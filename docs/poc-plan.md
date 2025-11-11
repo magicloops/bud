@@ -8,6 +8,8 @@ This document tracks active plans derived from [`/plan/proof-of-concept.md`](../
 |---------------|----------|-------|
 | Phase 0 — Repo & Scaffolding | [`plan/phase-0-scaffolding.md`](../plan/phase-0-scaffolding.md) | Initialize repo structure, stub docs, and baseline tooling. |
 | Phase 1 — Database & Schema | [`plan/phase-1-db-schema.md`](../plan/phase-1-db-schema.md) | Establish Postgres schema + migrations and seed initial data. |
+| Phase 2 — WSS Handshake & Presence | [`plan/phase-2-wss-handshake.md`](../plan/phase-2-wss-handshake.md) | Implement hello/ack, registry, and Bud presence tracking. |
+| Phase 3 — Exec Path (No Agent) | [`plan/phase-3-exec-path.md`](../plan/phase-3-exec-path.md) | Trigger shell runs via REST, execute on Bud, stream logs via SSE. |
 
 Add rows here as new plans are created (Phase 1 schema work, Phase 2 WS handshake, etc.).
 

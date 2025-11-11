@@ -1,6 +1,6 @@
 # Bud Device Agent
 
-Rust daemon that connects to the backend via WSS, executes shell commands, and streams logs/cancel events. The current binary is a scaffold per `plan/phase-0-scaffolding.md`.
+Rust daemon that connects to the backend via WSS, completes the `hello`/`hello_ack` handshake (with enrollment + challenge/response), persists identity material locally, and keeps the connection alive with periodic heartbeats. Execution and log streaming will land in the next phases of the PoC.
 
 ## Development
 
@@ -18,9 +18,25 @@ Flags/env vars (see `src/main.rs`):
 - `--default-cwd` / `BUD_DEFAULT_CWD`: default working directory for shell runs.
 - `--identity-file` / `BUD_IDENTITY_FILE`: path to `{ bud_id, device_secret }`.
 
+## Enrolling a Bud
+
+1. Seed or mint an enrollment token on the backend (e.g., `pnpm db:seed` inside `service/`).
+2. Start the backend (`pnpm dev` in `service/`).
+3. Launch Bud:
+
+   ```bash
+   cargo run -- \
+     --server ws://localhost:3000/ws \
+     --token DEV-ENROLL-0001 \
+     --name dev-box \
+     --identity-file ~/.bud/identity.json
+   ```
+
+4. On success, `~/.bud/identity.json` is written with `0600` perms and reused for future reconnects (challenge/response with `hello_challenge`/`hello_proof`). Bud sends heartbeats every 30s and transitions to `online` in the backend registry.
+
 ## Next milestones
 
-1. Implement WSS handshake (`hello`/`hello_ack`) with reconnect + heartbeats.
-2. Add run queue + shell executor (TERM→5s→KILL cancel semantics).
-3. Stream stdout/stderr chunks (≤16 KB) with seq numbers.
-4. Persist identity to `~/.bud/identity.json` (0600).
+1. Add the run queue and shell executor (TERM→5s→KILL cancel semantics).
+2. Stream stdout/stderr chunks (≤16 KB) back to the backend with seq numbers.
+3. Implement `cancel` handling and process group teardown.
+4. Wire LLM tool calls + workspace management once backend agent is ready.

@@ -35,11 +35,11 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
-`pnpm dev` will then serve `/api/buds` from the seeded data.
+`pnpm dev` will then serve `/api/buds` from the seeded data and host the `/ws` gateway (enrollment + challenge/response + presence updates).
 
 ## Next milestones
 
-1. Flesh out `/ws` (Bud handshake, heartbeats, run routing).
-2. Add REST resources for buds, threads, messages, and runs.
-3. Wire SSE endpoint to the run event buffer and log storage.
+1. Route `run`/`cancel` frames through active Bud sessions and persist execution metadata.
+2. Add REST resources for threads, messages, and runs (beyond `/api/buds`).
+3. Wire the SSE endpoint to an in-memory event buffer with DB backfill.
 4. Introduce the agent loop + LLM adapter (OpenAI Responses API first).

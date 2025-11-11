@@ -1,25 +1,22 @@
 import Fastify, { FastifyInstance } from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import fastifySseV2 from "fastify-sse-v2";
-import { config as loadEnv } from "dotenv";
 import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
-
-loadEnv();
-
-const LOG_LEVEL = process.env.LOG_LEVEL ?? "info";
-const PORT = Number(process.env.PORT ?? 3000);
+import { config } from "./config.js";
+import { registerWsGateway } from "./ws/gateway.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
     logger: {
-      level: LOG_LEVEL
+      level: config.logLevel
     }
   });
 
   await server.register(websocketPlugin);
   await server.register(fastifySseV2);
   await registerBudRoutes(server);
+  await registerWsGateway(server);
 
   server.addHook("onClose", async () => {
     await pool.end();
@@ -46,21 +43,14 @@ export async function buildServer(): Promise<FastifyInstance> {
     reply.raw.end();
   });
 
-  server.get("/ws", { websocket: true }, (connection) => {
-    connection.socket.send(JSON.stringify({ type: "hello_ack", message: "WS gateway not implemented" }));
-    connection.socket.on("message", (rawMessage: Buffer) => {
-      server.log.trace({ msg: rawMessage.toString() }, "ws message");
-    });
-  });
-
   return server;
 }
 
 async function start() {
   const server = await buildServer();
   try {
-    await server.listen({ port: PORT, host: process.env.HOST ?? "0.0.0.0" });
-    server.log.info({ port: PORT }, "service listening");
+    await server.listen({ port: config.port, host: config.host });
+    server.log.info({ port: config.port }, "service listening");
   } catch (err) {
     server.log.error({ err }, "Failed to start service");
     process.exitCode = 1;
