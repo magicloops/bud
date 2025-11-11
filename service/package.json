@@ -1,0 +1,45 @@
+{
+  "name": "@bud/service",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Bud backend (REST + SSE + WS gateway + agent).",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/server.js",
+    "lint": "eslint \"src/**/*.ts\"",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx src/scripts/seed.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^10.0.1",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.44.7",
+    "fastify": "^4.28.1",
+    "fastify-sse-v2": "^2.2.1",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0",
+    "ulid": "^2.3.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@types/node": "^22.10.1",
+    "@types/pg": "^8.15.6",
+    "@typescript-eslint/eslint-plugin": "^8.17.0",
+    "@typescript-eslint/parser": "^8.17.0",
+    "drizzle-kit": "^0.31.6",
+    "eslint": "^9.15.0",
+    "globals": "^15.12.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,26 @@
+# Global
+.DS_Store
+.env
+.env.*
+.idea/
+.vscode/
+
+# Rust
+/target/
+**/target/
+
+# Node / Web
+node_modules/
+**/node_modules/
+dist/
+build/
+.turbo/
+
+# Logs & coverage
+*.log
+*.tmp
+coverage/
+
+# Misc
+*.swp
+*.swo
