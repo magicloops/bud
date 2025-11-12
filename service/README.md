@@ -37,9 +37,34 @@ pnpm db:seed
 
 `pnpm dev` will then serve `/api/buds` from the seeded data and host the `/ws` gateway (enrollment + challenge/response + presence updates).
 
+### Trigger a run
+
+1. Enroll a Bud and ensure it shows `online` via `GET /api/buds`.
+2. `POST /api/runs` with a JSON body:
+
+```bash
+curl -X POST http://localhost:3000/api/runs \
+  -H "Content-Type: application/json" \
+  -d '{"bud_id":"b_dev_seed","cmd":"echo hello from bud"}'
+```
+
+Response:
+
+```json
+{ "runId": "run_01HX..." }
+```
+
+3. Stream logs via SSE:
+
+```bash
+curl -N http://localhost:3000/api/runs/run_01HX.../stream
+```
+
+You will receive `status`, `exec.stdout`/`exec.stderr`, and `final` events as the Bud executes the command.
+
 ## Next milestones
 
-1. Route `run`/`cancel` frames through active Bud sessions and persist execution metadata.
-2. Add REST resources for threads, messages, and runs (beyond `/api/buds`).
-3. Wire the SSE endpoint to an in-memory event buffer with DB backfill.
+1. Route `cancel` frames through active Bud sessions and add workspace management.
+2. Add REST resources for threads/messages and persist more run metadata (summaries, truncation flags).
+3. Wire the SSE endpoint to an in-memory event buffer with DB backfill & resume support.
 4. Introduce the agent loop + LLM adapter (OpenAI Responses API first).

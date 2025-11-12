@@ -14,7 +14,7 @@ This app will host the chat thread, live run logs, and cancel controls described
 ## Next steps
 
 1. Implement Bud list + enrollment token UI (Phase 2+ of the PoC plan).
-2. Add thread views with agent/bud event timelines driven by `GET /api/runs/:run_id/stream`.
+2. Expand the run console into a full thread view with agent/bud interleaving.
 3. Surface cancel + retry affordances, plus Unsafe PoC warnings, per `AGENTS.md`.
 
 Keep this document updated as new flows/components are added.***

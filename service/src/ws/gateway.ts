@@ -8,6 +8,7 @@ import { db } from "../db/client.js";
 import { budTable, enrollmentTokenTable } from "../db/schema.js";
 import { PROTO_VERSION, config } from "../config.js";
 import { and, eq, gt, isNull } from "drizzle-orm";
+import type { RunManager } from "../runtime/run-manager.js";
 
 type HelloFrame = z.infer<typeof HelloSchema>;
 type HelloWithBudId = HelloFrame & { bud_id: string };
@@ -48,6 +49,21 @@ const HelloProofSchema = EnvelopeSchema.extend({
   hmac: z.string()
 });
 
+const StreamSchema = EnvelopeSchema.extend({
+  type: z.union([z.literal("stdout"), z.literal("stderr")]),
+  run_id: z.string(),
+  seq: z.number().int().nonnegative(),
+  data: z.string()
+});
+
+const RunFinishedSchema = EnvelopeSchema.extend({
+  type: z.literal("run_finished"),
+  run_id: z.string(),
+  exit_code: z.number().int().nullable().optional(),
+  canceled: z.boolean().optional(),
+  signal: z.string().optional()
+});
+
 const HeartbeatSchema = EnvelopeSchema.extend({
   type: z.literal("heartbeat")
 });
@@ -79,6 +95,7 @@ interface SessionTracker {
   budId: string;
   sessionId: string;
   lastHeartbeat: number;
+  socket: WebSocket;
   timeout?: NodeJS.Timeout;
 }
 
@@ -88,10 +105,22 @@ type SocketStreamLike = {
 
 const sessions = new Map<string, SessionTracker>();
 
-export async function registerWsGateway(server: FastifyInstance) {
+export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
+  const session = sessions.get(budId);
+  if (!session) {
+    return false;
+  }
+  if (session.socket.readyState !== session.socket.OPEN) {
+    return false;
+  }
+  session.socket.send(JSON.stringify(payload));
+  return true;
+}
+
+export async function registerWsGateway(server: FastifyInstance, runManager: RunManager) {
   server.get("/ws", { websocket: true }, (stream: unknown) => {
     const socketStream = stream as SocketStreamLike;
-    const connection = new BudConnection(server, socketStream);
+    const connection = new BudConnection(server, socketStream, runManager);
     connection.start().catch((err) => {
       server.log.error({ err }, "WS connection failed");
       socketStream.socket.close();
@@ -103,7 +132,11 @@ class BudConnection {
   private state: ConnectionState = { kind: "awaiting_hello" };
   private lastPresenceWrite = 0;
 
-  constructor(private server: FastifyInstance, private stream: SocketStreamLike) {
+  constructor(
+    private server: FastifyInstance,
+    private stream: SocketStreamLike,
+    private runManager: RunManager
+  ) {
     stream.socket.on("close", () => {
       void this.handleClose();
     });
@@ -161,10 +194,42 @@ class BudConnection {
       case "heartbeat":
         await this.handleHeartbeat(envelope.data.ts);
         break;
+      case "stdout":
+      case "stderr":
+        await this.handleStreamFrame(parsed);
+        break;
+      case "run_finished":
+        await this.handleRunFinished(parsed);
+        break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
         break;
     }
+  }
+
+  private async handleStreamFrame(raw: unknown) {
+    const result = StreamSchema.safeParse(raw);
+    if (!result.success) {
+      return;
+    }
+    await this.runManager.handleStreamChunk(
+      result.data.run_id,
+      result.data.type,
+      result.data.data,
+      result.data.seq
+    );
+  }
+
+  private async handleRunFinished(raw: unknown) {
+    const result = RunFinishedSchema.safeParse(raw);
+    if (!result.success) {
+      return;
+    }
+    await this.runManager.handleRunFinished(result.data.run_id, {
+      exit_code: result.data.exit_code ?? null,
+      canceled: result.data.canceled,
+      signal: result.data.signal
+    });
   }
 
   private async handleHello(raw: unknown) {
@@ -352,7 +417,8 @@ class BudConnection {
     const tracker: SessionTracker = {
       budId,
       sessionId,
-      lastHeartbeat: Date.now()
+      lastHeartbeat: Date.now(),
+      socket: this.stream.socket
     };
     sessions.set(budId, tracker);
     this.scheduleTimeout(tracker);

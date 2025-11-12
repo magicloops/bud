@@ -1,21 +1,21 @@
 .app-shell {
-  max-width: 960px;
+  max-width: 840px;
   margin: 0 auto;
-  padding: 2.5rem 1.5rem 4rem;
+  padding: 2.5rem 1.25rem 4rem;
   display: flex;
   flex-direction: column;
-  gap: 2.5rem;
+  gap: 2rem;
 }
 
 header {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 0.75rem;
 }
 
 .eyebrow {
-  font-size: 0.85rem;
-  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--eyebrow-color);
   margin: 0;
@@ -23,57 +23,80 @@ header {
 
 .lede {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
   color: var(--muted-fg);
 }
 
-.callout {
+.panel {
+  border: 1px solid var(--card-border);
   border-radius: 12px;
-  padding: 1.25rem 1.5rem;
-  background: var(--callout-bg);
-  border: 1px solid var(--callout-border);
-  color: var(--muted-fg);
+  padding: 1.5rem;
+  background: var(--card-bg);
+  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.08);
 }
 
-.callout strong {
-  display: block;
-  font-size: 0.95rem;
-  margin-bottom: 0.5rem;
-  color: var(--fg);
-}
-
-.callout ul {
-  padding-left: 1.25rem;
-  margin: 0;
-  line-height: 1.6;
-}
-
-section h2 {
+.run-form {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin-bottom: 1rem;
 }
 
-.feature-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 1rem;
-}
-
-.feature-card {
-  border: 1px solid var(--card-border);
-  border-radius: 12px;
-  padding: 1.25rem;
-  background: var(--card-bg);
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
-}
-
-.feature-card h3 {
-  margin-top: 0;
-  margin-bottom: 0.5rem;
-  font-size: 1.05rem;
-}
-
-.feature-card p {
-  margin: 0;
-  line-height: 1.5;
+.run-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
   color: var(--muted-fg);
+}
+
+.run-form input {
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  font-size: 0.95rem;
+}
+
+.run-form button {
+  grid-column: 1 / -1;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  background: #4338ca;
+  color: white;
+}
+
+.run-form button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.log-box {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  min-height: 220px;
+  padding: 1rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, monospace;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.placeholder {
+  margin: 0;
+  color: #94a3b8;
+}
+
+.error {
+  color: #dc2626;
+  margin: 0 0 0.5rem;
+}
+
+.meta {
+  font-size: 0.85rem;
+  color: var(--muted-fg);
+  margin-top: 0;
 }

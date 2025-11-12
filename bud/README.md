@@ -34,9 +34,27 @@ Flags/env vars (see `src/main.rs`):
 
 4. On success, `~/.bud/identity.json` is written with `0600` perms and reused for future reconnects (challenge/response with `hello_challenge`/`hello_proof`). Bud sends heartbeats every 30s and transitions to `online` in the backend registry.
 
+## Running a command (Phase 3)
+
+After the Bud is online:
+
+```bash
+curl -X POST http://localhost:3000/api/runs \
+  -H "Content-Type: application/json" \
+  -d '{"bud_id":"b_dev_seed","cmd":"uname -a"}'
+```
+
+Then stream logs:
+
+```bash
+curl -N http://localhost:3000/api/runs/<run_id>/stream
+```
+
+Bud executes the command locally, streams stdout/stderr chunks (base64) over WSS, and emits `run_finished` with the exit code. The backend persists logs to Postgres and relays human-readable chunks via SSE.
+
 ## Next milestones
 
-1. Add the run queue and shell executor (TERM→5s→KILL cancel semantics).
-2. Stream stdout/stderr chunks (≤16 KB) back to the backend with seq numbers.
-3. Implement `cancel` handling and process group teardown.
-4. Wire LLM tool calls + workspace management once backend agent is ready.
+1. Add robust cancel handling (TERM→5s→KILL of the process group) and workspace isolation per run.
+2. Enforce per-run timeouts and capture tail summaries for agent responses.
+3. Support additional tools (e.g., file upload/download) through the same registry.
+4. Harden reconnection/resume logic so in-flight runs can continue across backend restarts.
