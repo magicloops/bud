@@ -335,7 +335,7 @@ Used by either side for latency checks.
   `{ "event_id":"...", "ts":1731, "text":"Cloning repository..." }`
 
 * `agent.tool_call`
-  `{ "event_id":"...", "ts":1731, "name":"shell.run", "args":{"cmd":"...", "cwd":"~", "timeout_sec":600} }`
+  `{ "event_id":"...", "ts":1731, "name":"shell.run", "args":{"command":"...", "cwd":"~"} }`
 
 * `exec.stdout`
   `{ "event_id":"...", "ts":1731, "chunk":"base64url" }`
@@ -344,7 +344,7 @@ Used by either side for latency checks.
   `{ "event_id":"...", "ts":1731, "chunk":"base64url" }`
 
 * `agent.tool_result`
-  `{ "event_id":"...", "ts":1731, "name":"shell.run", "exit_code":0, "summary":"last 4KB of output..."}`
+  `{ "event_id":"...", "ts":1731, "name":"shell.run", "exit_code":0, "stdout":"last 4KB...", "stderr":"" }`
 
 * `final`
   `{ "event_id":"...", "ts":1731, "status":"succeeded|failed|canceled", "text":"Done.", "log_truncated":false }`

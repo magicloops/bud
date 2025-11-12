@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { RunManager } from "../runtime/run-manager.js";
 import { db } from "../db/client.js";
 import { budTable, messageTable, threadTable } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { eq, desc, asc } from "drizzle-orm";
+import { AgentService } from "../agent/index.js";
+import { RunManager } from "../runtime/run-manager.js";
 
 const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),
@@ -19,10 +20,47 @@ const ThreadParamsSchema = z.object({
   threadId: z.string().uuid()
 });
 
+const ThreadListQuerySchema = z.object({
+  bud_id: z.string().optional()
+});
+
+const MessagesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(100)
+});
+
+function serializeThread(row: typeof threadTable.$inferSelect) {
+  return {
+    thread_id: row.threadId,
+    bud_id: row.budId,
+    title: row.title,
+    created_at: row.createdAt
+  };
+}
+
+function serializeMessage(row: typeof messageTable.$inferSelect) {
+  return {
+    message_id: row.messageId,
+    role: row.role,
+    content: row.content,
+    created_at: row.createdAt
+  };
+}
+
 export async function registerThreadRoutes(
   server: FastifyInstance,
-  runManager: RunManager
+  _runManager: RunManager,
+  agentService: AgentService
 ): Promise<void> {
+  server.get("/api/threads", async (request) => {
+    const query = ThreadListQuerySchema.parse(request.query ?? {});
+    const threads = await db
+      .select()
+      .from(threadTable)
+      .where(query.bud_id ? eq(threadTable.budId, query.bud_id) : undefined)
+      .orderBy(desc(threadTable.createdAt));
+    return threads.map(serializeThread);
+  });
+
   server.post("/api/threads", async (request, reply) => {
     const body = CreateThreadSchema.parse(request.body ?? {});
     const bud = await db.query.budTable.findFirst({
@@ -44,6 +82,37 @@ export async function registerThreadRoutes(
     reply.code(201).send({ threadId: thread.threadId });
   });
 
+  server.get("/api/threads/:threadId", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, params.threadId)
+    });
+    if (!thread) {
+      reply.code(404).send({ error: "thread not found" });
+      return;
+    }
+    reply.send(serializeThread(thread));
+  });
+
+  server.get("/api/threads/:threadId/messages", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const query = MessagesQuerySchema.parse(request.query ?? {});
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, params.threadId)
+    });
+    if (!thread) {
+      reply.code(404).send({ error: "thread not found" });
+      return;
+    }
+    const rows = await db
+      .select()
+      .from(messageTable)
+      .where(eq(messageTable.threadId, thread.threadId))
+      .orderBy(asc(messageTable.createdAt))
+      .limit(query.limit);
+    reply.send(rows.map(serializeMessage));
+  });
+
   server.post("/api/threads/:threadId/messages", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const body = CreateMessageSchema.parse(request.body ?? {});
@@ -56,25 +125,23 @@ export async function registerThreadRoutes(
       return;
     }
 
+    const messageContent = body.cwd ? `${body.text}\n\n[Preferred CWD: ${body.cwd}]` : body.text;
+
     const [message] = await db
       .insert(messageTable)
       .values({
         threadId: thread.threadId,
         role: "user",
-        content: body.text
+        content: messageContent
       })
       .returning({ messageId: messageTable.messageId });
 
     try {
-      const result = await runManager.createRun({
-        threadId: thread.threadId,
-        command: body.text,
-        cwd: body.cwd
-      });
+      const result = await agentService.handleUserMessage(thread.threadId);
       reply.code(201).send({ messageId: message.messageId, runId: result.runId });
     } catch (err) {
-      server.log.error({ err }, "Failed to dispatch run from message");
-      reply.code(400).send({ error: (err as Error).message });
+      server.log.error({ err }, "Agent failed to process message");
+      reply.code(500).send({ error: (err as Error).message });
     }
   });
 }

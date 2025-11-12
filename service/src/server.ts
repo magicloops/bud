@@ -9,6 +9,8 @@ import { RunEventBus } from "./runtime/event-bus.js";
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes } from "./routes/threads.js";
+import { AgentService } from "./agent/index.js";
+import OpenAI from "openai";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -18,11 +20,13 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   const eventBus = new RunEventBus();
   const runManager = new RunManager(eventBus);
+  const openai = new OpenAI({ apiKey: config.openaiApiKey });
+  const agentService = new AgentService(openai, runManager, eventBus);
 
   await server.register(websocketPlugin);
   await server.register(fastifySseV2);
   await registerBudRoutes(server);
-  await registerThreadRoutes(server, runManager);
+  await registerThreadRoutes(server, runManager, agentService);
   await registerRunRoutes(server, runManager);
   await registerWsGateway(server, runManager);
 

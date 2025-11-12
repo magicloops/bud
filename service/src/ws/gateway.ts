@@ -97,10 +97,6 @@ interface SessionTracker {
   timeout?: TimeoutHandle;
 }
 
-type SocketStreamLike = {
-  socket: WebSocket;
-};
-
 const sessions = new Map<string, SessionTracker>();
 
 export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
@@ -119,12 +115,15 @@ export async function registerWsGateway(
   server: FastifyInstance,
   runManager: RunManager
 ): Promise<void> {
-  server.get("/ws", { websocket: true }, (stream: unknown) => {
-    const socketStream = stream as SocketStreamLike;
-    const connection = new BudConnection(server, socketStream, runManager);
+  server.get("/ws", { websocket: true }, (socket: WebSocket) => {
+    const connection = new BudConnection(server, socket, runManager);
     connection.start().catch((err) => {
       server.log.error({ err }, "WS connection failed");
-      socketStream.socket.close();
+      try {
+        socket.close();
+      } catch {
+        /* noop */
+      }
     });
   });
 }
@@ -133,20 +132,20 @@ class BudConnection {
   private state: ConnectionState = { kind: "awaiting_hello" };
   private lastPresenceWrite = 0;
   private readonly server: FastifyInstance;
-  private readonly stream: SocketStreamLike;
+  private readonly socket: WebSocket;
   private readonly runManager: RunManager;
 
-  constructor(server: FastifyInstance, stream: SocketStreamLike, runManager: RunManager) {
+  constructor(server: FastifyInstance, socket: WebSocket, runManager: RunManager) {
     this.server = server;
-    this.stream = stream;
+    this.socket = socket;
     this.runManager = runManager;
-    stream.socket.on("close", () => {
+    socket.on("close", () => {
       void this.handleClose();
     });
   }
 
   async start(): Promise<void> {
-    this.stream.socket.on("message", (raw: RawData) => {
+    this.socket.on("message", (raw: RawData) => {
       if (typeof raw === "string") {
         void this.handleRaw(raw);
         return;
@@ -176,14 +175,14 @@ class BudConnection {
     } catch (err) {
       this.server.log.warn({ err }, "Failed to parse WS frame");
       await this.sendError("PROTO_VERSION_MISMATCH", "Invalid JSON");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
 
     const envelope = EnvelopeSchema.safeParse(parsed);
     if (!envelope.success) {
       await this.sendError("PROTO_VERSION_MISMATCH", "Invalid envelope");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
 
@@ -239,7 +238,7 @@ class BudConnection {
     const result = HelloSchema.safeParse(raw);
     if (!result.success) {
       await this.sendError("PROTO_VERSION_MISMATCH", "Malformed hello frame");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
     const frame = result.data;
@@ -252,13 +251,13 @@ class BudConnection {
       return;
     }
     await this.sendError("AUTH_FAILED", "hello requires token or bud_id");
-    this.stream.socket.close();
+    this.socket.close();
   }
 
   private async handleEnrollmentHello(frame: HelloFrame) {
     if (!frame.token) {
       await this.sendError("AUTH_FAILED", "Missing enrollment token");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
     const tokenHash = hashToken(frame.token);
@@ -271,7 +270,7 @@ class BudConnection {
     });
     if (!tokenRow) {
       await this.sendError("AUTH_FAILED", "Enrollment token invalid or expired");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
 
@@ -334,7 +333,7 @@ class BudConnection {
     });
     if (!bud || !bud.deviceSecret) {
       await this.sendError("AUTH_FAILED", "Unknown bud_id");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
 
@@ -353,19 +352,19 @@ class BudConnection {
     const result = HelloProofSchema.safeParse(raw);
     if (!result.success) {
       await this.sendError("AUTH_FAILED", "Malformed hello_proof");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
     if (this.state.kind !== "awaiting_proof") {
       await this.sendError("AUTH_FAILED", "Unexpected hello_proof");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
     const { budId, deviceSecret, nonce, hello } = this.state;
     const computed = createHmac("sha256", deviceSecret).update(nonce).digest("base64url");
     if (computed !== result.data.hmac) {
       await this.sendError("AUTH_FAILED", "Invalid proof");
-      this.stream.socket.close();
+      this.socket.close();
       return;
     }
 
@@ -421,7 +420,7 @@ class BudConnection {
       budId,
       sessionId,
       lastHeartbeat: Date.now(),
-      socket: this.stream.socket
+      socket: this.socket
     };
     sessions.set(budId, tracker);
     this.scheduleTimeout(tracker);
@@ -435,7 +434,7 @@ class BudConnection {
       sessions.delete(tracker.budId);
       void markBudOffline(tracker.budId, this.server);
       try {
-        this.stream.socket.close();
+        tracker.socket.close();
       } catch {
         /* noop */
       }
@@ -476,10 +475,10 @@ class BudConnection {
   }
 
   private async send(frame: object) {
-    if (this.stream.socket.readyState !== this.stream.socket.OPEN) {
+    if (this.socket.readyState !== this.socket.OPEN) {
       return;
     }
-    this.stream.socket.send(JSON.stringify(frame));
+    this.socket.send(JSON.stringify(frame));
   }
 }
 

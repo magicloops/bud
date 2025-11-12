@@ -1,25 +1,26 @@
-# Bud PoC Progress — Phase 3 Snapshot
+# Bud PoC Progress — Phase 4 Snapshot
 
 _Last updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)_
 
 ## What’s implemented
-- **Run dispatch (Phase 3)**: `POST /api/runs` creates a run, persists it in Postgres, and dispatches a `run` frame to the selected Bud. `RunManager` handles `run_step`, `run_log`, and SSE broadcasts (`status`, `exec.stdout`, `exec.stderr`, `final`).
-- **Bud executor**: Rust agent enrolls via `hello`/`hello_ack`, maintains heartbeats, executes commands serially via `<shell> -lc`, streams base64 stdout/stderr chunks, and emits `run_finished` after each command.
-- **Web console**: Minimal Vite/React page that lets you POST `/api/runs`, then opens `/api/runs/:id/stream` to view live `exec.*` events.
-- **Docs**: `README.md` files, `docs/proto.md`, and `plan/phase-3-exec-path.md` describe the Phase 3 architecture, API usage, and future work.
+- **Agent loop**: `POST /api/threads/:id/messages` now triggers an OpenAI Responses-driven planner that replays thread history, emits `agent.*` SSE events, issues `shell.run` tool calls, and streams stdout/stderr interleaved with agent narration.
+- **Threaded runs**: Run creation is tied to threads, `run_step` rows are appended per tool call, and SSE buffers now include ULID-backed IDs for resume.
+- **Bud executor**: Rust agent still handles enrollment, WSS heartbeats, and serial shell execution with base64 log chunks and `run_finished` events.
+- **Web console**: The Vite playground now creates threads/messages, listens for `agent.message/tool_call/tool_result`, and displays them alongside `exec.*` streams.
+- **Docs**: `service/README.md`, `docs/proto.md`, and `plan/phase-4-agent-loop.md` document the agent architecture, SSE payloads, and open TODOs.
 
 ## Known gaps / next phases
-- **Phase 4 (Agent loop)**: hook the LLM tool-calling loop into `/api/threads` + `/api/runs`, interleave agent messages, and orchestrate multi-step plans.
-- **Phase 5 (Cancel semantics)**: wire `/api/runs/:id/cancel`, propagate through WS registry, and implement SIGTERM→SIGKILL handling in Bud. (Captured in plan doc.)
-- **Reliability polish**: resume/replay for SSE buffers, better queue backpressure, enforced timeouts/log truncation.
+- **Phase 5 (Cancel semantics)**: wire `/api/runs/:id/cancel`, propagate through the agent + OpenAI request, and forward cancels to Bud (TERM→KILL).
+- **Reliability polish**: SSE replay/`Last-Event-ID`, better run log truncation UX, tool-result summaries, and queue/backpressure on Bud dispatch.
+- **Security & ergonomics**: workspace isolation, richer denylist, and friendlier error reporting/testing knobs for mock LLMs.
 
 ## Quick start
 1. `pnpm db:migrate && pnpm db:seed` inside `service/` (local Postgres).
-2. `pnpm dev` (backend) and `cargo run -- --server ws://localhost:3000/ws --token DEV-ENROLL-0001` (Bud).
-3. Optional: `pnpm dev` inside `web/` to use the run console.
-4. `curl -X POST http://localhost:3000/api/runs -d '{"bud_id":"b_dev_seed","cmd":"echo hello"}' -H 'Content-Type: application/json'`.
-5. Stream events: `curl -N http://localhost:3000/api/runs/<run_id>/stream`.
+2. Provide `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`) in `service/.env`.
+3. `pnpm dev` (backend) and `cargo run -- --server ws://localhost:3000/ws --token DEV-ENROLL-0001` (Bud).
+4. `pnpm dev` inside `web/`, create a thread, and chat with Bud; watch SSE logs interleave agent chatter + stdout.
+5. Alternatively, use `curl` as shown in `service/README.md` to post a thread message and stream `/api/runs/:id/stream`.
 
 ## Notes
-- Cancel support intentionally deferred to Phase 5 to avoid destabilizing Phase 3.
-- Keep `AGENTS.md` invariants in mind (plan/debug docs, proto updates, etc.).
+- LLM cancels are deferred to Phase 5; for now, long-running commands must finish naturally.
+- Keep `AGENTS.md` invariants in mind (plan/debug docs, protocol updates, safety posture).

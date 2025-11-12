@@ -393,7 +393,7 @@ queued → planning → running → (succeeded | failed)
 ### Phase 4 — Agent (Tool-Calling) + SSE Interleave
 
 * Implement **LLMAdapter** (OpenAI Responses API); add tool schema for `shell.run`.
-* Agent loop: interleave agent messages, tool_call, tool_result; step/time caps; denylist.
+* Agent loop: backend loads full thread history from Postgres, assembles the prompt, interleaves agent messages, tool_call, tool_result; step/time caps; denylist. Front-end only submits the new user message + metadata.
 * **DoD:** User asks “Clone X and run it”; agent issues `shell.run` calls and returns a final answer.
 
 **Phase 4 TODOs (prep work informed by the agent loop)**

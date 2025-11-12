@@ -25,6 +25,9 @@ For local development:
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/bud
 ENROLLMENT_HASH_SECRET=dev-secret
 SEED_ENROLLMENT_TOKEN=DEV-ENROLL-0001
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+AGENT_MAX_STEPS=5
 ```
 
 You can run Postgres however you like (Docker, Supabase, etc.). A quick Docker example:
@@ -54,7 +57,7 @@ Response:
 { "threadId": "6d5fd8cb-..." }
 ```
 
-3. Post a user message to the thread. This persists the prompt and immediately dispatches a run tied to that conversation:
+3. Post a user message to the thread. This persists the prompt and kicks off the agent loop (planning → tool calls → final answer):
 
 ```bash
 curl -X POST http://localhost:3000/api/threads/6d5fd8cb-.../messages \
@@ -74,11 +77,28 @@ Response:
 curl -N http://localhost:3000/api/runs/run_01HX.../stream
 ```
 
-Events include `status`, `exec.stdout`, `exec.stderr`, and `final`. The legacy `POST /api/runs` endpoint still exists for quick experiments, but new surfaces should go through threads/messages so prompts are recorded.
+Events now include `status`, `agent.message`, `agent.tool_call`, `exec.stdout`, `exec.stderr`, `agent.tool_result`, and `final`. The legacy `POST /api/runs` endpoint still exists for quick experiments, but new surfaces should go through threads/messages so prompts are recorded and the agent can hydrate prior context.
+
+### Inspect threads & messages
+
+List threads (optionally filter by Bud):
+
+```bash
+curl http://localhost:3000/api/threads?bud_id=b_dev_seed
+```
+
+Fetch a single thread and its message history:
+
+```bash
+curl http://localhost:3000/api/threads/6d5fd8cb-...
+curl http://localhost:3000/api/threads/6d5fd8cb-.../messages?limit=100
+```
+
+Responses include ULIDs/timestamps so the web UI (and agent) can replay context without bespoke queries.
 
 ## Next milestones
 
-1. Route `cancel` frames through active Bud sessions and add workspace management.
-2. Enrich run metadata (step summaries, log truncation accounting) and expose thread history endpoints.
-3. Wire the SSE endpoint to a bounded event buffer with resume support backed by DB reads.
-4. Introduce the agent loop + LLM adapter (OpenAI Responses API first).
+1. Route `/api/runs/:id/cancel` through active Bud sessions (TERM → KILL) and plumb cancel into the agent + OpenAI request.
+2. Persist richer run metadata (workspace paths, tool summaries) and add history listing APIs for the web UI.
+3. Add SSE replay/`Last-Event-ID` resume backed by a bounded in-memory buffer + DB rehydrate.
+4. Harden reliability: queue backpressure, timeout enforcement, and better log truncation UX.
