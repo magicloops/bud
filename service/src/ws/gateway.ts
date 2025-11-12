@@ -64,10 +64,6 @@ const RunFinishedSchema = EnvelopeSchema.extend({
   signal: z.string().optional()
 });
 
-const HeartbeatSchema = EnvelopeSchema.extend({
-  type: z.literal("heartbeat")
-});
-
 const ErrorFrameSchema = EnvelopeSchema.extend({
   type: z.literal("error"),
   code: z.string(),
@@ -91,12 +87,14 @@ type ConnectionState =
     }
   | { kind: "closed" };
 
+type TimeoutHandle = ReturnType<typeof setTimeout>;
+
 interface SessionTracker {
   budId: string;
   sessionId: string;
   lastHeartbeat: number;
   socket: WebSocket;
-  timeout?: NodeJS.Timeout;
+  timeout?: TimeoutHandle;
 }
 
 type SocketStreamLike = {
@@ -117,7 +115,10 @@ export function sendFrameToBud(budId: string, payload: Record<string, unknown>):
   return true;
 }
 
-export async function registerWsGateway(server: FastifyInstance, runManager: RunManager) {
+export async function registerWsGateway(
+  server: FastifyInstance,
+  runManager: RunManager
+): Promise<void> {
   server.get("/ws", { websocket: true }, (stream: unknown) => {
     const socketStream = stream as SocketStreamLike;
     const connection = new BudConnection(server, socketStream, runManager);
@@ -131,18 +132,20 @@ export async function registerWsGateway(server: FastifyInstance, runManager: Run
 class BudConnection {
   private state: ConnectionState = { kind: "awaiting_hello" };
   private lastPresenceWrite = 0;
+  private readonly server: FastifyInstance;
+  private readonly stream: SocketStreamLike;
+  private readonly runManager: RunManager;
 
-  constructor(
-    private server: FastifyInstance,
-    private stream: SocketStreamLike,
-    private runManager: RunManager
-  ) {
+  constructor(server: FastifyInstance, stream: SocketStreamLike, runManager: RunManager) {
+    this.server = server;
+    this.stream = stream;
+    this.runManager = runManager;
     stream.socket.on("close", () => {
       void this.handleClose();
     });
   }
 
-  async start() {
+  async start(): Promise<void> {
     this.stream.socket.on("message", (raw: RawData) => {
       if (typeof raw === "string") {
         void this.handleRaw(raw);

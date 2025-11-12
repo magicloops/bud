@@ -390,11 +390,16 @@ queued → planning → running → (succeeded | failed)
 * Bud executes; backend streams `exec.stdout/stderr` → SSE; stores `run_log`.
 * **DoD:** See live logs in browser; `run` finishes with exit code.
 
-### Phase 4 — Agent (Tool‑Calling) + SSE Interleave
+### Phase 4 — Agent (Tool-Calling) + SSE Interleave
 
 * Implement **LLMAdapter** (OpenAI Responses API); add tool schema for `shell.run`.
 * Agent loop: interleave agent messages, tool_call, tool_result; step/time caps; denylist.
 * **DoD:** User asks “Clone X and run it”; agent issues `shell.run` calls and returns a final answer.
+
+**Phase 4 TODOs (prep work informed by the agent loop)**
+
+* Add thread/message listing APIs so the UI + agent can hydrate prior context.
+* Track richer run metadata (log bytes, truncation flags, per-step summaries) to give the agent grounded observations.
 
 ### Phase 5 — Cancel Semantics
 
@@ -462,4 +467,3 @@ queued → planning → running → (succeeded | failed)
 | Identity          | Enrollment token → `bud_id` + device secret (HMAC re‑auth)         |
 | Cancel            | Stop both LLM and Bud (TERM→5s→KILL)                               |
 | OSS               | Add tenant/user columns now; adapters & local fallbacks documented |
-

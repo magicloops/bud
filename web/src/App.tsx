@@ -11,6 +11,7 @@ function App() {
   const [budId, setBudId] = useState('b_dev_seed')
   const [command, setCommand] = useState('echo hello from bud')
   const [cwd, setCwd] = useState('~')
+  const [threadId, setThreadId] = useState<string | null>(null)
   const [runId, setRunId] = useState<string | null>(null)
   const [logs, setLogs] = useState<RunEvent[]>([])
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
@@ -60,23 +61,40 @@ function App() {
     setLogs([])
     setStatus('dispatching')
     eventSourceRef.current?.close()
+    setRunId(null)
 
     try {
-      const response = await fetch('/api/runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bud_id: budId, cmd: command, cwd })
-      })
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}))
-        throw new Error(body.error ?? `HTTP ${response.status}`)
+      let currentThreadId = threadId
+      if (!currentThreadId) {
+        const threadResp = await fetch('/api/threads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bud_id: budId })
+        })
+        if (!threadResp.ok) {
+          const body = await threadResp.json().catch(() => ({}))
+          throw new Error(body.error ?? `HTTP ${threadResp.status}`)
+        }
+        const data = (await threadResp.json()) as { threadId: string }
+        currentThreadId = data.threadId
+        setThreadId(currentThreadId)
+        appendEvent('thread', { threadId: currentThreadId })
       }
 
-      const { runId } = (await response.json()) as { runId: string }
-      setRunId(runId)
-      appendEvent('status', { phase: 'running', runId })
-      startStream(runId)
+      const messageResp = await fetch(`/api/threads/${currentThreadId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: command, cwd })
+      })
+      if (!messageResp.ok) {
+        const body = await messageResp.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${messageResp.status}`)
+      }
+      const messageData = (await messageResp.json()) as { runId: string; messageId: string }
+      setRunId(messageData.runId)
+      appendEvent('message', { messageId: messageData.messageId })
+      appendEvent('status', { phase: 'running', runId: messageData.runId })
+      startStream(messageData.runId)
     } catch (err) {
       setStatus('idle')
       const message = err instanceof Error ? err.message : 'Failed to start run'
@@ -111,7 +129,15 @@ function App() {
         <form onSubmit={handleSubmit} className="run-form">
           <label>
             Bud ID
-            <input value={budId} onChange={(e) => setBudId(e.target.value)} placeholder="b_dev_seed" required />
+            <input
+              value={budId}
+              onChange={(e) => {
+                setBudId(e.target.value)
+                setThreadId(null)
+              }}
+              placeholder="b_dev_seed"
+              required
+            />
           </label>
           <label>
             Command
@@ -126,6 +152,11 @@ function App() {
           </button>
         </form>
         {error && <p className="error">{error}</p>}
+        {threadId && (
+          <p className="meta">
+            Thread <code>{threadId}</code>
+          </p>
+        )}
         {runId && (
           <p className="meta">
             Observing <code>{runId}</code>

@@ -14,7 +14,7 @@ import { sendFrameToBud } from "../ws/gateway.js";
  
 
 type RunRequest = {
-  budId: string;
+  threadId: string;
   command: string;
   cwd?: string;
 };
@@ -29,11 +29,22 @@ type RunContext = {
 const activeRuns = new Map<string, RunContext>();
 
 export class RunManager {
-  constructor(private events: RunEventBus) {}
+  private readonly events: RunEventBus;
 
-  async createRun(request: RunRequest) {
+  constructor(events: RunEventBus) {
+    this.events = events;
+  }
+
+  async createRun(request: RunRequest): Promise<{ runId: string }> {
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, request.threadId)
+    });
+    if (!thread) {
+      throw new Error("thread not found");
+    }
+
     const bud = await db.query.budTable.findFirst({
-      where: eq(budTable.budId, request.budId)
+      where: eq(budTable.budId, thread.budId)
     });
     if (!bud) {
       throw new Error("bud not found");
@@ -43,10 +54,6 @@ export class RunManager {
     }
 
     const runId = `run_${ulid()}`;
-    const [thread] = await db
-      .insert(threadTable)
-      .values({ budId: request.budId, title: `Run ${runId}` })
-      .returning({ threadId: threadTable.threadId });
     const now = new Date();
     await db.insert(runTable).values({
       runId,
@@ -87,7 +94,7 @@ export class RunManager {
       use_pty: false
     };
 
-    const sent = sendFrameToBud(request.budId, frame);
+    const sent = sendFrameToBud(thread.budId, frame);
     if (!sent) {
       await db
         .update(runTable)
@@ -98,7 +105,7 @@ export class RunManager {
 
     activeRuns.set(runId, {
       runId,
-      budId: request.budId,
+      budId: thread.budId,
       stepId: step.stepId,
       seq: 0
     });
@@ -110,7 +117,12 @@ export class RunManager {
     return { runId };
   }
 
-  async handleStreamChunk(runId: string, stream: "stdout" | "stderr", dataB64: string, seq: number) {
+  async handleStreamChunk(
+    runId: string,
+    stream: "stdout" | "stderr",
+    dataB64: string,
+    seq: number
+  ): Promise<void> {
     const context = activeRuns.get(runId);
     if (!context) {
       return;
@@ -135,7 +147,7 @@ export class RunManager {
   async handleRunFinished(
     runId: string,
     payload: { exit_code: number | null; canceled?: boolean; signal?: string }
-  ) {
+  ): Promise<void> {
     const context = activeRuns.get(runId);
     const finishedAt = new Date();
     await db

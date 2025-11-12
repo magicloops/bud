@@ -18,7 +18,7 @@ function serializeBud(bud: BudRow) {
   };
 }
 
-export async function registerBudRoutes(server: FastifyInstance) {
+export async function registerBudRoutes(server: FastifyInstance): Promise<void> {
   server.get("/api/buds", async () => {
     const buds = await db
       .select()

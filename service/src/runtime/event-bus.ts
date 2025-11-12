@@ -6,15 +6,19 @@ export type RunEvent = {
   id?: string;
 };
 
+// eslint-disable-next-line no-unused-vars
 type Listener = (event: RunEvent) => void;
 
 export class RunEventBus {
   private listeners = new Map<string, Set<Listener>>();
   private buffers = new Map<string, RunEvent[]>();
+  private readonly bufferLimit: number;
 
-  constructor(private bufferLimit = 1000) {}
+  constructor(bufferLimit = 1000) {
+    this.bufferLimit = bufferLimit;
+  }
 
-  emit(runId: string, event: RunEvent) {
+  emit(runId: string, event: RunEvent): void {
     if (!this.buffers.has(runId)) {
       this.buffers.set(runId, []);
     }
@@ -31,7 +35,7 @@ export class RunEventBus {
     }
   }
 
-  attach(runId: string, reply: FastifyReply) {
+  attach(runId: string, reply: FastifyReply): () => void {
     const listener: Listener = (event) => {
       reply.sse({ event: event.event, data: JSON.stringify(event.data), id: event.id });
     };

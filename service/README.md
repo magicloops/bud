@@ -40,31 +40,45 @@ pnpm db:seed
 ### Trigger a run
 
 1. Enroll a Bud and ensure it shows `online` via `GET /api/buds`.
-2. `POST /api/runs` with a JSON body:
+2. Create (or reuse) a thread for that Bud:
 
 ```bash
-curl -X POST http://localhost:3000/api/runs \
+curl -X POST http://localhost:3000/api/threads \
   -H "Content-Type: application/json" \
-  -d '{"bud_id":"b_dev_seed","cmd":"echo hello from bud"}'
+  -d '{"bud_id":"b_dev_seed","title":"Dev shell"}'
 ```
 
 Response:
 
 ```json
-{ "runId": "run_01HX..." }
+{ "threadId": "6d5fd8cb-..." }
 ```
 
-3. Stream logs via SSE:
+3. Post a user message to the thread. This persists the prompt and immediately dispatches a run tied to that conversation:
+
+```bash
+curl -X POST http://localhost:3000/api/threads/6d5fd8cb-.../messages \
+  -H "Content-Type: application/json" \
+  -d '{"text":"echo hello from bud","cwd":"~"}'
+```
+
+Response:
+
+```json
+{ "messageId": "9f3ab3d6-...", "runId": "run_01HX..." }
+```
+
+4. Stream logs/events for that run via SSE:
 
 ```bash
 curl -N http://localhost:3000/api/runs/run_01HX.../stream
 ```
 
-You will receive `status`, `exec.stdout`/`exec.stderr`, and `final` events as the Bud executes the command.
+Events include `status`, `exec.stdout`, `exec.stderr`, and `final`. The legacy `POST /api/runs` endpoint still exists for quick experiments, but new surfaces should go through threads/messages so prompts are recorded.
 
 ## Next milestones
 
 1. Route `cancel` frames through active Bud sessions and add workspace management.
-2. Add REST resources for threads/messages and persist more run metadata (summaries, truncation flags).
-3. Wire the SSE endpoint to an in-memory event buffer with DB backfill & resume support.
+2. Enrich run metadata (step summaries, log truncation accounting) and expose thread history endpoints.
+3. Wire the SSE endpoint to a bounded event buffer with resume support backed by DB reads.
 4. Introduce the agent loop + LLM adapter (OpenAI Responses API first).

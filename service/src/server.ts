@@ -8,6 +8,7 @@ import { registerWsGateway } from "./ws/gateway.js";
 import { RunEventBus } from "./runtime/event-bus.js";
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
+import { registerThreadRoutes } from "./routes/threads.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -21,6 +22,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await server.register(websocketPlugin);
   await server.register(fastifySseV2);
   await registerBudRoutes(server);
+  await registerThreadRoutes(server, runManager);
   await registerRunRoutes(server, runManager);
   await registerWsGateway(server, runManager);
 
