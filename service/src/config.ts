@@ -14,6 +14,7 @@ export const config = {
   heartbeatSec: toNumber(process.env.WS_HEARTBEAT_SEC, 30),
   offlineGraceSec: toNumber(process.env.WS_OFFLINE_GRACE_SEC, 90),
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
+  devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 5),

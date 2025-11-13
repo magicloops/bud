@@ -25,6 +25,7 @@ For local development:
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/bud
 ENROLLMENT_HASH_SECRET=dev-secret
 SEED_ENROLLMENT_TOKEN=DEV-ENROLL-0001
+DEV_BUD_TOKEN_BYPASS=DEV-LOCAL-ONLY  # optional, for local testing
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4.1-mini
 AGENT_MAX_STEPS=5
@@ -38,7 +39,7 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
-`pnpm dev` will then serve `/api/buds` from the seeded data and host the `/ws` gateway (enrollment + challenge/response + presence updates).
+`pnpm dev` will then serve `/api/buds` from the seeded data and host the `/ws` gateway (enrollment + challenge/response + presence updates). If you set `DEV_BUD_TOKEN_BYPASS`, Bud can enroll with that token indefinitely (local/dev only!); otherwise you must generate a fresh enrollment token per device.
 
 ### Trigger a run
 

@@ -260,18 +260,23 @@ class BudConnection {
       this.socket.close();
       return;
     }
+    const bypassToken =
+      config.devTokenBypass && frame.token === config.devTokenBypass ? config.devTokenBypass : null;
     const tokenHash = hashToken(frame.token);
-    const tokenRow = await db.query.enrollmentTokenTable.findFirst({
-      where: and(
-        eq(enrollmentTokenTable.tokenHash, tokenHash),
-        isNull(enrollmentTokenTable.consumedAt),
-        gt(enrollmentTokenTable.expiresAt, new Date())
-      )
-    });
-    if (!tokenRow) {
-      await this.sendError("AUTH_FAILED", "Enrollment token invalid or expired");
-      this.socket.close();
-      return;
+
+    if (!bypassToken) {
+      const tokenRow = await db.query.enrollmentTokenTable.findFirst({
+        where: and(
+          eq(enrollmentTokenTable.tokenHash, tokenHash),
+          isNull(enrollmentTokenTable.consumedAt),
+          gt(enrollmentTokenTable.expiresAt, new Date())
+        )
+      });
+      if (!tokenRow) {
+        await this.sendError("AUTH_FAILED", "Enrollment token invalid or expired");
+        this.socket.close();
+        return;
+      }
     }
 
     const budId = `b_${ulid()}`;
@@ -304,12 +309,17 @@ class BudConnection {
           }
         });
 
-      await tx
-        .update(enrollmentTokenTable)
-        .set({ consumedAt: now })
-        .where(eq(enrollmentTokenTable.tokenHash, tokenHash));
+      if (!bypassToken) {
+        await tx
+          .update(enrollmentTokenTable)
+          .set({ consumedAt: now })
+          .where(eq(enrollmentTokenTable.tokenHash, tokenHash));
+      }
     });
 
+    if (bypassToken) {
+      this.server.log.warn({ budId }, "Dev token bypass used for enrollment");
+    }
     this.server.log.info({ budId }, "Bud enrolled");
     await this.sendFrame("hello_ack", {
       session_id: sessionId,
