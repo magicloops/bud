@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Button } from '@/components/ui/button'
 import './App.css'
 
 type RunEvent = {
@@ -245,9 +246,13 @@ function App() {
             Preferred CWD
             <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="~" />
           </label>
-          <button type="submit" disabled={status === 'dispatching'}>
+          <Button
+            type="submit"
+            className="submit-button"
+            disabled={status === 'dispatching'}
+          >
             {status === 'dispatching' ? 'Dispatching…' : 'Send message'}
-          </button>
+          </Button>
         </form>
         {error && <p className="error">{error}</p>}
         {threadId && (

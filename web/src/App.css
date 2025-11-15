@@ -1,3 +1,40 @@
+:root {
+  font-family: "Inter", "SF Pro Display", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #0f172a;
+  background-color: #f4f6fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --fg: #0f172a;
+  --muted-fg: #475569;
+  --eyebrow-color: #64748b;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --callout-bg: #eef2ff;
+  --callout-border: #c7d2fe;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #fdf2ff, #f4f6fb 35%);
+  color: var(--fg);
+}
+
+a {
+  color: inherit;
+}
+
 .app-shell {
   max-width: 840px;
   margin: 0 auto;
@@ -57,20 +94,8 @@ header {
   font-size: 0.95rem;
 }
 
-.run-form button {
+.run-form .submit-button {
   grid-column: 1 / -1;
-  padding: 0.75rem 1rem;
-  border-radius: 10px;
-  border: none;
-  font-weight: 600;
-  cursor: pointer;
-  background: #4338ca;
-  color: white;
-}
-
-.run-form button:disabled {
-  opacity: 0.6;
-  cursor: progress;
 }
 
 .log-box {
