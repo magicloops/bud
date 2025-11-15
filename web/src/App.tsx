@@ -1,18 +1,15 @@
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import './App.css'
+import { BudRail, type BudProfile } from '@/components/workbench/bud-rail'
+import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
+import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
+import { RunView } from '@/components/workbench/run-view'
+import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
+import { CommandComposer } from '@/components/workbench/command-composer'
 
 type RunEvent = {
   type: string
   data: Record<string, unknown>
-}
-
-type ThreadSummary = {
-  thread_id: string
-  bud_id: string
-  title: string | null
-  created_at: string
 }
 
 type ThreadMessage = {
@@ -33,7 +30,28 @@ function App() {
   const [logs, setLogs] = useState<RunEvent[]>([])
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [threadPanelOpen, setThreadPanelOpen] = useState(true)
+  const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
+  const [railCollapsed, setRailCollapsed] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
+
+  const budCatalog: BudProfile[] = useMemo(
+    () => [
+      { id: 'b_dev_seed', label: 'Dev Seed Bud', colorVar: 'var(--avatar-3)', status: 'online' },
+      { id: 'b_laptop_demo', label: 'Laptop Demo Bud', colorVar: 'var(--avatar-1)', status: 'offline' },
+      { id: 'b_lab_cluster', label: 'Lab Cluster Bud', colorVar: 'var(--avatar-2)', status: 'online' },
+    ],
+    []
+  )
+
+  const activeBudProfile =
+    budCatalog.find((bud) => bud.id === budId) ??
+    ({
+      id: budId,
+      label: budId,
+      colorVar: 'var(--accent)',
+      status: 'online',
+    } satisfies BudProfile)
 
   useEffect(() => {
     return () => {
@@ -197,93 +215,60 @@ function App() {
     [logs]
   )
 
+  const chatMessages: ChatMessage[] = useMemo(
+    () =>
+      messages.map((msg) => ({
+        id: msg.message_id,
+        role: msg.role,
+        content: msg.content,
+        createdAt: msg.created_at,
+      })),
+    [messages]
+  )
+
   return (
-    <div className="app-shell">
-      <header>
-        <p className="eyebrow">Bud Web UI · Proof-of-Concept</p>
-        <h1>Fire a run + stream logs</h1>
-        <p className="lede">
-          Use this helper to create threads, post messages (agent-driven runs), and stream events from <code>/api/runs/:id/stream</code>. For development, run the backend on the same origin (or proxy Vite) so these relative paths work.
-        </p>
-      </header>
-
-      <section className="panel">
-        <form onSubmit={handleSubmit} className="run-form">
-          <label>
-            Bud ID
-            <input
-              value={budId}
-              onChange={(e) => {
-                setBudId(e.target.value)
-                setThreadId(null)
-              }}
-              placeholder="b_dev_seed"
-              required
-            />
-          </label>
-          <label>
-            Thread
-            <select value={threadId ?? ''} onChange={(e) => setThreadId(e.target.value || null)}>
-              <option value="">New thread…</option>
-              {threads.map((thread) => (
-                <option key={thread.thread_id} value={thread.thread_id}>
-                  {thread.title ?? thread.thread_id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Message
-            <textarea
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              placeholder="Describe the task for Bud"
-              required
-              rows={3}
-            />
-          </label>
-          <label>
-            Preferred CWD
-            <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="~" />
-          </label>
-          <Button
-            type="submit"
-            className="submit-button"
-            disabled={status === 'dispatching'}
-          >
-            {status === 'dispatching' ? 'Dispatching…' : 'Send message'}
-          </Button>
-        </form>
-        {error && <p className="error">{error}</p>}
-        {threadId && (
-          <p className="meta">
-            Thread <code>{threadId}</code>
-          </p>
-        )}
-        {runId && (
-          <p className="meta">
-            Observing <code>{runId}</code>
-          </p>
-        )}
-        <div className="log-box">
-          {humanLogs.length === 0 ? <p className="placeholder">No events yet.</p> : <pre>{humanLogs.join('\n')}</pre>}
+    <div className="flex h-screen bg-background text-foreground">
+      <BudRail
+        buds={budCatalog}
+        activeBudId={budId}
+        onSelectBud={(nextId) => {
+          setBudId(nextId)
+          setThreadId(null)
+        }}
+        collapsed={railCollapsed}
+        onToggleCollapsed={setRailCollapsed}
+      />
+      {threadPanelOpen && (
+        <ThreadPanel
+          threads={threads}
+          activeThreadId={threadId}
+          onSelectThread={(value) => setThreadId(value)}
+          accentColor={activeBudProfile.colorVar}
+          budLabel={activeBudProfile.label}
+        />
+      )}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <WorkspaceTopBar
+          budLabel={activeBudProfile.label}
+          view={viewMode}
+          onViewChange={setViewMode}
+          onToggleThreads={() => setThreadPanelOpen((open) => !open)}
+          status={status}
+        />
+        <div className="flex flex-1 overflow-hidden border-b-4 border-black">
+          <ChatTimeline messages={chatMessages} accentColor={activeBudProfile.colorVar} />
+          <RunView logs={humanLogs} view={viewMode} runId={runId} status={status} />
         </div>
-      </section>
-
-      <section className="panel">
-        <h2>Messages</h2>
-        <div className="log-box">
-          {messages.length === 0 ? (
-            <p className="placeholder">No messages yet.</p>
-          ) : (
-            <pre>
-              {messages
-                .map((msg) => `[${msg.role}] ${msg.content} (${new Date(msg.created_at).toLocaleTimeString()})`)
-                .join('\n')}
-            </pre>
-          )}
-        </div>
-      </section>
+        <CommandComposer
+          messageText={messageText}
+          onMessageChange={setMessageText}
+          cwd={cwd}
+          onCwdChange={setCwd}
+          status={status}
+          onSubmit={handleSubmit}
+          error={error}
+        />
+      </div>
     </div>
   )
 }

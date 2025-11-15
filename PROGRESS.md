@@ -1,12 +1,12 @@
 # Bud PoC Progress — Phase 4 Snapshot
 
-_Last updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)_
+_Last updated: 2025-02-15T12:00:00Z_
 
 ## What’s implemented
 - **Agent loop**: backend now uses OpenAI Responses tool-calling end-to-end—threads/messages hydrate context, we send `input_text` items, register the `shell.run` function schema, and parse structured `function_call` outputs before dispatching runs to Bud. SSE streams `agent.*` + `exec.*` events interleaved with stdout/stderr.
 - **Threaded runs**: Run creation is tied to threads, `run_step` rows and log tails are recorded per tool call, and the event bus assigns ULID IDs for resume.
 - **Bud executor**: Rust agent handles enrollment (with optional dev-token bypass), WSS heartbeats, serial shell execution, and base64 log streaming with `run_finished` frames.
-- **Web console**: Vite helper creates/reuses threads, shows stored message history, posts new messages, and renders `agent.message/tool_call/tool_result` alongside `exec.*` events.
+- **Web console**: Vite helper now ships a Bud workbench—neo‑brutalist shadcn/Tailwind layout with a Bud rail, thread list, chat timeline, terminal/web viewport toggle, and composer that still speaks to today’s `/api/threads` + SSE stack.
 - **Docs/Plans**: `service/README.md`, `docs/proto.md`, `plan/phase-4-agent-loop.md`, and `debug/` notes cover architecture, SSE payloads, and current gaps.
 
 ## Known gaps / next phases
@@ -14,6 +14,7 @@ _Last updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)_
 - **Streaming & robustness**: adopt Responses streaming events (`response.output_text.delta`, `response.function_call_arguments.delta`) so we can stream agent tokens, detect tool calls earlier, and capture token usage from `response.completed`.
 - **Reliability polish**: SSE replay/`Last-Event-ID`, run log truncation UX/downloads, and queue/backpressure on Bud dispatch.
 - **Security & ergonomics**: workspace isolation, richer denylist, friendlier error reporting/testing knobs for mock LLMs.
+- **UI schema alignment**: wire the new workbench components to richer Bud metadata (availability, tags), tabbed log panes, and future settings drawers once backend schemas catch up.
 
 ## Quick start
 1. `pnpm db:migrate && pnpm db:seed` inside `service/` (local Postgres).
