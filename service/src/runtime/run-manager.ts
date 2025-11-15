@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import type { FastifyBaseLogger } from "fastify";
 import { ulid } from "ulid";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -76,9 +77,13 @@ function appendTail(current: string, chunk: Buffer) {
 
 export class RunManager {
   private readonly events: RunEventBus;
+  private readonly logger: FastifyBaseLogger;
+  private readonly debugEnabled: boolean;
 
-  constructor(events: RunEventBus) {
+  constructor(events: RunEventBus, logger: FastifyBaseLogger, debugEnabled: boolean) {
     this.events = events;
+    this.logger = logger;
+    this.debugEnabled = debugEnabled;
   }
 
   async createRun(request: RunRequest): Promise<{ runId: string }> {
@@ -95,6 +100,10 @@ export class RunManager {
     });
 
     dispatch.promise.catch((err) => {
+      this.debug("Standalone run failed", {
+        runId,
+        error: err instanceof Error ? err.message : String(err)
+      });
       this.events.emit(runId, {
         event: "final",
         data: {
@@ -205,8 +214,20 @@ export class RunManager {
       use_pty: false
     };
 
+    this.debug("Dispatching run to Bud", {
+      runId: params.runId,
+      budId: params.budId,
+      command: params.command,
+      cwd: params.cwd,
+      mode: params.mode
+    });
+
     const sent = sendFrameToBud(params.budId, frame);
     if (!sent) {
+      this.debug("Failed to send run frame to Bud", {
+        runId: params.runId,
+        budId: params.budId
+      });
       await db
         .update(runTable)
         .set({ status: "failed", finishedAt: new Date(), error: "BUD_OFFLINE" })
@@ -226,6 +247,12 @@ export class RunManager {
       stdoutTail: "",
       stderrTail: "",
       bytes: { stdout: 0, stderr: 0 }
+    });
+
+    this.debug("Run registered with active tracker", {
+      runId: params.runId,
+      stepId: step.stepId,
+      mode: params.mode
     });
 
     return deferred;
@@ -279,6 +306,13 @@ export class RunManager {
       context.bytes.stderr += buffer.length;
     }
 
+    this.debug("Streaming chunk received", {
+      runId,
+      stream,
+      seq,
+      bytes: buffer.length
+    });
+
     this.events.emit(runId, {
       event: `exec.${stream}`,
       data: {
@@ -291,7 +325,7 @@ export class RunManager {
 
   async handleRunFinished(
     runId: string,
-    payload: { exit_code: number | null; canceled?: boolean; signal?: string }
+    payload: { exit_code: number | null; canceled?: boolean; signal?: string | null }
   ): Promise<void> {
     const context = activeRuns.get(runId);
     const finishedAt = new Date();
@@ -327,13 +361,28 @@ export class RunManager {
     } else {
       context.resolve?.({
         exitCode: payload.exit_code ?? null,
-        signal: payload.signal,
+        signal: payload.signal ?? undefined,
         stdout: context.stdoutTail,
         stderr: context.stderrTail,
         bytes: context.bytes
       });
     }
 
+    this.debug("Run finished", {
+      runId,
+      mode: context?.mode ?? "standalone",
+      exit_code: payload.exit_code,
+      canceled: payload.canceled,
+      signal: payload.signal
+    });
+
     activeRuns.delete(runId);
+  }
+
+  private debug(message: string, meta?: Record<string, unknown>) {
+    if (!this.debugEnabled) {
+      return;
+    }
+    this.logger.info({ ...meta, component: "run_manager" }, message);
   }
 }

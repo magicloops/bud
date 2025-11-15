@@ -19,10 +19,18 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
   });
   const eventBus = new RunEventBus();
-  const runManager = new RunManager(eventBus);
+  const runLogger = server.log.child({ component: "run_manager" });
+  const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
   const openai = new OpenAI({ apiKey: config.openaiApiKey });
   const agentLogger = server.log.child({ component: "agent" });
-  const agentService = new AgentService(openai, runManager, eventBus, agentLogger, config.agentDebug);
+  const agentService = new AgentService(
+    openai,
+    runManager,
+    eventBus,
+    agentLogger,
+    config.agentDebug,
+    config.agentOpenaiDebug
+  );
 
   await server.register(websocketPlugin);
   await server.register(fastifySseV2);

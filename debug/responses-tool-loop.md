@@ -38,3 +38,11 @@
 - Implement follow-up Responses calls after each tool execution, passing the tool output as `function_call_output`.
 - Stop throwing on missing `output_text`; keep the loop alive until we hit max steps or receive `final` text.
 - Update SSE/status handling to reflect planning vs. running states during multi-turn interactions.
+
+## Update 2025-11-15 — call_id mismatch
+- **Observed**: Second Responses call now fails with `400 No tool call found for function call output with call_id ...`.
+- **Hypothesis**: When we reconstruct history, we only inject `function_call_output` items for persisted tool rows, so the follow-up request lacks the preceding `function_call` item that introduced the matching `call_id`.
+- **Plan**:
+  1. Update `buildConversation` to emit both a `function_call` (with `call_id`, `name: shell_run`, `arguments`) and the `function_call_output` for every stored tool payload.
+  2. Continue storing the same structured payload (command/cwd/exit/status/stdout) so we can faithfully rebuild both items for future turns.
+  3. Re-test the multi-turn loop; Responses should now accept the tool output because the input contains the matching call definition.

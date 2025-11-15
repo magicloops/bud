@@ -63,19 +63,22 @@ export class AgentService {
   private readonly events: RunEventBus;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
+  private readonly openaiDebugEnabled: boolean;
 
   constructor(
     client: OpenAI,
     runManager: RunManager,
     events: RunEventBus,
     logger: FastifyBaseLogger,
-    debugEnabled: boolean
+    debugEnabled: boolean,
+    openaiDebugEnabled: boolean
   ) {
     this.client = client;
     this.runManager = runManager;
     this.events = events;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
+    this.openaiDebugEnabled = openaiDebugEnabled;
     if (!config.openaiApiKey) {
       throw new Error("OPENAI_API_KEY is required to run the agent");
     }
@@ -111,7 +114,7 @@ export class AgentService {
           conversation.push({
             type: "function_call",
             call_id: toolCall.callId,
-            name: toolCall.tool,
+            name: SHELL_TOOL.name,
             arguments: JSON.stringify({
               command: toolCall.command,
               cwd: toolCall.cwd ?? "~"
@@ -247,13 +250,40 @@ export class AgentService {
     for (const row of rows) {
       if (row.role === "tool") {
         try {
-          const payload = JSON.parse(row.content);
+          const raw = row.content;
+          const payload = JSON.parse(raw) as {
+            call_id?: string;
+            command?: string;
+            cwd?: string;
+          };
           const callId =
-            typeof payload.call_id === "string" ? payload.call_id : `tool_${ulid()}`;
+            typeof payload.call_id === "string" && payload.call_id
+              ? payload.call_id
+              : `tool_${ulid()}`;
+          const command =
+            typeof payload.command === "string" && payload.command
+              ? payload.command
+              : null;
+          const cwd =
+            typeof payload.cwd === "string" && payload.cwd ? payload.cwd : "~";
+
+          if (!command) {
+            throw new Error("tool payload missing command");
+          }
+
+          items.push({
+            type: "function_call",
+            call_id: callId,
+            name: SHELL_TOOL.name,
+            arguments: JSON.stringify({
+              command,
+              cwd
+            })
+          });
           items.push({
             type: "function_call_output",
             call_id: callId,
-            output: JSON.stringify(payload)
+            output: raw
           });
           continue;
         } catch {
@@ -280,7 +310,7 @@ export class AgentService {
       input,
       tools: [SHELL_TOOL],
       tool_choice: "auto",
-      max_output_tokens: 800
+      max_output_tokens: config.agentMaxOutputTokens
     });
     const outputItems =
       (response as { output?: Array<{ type?: string }> }).output ?? [];
@@ -288,10 +318,20 @@ export class AgentService {
       responseId: response.id,
       outputTypes: outputItems.map((item) => item.type ?? "unknown")
     });
+    this.debugOpenAIResponse(response);
     return response;
   }
 
   private parseResponse(response: OpenAIResponse): AgentDirective {
+    const status = (response as { status?: string }).status;
+    const incompleteReason = (response as { incomplete_details?: { reason?: string } }).incomplete_details
+      ?.reason;
+    if (status === "incomplete") {
+      throw new Error(
+        `model response incomplete: ${incompleteReason ?? "unknown reason"}`
+      );
+    }
+
     const aggregated = Array.isArray(response.output_text)
       ? response.output_text.join("\n")
       : typeof response.output_text === "string"
@@ -425,5 +465,20 @@ export class AgentService {
       return;
     }
     this.logger.info({ ...meta, component: "agent" }, message);
+  }
+
+  private debugOpenAIResponse(response: OpenAIResponse) {
+    if (!this.openaiDebugEnabled) {
+      return;
+    }
+    try {
+      const serialized = JSON.stringify(response, null, 2);
+      this.logger.info({ component: "agent", openai_response: serialized }, "OpenAI response payload");
+    } catch (err) {
+      this.logger.warn(
+        { err, component: "agent" },
+        "Failed to serialize OpenAI response for debug logging"
+      );
+    }
   }
 }

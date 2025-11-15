@@ -7,6 +7,8 @@ const toNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+
 export const config = {
   port: toNumber(process.env.PORT, 3000),
   host: process.env.HOST ?? "0.0.0.0",
@@ -18,6 +20,8 @@ export const config = {
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 5),
+  agentMaxOutputTokens: toNumber(process.env.AGENT_MAX_OUTPUT_TOKENS, 128000),
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
-  agentDebug: ["1", "true", "yes"].includes((process.env.AGENT_DEBUG ?? "").toLowerCase())
+  agentDebug: toBool(process.env.AGENT_DEBUG),
+  agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI)
 };

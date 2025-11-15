@@ -192,6 +192,12 @@ impl RunExecutor {
     }
 
     async fn enqueue(&self, command: RunCommand) -> Result<()> {
+        info!(
+            run_id = %command.run_id,
+            cmd = %command.cmd,
+            cwd = %command.cwd,
+            "Queued run command"
+        );
         let mut inner = self.inner.lock().await;
         if inner.queue.len() >= MAX_QUEUE_DEPTH {
             bail!("run queue is full");
@@ -236,6 +242,12 @@ impl RunExecutor {
 
     async fn execute_run(&self, run: RunCommand, sender: Option<OutboundSender>) -> Result<()> {
         let sender = sender.ok_or_else(|| anyhow!("no websocket writer available"))?;
+        info!(
+            run_id = %run.run_id,
+            cmd = %run.cmd,
+            cwd = %run.cwd,
+            "Starting shell command"
+        );
         let shell = default_shell();
         let mut command = Command::new(shell);
         command.arg("-lc").arg(&run.cmd);
@@ -297,6 +309,13 @@ impl RunExecutor {
             }
         };
 
+        info!(
+            run_id = %run.run_id,
+            exit_code = exit_code,
+            signal = signal.as_deref().unwrap_or(""),
+            "Shell command finished"
+        );
+
         send_ws_frame(
             &sender,
             json!({
@@ -311,6 +330,8 @@ impl RunExecutor {
                 "canceled": false,
             }),
         )?;
+
+        info!(run_id = %run.run_id, "Sent run_finished frame to backend");
 
         Ok(())
     }
@@ -599,6 +620,13 @@ impl BudApp {
             env,
             timeout_ms: frame.timeout_ms.unwrap_or(30 * 60 * 1000),
         };
+
+        info!(
+            run_id = %command.run_id,
+            cmd = %command.cmd,
+            cwd = %command.cwd,
+            "Received run frame from backend"
+        );
 
         self.run_executor.enqueue(command).await?;
         Ok(())
