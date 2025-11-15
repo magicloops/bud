@@ -18,5 +18,6 @@ export const config = {
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 5),
-  runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024)
+  runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
+  agentDebug: ["1", "true", "yes"].includes((process.env.AGENT_DEBUG ?? "").toLowerCase())
 };

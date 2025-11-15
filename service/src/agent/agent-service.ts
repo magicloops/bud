@@ -6,6 +6,10 @@ import { db } from "../db/client.js";
 import { messageTable, runTable } from "../db/schema.js";
 import { RunManager, RunStepResult } from "../runtime/run-manager.js";
 import { RunEventBus } from "../runtime/event-bus.js";
+import type { FastifyBaseLogger } from "fastify";
+
+type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
+type InputItem = OpenAI.Responses.CreateParams["input"][number];
 
 type AgentDirective =
   | {
@@ -13,6 +17,7 @@ type AgentDirective =
       tool: "shell.run";
       command: string;
       cwd?: string;
+      callId: string;
     }
   | {
       type: "final";
@@ -20,31 +25,57 @@ type AgentDirective =
       message: string;
     };
 
-type ConversationMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
-
 const SYSTEM_PROMPT = `
 You are Bud Agent, coordinating shell access to a user's machine. Always produce STRICT JSON.
 Use schema:
 {"type":"tool_call","tool":"shell.run","command":"...","cwd":"~/project"} to run shell commands.
 Only run commands when necessary, use short commands, prefer cwd from user context (default "~").
-After receiving tool results (prefixed with TOOL_RESULT), reason about next steps.
-When you are done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
+After receiving tool results, immediately reason about next steps. When you are done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
 `.trim();
 
 const TOOL_RESULT_PREFIX = "TOOL_RESULT";
+
+const SHELL_TOOL = {
+  type: "function" as const,
+  name: "shell_run",
+  description: "Execute a shell command on the user's Bud device.",
+  parameters: {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description: "Command to execute (non-interactive)."
+      },
+      cwd: {
+        type: "string",
+        description: "Working directory (default ~)."
+      }
+    },
+    required: ["command", "cwd"],
+    additionalProperties: false
+  },
+  strict: true
+};
 
 export class AgentService {
   private readonly client: OpenAI;
   private readonly runManager: RunManager;
   private readonly events: RunEventBus;
+  private readonly logger: FastifyBaseLogger;
+  private readonly debugEnabled: boolean;
 
-  constructor(client: OpenAI, runManager: RunManager, events: RunEventBus) {
+  constructor(
+    client: OpenAI,
+    runManager: RunManager,
+    events: RunEventBus,
+    logger: FastifyBaseLogger,
+    debugEnabled: boolean
+  ) {
     this.client = client;
     this.runManager = runManager;
     this.events = events;
+    this.logger = logger;
+    this.debugEnabled = debugEnabled;
     if (!config.openaiApiKey) {
       throw new Error("OPENAI_API_KEY is required to run the agent");
     }
@@ -52,68 +83,85 @@ export class AgentService {
 
   async handleUserMessage(threadId: string): Promise<{ runId: string }> {
     const { runId, budId } = await this.runManager.createRunRecord(threadId, { status: "planning" });
+    const conversation = await this.buildConversation(threadId);
+    this.debug("Starting agent run", { threadId, runId, entries: conversation.length });
     try {
-      const history = await this.fetchHistory(threadId);
-      const messages: ConversationMessage[] = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history
-      ];
-
       let steps = 0;
       while (steps < config.agentMaxSteps) {
-        const directive = await this.invokeModel(messages);
-        if (directive.type === "tool_call") {
+        const response = await this.invokeModel(conversation);
+        const toolCall = this.extractFunctionCall(response);
+        if (toolCall) {
           this.events.emit(runId, {
             event: "agent.tool_call",
             data: {
               id: ulid(),
-              name: directive.tool,
-              args: { command: directive.command, cwd: directive.cwd ?? "~" }
+              name: toolCall.tool,
+              args: { command: toolCall.command, cwd: toolCall.cwd ?? "~" }
             },
             id: ulid()
+          });
+          this.debug("Dispatching tool call", {
+            runId,
+            threadId,
+            command: toolCall.command,
+            cwd: toolCall.cwd ?? "~",
+            callId: toolCall.callId
+          });
+
+          conversation.push({
+            type: "function_call",
+            call_id: toolCall.callId,
+            name: toolCall.tool,
+            arguments: JSON.stringify({
+              command: toolCall.command,
+              cwd: toolCall.cwd ?? "~"
+            })
           });
 
           const dispatch = await this.runManager.dispatchShellCommand({
             runId,
             budId,
-            command: directive.command,
-            cwd: directive.cwd ?? "~",
+            command: toolCall.command,
+            cwd: toolCall.cwd ?? "~",
             mode: "agent"
           });
           const result = await dispatch.promise;
-          await this.recordToolMessage(threadId, directive, result);
+          const toolPayload = await this.recordToolMessage(threadId, toolCall, result);
+          conversation.push({
+            type: "function_call_output",
+            call_id: toolCall.callId,
+            output: JSON.stringify(toolPayload)
+          });
+          this.debug("Bud execution completed", {
+            runId,
+            callId: toolCall.callId,
+            exitCode: result.exitCode,
+            stdoutBytes: result.bytes.stdout,
+            stderrBytes: result.bytes.stderr
+          });
+
           this.events.emit(runId, {
             event: "agent.tool_result",
             data: {
-              name: directive.tool,
+              name: toolCall.tool,
               exit_code: result.exitCode,
               stdout: result.stdout,
               stderr: result.stderr
             },
             id: ulid()
           });
-          messages.push({
-            role: "user",
-            content: `${TOOL_RESULT_PREFIX}\n${JSON.stringify({
-              tool: directive.tool,
-              command: directive.command,
-              cwd: directive.cwd ?? "~",
-              exit_code: result.exitCode,
-              signal: result.signal,
-              stdout_tail: result.stdout,
-              stderr_tail: result.stderr,
-              bytes: result.bytes
-            })}`
-          });
+
           steps += 1;
           continue;
         }
 
+        const directive = this.parseResponse(response);
         await db.insert(messageTable).values({
           threadId,
           role: "assistant",
           content: directive.message
         });
+        conversation.push(this.createMessageInput("assistant", directive.message));
         await db
           .update(runTable)
           .set({
@@ -134,6 +182,11 @@ export class AgentService {
           id: ulid()
         });
 
+        this.debug("Agent final response", {
+          runId,
+          status: directive.status,
+          textLength: directive.message.length
+        });
         return { runId };
       }
 
@@ -157,11 +210,31 @@ export class AgentService {
         id: ulid()
       });
 
+      this.debug("Agent run failed", {
+        runId,
+        error: err instanceof Error ? err.message : err
+      });
       throw err;
     }
   }
 
-  private async fetchHistory(threadId: string): Promise<ConversationMessage[]> {
+  private createMessageInput(
+    role: "system" | "user" | "assistant" | "developer",
+    text: string
+  ): InputItem {
+    const content =
+      role === "assistant"
+        ? [{ type: "output_text", text }]
+        : [{ type: "input_text", text }];
+    return {
+      type: "message",
+      role,
+      content
+    };
+  }
+
+  private async buildConversation(threadId: string): Promise<InputItem[]> {
+    const items: InputItem[] = [this.createMessageInput("system", SYSTEM_PROMPT)];
     const rows = await db
       .select({
         role: messageTable.role,
@@ -171,39 +244,63 @@ export class AgentService {
       .where(eq(messageTable.threadId, threadId))
       .orderBy(asc(messageTable.createdAt));
 
-    return rows.map((row) => {
-      if (row.role === "assistant") {
-        return { role: "assistant" as const, content: row.content };
-      }
+    for (const row of rows) {
       if (row.role === "tool") {
-        return {
-          role: "user" as const,
-          content: `${TOOL_RESULT_PREFIX}\n${row.content}`
-        };
+        try {
+          const payload = JSON.parse(row.content);
+          const callId =
+            typeof payload.call_id === "string" ? payload.call_id : `tool_${ulid()}`;
+          items.push({
+            type: "function_call_output",
+            call_id: callId,
+            output: JSON.stringify(payload)
+          });
+          continue;
+        } catch {
+          items.push(this.createMessageInput("assistant", `${TOOL_RESULT_PREFIX}\n${row.content}`));
+          continue;
+        }
       }
-      return { role: "user" as const, content: row.content };
-    });
+      if (row.role === "assistant" || row.role === "user") {
+        items.push(this.createMessageInput(row.role, row.content));
+      }
+    }
+    return items;
   }
 
-  private async invokeModel(messages: ConversationMessage[]): Promise<AgentDirective> {
-    const input = messages.map((msg) => ({
-      role: msg.role,
-      type: "message",
-      content: [{ type: "text", text: msg.content }]
-    }));
-
+  private async invokeModel(input: InputItem[]): Promise<OpenAIResponse> {
+    const last = input.at(-1);
+    const lastRole = last && "type" in last && last?.type === "message" ? last.role : "n/a";
+    this.debug("Calling OpenAI Responses", {
+      entries: input.length,
+      lastRole
+    });
     const response = await this.client.responses.create({
       model: config.openaiModel,
       input,
-      temperature: 0.2,
+      tools: [SHELL_TOOL],
+      tool_choice: "auto",
       max_output_tokens: 800
     });
-
-    return this.parseDirective(response.output_text);
+    const outputItems =
+      (response as { output?: Array<{ type?: string }> }).output ?? [];
+    this.debug("OpenAI response received", {
+      responseId: response.id,
+      outputTypes: outputItems.map((item) => item.type ?? "unknown")
+    });
+    return response;
   }
 
-  private parseDirective(rawText: string): AgentDirective {
-    const trimmed = rawText.trim();
+  private parseResponse(response: OpenAIResponse): AgentDirective {
+    const aggregated = Array.isArray(response.output_text)
+      ? response.output_text.join("\n")
+      : typeof response.output_text === "string"
+        ? response.output_text
+        : "";
+    if (!aggregated) {
+      throw new Error("model returned no text or tool call");
+    }
+    const trimmed = aggregated.trim();
     const jsonText = this.stripCodeFence(trimmed);
     let parsed: unknown;
     try {
@@ -219,7 +316,7 @@ export class AgentService {
     const type = payload.type;
     if (type === "tool_call") {
       const command = payload.command;
-      if (typeof command !== "string" || command.trim().length === 0) {
+      if (typeof command !== "string" || !command.trim()) {
         throw new Error("tool_call requires non-empty command");
       }
       const cwd = typeof payload.cwd === "string" ? payload.cwd : undefined;
@@ -227,7 +324,8 @@ export class AgentService {
         type: "tool_call",
         tool: "shell.run",
         command: command.trim(),
-        cwd
+        cwd,
+        callId: `txt_${ulid()}`
       };
     }
     if (type === "final") {
@@ -240,6 +338,48 @@ export class AgentService {
       };
     }
     throw new Error("unknown agent directive");
+  }
+
+  private extractFunctionCall(response: OpenAIResponse): AgentDirective | null {
+    const items = (response as { output?: Array<Record<string, unknown>> }).output;
+    if (!Array.isArray(items)) {
+      return null;
+    }
+    for (const item of items) {
+      const toolItem = item as {
+        type?: string;
+        name?: string;
+        arguments?: string;
+        call_id?: string;
+        id?: string;
+      };
+      if (toolItem?.type === "function_call" && toolItem?.name === "shell_run") {
+        const args = this.safeParseArgs(toolItem.arguments);
+        if (!args.command || typeof args.command !== "string") {
+          throw new Error("function_call missing command argument");
+        }
+        const callId = typeof toolItem.call_id === "string" ? toolItem.call_id : toolItem.id ?? ulid();
+        return {
+          type: "tool_call",
+          tool: "shell.run",
+          command: args.command,
+          cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+          callId
+        };
+      }
+    }
+    return null;
+  }
+
+  private safeParseArgs(raw?: string) {
+    if (!raw) {
+      return {};
+    }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new Error("failed to parse tool call arguments");
+    }
   }
 
   private stripCodeFence(text: string) {
@@ -261,19 +401,29 @@ export class AgentService {
     directive: Extract<AgentDirective, { type: "tool_call" }>,
     result: RunStepResult
   ) {
+    const payload = {
+      tool: directive.tool,
+      call_id: directive.callId,
+      command: directive.command,
+      cwd: directive.cwd ?? "~",
+      exit_code: result.exitCode,
+      signal: result.signal,
+      stdout_tail: result.stdout,
+      stderr_tail: result.stderr,
+      bytes: result.bytes
+    };
     await db.insert(messageTable).values({
       threadId,
       role: "tool",
-      content: JSON.stringify({
-        tool: directive.tool,
-        command: directive.command,
-        cwd: directive.cwd ?? "~",
-        exit_code: result.exitCode,
-        signal: result.signal,
-        stdout_tail: result.stdout,
-        stderr_tail: result.stderr,
-        bytes: result.bytes
-      })
+      content: JSON.stringify(payload)
     });
+    return payload;
+  }
+
+  private debug(message: string, meta?: Record<string, unknown>) {
+    if (!this.debugEnabled) {
+      return;
+    }
+    this.logger.info({ ...meta, component: "agent" }, message);
   }
 }

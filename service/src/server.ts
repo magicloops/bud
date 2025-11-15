@@ -21,7 +21,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   const eventBus = new RunEventBus();
   const runManager = new RunManager(eventBus);
   const openai = new OpenAI({ apiKey: config.openaiApiKey });
-  const agentService = new AgentService(openai, runManager, eventBus);
+  const agentLogger = server.log.child({ component: "agent" });
+  const agentService = new AgentService(openai, runManager, eventBus, agentLogger, config.agentDebug);
 
   await server.register(websocketPlugin);
   await server.register(fastifySseV2);

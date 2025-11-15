@@ -1,1360 +1,661 @@
-Responses
-OpenAI's most advanced interface for generating model responses. Supports text and image inputs, and text outputs. Create stateful interactions with the model, using the output of previous responses as input. Extend the model's capabilities with built-in tools for file search, web search, computer use, and more. Allow the model access to external systems and data using function calling.
+# **OpenAI Responses API – Practical Engineering Guide**
 
-Related guides:
+A concise, implementation-focused reference for developers using the Responses API with:
 
-Quickstart
-Text inputs and outputs
-Image inputs
-Structured Outputs
-Function calling
-Conversation state
-Extend the models with tools
-Create a model response
-post
- 
-https://api.openai.com/v1/responses
-Creates a model response. Provide text or image inputs to generate text or JSON outputs. Have the model call your own custom code or use built-in tools like web search or file search to use your own data as input for the model's response.
+* **Text inputs (via `input_text`)**
+* **Image inputs (via `input_image`)**
+* **Function tools**
+* **MCP tools**
+* **Manual multi-turn conversation state**
+* **Streaming responses**
 
-Request body
-background
-boolean
+Purpose: make it easy for engineers to implement correct request/response flows without reading the full OpenAI docs.
 
-Optional
-Defaults to false
-Whether to run the model response in the background. Learn more.
+---
 
-conversation
-string or object
+# **1. Core Endpoint**
 
-Optional
-Defaults to null
-The conversation that this response belongs to. Items from this conversation are prepended to input_items for this response request. Input items and output items from this response are automatically added to this conversation after this response completes.
+```http
+POST /v1/responses
+```
 
+This endpoint handles:
 
-Show possible types
-include
-array
+* Sending inputs
+* Receiving assistant output
+* Multi-turn conversations
+* Tool calls (function + MCP)
+* Image inputs
+* Structured content
+* Streaming responses
 
-Optional
-Specify additional output data to include in the model response. Currently supported values are:
+Every request returns (or streams) a **Response object** containing:
 
-web_search_call.action.sources: Include the sources of the web search tool call.
-code_interpreter_call.outputs: Includes the outputs of python code execution in code interpreter tool call items.
-computer_call_output.output.image_url: Include image urls from the computer call output.
-file_search_call.results: Include the search results of the file search tool call.
-message.input_image.image_url: Include image urls from the input message.
-message.output_text.logprobs: Include logprobs with assistant messages.
-reasoning.encrypted_content: Includes an encrypted version of reasoning tokens in reasoning item outputs. This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly (like when the store parameter is set to false, or when an organization is enrolled in the zero data retention program).
-input
-string or array
+* Assistant messages
+* Tool call requests
+* Usage tokens
+* Reasoning info (if applicable)
+* IDs if needed for advanced flows
 
-Optional
-Text, image, or file inputs to the model, used to generate a response.
+---
 
-Learn more:
+# **2. Input Structure Overview**
 
-Text inputs and outputs
-Image inputs
-File inputs
-Conversation state
-Function calling
+You will build **all input** using structured message objects—no plain string input.
 
-Show possible types
-instructions
-string
-
-Optional
-A system (or developer) message inserted into the model's context.
-
-When using along with previous_response_id, the instructions from a previous response will not be carried over to the next response. This makes it simple to swap out system (or developer) messages in new responses.
-
-max_output_tokens
-integer
-
-Optional
-An upper bound for the number of tokens that can be generated for a response, including visible output tokens and reasoning tokens.
-
-max_tool_calls
-integer
-
-Optional
-The maximum number of total calls to built-in tools that can be processed in a response. This maximum number applies across all built-in tool calls, not per individual tool. Any further attempts to call a tool by the model will be ignored.
-
-metadata
-map
-
-Optional
-Set of 16 key-value pairs that can be attached to an object. This can be useful for storing additional information about the object in a structured format, and querying for objects via API or the dashboard.
-
-Keys are strings with a maximum length of 64 characters. Values are strings with a maximum length of 512 characters.
-
-model
-string
-
-Optional
-Model ID used to generate the response, like gpt-4o or o3. OpenAI offers a wide range of models with different capabilities, performance characteristics, and price points. Refer to the model guide to browse and compare available models.
-
-parallel_tool_calls
-boolean
-
-Optional
-Defaults to true
-Whether to allow the model to run tool calls in parallel.
-
-previous_response_id
-string
-
-Optional
-The unique ID of the previous response to the model. Use this to create multi-turn conversations. Learn more about conversation state. Cannot be used in conjunction with conversation.
-
-prompt
-object
-
-Optional
-Reference to a prompt template and its variables. Learn more.
-
-
-Show properties
-prompt_cache_key
-string
-
-Optional
-Used by OpenAI to cache responses for similar requests to optimize your cache hit rates. Replaces the user field. Learn more.
-
-reasoning
-object
-
-Optional
-gpt-5 and o-series models only
-
-Configuration options for reasoning models.
-
-
-Show properties
-safety_identifier
-string
-
-Optional
-A stable identifier used to help detect users of your application that may be violating OpenAI's usage policies. The IDs should be a string that uniquely identifies each user. We recommend hashing their username or email address, in order to avoid sending us any identifying information. Learn more.
-
-service_tier
-string
-
-Optional
-Defaults to auto
-Specifies the processing type used for serving the request.
-
-If set to 'auto', then the request will be processed with the service tier configured in the Project settings. Unless otherwise configured, the Project will use 'default'.
-If set to 'default', then the request will be processed with the standard pricing and performance for the selected model.
-If set to 'flex' or 'priority', then the request will be processed with the corresponding service tier.
-When not set, the default behavior is 'auto'.
-When the service_tier parameter is set, the response body will include the service_tier value based on the processing mode actually used to serve the request. This response value may be different from the value set in the parameter.
-
-store
-boolean
-
-Optional
-Defaults to true
-Whether to store the generated model response for later retrieval via API.
-
-stream
-boolean
-
-Optional
-Defaults to false
-If set to true, the model response data will be streamed to the client as it is generated using server-sent events. See the Streaming section below for more information.
-
-stream_options
-object
-
-Optional
-Defaults to null
-Options for streaming responses. Only set this when you set stream: true.
-
-
-Show properties
-temperature
-number
-
-Optional
-Defaults to 1
-What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic. We generally recommend altering this or top_p but not both.
-
-text
-object
-
-Optional
-Configuration options for a text response from the model. Can be plain text or structured JSON data. Learn more:
-
-Text inputs and outputs
-Structured Outputs
-
-Show properties
-tool_choice
-string or object
-
-Optional
-How the model should select which tool (or tools) to use when generating a response. See the tools parameter to see how to specify which tools the model can call.
-
-
-Show possible types
-tools
-array
-
-Optional
-An array of tools the model may call while generating a response. You can specify which tool to use by setting the tool_choice parameter.
-
-We support the following categories of tools:
-
-Built-in tools: Tools that are provided by OpenAI that extend the model's capabilities, like web search or file search. Learn more about built-in tools.
-MCP Tools: Integrations with third-party systems via custom MCP servers or predefined connectors such as Google Drive and SharePoint. Learn more about MCP Tools.
-Function calls (custom tools): Functions that are defined by you, enabling the model to call your own code with strongly typed arguments and outputs. Learn more about function calling. You can also use custom tools to call your own code.
-
-Show possible types
-top_logprobs
-integer
-
-Optional
-An integer between 0 and 20 specifying the number of most likely tokens to return at each token position, each with an associated log probability.
-
-top_p
-number
-
-Optional
-Defaults to 1
-An alternative to sampling with temperature, called nucleus sampling, where the model considers the results of the tokens with top_p probability mass. So 0.1 means only the tokens comprising the top 10% probability mass are considered.
-
-We generally recommend altering this or temperature but not both.
-
-truncation
-string
-
-Optional
-Defaults to disabled
-The truncation strategy to use for the model response.
-
-auto: If the input to this Response exceeds the model's context window size, the model will truncate the response to fit the context window by dropping items from the beginning of the conversation.
-disabled (default): If the input size will exceed the context window size for a model, the request will fail with a 400 error.
-user
-Deprecated
-string
-
-Optional
-This field is being replaced by safety_identifier and prompt_cache_key. Use prompt_cache_key instead to maintain caching optimizations. A stable identifier for your end-users. Used to boost cache hit rates by better bucketing similar requests and to help OpenAI detect and prevent abuse. Learn more.
-
-Returns
-Returns a Response object.
-
-Text input
-Image input
-File input
-Web search
-File search
-Streaming
-Functions
-Reasoning
-Example request
-import OpenAI from "openai";
-
-const openai = new OpenAI();
-
-const response = await openai.responses.create({
-    model: "gpt-4.1",
-    input: "Tell me a three sentence bedtime story about a unicorn."
-});
-
-console.log(response);
-Response
+```ts
 {
-  "id": "resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b",
-  "object": "response",
-  "created_at": 1741476542,
-  "status": "completed",
-  "error": null,
-  "incomplete_details": null,
-  "instructions": null,
-  "max_output_tokens": null,
-  "model": "gpt-4.1-2025-04-14",
-  "output": [
+  model: string;
+  input: InputItem[];
+  instructions?: string;
+  tools?: ToolDefinition[];
+  tool_choice?: ToolChoice;
+  temperature?: number;
+  top_p?: number;
+  text?: { format: ... };
+  stream?: boolean;
+}
+```
+
+You will primarily use:
+
+* **input** → full message list (manual history)
+* **tools** → function & MCP tool definitions
+* **tool_choice** → auto or required
+* **instructions** → system/developer messages
+* **temperature / top_p** → sampling controls
+* **text.format** → plain text or structured output mode
+* **stream** → enable server-sent events (SSE)
+
+---
+
+# **3. Input: Multi-turn Message Structure**
+
+All inputs are built using the `message` item type:
+
+```ts
+{
+  type: "message";
+  role: "user" | "assistant" | "system" | "developer";
+  content: ContentItem[];
+}
+```
+
+Where `ContentItem` is one of:
+
+* `input_text`
+* `input_image`
+* (For assistant messages, `output_text`)
+
+Your system constructs a complete sequence of prior turns:
+
+1. System/developer messages
+2. All prior user messages
+3. All prior assistant messages
+4. All tool call items + tool call outputs
+5. The new message
+
+### Example conversation using only structured messages
+
+```jsonc
+{
+  "model": "gpt-4.1",
+  "input": [
     {
       "type": "message",
-      "id": "msg_67ccd2bf17f0819081ff3bb2cf6508e60bb6a6b452d3795b",
-      "status": "completed",
-      "role": "assistant",
+      "role": "system",
       "content": [
-        {
-          "type": "output_text",
-          "text": "In a peaceful grove beneath a silver moon, a unicorn named Lumina discovered a hidden pool that reflected the stars. As she dipped her horn into the water, the pool began to shimmer, revealing a pathway to a magical realm of endless night skies. Filled with wonder, Lumina whispered a wish for all who dream to find their own hidden magic, and as she glanced back, her hoofprints sparkled like stardust.",
-          "annotations": []
-        }
+        { "type": "input_text", "text": "You are MagicLoopsGPT." }
       ]
-    }
-  ],
-  "parallel_tool_calls": true,
-  "previous_response_id": null,
-  "reasoning": {
-    "effort": null,
-    "summary": null
-  },
-  "store": true,
-  "temperature": 1.0,
-  "text": {
-    "format": {
-      "type": "text"
-    }
-  },
-  "tool_choice": "auto",
-  "tools": [],
-  "top_p": 1.0,
-  "truncation": "disabled",
-  "usage": {
-    "input_tokens": 36,
-    "input_tokens_details": {
-      "cached_tokens": 0
     },
-    "output_tokens": 87,
-    "output_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "total_tokens": 123
-  },
-  "user": null,
-  "metadata": {}
-}
-Get a model response
-get
- 
-https://api.openai.com/v1/responses/{response_id}
-Retrieves a model response with the given ID.
-
-Path parameters
-response_id
-string
-
-Required
-The ID of the response to retrieve.
-
-Query parameters
-include
-array
-
-Optional
-Additional fields to include in the response. See the include parameter for Response creation above for more information.
-
-include_obfuscation
-boolean
-
-Optional
-When true, stream obfuscation will be enabled. Stream obfuscation adds random characters to an obfuscation field on streaming delta events to normalize payload sizes as a mitigation to certain side-channel attacks. These obfuscation fields are included by default, but add a small amount of overhead to the data stream. You can set include_obfuscation to false to optimize for bandwidth if you trust the network links between your application and the OpenAI API.
-
-starting_after
-integer
-
-Optional
-The sequence number of the event after which to start streaming.
-
-stream
-boolean
-
-Optional
-If set to true, the model response data will be streamed to the client as it is generated using server-sent events. See the Streaming section below for more information.
-
-Returns
-The Response object matching the specified ID.
-
-Example request
-import OpenAI from "openai";
-const client = new OpenAI();
-
-const response = await client.responses.retrieve("resp_123");
-console.log(response);
-Response
-{
-  "id": "resp_67cb71b351908190a308f3859487620d06981a8637e6bc44",
-  "object": "response",
-  "created_at": 1741386163,
-  "status": "completed",
-  "error": null,
-  "incomplete_details": null,
-  "instructions": null,
-  "max_output_tokens": null,
-  "model": "gpt-4o-2024-08-06",
-  "output": [
     {
-      "type": "message",
-      "id": "msg_67cb71b3c2b0819084d481baaaf148f206981a8637e6bc44",
-      "status": "completed",
-      "role": "assistant",
-      "content": [
-        {
-          "type": "output_text",
-          "text": "Silent circuits hum,  \nThoughts emerge in data streams—  \nDigital dawn breaks.",
-          "annotations": []
-        }
-      ]
-    }
-  ],
-  "parallel_tool_calls": true,
-  "previous_response_id": null,
-  "reasoning": {
-    "effort": null,
-    "summary": null
-  },
-  "store": true,
-  "temperature": 1.0,
-  "text": {
-    "format": {
-      "type": "text"
-    }
-  },
-  "tool_choice": "auto",
-  "tools": [],
-  "top_p": 1.0,
-  "truncation": "disabled",
-  "usage": {
-    "input_tokens": 32,
-    "input_tokens_details": {
-      "cached_tokens": 0
-    },
-    "output_tokens": 18,
-    "output_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "total_tokens": 50
-  },
-  "user": null,
-  "metadata": {}
-}
-Delete a model response
-delete
- 
-https://api.openai.com/v1/responses/{response_id}
-Deletes a model response with the given ID.
-
-Path parameters
-response_id
-string
-
-Required
-The ID of the response to delete.
-
-Returns
-A success message.
-
-Example request
-import OpenAI from "openai";
-const client = new OpenAI();
-
-const response = await client.responses.delete("resp_123");
-console.log(response);
-Response
-{
-  "id": "resp_6786a1bec27481909a17d673315b29f6",
-  "object": "response",
-  "deleted": true
-}
-Cancel a response
-post
- 
-https://api.openai.com/v1/responses/{response_id}/cancel
-Cancels a model response with the given ID. Only responses created with the background parameter set to true can be cancelled. Learn more.
-
-Path parameters
-response_id
-string
-
-Required
-The ID of the response to cancel.
-
-Returns
-A Response object.
-
-Example request
-import OpenAI from "openai";
-const client = new OpenAI();
-
-const response = await client.responses.cancel("resp_123");
-console.log(response);
-Response
-{
-  "id": "resp_67cb71b351908190a308f3859487620d06981a8637e6bc44",
-  "object": "response",
-  "created_at": 1741386163,
-  "status": "completed",
-  "error": null,
-  "incomplete_details": null,
-  "instructions": null,
-  "max_output_tokens": null,
-  "model": "gpt-4o-2024-08-06",
-  "output": [
-    {
-      "type": "message",
-      "id": "msg_67cb71b3c2b0819084d481baaaf148f206981a8637e6bc44",
-      "status": "completed",
-      "role": "assistant",
-      "content": [
-        {
-          "type": "output_text",
-          "text": "Silent circuits hum,  \nThoughts emerge in data streams—  \nDigital dawn breaks.",
-          "annotations": []
-        }
-      ]
-    }
-  ],
-  "parallel_tool_calls": true,
-  "previous_response_id": null,
-  "reasoning": {
-    "effort": null,
-    "summary": null
-  },
-  "store": true,
-  "temperature": 1.0,
-  "text": {
-    "format": {
-      "type": "text"
-    }
-  },
-  "tool_choice": "auto",
-  "tools": [],
-  "top_p": 1.0,
-  "truncation": "disabled",
-  "usage": {
-    "input_tokens": 32,
-    "input_tokens_details": {
-      "cached_tokens": 0
-    },
-    "output_tokens": 18,
-    "output_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "total_tokens": 50
-  },
-  "user": null,
-  "metadata": {}
-}
-List input items
-get
- 
-https://api.openai.com/v1/responses/{response_id}/input_items
-Returns a list of input items for a given response.
-
-Path parameters
-response_id
-string
-
-Required
-The ID of the response to retrieve input items for.
-
-Query parameters
-after
-string
-
-Optional
-An item ID to list items after, used in pagination.
-
-include
-array
-
-Optional
-Additional fields to include in the response. See the include parameter for Response creation above for more information.
-
-limit
-integer
-
-Optional
-Defaults to 20
-A limit on the number of objects to be returned. Limit can range between 1 and 100, and the default is 20.
-
-order
-string
-
-Optional
-The order to return the input items in. Default is desc.
-
-asc: Return the input items in ascending order.
-desc: Return the input items in descending order.
-Returns
-A list of input item objects.
-
-Example request
-import OpenAI from "openai";
-const client = new OpenAI();
-
-const response = await client.responses.inputItems.list("resp_123");
-console.log(response.data);
-Response
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "msg_abc123",
       "type": "message",
       "role": "user",
       "content": [
-        {
-          "type": "input_text",
-          "text": "Tell me a three sentence bedtime story about a unicorn."
-        }
+        { "type": "input_text", "text": "Summarize this text." }
       ]
-    }
-  ],
-  "first_id": "msg_abc123",
-  "last_id": "msg_abc123",
-  "has_more": false
-}
-Get input token counts
-post
- 
-https://api.openai.com/v1/responses/input_tokens
-Get input token counts
-
-Request body
-conversation
-string or object
-
-Optional
-Defaults to null
-The conversation that this response belongs to. Items from this conversation are prepended to input_items for this response request. Input items and output items from this response are automatically added to this conversation after this response completes.
-
-
-Show possible types
-input
-string or array
-
-Optional
-Text, image, or file inputs to the model, used to generate a response
-
-
-Show possible types
-instructions
-string
-
-Optional
-A system (or developer) message inserted into the model's context. When used along with previous_response_id, the instructions from a previous response will not be carried over to the next response. This makes it simple to swap out system (or developer) messages in new responses.
-
-model
-string
-
-Optional
-Model ID used to generate the response, like gpt-4o or o3. OpenAI offers a wide range of models with different capabilities, performance characteristics, and price points. Refer to the model guide to browse and compare available models.
-
-parallel_tool_calls
-boolean
-
-Optional
-Whether to allow the model to run tool calls in parallel.
-
-previous_response_id
-string
-
-Optional
-The unique ID of the previous response to the model. Use this to create multi-turn conversations. Learn more about conversation state. Cannot be used in conjunction with conversation.
-
-reasoning
-object
-
-Optional
-gpt-5 and o-series models only
-
-Configuration options for reasoning models.
-
-
-Show properties
-text
-object
-
-Optional
-Configuration options for a text response from the model. Can be plain text or structured JSON data. Learn more:
-
-Text inputs and outputs
-Structured Outputs
-
-Show properties
-tool_choice
-string or object
-
-Optional
-How the model should select which tool (or tools) to use when generating a response. See the tools parameter to see how to specify which tools the model can call.
-
-
-Show possible types
-tools
-array
-
-Optional
-An array of tools the model may call while generating a response. You can specify which tool to use by setting the tool_choice parameter.
-
-
-Show possible types
-truncation
-string
-
-Optional
-The truncation strategy to use for the model response. - auto: If the input to this Response exceeds the model's context window size, the model will truncate the response to fit the context window by dropping items from the beginning of the conversation. - disabled (default): If the input size will exceed the context window size for a model, the request will fail with a 400 error.
-
-Returns
-The input token counts.
-
-{
-  object: "response.input_tokens"
-  input_tokens: 123
-}
-Example request
-curl -X POST https://api.openai.com/v1/responses/input_tokens \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -d '{
-      "model": "gpt-5",
-      "input": "Tell me a joke."
-    }'
-Response
-{
-  "object": "response.input_tokens",
-  "input_tokens": 11
-}
-The response object
-background
-boolean
-
-Whether to run the model response in the background. Learn more.
-
-conversation
-object
-
-The conversation that this response belongs to. Input items and output items from this response are automatically added to this conversation.
-
-
-Show properties
-created_at
-number
-
-Unix timestamp (in seconds) of when this Response was created.
-
-error
-object
-
-An error object returned when the model fails to generate a Response.
-
-
-Show properties
-id
-string
-
-Unique identifier for this Response.
-
-incomplete_details
-object
-
-Details about why the response is incomplete.
-
-
-Show properties
-instructions
-string or array
-
-A system (or developer) message inserted into the model's context.
-
-When using along with previous_response_id, the instructions from a previous response will not be carried over to the next response. This makes it simple to swap out system (or developer) messages in new responses.
-
-
-Show possible types
-max_output_tokens
-integer
-
-An upper bound for the number of tokens that can be generated for a response, including visible output tokens and reasoning tokens.
-
-max_tool_calls
-integer
-
-The maximum number of total calls to built-in tools that can be processed in a response. This maximum number applies across all built-in tool calls, not per individual tool. Any further attempts to call a tool by the model will be ignored.
-
-metadata
-map
-
-Set of 16 key-value pairs that can be attached to an object. This can be useful for storing additional information about the object in a structured format, and querying for objects via API or the dashboard.
-
-Keys are strings with a maximum length of 64 characters. Values are strings with a maximum length of 512 characters.
-
-model
-string
-
-Model ID used to generate the response, like gpt-4o or o3. OpenAI offers a wide range of models with different capabilities, performance characteristics, and price points. Refer to the model guide to browse and compare available models.
-
-object
-string
-
-The object type of this resource - always set to response.
-
-output
-array
-
-An array of content items generated by the model.
-
-The length and order of items in the output array is dependent on the model's response.
-Rather than accessing the first item in the output array and assuming it's an assistant message with the content generated by the model, you might consider using the output_text property where supported in SDKs.
-
-Show possible types
-output_text
-string
-
-SDK Only
-SDK-only convenience property that contains the aggregated text output from all output_text items in the output array, if any are present. Supported in the Python and JavaScript SDKs.
-
-parallel_tool_calls
-boolean
-
-Whether to allow the model to run tool calls in parallel.
-
-previous_response_id
-string
-
-The unique ID of the previous response to the model. Use this to create multi-turn conversations. Learn more about conversation state. Cannot be used in conjunction with conversation.
-
-prompt
-object
-
-Reference to a prompt template and its variables. Learn more.
-
-
-Show properties
-prompt_cache_key
-string
-
-Used by OpenAI to cache responses for similar requests to optimize your cache hit rates. Replaces the user field. Learn more.
-
-reasoning
-object
-
-gpt-5 and o-series models only
-
-Configuration options for reasoning models.
-
-
-Show properties
-safety_identifier
-string
-
-A stable identifier used to help detect users of your application that may be violating OpenAI's usage policies. The IDs should be a string that uniquely identifies each user. We recommend hashing their username or email address, in order to avoid sending us any identifying information. Learn more.
-
-service_tier
-string
-
-Specifies the processing type used for serving the request.
-
-If set to 'auto', then the request will be processed with the service tier configured in the Project settings. Unless otherwise configured, the Project will use 'default'.
-If set to 'default', then the request will be processed with the standard pricing and performance for the selected model.
-If set to 'flex' or 'priority', then the request will be processed with the corresponding service tier.
-When not set, the default behavior is 'auto'.
-When the service_tier parameter is set, the response body will include the service_tier value based on the processing mode actually used to serve the request. This response value may be different from the value set in the parameter.
-
-status
-string
-
-The status of the response generation. One of completed, failed, in_progress, cancelled, queued, or incomplete.
-
-temperature
-number
-
-What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic. We generally recommend altering this or top_p but not both.
-
-text
-object
-
-Configuration options for a text response from the model. Can be plain text or structured JSON data. Learn more:
-
-Text inputs and outputs
-Structured Outputs
-
-Show properties
-tool_choice
-string or object
-
-How the model should select which tool (or tools) to use when generating a response. See the tools parameter to see how to specify which tools the model can call.
-
-
-Show possible types
-tools
-array
-
-An array of tools the model may call while generating a response. You can specify which tool to use by setting the tool_choice parameter.
-
-We support the following categories of tools:
-
-Built-in tools: Tools that are provided by OpenAI that extend the model's capabilities, like web search or file search. Learn more about built-in tools.
-MCP Tools: Integrations with third-party systems via custom MCP servers or predefined connectors such as Google Drive and SharePoint. Learn more about MCP Tools.
-Function calls (custom tools): Functions that are defined by you, enabling the model to call your own code with strongly typed arguments and outputs. Learn more about function calling. You can also use custom tools to call your own code.
-
-Show possible types
-top_logprobs
-integer
-
-An integer between 0 and 20 specifying the number of most likely tokens to return at each token position, each with an associated log probability.
-
-top_p
-number
-
-An alternative to sampling with temperature, called nucleus sampling, where the model considers the results of the tokens with top_p probability mass. So 0.1 means only the tokens comprising the top 10% probability mass are considered.
-
-We generally recommend altering this or temperature but not both.
-
-truncation
-string
-
-The truncation strategy to use for the model response.
-
-auto: If the input to this Response exceeds the model's context window size, the model will truncate the response to fit the context window by dropping items from the beginning of the conversation.
-disabled (default): If the input size will exceed the context window size for a model, the request will fail with a 400 error.
-usage
-object
-
-Represents token usage details including input tokens, output tokens, a breakdown of output tokens, and the total tokens used.
-
-
-Show properties
-user
-Deprecated
-string
-
-This field is being replaced by safety_identifier and prompt_cache_key. Use prompt_cache_key instead to maintain caching optimizations. A stable identifier for your end-users. Used to boost cache hit rates by better bucketing similar requests and to help OpenAI detect and prevent abuse. Learn more.
-
-OBJECT The response object
-{
-  "id": "resp_67ccd3a9da748190baa7f1570fe91ac604becb25c45c1d41",
-  "object": "response",
-  "created_at": 1741476777,
-  "status": "completed",
-  "error": null,
-  "incomplete_details": null,
-  "instructions": null,
-  "max_output_tokens": null,
-  "model": "gpt-4o-2024-08-06",
-  "output": [
+    },
     {
       "type": "message",
-      "id": "msg_67ccd3acc8d48190a77525dc6de64b4104becb25c45c1d41",
-      "status": "completed",
       "role": "assistant",
       "content": [
-        {
-          "type": "output_text",
-          "text": "The image depicts a scenic landscape with a wooden boardwalk or pathway leading through lush, green grass under a blue sky with some clouds. The setting suggests a peaceful natural area, possibly a park or nature reserve. There are trees and shrubs in the background.",
-          "annotations": []
-        }
+        { "type": "output_text", "text": "Sure — what text?" }
       ]
-    }
-  ],
-  "parallel_tool_calls": true,
-  "previous_response_id": null,
-  "reasoning": {
-    "effort": null,
-    "summary": null
-  },
-  "store": true,
-  "temperature": 1,
-  "text": {
-    "format": {
-      "type": "text"
-    }
-  },
-  "tool_choice": "auto",
-  "tools": [],
-  "top_p": 1,
-  "truncation": "disabled",
-  "usage": {
-    "input_tokens": 328,
-    "input_tokens_details": {
-      "cached_tokens": 0
     },
-    "output_tokens": 52,
-    "output_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "total_tokens": 380
-  },
-  "user": null,
-  "metadata": {}
-}
-The input item list
-A list of Response items.
-
-data
-array
-
-A list of items used to generate this response.
-
-
-Show possible types
-first_id
-string
-
-The ID of the first item in the list.
-
-has_more
-boolean
-
-Whether there are more items available.
-
-last_id
-string
-
-The ID of the last item in the list.
-
-object
-string
-
-The type of object returned, must be list.
-
-OBJECT The input item list
-{
-  "object": "list",
-  "data": [
     {
-      "id": "msg_abc123",
       "type": "message",
       "role": "user",
       "content": [
-        {
-          "type": "input_text",
-          "text": "Tell me a three sentence bedtime story about a unicorn."
-        }
+        { "type": "input_text", "text": "Here is the text to summarize." }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+# **4. Input: Text Content Items**
+
+Within a `message` → `content` array:
+
+### **4.1 `input_text`**
+
+```ts
+{
+  type: "input_text";
+  text: string;
+}
+```
+
+Use this for all user-provided text.
+
+Example:
+
+```json
+{ "type": "input_text", "text": "Explain quantum tunneling." }
+```
+
+---
+
+# **5. Input: Image Items**
+
+Images are passed using `input_image`:
+
+```ts
+{
+  type: "input_image";
+  detail: "high" | "low" | "auto";
+  image_url?: string;   // URL or base64 data URL
+  file_id?: string;     // if uploaded via files API
+}
+```
+
+Example:
+
+```jsonc
+{
+  "type": "input_image",
+  "detail": "high",
+  "image_url": "https://example.com/cat.jpg"
+}
+```
+
+Combined text + image message:
+
+```jsonc
+{
+  "type": "message",
+  "role": "user",
+  "content": [
+    { "type": "input_text", "text": "Describe this picture." },
+    { "type": "input_image", "detail": "high", "image_url": "..." }
+  ]
+}
+```
+
+---
+
+# **6. Tools (Function & MCP)**
+
+Only the tools you use:
+
+* Function tools (call your backend)
+* MCP tools (call out to your Model Context Protocol servers)
+
+---
+
+## **6.1 Function Tools**
+
+Define a tool:
+
+```ts
+{
+  type: "function",
+  name: "getWeather",
+  description: "Get current weather for a city.",
+  parameters: {
+    type: "object",
+    properties: {
+      city: { type: "string" }
+    },
+    required: ["city"]
+  },
+  strict: true
+}
+```
+
+Include in your request:
+
+```json
+{
+  "tools": [
+    {
+      "type": "function",
+      "name": "getWeather",
+      "parameters": { /* JSON schema */ }
+    }
+  ]
+}
+```
+
+Example function call output from model:
+
+```jsonc
+{
+  "type": "function_call",
+  "call_id": "tool_123",
+  "name": "getWeather",
+  "arguments": "{\"city\":\"Paris\"}"
+}
+```
+
+### Responding with tool output
+
+You include in the next turn’s `input`:
+
+```ts
+{
+  type: "function_call_output",
+  call_id: "tool_123",
+  output: string // JSON or text
+}
+```
+
+---
+
+## **6.2 MCP Tools**
+
+Define MCP tools similarly:
+
+```ts
+{
+  type: "mcp",
+  server_label: "magic-indexer",
+  name: "search"
+}
+```
+
+Model emits:
+
+```jsonc
+{
+  "type": "mcp_tool_call",
+  "id": "mcp_1",
+  "server_label": "magic-indexer",
+  "name": "search",
+  "arguments": "{\"query\":\"productivity\"}"
+}
+```
+
+You respond with:
+
+```ts
+{
+  type: "mcp_tool_call_output",
+  call_id: "mcp_1",
+  output: { /* JSON-safe payload */ }
+}
+```
+
+---
+
+## **6.3 Tool Choice**
+
+### Auto (recommended)
+
+```json
+"tool_choice": "auto"
+```
+
+Model may or may not call tools.
+
+### Required
+
+```json
+"tool_choice": "required"
+```
+
+Model must call at least one tool.
+
+### Force a specific function
+
+```json
+{
+  "tool_choice": { "type": "function", "name": "getWeather" }
+}
+```
+
+### Force a specific MCP tool
+
+```json
+{
+  "tool_choice": { "type": "mcp", "server_label": "magic-indexer" }
+}
+```
+
+---
+
+# **7. Multi-Turn Conversations (Manual History Management)**
+
+You will always:
+
+* Maintain your own message history
+* Append each assistant response, tool call, and tool output
+* Rebuild the full `input` array each turn
+
+### This gives you:
+
+* Full control over context window management
+* Customizable trimming logic
+* Ability to persist conversations anywhere
+* Predictable, explicit message ordering
+
+No `previous_response_id` or OpenAI-managed context is used.
+
+### Structure per turn:
+
+1. System/developer instructions (optional)
+2. All prior user messages
+3. All prior assistant messages
+4. All prior tool call items
+5. All tool call output items
+6. Current user message
+
+Then call:
+
+```ts
+client.responses.create({ model, input, tools, tool_choice })
+```
+
+---
+
+# **8. Example: Full Multi-turn with Function Tool + Image**
+
+### Step 1 — Initial user message with image
+
+```jsonc
+{
+  "model": "gpt-4.1",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        { "type": "input_text", "text": "What is happening in this image?" },
+        { "type": "input_image", "detail": "high", "image_url": "..." }
       ]
     }
   ],
-  "first_id": "msg_abc123",
-  "last_id": "msg_abc123",
-  "has_more": false
+  "tools": [
+    {
+      "type": "function",
+      "name": "describeScene",
+      "parameters": {
+        "type": "object",
+        "properties": { "context": { "type": "string" } }
+      }
+    }
+  ],
+  "tool_choice": "auto"
 }
+```
 
-Streaming events
-When you create a Response with stream set to true, the server will emit server-sent events to the client as the Response is generated. This section contains the events that are emitted by the server.
+### Step 2 — Model responds with tool call
 
-Learn more about streaming responses.
+```jsonc
+{
+  "type": "function_call",
+  "call_id": "tool_789",
+  "name": "describeScene",
+  "arguments": "{\"context\":\"outdoor\"}"
+}
+```
 
-response.created
-An event that is emitted when a response is created.
+### Step 3 — You execute the tool and send next turn
 
-response
-object
+```jsonc
+{
+  "model": "gpt-4.1",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        { "type": "input_text", "text": "What is happening in this image?" },
+        { "type": "input_image", "detail": "high", "image_url": "..." }
+      ]
+    },
+    {
+      "type": "function_call",
+      "call_id": "tool_789",
+      "name": "describeScene",
+      "arguments": "{\"context\":\"outdoor\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "tool_789",
+      "output": "{\"description\":\"A boardwalk through grass.\"}"
+    }
+  ]
+}
+```
 
-The response that was created.
+### Step 4 — Model produces assistant text
 
+```jsonc
+{
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "output_text",
+      "text": "It appears to be a wooden boardwalk through a grassy field."
+    }
+  ]
+}
+```
 
-Show properties
-sequence_number
-integer
+---
 
-The sequence number for this event.
+# **9. Response Object (Simplified for Your Use Case)**
 
-type
-string
+```ts
+{
+  id: string;
+  model: string;
+  status: "completed" | "in_progress" | "failed" | "queued" | "incomplete";
+  output: OutputItem[];
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  } | null;
+  output_text?: string; // SDK convenience field
+}
+```
 
-The type of the event. Always response.created.
+* In streaming mode, `usage` is usually only populated in the final `response.completed` event.
+* `output` contains messages, function calls, MCP calls, etc.
 
-OBJECT response.created
+---
+
+# **10. Output Item Types (You Will Encounter)**
+
+### Assistant Message
+
+```jsonc
+{
+  "type": "message",
+  "role": "assistant",
+  "status": "completed",
+  "content": [
+    { "type": "output_text", "text": "Hello!" }
+  ]
+}
+```
+
+### Function Tool Call
+
+```jsonc
+{
+  "type": "function_call",
+  "id": "item-abc",
+  "call_id": "item-abc",
+  "name": "searchDocuments",
+  "arguments": "{\"query\":\"test\"}",
+  "status": "in_progress"
+}
+```
+
+### MCP Tool Call
+
+```jsonc
+{
+  "type": "mcp_tool_call",
+  "id": "mcp_1",
+  "server_label": "magic-indexer",
+  "name": "search",
+  "arguments": "{\"query\":\"testing\"}",
+  "status": "in_progress"
+}
+```
+
+---
+
+# **11. Recommended Implementation Pattern**
+
+1. Build your own **message structure** mirroring OpenAI InputItems.
+2. Each turn:
+
+   * Append new user messages.
+   * Append prior assistant messages.
+   * Append tool call & tool output items.
+   * Serialize to OpenAI’s `input` array.
+3. On output:
+
+   * Detect function/MCP tool calls.
+   * Execute backend or MCP request.
+   * Append tool output.
+   * Send the next round.
+4. When output is a normal assistant message:
+
+   * Save + display it.
+   * End the turn (or wait for user input).
+5. Use **streaming** (next section) to show partial results and capture token usage from the final event.
+
+---
+
+# **12. Streaming Responses**
+
+When you set `stream: true` in `POST /v1/responses`, the API returns **Server-Sent Events (SSE)** instead of a single JSON object.
+
+Streaming is how you will:
+
+* Stream partial assistant text
+* Detect tool calls early (function & MCP)
+* Learn final token usage from the end-of-stream event
+
+## 12.1 Enabling Streaming
+
+Example request body:
+
+```jsonc
+{
+  "model": "gpt-4.1",
+  "stream": true,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        { "type": "input_text", "text": "Tell me a short story." }
+      ]
+    }
+  ]
+}
+```
+
+Over HTTP, you’ll receive a sequence of SSE events like:
+
+```text
+event: response.created
+data: { ... }
+
+event: response.output_item.added
+data: { ... }
+
+event: response.output_text.delta
+data: { ... }
+
+...
+
+event: response.completed
+data: { ... }
+
+event: done
+data: [empty or {}]
+```
+
+Your client should:
+
+* Parse each `event:` line
+* Parse `data:` as JSON
+* Dispatch based on `type` (inside the JSON) or on the SSE event name, depending on your client library
+
+---
+
+## 12.2 Key Events You Actually Care About
+
+Only the events relevant for:
+
+* Text output
+* Function tools
+* MCP tools
+* Token usage
+* Error handling
+
+### **1. `response.created`**
+
+Emitted when the response is created.
+
+Shape (simplified):
+
+```jsonc
 {
   "type": "response.created",
   "response": {
-    "id": "resp_67ccfcdd16748190a91872c75d38539e09e4d4aac714747c",
-    "object": "response",
-    "created_at": 1741487325,
+    "id": "resp_...",
     "status": "in_progress",
-    "error": null,
-    "incomplete_details": null,
-    "instructions": null,
-    "max_output_tokens": null,
     "model": "gpt-4o-2024-08-06",
     "output": [],
-    "parallel_tool_calls": true,
-    "previous_response_id": null,
-    "reasoning": {
-      "effort": null,
-      "summary": null
-    },
-    "store": true,
-    "temperature": 1,
-    "text": {
-      "format": {
-        "type": "text"
-      }
-    },
-    "tool_choice": "auto",
-    "tools": [],
-    "top_p": 1,
-    "truncation": "disabled",
-    "usage": null,
-    "user": null,
-    "metadata": {}
+    "usage": null
   },
   "sequence_number": 1
 }
-response.in_progress
+```
+
+Use this to:
+
+* Capture `response.id` if you want to reference this response later.
+
+---
+
+### **2. `response.in_progress` (optional)**
+
 Emitted when the response is in progress.
 
-response
-object
+You can usually ignore this for basic UI; it just confirms the run is ongoing.
 
-The response that is in progress.
+---
 
+### **3. `response.output_item.added`**
 
-Show properties
-sequence_number
-integer
+Emitted when a **new output item** is created.
 
-The sequence number of this event.
+Example (assistant message being started):
 
-type
-string
-
-The type of the event. Always response.in_progress.
-
-OBJECT response.in_progress
-{
-  "type": "response.in_progress",
-  "response": {
-    "id": "resp_67ccfcdd16748190a91872c75d38539e09e4d4aac714747c",
-    "object": "response",
-    "created_at": 1741487325,
-    "status": "in_progress",
-    "error": null,
-    "incomplete_details": null,
-    "instructions": null,
-    "max_output_tokens": null,
-    "model": "gpt-4o-2024-08-06",
-    "output": [],
-    "parallel_tool_calls": true,
-    "previous_response_id": null,
-    "reasoning": {
-      "effort": null,
-      "summary": null
-    },
-    "store": true,
-    "temperature": 1,
-    "text": {
-      "format": {
-        "type": "text"
-      }
-    },
-    "tool_choice": "auto",
-    "tools": [],
-    "top_p": 1,
-    "truncation": "disabled",
-    "usage": null,
-    "user": null,
-    "metadata": {}
-  },
-  "sequence_number": 1
-}
-response.completed
-Emitted when the model response is complete.
-
-response
-object
-
-Properties of the completed response.
-
-
-Show properties
-sequence_number
-integer
-
-The sequence number for this event.
-
-type
-string
-
-The type of the event. Always response.completed.
-
-OBJECT response.completed
-{
-  "type": "response.completed",
-  "response": {
-    "id": "resp_123",
-    "object": "response",
-    "created_at": 1740855869,
-    "status": "completed",
-    "error": null,
-    "incomplete_details": null,
-    "input": [],
-    "instructions": null,
-    "max_output_tokens": null,
-    "model": "gpt-4o-mini-2024-07-18",
-    "output": [
-      {
-        "id": "msg_123",
-        "type": "message",
-        "role": "assistant",
-        "content": [
-          {
-            "type": "output_text",
-            "text": "In a shimmering forest under a sky full of stars, a lonely unicorn named Lila discovered a hidden pond that glowed with moonlight. Every night, she would leave sparkling, magical flowers by the water's edge, hoping to share her beauty with others. One enchanting evening, she woke to find a group of friendly animals gathered around, eager to be friends and share in her magic.",
-            "annotations": []
-          }
-        ]
-      }
-    ],
-    "previous_response_id": null,
-    "reasoning_effort": null,
-    "store": false,
-    "temperature": 1,
-    "text": {
-      "format": {
-        "type": "text"
-      }
-    },
-    "tool_choice": "auto",
-    "tools": [],
-    "top_p": 1,
-    "truncation": "disabled",
-    "usage": {
-      "input_tokens": 0,
-      "output_tokens": 0,
-      "output_tokens_details": {
-        "reasoning_tokens": 0
-      },
-      "total_tokens": 0
-    },
-    "user": null,
-    "metadata": {}
-  },
-  "sequence_number": 1
-}
-response.failed
-An event that is emitted when a response fails.
-
-response
-object
-
-The response that failed.
-
-
-Show properties
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.failed.
-
-OBJECT response.failed
-{
-  "type": "response.failed",
-  "response": {
-    "id": "resp_123",
-    "object": "response",
-    "created_at": 1740855869,
-    "status": "failed",
-    "error": {
-      "code": "server_error",
-      "message": "The model failed to generate a response."
-    },
-    "incomplete_details": null,
-    "instructions": null,
-    "max_output_tokens": null,
-    "model": "gpt-4o-mini-2024-07-18",
-    "output": [],
-    "previous_response_id": null,
-    "reasoning_effort": null,
-    "store": false,
-    "temperature": 1,
-    "text": {
-      "format": {
-        "type": "text"
-      }
-    },
-    "tool_choice": "auto",
-    "tools": [],
-    "top_p": 1,
-    "truncation": "disabled",
-    "usage": null,
-    "user": null,
-    "metadata": {}
-  }
-}
-response.incomplete
-An event that is emitted when a response finishes as incomplete.
-
-response
-object
-
-The response that was incomplete.
-
-
-Show properties
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.incomplete.
-
-OBJECT response.incomplete
-{
-  "type": "response.incomplete",
-  "response": {
-    "id": "resp_123",
-    "object": "response",
-    "created_at": 1740855869,
-    "status": "incomplete",
-    "error": null, 
-    "incomplete_details": {
-      "reason": "max_tokens"
-    },
-    "instructions": null,
-    "max_output_tokens": null,
-    "model": "gpt-4o-mini-2024-07-18",
-    "output": [],
-    "previous_response_id": null,
-    "reasoning_effort": null,
-    "store": false,
-    "temperature": 1,
-    "text": {
-      "format": {
-        "type": "text"
-      }
-    },
-    "tool_choice": "auto",
-    "tools": [],
-    "top_p": 1,
-    "truncation": "disabled",
-    "usage": null,
-    "user": null,
-    "metadata": {}
-  },
-  "sequence_number": 1
-}
-response.output_item.added
-Emitted when a new output item is added.
-
-item
-object
-
-The output item that was added.
-
-
-Show possible types
-output_index
-integer
-
-The index of the output item that was added.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.output_item.added.
-
-OBJECT response.output_item.added
+```jsonc
 {
   "type": "response.output_item.added",
   "output_index": 0,
@@ -1365,34 +666,214 @@ OBJECT response.output_item.added
     "role": "assistant",
     "content": []
   },
-  "sequence_number": 1
+  "sequence_number": 2
 }
-response.output_item.done
-Emitted when an output item is marked done.
+```
 
-item
-object
+Or a function call:
 
-The output item that was marked done.
+```jsonc
+{
+  "type": "response.output_item.added",
+  "output_index": 0,
+  "item": {
+    "id": "item-abc",
+    "status": "in_progress",
+    "type": "function_call",
+    "name": "getWeather",
+    "arguments": ""
+  },
+  "sequence_number": 3
+}
+```
 
+Use this to:
 
-Show possible types
-output_index
-integer
+* Allocate a buffer in your UI / state model for:
 
-The index of the output item that was marked done.
+  * New assistant message text
+  * New function call
+  * New MCP call
 
-sequence_number
-integer
+---
 
-The sequence number of this event.
+### **4. `response.content_part.added`**
 
-type
-string
+Starts a **content part** (e.g., an `output_text` object).
 
-The type of the event. Always response.output_item.done.
+Example:
 
-OBJECT response.output_item.done
+```jsonc
+{
+  "type": "response.content_part.added",
+  "item_id": "msg_123",
+  "output_index": 0,
+  "content_index": 0,
+  "part": {
+    "type": "output_text",
+    "text": "",
+    "annotations": []
+  },
+  "sequence_number": 4
+}
+```
+
+Use this to:
+
+* Track which `content_index` is being streamed for a given message.
+
+In many cases you can skip reacting to this explicitly and rely directly on `response.output_text.delta`.
+
+---
+
+### **5. `response.output_text.delta`**
+
+This is the main event for streaming assistant text.
+
+```jsonc
+{
+  "type": "response.output_text.delta",
+  "item_id": "msg_123",
+  "output_index": 0,
+  "content_index": 0,
+  "delta": "In",
+  "sequence_number": 5
+}
+```
+
+You append `delta` to the existing text buffer for:
+
+* The message with `item_id`
+* The content part at `content_index`
+
+Pseudo-logic:
+
+```ts
+onOutputTextDelta(e) {
+  const { item_id, content_index, delta } = e;
+  const message = messages[item_id];
+  message.content[content_index].text += delta;
+}
+```
+
+---
+
+### **6. `response.output_text.done`**
+
+Emitted when the **text content** is finalized.
+
+```jsonc
+{
+  "type": "response.output_text.done",
+  "item_id": "msg_123",
+  "output_index": 0,
+  "content_index": 0,
+  "text": "Full completed text...",
+  "sequence_number": 10
+}
+```
+
+You can:
+
+* Optionally reconcile your buffer with `text` (should match accumulated deltas)
+* Mark the content part as `done` in your state
+
+---
+
+### **7. Tool Calls – Function Arguments**
+
+#### `response.function_call_arguments.delta`
+
+Partial JSON string for function-call arguments:
+
+```jsonc
+{
+  "type": "response.function_call_arguments.delta",
+  "item_id": "item-abc",
+  "output_index": 0,
+  "delta": "{ \"city\": \"Par",
+  "sequence_number": 6
+}
+```
+
+You accumulate `delta` to build up the full `arguments` string.
+
+#### `response.function_call_arguments.done`
+
+Final arguments for the function call:
+
+```jsonc
+{
+  "type": "response.function_call_arguments.done",
+  "item_id": "item-abc",
+  "name": "getWeather",
+  "output_index": 0,
+  "arguments": "{ \"city\": \"Paris\" }",
+  "sequence_number": 7
+}
+```
+
+At this point:
+
+1. Parse `arguments` as JSON.
+2. Trigger your tool execution.
+3. Build the next-turn request with a `function_call_output` item.
+
+This lets you:
+
+* Detect tool calls ASAP in the stream
+* Start network/database work while other content may still be streaming
+
+---
+
+### **8. Tool Calls – MCP Arguments**
+
+#### `response.mcp_call_arguments.delta`
+
+```jsonc
+{
+  "type": "response.mcp_call_arguments.delta",
+  "output_index": 0,
+  "item_id": "mcp_abc",
+  "delta": "{",
+  "sequence_number": 8
+}
+```
+
+#### `response.mcp_call_arguments.done`
+
+```jsonc
+{
+  "type": "response.mcp_call_arguments.done",
+  "output_index": 0,
+  "item_id": "mcp_abc",
+  "arguments": "{\"query\": \"hello\"}",
+  "sequence_number": 9
+}
+```
+
+Same pattern as function calls:
+
+* Accumulate deltas
+* On `done`, parse `arguments` and execute your MCP tool
+
+You may also see:
+
+* `response.mcp_call.in_progress`
+* `response.mcp_call.completed`
+* `response.mcp_call.failed`
+
+These describe the lifecycle of the MCP call item itself (not strictly necessary for most client logic, but can be useful for debugging/telemetry).
+
+---
+
+### **9. Item Completion**
+
+#### `response.output_item.done`
+
+Marks the entire output item as done (message, function call, MCP call, etc.):
+
+```jsonc
 {
   "type": "response.output_item.done",
   "output_index": 0,
@@ -1404,1538 +885,106 @@ OBJECT response.output_item.done
     "content": [
       {
         "type": "output_text",
-        "text": "In a shimmering forest under a sky full of stars, a lonely unicorn named Lila discovered a hidden pond that glowed with moonlight. Every night, she would leave sparkling, magical flowers by the water's edge, hoping to share her beauty with others. One enchanting evening, she woke to find a group of friendly animals gathered around, eager to be friends and share in her magic.",
+        "text": "Full text...",
         "annotations": []
       }
     ]
   },
-  "sequence_number": 1
+  "sequence_number": 11
 }
-response.content_part.added
-Emitted when a new content part is added.
+```
 
-content_index
-integer
+You can:
 
-The index of the content part that was added.
+* Update your state to mark that item as completed.
+* Use `item` as a snapshot of the finished piece.
 
-item_id
-string
+---
 
-The ID of the output item that the content part was added to.
+### **10. Response Completion / Failure**
 
-output_index
-integer
+#### `response.completed`
 
-The index of the output item that the content part was added to.
+Emitted when the entire response is finished:
 
-part
-object
-
-The content part that was added.
-
-
-Show possible types
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.content_part.added.
-
-OBJECT response.content_part.added
+```jsonc
 {
-  "type": "response.content_part.added",
-  "item_id": "msg_123",
-  "output_index": 0,
-  "content_index": 0,
-  "part": {
-    "type": "output_text",
-    "text": "",
-    "annotations": []
+  "type": "response.completed",
+  "response": {
+    "id": "resp_123",
+    "status": "completed",
+    "output": [ /* final items */ ],
+    "usage": {
+      "input_tokens": 123,
+      "output_tokens": 45,
+      "total_tokens": 168,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      }
+    }
   },
-  "sequence_number": 1
+  "sequence_number": 12
 }
-response.content_part.done
-Emitted when a content part is done.
+```
 
-content_index
-integer
+Use this to:
 
-The index of the content part that is done.
+* Finalize UI state.
+* Read token usage for billing/analytics.
+* Persist the final `response` object if desired.
 
-item_id
-string
+#### `response.failed`
 
-The ID of the output item that the content part was added to.
+If the model fails:
 
-output_index
-integer
-
-The index of the output item that the content part was added to.
-
-part
-object
-
-The content part that is done.
-
-
-Show possible types
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.content_part.done.
-
-OBJECT response.content_part.done
+```jsonc
 {
-  "type": "response.content_part.done",
-  "item_id": "msg_123",
-  "output_index": 0,
-  "content_index": 0,
-  "sequence_number": 1,
-  "part": {
-    "type": "output_text",
-    "text": "In a shimmering forest under a sky full of stars, a lonely unicorn named Lila discovered a hidden pond that glowed with moonlight. Every night, she would leave sparkling, magical flowers by the water's edge, hoping to share her beauty with others. One enchanting evening, she woke to find a group of friendly animals gathered around, eager to be friends and share in her magic.",
-    "annotations": []
+  "type": "response.failed",
+  "response": {
+    "id": "resp_123",
+    "status": "failed",
+    "error": {
+      "code": "server_error",
+      "message": "The model failed to generate a response."
+    }
   }
 }
-response.output_text.delta
-Emitted when there is an additional text delta.
+```
 
-content_index
-integer
+#### `response.incomplete`
 
-The index of the content part that the text delta was added to.
+If the response ends early (e.g., `max_tokens`):
 
-delta
-string
-
-The text delta that was added.
-
-item_id
-string
-
-The ID of the output item that the text delta was added to.
-
-logprobs
-array
-
-The log probabilities of the tokens in the delta.
-
-
-Show properties
-output_index
-integer
-
-The index of the output item that the text delta was added to.
-
-sequence_number
-integer
-
-The sequence number for this event.
-
-type
-string
-
-The type of the event. Always response.output_text.delta.
-
-OBJECT response.output_text.delta
+```jsonc
 {
-  "type": "response.output_text.delta",
-  "item_id": "msg_123",
-  "output_index": 0,
-  "content_index": 0,
-  "delta": "In",
-  "sequence_number": 1
+  "type": "response.incomplete",
+  "response": {
+    "id": "resp_123",
+    "status": "incomplete",
+    "incomplete_details": {
+      "reason": "max_tokens"
+    }
+  }
 }
-response.output_text.done
-Emitted when text content is finalized.
+```
 
-content_index
-integer
+#### `response.queued`
 
-The index of the content part that the text content is finalized.
+If the response is queued:
 
-item_id
-string
-
-The ID of the output item that the text content is finalized.
-
-logprobs
-array
-
-The log probabilities of the tokens in the delta.
-
-
-Show properties
-output_index
-integer
-
-The index of the output item that the text content is finalized.
-
-sequence_number
-integer
-
-The sequence number for this event.
-
-text
-string
-
-The text content that is finalized.
-
-type
-string
-
-The type of the event. Always response.output_text.done.
-
-OBJECT response.output_text.done
-{
-  "type": "response.output_text.done",
-  "item_id": "msg_123",
-  "output_index": 0,
-  "content_index": 0,
-  "text": "In a shimmering forest under a sky full of stars, a lonely unicorn named Lila discovered a hidden pond that glowed with moonlight. Every night, she would leave sparkling, magical flowers by the water's edge, hoping to share her beauty with others. One enchanting evening, she woke to find a group of friendly animals gathered around, eager to be friends and share in her magic.",
-  "sequence_number": 1
-}
-response.refusal.delta
-Emitted when there is a partial refusal text.
-
-content_index
-integer
-
-The index of the content part that the refusal text is added to.
-
-delta
-string
-
-The refusal text that is added.
-
-item_id
-string
-
-The ID of the output item that the refusal text is added to.
-
-output_index
-integer
-
-The index of the output item that the refusal text is added to.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.refusal.delta.
-
-OBJECT response.refusal.delta
-{
-  "type": "response.refusal.delta",
-  "item_id": "msg_123",
-  "output_index": 0,
-  "content_index": 0,
-  "delta": "refusal text so far",
-  "sequence_number": 1
-}
-response.refusal.done
-Emitted when refusal text is finalized.
-
-content_index
-integer
-
-The index of the content part that the refusal text is finalized.
-
-item_id
-string
-
-The ID of the output item that the refusal text is finalized.
-
-output_index
-integer
-
-The index of the output item that the refusal text is finalized.
-
-refusal
-string
-
-The refusal text that is finalized.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.refusal.done.
-
-OBJECT response.refusal.done
-{
-  "type": "response.refusal.done",
-  "item_id": "item-abc",
-  "output_index": 1,
-  "content_index": 2,
-  "refusal": "final refusal text",
-  "sequence_number": 1
-}
-response.function_call_arguments.delta
-Emitted when there is a partial function-call arguments delta.
-
-delta
-string
-
-The function-call arguments delta that is added.
-
-item_id
-string
-
-The ID of the output item that the function-call arguments delta is added to.
-
-output_index
-integer
-
-The index of the output item that the function-call arguments delta is added to.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.function_call_arguments.delta.
-
-OBJECT response.function_call_arguments.delta
-{
-  "type": "response.function_call_arguments.delta",
-  "item_id": "item-abc",
-  "output_index": 0,
-  "delta": "{ \"arg\":"
-  "sequence_number": 1
-}
-response.function_call_arguments.done
-Emitted when function-call arguments are finalized.
-
-arguments
-string
-
-The function-call arguments.
-
-item_id
-string
-
-The ID of the item.
-
-name
-string
-
-The name of the function that was called.
-
-output_index
-integer
-
-The index of the output item.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-OBJECT response.function_call_arguments.done
-{
-  "type": "response.function_call_arguments.done",
-  "item_id": "item-abc",
-  "name": "get_weather",
-  "output_index": 1,
-  "arguments": "{ \"arg\": 123 }",
-  "sequence_number": 1
-}
-response.file_search_call.in_progress
-Emitted when a file search call is initiated.
-
-item_id
-string
-
-The ID of the output item that the file search call is initiated.
-
-output_index
-integer
-
-The index of the output item that the file search call is initiated.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.file_search_call.in_progress.
-
-OBJECT response.file_search_call.in_progress
-{
-  "type": "response.file_search_call.in_progress",
-  "output_index": 0,
-  "item_id": "fs_123",
-  "sequence_number": 1
-}
-response.file_search_call.searching
-Emitted when a file search is currently searching.
-
-item_id
-string
-
-The ID of the output item that the file search call is initiated.
-
-output_index
-integer
-
-The index of the output item that the file search call is searching.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.file_search_call.searching.
-
-OBJECT response.file_search_call.searching
-{
-  "type": "response.file_search_call.searching",
-  "output_index": 0,
-  "item_id": "fs_123",
-  "sequence_number": 1
-}
-response.file_search_call.completed
-Emitted when a file search call is completed (results found).
-
-item_id
-string
-
-The ID of the output item that the file search call is initiated.
-
-output_index
-integer
-
-The index of the output item that the file search call is initiated.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.file_search_call.completed.
-
-OBJECT response.file_search_call.completed
-{
-  "type": "response.file_search_call.completed",
-  "output_index": 0,
-  "item_id": "fs_123",
-  "sequence_number": 1
-}
-response.web_search_call.in_progress
-Emitted when a web search call is initiated.
-
-item_id
-string
-
-Unique ID for the output item associated with the web search call.
-
-output_index
-integer
-
-The index of the output item that the web search call is associated with.
-
-sequence_number
-integer
-
-The sequence number of the web search call being processed.
-
-type
-string
-
-The type of the event. Always response.web_search_call.in_progress.
-
-OBJECT response.web_search_call.in_progress
-{
-  "type": "response.web_search_call.in_progress",
-  "output_index": 0,
-  "item_id": "ws_123",
-  "sequence_number": 0
-}
-response.web_search_call.searching
-Emitted when a web search call is executing.
-
-item_id
-string
-
-Unique ID for the output item associated with the web search call.
-
-output_index
-integer
-
-The index of the output item that the web search call is associated with.
-
-sequence_number
-integer
-
-The sequence number of the web search call being processed.
-
-type
-string
-
-The type of the event. Always response.web_search_call.searching.
-
-OBJECT response.web_search_call.searching
-{
-  "type": "response.web_search_call.searching",
-  "output_index": 0,
-  "item_id": "ws_123",
-  "sequence_number": 0
-}
-response.web_search_call.completed
-Emitted when a web search call is completed.
-
-item_id
-string
-
-Unique ID for the output item associated with the web search call.
-
-output_index
-integer
-
-The index of the output item that the web search call is associated with.
-
-sequence_number
-integer
-
-The sequence number of the web search call being processed.
-
-type
-string
-
-The type of the event. Always response.web_search_call.completed.
-
-OBJECT response.web_search_call.completed
-{
-  "type": "response.web_search_call.completed",
-  "output_index": 0,
-  "item_id": "ws_123",
-  "sequence_number": 0
-}
-response.reasoning_summary_part.added
-Emitted when a new reasoning summary part is added.
-
-item_id
-string
-
-The ID of the item this summary part is associated with.
-
-output_index
-integer
-
-The index of the output item this summary part is associated with.
-
-part
-object
-
-The summary part that was added.
-
-
-Show properties
-sequence_number
-integer
-
-The sequence number of this event.
-
-summary_index
-integer
-
-The index of the summary part within the reasoning summary.
-
-type
-string
-
-The type of the event. Always response.reasoning_summary_part.added.
-
-OBJECT response.reasoning_summary_part.added
-{
-  "type": "response.reasoning_summary_part.added",
-  "item_id": "rs_6806bfca0b2481918a5748308061a2600d3ce51bdffd5476",
-  "output_index": 0,
-  "summary_index": 0,
-  "part": {
-    "type": "summary_text",
-    "text": ""
-  },
-  "sequence_number": 1
-}
-response.reasoning_summary_part.done
-Emitted when a reasoning summary part is completed.
-
-item_id
-string
-
-The ID of the item this summary part is associated with.
-
-output_index
-integer
-
-The index of the output item this summary part is associated with.
-
-part
-object
-
-The completed summary part.
-
-
-Show properties
-sequence_number
-integer
-
-The sequence number of this event.
-
-summary_index
-integer
-
-The index of the summary part within the reasoning summary.
-
-type
-string
-
-The type of the event. Always response.reasoning_summary_part.done.
-
-OBJECT response.reasoning_summary_part.done
-{
-  "type": "response.reasoning_summary_part.done",
-  "item_id": "rs_6806bfca0b2481918a5748308061a2600d3ce51bdffd5476",
-  "output_index": 0,
-  "summary_index": 0,
-  "part": {
-    "type": "summary_text",
-    "text": "**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!"
-  },
-  "sequence_number": 1
-}
-response.reasoning_summary_text.delta
-Emitted when a delta is added to a reasoning summary text.
-
-delta
-string
-
-The text delta that was added to the summary.
-
-item_id
-string
-
-The ID of the item this summary text delta is associated with.
-
-output_index
-integer
-
-The index of the output item this summary text delta is associated with.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-summary_index
-integer
-
-The index of the summary part within the reasoning summary.
-
-type
-string
-
-The type of the event. Always response.reasoning_summary_text.delta.
-
-OBJECT response.reasoning_summary_text.delta
-{
-  "type": "response.reasoning_summary_text.delta",
-  "item_id": "rs_6806bfca0b2481918a5748308061a2600d3ce51bdffd5476",
-  "output_index": 0,
-  "summary_index": 0,
-  "delta": "**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!",
-  "sequence_number": 1
-}
-response.reasoning_summary_text.done
-Emitted when a reasoning summary text is completed.
-
-item_id
-string
-
-The ID of the item this summary text is associated with.
-
-output_index
-integer
-
-The index of the output item this summary text is associated with.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-summary_index
-integer
-
-The index of the summary part within the reasoning summary.
-
-text
-string
-
-The full text of the completed reasoning summary.
-
-type
-string
-
-The type of the event. Always response.reasoning_summary_text.done.
-
-OBJECT response.reasoning_summary_text.done
-{
-  "type": "response.reasoning_summary_text.done",
-  "item_id": "rs_6806bfca0b2481918a5748308061a2600d3ce51bdffd5476",
-  "output_index": 0,
-  "summary_index": 0,
-  "text": "**Responding to a greeting**\n\nThe user just said, \"Hello!\" So, it seems I need to engage. I'll greet them back and offer help since they're looking to chat. I could say something like, \"Hello! How can I assist you today?\" That feels friendly and open. They didn't ask a specific question, so this approach will work well for starting a conversation. Let's see where it goes from there!",
-  "sequence_number": 1
-}
-response.reasoning_text.delta
-Emitted when a delta is added to a reasoning text.
-
-content_index
-integer
-
-The index of the reasoning content part this delta is associated with.
-
-delta
-string
-
-The text delta that was added to the reasoning content.
-
-item_id
-string
-
-The ID of the item this reasoning text delta is associated with.
-
-output_index
-integer
-
-The index of the output item this reasoning text delta is associated with.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always response.reasoning_text.delta.
-
-OBJECT response.reasoning_text.delta
-{
-  "type": "response.reasoning_text.delta",
-  "item_id": "rs_123",
-  "output_index": 0,
-  "content_index": 0,
-  "delta": "The",
-  "sequence_number": 1
-}
-response.reasoning_text.done
-Emitted when a reasoning text is completed.
-
-content_index
-integer
-
-The index of the reasoning content part.
-
-item_id
-string
-
-The ID of the item this reasoning text is associated with.
-
-output_index
-integer
-
-The index of the output item this reasoning text is associated with.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-text
-string
-
-The full text of the completed reasoning content.
-
-type
-string
-
-The type of the event. Always response.reasoning_text.done.
-
-OBJECT response.reasoning_text.done
-{
-  "type": "response.reasoning_text.done",
-  "item_id": "rs_123",
-  "output_index": 0,
-  "content_index": 0,
-  "text": "The user is asking...",
-  "sequence_number": 4
-}
-response.image_generation_call.completed
-Emitted when an image generation tool call has completed and the final image is available.
-
-item_id
-string
-
-The unique identifier of the image generation item being processed.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.image_generation_call.completed'.
-
-OBJECT response.image_generation_call.completed
-{
-  "type": "response.image_generation_call.completed",
-  "output_index": 0,
-  "item_id": "item-123",
-  "sequence_number": 1
-}
-response.image_generation_call.generating
-Emitted when an image generation tool call is actively generating an image (intermediate state).
-
-item_id
-string
-
-The unique identifier of the image generation item being processed.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-sequence_number
-integer
-
-The sequence number of the image generation item being processed.
-
-type
-string
-
-The type of the event. Always 'response.image_generation_call.generating'.
-
-OBJECT response.image_generation_call.generating
-{
-  "type": "response.image_generation_call.generating",
-  "output_index": 0,
-  "item_id": "item-123",
-  "sequence_number": 0
-}
-response.image_generation_call.in_progress
-Emitted when an image generation tool call is in progress.
-
-item_id
-string
-
-The unique identifier of the image generation item being processed.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-sequence_number
-integer
-
-The sequence number of the image generation item being processed.
-
-type
-string
-
-The type of the event. Always 'response.image_generation_call.in_progress'.
-
-OBJECT response.image_generation_call.in_progress
-{
-  "type": "response.image_generation_call.in_progress",
-  "output_index": 0,
-  "item_id": "item-123",
-  "sequence_number": 0
-}
-response.image_generation_call.partial_image
-Emitted when a partial image is available during image generation streaming.
-
-item_id
-string
-
-The unique identifier of the image generation item being processed.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-partial_image_b64
-string
-
-Base64-encoded partial image data, suitable for rendering as an image.
-
-partial_image_index
-integer
-
-0-based index for the partial image (backend is 1-based, but this is 0-based for the user).
-
-sequence_number
-integer
-
-The sequence number of the image generation item being processed.
-
-type
-string
-
-The type of the event. Always 'response.image_generation_call.partial_image'.
-
-OBJECT response.image_generation_call.partial_image
-{
-  "type": "response.image_generation_call.partial_image",
-  "output_index": 0,
-  "item_id": "item-123",
-  "sequence_number": 0,
-  "partial_image_index": 0,
-  "partial_image_b64": "..."
-}
-response.mcp_call_arguments.delta
-Emitted when there is a delta (partial update) to the arguments of an MCP tool call.
-
-delta
-string
-
-A JSON string containing the partial update to the arguments for the MCP tool call.
-
-item_id
-string
-
-The unique identifier of the MCP tool call item being processed.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_call_arguments.delta'.
-
-OBJECT response.mcp_call_arguments.delta
-{
-  "type": "response.mcp_call_arguments.delta",
-  "output_index": 0,
-  "item_id": "item-abc",
-  "delta": "{",
-  "sequence_number": 1
-}
-response.mcp_call_arguments.done
-Emitted when the arguments for an MCP tool call are finalized.
-
-arguments
-string
-
-A JSON string containing the finalized arguments for the MCP tool call.
-
-item_id
-string
-
-The unique identifier of the MCP tool call item being processed.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_call_arguments.done'.
-
-OBJECT response.mcp_call_arguments.done
-{
-  "type": "response.mcp_call_arguments.done",
-  "output_index": 0,
-  "item_id": "item-abc",
-  "arguments": "{\"arg1\": \"value1\", \"arg2\": \"value2\"}",
-  "sequence_number": 1
-}
-response.mcp_call.completed
-Emitted when an MCP tool call has completed successfully.
-
-item_id
-string
-
-The ID of the MCP tool call item that completed.
-
-output_index
-integer
-
-The index of the output item that completed.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_call.completed'.
-
-OBJECT response.mcp_call.completed
-{
-  "type": "response.mcp_call.completed",
-  "sequence_number": 1,
-  "item_id": "mcp_682d437d90a88191bf88cd03aae0c3e503937d5f622d7a90",
-  "output_index": 0
-}
-response.mcp_call.failed
-Emitted when an MCP tool call has failed.
-
-item_id
-string
-
-The ID of the MCP tool call item that failed.
-
-output_index
-integer
-
-The index of the output item that failed.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_call.failed'.
-
-OBJECT response.mcp_call.failed
-{
-  "type": "response.mcp_call.failed",
-  "sequence_number": 1,
-  "item_id": "mcp_682d437d90a88191bf88cd03aae0c3e503937d5f622d7a90",
-  "output_index": 0
-}
-response.mcp_call.in_progress
-Emitted when an MCP tool call is in progress.
-
-item_id
-string
-
-The unique identifier of the MCP tool call item being processed.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_call.in_progress'.
-
-OBJECT response.mcp_call.in_progress
-{
-  "type": "response.mcp_call.in_progress",
-  "sequence_number": 1,
-  "output_index": 0,
-  "item_id": "mcp_682d437d90a88191bf88cd03aae0c3e503937d5f622d7a90"
-}
-response.mcp_list_tools.completed
-Emitted when the list of available MCP tools has been successfully retrieved.
-
-item_id
-string
-
-The ID of the MCP tool call item that produced this output.
-
-output_index
-integer
-
-The index of the output item that was processed.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_list_tools.completed'.
-
-OBJECT response.mcp_list_tools.completed
-{
-  "type": "response.mcp_list_tools.completed",
-  "sequence_number": 1,
-  "output_index": 0,
-  "item_id": "mcpl_682d4379df088191886b70f4ec39f90403937d5f622d7a90"
-}
-response.mcp_list_tools.failed
-Emitted when the attempt to list available MCP tools has failed.
-
-item_id
-string
-
-The ID of the MCP tool call item that failed.
-
-output_index
-integer
-
-The index of the output item that failed.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_list_tools.failed'.
-
-OBJECT response.mcp_list_tools.failed
-{
-  "type": "response.mcp_list_tools.failed",
-  "sequence_number": 1,
-  "output_index": 0,
-  "item_id": "mcpl_682d4379df088191886b70f4ec39f90403937d5f622d7a90"
-}
-response.mcp_list_tools.in_progress
-Emitted when the system is in the process of retrieving the list of available MCP tools.
-
-item_id
-string
-
-The ID of the MCP tool call item that is being processed.
-
-output_index
-integer
-
-The index of the output item that is being processed.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.mcp_list_tools.in_progress'.
-
-OBJECT response.mcp_list_tools.in_progress
-{
-  "type": "response.mcp_list_tools.in_progress",
-  "sequence_number": 1,
-  "output_index": 0,
-  "item_id": "mcpl_682d4379df088191886b70f4ec39f90403937d5f622d7a90"
-}
-response.code_interpreter_call.in_progress
-Emitted when a code interpreter call is in progress.
-
-item_id
-string
-
-The unique identifier of the code interpreter tool call item.
-
-output_index
-integer
-
-The index of the output item in the response for which the code interpreter call is in progress.
-
-sequence_number
-integer
-
-The sequence number of this event, used to order streaming events.
-
-type
-string
-
-The type of the event. Always response.code_interpreter_call.in_progress.
-
-OBJECT response.code_interpreter_call.in_progress
-{
-  "type": "response.code_interpreter_call.in_progress",
-  "output_index": 0,
-  "item_id": "ci_12345",
-  "sequence_number": 1
-}
-response.code_interpreter_call.interpreting
-Emitted when the code interpreter is actively interpreting the code snippet.
-
-item_id
-string
-
-The unique identifier of the code interpreter tool call item.
-
-output_index
-integer
-
-The index of the output item in the response for which the code interpreter is interpreting code.
-
-sequence_number
-integer
-
-The sequence number of this event, used to order streaming events.
-
-type
-string
-
-The type of the event. Always response.code_interpreter_call.interpreting.
-
-OBJECT response.code_interpreter_call.interpreting
-{
-  "type": "response.code_interpreter_call.interpreting",
-  "output_index": 4,
-  "item_id": "ci_12345",
-  "sequence_number": 1
-}
-response.code_interpreter_call.completed
-Emitted when the code interpreter call is completed.
-
-item_id
-string
-
-The unique identifier of the code interpreter tool call item.
-
-output_index
-integer
-
-The index of the output item in the response for which the code interpreter call is completed.
-
-sequence_number
-integer
-
-The sequence number of this event, used to order streaming events.
-
-type
-string
-
-The type of the event. Always response.code_interpreter_call.completed.
-
-OBJECT response.code_interpreter_call.completed
-{
-  "type": "response.code_interpreter_call.completed",
-  "output_index": 5,
-  "item_id": "ci_12345",
-  "sequence_number": 1
-}
-response.code_interpreter_call_code.delta
-Emitted when a partial code snippet is streamed by the code interpreter.
-
-delta
-string
-
-The partial code snippet being streamed by the code interpreter.
-
-item_id
-string
-
-The unique identifier of the code interpreter tool call item.
-
-output_index
-integer
-
-The index of the output item in the response for which the code is being streamed.
-
-sequence_number
-integer
-
-The sequence number of this event, used to order streaming events.
-
-type
-string
-
-The type of the event. Always response.code_interpreter_call_code.delta.
-
-OBJECT response.code_interpreter_call_code.delta
-{
-  "type": "response.code_interpreter_call_code.delta",
-  "output_index": 0,
-  "item_id": "ci_12345",
-  "delta": "print('Hello, world')",
-  "sequence_number": 1
-}
-response.code_interpreter_call_code.done
-Emitted when the code snippet is finalized by the code interpreter.
-
-code
-string
-
-The final code snippet output by the code interpreter.
-
-item_id
-string
-
-The unique identifier of the code interpreter tool call item.
-
-output_index
-integer
-
-The index of the output item in the response for which the code is finalized.
-
-sequence_number
-integer
-
-The sequence number of this event, used to order streaming events.
-
-type
-string
-
-The type of the event. Always response.code_interpreter_call_code.done.
-
-OBJECT response.code_interpreter_call_code.done
-{
-  "type": "response.code_interpreter_call_code.done",
-  "output_index": 3,
-  "item_id": "ci_12345",
-  "code": "print('done')",
-  "sequence_number": 1
-}
-response.output_text.annotation.added
-Emitted when an annotation is added to output text content.
-
-annotation
-object
-
-The annotation object being added. (See annotation schema for details.)
-
-annotation_index
-integer
-
-The index of the annotation within the content part.
-
-content_index
-integer
-
-The index of the content part within the output item.
-
-item_id
-string
-
-The unique identifier of the item to which the annotation is being added.
-
-output_index
-integer
-
-The index of the output item in the response's output array.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always 'response.output_text.annotation.added'.
-
-OBJECT response.output_text.annotation.added
-{
-  "type": "response.output_text.annotation.added",
-  "item_id": "item-abc",
-  "output_index": 0,
-  "content_index": 0,
-  "annotation_index": 0,
-  "annotation": {
-    "type": "text_annotation",
-    "text": "This is a test annotation",
-    "start": 0,
-    "end": 10
-  },
-  "sequence_number": 1
-}
-response.queued
-Emitted when a response is queued and waiting to be processed.
-
-response
-object
-
-The full response object that is queued.
-
-
-Show properties
-sequence_number
-integer
-
-The sequence number for this event.
-
-type
-string
-
-The type of the event. Always 'response.queued'.
-
-OBJECT response.queued
+```jsonc
 {
   "type": "response.queued",
   "response": {
-    "id": "res_123",
-    "status": "queued",
-    "created_at": "2021-01-01T00:00:00Z",
-    "updated_at": "2021-01-01T00:00:00Z"
-  },
-  "sequence_number": 1
+    "id": "resp_123",
+    "status": "queued"
+  }
 }
-response.custom_tool_call_input.delta
-Event representing a delta (partial update) to the input of a custom tool call.
+```
 
-delta
-string
+#### Generic `error` event (transport-level)
 
-The incremental input data (delta) for the custom tool call.
-
-item_id
-string
-
-Unique identifier for the API item associated with this event.
-
-output_index
-integer
-
-The index of the output this delta applies to.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The event type identifier.
-
-OBJECT response.custom_tool_call_input.delta
-{
-  "type": "response.custom_tool_call_input.delta",
-  "output_index": 0,
-  "item_id": "ctc_1234567890abcdef",
-  "delta": "partial input text"
-}
-response.custom_tool_call_input.done
-Event indicating that input for a custom tool call is complete.
-
-input
-string
-
-The complete input data for the custom tool call.
-
-item_id
-string
-
-Unique identifier for the API item associated with this event.
-
-output_index
-integer
-
-The index of the output this event applies to.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The event type identifier.
-
-OBJECT response.custom_tool_call_input.done
-{
-  "type": "response.custom_tool_call_input.done",
-  "output_index": 0,
-  "item_id": "ctc_1234567890abcdef",
-  "input": "final complete input text"
-}
-error
-Emitted when an error occurs.
-
-code
-string
-
-The error code.
-
-message
-string
-
-The error message.
-
-param
-string
-
-The error parameter.
-
-sequence_number
-integer
-
-The sequence number of this event.
-
-type
-string
-
-The type of the event. Always error.
-
-OBJECT error
+```jsonc
 {
   "type": "error",
   "code": "ERR_SOMETHING",
@@ -2943,3 +992,86 @@ OBJECT error
   "param": null,
   "sequence_number": 1
 }
+```
+
+Your client should treat both `response.failed` and `error` as failures.
+
+---
+
+## 12.3 Minimal Streaming Client Logic (Conceptual)
+
+Pseudo-code outline:
+
+```ts
+function handleEvent(e: StreamingEvent) {
+  switch (e.type) {
+    case "response.created":
+      state.responseId = e.response.id;
+      break;
+
+    case "response.output_item.added":
+      initOutputItem(e.item);
+      break;
+
+    case "response.output_text.delta":
+      appendTextDelta(e.item_id, e.content_index, e.delta);
+      break;
+
+    case "response.output_text.done":
+      finalizeText(e.item_id, e.content_index, e.text);
+      break;
+
+    case "response.function_call_arguments.delta":
+      appendToolArgsDelta(e.item_id, e.delta);
+      break;
+
+    case "response.function_call_arguments.done":
+      const args = JSON.parse(e.arguments);
+      handleFunctionCall(e.item_id, e.name, args);
+      break;
+
+    case "response.mcp_call_arguments.delta":
+      appendMcpArgsDelta(e.item_id, e.delta);
+      break;
+
+    case "response.mcp_call_arguments.done":
+      const mcpArgs = JSON.parse(e.arguments);
+      handleMcpCall(e.item_id, mcpArgs);
+      break;
+
+    case "response.completed":
+      state.usage = e.response.usage;
+      finalizeConversation(e.response);
+      break;
+
+    case "response.failed":
+    case "response.incomplete":
+    case "error":
+      handleError(e);
+      break;
+
+    default:
+      // ignore others or log for debugging
+  }
+}
+```
+
+You can build all your token tracking, UI streaming, and tool execution logic on top of this event loop.
+
+---
+
+# **13. Summary**
+
+You now have:
+
+* A single unified way to construct **structured inputs** (messages only)
+* Support for **text** and **image** inputs
+* Support for **function** and **MCP** tools and their streaming argument events
+* A pattern for **manual multi-turn state management**
+* A clear view of the **streaming event model**, including:
+
+  * Text deltas (`response.output_text.delta`)
+  * Tool-call arguments (`response.function_call_arguments.*`, `response.mcp_call_arguments.*`)
+  * Completion, failure, and usage (`response.completed`, `response.failed`, `response.incomplete`)
+
+This should be enough for an engineer to wire up a robust, streaming, tool-using agent system on top of the Responses API.

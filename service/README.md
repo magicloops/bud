@@ -29,6 +29,8 @@ DEV_BUD_TOKEN_BYPASS=DEV-LOCAL-ONLY  # optional, for local testing
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4.1-mini
 AGENT_MAX_STEPS=5
+RUN_LOG_MAX_BYTES=104857600
+AGENT_DEBUG=false                    # set true to log OpenAI/Bud debug info
 ```
 
 You can run Postgres however you like (Docker, Supabase, etc.). A quick Docker example:
