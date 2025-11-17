@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
 import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -11,7 +11,7 @@ type CommandComposerProps = {
 }
 
 export function CommandComposer({ messageText, onMessageChange, status, onSubmit, error }: CommandComposerProps) {
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       if (!status || status === 'idle' || status === 'streaming') {

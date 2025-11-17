@@ -61,7 +61,9 @@ const RunFinishedSchema = EnvelopeSchema.extend({
   run_id: z.string(),
   exit_code: z.number().int().nullable().optional(),
   canceled: z.boolean().optional(),
-  signal: z.string().nullable().optional()
+  signal: z.string().nullable().optional(),
+  cwd: z.string().optional(),
+  error: z.string().optional()
 });
 
 const ErrorFrameSchema = EnvelopeSchema.extend({
@@ -256,7 +258,8 @@ class BudConnection {
     await this.runManager.handleRunFinished(result.data.run_id, {
       exit_code: result.data.exit_code ?? null,
       canceled: result.data.canceled,
-      signal: result.data.signal
+      signal: result.data.signal,
+      cwd: result.data.cwd
     });
   }
 

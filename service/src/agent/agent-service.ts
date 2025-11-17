@@ -117,7 +117,7 @@ export class AgentService {
             data: {
               id: ulid(),
               name: toolCall.tool,
-              args: { command: toolCall.command, cwd: toolCall.cwd ?? "~" }
+              args: { command: toolCall.command, cwd: toolCall.cwd ?? null }
             },
             id: ulid()
           });
@@ -143,7 +143,7 @@ export class AgentService {
             runId,
             budId,
             command: toolCall.command,
-            cwd: toolCall.cwd ?? "~",
+            cwd: toolCall.cwd ?? undefined,
             mode: "agent"
           });
           const result = await dispatch.promise;
@@ -497,7 +497,7 @@ export class AgentService {
       tool: directive.tool,
       call_id: directive.callId,
       command: directive.command,
-      cwd: directive.cwd ?? "~",
+      cwd: directive.cwd ?? null,
       exit_code: result.exitCode,
       signal: result.signal,
       stdout_tail: result.stdout,

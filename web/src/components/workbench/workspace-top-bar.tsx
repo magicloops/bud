@@ -6,13 +6,14 @@ type ViewMode = 'terminal' | 'web'
 
 type WorkspaceTopBarProps = {
   budLabel: string
+  currentCwd?: string | null
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
   status: 'idle' | 'dispatching' | 'streaming'
 }
 
-export function WorkspaceTopBar({ budLabel, view, onViewChange, onToggleThreads, status }: WorkspaceTopBarProps) {
+export function WorkspaceTopBar({ budLabel, currentCwd, view, onViewChange, onToggleThreads, status }: WorkspaceTopBarProps) {
   return (
     <div className="flex h-16 items-center justify-between border-b-4 border-black px-6" style={{ backgroundColor: 'var(--chat-bg)' }}>
       <div className="flex items-center gap-4">
@@ -29,6 +30,9 @@ export function WorkspaceTopBar({ budLabel, view, onViewChange, onToggleThreads,
         <div className="flex flex-col">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Active Bud</p>
           <p className="font-mono text-lg font-semibold">{budLabel}</p>
+          <p className="text-[11px] font-mono text-muted-foreground">
+            cwd: {currentCwd ? currentCwd : '—'}
+          </p>
         </div>
       </div>
       <div className="flex items-center gap-2">

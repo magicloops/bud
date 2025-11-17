@@ -40,6 +40,7 @@ type RunContext = {
   stepId: string;
   seq: number;
   mode: DispatchMode;
+  cwd?: string;
   // eslint-disable-next-line no-unused-vars
   resolve?: (result: RunStepResult) => void;
   // eslint-disable-next-line no-unused-vars
@@ -179,7 +180,7 @@ export class RunManager {
         runId: params.runId,
         idx,
         tool: "shell.run",
-        argsJson: { cmd: params.command, cwd: params.cwd },
+        argsJson: { cmd: params.command, cwd: params.cwd ?? null },
         startedAt: now
       })
       .returning({
@@ -197,7 +198,7 @@ export class RunManager {
       id: ulid()
     });
 
-    const frame = {
+    const frame: Record<string, unknown> = {
       proto: "0.1",
       type: "run",
       id: `msg_${ulid()}`,
@@ -205,7 +206,6 @@ export class RunManager {
       ext: {},
       run_id: params.runId,
       cmd: params.command,
-      cwd: params.cwd,
       env: {
         CI: "1",
         LANG: "C.UTF-8",
@@ -214,6 +214,9 @@ export class RunManager {
       timeout_ms: 30 * 60 * 1000,
       use_pty: false
     };
+    if (params.cwd) {
+      frame.cwd = params.cwd;
+    }
 
     this.debug("Dispatching run to Bud", {
       runId: params.runId,
@@ -251,6 +254,7 @@ export class RunManager {
       stepId: step.stepId,
       seq: 0,
       mode: params.mode,
+      cwd: params.cwd,
       resolve: deferred.resolve,
       reject: deferred.reject,
       stdoutTail: "",
@@ -336,7 +340,13 @@ export class RunManager {
 
   async handleRunFinished(
     runId: string,
-    payload: { exit_code: number | null; canceled?: boolean; signal?: string | null }
+    payload: {
+      exit_code: number | null;
+      canceled?: boolean;
+      signal?: string | null;
+      cwd?: string | null;
+      error?: string;
+    }
   ): Promise<void> {
     const context = activeRuns.get(runId);
     const finishedAt = new Date();
@@ -353,18 +363,22 @@ export class RunManager {
 
     const resolvedStatus = payload.canceled
       ? "canceled"
-      : payload.exit_code === 0
+      : payload.exit_code === 0 && !payload.error
         ? "succeeded"
         : "failed";
 
     if (!context || context.mode === "standalone") {
-      await db
-        .update(runTable)
-        .set({
-          status: resolvedStatus,
-          finishedAt
-        })
-        .where(eq(runTable.runId, runId));
+      const updateValues: Record<string, unknown> = {
+        status: resolvedStatus,
+        finishedAt
+      };
+      if (payload.cwd) {
+        updateValues.workspacePath = payload.cwd;
+      }
+      if (payload.error) {
+        updateValues.error = payload.error;
+      }
+      await db.update(runTable).set(updateValues).where(eq(runTable.runId, runId));
 
       await upsertRunSummary({
         runId,
@@ -380,7 +394,9 @@ export class RunManager {
         data: {
           status: resolvedStatus,
           exit_code: payload.exit_code,
-          signal: payload.signal
+          signal: payload.signal,
+          cwd: payload.cwd ?? context?.cwd ?? null,
+          error: payload.error
         },
         id: ulid()
       });

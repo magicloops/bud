@@ -52,6 +52,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [threadPanelOpen, setThreadPanelOpen] = useState(true)
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
+  const [currentCwd, setCurrentCwd] = useState<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   const activeBudProfile = useMemo(() => {
@@ -190,7 +191,11 @@ function App() {
       appendEvent('agent.tool_result', JSON.parse(evt.data))
     })
     source.addEventListener('final', (evt) => {
-      appendEvent('final', JSON.parse(evt.data))
+      const data = JSON.parse(evt.data)
+      appendEvent('final', data)
+      if (typeof data.cwd === 'string') {
+        setCurrentCwd(data.cwd)
+      }
       fetchMessages(thread).catch((err) => {
         console.error('Failed to refresh messages after final event', err)
       })
@@ -230,8 +235,7 @@ function App() {
       role: 'user',
       display_role: 'User',
       content: trimmedMessage,
-      created_at: new Date().toISOString(),
-      metadata: { optimistic: true }
+      created_at: new Date().toISOString()
     }
     setMessages((prev) => [...prev, optimisticMessage])
 
@@ -254,11 +258,10 @@ function App() {
         await fetchThreads(budId)
       }
 
-      const preferredCwd = '~'
       const messageResp = await fetch(`/api/threads/${currentThreadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmedMessage, cwd: preferredCwd })
+        body: JSON.stringify({ text: trimmedMessage })
       })
       if (!messageResp.ok) {
         const body = await messageResp.json().catch(() => ({}))
@@ -336,6 +339,7 @@ function App() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <WorkspaceTopBar
           budLabel={activeBudProfile?.label ?? 'Select a Bud'}
+          currentCwd={currentCwd}
           view={viewMode}
           onViewChange={setViewMode}
           onToggleThreads={() => setThreadPanelOpen((open) => !open)}
