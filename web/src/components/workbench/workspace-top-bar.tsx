@@ -4,8 +4,6 @@ import { cn } from '@/lib/utils'
 
 type ViewMode = 'terminal' | 'web'
 
-type ReasoningEffort = 'none' | 'low' | 'medium' | 'high'
-
 type WorkspaceTopBarProps = {
   budLabel: string
   currentCwd?: string | null
@@ -13,16 +11,7 @@ type WorkspaceTopBarProps = {
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
   status: 'idle' | 'dispatching' | 'streaming'
-  reasoningEffort: ReasoningEffort
-  onReasoningChange: (value: ReasoningEffort) => void
 }
-
-const REASONING_OPTIONS: Array<{ value: ReasoningEffort; label: string }> = [
-  { value: 'none', label: 'Fast' },
-  { value: 'low', label: 'Thinking' },
-  { value: 'medium', label: 'Deep' },
-  { value: 'high', label: 'Max' }
-]
 
 export function WorkspaceTopBar({
   budLabel,
@@ -30,9 +19,7 @@ export function WorkspaceTopBar({
   view,
   onViewChange,
   onToggleThreads,
-  status,
-  reasoningEffort,
-  onReasoningChange
+  status
 }: WorkspaceTopBarProps) {
   return (
     <div className="flex h-16 items-center justify-between border-b-4 border-black px-6" style={{ backgroundColor: 'var(--chat-bg)' }}>
@@ -56,7 +43,6 @@ export function WorkspaceTopBar({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <ReasoningSelect value={reasoningEffort} onChange={onReasoningChange} />
         <span className="text-xs font-mono uppercase tracking-wide text-muted-foreground">
           {status === 'dispatching' ? 'Dispatching' : status === 'streaming' ? 'Streaming' : 'Idle'}
         </span>
@@ -68,30 +54,6 @@ export function WorkspaceTopBar({
         </ViewToggleButton>
       </div>
     </div>
-  )
-}
-
-type ReasoningSelectProps = {
-  value: ReasoningEffort
-  onChange: (value: ReasoningEffort) => void
-}
-
-function ReasoningSelect({ value, onChange }: ReasoningSelectProps) {
-  return (
-    <label className="flex items-center gap-2 rounded-lg border-3 border-black bg-card px-3 py-1.5 font-mono text-[10px] uppercase text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)]">
-      <span>Reasoning</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value as ReasoningEffort)}
-        className="rounded-md border-2 border-black bg-background px-2 py-1 text-[11px] font-mono text-foreground focus:outline-none"
-      >
-        {REASONING_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
   )
 }
 

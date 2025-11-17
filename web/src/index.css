@@ -141,4 +141,8 @@
   body {
     @apply bg-background text-foreground font-sans;
   }
+  html,
+  body {
+    overscroll-behavior: none;
+  }
 }

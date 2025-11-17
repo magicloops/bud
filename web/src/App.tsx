@@ -480,8 +480,6 @@ function App() {
           onViewChange={setViewMode}
           onToggleThreads={() => setThreadPanelOpen((open) => !open)}
           status={status}
-          reasoningEffort={reasoningEffort}
-          onReasoningChange={setReasoningEffort}
         />
         <div className="flex flex-1 overflow-hidden">
           <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
@@ -493,6 +491,8 @@ function App() {
           status={status}
           onSubmit={handleSubmit}
           error={error}
+          reasoningEffort={reasoningEffort}
+          onReasoningChange={setReasoningEffort}
         />
       </div>
     </div>

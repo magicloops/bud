@@ -38,7 +38,6 @@ type RunContext = {
   runId: string;
   budId: string;
   stepId: string;
-  seq: number;
   mode: DispatchMode;
   cwd?: string;
   // eslint-disable-next-line no-unused-vars
@@ -252,7 +251,6 @@ export class RunManager {
       runId: params.runId,
       budId: params.budId,
       stepId: step.stepId,
-      seq: 0,
       mode: params.mode,
       cwd: params.cwd,
       resolve: deferred.resolve,
@@ -293,24 +291,34 @@ export class RunManager {
       const currentBytes = runRow?.logsBytes ?? 0;
       const remaining = Math.max(config.runLogMaxBytes - currentBytes, 0);
       const toStore = remaining >= buffer.length ? buffer : buffer.subarray(0, remaining);
+      let insertedBytes = 0;
       if (toStore.length > 0) {
-        const storeSeq = context.seq;
-        context.seq += 1;
-        await db.insert(runLogTable).values({
-          runId,
-          seq: storeSeq,
-          stream,
-          data: toStore
-        });
+        const inserted = await db
+          .insert(runLogTable)
+          .values({
+            runId,
+            seq,
+            stream,
+            data: toStore
+          })
+          .onConflictDoNothing({
+            target: [runLogTable.runId, runLogTable.seq]
+          })
+          .returning({ seq: runLogTable.seq });
+        if (inserted.length > 0) {
+          insertedBytes = toStore.length;
+        }
       }
-      const newTotal = currentBytes + buffer.length;
-      await db
-        .update(runTable)
-        .set({
-          logsBytes: Math.min(newTotal, config.runLogMaxBytes),
-          logTruncated: newTotal > config.runLogMaxBytes
-        })
-        .where(eq(runTable.runId, runId));
+      if (insertedBytes > 0) {
+        const newTotal = currentBytes + insertedBytes;
+        await db
+          .update(runTable)
+          .set({
+            logsBytes: Math.min(newTotal, config.runLogMaxBytes),
+            logTruncated: newTotal > config.runLogMaxBytes
+          })
+          .where(eq(runTable.runId, runId));
+      }
     }
 
     if (stream === "stdout") {
