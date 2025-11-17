@@ -313,6 +313,7 @@ function App() {
         displayRole: msg.display_role,
         content: msg.content,
         createdAt: msg.created_at,
+        metadata: msg.metadata ?? null
       })),
     [messages]
   )
