@@ -15,14 +15,34 @@ type RunEvent = {
 type ThreadMessage = {
   message_id: string
   role: string
+  display_role: string
+  metadata?: Record<string, unknown>
   content: string
   created_at: string
 }
 
+type ApiBud = {
+  bud_id: string
+  name: string
+  display_name?: string | null
+  accent_color?: string | null
+  status: string
+  tags?: string[]
+  capabilities?: string[]
+  last_run?: {
+    run_id: string
+    status: string
+    exit_code: number | null
+    started_at: string | null
+    finished_at: string | null
+  } | null
+}
+
 function App() {
-  const [budId, setBudId] = useState('b_dev_seed')
+  const [budId, setBudId] = useState<string | null>(null)
   const [messageText, setMessageText] = useState('Clone a repo and list files.')
   const [cwd, setCwd] = useState('~')
+  const [buds, setBuds] = useState<BudProfile[]>([])
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadId, setThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ThreadMessage[]>([])
@@ -35,23 +55,10 @@ function App() {
   const [railCollapsed, setRailCollapsed] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
 
-  const budCatalog: BudProfile[] = useMemo(
-    () => [
-      { id: 'b_dev_seed', label: 'Dev Seed Bud', colorVar: 'var(--avatar-3)', status: 'online' },
-      { id: 'b_laptop_demo', label: 'Laptop Demo Bud', colorVar: 'var(--avatar-1)', status: 'offline' },
-      { id: 'b_lab_cluster', label: 'Lab Cluster Bud', colorVar: 'var(--avatar-2)', status: 'online' },
-    ],
-    []
-  )
-
-  const activeBudProfile =
-    budCatalog.find((bud) => bud.id === budId) ??
-    ({
-      id: budId,
-      label: budId,
-      colorVar: 'var(--accent)',
-      status: 'online',
-    } satisfies BudProfile)
+  const activeBudProfile = useMemo(() => {
+    if (!budId) return undefined
+    return buds.find((bud) => bud.id === budId)
+  }, [budId, buds])
 
   useEffect(() => {
     return () => {
@@ -63,7 +70,32 @@ function App() {
     setLogs((prev) => [...prev, { type, data }])
   }
 
-  const fetchThreads = async (bud: string) => {
+  const fetchBuds = async () => {
+    const resp = await fetch('/api/buds')
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}))
+      throw new Error(body.error ?? `HTTP ${resp.status}`)
+    }
+    const data = (await resp.json()) as ApiBud[]
+    const normalized: BudProfile[] = data.map((bud) => ({
+      id: bud.bud_id,
+      label: bud.display_name ?? bud.name ?? bud.bud_id,
+      accentColor: bud.accent_color ?? undefined,
+      status: bud.status ?? 'offline',
+      tags: bud.tags ?? [],
+      capabilities: bud.capabilities ?? [],
+      lastRun: bud.last_run ?? null
+    }))
+    setBuds(normalized)
+    setBudId((current) => current ?? normalized[0]?.id ?? null)
+  }
+
+  const fetchThreads = async (bud: string | null) => {
+    if (!bud) {
+      setThreads([])
+      setThreadId(null)
+      return
+    }
     const query = bud ? `?bud_id=${encodeURIComponent(bud)}` : ''
     const resp = await fetch(`/api/threads${query}`)
     if (!resp.ok) {
@@ -93,6 +125,12 @@ function App() {
     const data = (await resp.json()) as ThreadMessage[]
     setMessages(data)
   }
+
+  useEffect(() => {
+    fetchBuds().catch((err) => {
+      setError(err instanceof Error ? err.message : 'Failed to load buds')
+    })
+  }, [])
 
   useEffect(() => {
     fetchThreads(budId).catch((err) => {
@@ -144,6 +182,10 @@ function App() {
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
+    if (!budId) {
+      setError('Select a Bud before running commands.')
+      return
+    }
     setError(null)
     setLogs([])
     setStatus('dispatching')
@@ -220,6 +262,7 @@ function App() {
       messages.map((msg) => ({
         id: msg.message_id,
         role: msg.role,
+        displayRole: msg.display_role,
         content: msg.content,
         createdAt: msg.created_at,
       })),
@@ -229,8 +272,8 @@ function App() {
   return (
     <div className="flex h-screen bg-background text-foreground">
       <BudRail
-        buds={budCatalog}
-        activeBudId={budId}
+        buds={buds}
+        activeBudId={budId ?? ''}
         onSelectBud={(nextId) => {
           setBudId(nextId)
           setThreadId(null)
@@ -238,25 +281,25 @@ function App() {
         collapsed={railCollapsed}
         onToggleCollapsed={setRailCollapsed}
       />
-      {threadPanelOpen && (
+      {threadPanelOpen && activeBudProfile && (
         <ThreadPanel
           threads={threads}
           activeThreadId={threadId}
           onSelectThread={(value) => setThreadId(value)}
-          accentColor={activeBudProfile.colorVar}
+          accentColor={activeBudProfile.accentColor ?? 'var(--accent)'}
           budLabel={activeBudProfile.label}
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">
         <WorkspaceTopBar
-          budLabel={activeBudProfile.label}
+          budLabel={activeBudProfile?.label ?? 'Select a Bud'}
           view={viewMode}
           onViewChange={setViewMode}
           onToggleThreads={() => setThreadPanelOpen((open) => !open)}
           status={status}
         />
         <div className="flex flex-1 overflow-hidden border-b-4 border-black">
-          <ChatTimeline messages={chatMessages} accentColor={activeBudProfile.colorVar} />
+          <ChatTimeline messages={chatMessages} accentColor={activeBudProfile?.accentColor ?? 'var(--avatar-3)'} />
           <RunView logs={humanLogs} view={viewMode} runId={runId} status={status} />
         </div>
         <CommandComposer

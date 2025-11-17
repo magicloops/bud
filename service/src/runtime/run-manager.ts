@@ -13,6 +13,7 @@ import {
 import { RunEventBus } from "./event-bus.js";
 import { config } from "../config.js";
 import { sendFrameToBud } from "../ws/gateway.js";
+import { upsertRunSummary } from "../db/run-summary.js";
 
 type RunRequest = {
   threadId: string;
@@ -232,6 +233,14 @@ export class RunManager {
         .update(runTable)
         .set({ status: "failed", finishedAt: new Date(), error: "BUD_OFFLINE" })
         .where(eq(runTable.runId, params.runId));
+      await upsertRunSummary({
+        runId: params.runId,
+        status: "failed",
+        exitCode: null,
+        stdoutBytes: 0,
+        stderrBytes: 0,
+        finishedAt: new Date()
+      });
       throw new Error("bud disconnected");
     }
 
@@ -340,19 +349,34 @@ export class RunManager {
         .where(eq(runStepTable.stepId, context.stepId));
     }
 
+    const resolvedStatus = payload.canceled
+      ? "canceled"
+      : payload.exit_code === 0
+        ? "succeeded"
+        : "failed";
+
     if (!context || context.mode === "standalone") {
       await db
         .update(runTable)
         .set({
-          status: payload.canceled ? "canceled" : payload.exit_code === 0 ? "succeeded" : "failed",
+          status: resolvedStatus,
           finishedAt
         })
         .where(eq(runTable.runId, runId));
 
+      await upsertRunSummary({
+        runId,
+        status: resolvedStatus,
+        exitCode: payload.exit_code ?? null,
+        stdoutBytes: context?.bytes.stdout ?? 0,
+        stderrBytes: context?.bytes.stderr ?? 0,
+        finishedAt
+      });
+
       this.events.emit(runId, {
         event: "final",
         data: {
-          status: payload.canceled ? "canceled" : payload.exit_code === 0 ? "succeeded" : "failed",
+          status: resolvedStatus,
           exit_code: payload.exit_code,
           signal: payload.signal
         },

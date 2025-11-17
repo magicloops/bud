@@ -7,6 +7,8 @@ import { messageTable, runTable } from "../db/schema.js";
 import { RunManager, RunStepResult } from "../runtime/run-manager.js";
 import { RunEventBus } from "../runtime/event-bus.js";
 import type { FastifyBaseLogger } from "fastify";
+import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
+import { upsertRunSummary } from "../db/run-summary.js";
 
 type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
 type InputItem = OpenAI.Responses.CreateParams["input"][number];
@@ -88,6 +90,7 @@ export class AgentService {
     const { runId, budId } = await this.runManager.createRunRecord(threadId, { status: "planning" });
     const conversation = await this.buildConversation(threadId);
     this.debug("Starting agent run", { threadId, runId, entries: conversation.length });
+    const aggregateBytes = { stdout: 0, stderr: 0 };
     try {
       let steps = 0;
       while (steps < config.agentMaxSteps) {
@@ -154,6 +157,8 @@ export class AgentService {
             id: ulid()
           });
 
+          aggregateBytes.stdout += result.bytes.stdout;
+          aggregateBytes.stderr += result.bytes.stderr;
           steps += 1;
           continue;
         }
@@ -162,8 +167,11 @@ export class AgentService {
         await db.insert(messageTable).values({
           threadId,
           role: "assistant",
-          content: directive.message
+          displayRole: "Bud Agent",
+          content: directive.message,
+          metadata: { status: directive.status }
         });
+        await recordThreadMessageMetadata(threadId, directive.message);
         conversation.push(this.createMessageInput("assistant", directive.message));
         await db
           .update(runTable)
@@ -173,6 +181,14 @@ export class AgentService {
             error: directive.status === "failed" ? directive.message : null
           })
           .where(eq(runTable.runId, runId));
+        await upsertRunSummary({
+          runId,
+          status: directive.status,
+          exitCode: directive.status === "succeeded" ? 0 : null,
+          stdoutBytes: aggregateBytes.stdout,
+          stderrBytes: aggregateBytes.stderr,
+          finishedAt: new Date()
+        });
 
         this.events.emit(runId, {
           event: "agent.message",
@@ -203,6 +219,14 @@ export class AgentService {
           error: err instanceof Error ? err.message : "agent_failed"
         })
         .where(eq(runTable.runId, runId));
+      await upsertRunSummary({
+        runId,
+        status: "failed",
+        exitCode: null,
+        stdoutBytes: aggregateBytes.stdout,
+        stderrBytes: aggregateBytes.stderr,
+        finishedAt: new Date()
+      });
 
       this.events.emit(runId, {
         event: "final",
@@ -241,7 +265,8 @@ export class AgentService {
     const rows = await db
       .select({
         role: messageTable.role,
-        content: messageTable.content
+        content: messageTable.content,
+        metadata: messageTable.metadata
       })
       .from(messageTable)
       .where(eq(messageTable.threadId, threadId))
@@ -291,8 +316,20 @@ export class AgentService {
           continue;
         }
       }
-      if (row.role === "assistant" || row.role === "user") {
+      if (row.role === "assistant") {
         items.push(this.createMessageInput(row.role, row.content));
+        continue;
+      }
+      if (row.role === "user") {
+        const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+        const preferredCwd =
+          typeof metadata.preferred_cwd === "string" && metadata.preferred_cwd
+            ? metadata.preferred_cwd
+            : undefined;
+        const content = preferredCwd
+          ? `${row.content}\n\n[Preferred CWD: ${preferredCwd}]`
+          : row.content;
+        items.push(this.createMessageInput("user", content));
       }
     }
     return items;
@@ -455,8 +492,12 @@ export class AgentService {
     await db.insert(messageTable).values({
       threadId,
       role: "tool",
-      content: JSON.stringify(payload)
+      displayRole: "Tool",
+      content: JSON.stringify(payload),
+      metadata: payload
     });
+    const preview = `${directive.tool} exit ${payload.exit_code ?? "?"}`;
+    await recordThreadMessageMetadata(threadId, preview);
     return payload;
   }
 

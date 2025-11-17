@@ -26,9 +26,19 @@ const byteaColumn = customType<{ data: Buffer }>({
 export const budTable = pgTable("bud", {
   budId: text("bud_id").primaryKey(),
   name: text("name").notNull(),
+  displayName: text("display_name"),
   os: text("os").notNull(),
   arch: text("arch").notNull(),
   version: text("version"),
+  accentColor: text("accent_color"),
+  tags: jsonb("tags")
+    .$type<string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  capabilities: jsonb("capabilities")
+    .$type<string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
   status: text("status").notNull().default("offline"),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   deviceSecret: text("device_secret"),
@@ -53,6 +63,11 @@ export const threadTable = pgTable(
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
     title: text("title"),
+    lastMessagePreview: text("last_message_preview"),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    messageCount: integer("message_count").notNull().default(0),
+    pinned: boolean("pinned").notNull().default(false),
+    archived: boolean("archived").notNull().default(false),
     tenantId: text("tenant_id"),
     createdByUserId: text("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
@@ -70,7 +85,12 @@ export const messageTable = pgTable(
       .notNull()
       .references(() => threadTable.threadId, { onDelete: "cascade" }),
     role: text("role", { enum: messageRoleValues }).notNull(),
+    displayRole: text("display_role"),
     content: text("content").notNull(),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     tenantId: text("tenant_id"),
     createdByUserId: text("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
@@ -143,5 +163,30 @@ export const runLogTable = pgTable(
   (table) => ({
     pk: primaryKey({ columns: [table.runId, table.seq], name: "run_log_pkey" }),
     streamIdx: index("run_log_stream_idx").on(table.runId, table.stream, table.seq)
+  })
+);
+
+export const runSummaryTable = pgTable(
+  "run_summary",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => runTable.runId, { onDelete: "cascade" }),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threadTable.threadId, { onDelete: "cascade" }),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    status: text("status", { enum: runStatusValues }).notNull(),
+    exitCode: integer("exit_code"),
+    stdoutBytes: bigint("stdout_bytes", { mode: "number" }).notNull().default(0),
+    stderrBytes: bigint("stderr_bytes", { mode: "number" }).notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true })
+  },
+  (table) => ({
+    budIdx: index("run_summary_bud_idx").on(table.budId, table.startedAt),
+    threadIdx: index("run_summary_thread_idx").on(table.threadId, table.startedAt)
   })
 );

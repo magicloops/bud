@@ -5,6 +5,7 @@ import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 export type ChatMessage = {
   id: string
   role: string
+  displayRole: string
   content: string
   createdAt: string
 }
@@ -15,10 +16,10 @@ type ChatTimelineProps = {
 }
 
 export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
-  const [systemColor, setSystemColor] = useState(accentColor)
+  const [systemColor, setSystemColor] = useState(accentColor || 'var(--avatar-3)')
 
   useEffect(() => {
-    const resolved = resolveCssVar(accentColor)
+    const resolved = resolveCssVar(accentColor || 'var(--avatar-3)')
     setSystemColor(getMutedColor(resolved, 0.4))
   }, [accentColor])
 
@@ -52,7 +53,7 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
               style={{ backgroundColor: isUser ? undefined : systemColor }}
             >
               <div className="mb-1 flex items-center justify-between text-[11px] font-mono uppercase text-muted-foreground">
-                <span>{isUser ? 'User' : message.role}</span>
+                <span>{message.displayRole || (isUser ? 'User' : message.role)}</span>
                 <time>{new Date(message.createdAt).toLocaleTimeString()}</time>
               </div>
               <p>{message.content}</p>

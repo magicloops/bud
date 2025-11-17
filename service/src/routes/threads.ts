@@ -5,6 +5,7 @@ import { budTable, messageTable, threadTable } from "../db/schema.js";
 import { eq, desc, asc } from "drizzle-orm";
 import { AgentService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
+import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 
 const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),
@@ -33,7 +34,12 @@ function serializeThread(row: typeof threadTable.$inferSelect) {
     thread_id: row.threadId,
     bud_id: row.budId,
     title: row.title,
-    created_at: row.createdAt
+    created_at: row.createdAt,
+    last_activity_at: row.lastActivityAt,
+    last_message_preview: row.lastMessagePreview,
+    message_count: row.messageCount,
+    pinned: row.pinned,
+    archived: row.archived
   };
 }
 
@@ -41,7 +47,9 @@ function serializeMessage(row: typeof messageTable.$inferSelect) {
   return {
     message_id: row.messageId,
     role: row.role,
+    display_role: row.displayRole ?? row.role,
     content: row.content,
+    metadata: row.metadata ?? {},
     created_at: row.createdAt
   };
 }
@@ -57,7 +65,7 @@ export async function registerThreadRoutes(
       .select()
       .from(threadTable)
       .where(query.bud_id ? eq(threadTable.budId, query.bud_id) : undefined)
-      .orderBy(desc(threadTable.createdAt));
+      .orderBy(desc(threadTable.lastActivityAt));
     return threads.map(serializeThread);
   });
 
@@ -125,16 +133,18 @@ export async function registerThreadRoutes(
       return;
     }
 
-    const messageContent = body.cwd ? `${body.text}\n\n[Preferred CWD: ${body.cwd}]` : body.text;
-
+    const metadata: Record<string, unknown> = body.cwd ? { preferred_cwd: body.cwd } : {};
     const [message] = await db
       .insert(messageTable)
       .values({
         threadId: thread.threadId,
         role: "user",
-        content: messageContent
+        displayRole: "User",
+        content: body.text,
+        metadata
       })
       .returning({ messageId: messageTable.messageId });
+    await recordThreadMessageMetadata(thread.threadId, body.text);
 
     try {
       const result = await agentService.handleUserMessage(thread.threadId);

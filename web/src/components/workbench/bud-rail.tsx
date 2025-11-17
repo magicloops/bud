@@ -5,8 +5,17 @@ import { useTheme } from '@/components/theme-provider'
 export type BudProfile = {
   id: string
   label: string
-  colorVar: string
-  status?: 'online' | 'offline'
+  accentColor?: string | null
+  status: string
+  tags?: string[]
+  capabilities?: string[]
+  lastRun?: {
+    run_id: string
+    status: string
+    exit_code: number | null
+    started_at: string | null
+    finished_at: string | null
+  } | null
 }
 
 type BudRailProps = {
@@ -41,6 +50,7 @@ export function BudRail({ buds, activeBudId, onSelectBud, collapsed, onToggleCol
       <div className="flex flex-1 flex-col gap-3 p-3">
         {buds.map((bud, index) => {
           const isActive = bud.id === activeBudId
+          const accent = bud.accentColor ?? 'var(--sidebar-primary)'
           return (
             <button
               key={bud.id}
@@ -51,12 +61,16 @@ export function BudRail({ buds, activeBudId, onSelectBud, collapsed, onToggleCol
                 isActive ? 'translate-y-0 border-black shadow-none' : 'shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'
               )}
               style={{
-                backgroundColor: bud.colorVar,
+                backgroundColor: accent,
                 opacity: isActive ? 1 : 0.55,
               }}
             >
               <Server className="h-5 w-5 text-black" />
               <span className="mt-1 font-mono text-xs font-bold text-black">{index + 1}</span>
+              <span
+                className="absolute bottom-2 right-2 h-3 w-3 rounded-full border border-black"
+                style={{ backgroundColor: bud.status === 'online' ? '#16a34a' : '#f97316' }}
+              />
             </button>
           )
         })}

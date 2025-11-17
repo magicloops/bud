@@ -9,6 +9,11 @@ export type ThreadSummary = {
   bud_id: string
   title: string | null
   created_at: string
+  last_activity_at?: string | null
+  last_message_preview?: string | null
+  message_count?: number
+  pinned?: boolean
+  archived?: boolean
 }
 
 type ThreadPanelProps = {
@@ -30,15 +35,20 @@ function relativeTime(iso: string) {
 }
 
 export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentColor, budLabel }: ThreadPanelProps) {
-  const [mutedColor, setMutedColor] = useState(accentColor)
+  const [mutedColor, setMutedColor] = useState(accentColor ?? 'var(--accent)')
 
   useEffect(() => {
-    const resolved = resolveCssVar(accentColor)
+    const resolved = resolveCssVar(accentColor ?? 'var(--accent)')
     setMutedColor(getMutedColor(resolved, 0.35))
   }, [accentColor])
 
   const orderedThreads = useMemo(
-    () => [...threads].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    () =>
+      [...threads].sort((a, b) => {
+        const aTs = new Date(a.last_activity_at ?? a.created_at).getTime()
+        const bTs = new Date(b.last_activity_at ?? b.created_at).getTime()
+        return bTs - aTs
+      }),
     [threads]
   )
 
@@ -74,6 +84,7 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentCol
         )}
         {orderedThreads.map((thread) => {
           const isActive = thread.thread_id === activeThreadId
+          const activityTs = thread.last_activity_at ?? thread.created_at
           return (
             <button
               key={thread.thread_id}
@@ -88,8 +99,20 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentCol
                 backgroundColor: isActive ? mutedColor : 'var(--card)',
               }}
             >
-              <p className="line-clamp-1 text-sm font-semibold">{thread.title ?? 'Untitled thread'}</p>
-              <p className="text-xs text-muted-foreground">{relativeTime(thread.created_at)}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="line-clamp-1 text-sm font-semibold">{thread.title ?? 'Untitled thread'}</p>
+                {thread.message_count != null && (
+                  <span className="rounded-full border border-black px-2 py-px text-[10px] font-mono">
+                    {thread.message_count}
+                  </span>
+                )}
+              </div>
+              <p className="line-clamp-2 text-xs text-muted-foreground">
+                {thread.last_message_preview ?? '—'}
+              </p>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                {relativeTime(activityTs)}
+              </p>
             </button>
           )
         })}
