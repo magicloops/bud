@@ -3,15 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { BudRail, type BudProfile } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
-import { RunView } from '@/components/workbench/run-view'
+import { RunView, type ShellEntry } from '@/components/workbench/run-view'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
-
-type RunEvent = {
-  type: string
-  data: Record<string, unknown>
-}
 
 type ThreadMessage = {
   message_id: string
@@ -46,13 +41,13 @@ function App() {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadId, setThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ThreadMessage[]>([])
-  const [runId, setRunId] = useState<string | null>(null)
-  const [logs, setLogs] = useState<RunEvent[]>([])
+  const [terminalEntries, setTerminalEntries] = useState<ShellEntry[]>([])
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [threadPanelOpen, setThreadPanelOpen] = useState(true)
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
   const [currentCwd, setCurrentCwd] = useState<string | null>(null)
+  const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
   const eventSourceRef = useRef<EventSource | null>(null)
 
   const activeBudProfile = useMemo(() => {
@@ -81,8 +76,139 @@ function App() {
     root.style.setProperty('--bud-accent-soft', palette.soft)
   }, [palette])
 
-  const appendEvent = (type: string, data: Record<string, unknown>) => {
-    setLogs((prev) => [...prev, { type, data }])
+  const findActiveEntryIndex = (entries: ShellEntry[]) => {
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      if (entries[i].status === 'running') {
+        return i
+      }
+    }
+    return -1
+  }
+
+  const startShellEntry = (payload: Record<string, unknown>) => {
+    const args = (payload.args ?? {}) as Record<string, unknown>
+    const entry: ShellEntry = {
+      id: typeof payload.id === 'string' ? payload.id : `call_${Date.now()}`,
+      command: typeof args.command === 'string' && args.command.length > 0 ? args.command : 'shell.run',
+      cwd: typeof args.cwd === 'string' && args.cwd.length > 0 ? args.cwd : null,
+      status: 'running',
+      stdout: [],
+      stderr: [],
+      exitCode: null,
+      startedAt: Date.now()
+    }
+    setTerminalEntries((prev) => [...prev, entry])
+  }
+
+  const appendStreamChunk = (stream: 'stdout' | 'stderr', payload: Record<string, unknown>) => {
+    const chunk = typeof payload.chunk === 'string' ? payload.chunk : ''
+    if (!chunk) {
+      return
+    }
+    setTerminalEntries((prev) => {
+      const next = [...prev]
+      const idx = findActiveEntryIndex(next)
+      if (idx === -1) {
+        const fallback: ShellEntry = {
+          id: `stream_${Date.now()}`,
+          command: 'shell.run',
+          cwd: null,
+          status: 'running',
+          stdout: stream === 'stdout' ? [chunk] : [],
+          stderr: stream === 'stderr' ? [chunk] : [],
+          exitCode: null,
+          startedAt: Date.now()
+        }
+        next.push(fallback)
+        return next
+      }
+      const target = next[idx]
+      next[idx] = {
+        ...target,
+        stdout: stream === 'stdout' ? [...target.stdout, chunk] : target.stdout,
+        stderr: stream === 'stderr' ? [...target.stderr, chunk] : target.stderr
+      }
+      return next
+    })
+  }
+
+  const finalizeShellEntry = (payload: Record<string, unknown>) => {
+    setTerminalEntries((prev) => {
+      if (prev.length === 0) {
+        return prev
+      }
+      const next = [...prev]
+      const idx = findActiveEntryIndex(next)
+      if (idx === -1) {
+        return prev
+      }
+      const entry = next[idx]
+      const exit = typeof payload.exit_code === 'number' ? payload.exit_code : null
+      let stdout = entry.stdout
+      let stderr = entry.stderr
+      let addedError = false
+      if (stdout.length === 0 && typeof payload.stdout === 'string' && payload.stdout.length > 0) {
+        stdout = [...stdout, payload.stdout]
+      }
+      if (stderr.length === 0 && typeof payload.stderr === 'string' && payload.stderr.length > 0) {
+        stderr = [...stderr, payload.stderr]
+        addedError = true
+      }
+      const status: ShellEntry['status'] =
+        exit === null ? (addedError ? 'failed' : 'succeeded') : exit === 0 ? 'succeeded' : 'failed'
+      next[idx] = {
+        ...entry,
+        stdout,
+        stderr,
+        exitCode: exit,
+        status,
+        finishedAt: Date.now()
+      }
+      return next
+    })
+  }
+
+  const recordTerminalError = (message: string, cwd?: string | null) => {
+    if (!message) {
+      return
+    }
+    setTerminalEntries((prev) => {
+      const next = [...prev]
+      if (next.length === 0) {
+        const entry: ShellEntry = {
+          id: `error_${Date.now()}`,
+          command: 'shell.run',
+          cwd: typeof cwd === 'string' && cwd.length > 0 ? cwd : null,
+          status: 'failed',
+          stdout: [],
+          stderr: [message],
+          exitCode: null,
+          startedAt: Date.now(),
+          finishedAt: Date.now()
+        }
+        return [entry]
+      }
+      const idx = findActiveEntryIndex(next)
+      if (idx === -1) {
+        const lastIdx = next.length - 1
+        const last = next[lastIdx]
+        next[lastIdx] = {
+          ...last,
+          stderr: [...last.stderr, message],
+          status: 'failed',
+          finishedAt: Date.now()
+        }
+        return next
+      }
+      const entry = next[idx]
+      next[idx] = {
+        ...entry,
+        stderr: [...entry.stderr, message],
+        status: 'failed',
+        finishedAt: Date.now()
+      }
+      return next
+    })
   }
 
   const fetchBuds = async () => {
@@ -163,6 +289,12 @@ function App() {
     })
   }, [threadId])
 
+  useEffect(() => {
+    setTerminalEntries([])
+    eventSourceRef.current?.close()
+    setStatus('idle')
+  }, [threadId])
+
   const startStream = (id: string, thread: string) => {
     eventSourceRef.current?.close()
     const source = new EventSource(`/api/runs/${id}/stream`)
@@ -170,42 +302,73 @@ function App() {
     setStatus('streaming')
 
     source.addEventListener('status', (evt) => {
-      appendEvent('status', JSON.parse(evt.data))
+      try {
+        const data = JSON.parse(evt.data) as { phase?: string }
+        if (data.phase === 'planning') {
+          setStatus('dispatching')
+        } else if (data.phase === 'running') {
+          setStatus('streaming')
+        }
+      } catch (err) {
+        console.error('Failed to parse status event', err)
+      }
     })
     source.addEventListener('exec.stdout', (evt) => {
-      appendEvent('stdout', JSON.parse(evt.data))
+      try {
+        appendStreamChunk('stdout', JSON.parse(evt.data) as Record<string, unknown>)
+      } catch (err) {
+        console.error('Failed to parse stdout event', err)
+      }
     })
     source.addEventListener('exec.stderr', (evt) => {
-      appendEvent('stderr', JSON.parse(evt.data))
+      try {
+        appendStreamChunk('stderr', JSON.parse(evt.data) as Record<string, unknown>)
+      } catch (err) {
+        console.error('Failed to parse stderr event', err)
+      }
     })
-    source.addEventListener('agent.message', (evt) => {
-      appendEvent('agent.message', JSON.parse(evt.data))
+    source.addEventListener('agent.message', () => {
       fetchMessages(thread).catch((err) => {
         console.error('Failed to refresh messages after agent message', err)
       })
     })
     source.addEventListener('agent.tool_call', (evt) => {
-      appendEvent('agent.tool_call', JSON.parse(evt.data))
+      try {
+        startShellEntry(JSON.parse(evt.data) as Record<string, unknown>)
+      } catch (err) {
+        console.error('Failed to parse tool call event', err)
+      }
     })
     source.addEventListener('agent.tool_result', (evt) => {
-      appendEvent('agent.tool_result', JSON.parse(evt.data))
+      try {
+        finalizeShellEntry(JSON.parse(evt.data) as Record<string, unknown>)
+      } catch (err) {
+        console.error('Failed to parse tool result event', err)
+      }
     })
     source.addEventListener('final', (evt) => {
-      const data = JSON.parse(evt.data)
-      appendEvent('final', data)
-      if (typeof data.cwd === 'string') {
-        setCurrentCwd(data.cwd)
+      try {
+        const data = JSON.parse(evt.data) as Record<string, unknown>
+        if (typeof data.cwd === 'string') {
+          setCurrentCwd(data.cwd)
+        }
+        if (typeof data.error === 'string' && data.error.length > 0) {
+          recordTerminalError(data.error, typeof data.cwd === 'string' ? data.cwd : null)
+        }
+        fetchMessages(thread).catch((err) => {
+          console.error('Failed to refresh messages after final event', err)
+        })
+      } catch (err) {
+        console.error('Failed to process final event', err)
+      } finally {
+        source.close()
+        setStatus('idle')
       }
-      fetchMessages(thread).catch((err) => {
-        console.error('Failed to refresh messages after final event', err)
-      })
-      source.close()
-      setStatus('idle')
     })
     source.onerror = () => {
       source.close()
       setStatus('idle')
-      appendEvent('error', { message: 'SSE connection closed' })
+      recordTerminalError('SSE connection closed unexpectedly')
     }
   }
 
@@ -221,10 +384,9 @@ function App() {
       return
     }
     setError(null)
-    setLogs([])
+    setTerminalEntries([])
     setStatus('dispatching')
     eventSourceRef.current?.close()
-    setRunId(null)
     setMessageText('')
     const optimisticId =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -254,56 +416,29 @@ function App() {
         const data = (await threadResp.json()) as { threadId: string }
         currentThreadId = data.threadId
         setThreadId(currentThreadId)
-        appendEvent('thread', { threadId: currentThreadId })
         await fetchThreads(budId)
       }
 
       const messageResp = await fetch(`/api/threads/${currentThreadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmedMessage })
+        body: JSON.stringify({ text: trimmedMessage, reasoning_effort: reasoningEffort })
       })
       if (!messageResp.ok) {
         const body = await messageResp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
       const messageData = (await messageResp.json()) as { runId: string; messageId: string }
-      setRunId(messageData.runId)
       await fetchMessages(currentThreadId)
-      appendEvent('message', { messageId: messageData.messageId })
-      appendEvent('status', { phase: 'running', runId: messageData.runId })
       startStream(messageData.runId, currentThreadId)
     } catch (err) {
       setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
       setStatus('idle')
       const message = err instanceof Error ? err.message : 'Failed to start run'
       setError(message)
-      appendEvent('error', { message })
+      recordTerminalError(message)
     }
   }
-
-  const humanLogs = useMemo(
-    () =>
-      logs.map((evt) => {
-        if (evt.type === 'stdout' || evt.type === 'stderr') {
-          return `${evt.type.padEnd(7, ' ')} › ${evt.data.chunk ?? ''}`
-        }
-        if (evt.type === 'agent.message') {
-          return `agent      › ${evt.data.text ?? ''}`
-        }
-        if (evt.type === 'agent.tool_call') {
-          return `tool call  › ${JSON.stringify(evt.data)}`
-        }
-        if (evt.type === 'agent.tool_result') {
-          return `tool result› ${JSON.stringify(evt.data)}`
-        }
-        if (evt.type === 'final') {
-          return `final      › ${JSON.stringify(evt.data)}`
-        }
-        return `${evt.type} › ${JSON.stringify(evt.data)}`
-      }),
-    [logs]
-  )
 
   const chatMessages: ChatMessage[] = useMemo(
     () =>
@@ -345,10 +480,12 @@ function App() {
           onViewChange={setViewMode}
           onToggleThreads={() => setThreadPanelOpen((open) => !open)}
           status={status}
+          reasoningEffort={reasoningEffort}
+          onReasoningChange={setReasoningEffort}
         />
         <div className="flex flex-1 overflow-hidden">
           <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
-          <RunView logs={humanLogs} view={viewMode} runId={runId} status={status} />
+          <RunView entries={terminalEntries} view={viewMode} status={status} />
         </div>
         <CommandComposer
           messageText={messageText}

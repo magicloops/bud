@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { ulid } from "ulid";
 import { asc, eq } from "drizzle-orm";
-import { config } from "../config.js";
+import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { messageTable, runTable } from "../db/schema.js";
 import { RunManager, RunStepResult } from "../runtime/run-manager.js";
@@ -66,6 +66,8 @@ export class AgentService {
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
   private readonly openaiDebugEnabled: boolean;
+  private readonly defaultReasoningEffort: ReasoningEffortSetting;
+  private readonly supportsReasoningNone: boolean;
 
   constructor(
     client: OpenAI,
@@ -81,14 +83,20 @@ export class AgentService {
     this.logger = logger;
     this.debugEnabled = debugEnabled;
     this.openaiDebugEnabled = openaiDebugEnabled;
+    this.defaultReasoningEffort = config.agentReasoningEffortDefault;
+    this.supportsReasoningNone = this.detectReasoningNoneSupport(config.openaiModel);
     if (!config.openaiApiKey) {
       throw new Error("OPENAI_API_KEY is required to run the agent");
     }
   }
 
-  async startUserMessage(threadId: string): Promise<{ runId: string }> {
+  async startUserMessage(
+    threadId: string,
+    options?: { reasoningEffort?: ReasoningEffortSetting | null }
+  ): Promise<{ runId: string }> {
+    const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
     const { runId, budId } = await this.runManager.createRunRecord(threadId, { status: "planning" });
-    void this.runAgentFlow({ threadId, budId, runId }).catch((err) => {
+    void this.runAgentFlow({ threadId, budId, runId, reasoningEffort: requestedEffort }).catch((err) => {
       this.logger.error({ err, runId, threadId, component: "agent" }, "Agent flow failed");
     });
     return { runId };
@@ -97,19 +105,21 @@ export class AgentService {
   private async runAgentFlow({
     threadId,
     budId,
-    runId
+    runId,
+    reasoningEffort
   }: {
     threadId: string;
     budId: string;
     runId: string;
+    reasoningEffort: ReasoningEffortSetting;
   }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
-    this.debug("Starting agent run", { threadId, runId, entries: conversation.length });
+    this.debug("Starting agent run", { threadId, runId, entries: conversation.length, reasoningEffort });
     const aggregateBytes = { stdout: 0, stderr: 0 };
     try {
       let steps = 0;
       while (steps < config.agentMaxSteps) {
-        const response = await this.invokeModel(conversation);
+        const response = await this.invokeModel(conversation, reasoningEffort);
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           this.events.emit(runId, {
@@ -350,19 +360,24 @@ export class AgentService {
     return items;
   }
 
-  private async invokeModel(input: InputItem[]): Promise<OpenAIResponse> {
+  private async invokeModel(
+    input: InputItem[],
+    reasoningEffort: ReasoningEffortSetting
+  ): Promise<OpenAIResponse> {
     const last = input.at(-1);
     const lastRole = last && "type" in last && last?.type === "message" ? last.role : "n/a";
     this.debug("Calling OpenAI Responses", {
       entries: input.length,
-      lastRole
+      lastRole,
+      reasoningEffort
     });
     const response = await this.client.responses.create({
       model: config.openaiModel,
       input,
       tools: [SHELL_TOOL],
       tool_choice: "auto",
-      max_output_tokens: config.agentMaxOutputTokens
+      max_output_tokens: config.agentMaxOutputTokens,
+      reasoning: { effort: reasoningEffort }
     });
     const outputItems =
       (response as { output?: Array<{ type?: string }> }).output ?? [];
@@ -398,7 +413,20 @@ export class AgentService {
     try {
       parsed = JSON.parse(jsonText);
     } catch (err) {
-      throw new Error(`failed to parse agent response as JSON: ${(err as Error).message}`);
+      this.logger.warn(
+        {
+          err,
+          responseId: response.id,
+          component: "agent",
+          rawText: trimmed.slice(0, 500)
+        },
+        "Agent response was not JSON; falling back to plain text"
+      );
+      return {
+        type: "final",
+        status: "succeeded",
+        message: trimmed
+      };
     }
 
     if (typeof parsed !== "object" || parsed === null) {
@@ -430,6 +458,19 @@ export class AgentService {
       };
     }
     throw new Error("unknown agent directive");
+  }
+
+  private normalizeReasoningEffort(requested?: ReasoningEffortSetting | null): ReasoningEffortSetting {
+    const desired = requested ?? this.defaultReasoningEffort;
+    if (desired === "none" && !this.supportsReasoningNone) {
+      return "low";
+    }
+    return desired;
+  }
+
+  private detectReasoningNoneSupport(model: string): boolean {
+    const normalized = model.toLowerCase();
+    return normalized.includes("gpt-5.1") || normalized.includes("gpt-5o") || normalized.includes("o1");
   }
 
   private extractFunctionCall(response: OpenAIResponse): AgentDirective | null {

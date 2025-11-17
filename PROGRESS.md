@@ -1,12 +1,12 @@
 # Bud PoC Progress — Phase 4 Snapshot
 
-_Last updated: 2025-02-17T07:55:00Z_
+_Last updated: 2025-11-17T09:01:59Z_
 
 ## What’s implemented
 - **Agent loop**: backend now uses OpenAI Responses tool-calling end-to-end—threads/messages hydrate context, we send `input_text` items, register the `shell.run` function schema, and parse structured `function_call` outputs before dispatching runs to Bud. SSE streams `agent.*` + `exec.*` events interleaved with stdout/stderr.
 - **Threaded runs**: Run creation is tied to threads, `run_step` rows and log tails are recorded per tool call, and the event bus assigns ULID IDs for resume.
 - **Bud executor**: Rust agent handles enrollment (with optional dev-token bypass), WSS heartbeats, serial shell execution, and base64 log streaming with `run_finished` frames. Bud now owns its working directory, reports `cwd` + `error` in `run_finished`, and keeps running even if the backend omits `cwd`.
-- **Web console**: Vite helper now ships a Bud workbench—neo‑brutalist shadcn/Tailwind layout with a Bud rail, thread list, chat timeline, terminal/web viewport toggle, and composer that still speaks to today’s `/api/threads` + SSE stack. Optimistic user messages show instantly and the SSE stream updates messages + current `cwd` as the run finishes.
+- **Web console**: Vite helper now ships a Bud workbench—neo‑brutalist shadcn/Tailwind layout with a Bud rail, thread list, chat timeline, terminal/web viewport toggle, and composer that still speaks to today’s `/api/threads` + SSE stack. Optimistic user messages show instantly, the SSE stream updates messages + current `cwd` as the run finishes, assistant/tool entries render richly (Markdown via `react-markdown` + `remark-breaks`, structured tool call cards with expandable JSON viewer, and per-message collapse toggles for >500 px histories), the terminal pane mirrors a real shell transcript (prompt + command rows, streaming stdout/stderr, exit codes, inline “running…” indicators keyed off tool calls), and operators can choose GPT‑5 reasoning effort (Fast/Thinking/Deep/Max) which threads through to the backend/OpenAI config.
 - **Docs/Plans**: `service/README.md`, `docs/proto.md`, `plan/phase-4-agent-loop.md`, and `debug/` notes cover architecture, SSE payloads, and current gaps.
 
 ## Known gaps / next phases
@@ -15,6 +15,7 @@ _Last updated: 2025-02-17T07:55:00Z_
 - **Reliability polish**: SSE replay/`Last-Event-ID`, run log truncation UX/downloads, and queue/backpressure on Bud dispatch.
 - **Security & ergonomics**: workspace isolation, richer denylist, friendlier error reporting/testing knobs for mock LLMs.
 - **UI schema alignment**: wire the new workbench components to richer Bud metadata (availability, tags), tabbed log panes, and future settings drawers once backend schemas catch up.
+- **Rich transcripts**: persist the new shell transcript objects (Markdown/tool metadata + stdout/stderr chunks) downstream so uploads/export keep formatting (ties into upcoming schema doc in `plan/ui-schema-alignment.md`).
 
 ## Quick start
 1. `pnpm db:migrate && pnpm db:seed` inside `service/` (local Postgres).

@@ -14,7 +14,8 @@ const CreateThreadSchema = z.object({
 
 const CreateMessageSchema = z.object({
   text: z.string().min(1),
-  cwd: z.string().optional()
+  cwd: z.string().optional(),
+  reasoning_effort: z.enum(["none", "low", "medium", "high"]).optional()
 });
 
 const ThreadParamsSchema = z.object({
@@ -147,7 +148,9 @@ export async function registerThreadRoutes(
     await recordThreadMessageMetadata(thread.threadId, body.text);
 
     try {
-      const { runId } = await agentService.startUserMessage(thread.threadId);
+      const { runId } = await agentService.startUserMessage(thread.threadId, {
+        reasoningEffort: body.reasoning_effort ?? null
+      });
       reply.code(201).send({ messageId: message.messageId, runId });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");
