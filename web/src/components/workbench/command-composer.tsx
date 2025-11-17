@@ -14,7 +14,7 @@ type CommandComposerProps = {
 
 const REASONING_OPTIONS = [
   { value: 'none', label: 'Fast' },
-  { value: 'low', label: 'Thinking' },
+  { value: 'low', label: 'Think' },
   { value: 'medium', label: 'Deep' },
   { value: 'high', label: 'Max' }
 ] as const
@@ -32,7 +32,7 @@ export function CommandComposer({
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       if (!status || status === 'idle' || status === 'streaming') {
-        ;(event.currentTarget.form as HTMLFormElement | null)?.requestSubmit()
+        ; (event.currentTarget.form as HTMLFormElement | null)?.requestSubmit()
       }
     }
   }
@@ -52,7 +52,7 @@ export function CommandComposer({
         <select
           value={reasoningEffort}
           onChange={(event) => onReasoningChange(event.target.value as 'none' | 'low' | 'medium' | 'high')}
-          className="rounded-lg border-3 border-black bg-card px-3 py-2 font-mono text-[11px] uppercase text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none"
+          className="rounded-lg border-3 border-black bg-card w-[75px] px-2 py-2 font-mono text-[11px] uppercase text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none"
           disabled={status === 'dispatching'}
         >
           {REASONING_OPTIONS.map((option) => (
@@ -61,15 +61,15 @@ export function CommandComposer({
             </option>
           ))}
         </select>
-      <Button
-        type="submit"
-        size="icon"
-        disabled={status === 'dispatching'}
-        className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
-        style={{ backgroundColor: 'var(--bud-accent-muted)' }}
-      >
-        <Send className="h-4 w-4" />
-      </Button>
+        <Button
+          type="submit"
+          size="icon"
+          disabled={status === 'dispatching'}
+          className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
+          style={{ backgroundColor: 'var(--bud-accent-muted)' }}
+        >
+          <Send className="h-4 w-4" />
+        </Button>
       </div>
     </form>
   )

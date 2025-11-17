@@ -52,3 +52,6 @@
 ## Out of scope
 - Persisting per-thread reasoning preferences.
 - Surfacing effort per run in SSE/terminal history (can add later with run metadata).
+
+## Status
+- **2025-11-17**: Completed backend plumbing (`config.ts`, `agent-service.ts`, `/api/threads/:id/messages`) and UI selector (now lives in the command composer beside the send button). Selector values map to OpenAI’s `reasoning.effort`, defaulting to `none` but auto-coercing to `low` for models that don’t support it. `.env.example` + `PROGRESS.md` updated; remaining follow-up is to document the behavior in `web/README.md` and consider persisting per-thread preferences later.

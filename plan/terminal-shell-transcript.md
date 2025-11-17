@@ -54,3 +54,6 @@
 - Persisting transcripts server-side (still derived from SSE).
 - Fancy terminal emulation (PTY, ANSI colors, input).
 - Cancel semantics (Phase 5).
+
+## Status
+- **2025-11-17**: Implemented structured `ShellEntry` hydration in `web/src/App.tsx` and refreshed `RunView` to render Bud-like prompts with streaming stdout/stderr, running indicators, and exit codes. Terminal pane now resets per thread, and the new styling (lighter stdout / red stderr) matches sample UI guidance. Remaining follow-up: document behavior in `web/README.md` and consider persisting transcripts server-side.
