@@ -147,10 +147,10 @@ export async function registerThreadRoutes(
     await recordThreadMessageMetadata(thread.threadId, body.text);
 
     try {
-      const result = await agentService.handleUserMessage(thread.threadId);
-      reply.code(201).send({ messageId: message.messageId, runId: result.runId });
+      const { runId } = await agentService.startUserMessage(thread.threadId);
+      reply.code(201).send({ messageId: message.messageId, runId });
     } catch (err) {
-      server.log.error({ err }, "Agent failed to process message");
+      server.log.error({ err }, "Agent failed to queue message");
       reply.code(500).send({ error: (err as Error).message });
     }
   });

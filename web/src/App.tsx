@@ -162,7 +162,7 @@ function App() {
     })
   }, [threadId])
 
-  const startStream = (id: string) => {
+  const startStream = (id: string, thread: string) => {
     eventSourceRef.current?.close()
     const source = new EventSource(`/api/runs/${id}/stream`)
     eventSourceRef.current = source
@@ -179,6 +179,9 @@ function App() {
     })
     source.addEventListener('agent.message', (evt) => {
       appendEvent('agent.message', JSON.parse(evt.data))
+      fetchMessages(thread).catch((err) => {
+        console.error('Failed to refresh messages after agent message', err)
+      })
     })
     source.addEventListener('agent.tool_call', (evt) => {
       appendEvent('agent.tool_call', JSON.parse(evt.data))
@@ -188,6 +191,9 @@ function App() {
     })
     source.addEventListener('final', (evt) => {
       appendEvent('final', JSON.parse(evt.data))
+      fetchMessages(thread).catch((err) => {
+        console.error('Failed to refresh messages after final event', err)
+      })
       source.close()
       setStatus('idle')
     })
@@ -204,12 +210,30 @@ function App() {
       setError('Select a Bud before running commands.')
       return
     }
+    const trimmedMessage = messageText.trim()
+    if (!trimmedMessage) {
+      setError('Message cannot be empty.')
+      return
+    }
     setError(null)
     setLogs([])
     setStatus('dispatching')
     eventSourceRef.current?.close()
     setRunId(null)
     setMessageText('')
+    const optimisticId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `temp_${crypto.randomUUID()}`
+        : `temp_${Date.now()}`
+    const optimisticMessage: ThreadMessage = {
+      message_id: optimisticId,
+      role: 'user',
+      display_role: 'User',
+      content: trimmedMessage,
+      created_at: new Date().toISOString(),
+      metadata: { optimistic: true }
+    }
+    setMessages((prev) => [...prev, optimisticMessage])
 
     try {
       let currentThreadId = threadId
@@ -234,7 +258,7 @@ function App() {
       const messageResp = await fetch(`/api/threads/${currentThreadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: messageText, cwd: preferredCwd })
+        body: JSON.stringify({ text: trimmedMessage, cwd: preferredCwd })
       })
       if (!messageResp.ok) {
         const body = await messageResp.json().catch(() => ({}))
@@ -245,8 +269,9 @@ function App() {
       await fetchMessages(currentThreadId)
       appendEvent('message', { messageId: messageData.messageId })
       appendEvent('status', { phase: 'running', runId: messageData.runId })
-      startStream(messageData.runId)
+      startStream(messageData.runId, currentThreadId)
     } catch (err) {
+      setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
       setStatus('idle')
       const message = err instanceof Error ? err.message : 'Failed to start run'
       setError(message)

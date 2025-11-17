@@ -86,8 +86,23 @@ export class AgentService {
     }
   }
 
-  async handleUserMessage(threadId: string): Promise<{ runId: string }> {
+  async startUserMessage(threadId: string): Promise<{ runId: string }> {
     const { runId, budId } = await this.runManager.createRunRecord(threadId, { status: "planning" });
+    void this.runAgentFlow({ threadId, budId, runId }).catch((err) => {
+      this.logger.error({ err, runId, threadId, component: "agent" }, "Agent flow failed");
+    });
+    return { runId };
+  }
+
+  private async runAgentFlow({
+    threadId,
+    budId,
+    runId
+  }: {
+    threadId: string;
+    budId: string;
+    runId: string;
+  }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
     this.debug("Starting agent run", { threadId, runId, entries: conversation.length });
     const aggregateBytes = { stdout: 0, stderr: 0 };
@@ -206,7 +221,7 @@ export class AgentService {
           status: directive.status,
           textLength: directive.message.length
         });
-        return { runId };
+        return;
       }
 
       throw new Error("agent reached max steps");
