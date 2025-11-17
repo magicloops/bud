@@ -29,8 +29,7 @@ export async function upsertRunSummary({
   }
 
   const thread = await db.query.threadTable.findFirst({
-    where: eq(threadTable.threadId, run.threadId),
-    columns: { budId: threadTable.budId }
+    where: eq(threadTable.threadId, run.threadId)
   });
   if (!thread) {
     return;

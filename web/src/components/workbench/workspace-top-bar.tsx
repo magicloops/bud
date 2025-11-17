@@ -57,12 +57,14 @@ function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonP
   return (
     <Button
       type="button"
-      variant={active ? 'default' : 'outline'}
+      variant="outline"
       size="sm"
       onClick={onClick}
       className={cn(
         'rounded-lg border-3 border-black font-mono transition-all',
-        active ? 'shadow-none translate-y-0.5' : 'hover:-translate-y-0.5'
+        active
+          ? 'bg-[var(--bud-accent-muted)] text-black shadow-none translate-y-0.5'
+          : 'hover:-translate-y-0.5'
       )}
       style={active ? {} : { boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
     >

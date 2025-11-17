@@ -46,6 +46,9 @@
   --chat-message: oklch(1 0 0);
   --terminal-bg: oklch(0.18 0.02 240);
   --terminal-text: oklch(0.85 0.05 150);
+  --bud-accent-vibrant: var(--accent);
+  --bud-accent-muted: var(--muted);
+  --bud-accent-soft: var(--muted);
 }
 
 .dark {
@@ -85,6 +88,9 @@
   --chat-message: oklch(0.22 0.02 270);
   --terminal-bg: oklch(0.1 0.02 240);
   --terminal-text: oklch(0.75 0.05 150);
+  --bud-accent-vibrant: var(--accent);
+  --bud-accent-muted: var(--muted);
+  --bud-accent-soft: var(--muted);
 }
 
 @theme inline {

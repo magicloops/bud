@@ -22,11 +22,9 @@ type BudRailProps = {
   buds: BudProfile[]
   activeBudId: string
   onSelectBud: (id: string) => void
-  collapsed: boolean
-  onToggleCollapsed: (collapsed: boolean) => void
 }
 
-export function BudRail({ buds, activeBudId, onSelectBud, collapsed, onToggleCollapsed }: BudRailProps) {
+export function BudRail({ buds, activeBudId, onSelectBud }: BudRailProps) {
   const { theme, setTheme } = useTheme()
 
   const cycleTheme = () => {
@@ -40,13 +38,7 @@ export function BudRail({ buds, activeBudId, onSelectBud, collapsed, onToggleCol
   }
 
   return (
-    <aside
-      className={cn(
-        'flex flex-col border-r-4 border-black transition-all duration-200',
-        collapsed ? 'w-20' : 'w-24'
-      )}
-      style={{ backgroundColor: 'var(--sidebar)' }}
-    >
+    <aside className="flex w-20 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--sidebar)' }}>
       <div className="flex flex-1 flex-col gap-3 p-3">
         {buds.map((bud, index) => {
           const isActive = bud.id === activeBudId
@@ -56,7 +48,7 @@ export function BudRail({ buds, activeBudId, onSelectBud, collapsed, onToggleCol
               key={bud.id}
               onClick={() => onSelectBud(bud.id)}
               className={cn(
-                'group relative flex h-16 w-16 flex-col items-center justify-center rounded-xl border-3 border-black text-center transition-all',
+                'group relative flex h-14 w-14 flex-col items-center justify-center rounded-xl border-3 border-black text-center transition-all',
                 'hover:-translate-y-0.5 active:translate-y-0',
                 isActive ? 'translate-y-0 border-black shadow-none' : 'shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]'
               )}
@@ -65,8 +57,8 @@ export function BudRail({ buds, activeBudId, onSelectBud, collapsed, onToggleCol
                 opacity: isActive ? 1 : 0.55,
               }}
             >
-              <Server className="h-5 w-5 text-black" />
-              <span className="mt-1 font-mono text-xs font-bold text-black">{index + 1}</span>
+              <Server className="h-4 w-4 text-black" />
+              <span className="mt-1 font-mono text-[11px] font-bold text-black">{index + 1}</span>
               <span
                 className="absolute bottom-2 right-2 h-3 w-3 rounded-full border border-black"
                 style={{ backgroundColor: bud.status === 'online' ? '#16a34a' : '#f97316' }}
@@ -75,18 +67,17 @@ export function BudRail({ buds, activeBudId, onSelectBud, collapsed, onToggleCol
           )
         })}
         <button
-          className="flex h-16 w-16 items-center justify-center rounded-xl border-3 border-dashed border-black bg-muted/60 text-muted-foreground transition-all hover:-translate-y-0.5"
+          className="flex h-14 w-14 items-center justify-center rounded-xl border-3 border-dashed border-black bg-muted/60 text-muted-foreground transition-all hover:-translate-y-0.5"
           style={{ boxShadow: '4px 4px 0px 0px rgba(0,0,0,1)' }}
-          onClick={() => onToggleCollapsed(!collapsed)}
         >
-          {collapsed ? <Monitor className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+          <Plus className="h-5 w-5" />
         </button>
       </div>
-      <div className="p-3">
+      <div className="p-2">
         <button
           onClick={cycleTheme}
-          className="flex h-16 w-16 items-center justify-center rounded-xl border-3 border-black bg-accent text-accent-foreground transition-all hover:-translate-y-0.5"
-          style={{ boxShadow: '4px 4px 0px 0px rgba(0,0,0,1)' }}
+          className="flex h-14 w-14 items-center justify-center rounded-xl border-3 border-black text-black transition-all hover:-translate-y-0.5"
+          style={{ boxShadow: '4px 4px 0px 0px rgba(0,0,0,1)', backgroundColor: 'var(--bud-accent-muted)' }}
           title={`Theme: ${theme}`}
         >
           {theme === 'light' ? <Sun className="h-6 w-6" /> : theme === 'dark' ? <Moon className="h-6 w-6" /> : <Monitor className="h-6 w-6" />}

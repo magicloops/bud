@@ -7,7 +7,7 @@ type RunViewProps = {
   status: 'idle' | 'dispatching' | 'streaming'
 }
 
-export function RunView({ logs, view, runId, status }: RunViewProps) {
+export function RunView({ logs, view, status }: RunViewProps) {
   if (view === 'web') {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-muted/30 p-8 text-center">
@@ -23,21 +23,19 @@ export function RunView({ logs, view, runId, status }: RunViewProps) {
   }
 
   return (
-    <div className="flex flex-1 flex-col">
-      <div className="flex items-center justify-between border-b-4 border-black bg-card/70 px-4 py-3 font-mono text-xs uppercase tracking-wide text-muted-foreground">
-        <span>Terminal stream</span>
-        <span>{runId ? `Run: ${runId}` : status === 'dispatching' ? 'Dispatching…' : 'Idle'}</span>
-      </div>
-      <div
-        className="flex-1 overflow-y-auto px-6 py-4 font-mono text-sm leading-relaxed"
-        style={{ backgroundColor: 'var(--terminal-bg)', color: 'var(--terminal-text)' }}
-      >
-        {logs.length === 0 ? (
-          <p className="text-muted-foreground">No stdout/stderr yet.</p>
-        ) : (
-          logs.map((line, idx) => <div key={idx}>{line}</div>)
-        )}
-      </div>
+    <div
+      className="flex flex-1 overflow-y-auto px-6 py-4 font-mono text-sm leading-relaxed"
+      style={{ backgroundColor: 'var(--terminal-bg)', color: 'var(--terminal-text)' }}
+    >
+      {logs.length === 0 ? (
+        <p className="text-muted-foreground">No stdout/stderr yet.</p>
+      ) : (
+        <div className="space-y-1">
+          {logs.map((line, idx) => (
+            <div key={idx}>{line}</div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 
@@ -17,6 +17,7 @@ type ChatTimelineProps = {
 
 export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
   const [systemColor, setSystemColor] = useState(accentColor || 'var(--avatar-3)')
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const resolved = resolveCssVar(accentColor || 'var(--avatar-3)')
@@ -28,16 +29,15 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
     [messages]
   )
 
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [orderedMessages])
+
   return (
     <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
-      <div className="flex items-center justify-between border-b-4 border-black px-4 py-3">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Conversation</p>
-          <p className="text-sm font-semibold">Latest exchange</p>
-        </div>
-        <p className="text-xs font-mono text-muted-foreground">{orderedMessages.length} msgs</p>
-      </div>
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
         {orderedMessages.length === 0 && (
           <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
         )}

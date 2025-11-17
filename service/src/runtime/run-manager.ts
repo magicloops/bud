@@ -290,9 +290,11 @@ export class RunManager {
       const remaining = Math.max(config.runLogMaxBytes - currentBytes, 0);
       const toStore = remaining >= buffer.length ? buffer : buffer.subarray(0, remaining);
       if (toStore.length > 0) {
+        const storeSeq = context.seq;
+        context.seq += 1;
         await db.insert(runLogTable).values({
           runId,
-          seq,
+          seq: storeSeq,
           stream,
           data: toStore
         });

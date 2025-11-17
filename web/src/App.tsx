@@ -6,6 +6,7 @@ import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-time
 import { RunView } from '@/components/workbench/run-view'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
 import { CommandComposer } from '@/components/workbench/command-composer'
+import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
 
 type RunEvent = {
   type: string
@@ -41,7 +42,6 @@ type ApiBud = {
 function App() {
   const [budId, setBudId] = useState<string | null>(null)
   const [messageText, setMessageText] = useState('Clone a repo and list files.')
-  const [cwd, setCwd] = useState('~')
   const [buds, setBuds] = useState<BudProfile[]>([])
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -52,7 +52,6 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [threadPanelOpen, setThreadPanelOpen] = useState(true)
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
-  const [railCollapsed, setRailCollapsed] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   const activeBudProfile = useMemo(() => {
@@ -60,11 +59,26 @@ function App() {
     return buds.find((bud) => bud.id === budId)
   }, [budId, buds])
 
+  const palette = useMemo(() => {
+    const budIndex = budId ? buds.findIndex((bud) => bud.id === budId) : -1
+    const fallbackIndex = budIndex >= 0 ? budIndex : 0
+    const fallbackColor = DEFAULT_AVATAR_COLORS[fallbackIndex % DEFAULT_AVATAR_COLORS.length] ?? 'var(--accent)'
+    const baseColor = activeBudProfile?.accentColor ?? fallbackColor
+    return deriveBudPalette(baseColor)
+  }, [activeBudProfile, budId, buds])
+
   useEffect(() => {
     return () => {
       eventSourceRef.current?.close()
     }
   }, [])
+
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--bud-accent-vibrant', palette.vibrant)
+    root.style.setProperty('--bud-accent-muted', palette.muted)
+    root.style.setProperty('--bud-accent-soft', palette.soft)
+  }, [palette])
 
   const appendEvent = (type: string, data: Record<string, unknown>) => {
     setLogs((prev) => [...prev, { type, data }])
@@ -77,15 +91,19 @@ function App() {
       throw new Error(body.error ?? `HTTP ${resp.status}`)
     }
     const data = (await resp.json()) as ApiBud[]
-    const normalized: BudProfile[] = data.map((bud) => ({
-      id: bud.bud_id,
-      label: bud.display_name ?? bud.name ?? bud.bud_id,
-      accentColor: bud.accent_color ?? undefined,
-      status: bud.status ?? 'offline',
-      tags: bud.tags ?? [],
-      capabilities: bud.capabilities ?? [],
-      lastRun: bud.last_run ?? null
-    }))
+    const normalized: BudProfile[] = data.map((bud, index) => {
+      const fallback = DEFAULT_AVATAR_COLORS[index % DEFAULT_AVATAR_COLORS.length]
+      const accent = bud.accent_color ?? fallback
+      return {
+        id: bud.bud_id,
+        label: bud.display_name ?? bud.name ?? bud.bud_id,
+        accentColor: accent,
+        status: bud.status ?? 'offline',
+        tags: bud.tags ?? [],
+        capabilities: bud.capabilities ?? [],
+        lastRun: bud.last_run ?? null
+      }
+    })
     setBuds(normalized)
     setBudId((current) => current ?? normalized[0]?.id ?? null)
   }
@@ -191,6 +209,7 @@ function App() {
     setStatus('dispatching')
     eventSourceRef.current?.close()
     setRunId(null)
+    setMessageText('')
 
     try {
       let currentThreadId = threadId
@@ -211,10 +230,11 @@ function App() {
         await fetchThreads(budId)
       }
 
+      const preferredCwd = '~'
       const messageResp = await fetch(`/api/threads/${currentThreadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: messageText, cwd })
+        body: JSON.stringify({ text: messageText, cwd: preferredCwd })
       })
       if (!messageResp.ok) {
         const body = await messageResp.json().catch(() => ({}))
@@ -222,9 +242,9 @@ function App() {
       }
       const messageData = (await messageResp.json()) as { runId: string; messageId: string }
       setRunId(messageData.runId)
+      await fetchMessages(currentThreadId)
       appendEvent('message', { messageId: messageData.messageId })
       appendEvent('status', { phase: 'running', runId: messageData.runId })
-      await fetchMessages(currentThreadId)
       startStream(messageData.runId)
     } catch (err) {
       setStatus('idle')
@@ -278,15 +298,13 @@ function App() {
           setBudId(nextId)
           setThreadId(null)
         }}
-        collapsed={railCollapsed}
-        onToggleCollapsed={setRailCollapsed}
       />
       {threadPanelOpen && activeBudProfile && (
         <ThreadPanel
           threads={threads}
           activeThreadId={threadId}
           onSelectThread={(value) => setThreadId(value)}
-          accentColor={activeBudProfile.accentColor ?? 'var(--accent)'}
+          accentColor={palette.vibrant}
           budLabel={activeBudProfile.label}
         />
       )}
@@ -298,15 +316,13 @@ function App() {
           onToggleThreads={() => setThreadPanelOpen((open) => !open)}
           status={status}
         />
-        <div className="flex flex-1 overflow-hidden border-b-4 border-black">
-          <ChatTimeline messages={chatMessages} accentColor={activeBudProfile?.accentColor ?? 'var(--avatar-3)'} />
+        <div className="flex flex-1 overflow-hidden">
+          <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
           <RunView logs={humanLogs} view={viewMode} runId={runId} status={status} />
         </div>
         <CommandComposer
           messageText={messageText}
           onMessageChange={setMessageText}
-          cwd={cwd}
-          onCwdChange={setCwd}
           status={status}
           onSubmit={handleSubmit}
           error={error}

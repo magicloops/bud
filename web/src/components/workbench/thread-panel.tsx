@@ -54,29 +54,35 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentCol
 
   return (
     <div className="flex w-72 min-w-60 flex-col border-r-4 border-black bg-secondary/40">
-      <div className="flex items-center justify-between border-b-4 border-black px-4 py-4" style={{ backgroundColor: 'var(--chat-bg)' }}>
+      <div
+        className="flex h-16 items-center justify-between border-b-4 border-black px-4"
+        style={{ backgroundColor: 'var(--chat-bg)' }}
+      >
         <div className="flex flex-col">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Bud</p>
-          <p className="text-base font-semibold leading-tight">{budLabel}</p>
+          <p className="text-sm font-semibold leading-tight">{budLabel}</p>
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Threads</p>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 rounded-lg border-3 border-black text-foreground transition-all hover:-translate-y-0.5"
-          style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
-        >
-          <Settings className="h-5 w-5" />
-        </Button>
-      </div>
-      <div className="flex items-center justify-between border-b-4 border-black px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <span>Threads</span>
-        <button
-          className="rounded-md border-2 border-dashed border-black px-2 py-1 font-mono text-[10px]"
-          onClick={() => onSelectThread(null)}
-        >
-          New
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded-md border-2 border-black px-3 py-1 font-mono text-[11px] font-semibold uppercase transition-transform hover:-translate-y-0.5"
+            onClick={() => onSelectThread(null)}
+            style={{
+              backgroundColor: 'var(--bud-accent-muted)',
+              boxShadow: '2px 2px 0px rgba(0,0,0,1)'
+            }}
+          >
+            New
+          </button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10 rounded-lg border-3 border-black text-foreground transition-all hover:-translate-y-0.5"
+            style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
+        </div>
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {orderedThreads.length === 0 && (
@@ -93,7 +99,7 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentCol
                 'w-full rounded-xl border-3 border-black px-3 py-2 text-left transition-all',
                 isActive
                   ? 'shadow-none'
-                  : 'opacity-60 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-y-0.5 hover:opacity-90'
+                  : 'shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-y-0.5'
               )}
               style={{
                 backgroundColor: isActive ? mutedColor : 'var(--card)',
