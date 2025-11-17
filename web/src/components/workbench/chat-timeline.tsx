@@ -1,7 +1,11 @@
 import ReactJsonView from '@microlink/react-json-view'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import remarkBreaks from 'remark-breaks'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
+
+const Markdown = lazy(async () => await import('react-markdown'))
+const MAX_MESSAGE_HEIGHT = 500
 
 export type ChatMessage = {
   id: string
@@ -20,7 +24,10 @@ type ChatTimelineProps = {
 export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
   const [systemColor, setSystemColor] = useState(accentColor || 'var(--avatar-3)')
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [expandedPayloads, setExpandedPayloads] = useState<Record<string, boolean>>({})
+  const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({})
+  const [overflowingMessages, setOverflowingMessages] = useState<Record<string, boolean>>({})
+  const contentRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   useEffect(() => {
     const resolved = resolveCssVar(accentColor || 'var(--avatar-3)')
@@ -38,6 +45,21 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
     node.scrollTop = node.scrollHeight
   }, [orderedMessages])
 
+  useEffect(() => {
+    const next: Record<string, boolean> = {}
+    for (const msg of orderedMessages) {
+      const el = contentRefs.current[msg.id]
+      if (!el) continue
+      next[msg.id] = el.scrollHeight > MAX_MESSAGE_HEIGHT
+    }
+    setOverflowingMessages((prev) => {
+      const changed =
+        Object.keys(next).length !== Object.keys(prev).length ||
+        Object.entries(next).some(([key, value]) => prev[key] !== value)
+    return changed ? next : prev
+    })
+  }, [orderedMessages])
+
   return (
     <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
@@ -47,12 +69,64 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
         {orderedMessages.map((message) => {
           const isUser = message.role === 'user'
           const isTool = message.role === 'tool'
+          const isAssistant = message.role === 'assistant' && !isTool
           const payload = isTool ? resolveToolPayload(message) : null
           const toolName =
             (payload?.tool as string | undefined) ?? (message.displayRole || 'Tool')
           const summaryText =
             typeof payload?.command === 'string' ? payload.command : message.content
-          const isExpanded = expanded[message.id] ?? false
+          const isPayloadExpanded = expandedPayloads[message.id] ?? false
+          const isMessageExpanded = expandedMessages[message.id] ?? false
+          const isOverflowing = overflowingMessages[message.id] ?? false
+          const backgroundColor = isUser ? undefined : systemColor
+          const overlayColor = backgroundColor ?? 'hsl(var(--card))'
+
+          const contentNode = isTool ? (
+            <div className="space-y-2 text-xs">
+              <div className="rounded-md border border-dashed border-black/20 bg-muted/60 p-2 font-mono text-[11px] leading-relaxed">
+                {summaryText}
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedPayloads((prev) => ({
+                    ...prev,
+                    [message.id]: !isPayloadExpanded
+                  }))
+                }
+                className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+              >
+                {isPayloadExpanded ? 'Hide payload' : 'Show payload'}
+              </button>
+              {isPayloadExpanded && (
+                <div className="rounded-lg border border-border bg-card/70 p-2 text-foreground shadow-sm">
+                  <ReactJsonView
+                    src={payload ?? { content: message.content }}
+                    name={false}
+                    collapsed={1}
+                    enableClipboard={false}
+                    displayDataTypes={false}
+                    displayObjectSize={false}
+                  />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {isAssistant && message.content ? (
+                <Suspense
+                  fallback={
+                    <pre className="whitespace-pre-wrap text-sm">{message.content}</pre>
+                  }
+                >
+                  <Markdown remarkPlugins={[remarkBreaks]}>{message.content}</Markdown>
+                </Suspense>
+              ) : (
+                <p>{message.content}</p>
+              )}
+            </div>
+          )
+
           return (
             <article
               key={message.id}
@@ -61,44 +135,43 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
                 isUser ? 'bg-card text-card-foreground' : 'text-foreground',
                 isTool && 'bg-background'
               )}
-              style={{ backgroundColor: isUser ? undefined : systemColor }}
+              style={{ backgroundColor }}
             >
               <div className="mb-1 flex items-center justify-between text-[11px] font-mono uppercase text-muted-foreground">
                 <span>{isTool ? `Tool • ${toolName}` : message.displayRole || (isUser ? 'User' : message.role)}</span>
                 <time>{new Date(message.createdAt).toLocaleTimeString()}</time>
               </div>
-              {isTool ? (
-                <div className="space-y-2 text-xs">
-                  <div className="rounded-md border border-dashed border-black/20 bg-muted/60 p-2 font-mono text-[11px] leading-relaxed">
-                    {summaryText}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpanded((prev) => ({
-                        ...prev,
-                        [message.id]: !isExpanded
-                      }))
-                    }
-                    className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
-                  >
-                    {isExpanded ? 'Hide payload' : 'Show payload'}
-                  </button>
-                  {isExpanded && (
-                    <div className="rounded-lg border border-border bg-card/70 p-2 text-foreground shadow-sm">
-                      <ReactJsonView
-                        src={payload ?? { content: message.content }}
-                        name={false}
-                        collapsed={1}
-                        enableClipboard={false}
-                        displayDataTypes={false}
-                        displayObjectSize={false}
-                      />
-                    </div>
-                  )}
+              <div className="relative">
+                <div
+                  ref={(node) => {
+                    contentRefs.current[message.id] = node
+                  }}
+                  className={cn(isOverflowing && !isMessageExpanded && 'max-h-[500px] overflow-hidden')}
+                >
+                  {contentNode}
                 </div>
-              ) : (
-                <p>{message.content}</p>
+                {isOverflowing && !isMessageExpanded && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-5"
+                    style={{
+                      background: `linear-gradient(0deg, ${overlayColor} 60%, rgba(0,0,0,0))`
+                    }}
+                  />
+                )}
+              </div>
+              {(isOverflowing || isMessageExpanded) && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedMessages((prev) => ({
+                      ...prev,
+                      [message.id]: !isMessageExpanded
+                    }))
+                  }
+                  className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                >
+                  {isMessageExpanded ? 'Collapse message' : 'Expand message'}
+                </button>
               )}
             </article>
           )
