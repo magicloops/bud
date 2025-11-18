@@ -13,14 +13,28 @@ export type ShellEntry = {
 }
 
 type RunViewProps = {
-  entries: ShellEntry[]
+  historyEntries: ShellEntry[]
+  liveEntries: ShellEntry[]
   view: ViewMode
   status: 'idle' | 'dispatching' | 'streaming'
+  hasMoreHistory: boolean
+  historyLoading: boolean
+  onLoadMoreHistory: () => void
 }
 
 const joinChunks = (chunks: string[]) => chunks.join('')
 
-export function RunView({ entries, view, status }: RunViewProps) {
+export function RunView({
+  historyEntries,
+  liveEntries,
+  view,
+  status,
+  hasMoreHistory,
+  historyLoading,
+  onLoadMoreHistory
+}: RunViewProps) {
+  const combinedEntries = [...historyEntries, ...liveEntries]
+
   if (view === 'web') {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-muted/30 p-8 text-center">
@@ -38,13 +52,25 @@ export function RunView({ entries, view, status }: RunViewProps) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden" style={{ backgroundColor: 'var(--terminal-bg)' }}>
       <div className="flex-1 overflow-y-auto px-6 py-4 font-mono text-sm leading-relaxed" style={{ color: 'var(--terminal-text)' }}>
-        {entries.length === 0 ? (
+        {hasMoreHistory && (
+          <div className="mb-4 flex justify-center">
+            <button
+              type="button"
+              onClick={onLoadMoreHistory}
+              disabled={historyLoading}
+              className="rounded-md border-2 border-white/40 px-3 py-1 text-xs uppercase tracking-wide text-muted-foreground transition hover:border-white hover:text-white disabled:opacity-50"
+            >
+              {historyLoading ? 'Loading…' : 'Load older commands'}
+            </button>
+          </div>
+        )}
+        {combinedEntries.length === 0 ? (
           <p className="text-muted-foreground">
             {status === 'dispatching' || status === 'streaming' ? 'Preparing command…' : 'No Bud output yet.'}
           </p>
         ) : (
           <div className="space-y-6">
-            {entries.map((entry) => (
+            {combinedEntries.map((entry) => (
               <article key={entry.id} className="space-y-2 border-b border-white/5 pb-4 last:border-none last:pb-0">
                 <div className="flex flex-wrap items-baseline gap-2 text-xs uppercase tracking-wide text-muted-foreground">
                   <span style={{ color: 'var(--bud-accent-vibrant)' }}>bud</span>

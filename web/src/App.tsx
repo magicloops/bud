@@ -1,5 +1,5 @@
 import type { FormEvent } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BudRail, type BudProfile } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
@@ -34,6 +34,41 @@ type ApiBud = {
   } | null
 }
 
+type RunHistoryEntry = {
+  run_id: string
+  status: string
+  exit_code: number | null
+  started_at: string | null
+  finished_at: string | null
+  cwd: string | null
+  error: string | null
+  command: string | null
+  stdout: string
+  stderr: string
+  stdout_truncated: boolean
+  stderr_truncated: boolean
+  stdout_bytes: number
+  stderr_bytes: number
+}
+
+const mapHistoryRunToEntry = (run: RunHistoryEntry): ShellEntry => {
+  const status: ShellEntry['status'] =
+    run.status === 'failed' ? 'failed' : run.status === 'succeeded' ? 'succeeded' : 'running'
+  const command =
+    run.command && run.command.length > 0 ? run.command : `run ${run.run_id.slice(-6)}`
+  return {
+    id: `history_${run.run_id}`,
+    command,
+    cwd: run.cwd,
+    status,
+    stdout: run.stdout ? [run.stdout] : [],
+    stderr: run.stderr ? [run.stderr] : [],
+    exitCode: typeof run.exit_code === 'number' ? run.exit_code : null,
+    startedAt: run.started_at ? Date.parse(run.started_at) : Date.now(),
+    finishedAt: run.finished_at ? Date.parse(run.finished_at) : undefined
+  }
+}
+
 function App() {
   const [budId, setBudId] = useState<string | null>(null)
   const [messageText, setMessageText] = useState('Clone a repo and list files.')
@@ -48,6 +83,10 @@ function App() {
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
   const [currentCwd, setCurrentCwd] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
+  const [runHistory, setRunHistory] = useState<ShellEntry[]>([])
+  const [runHistoryCursor, setRunHistoryCursor] = useState<string | null>(null)
+  const [runHistoryHasMore, setRunHistoryHasMore] = useState(false)
+  const [runHistoryLoading, setRunHistoryLoading] = useState(false)
   const eventSourceRef = useRef<EventSource | null>(null)
 
   const activeBudProfile = useMemo(() => {
@@ -257,6 +296,50 @@ function App() {
     }
   }
 
+  type LoadHistoryOptions = {
+    mode: 'replace' | 'append' | 'refresh'
+    cursor?: string | null
+  }
+
+  const loadRunHistory = useCallback(async (thread: string, options: LoadHistoryOptions) => {
+    setRunHistoryLoading(true)
+    try {
+      const params = new URLSearchParams({ limit: '5' })
+      if (options.cursor) {
+        params.set('cursor', options.cursor)
+      }
+      const resp = await fetch(`/api/threads/${thread}/runs?${params.toString()}`)
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${resp.status}`)
+      }
+      const data = (await resp.json()) as { runs: RunHistoryEntry[]; next_cursor: string | null }
+      const mapped = data.runs.map(mapHistoryRunToEntry).reverse()
+      setRunHistoryCursor(data.next_cursor ?? null)
+      setRunHistoryHasMore(Boolean(data.next_cursor))
+      setRunHistory((prev) => {
+        if (options.mode === 'append') {
+          return [...mapped, ...prev]
+        }
+        if (options.mode === 'refresh') {
+          const existingIds = new Set(prev.map((entry) => entry.id))
+          const merged = [...mapped]
+          for (const entry of prev) {
+            if (!existingIds.has(entry.id)) {
+              merged.push(entry)
+            }
+          }
+          return merged
+        }
+        return mapped
+      })
+    } catch (err) {
+      console.error('Failed to load run history', err)
+    } finally {
+      setRunHistoryLoading(false)
+    }
+  }, [])
+
   const fetchMessages = async (thread: string | null) => {
     if (!thread) {
       setMessages([])
@@ -288,6 +371,16 @@ function App() {
       setError(err instanceof Error ? err.message : 'Failed to load messages')
     })
   }, [threadId])
+
+  useEffect(() => {
+    if (!threadId) {
+      setRunHistory([])
+      setRunHistoryCursor(null)
+      setRunHistoryHasMore(false)
+      return
+    }
+    void loadRunHistory(threadId, { mode: 'replace' })
+  }, [threadId, loadRunHistory])
 
   useEffect(() => {
     setTerminalEntries([])
@@ -358,6 +451,11 @@ function App() {
         fetchMessages(thread).catch((err) => {
           console.error('Failed to refresh messages after final event', err)
         })
+        if (threadId === thread) {
+          loadRunHistory(thread, { mode: 'refresh' }).catch((err) => {
+            console.error('Failed to refresh run history after final event', err)
+          })
+        }
       } catch (err) {
         console.error('Failed to process final event', err)
       } finally {
@@ -453,6 +551,15 @@ function App() {
     [messages]
   )
 
+  const handleLoadMoreHistory = () => {
+    if (!threadId || !runHistoryHasMore || !runHistoryCursor || runHistoryLoading) {
+      return
+    }
+    loadRunHistory(threadId, { mode: 'append', cursor: runHistoryCursor }).catch((err) => {
+      console.error('Failed to load older run history', err)
+    })
+  }
+
   return (
     <div className="flex h-screen bg-background text-foreground">
       <BudRail
@@ -483,7 +590,15 @@ function App() {
         />
         <div className="flex flex-1 overflow-hidden">
           <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
-          <RunView entries={terminalEntries} view={viewMode} status={status} />
+          <RunView
+            historyEntries={runHistory}
+            liveEntries={terminalEntries}
+            view={viewMode}
+            status={status}
+            hasMoreHistory={runHistoryHasMore}
+            historyLoading={runHistoryLoading}
+            onLoadMoreHistory={handleLoadMoreHistory}
+          />
         </div>
         <CommandComposer
           messageText={messageText}
