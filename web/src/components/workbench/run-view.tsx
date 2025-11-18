@@ -1,6 +1,9 @@
+import { memo, useEffect, useMemo, useRef } from 'react'
+
 type ViewMode = 'terminal' | 'web'
 
 export type ShellEntry = {
+  runId: string | null
   id: string
   command: string
   cwd: string | null
@@ -24,7 +27,7 @@ type RunViewProps = {
 
 const joinChunks = (chunks: string[]) => chunks.join('')
 
-export function RunView({
+const RunViewComponent = ({
   historyEntries,
   liveEntries,
   view,
@@ -32,8 +35,51 @@ export function RunView({
   hasMoreHistory,
   historyLoading,
   onLoadMoreHistory
-}: RunViewProps) {
-  const combinedEntries = [...historyEntries, ...liveEntries]
+}: RunViewProps) => {
+  const combinedEntries = useMemo(() => [...historyEntries, ...liveEntries], [historyEntries, liveEntries])
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const stickRef = useRef(true)
+  const lastEntryRef = useRef<string | null>(null)
+  const lastSignatureRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = node
+      stickRef.current = scrollHeight - (scrollTop + clientHeight) < 48
+    }
+    node.addEventListener('scroll', handleScroll, { passive: true })
+    return () => node.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  const lastEntryId = combinedEntries.at(-1)?.runId ?? combinedEntries.at(-1)?.id ?? null
+  const combinedLength = combinedEntries.length
+  const lastEntrySignature = combinedEntries.length
+    ? `${combinedEntries[combinedEntries.length - 1]?.id ?? 'n/a'}:${
+        combinedEntries[combinedEntries.length - 1]?.stdout.length ?? 0
+      }:${combinedEntries[combinedEntries.length - 1]?.stderr.length ?? 0}:${
+        combinedEntries[combinedEntries.length - 1]?.status ?? 'unknown'
+      }`
+    : null
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    const entryChanged = lastEntryRef.current !== lastEntryId
+    const signatureChanged = lastSignatureRef.current !== lastEntrySignature
+    const shouldStick = stickRef.current || entryChanged || view !== 'terminal'
+    lastEntryRef.current = lastEntryId
+    lastSignatureRef.current = lastEntrySignature
+    if (!shouldStick && !signatureChanged) {
+      return
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        node.scrollTop = node.scrollHeight
+      })
+    })
+  }, [combinedLength, lastEntryId, lastEntrySignature, view])
 
   if (view === 'web') {
     return (
@@ -51,7 +97,11 @@ export function RunView({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden" style={{ backgroundColor: 'var(--terminal-bg)' }}>
-      <div className="flex-1 overflow-y-auto px-6 py-4 font-mono text-sm leading-relaxed" style={{ color: 'var(--terminal-text)' }}>
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-6 py-4 font-mono text-sm leading-relaxed"
+        style={{ color: 'var(--terminal-text)' }}
+      >
         {hasMoreHistory && (
           <div className="mb-4 flex justify-center">
             <button
@@ -72,11 +122,13 @@ export function RunView({
           <div className="space-y-6">
             {combinedEntries.map((entry) => (
               <article key={entry.id} className="space-y-2 border-b border-white/5 pb-4 last:border-none last:pb-0">
-                <div className="flex flex-wrap items-baseline gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-                  <span style={{ color: 'var(--bud-accent-vibrant)' }}>bud</span>
+                <div className="flex flex-wrap items-baseline gap-2 text-xs tracking-wide text-muted-foreground">
+                  <span className="uppercase" style={{ color: 'var(--bud-accent-vibrant)' }}>
+                    bud
+                  </span>
                   <span className="text-[length:0.75rem] text-muted-foreground">({entry.cwd ?? '~'})</span>
-                  <span className="text-foreground">$</span>
-                  <span className="text-foreground text-sm">{entry.command}</span>
+                  <span className="text-[color:#a6ff4d]">$</span>
+                  <span className="text-[color:rgba(255,255,255,0.95)] text-sm">{entry.command}</span>
                   {entry.status === 'running' && (
                     <span className="text-[color:var(--bud-accent-muted)] animate-pulse">running…</span>
                   )}
@@ -101,3 +153,6 @@ export function RunView({
     </div>
   )
 }
+
+export const RunView = memo(RunViewComponent)
+RunView.displayName = 'RunView'

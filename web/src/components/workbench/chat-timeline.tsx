@@ -1,6 +1,6 @@
 import ReactJsonView from '@microlink/react-json-view'
 import remarkBreaks from 'remark-breaks'
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 
@@ -21,9 +21,10 @@ type ChatTimelineProps = {
   accentColor: string
 }
 
-export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
+const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => {
   const [systemColor, setSystemColor] = useState(accentColor || 'var(--avatar-3)')
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const shouldStickRef = useRef(true)
   const [expandedPayloads, setExpandedPayloads] = useState<Record<string, boolean>>({})
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({})
   const [overflowingMessages, setOverflowingMessages] = useState<Record<string, boolean>>({})
@@ -42,8 +43,30 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
   useEffect(() => {
     const node = scrollRef.current
     if (!node) return
-    node.scrollTop = node.scrollHeight
-  }, [orderedMessages])
+    const handler = () => {
+      const { scrollTop, scrollHeight, clientHeight } = node
+      const atBottom = scrollHeight - (scrollTop + clientHeight) < 48
+      shouldStickRef.current = atBottom
+    }
+    node.addEventListener('scroll', handler, { passive: true })
+    return () => {
+      node.removeEventListener('scroll', handler)
+    }
+  }, [])
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    if (!shouldStickRef.current) {
+      return
+    }
+    const syncScroll = () => {
+      node.scrollTop = node.scrollHeight
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(syncScroll)
+    })
+  }, [orderedMessages.length])
 
   useEffect(() => {
     const next: Record<string, boolean> = {}
@@ -78,8 +101,17 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
           const isPayloadExpanded = expandedPayloads[message.id] ?? false
           const isMessageExpanded = expandedMessages[message.id] ?? false
           const isOverflowing = overflowingMessages[message.id] ?? false
-          const backgroundColor = isUser ? undefined : systemColor
+          const backgroundColor = isUser ? 'var(--chat-message)' : undefined
+          const assistantBackground =
+            isAssistant ? 'var(--chat-message)' : isTool ? 'oklch(0.98 0.01 90)' : undefined
           const overlayColor = backgroundColor ?? 'hsl(var(--card))'
+          const accentStyles =
+            isUser && systemColor
+              ? {
+                  borderColor: systemColor,
+                  boxShadow: `3px 3px 0 ${systemColor}`
+                }
+              : undefined
 
           const contentNode = isTool ? (
             <div className="space-y-2 text-xs">
@@ -132,10 +164,13 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
               key={message.id}
               className={cn(
                 'rounded-xl border-3 border-black p-3 text-sm leading-relaxed shadow-[3px_3px_0px_rgba(0,0,0,1)]',
-                isUser ? 'bg-card text-card-foreground' : 'text-foreground',
-                isTool && 'bg-background'
+                isUser ? 'text-card-foreground' : 'text-foreground',
+                (isAssistant || isTool) && 'bg-background'
               )}
-              style={{ backgroundColor }}
+              style={{
+                backgroundColor: backgroundColor ?? assistantBackground,
+                ...(accentStyles ?? {})
+              }}
             >
               <div className="mb-1 flex items-center justify-between text-[11px] font-mono uppercase text-muted-foreground">
                 <span>{isTool ? `Tool • ${toolName}` : message.displayRole || (isUser ? 'User' : message.role)}</span>
@@ -180,6 +215,9 @@ export function ChatTimeline({ messages, accentColor }: ChatTimelineProps) {
     </div>
   )
 }
+
+export const ChatTimeline = memo(ChatTimelineComponent)
+ChatTimeline.displayName = 'ChatTimeline'
 
 function resolveToolPayload(message: ChatMessage): Record<string, unknown> | null {
   if (message.metadata && typeof message.metadata === 'object') {

@@ -1,5 +1,5 @@
 import type { FormEvent, KeyboardEvent } from 'react'
-import { Send } from 'lucide-react'
+import { LoaderCircle, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 type CommandComposerProps = {
@@ -61,15 +61,15 @@ export function CommandComposer({
             </option>
           ))}
         </select>
-        <Button
-          type="submit"
-          size="icon"
-          disabled={status === 'dispatching'}
-          className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
-          style={{ backgroundColor: 'var(--bud-accent-muted)' }}
-        >
-          <Send className="h-4 w-4" />
-        </Button>
+      <Button
+        type="submit"
+        size="icon"
+        disabled={status !== 'idle'}
+        className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
+        style={{ backgroundColor: 'var(--bud-accent-muted)' }}
+      >
+        {status !== 'idle' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+      </Button>
       </div>
     </form>
   )

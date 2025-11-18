@@ -57,6 +57,7 @@ const mapHistoryRunToEntry = (run: RunHistoryEntry): ShellEntry => {
   const command =
     run.command && run.command.length > 0 ? run.command : `run ${run.run_id.slice(-6)}`
   return {
+    runId: run.run_id,
     id: `history_${run.run_id}`,
     command,
     cwd: run.cwd,
@@ -128,6 +129,7 @@ function App() {
     const args = (payload.args ?? {}) as Record<string, unknown>
     const entry: ShellEntry = {
       id: typeof payload.id === 'string' ? payload.id : `call_${Date.now()}`,
+      runId: typeof payload.run_id === 'string' ? payload.run_id : null,
       command: typeof args.command === 'string' && args.command.length > 0 ? args.command : 'shell.run',
       cwd: typeof args.cwd === 'string' && args.cwd.length > 0 ? args.cwd : null,
       status: 'running',
@@ -150,6 +152,7 @@ function App() {
       if (idx === -1) {
         const fallback: ShellEntry = {
           id: `stream_${Date.now()}`,
+          runId: typeof payload.run_id === 'string' ? payload.run_id : null,
           command: 'shell.run',
           cwd: null,
           status: 'running',
@@ -216,6 +219,7 @@ function App() {
       if (next.length === 0) {
         const entry: ShellEntry = {
           id: `error_${Date.now()}`,
+          runId: null,
           command: 'shell.run',
           cwd: typeof cwd === 'string' && cwd.length > 0 ? cwd : null,
           status: 'failed',
@@ -299,6 +303,7 @@ function App() {
   type LoadHistoryOptions = {
     mode: 'replace' | 'append' | 'refresh'
     cursor?: string | null
+    onComplete?: () => void
   }
 
   const loadRunHistory = useCallback(async (thread: string, options: LoadHistoryOptions) => {
@@ -318,25 +323,26 @@ function App() {
       setRunHistoryCursor(data.next_cursor ?? null)
       setRunHistoryHasMore(Boolean(data.next_cursor))
       setRunHistory((prev) => {
-        if (options.mode === 'append') {
-          return [...mapped, ...prev]
+        const existing = new Map(prev.map((entry) => [entry.runId ?? entry.id, entry]))
+        for (const entry of mapped) {
+          existing.set(entry.runId ?? entry.id, entry)
         }
-        if (options.mode === 'refresh') {
-          const existingIds = new Set(prev.map((entry) => entry.id))
-          const merged = [...mapped]
-          for (const entry of prev) {
-            if (!existingIds.has(entry.id)) {
-              merged.push(entry)
-            }
-          }
-          return merged
-        }
-        return mapped
+        const result = Array.from(existing.values()).sort((a, b) => a.startedAt - b.startedAt)
+        setTerminalEntries((live) =>
+          live.filter((entry) => {
+            if (!entry.runId) return true
+            return !existing.has(entry.runId)
+          })
+        )
+        return result
       })
+      options.onComplete?.()
     } catch (err) {
       console.error('Failed to load run history', err)
+      options.onComplete?.()
     } finally {
       setRunHistoryLoading(false)
+      options.onComplete?.()
     }
   }, [])
 
@@ -379,11 +385,16 @@ function App() {
       setRunHistoryHasMore(false)
       return
     }
-    void loadRunHistory(threadId, { mode: 'replace' })
+    setRunHistory([])
+    setRunHistoryCursor(null)
+    setRunHistoryHasMore(false)
+    setTerminalEntries([])
+    void loadRunHistory(threadId, {
+      mode: 'replace'
+    })
   }, [threadId, loadRunHistory])
 
   useEffect(() => {
-    setTerminalEntries([])
     eventSourceRef.current?.close()
     setStatus('idle')
   }, [threadId])
@@ -393,6 +404,7 @@ function App() {
     const source = new EventSource(`/api/runs/${id}/stream`)
     eventSourceRef.current = source
     setStatus('streaming')
+    const activeRunId = id
 
     source.addEventListener('status', (evt) => {
       try {
@@ -408,14 +420,14 @@ function App() {
     })
     source.addEventListener('exec.stdout', (evt) => {
       try {
-        appendStreamChunk('stdout', JSON.parse(evt.data) as Record<string, unknown>)
+        appendStreamChunk('stdout', { ...(JSON.parse(evt.data) as Record<string, unknown>), run_id: activeRunId })
       } catch (err) {
         console.error('Failed to parse stdout event', err)
       }
     })
     source.addEventListener('exec.stderr', (evt) => {
       try {
-        appendStreamChunk('stderr', JSON.parse(evt.data) as Record<string, unknown>)
+        appendStreamChunk('stderr', { ...(JSON.parse(evt.data) as Record<string, unknown>), run_id: activeRunId })
       } catch (err) {
         console.error('Failed to parse stderr event', err)
       }
@@ -427,14 +439,16 @@ function App() {
     })
     source.addEventListener('agent.tool_call', (evt) => {
       try {
-        startShellEntry(JSON.parse(evt.data) as Record<string, unknown>)
+        const data = JSON.parse(evt.data) as Record<string, unknown>
+        startShellEntry({ ...data, run_id: activeRunId })
       } catch (err) {
         console.error('Failed to parse tool call event', err)
       }
     })
     source.addEventListener('agent.tool_result', (evt) => {
       try {
-        finalizeShellEntry(JSON.parse(evt.data) as Record<string, unknown>)
+        const data = JSON.parse(evt.data) as Record<string, unknown>
+        finalizeShellEntry({ ...data, run_id: activeRunId })
       } catch (err) {
         console.error('Failed to parse tool result event', err)
       }
@@ -452,10 +466,20 @@ function App() {
           console.error('Failed to refresh messages after final event', err)
         })
         if (threadId === thread) {
-          loadRunHistory(thread, { mode: 'refresh' }).catch((err) => {
-            console.error('Failed to refresh run history after final event', err)
-          })
-        }
+        loadRunHistory(thread, {
+          mode: 'refresh',
+          onComplete: () => {
+            setTerminalEntries((live) =>
+              live.filter((entry) => {
+                if (!entry.runId) return true
+                return entry.runId !== data.run_id
+              })
+            )
+          }
+        }).catch((err) => {
+          console.error('Failed to refresh run history after final event', err)
+        })
+      }
       } catch (err) {
         console.error('Failed to process final event', err)
       } finally {
@@ -551,14 +575,14 @@ function App() {
     [messages]
   )
 
-  const handleLoadMoreHistory = () => {
+  const handleLoadMoreHistory = useCallback(() => {
     if (!threadId || !runHistoryHasMore || !runHistoryCursor || runHistoryLoading) {
       return
     }
     loadRunHistory(threadId, { mode: 'append', cursor: runHistoryCursor }).catch((err) => {
       console.error('Failed to load older run history', err)
     })
-  }
+  }, [threadId, runHistoryHasMore, runHistoryCursor, runHistoryLoading, loadRunHistory])
 
   return (
     <div className="flex h-screen bg-background text-foreground">

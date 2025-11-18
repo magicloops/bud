@@ -59,8 +59,9 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentCol
         style={{ backgroundColor: 'var(--chat-bg)' }}
       >
         <div className="flex flex-col">
-          <p className="text-sm font-semibold leading-tight">{budLabel}</p>
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Threads</p>
+          <p className="line-clamp-1 font-mono text-[15px] font-semibold uppercase tracking-wide">
+            {budLabel}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
