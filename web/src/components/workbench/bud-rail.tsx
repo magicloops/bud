@@ -2,13 +2,19 @@ import { Monitor, Moon, Plus, Server, Sun } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/components/theme-provider'
 
+export type BudCapabilities = {
+  sessions?: boolean
+  sessions_backends?: string[]
+  tmux_version?: string
+}
+
 export type BudProfile = {
   id: string
   label: string
   accentColor?: string | null
   status: string
   tags?: string[]
-  capabilities?: string[]
+  capabilities?: BudCapabilities | null
   lastRun?: {
     run_id: string
     status: string

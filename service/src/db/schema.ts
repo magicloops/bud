@@ -36,9 +36,9 @@ export const budTable = pgTable("bud", {
     .notNull()
     .default(sql`'[]'::jsonb`),
   capabilities: jsonb("capabilities")
-    .$type<string[]>()
+    .$type<Record<string, unknown>>()
     .notNull()
-    .default(sql`'[]'::jsonb`),
+    .default(sql`'{}'::jsonb`),
   status: text("status").notNull().default("offline"),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   deviceSecret: text("device_secret"),
@@ -188,5 +188,55 @@ export const runSummaryTable = pgTable(
   (table) => ({
     budIdx: index("run_summary_bud_idx").on(table.budId, table.startedAt),
     threadIdx: index("run_summary_thread_idx").on(table.threadId, table.startedAt)
+  })
+);
+
+export const sessionTable = pgTable(
+  "session",
+  {
+    sessionId: text("session_id").primaryKey(),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => threadTable.threadId, { onDelete: "set null" }),
+    backend: text("backend").notNull(),
+    status: text("status").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).default(sql`now()`),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    exitCode: integer("exit_code"),
+    signal: text("signal"),
+    bytesOut: bigint("bytes_out", { mode: "number" }).notNull().default(0),
+    writerUserId: text("writer_user_id"),
+    hardTtlSec: integer("hard_ttl_sec").notNull().default(12 * 60 * 60),
+    idleKillSec: integer("idle_kill_sec").notNull().default(20 * 60),
+    logsBytes: bigint("logs_bytes", { mode: "number" }).notNull().default(0),
+    logTruncated: boolean("log_truncated").notNull().default(false),
+    logsBlobUrl: text("logs_blob_url"),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
+  },
+  (table) => ({
+    budIdx: index("session_bud_idx").on(table.budId, table.startedAt),
+    threadIdx: index("session_thread_idx").on(table.threadId, table.startedAt)
+  })
+);
+
+export const sessionLogTable = pgTable(
+  "session_log",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessionTable.sessionId, { onDelete: "cascade" }),
+    seq: bigint("seq", { mode: "number" }).notNull(),
+    stream: text("stream").default("pty"),
+    data: byteaColumn("data").notNull(),
+    tenantId: text("tenant_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.sessionId, table.seq], name: "session_log_pkey" }),
+    createdIdx: index("session_log_created_idx").on(table.sessionId, table.seq)
   })
 );

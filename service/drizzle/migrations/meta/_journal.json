@@ -15,6 +15,13 @@
       "when": 1763200266137,
       "tag": "0001_stiff_magdalene",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1763459146104,
+      "tag": "0002_glorious_james_howlett",
+      "breakpoints": true
     }
   ]
 }

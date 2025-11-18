@@ -1,10 +1,13 @@
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
 use std::io;
+use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -13,7 +16,9 @@ use base64::Engine;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
-use nix::unistd::{self, Pid};
+use nix::pty::{openpty, OpenptyResult as NixOpenptyResult};
+use nix::sys::signal::{killpg, Signal};
+use nix::unistd::{self, dup, close, Pid};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Number, Value};
 use sha2::Sha256;
@@ -38,6 +43,8 @@ type OutboundSender = Arc<mpsc::UnboundedSender<Message>>;
 const PROTO_VERSION: &str = "0.1";
 const DEFAULT_HEARTBEAT_SEC: u64 = 30;
 const MAX_QUEUE_DEPTH: usize = 10;
+const DEFAULT_PTY_ROWS: u16 = 24;
+const DEFAULT_PTY_COLS: u16 = 80;
 
 /// Bud (device agent) CLI arguments.
 #[derive(Debug, Parser, Clone)]
@@ -84,6 +91,7 @@ struct BudApp {
     identity_path: PathBuf,
     identity: Option<DeviceIdentity>,
     run_executor: RunExecutor,
+    session_manager: SessionManager,
 }
 
 struct SessionMeta {
@@ -140,6 +148,50 @@ struct RunFrame {
     use_pty: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct SessionOpenFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    session_id: String,
+    backend: Option<String>,
+    cmd: Option<String>,
+    cwd: Option<String>,
+    env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pty: SessionPtyOptions,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+struct SessionPtyOptions {
+    rows: Option<u16>,
+    cols: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct SessionInputFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    session_id: String,
+    data: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct SessionResizeFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    session_id: String,
+    rows: u16,
+    cols: u16,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct SessionCloseFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    session_id: String,
+    reason: Option<String>,
+}
+
 #[derive(Clone)]
 struct RunCommand {
     run_id: String,
@@ -168,6 +220,38 @@ struct RunHandle {
 
 enum CancelCommand {
     Terminate,
+}
+
+#[derive(Clone)]
+struct SessionManager {
+    inner: Arc<Mutex<SessionState>>,
+}
+
+struct SessionState {
+    sessions: HashMap<String, SessionHandle>,
+    sender: Option<OutboundSender>,
+    default_shell: String,
+}
+
+struct SessionHandle {
+    command_tx: mpsc::UnboundedSender<SessionCommand>,
+}
+
+enum SessionCommand {
+    Input(Vec<u8>),
+    Resize(u16, u16),
+    Close,
+}
+
+struct SessionConfig {
+    session_id: String,
+    backend: String,
+    cmd: Option<String>,
+    cwd: Option<PathBuf>,
+    env: HashMap<String, String>,
+    rows: u16,
+    cols: u16,
+    default_shell: String,
 }
 
 impl RunExecutor {
@@ -395,6 +479,287 @@ impl RunExecutor {
     }
 }
 
+impl SessionManager {
+    fn new(default_shell: String) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SessionState {
+                sessions: HashMap::new(),
+                sender: None,
+                default_shell,
+            })),
+        }
+    }
+
+    async fn set_sender(&self, sender: OutboundSender) {
+        let mut inner = self.inner.lock().await;
+        inner.sender = Some(sender);
+    }
+
+    async fn clear_sender(&self) {
+        let mut inner = self.inner.lock().await;
+        let sessions = std::mem::take(&mut inner.sessions);
+        inner.sender = None;
+        drop(inner);
+        for (_, handle) in sessions {
+            let _ = handle.command_tx.send(SessionCommand::Close);
+        }
+    }
+
+    async fn handle_open(&self, frame: SessionOpenFrame) -> Result<()> {
+        let backend = frame.backend.clone().unwrap_or_else(|| "pty".to_string());
+        if backend.as_str() != "pty" {
+            self.send_session_error(&frame.session_id, "backend_unsupported", "Unsupported session backend")
+                .await?;
+            return Ok(());
+        }
+        let mut inner = self.inner.lock().await;
+        if inner.sessions.contains_key(&frame.session_id) {
+            return Ok(());
+        }
+        let sender = inner
+            .sender
+            .clone()
+            .ok_or_else(|| anyhow!("no websocket writer available"))?;
+        let mut env = frame.env.unwrap_or_default();
+        env.entry("LANG".into()).or_insert_with(|| "C.UTF-8".into());
+        env.entry("TERM".into()).or_insert_with(|| "xterm-256color".into());
+        let cwd = frame
+            .cwd
+            .and_then(|value| expand_path(&value))
+            .or_else(|| std::env::current_dir().ok());
+        let config = SessionConfig {
+            session_id: frame.session_id.clone(),
+            backend,
+            cmd: frame.cmd.clone(),
+            cwd,
+            env,
+            rows: frame.pty.rows.unwrap_or(DEFAULT_PTY_ROWS),
+            cols: frame.pty.cols.unwrap_or(DEFAULT_PTY_COLS),
+            default_shell: inner.default_shell.clone(),
+        };
+        let session_id = config.session_id.clone();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        inner.sessions.insert(
+            session_id.clone(),
+            SessionHandle {
+                command_tx: command_tx.clone(),
+            },
+        );
+        drop(inner);
+        let manager = self.clone();
+        tokio::task::spawn_local(async move {
+            if let Err(err) = run_pty_session(config, sender, command_rx).await {
+                warn!(session_id = %session_id, error = %err, "session task failed");
+                let _ = manager
+                    .send_session_error(&session_id, "EXEC_FAILED", err.to_string())
+                    .await;
+            }
+            manager.remove_session(&session_id).await;
+        });
+        Ok(())
+    }
+
+    async fn handle_input(&self, frame: SessionInputFrame) -> Result<()> {
+        let data = BASE64_STANDARD
+            .decode(frame.data.as_bytes())
+            .map_err(|err| anyhow!("invalid session input data: {}", err))?;
+        let inner = self.inner.lock().await;
+        if let Some(handle) = inner.sessions.get(&frame.session_id) {
+            let _ = handle.command_tx.send(SessionCommand::Input(data));
+        }
+        Ok(())
+    }
+
+    async fn handle_resize(&self, frame: SessionResizeFrame) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if let Some(handle) = inner.sessions.get(&frame.session_id) {
+            let _ = handle.command_tx.send(SessionCommand::Resize(frame.rows, frame.cols));
+        }
+        Ok(())
+    }
+
+    async fn handle_close(&self, frame: SessionCloseFrame) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        if let Some(handle) = inner.sessions.get(&frame.session_id) {
+            let _ = handle.command_tx.send(SessionCommand::Close);
+        }
+        Ok(())
+    }
+
+    async fn remove_session(&self, session_id: &str) {
+        let mut inner = self.inner.lock().await;
+        inner.sessions.remove(session_id);
+    }
+
+    async fn send_session_error(&self, session_id: &str, code: &str, message: String) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if let Some(sender) = &inner.sender {
+            send_ws_frame(
+                sender,
+                json!({
+                    "proto": PROTO_VERSION,
+                    "type": "session_error",
+                    "id": new_message_id(),
+                    "ts": now_millis(),
+                    "ext": {},
+                    "session_id": session_id,
+                    "code": code,
+                    "message": message
+                }),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+async fn run_pty_session(
+    config: SessionConfig,
+    sender: OutboundSender,
+    mut command_rx: mpsc::UnboundedReceiver<SessionCommand>,
+) -> Result<()> {
+    let winsize = libc::winsize {
+        ws_row: config.rows,
+        ws_col: config.cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let NixOpenptyResult { master, slave } = openpty(Some(&winsize), None)?;
+    let stdin_fd = dup(slave)?;
+    let stdout_fd = dup(slave)?;
+    let stderr_fd = dup(slave)?;
+
+    let mut command = Command::new(config.default_shell.clone());
+    if let Some(cmd) = config.cmd.clone() {
+        command.arg("-lc").arg(cmd);
+    } else {
+        command.arg("-l");
+    }
+    if let Some(cwd) = config.cwd.clone() {
+        command.current_dir(cwd);
+    }
+    command.envs(config.env.clone());
+    unsafe {
+        command.pre_exec(move || {
+            let _ = libc::setsid();
+            if libc::ioctl(slave, libc::TIOCSCTTY, 0) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command.stdin(unsafe { Stdio::from_raw_fd(stdin_fd) });
+    command.stdout(unsafe { Stdio::from_raw_fd(stdout_fd) });
+    command.stderr(unsafe { Stdio::from_raw_fd(stderr_fd) });
+    let mut child = command.spawn()?;
+    close(slave)?;
+
+    let reader_file = unsafe { File::from_raw_fd(master) };
+    let writer_file = reader_file.try_clone()?;
+    let writer = Arc::new(StdMutex::new(writer_file));
+    let session_id = config.session_id.clone();
+    let seq = Arc::new(AtomicU64::new(0));
+    let sender_output = sender.clone();
+    let session_id_clone = session_id.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut reader = reader_file;
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let chunk = &buffer[..read];
+            let seq_no = seq.fetch_add(1, Ordering::SeqCst);
+            send_ws_frame(
+                &sender_output,
+                json!({
+                    "proto": PROTO_VERSION,
+                    "type": "session_output",
+                    "id": new_message_id(),
+                    "ts": now_millis(),
+                    "ext": {},
+                    "session_id": session_id_clone,
+                    "seq": seq_no,
+                    "data": BASE64_STANDARD.encode(chunk)
+                }),
+            )?;
+        }
+        Ok(())
+    });
+
+    send_ws_frame(
+        &sender,
+        json!({
+            "proto": PROTO_VERSION,
+            "type": "session_opened",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": session_id,
+            "backend": "pty",
+        }),
+    )?;
+
+    let mut child_wait = child.wait();
+    tokio::pin!(child_wait);
+    loop {
+        tokio::select! {
+            Some(cmd) = command_rx.recv() => {
+                match cmd {
+                    SessionCommand::Input(data) => {
+                        let writer = writer.clone();
+                        tokio::task::spawn_blocking(move || -> Result<()> {
+                            let mut guard = writer.lock().unwrap();
+                            guard.write_all(&data)?;
+                            guard.flush()?;
+                            Ok(())
+                        }).await??;
+                    }
+                    SessionCommand::Resize(rows, cols) => {
+                        let writer = writer.clone();
+                        tokio::task::spawn_blocking(move || -> Result<()> {
+                            let fd = writer.lock().unwrap().as_raw_fd();
+                            let winsize = libc::winsize {
+                                ws_row: rows,
+                                ws_col: cols,
+                                ws_xpixel: 0,
+                                ws_ypixel: 0,
+                            };
+                            let res = unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &winsize) };
+                            if res != 0 {
+                                return Err(io::Error::last_os_error().into());
+                            }
+                            Ok(())
+                        }).await??;
+                    }
+                    SessionCommand::Close => {
+                        let _ = child.start_kill();
+                    }
+                }
+            }
+            status = &mut child_wait => {
+                let exit_status = status?;
+                send_ws_frame(
+                    &sender,
+                    json!({
+                        "proto": PROTO_VERSION,
+                        "type": "session_closed",
+                        "id": new_message_id(),
+                        "ts": now_millis(),
+                        "ext": {},
+                        "session_id": config.session_id,
+                        "exit_code": exit_status.code(),
+                        "signal": exit_status.signal(),
+                        "canceled": false
+                    }),
+                )?;
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn stream_pipe<R: AsyncRead + Unpin>(
     mut reader: R,
     run_id: String,
@@ -444,11 +809,13 @@ impl BudApp {
         let default_cwd = expand_path(&args.cwd)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
+        let default_shell = default_shell().to_string();
         Self {
             args,
             identity_path,
             identity: None,
             run_executor: RunExecutor::new(default_cwd),
+            session_manager: SessionManager::new(default_shell),
         }
     }
 
@@ -591,6 +958,7 @@ impl BudApp {
         });
 
         self.run_executor.set_sender(sender.clone()).await;
+        self.session_manager.set_sender(sender.clone()).await;
 
         loop {
             tokio::select! {
@@ -605,6 +973,7 @@ impl BudApp {
                     });
                     if let Err(err) = send_ws_frame(&sender, heartbeat) {
                         self.run_executor.clear_sender().await;
+                        self.session_manager.clear_sender().await;
                         drop(sender);
                         let _ = writer_handle.await;
                         return Err(err);
@@ -618,6 +987,7 @@ impl BudApp {
                         Some(Ok(Message::Ping(payload))) => {
                             if let Err(err) = send_ws_message(&sender, Message::Pong(payload)) {
                                 self.run_executor.clear_sender().await;
+                                self.session_manager.clear_sender().await;
                                 drop(sender);
                                 let _ = writer_handle.await;
                                 return Err(err);
@@ -626,6 +996,7 @@ impl BudApp {
                         Some(Ok(Message::Close(frame))) => {
                             info!(?frame, "Server closed connection");
                             self.run_executor.clear_sender().await;
+                            self.session_manager.clear_sender().await;
                             drop(sender);
                             let _ = writer_handle.await;
                             return Ok(());
@@ -633,12 +1004,14 @@ impl BudApp {
                         Some(Ok(_)) => {}
                         Some(Err(err)) => {
                             self.run_executor.clear_sender().await;
+                            self.session_manager.clear_sender().await;
                             drop(sender);
                             let _ = writer_handle.await;
                             return Err(err.into());
                         }
                         None => {
                             self.run_executor.clear_sender().await;
+                            self.session_manager.clear_sender().await;
                             drop(sender);
                             let _ = writer_handle.await;
                             return Ok(());
@@ -655,6 +1028,22 @@ impl BudApp {
             "run" => {
                 let frame: RunFrame = serde_json::from_str(text)?;
                 self.handle_run_frame(frame).await?;
+            }
+            "session_open" => {
+                let frame: SessionOpenFrame = serde_json::from_str(text)?;
+                self.session_manager.handle_open(frame).await?;
+            }
+            "session_input" => {
+                let frame: SessionInputFrame = serde_json::from_str(text)?;
+                self.session_manager.handle_input(frame).await?;
+            }
+            "session_resize" => {
+                let frame: SessionResizeFrame = serde_json::from_str(text)?;
+                self.session_manager.handle_resize(frame).await?;
+            }
+            "session_close" => {
+                let frame: SessionCloseFrame = serde_json::from_str(text)?;
+                self.session_manager.handle_close(frame).await?;
             }
             "error" => {
                 let err: ErrorFrame = serde_json::from_str(text)?;
@@ -759,7 +1148,9 @@ impl BudApp {
             json!({
                 "max_concurrency": 1,
                 "supports_pty": false,
-                "shell_default": "/bin/bash"
+                "shell_default": "/bin/bash",
+                "sessions": true,
+                "sessions_backends": ["pty"]
             }),
         );
 

@@ -11,6 +11,9 @@ import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes } from "./routes/threads.js";
 import { AgentService } from "./agent/index.js";
 import OpenAI from "openai";
+import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerTermGateway } from "./ws/term-gateway.js";
+import { SessionManager } from "./runtime/session-manager.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -21,6 +24,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   const eventBus = new RunEventBus();
   const runLogger = server.log.child({ component: "run_manager" });
   const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
+  const sessionLogger = server.log.child({ component: "session_manager" });
+  const sessionManager = new SessionManager(sessionLogger);
   const openai = new OpenAI({ apiKey: config.openaiApiKey });
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
@@ -37,7 +42,9 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerBudRoutes(server);
   await registerThreadRoutes(server, runManager, agentService);
   await registerRunRoutes(server, runManager);
-  await registerWsGateway(server, runManager);
+  await registerSessionRoutes(server, sessionManager);
+  await registerWsGateway(server, runManager, sessionManager);
+  await registerTermGateway(server, sessionManager);
 
   server.addHook("onClose", async () => {
     await pool.end();

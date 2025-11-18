@@ -1,6 +1,6 @@
-import type { FormEvent } from 'react'
+import type { FormEvent, ClipboardEvent, KeyboardEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BudRail, type BudProfile } from '@/components/workbench/bud-rail'
+import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
 import { RunView, type ShellEntry } from '@/components/workbench/run-view'
@@ -24,7 +24,7 @@ type ApiBud = {
   accent_color?: string | null
   status: string
   tags?: string[]
-  capabilities?: string[]
+  capabilities?: Record<string, unknown> | null
   last_run?: {
     run_id: string
     status: string
@@ -51,6 +51,15 @@ type RunHistoryEntry = {
   stderr_bytes: number
 }
 
+type InteractiveSessionState = {
+  sessionId: string
+  attachToken: string
+  status: 'idle' | 'connecting' | 'open' | 'closed' | 'error'
+  output: string[]
+  socket: WebSocket | null
+  error?: string | null
+}
+
 const mapHistoryRunToEntry = (run: RunHistoryEntry): ShellEntry => {
   const status: ShellEntry['status'] =
     run.status === 'failed' ? 'failed' : run.status === 'succeeded' ? 'succeeded' : 'running'
@@ -67,6 +76,33 @@ const mapHistoryRunToEntry = (run: RunHistoryEntry): ShellEntry => {
     exitCode: typeof run.exit_code === 'number' ? run.exit_code : null,
     startedAt: run.started_at ? Date.parse(run.started_at) : Date.now(),
     finishedAt: run.finished_at ? Date.parse(run.finished_at) : undefined
+  }
+}
+
+const encodeTerminalData = (text: string) => {
+  if (typeof window === 'undefined' || typeof window.btoa !== 'function') {
+    return ''
+  }
+  const encoder = new TextEncoder()
+  const bytes = encoder.encode(text)
+  let binary = ''
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte)
+  })
+  return btoa(binary)
+}
+
+const decodeTerminalData = (data: string) => {
+  if (typeof window === 'undefined' || typeof window.atob !== 'function') {
+    return ''
+  }
+  try {
+    const binary = atob(data)
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    const decoder = new TextDecoder()
+    return decoder.decode(bytes)
+  } catch {
+    return ''
   }
 }
 
@@ -88,7 +124,28 @@ function App() {
   const [runHistoryCursor, setRunHistoryCursor] = useState<string | null>(null)
   const [runHistoryHasMore, setRunHistoryHasMore] = useState(false)
   const [runHistoryLoading, setRunHistoryLoading] = useState(false)
+  const [prefersDurableSession, setPrefersDurableSession] = useState(false)
+  const [interactiveSession, setInteractiveSession] = useState<InteractiveSessionState | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const interactivePaneRef = useRef<HTMLDivElement | null>(null)
+
+  const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
+    if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
+      return null
+    }
+    const record = caps as Record<string, unknown>
+    const sessions = record.sessions === true
+    const tmuxVersion = typeof record.tmux_version === 'string' ? (record.tmux_version as string) : undefined
+    const backendsRaw = record.sessions_backends
+    const backends = Array.isArray(backendsRaw)
+      ? (backendsRaw as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      : []
+    return {
+      sessions,
+      sessions_backends: backends,
+      tmux_version: tmuxVersion
+    }
+  }, [])
 
   const activeBudProfile = useMemo(() => {
     if (!budId) return undefined
@@ -115,6 +172,21 @@ function App() {
     root.style.setProperty('--bud-accent-muted', palette.muted)
     root.style.setProperty('--bud-accent-soft', palette.soft)
   }, [palette])
+
+  const activeCapabilities = activeBudProfile?.capabilities ?? null
+  const sessionsSupported = Boolean(activeCapabilities?.sessions)
+  const tmuxSupported =
+    Array.isArray(activeCapabilities?.sessions_backends) &&
+    activeCapabilities.sessions_backends.includes('tmux')
+  const durableSessionsSupported = sessionsSupported && tmuxSupported
+  const interactiveStatus = interactiveSession?.status ?? 'idle'
+  const interactiveOutput = interactiveSession?.output ?? []
+
+  useEffect(() => {
+    if (!durableSessionsSupported && prefersDurableSession) {
+      setPrefersDurableSession(false)
+    }
+  }, [durableSessionsSupported, prefersDurableSession])
 
   const findActiveEntryIndex = (entries: ShellEntry[]) => {
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -280,7 +352,112 @@ function App() {
     })
   }
 
-  const fetchBuds = async () => {
+  const startInteractiveSession = async () => {
+    if (!budId) {
+      setError('Select a Bud before starting a session.')
+      return
+    }
+    if (!threadId) {
+      setError('Create or select a thread before starting a session.')
+      return
+    }
+    try {
+      const resp = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bud_id: budId,
+          thread_id: threadId,
+          backend: prefersDurableSession && durableSessionsSupported ? 'tmux' : 'pty',
+          rows: 24,
+          cols: 80
+        })
+      })
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${resp.status}`)
+      }
+      const data = (await resp.json()) as { session_id: string; attach_token: string; backend: string }
+      setInteractiveSession({
+        sessionId: data.session_id,
+        attachToken: data.attach_token,
+        status: 'connecting',
+        output: [],
+        socket: null,
+        error: null
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start interactive session')
+    }
+  }
+
+  const sendInteractiveInput = (text: string) => {
+    if (!interactiveSession?.socket || interactiveSession.socket.readyState !== WebSocket.OPEN) {
+      return
+    }
+    try {
+      interactiveSession.socket.send(JSON.stringify({ type: 'input', data: encodeTerminalData(text) }))
+    } catch (err) {
+      console.error('Failed to send terminal input', err)
+    }
+  }
+
+  const handleTerminalKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!interactiveSession || interactiveSession.status !== 'open') {
+      return
+    }
+    event.preventDefault()
+    let payload = ''
+    if (event.ctrlKey && event.key.toLowerCase() === 'c') {
+      payload = '\u0003'
+    } else if (event.key.length === 1 && !event.metaKey && !event.altKey && !event.ctrlKey) {
+      payload = event.key
+    } else if (event.key === 'Enter') {
+      payload = '\r'
+    } else if (event.key === 'Backspace') {
+      payload = '\u007f'
+    } else if (event.key === 'Escape') {
+      payload = '\u001b'
+    } else if (event.key === 'ArrowUp') {
+      payload = '\u001b[A'
+    } else if (event.key === 'ArrowDown') {
+      payload = '\u001b[B'
+    } else if (event.key === 'ArrowRight') {
+      payload = '\u001b[C'
+    } else if (event.key === 'ArrowLeft') {
+      payload = '\u001b[D'
+    } else if (event.key === 'Tab') {
+      payload = '\t'
+    }
+    if (payload) {
+      sendInteractiveInput(payload)
+    }
+  }
+
+  const handleTerminalPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    if (!interactiveSession || interactiveSession.status !== 'open') {
+      return
+    }
+    event.preventDefault()
+    const text = event.clipboardData?.getData('text') ?? ''
+    if (text) {
+      sendInteractiveInput(text)
+    }
+  }
+
+  const stopInteractiveSession = () => {
+    if (interactiveSession?.socket && interactiveSession.socket.readyState === WebSocket.OPEN) {
+      try {
+        interactiveSession.socket.send(JSON.stringify({ type: 'close' }))
+      } catch {
+        /* noop */
+      }
+      interactiveSession.socket.close()
+    }
+    setInteractiveSession(null)
+  }
+
+  const fetchBuds = useCallback(async () => {
     const resp = await fetch('/api/buds')
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}))
@@ -296,13 +473,13 @@ function App() {
         accentColor: accent,
         status: bud.status ?? 'offline',
         tags: bud.tags ?? [],
-        capabilities: bud.capabilities ?? [],
+        capabilities: normalizeCapabilities(bud.capabilities ?? null),
         lastRun: bud.last_run ?? null
       }
     })
     setBuds(normalized)
     setBudId((current) => current ?? normalized[0]?.id ?? null)
-  }
+  }, [normalizeCapabilities])
 
   const fetchThreads = async (bud: string | null) => {
     if (!bud) {
@@ -383,7 +560,7 @@ function App() {
     fetchBuds().catch((err) => {
       setError(err instanceof Error ? err.message : 'Failed to load buds')
     })
-  }, [])
+  }, [fetchBuds])
 
   useEffect(() => {
     fetchThreads(budId).catch((err) => {
@@ -396,6 +573,82 @@ function App() {
       setError(err instanceof Error ? err.message : 'Failed to load messages')
     })
   }, [threadId])
+
+  useEffect(() => {
+    if (!interactiveSession || interactiveSession.socket || typeof window === 'undefined') {
+      return
+    }
+    if (!interactiveSession.sessionId) {
+      return
+    }
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const url = `${protocol}//${window.location.host}/term?session_id=${encodeURIComponent(interactiveSession.sessionId)}&attach_token=${encodeURIComponent(interactiveSession.attachToken)}`
+    const ws = new WebSocket(url)
+    setInteractiveSession((prev) => {
+      if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+        return prev
+      }
+      return { ...prev, socket: ws, status: 'connecting', error: null }
+    })
+    ws.onopen = () => {
+      setInteractiveSession((prev) => {
+        if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+          return prev
+        }
+        return { ...prev, status: 'open' }
+      })
+    }
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data as string) as Record<string, unknown>
+        if (payload.type === 'output' && typeof payload.data === 'string') {
+          const decoded = decodeTerminalData(payload.data)
+          if (decoded) {
+            setInteractiveSession((prev) => {
+              if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+                return prev
+              }
+              const merged = [...prev.output, decoded]
+              const sliced = merged.slice(-500)
+              return { ...prev, output: sliced }
+            })
+          }
+        } else if (payload.type === 'status' && typeof payload.status === 'string') {
+          setInteractiveSession((prev) => {
+            if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+              return prev
+            }
+            return {
+              ...prev,
+              status: payload.status === 'open' ? 'open' : payload.status === 'closed' ? 'closed' : payload.status === 'failed' ? 'error' : prev.status,
+              error: typeof payload.error === 'string' ? payload.error : prev.error
+            }
+          })
+        }
+      } catch (err) {
+        console.error('Failed to parse terminal message', err)
+      }
+    }
+    ws.onerror = () => {
+      setInteractiveSession((prev) => {
+        if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+          return prev
+        }
+        return { ...prev, status: 'error', error: 'Connection lost' }
+      })
+    }
+    ws.onclose = () => {
+      setInteractiveSession((prev) => {
+        if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+          return prev
+        }
+        return { ...prev, socket: null, status: prev.status === 'error' ? prev.status : 'closed' }
+      })
+    }
+    return () => {
+      ws.close()
+    }
+  }, [interactiveSession?.sessionId, interactiveSession?.attachToken, interactiveSession?.socket])
 
   useEffect(() => {
     if (!threadId) {
@@ -417,6 +670,29 @@ function App() {
     eventSourceRef.current?.close()
     setStatus('idle')
   }, [threadId])
+
+  useEffect(() => {
+    if (!interactivePaneRef.current) return
+    interactivePaneRef.current.scrollTop = interactivePaneRef.current.scrollHeight
+  }, [interactiveOutput])
+
+  useEffect(() => {
+    if (!threadId && interactiveSession) {
+      stopInteractiveSession()
+    }
+  }, [threadId, interactiveSession])
+
+  useEffect(() => {
+    if (!interactiveSession) return
+    if (interactiveSession.socket) {
+      try {
+        interactiveSession.socket.close()
+      } catch {
+        /* noop */
+      }
+    }
+    setInteractiveSession(null)
+  }, [budId, interactiveSession])
 
   const startStream = (id: string, thread: string) => {
     eventSourceRef.current?.close()
@@ -639,6 +915,56 @@ function App() {
             onLoadMoreHistory={handleLoadMoreHistory}
           />
         </div>
+        {sessionsSupported && (
+          <div className="border-t-4 border-black bg-muted/20 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-mono text-sm font-semibold">Interactive session (beta)</p>
+                <p className="text-xs text-muted-foreground">
+                  {interactiveStatus === 'open'
+                    ? 'Session active — focus terminal to send input.'
+                    : interactiveStatus === 'connecting'
+                      ? 'Connecting…'
+                      : interactiveStatus === 'error'
+                        ? interactiveSession?.error ?? 'Session error'
+                        : 'Start a live terminal on this Bud.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={startInteractiveSession}
+                  disabled={interactiveStatus === 'open' || interactiveStatus === 'connecting'}
+                  className="rounded-lg border-2 border-black bg-[var(--bud-accent-muted)] px-4 py-2 font-mono text-xs uppercase tracking-wide text-black transition hover:-translate-y-0.5 disabled:opacity-60"
+                >
+                  {interactiveStatus === 'open' ? 'Session running' : 'Start session'}
+                </button>
+                {interactiveSession && (
+                  <button
+                    type="button"
+                    onClick={stopInteractiveSession}
+                    className="rounded-lg border-2 border-black bg-destructive px-3 py-2 font-mono text-xs uppercase tracking-wide text-destructive-foreground transition hover:-translate-y-0.5"
+                  >
+                    Stop
+                  </button>
+                )}
+              </div>
+            </div>
+            <div
+              ref={interactivePaneRef}
+              tabIndex={0}
+              className="h-48 overflow-y-auto rounded-lg border-2 border-black bg-black p-3 font-mono text-sm text-green-300 focus:outline-none"
+              onKeyDown={handleTerminalKeyDown}
+              onPaste={handleTerminalPaste}
+            >
+              {interactiveOutput.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Focus this pane and start typing once the session is open.</p>
+              ) : (
+                <pre className="whitespace-pre-wrap break-words text-green-300">{interactiveOutput.join('')}</pre>
+              )}
+            </div>
+          </div>
+        )}
         <CommandComposer
           messageText={messageText}
           onMessageChange={setMessageText}
@@ -647,6 +973,10 @@ function App() {
           error={error}
           reasoningEffort={reasoningEffort}
           onReasoningChange={setReasoningEffort}
+          durablePreferred={prefersDurableSession}
+          onDurablePreferredChange={setPrefersDurableSession}
+          durableSupported={durableSessionsSupported}
+          sessionsSupported={sessionsSupported}
         />
       </div>
     </div>
