@@ -144,7 +144,7 @@ struct RunFrame {
 struct RunCommand {
     run_id: String,
     cmd: String,
-    cwd: String,
+    cwd: PathBuf,
     env: HashMap<String, String>,
     timeout_ms: u64,
 }
@@ -159,6 +159,7 @@ struct ExecutorState {
     current_run: Option<String>,
     sender: Option<OutboundSender>,
     active: HashMap<String, RunHandle>,
+    current_dir: PathBuf,
 }
 
 struct RunHandle {
@@ -170,13 +171,14 @@ enum CancelCommand {
 }
 
 impl RunExecutor {
-    fn new() -> Self {
+    fn new(initial_cwd: PathBuf) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ExecutorState {
                 queue: VecDeque::new(),
                 current_run: None,
                 sender: None,
                 active: HashMap::new(),
+                current_dir: initial_cwd,
             })),
         }
     }
@@ -191,7 +193,43 @@ impl RunExecutor {
         inner.sender = None;
     }
 
+    async fn prepare_command(
+        &self,
+        run_id: String,
+        cmd: String,
+        requested_cwd: Option<String>,
+        env: HashMap<String, String>,
+        timeout_ms: u64,
+    ) -> Result<RunCommand> {
+        let mut inner = self.inner.lock().await;
+        let resolved_cwd = if let Some(override_cwd) = requested_cwd {
+            match expand_path(&override_cwd) {
+                Some(path) => {
+                    inner.current_dir = path.clone();
+                    path
+                }
+                None => inner.current_dir.clone(),
+            }
+        } else {
+            inner.current_dir.clone()
+        };
+        drop(inner);
+        Ok(RunCommand {
+            run_id,
+            cmd,
+            cwd: resolved_cwd,
+            env,
+            timeout_ms,
+        })
+    }
+
     async fn enqueue(&self, command: RunCommand) -> Result<()> {
+        info!(
+            run_id = %command.run_id,
+            cmd = %command.cmd,
+            cwd = %command.cwd.display(),
+            "Queued run command"
+        );
         let mut inner = self.inner.lock().await;
         if inner.queue.len() >= MAX_QUEUE_DEPTH {
             bail!("run queue is full");
@@ -211,10 +249,27 @@ impl RunExecutor {
     async fn spawn_run(&self, cmd: RunCommand, sender: Option<OutboundSender>) {
         let executor = self.clone();
         task::spawn_local(async move {
-            executor
-                .execute_run(cmd.clone(), sender.clone())
-                .await
-                .unwrap_or_else(|err| warn!(error = %err, "run execution failed"));
+            if let Err(err) = executor.execute_run(cmd.clone(), sender.clone()).await {
+                warn!(error = %err, "run execution failed");
+                if let Some(sender) = sender.clone() {
+                    let _ = send_ws_frame(
+                        &sender,
+                        json!({
+                            "proto": PROTO_VERSION,
+                            "type": "run_finished",
+                            "id": new_message_id(),
+                            "ts": now_millis(),
+                            "ext": {},
+                            "run_id": cmd.run_id,
+                            "exit_code": null,
+                            "signal": null,
+                            "canceled": false,
+                            "cwd": cmd.cwd.to_string_lossy(),
+                            "error": err.to_string()
+                        })
+                    );
+                }
+            }
             executor.finish_and_start_next(cmd.run_id).await;
         });
     }
@@ -236,6 +291,19 @@ impl RunExecutor {
 
     async fn execute_run(&self, run: RunCommand, sender: Option<OutboundSender>) -> Result<()> {
         let sender = sender.ok_or_else(|| anyhow!("no websocket writer available"))?;
+        info!(
+            run_id = %run.run_id,
+            cmd = %run.cmd,
+            cwd = %run.cwd.display(),
+            "Starting shell command"
+        );
+        if !run.cwd.exists() {
+            warn!(
+                run_id = %run.run_id,
+                cwd = %run.cwd.display(),
+                "Run cwd does not exist; command may fail"
+            );
+        }
         let shell = default_shell();
         let mut command = Command::new(shell);
         command.arg("-lc").arg(&run.cmd);
@@ -243,9 +311,7 @@ impl RunExecutor {
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         command.stdin(Stdio::null());
-        if let Some(dir) = expand_path(&run.cwd) {
-            command.current_dir(dir);
-        }
+        command.current_dir(&run.cwd);
         unsafe {
             command.pre_exec(|| {
                 unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0))
@@ -253,7 +319,10 @@ impl RunExecutor {
             });
         }
 
-        let mut child = command.spawn().context("failed to spawn shell")?;
+        let cwd_clone = run.cwd.clone();
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("failed to spawn shell in {}", cwd_clone.display()))?;
         let stdout = child
             .stdout
             .take()
@@ -297,6 +366,13 @@ impl RunExecutor {
             }
         };
 
+        info!(
+            run_id = %run.run_id,
+            exit_code = exit_code,
+            signal = signal.as_deref().unwrap_or(""),
+            "Shell command finished"
+        );
+
         send_ws_frame(
             &sender,
             json!({
@@ -309,8 +385,11 @@ impl RunExecutor {
                 "exit_code": exit_code,
                 "signal": signal,
                 "canceled": false,
+                "cwd": run.cwd.to_string_lossy(),
             }),
         )?;
+
+        info!(run_id = %run.run_id, "Sent run_finished frame to backend");
 
         Ok(())
     }
@@ -362,11 +441,14 @@ fn send_ws_message(sender: &OutboundSender, message: Message) -> Result<()> {
 impl BudApp {
     fn new(args: BudArgs) -> Self {
         let identity_path = PathBuf::from(shellexpand::tilde(&args.identity_file).into_owned());
+        let default_cwd = expand_path(&args.cwd)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."));
         Self {
             args,
             identity_path,
             identity: None,
-            run_executor: RunExecutor::new(),
+            run_executor: RunExecutor::new(default_cwd),
         }
     }
 
@@ -585,20 +667,29 @@ impl BudApp {
     }
 
     async fn handle_run_frame(&self, frame: RunFrame) -> Result<()> {
-        let cwd = frame.cwd.clone().unwrap_or_else(|| self.args.cwd.clone());
         let mut env = frame.env.unwrap_or_default();
         env.entry("CI".into()).or_insert_with(|| "1".into());
         env.entry("LANG".into()).or_insert_with(|| "C.UTF-8".into());
         env.entry("GIT_ASKPASS".into())
             .or_insert_with(|| "/bin/true".into());
 
-        let command = RunCommand {
-            run_id: frame.run_id.clone(),
-            cmd: frame.cmd.clone(),
-            cwd,
-            env,
-            timeout_ms: frame.timeout_ms.unwrap_or(30 * 60 * 1000),
-        };
+        let command = self
+            .run_executor
+            .prepare_command(
+                frame.run_id.clone(),
+                frame.cmd.clone(),
+                frame.cwd.clone(),
+                env,
+                frame.timeout_ms.unwrap_or(30 * 60 * 1000),
+            )
+            .await?;
+
+        info!(
+            run_id = %command.run_id,
+            cmd = %command.cmd,
+            cwd = %command.cwd.display(),
+            "Received run frame from backend"
+        );
 
         self.run_executor.enqueue(command).await?;
         Ok(())

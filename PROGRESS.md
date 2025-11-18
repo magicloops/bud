@@ -1,18 +1,22 @@
 # Bud PoC Progress — Phase 4 Snapshot
 
-_Last updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)_
+_Last updated: 2025-11-18T07:39:19Z_
 
 ## What’s implemented
-- **Agent loop**: `POST /api/threads/:id/messages` now triggers an OpenAI Responses-driven planner that replays thread history, emits `agent.*` SSE events, issues `shell.run` tool calls, and streams stdout/stderr interleaved with agent narration.
-- **Threaded runs**: Run creation is tied to threads, `run_step` rows are appended per tool call, and SSE buffers now include ULID-backed IDs for resume.
-- **Bud executor**: Rust agent still handles enrollment, WSS heartbeats, and serial shell execution with base64 log chunks and `run_finished` events.
-- **Web console**: The Vite playground now creates threads/messages, listens for `agent.message/tool_call/tool_result`, and displays them alongside `exec.*` streams.
-- **Docs**: `service/README.md`, `docs/proto.md`, and `plan/phase-4-agent-loop.md` document the agent architecture, SSE payloads, and open TODOs.
+- **Agent loop**: backend now uses OpenAI Responses tool-calling end-to-end—threads/messages hydrate context, we send `input_text` items, register the `shell.run` function schema, and parse structured `function_call` outputs before dispatching runs to Bud. SSE streams `agent.*` + `exec.*` events interleaved with stdout/stderr.
+- **Threaded runs**: Run creation is tied to threads, `run_step` rows and log tails are recorded per tool call, and the event bus assigns ULID IDs for resume.
+- **Run logging**: Bud stdout/stderr ingestion now trusts Bud-provided `seq` and de-duplicates inserts (`run_log` `(run_id, seq)` uniqueness) so retries or multi-step runs no longer crash; `logs_bytes` only advances on successful writes.
+- **Bud executor**: Rust agent handles enrollment (with optional dev-token bypass), WSS heartbeats, serial shell execution, and base64 log streaming with `run_finished` frames. Bud now owns its working directory, reports `cwd` + `error` in `run_finished`, and keeps running even if the backend omits `cwd`.
+- **Web console**: Vite helper now ships a Bud workbench—neo‑brutalist shadcn/Tailwind layout with a Bud rail, thread list, chat timeline, terminal/web viewport toggle, and composer that still speaks to today’s `/api/threads` + SSE stack. Optimistic user messages show instantly, the SSE stream updates messages + current `cwd` as the run finishes, assistant/tool entries render richly (Markdown via `react-markdown` + `remark-breaks`, structured tool call cards with expandable JSON viewer, and per-message collapse toggles for >500 px histories), the terminal pane mirrors a real shell transcript (prompt + command rows, streaming stdout/stderr, exit codes, inline “running…” indicators keyed off tool calls). We now archive live SSE entries into run history so multi-step commands persist, added a `/runs` history endpoint (with pagination) to hydrate the terminal on refresh, improved scroll-stickiness for both chat and terminal panes, smoothed terminal theming (prompt colors, bud header, overscroll removal), and moved the GPT‑5 reasoning selector into the composer. The send button now reflects the full run lifecycle (spinner while runs are active).
+- **Docs/Plans**: `service/README.md`, `docs/proto.md`, `plan/phase-4-agent-loop.md`, and `debug/` notes cover architecture, SSE payloads, and current gaps.
 
 ## Known gaps / next phases
-- **Phase 5 (Cancel semantics)**: wire `/api/runs/:id/cancel`, propagate through the agent + OpenAI request, and forward cancels to Bud (TERM→KILL).
-- **Reliability polish**: SSE replay/`Last-Event-ID`, better run log truncation UX, tool-result summaries, and queue/backpressure on Bud dispatch.
-- **Security & ergonomics**: workspace isolation, richer denylist, and friendlier error reporting/testing knobs for mock LLMs.
+- **Phase 5 (Cancel semantics)**: propagate `/api/runs/:id/cancel` through the agent + OpenAI request and send Bud `cancel` (TERM→KILL).
+- **Streaming & robustness**: adopt Responses streaming events (`response.output_text.delta`, `response.function_call_arguments.delta`) so we can stream agent tokens, detect tool calls earlier, and capture token usage from `response.completed`.
+- **Reliability polish**: SSE replay/`Last-Event-ID`, run log truncation UX/downloads, and queue/backpressure on Bud dispatch.
+- **Security & ergonomics**: workspace isolation, richer denylist, friendlier error reporting/testing knobs for mock LLMs.
+- **UI schema alignment**: wire the new workbench components to richer Bud metadata (availability, tags), tabbed log panes, and future settings drawers once backend schemas catch up.
+- **Rich transcripts**: persist the new shell transcript objects (Markdown/tool metadata + stdout/stderr chunks) downstream so uploads/export keep formatting (ties into upcoming schema doc in `plan/ui-schema-alignment.md`).
 
 ## Quick start
 1. `pnpm db:migrate && pnpm db:seed` inside `service/` (local Postgres).

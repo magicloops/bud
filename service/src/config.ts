@@ -7,6 +7,21 @@ const toNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+
+const REASONING_EFFORTS = ["none", "low", "medium", "high"] as const;
+export type ReasoningEffortSetting = (typeof REASONING_EFFORTS)[number];
+
+const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortSetting): ReasoningEffortSetting => {
+  if (!value) {
+    return fallback;
+  }
+  const normalized = value.toLowerCase();
+  return (REASONING_EFFORTS as readonly string[]).includes(normalized as (typeof REASONING_EFFORTS)[number])
+    ? (normalized as ReasoningEffortSetting)
+    : fallback;
+};
+
 export const config = {
   port: toNumber(process.env.PORT, 3000),
   host: process.env.HOST ?? "0.0.0.0",
@@ -18,5 +33,9 @@ export const config = {
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 5),
-  runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024)
+  agentMaxOutputTokens: toNumber(process.env.AGENT_MAX_OUTPUT_TOKENS, 128000),
+  agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "none"),
+  runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
+  agentDebug: toBool(process.env.AGENT_DEBUG),
+  agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI)
 };

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import type WebSocket from "ws";
 import type { RawData } from "ws";
 import { ulid } from "ulid";
@@ -61,7 +61,9 @@ const RunFinishedSchema = EnvelopeSchema.extend({
   run_id: z.string(),
   exit_code: z.number().int().nullable().optional(),
   canceled: z.boolean().optional(),
-  signal: z.string().optional()
+  signal: z.string().nullable().optional(),
+  cwd: z.string().optional(),
+  error: z.string().optional()
 });
 
 const ErrorFrameSchema = EnvelopeSchema.extend({
@@ -98,16 +100,26 @@ interface SessionTracker {
 }
 
 const sessions = new Map<string, SessionTracker>();
+let gatewayLogger: FastifyBaseLogger | null = null;
 
 export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
   const session = sessions.get(budId);
   if (!session) {
+    logDebug({ budId }, "No active session for bud; dropping frame");
     return false;
   }
   if (session.socket.readyState !== session.socket.OPEN) {
+    logDebug(
+      {
+        budId,
+        readyState: session.socket.readyState
+      },
+      "WS socket not open; dropping frame"
+    );
     return false;
   }
   session.socket.send(JSON.stringify(payload));
+  logDebug({ budId, type: payload.type }, "Frame sent to Bud");
   return true;
 }
 
@@ -115,6 +127,7 @@ export async function registerWsGateway(
   server: FastifyInstance,
   runManager: RunManager
 ): Promise<void> {
+  gatewayLogger = server.log.child({ component: "ws_gateway" });
   server.get("/ws", { websocket: true }, (socket: WebSocket) => {
     const connection = new BudConnection(server, socket, runManager);
     connection.start().catch((err) => {
@@ -212,8 +225,13 @@ class BudConnection {
   private async handleStreamFrame(raw: unknown) {
     const result = StreamSchema.safeParse(raw);
     if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid stream frame");
       return;
     }
+    logDebug(
+      { runId: result.data.run_id, stream: result.data.type, seq: result.data.seq },
+      "Stream frame received"
+    );
     await this.runManager.handleStreamChunk(
       result.data.run_id,
       result.data.type,
@@ -225,12 +243,23 @@ class BudConnection {
   private async handleRunFinished(raw: unknown) {
     const result = RunFinishedSchema.safeParse(raw);
     if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid run_finished frame");
       return;
     }
+    logDebug(
+      {
+        runId: result.data.run_id,
+        exit_code: result.data.exit_code,
+        canceled: result.data.canceled,
+        signal: result.data.signal
+      },
+      "run_finished frame received"
+    );
     await this.runManager.handleRunFinished(result.data.run_id, {
       exit_code: result.data.exit_code ?? null,
       canceled: result.data.canceled,
-      signal: result.data.signal
+      signal: result.data.signal,
+      cwd: result.data.cwd
     });
   }
 
@@ -502,4 +531,11 @@ async function markBudOffline(budId: string, server: FastifyInstance) {
 
 function hashToken(token: string) {
   return createHmac("sha256", config.enrollmentHashSecret).update(token).digest("hex");
+}
+
+function logDebug(meta: Record<string, unknown>, message: string) {
+  if (!config.agentDebug || !gatewayLogger) {
+    return;
+  }
+  gatewayLogger.info({ ...meta, component: "ws_gateway" }, message);
 }

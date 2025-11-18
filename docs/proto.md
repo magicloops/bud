@@ -115,6 +115,8 @@ Bud connects in **one** of two modes:
 }
 ```
 
+`cwd` is optional; when omitted Bud runs the command from its current working directory and reports the resulting path via `run_finished.cwd`.
+
 *Reconnection (no token):*
 
 ```json
@@ -249,6 +251,8 @@ Bud MAY drop buffered chunks with `seq ≤ upto`.
   "exit_code":137,
   "canceled":true,
   "signal":"SIGKILL",
+  "error":null,
+  "cwd":"/home/bud/projects/service",
   "killed_after_ms":5000,
   "duration_ms":123456,
   "ext":{}
@@ -256,6 +260,8 @@ Bud MAY drop buffered chunks with `seq ≤ upto`.
 ```
 
 * If normal exit: `canceled:false`, omit `signal/killed_after_ms`.
+* Bud MUST include its resulting working directory in `cwd`.
+* On failures (e.g., spawn errors), Bud SHOULD set `error` with a human-readable description and set `exit_code` to `null`.
 
 ---
 

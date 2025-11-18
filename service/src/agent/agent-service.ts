@@ -1,11 +1,17 @@
 import OpenAI from "openai";
 import { ulid } from "ulid";
 import { asc, eq } from "drizzle-orm";
-import { config } from "../config.js";
+import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { messageTable, runTable } from "../db/schema.js";
 import { RunManager, RunStepResult } from "../runtime/run-manager.js";
 import { RunEventBus } from "../runtime/event-bus.js";
+import type { FastifyBaseLogger } from "fastify";
+import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
+import { upsertRunSummary } from "../db/run-summary.js";
+
+type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
+type InputItem = OpenAI.Responses.CreateParams["input"][number];
 
 type AgentDirective =
   | {
@@ -13,6 +19,7 @@ type AgentDirective =
       tool: "shell.run";
       command: string;
       cwd?: string;
+      callId: string;
     }
   | {
       type: "final";
@@ -20,100 +27,177 @@ type AgentDirective =
       message: string;
     };
 
-type ConversationMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
-
 const SYSTEM_PROMPT = `
 You are Bud Agent, coordinating shell access to a user's machine. Always produce STRICT JSON.
 Use schema:
 {"type":"tool_call","tool":"shell.run","command":"...","cwd":"~/project"} to run shell commands.
 Only run commands when necessary, use short commands, prefer cwd from user context (default "~").
-After receiving tool results (prefixed with TOOL_RESULT), reason about next steps.
-When you are done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
+After receiving tool results, immediately reason about next steps. When you are done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
 `.trim();
 
 const TOOL_RESULT_PREFIX = "TOOL_RESULT";
+
+const SHELL_TOOL = {
+  type: "function" as const,
+  name: "shell_run",
+  description: "Execute a shell command on the user's Bud device.",
+  parameters: {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description: "Command to execute (non-interactive)."
+      },
+      cwd: {
+        type: "string",
+        description: "Working directory (default ~)."
+      }
+    },
+    required: ["command", "cwd"],
+    additionalProperties: false
+  },
+  strict: true
+};
 
 export class AgentService {
   private readonly client: OpenAI;
   private readonly runManager: RunManager;
   private readonly events: RunEventBus;
+  private readonly logger: FastifyBaseLogger;
+  private readonly debugEnabled: boolean;
+  private readonly openaiDebugEnabled: boolean;
+  private readonly defaultReasoningEffort: ReasoningEffortSetting;
+  private readonly supportsReasoningNone: boolean;
 
-  constructor(client: OpenAI, runManager: RunManager, events: RunEventBus) {
+  constructor(
+    client: OpenAI,
+    runManager: RunManager,
+    events: RunEventBus,
+    logger: FastifyBaseLogger,
+    debugEnabled: boolean,
+    openaiDebugEnabled: boolean
+  ) {
     this.client = client;
     this.runManager = runManager;
     this.events = events;
+    this.logger = logger;
+    this.debugEnabled = debugEnabled;
+    this.openaiDebugEnabled = openaiDebugEnabled;
+    this.defaultReasoningEffort = config.agentReasoningEffortDefault;
+    this.supportsReasoningNone = this.detectReasoningNoneSupport(config.openaiModel);
     if (!config.openaiApiKey) {
       throw new Error("OPENAI_API_KEY is required to run the agent");
     }
   }
 
-  async handleUserMessage(threadId: string): Promise<{ runId: string }> {
+  async startUserMessage(
+    threadId: string,
+    options?: { reasoningEffort?: ReasoningEffortSetting | null }
+  ): Promise<{ runId: string }> {
+    const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
     const { runId, budId } = await this.runManager.createRunRecord(threadId, { status: "planning" });
-    try {
-      const history = await this.fetchHistory(threadId);
-      const messages: ConversationMessage[] = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history
-      ];
+    void this.runAgentFlow({ threadId, budId, runId, reasoningEffort: requestedEffort }).catch((err) => {
+      this.logger.error({ err, runId, threadId, component: "agent" }, "Agent flow failed");
+    });
+    return { runId };
+  }
 
+  private async runAgentFlow({
+    threadId,
+    budId,
+    runId,
+    reasoningEffort
+  }: {
+    threadId: string;
+    budId: string;
+    runId: string;
+    reasoningEffort: ReasoningEffortSetting;
+  }): Promise<void> {
+    const conversation = await this.buildConversation(threadId);
+    this.debug("Starting agent run", { threadId, runId, entries: conversation.length, reasoningEffort });
+    const aggregateBytes = { stdout: 0, stderr: 0 };
+    try {
       let steps = 0;
       while (steps < config.agentMaxSteps) {
-        const directive = await this.invokeModel(messages);
-        if (directive.type === "tool_call") {
+        const response = await this.invokeModel(conversation, reasoningEffort);
+        const toolCall = this.extractFunctionCall(response);
+        if (toolCall) {
           this.events.emit(runId, {
             event: "agent.tool_call",
             data: {
               id: ulid(),
-              name: directive.tool,
-              args: { command: directive.command, cwd: directive.cwd ?? "~" }
+              name: toolCall.tool,
+              args: { command: toolCall.command, cwd: toolCall.cwd ?? null }
             },
             id: ulid()
+          });
+          this.debug("Dispatching tool call", {
+            runId,
+            threadId,
+            command: toolCall.command,
+            cwd: toolCall.cwd ?? "~",
+            callId: toolCall.callId
+          });
+
+          conversation.push({
+            type: "function_call",
+            call_id: toolCall.callId,
+            name: SHELL_TOOL.name,
+            arguments: JSON.stringify({
+              command: toolCall.command,
+              cwd: toolCall.cwd ?? "~"
+            })
           });
 
           const dispatch = await this.runManager.dispatchShellCommand({
             runId,
             budId,
-            command: directive.command,
-            cwd: directive.cwd ?? "~",
+            command: toolCall.command,
+            cwd: toolCall.cwd ?? undefined,
             mode: "agent"
           });
           const result = await dispatch.promise;
-          await this.recordToolMessage(threadId, directive, result);
+          const toolPayload = await this.recordToolMessage(threadId, toolCall, result);
+          conversation.push({
+            type: "function_call_output",
+            call_id: toolCall.callId,
+            output: JSON.stringify(toolPayload)
+          });
+          this.debug("Bud execution completed", {
+            runId,
+            callId: toolCall.callId,
+            exitCode: result.exitCode,
+            stdoutBytes: result.bytes.stdout,
+            stderrBytes: result.bytes.stderr
+          });
+
           this.events.emit(runId, {
             event: "agent.tool_result",
             data: {
-              name: directive.tool,
+              name: toolCall.tool,
               exit_code: result.exitCode,
               stdout: result.stdout,
               stderr: result.stderr
             },
             id: ulid()
           });
-          messages.push({
-            role: "user",
-            content: `${TOOL_RESULT_PREFIX}\n${JSON.stringify({
-              tool: directive.tool,
-              command: directive.command,
-              cwd: directive.cwd ?? "~",
-              exit_code: result.exitCode,
-              signal: result.signal,
-              stdout_tail: result.stdout,
-              stderr_tail: result.stderr,
-              bytes: result.bytes
-            })}`
-          });
+
+          aggregateBytes.stdout += result.bytes.stdout;
+          aggregateBytes.stderr += result.bytes.stderr;
           steps += 1;
           continue;
         }
 
+        const directive = this.parseResponse(response);
         await db.insert(messageTable).values({
           threadId,
           role: "assistant",
-          content: directive.message
+          displayRole: "Bud Agent",
+          content: directive.message,
+          metadata: { status: directive.status }
         });
+        await recordThreadMessageMetadata(threadId, directive.message);
+        conversation.push(this.createMessageInput("assistant", directive.message));
         await db
           .update(runTable)
           .set({
@@ -122,6 +206,14 @@ export class AgentService {
             error: directive.status === "failed" ? directive.message : null
           })
           .where(eq(runTable.runId, runId));
+        await upsertRunSummary({
+          runId,
+          status: directive.status,
+          exitCode: directive.status === "succeeded" ? 0 : null,
+          stdoutBytes: aggregateBytes.stdout,
+          stderrBytes: aggregateBytes.stderr,
+          finishedAt: new Date()
+        });
 
         this.events.emit(runId, {
           event: "agent.message",
@@ -134,7 +226,12 @@ export class AgentService {
           id: ulid()
         });
 
-        return { runId };
+        this.debug("Agent final response", {
+          runId,
+          status: directive.status,
+          textLength: directive.message.length
+        });
+        return;
       }
 
       throw new Error("agent reached max steps");
@@ -147,6 +244,14 @@ export class AgentService {
           error: err instanceof Error ? err.message : "agent_failed"
         })
         .where(eq(runTable.runId, runId));
+      await upsertRunSummary({
+        runId,
+        status: "failed",
+        exitCode: null,
+        stdoutBytes: aggregateBytes.stdout,
+        stderrBytes: aggregateBytes.stderr,
+        finishedAt: new Date()
+      });
 
       this.events.emit(runId, {
         event: "final",
@@ -157,59 +262,171 @@ export class AgentService {
         id: ulid()
       });
 
+      this.debug("Agent run failed", {
+        runId,
+        error: err instanceof Error ? err.message : err
+      });
       throw err;
     }
   }
 
-  private async fetchHistory(threadId: string): Promise<ConversationMessage[]> {
+  private createMessageInput(
+    role: "system" | "user" | "assistant" | "developer",
+    text: string
+  ): InputItem {
+    const content =
+      role === "assistant"
+        ? [{ type: "output_text", text }]
+        : [{ type: "input_text", text }];
+    return {
+      type: "message",
+      role,
+      content
+    };
+  }
+
+  private async buildConversation(threadId: string): Promise<InputItem[]> {
+    const items: InputItem[] = [this.createMessageInput("system", SYSTEM_PROMPT)];
     const rows = await db
       .select({
         role: messageTable.role,
-        content: messageTable.content
+        content: messageTable.content,
+        metadata: messageTable.metadata
       })
       .from(messageTable)
       .where(eq(messageTable.threadId, threadId))
       .orderBy(asc(messageTable.createdAt));
 
-    return rows.map((row) => {
-      if (row.role === "assistant") {
-        return { role: "assistant" as const, content: row.content };
-      }
+    for (const row of rows) {
       if (row.role === "tool") {
-        return {
-          role: "user" as const,
-          content: `${TOOL_RESULT_PREFIX}\n${row.content}`
-        };
+        try {
+          const raw = row.content;
+          const payload = JSON.parse(raw) as {
+            call_id?: string;
+            command?: string;
+            cwd?: string;
+          };
+          const callId =
+            typeof payload.call_id === "string" && payload.call_id
+              ? payload.call_id
+              : `tool_${ulid()}`;
+          const command =
+            typeof payload.command === "string" && payload.command
+              ? payload.command
+              : null;
+          const cwd =
+            typeof payload.cwd === "string" && payload.cwd ? payload.cwd : "~";
+
+          if (!command) {
+            throw new Error("tool payload missing command");
+          }
+
+          items.push({
+            type: "function_call",
+            call_id: callId,
+            name: SHELL_TOOL.name,
+            arguments: JSON.stringify({
+              command,
+              cwd
+            })
+          });
+          items.push({
+            type: "function_call_output",
+            call_id: callId,
+            output: raw
+          });
+          continue;
+        } catch {
+          items.push(this.createMessageInput("assistant", `${TOOL_RESULT_PREFIX}\n${row.content}`));
+          continue;
+        }
       }
-      return { role: "user" as const, content: row.content };
-    });
+      if (row.role === "assistant") {
+        items.push(this.createMessageInput(row.role, row.content));
+        continue;
+      }
+      if (row.role === "user") {
+        const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+        const preferredCwd =
+          typeof metadata.preferred_cwd === "string" && metadata.preferred_cwd
+            ? metadata.preferred_cwd
+            : undefined;
+        const content = preferredCwd
+          ? `${row.content}\n\n[Preferred CWD: ${preferredCwd}]`
+          : row.content;
+        items.push(this.createMessageInput("user", content));
+      }
+    }
+    return items;
   }
 
-  private async invokeModel(messages: ConversationMessage[]): Promise<AgentDirective> {
-    const input = messages.map((msg) => ({
-      role: msg.role,
-      type: "message",
-      content: [{ type: "text", text: msg.content }]
-    }));
-
+  private async invokeModel(
+    input: InputItem[],
+    reasoningEffort: ReasoningEffortSetting
+  ): Promise<OpenAIResponse> {
+    const last = input.at(-1);
+    const lastRole = last && "type" in last && last?.type === "message" ? last.role : "n/a";
+    this.debug("Calling OpenAI Responses", {
+      entries: input.length,
+      lastRole,
+      reasoningEffort
+    });
     const response = await this.client.responses.create({
       model: config.openaiModel,
       input,
-      temperature: 0.2,
-      max_output_tokens: 800
+      tools: [SHELL_TOOL],
+      tool_choice: "auto",
+      max_output_tokens: config.agentMaxOutputTokens,
+      reasoning: { effort: reasoningEffort }
     });
-
-    return this.parseDirective(response.output_text);
+    const outputItems =
+      (response as { output?: Array<{ type?: string }> }).output ?? [];
+    this.debug("OpenAI response received", {
+      responseId: response.id,
+      outputTypes: outputItems.map((item) => item.type ?? "unknown")
+    });
+    this.debugOpenAIResponse(response);
+    return response;
   }
 
-  private parseDirective(rawText: string): AgentDirective {
-    const trimmed = rawText.trim();
+  private parseResponse(response: OpenAIResponse): AgentDirective {
+    const status = (response as { status?: string }).status;
+    const incompleteReason = (response as { incomplete_details?: { reason?: string } }).incomplete_details
+      ?.reason;
+    if (status === "incomplete") {
+      throw new Error(
+        `model response incomplete: ${incompleteReason ?? "unknown reason"}`
+      );
+    }
+
+    const aggregated = Array.isArray(response.output_text)
+      ? response.output_text.join("\n")
+      : typeof response.output_text === "string"
+        ? response.output_text
+        : "";
+    if (!aggregated) {
+      throw new Error("model returned no text or tool call");
+    }
+    const trimmed = aggregated.trim();
     const jsonText = this.stripCodeFence(trimmed);
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonText);
     } catch (err) {
-      throw new Error(`failed to parse agent response as JSON: ${(err as Error).message}`);
+      this.logger.warn(
+        {
+          err,
+          responseId: response.id,
+          component: "agent",
+          rawText: trimmed.slice(0, 500)
+        },
+        "Agent response was not JSON; falling back to plain text"
+      );
+      return {
+        type: "final",
+        status: "succeeded",
+        message: trimmed
+      };
     }
 
     if (typeof parsed !== "object" || parsed === null) {
@@ -219,7 +436,7 @@ export class AgentService {
     const type = payload.type;
     if (type === "tool_call") {
       const command = payload.command;
-      if (typeof command !== "string" || command.trim().length === 0) {
+      if (typeof command !== "string" || !command.trim()) {
         throw new Error("tool_call requires non-empty command");
       }
       const cwd = typeof payload.cwd === "string" ? payload.cwd : undefined;
@@ -227,7 +444,8 @@ export class AgentService {
         type: "tool_call",
         tool: "shell.run",
         command: command.trim(),
-        cwd
+        cwd,
+        callId: `txt_${ulid()}`
       };
     }
     if (type === "final") {
@@ -240,6 +458,61 @@ export class AgentService {
       };
     }
     throw new Error("unknown agent directive");
+  }
+
+  private normalizeReasoningEffort(requested?: ReasoningEffortSetting | null): ReasoningEffortSetting {
+    const desired = requested ?? this.defaultReasoningEffort;
+    if (desired === "none" && !this.supportsReasoningNone) {
+      return "low";
+    }
+    return desired;
+  }
+
+  private detectReasoningNoneSupport(model: string): boolean {
+    const normalized = model.toLowerCase();
+    return normalized.includes("gpt-5.1") || normalized.includes("gpt-5o") || normalized.includes("o1");
+  }
+
+  private extractFunctionCall(response: OpenAIResponse): AgentDirective | null {
+    const items = (response as { output?: Array<Record<string, unknown>> }).output;
+    if (!Array.isArray(items)) {
+      return null;
+    }
+    for (const item of items) {
+      const toolItem = item as {
+        type?: string;
+        name?: string;
+        arguments?: string;
+        call_id?: string;
+        id?: string;
+      };
+      if (toolItem?.type === "function_call" && toolItem?.name === "shell_run") {
+        const args = this.safeParseArgs(toolItem.arguments);
+        if (!args.command || typeof args.command !== "string") {
+          throw new Error("function_call missing command argument");
+        }
+        const callId = typeof toolItem.call_id === "string" ? toolItem.call_id : toolItem.id ?? ulid();
+        return {
+          type: "tool_call",
+          tool: "shell.run",
+          command: args.command,
+          cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+          callId
+        };
+      }
+    }
+    return null;
+  }
+
+  private safeParseArgs(raw?: string) {
+    if (!raw) {
+      return {};
+    }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new Error("failed to parse tool call arguments");
+    }
   }
 
   private stripCodeFence(text: string) {
@@ -261,19 +534,48 @@ export class AgentService {
     directive: Extract<AgentDirective, { type: "tool_call" }>,
     result: RunStepResult
   ) {
+    const payload = {
+      tool: directive.tool,
+      call_id: directive.callId,
+      command: directive.command,
+      cwd: directive.cwd ?? null,
+      exit_code: result.exitCode,
+      signal: result.signal,
+      stdout_tail: result.stdout,
+      stderr_tail: result.stderr,
+      bytes: result.bytes
+    };
     await db.insert(messageTable).values({
       threadId,
       role: "tool",
-      content: JSON.stringify({
-        tool: directive.tool,
-        command: directive.command,
-        cwd: directive.cwd ?? "~",
-        exit_code: result.exitCode,
-        signal: result.signal,
-        stdout_tail: result.stdout,
-        stderr_tail: result.stderr,
-        bytes: result.bytes
-      })
+      displayRole: "Tool",
+      content: JSON.stringify(payload),
+      metadata: payload
     });
+    const preview = `${directive.tool} exit ${payload.exit_code ?? "?"}`;
+    await recordThreadMessageMetadata(threadId, preview);
+    return payload;
+  }
+
+  private debug(message: string, meta?: Record<string, unknown>) {
+    if (!this.debugEnabled) {
+      return;
+    }
+    this.logger.info({ ...meta, component: "agent" }, message);
+  }
+
+  private debugOpenAIResponse(response: OpenAIResponse) {
+    if (!this.openaiDebugEnabled) {
+      return;
+    }
+    try {
+      const serialized = JSON.stringify(response, null, 2);
+      this.logger.info({ component: "agent", openai_response: serialized }, "OpenAI response payload");
+    } catch (err) {
+      this.logger.warn(
+        { err, component: "agent" },
+        "Failed to serialize OpenAI response for debug logging"
+      );
+    }
   }
 }

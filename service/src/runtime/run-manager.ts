@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import type { FastifyBaseLogger } from "fastify";
 import { ulid } from "ulid";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -12,6 +13,7 @@ import {
 import { RunEventBus } from "./event-bus.js";
 import { config } from "../config.js";
 import { sendFrameToBud } from "../ws/gateway.js";
+import { upsertRunSummary } from "../db/run-summary.js";
 
 type RunRequest = {
   threadId: string;
@@ -36,8 +38,8 @@ type RunContext = {
   runId: string;
   budId: string;
   stepId: string;
-  seq: number;
   mode: DispatchMode;
+  cwd?: string;
   // eslint-disable-next-line no-unused-vars
   resolve?: (result: RunStepResult) => void;
   // eslint-disable-next-line no-unused-vars
@@ -76,9 +78,13 @@ function appendTail(current: string, chunk: Buffer) {
 
 export class RunManager {
   private readonly events: RunEventBus;
+  private readonly logger: FastifyBaseLogger;
+  private readonly debugEnabled: boolean;
 
-  constructor(events: RunEventBus) {
+  constructor(events: RunEventBus, logger: FastifyBaseLogger, debugEnabled: boolean) {
     this.events = events;
+    this.logger = logger;
+    this.debugEnabled = debugEnabled;
   }
 
   async createRun(request: RunRequest): Promise<{ runId: string }> {
@@ -95,6 +101,10 @@ export class RunManager {
     });
 
     dispatch.promise.catch((err) => {
+      this.debug("Standalone run failed", {
+        runId,
+        error: err instanceof Error ? err.message : String(err)
+      });
       this.events.emit(runId, {
         event: "final",
         data: {
@@ -169,7 +179,7 @@ export class RunManager {
         runId: params.runId,
         idx,
         tool: "shell.run",
-        argsJson: { cmd: params.command, cwd: params.cwd },
+        argsJson: { cmd: params.command, cwd: params.cwd ?? null },
         startedAt: now
       })
       .returning({
@@ -187,7 +197,7 @@ export class RunManager {
       id: ulid()
     });
 
-    const frame = {
+    const frame: Record<string, unknown> = {
       proto: "0.1",
       type: "run",
       id: `msg_${ulid()}`,
@@ -195,7 +205,6 @@ export class RunManager {
       ext: {},
       run_id: params.runId,
       cmd: params.command,
-      cwd: params.cwd,
       env: {
         CI: "1",
         LANG: "C.UTF-8",
@@ -204,13 +213,36 @@ export class RunManager {
       timeout_ms: 30 * 60 * 1000,
       use_pty: false
     };
+    if (params.cwd) {
+      frame.cwd = params.cwd;
+    }
+
+    this.debug("Dispatching run to Bud", {
+      runId: params.runId,
+      budId: params.budId,
+      command: params.command,
+      cwd: params.cwd,
+      mode: params.mode
+    });
 
     const sent = sendFrameToBud(params.budId, frame);
     if (!sent) {
+      this.debug("Failed to send run frame to Bud", {
+        runId: params.runId,
+        budId: params.budId
+      });
       await db
         .update(runTable)
         .set({ status: "failed", finishedAt: new Date(), error: "BUD_OFFLINE" })
         .where(eq(runTable.runId, params.runId));
+      await upsertRunSummary({
+        runId: params.runId,
+        status: "failed",
+        exitCode: null,
+        stdoutBytes: 0,
+        stderrBytes: 0,
+        finishedAt: new Date()
+      });
       throw new Error("bud disconnected");
     }
 
@@ -219,13 +251,19 @@ export class RunManager {
       runId: params.runId,
       budId: params.budId,
       stepId: step.stepId,
-      seq: 0,
       mode: params.mode,
+      cwd: params.cwd,
       resolve: deferred.resolve,
       reject: deferred.reject,
       stdoutTail: "",
       stderrTail: "",
       bytes: { stdout: 0, stderr: 0 }
+    });
+
+    this.debug("Run registered with active tracker", {
+      runId: params.runId,
+      stepId: step.stepId,
+      mode: params.mode
     });
 
     return deferred;
@@ -253,22 +291,34 @@ export class RunManager {
       const currentBytes = runRow?.logsBytes ?? 0;
       const remaining = Math.max(config.runLogMaxBytes - currentBytes, 0);
       const toStore = remaining >= buffer.length ? buffer : buffer.subarray(0, remaining);
+      let insertedBytes = 0;
       if (toStore.length > 0) {
-        await db.insert(runLogTable).values({
-          runId,
-          seq,
-          stream,
-          data: toStore
-        });
+        const inserted = await db
+          .insert(runLogTable)
+          .values({
+            runId,
+            seq,
+            stream,
+            data: toStore
+          })
+          .onConflictDoNothing({
+            target: [runLogTable.runId, runLogTable.seq]
+          })
+          .returning({ seq: runLogTable.seq });
+        if (inserted.length > 0) {
+          insertedBytes = toStore.length;
+        }
       }
-      const newTotal = currentBytes + buffer.length;
-      await db
-        .update(runTable)
-        .set({
-          logsBytes: Math.min(newTotal, config.runLogMaxBytes),
-          logTruncated: newTotal > config.runLogMaxBytes
-        })
-        .where(eq(runTable.runId, runId));
+      if (insertedBytes > 0) {
+        const newTotal = currentBytes + insertedBytes;
+        await db
+          .update(runTable)
+          .set({
+            logsBytes: Math.min(newTotal, config.runLogMaxBytes),
+            logTruncated: newTotal > config.runLogMaxBytes
+          })
+          .where(eq(runTable.runId, runId));
+      }
     }
 
     if (stream === "stdout") {
@@ -278,6 +328,13 @@ export class RunManager {
       context.stderrTail = appendTail(context.stderrTail, buffer);
       context.bytes.stderr += buffer.length;
     }
+
+    this.debug("Streaming chunk received", {
+      runId,
+      stream,
+      seq,
+      bytes: buffer.length
+    });
 
     this.events.emit(runId, {
       event: `exec.${stream}`,
@@ -291,7 +348,13 @@ export class RunManager {
 
   async handleRunFinished(
     runId: string,
-    payload: { exit_code: number | null; canceled?: boolean; signal?: string }
+    payload: {
+      exit_code: number | null;
+      canceled?: boolean;
+      signal?: string | null;
+      cwd?: string | null;
+      error?: string;
+    }
   ): Promise<void> {
     const context = activeRuns.get(runId);
     const finishedAt = new Date();
@@ -306,34 +369,70 @@ export class RunManager {
         .where(eq(runStepTable.stepId, context.stepId));
     }
 
+    const resolvedStatus = payload.canceled
+      ? "canceled"
+      : payload.exit_code === 0 && !payload.error
+        ? "succeeded"
+        : "failed";
+
     if (!context || context.mode === "standalone") {
-      await db
-        .update(runTable)
-        .set({
-          status: payload.canceled ? "canceled" : payload.exit_code === 0 ? "succeeded" : "failed",
-          finishedAt
-        })
-        .where(eq(runTable.runId, runId));
+      const updateValues: Record<string, unknown> = {
+        status: resolvedStatus,
+        finishedAt
+      };
+      if (payload.cwd) {
+        updateValues.workspacePath = payload.cwd;
+      }
+      if (payload.error) {
+        updateValues.error = payload.error;
+      }
+      await db.update(runTable).set(updateValues).where(eq(runTable.runId, runId));
+
+      await upsertRunSummary({
+        runId,
+        status: resolvedStatus,
+        exitCode: payload.exit_code ?? null,
+        stdoutBytes: context?.bytes.stdout ?? 0,
+        stderrBytes: context?.bytes.stderr ?? 0,
+        finishedAt
+      });
 
       this.events.emit(runId, {
         event: "final",
         data: {
-          status: payload.canceled ? "canceled" : payload.exit_code === 0 ? "succeeded" : "failed",
+          status: resolvedStatus,
           exit_code: payload.exit_code,
-          signal: payload.signal
+          signal: payload.signal,
+          cwd: payload.cwd ?? context?.cwd ?? null,
+          error: payload.error
         },
         id: ulid()
       });
     } else {
       context.resolve?.({
         exitCode: payload.exit_code ?? null,
-        signal: payload.signal,
+        signal: payload.signal ?? undefined,
         stdout: context.stdoutTail,
         stderr: context.stderrTail,
         bytes: context.bytes
       });
     }
 
+    this.debug("Run finished", {
+      runId,
+      mode: context?.mode ?? "standalone",
+      exit_code: payload.exit_code,
+      canceled: payload.canceled,
+      signal: payload.signal
+    });
+
     activeRuns.delete(runId);
+  }
+
+  private debug(message: string, meta?: Record<string, unknown>) {
+    if (!this.debugEnabled) {
+      return;
+    }
+    this.logger.info({ ...meta, component: "run_manager" }, message);
   }
 }
