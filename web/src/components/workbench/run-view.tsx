@@ -127,8 +127,9 @@ const RunViewComponent = ({
                     bud
                   </span>
                   <span className="text-[length:0.75rem] text-muted-foreground">({entry.cwd ?? '~'})</span>
-                  <span className="text-[color:#a6ff4d]">$</span>
-                  <span className="text-[color:rgba(255,255,255,0.95)] text-sm">{entry.command}</span>
+                  <span className="flex-1 min-w-0 text-[color:#a6ff4d] text-sm whitespace-pre-wrap break-words">
+                    $ {entry.command}
+                  </span>
                   {entry.status === 'running' && (
                     <span className="text-[color:var(--bud-accent-muted)] animate-pulse">running…</span>
                   )}

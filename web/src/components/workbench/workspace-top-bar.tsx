@@ -73,10 +73,10 @@ function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonP
       className={cn(
         'rounded-lg border-3 border-black font-mono transition-all',
         active
-          ? 'bg-[var(--bud-accent-muted)] text-black shadow-none translate-y-0.5'
-          : 'hover:-translate-y-0.5'
+          ? 'bg-[var(--bud-accent-muted)] text-black shadow-none translate-y-0.5 dark:bg-[var(--bud-accent-muted)] dark:text-white'
+          : 'bg-card hover:-translate-y-0.5 hover:bg-[var(--bud-accent-soft)] dark:bg-background dark:hover:bg-[var(--bud-accent-soft)]'
       )}
-      style={active ? {} : { boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
+      style={active ? { boxShadow: '3px 3px 0px rgba(0,0,0,0.4)' } : { boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
     >
       {icon}
       {children}

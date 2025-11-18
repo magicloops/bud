@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
@@ -35,11 +35,9 @@ function relativeTime(iso: string) {
 }
 
 export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentColor, budLabel }: ThreadPanelProps) {
-  const [mutedColor, setMutedColor] = useState(accentColor ?? 'var(--accent)')
-
-  useEffect(() => {
+  const accentBorder = useMemo(() => {
     const resolved = resolveCssVar(accentColor ?? 'var(--accent)')
-    setMutedColor(getMutedColor(resolved, 0.35))
+    return getMutedColor(resolved, 0.35)
   }, [accentColor])
 
   const orderedThreads = useMemo(
@@ -97,13 +95,13 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, accentCol
               key={thread.thread_id}
               onClick={() => onSelectThread(thread.thread_id)}
               className={cn(
-                'w-full rounded-xl border-3 border-black px-3 py-2 text-left transition-all',
-                isActive
-                  ? 'shadow-none'
-                  : 'shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-y-0.5'
+                'w-full rounded-xl border-3 border-black px-3 py-2 text-left transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5',
+                isActive && 'border-[color:var(--bud-accent-vibrant)]'
               )}
               style={{
-                backgroundColor: isActive ? mutedColor : 'var(--card)',
+                backgroundColor: 'var(--card)',
+                borderColor: isActive ? accentBorder : 'var(--border)',
+                boxShadow: isActive ? `3px 3px 0 ${accentBorder}` : undefined
               }}
             >
               <div className="flex items-center justify-between gap-2">

@@ -141,6 +141,32 @@ function App() {
     setTerminalEntries((prev) => [...prev, entry])
   }
 
+  const archiveRunEntries = (runId: string) => {
+    setTerminalEntries((prev) => {
+      if (!runId) return prev
+      const archive: ShellEntry[] = []
+      const remaining: ShellEntry[] = []
+      for (const entry of prev) {
+        if (entry.runId === runId) {
+          archive.push(entry)
+        } else {
+          remaining.push(entry)
+        }
+      }
+      if (archive.length > 0) {
+        setRunHistory((prevHistory) => {
+          const existing = new Map(prevHistory.map((entry) => [entry.id, entry]))
+          for (const entry of archive) {
+            const historyId = `history_${entry.id}`
+            existing.set(historyId, { ...entry, id: historyId })
+          }
+          return Array.from(existing.values()).sort((a, b) => a.startedAt - b.startedAt)
+        })
+      }
+      return remaining
+    })
+  }
+
   const appendStreamChunk = (stream: 'stdout' | 'stderr', payload: Record<string, unknown>) => {
     const chunk = typeof payload.chunk === 'string' ? payload.chunk : ''
     if (!chunk) {
@@ -323,18 +349,11 @@ function App() {
       setRunHistoryCursor(data.next_cursor ?? null)
       setRunHistoryHasMore(Boolean(data.next_cursor))
       setRunHistory((prev) => {
-        const existing = new Map(prev.map((entry) => [entry.runId ?? entry.id, entry]))
+        const existing = new Map(prev.map((entry) => [entry.id, entry]))
         for (const entry of mapped) {
-          existing.set(entry.runId ?? entry.id, entry)
+          existing.set(entry.id, entry)
         }
-        const result = Array.from(existing.values()).sort((a, b) => a.startedAt - b.startedAt)
-        setTerminalEntries((live) =>
-          live.filter((entry) => {
-            if (!entry.runId) return true
-            return !existing.has(entry.runId)
-          })
-        )
-        return result
+        return Array.from(existing.values()).sort((a, b) => a.startedAt - b.startedAt)
       })
       options.onComplete?.()
     } catch (err) {
@@ -456,6 +475,7 @@ function App() {
     source.addEventListener('final', (evt) => {
       try {
         const data = JSON.parse(evt.data) as Record<string, unknown>
+        archiveRunEntries(activeRunId)
         if (typeof data.cwd === 'string') {
           setCurrentCwd(data.cwd)
         }
@@ -466,20 +486,15 @@ function App() {
           console.error('Failed to refresh messages after final event', err)
         })
         if (threadId === thread) {
-        loadRunHistory(thread, {
-          mode: 'refresh',
-          onComplete: () => {
-            setTerminalEntries((live) =>
-              live.filter((entry) => {
-                if (!entry.runId) return true
-                return entry.runId !== data.run_id
-              })
-            )
-          }
-        }).catch((err) => {
-          console.error('Failed to refresh run history after final event', err)
-        })
-      }
+          loadRunHistory(thread, {
+            mode: 'refresh',
+            onComplete: () => {
+              archiveRunEntries(activeRunId)
+            }
+          }).catch((err) => {
+            console.error('Failed to refresh run history after final event', err)
+          })
+        }
       } catch (err) {
         console.error('Failed to process final event', err)
       } finally {

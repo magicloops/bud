@@ -102,8 +102,7 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
           const isMessageExpanded = expandedMessages[message.id] ?? false
           const isOverflowing = overflowingMessages[message.id] ?? false
           const backgroundColor = isUser ? 'var(--chat-message)' : undefined
-          const assistantBackground =
-            isAssistant ? 'var(--chat-message)' : isTool ? 'oklch(0.98 0.01 90)' : undefined
+          const assistantBackground = isAssistant || isTool ? 'var(--chat-message)' : undefined
           const overlayColor = backgroundColor ?? 'hsl(var(--card))'
           const accentStyles =
             isUser && systemColor
@@ -139,6 +138,24 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
                     enableClipboard={false}
                     displayDataTypes={false}
                     displayObjectSize={false}
+                    theme={{
+                      base00: 'var(--chat-message)',
+                      base01: 'var(--chat-message)',
+                      base02: 'var(--chat-bg)',
+                      base03: 'var(--muted-foreground)',
+                      base04: 'var(--foreground)',
+                      base05: 'var(--foreground)',
+                      base06: 'var(--foreground)',
+                      base07: 'var(--foreground)',
+                      base08: '#a6ff4d',
+                      base09: '#ffb347',
+                      base0A: '#ffb347',
+                      base0B: '#a6ff4d',
+                      base0C: '#7dd3fc',
+                      base0D: '#7dd3fc',
+                      base0E: '#f472b6',
+                      base0F: '#f472b6'
+                    }}
                   />
                 </div>
               )}
