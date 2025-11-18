@@ -447,6 +447,60 @@ SESSION_DB_SOFT_CAP_BYTES=100000000
 
 ---
 
+## 18) Code Review Findings & Open Questions (Apr 2024)
+
+> Read-through covered `bud/src/main.rs`, `service/src/**` (gateway, runtime, routes, agent), and `web/src/App.tsx` + workbench components.
+
+### Bud (Rust) gaps
+
+* `hello` currently emits a nested `capabilities` map with `supports_pty: false`; the backend Zod schema only knows about `capabilities`. We must decide whether to extend that object (`sessions`, `sessions_backends`, `tmux_version`) or introduce a new field so we do not break existing enrollments.
+* `RunExecutor` is a single FIFO (`MAX_QUEUE_DEPTH` 10, `current_run` mutex). Long‑lived sessions will block all runs unless we rework scheduling into distinct pools (runs vs sessions) or raise `max_concurrency`. Need a plan for fairness, isolation, and how session PGIDs interact with the current per‑run PGID logic.
+* WSS IO is text-only today: `send_ws_frame` wraps JSON strings, and `run_session` ignores `Message::Binary`. Implementing `session_input`/`session_output` with binary frames therefore requires new framing, buffering, and backpressure primitives; otherwise we fall back to base64 in JSON (contradicting §5.2).
+* Bud lacks any PTY/tmux plumbing. We still need to pick a PTY crate (`portable-pty` vs `tokio-pty`), prove it compiles with our async/runtime choices, and design the in-memory ring buffer + TTL enforcement that the spec references.
+* Cap/reporting for tmux is undefined. We need to figure out when to probe for tmux, where to cache the version, and how to surface “TMUX disabled” vs “TMUX missing” back to `/api/buds`.
+
+### Backend (Node/TS) gaps
+
+* `/ws` gateway only understands `run`, `stdout|stderr`, and `run_finished`. We still need to add all `session_*` frames, update the Zod schemas, and teach `sendFrameToBud` to forward binary payloads (currently always `JSON.stringify`).
+* There is no notion of a `SessionManager`. `RunManager` owns the only event bus (`RunEventBus` keyed by `run_id`) and SSE endpoint. We must decide whether to extend it or stand up a new session-specific bus (needed for `session.status`/`session.final` SSE).
+* `/api/sessions` and `/term` don’t exist. We need to design handlers, persistence (`session` + `session_log` tables), attach-token mint/validation, resize, writer lease endpoints, and rate limits.
+* Auth/user identity is absent in the PoC. Writer leases, attach tokens, and audit logs need a notion of `user_id`, but today the UI is unauthenticated and there is no user table. We need to decide whether to stub `user_id` (single-user) or add minimal identity primitives before the session flow.
+* The agent stack (`AgentService`) only calls `RunManager`. If/when we want GPT-driven sessions, we need to document whether that is out-of-scope or how it plugs in (new tool, reuse `/term`, etc.).
+
+### Web UI gaps
+
+* The terminal is a simple log renderer (`RunView` joins strings). There is no `xterm.js`, ANSI handling, binary paste, or resize events. We need to choose terminal tooling, wire CSS/assets, and figure out how to multiplex run transcripts vs live sessions in the existing layout.
+* App state only tracks SSE per run (`EventSource` on `/api/runs/:id/stream`). The frontend needs a WebSocket client for `/term`, an attach-token flow, writer lease UI, and the “Keep running if I leave (tmux)” toggle that respects Bud capabilities from `/api/buds`.
+* No surfaces exist for listing/reattaching existing sessions. We need UX for “Sessions” inventory (detached/active), error messaging when tmux is unavailable, pause/resume/stop buttons, and copy/download controls.
+
+### Data model & API questions
+
+* `session`/`session_log` tables are not defined in `service/src/db/schema.ts`. We need to add them (plus `tenant_id`, `created_by_user_id`, `logs_blob_url`, soft-cap flags) and plan migrations/backfills via Drizzle.
+* Thread linkage is undefined. Runs today are tied to `thread_id` and surfaced in chat history; we need to decide how sessions relate to threads (always attached? optional?), and how/where the UI will expose sessions launched outside the agent flow.
+* Attach tokens imply short-lived auth; we need to pick a signing key/alg, TTL, and storage for writer leases, plus server-side enforcement when multiple browsers connect.
+* Storage/backpressure strategy for PTY bytes needs a decision: do we mirror the 100 MB `run_log` soft cap, stream to blob storage sooner, or gate long-running tmux sessions entirely?
+
+### Ops & testing
+
+* Config knobs in §16 do not exist yet in code. We need to map them to actual env vars (Rust + Node) and decide on sensible defaults/tests.
+* There is no testing or fixture coverage for PTY/tmux interactions; we should spell out how to exercise unit/integration tests (e.g., mock PTY) before landing core session code.
+
+### Direction (keep it simple)
+
+* **Handshake & capability reporting:** extend the existing `capabilities` object with optional `sessions`, `sessions_backends`, and `tmux_version` keys rather than inventing a new top-level field. The backend will treat unknown keys as optional, so old Buds keep working.
+* **Command scheduling:** keep `RunExecutor` for one-off runs only. Introduce a separate `SessionManager` that owns PTYs/tmux sessions so a long REPL never blocks the FIFO run queue. No need for generalized concurrency controls yet.
+* **WS framing:** stick with JSON frames carrying base64 data for v1; binary pipes complicate the Rust + Fastify stacks and browsers still need base64 for SSE/log persistence. Document that we can flip to binary later.
+* **PTY backend:** start with `portable-pty` (mature, maintained) and implement a fixed-size ring buffer per session (4 MB). TTL/idle timers mirror the run cancel logic, reusing the same PGID termination helper.
+* **tmux caps:** probe once at Bud startup (`tmux -V`), cache the version, and expose `sessions_backends:["pty","tmux"]` only when the command succeeds. If tmux is missing, degrade gracefully to `["pty"]`.
+* **Backend architecture:** add a new `SessionManager` alongside `RunManager`. Reuse `RunEventBus` by keying on `session_id` prefixes so we don’t need a second SSE plumbing pass right now.
+* **REST & WS APIs:** implement only the minimum described endpoints (`POST /api/sessions`, `POST /api/sessions/:id/close`, `/term` WS). Pause/resume and writer takeover APIs can wait until after PTY MVP.
+* **Attach tokens & auth:** keep the PoC single-user: treat the browser as trusted and mint opaque attach tokens (`sess_att_<ulid>` stored in Redis/in-memory map keyed by `session_id`). No JWT or user IDs yet; leases just track `browser_session_id`.
+* **Threads association:** require `thread_id` when creating a session so transcripts live next to the conversation, but allow “detached” sessions by issuing a synthetic thread if the UI doesn’t provide one.
+* **Storage & limits:** reuse the `run_log` 100 MB soft cap for `session_log` and store payloads in Postgres bytea until we actually need blob offload. When truncated, flag `log_truncated` and surface it in the UI.
+* **Config:** mirror `SESSION_*` env vars in both the Rust binary (`BudArgs`) and service config with sane defaults; no dynamic reloads. Unit tests just validate parsing; integration tests can stub PTY to `/bin/cat`.
+
+---
+
 # Phased Build Plan (stacked on your existing phases)
 
 > We’ll introduce sessions incrementally, **stubbing tmux early** so the UI can show “Durable (tmux) unavailable” until the backend is ready.
