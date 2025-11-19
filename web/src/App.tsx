@@ -58,6 +58,8 @@ type InteractiveSessionState = {
   output: string[]
   socket: WebSocket | null
   error?: string | null
+  role: 'writer' | 'spectator'
+  truncated: boolean
 }
 
 const mapHistoryRunToEntry = (run: RunHistoryEntry): ShellEntry => {
@@ -106,6 +108,30 @@ const decodeTerminalData = (data: string) => {
   }
 }
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined
+
+const buildApiUrl = (path: string) => {
+  if (apiBaseUrl) {
+    return new URL(path, apiBaseUrl).toString()
+  }
+  return path
+}
+
+const buildWsUrl = (path: string) => {
+  let base: URL
+  if (apiBaseUrl) {
+    base = new URL(path, apiBaseUrl)
+  } else if (typeof window !== 'undefined') {
+    base = new URL(path, window.location.origin)
+  } else {
+    base = new URL(path, 'http://localhost:3000')
+  }
+  base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:'
+  return base.toString()
+}
+
+const apiFetch = (path: string, init?: RequestInit) => fetch(buildApiUrl(path), init)
+
 function App() {
   const [budId, setBudId] = useState<string | null>(null)
   const [messageText, setMessageText] = useState('Clone a repo and list files.')
@@ -127,6 +153,7 @@ function App() {
   const [prefersDurableSession, setPrefersDurableSession] = useState(false)
   const [interactiveSession, setInteractiveSession] = useState<InteractiveSessionState | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const termSocketRef = useRef<WebSocket | null>(null)
   const interactivePaneRef = useRef<HTMLDivElement | null>(null)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
@@ -181,6 +208,8 @@ function App() {
   const durableSessionsSupported = sessionsSupported && tmuxSupported
   const interactiveStatus = interactiveSession?.status ?? 'idle'
   const interactiveOutput = interactiveSession?.output ?? []
+  const interactiveRole = interactiveSession?.role ?? 'spectator'
+  const interactiveTruncated = interactiveSession?.truncated ?? false
 
   useEffect(() => {
     if (!durableSessionsSupported && prefersDurableSession) {
@@ -362,7 +391,7 @@ function App() {
       return
     }
     try {
-      const resp = await fetch('/api/sessions', {
+      const resp = await apiFetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -384,15 +413,28 @@ function App() {
         status: 'connecting',
         output: [],
         socket: null,
-        error: null
+        error: null,
+        role: 'spectator',
+        truncated: false
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start interactive session')
     }
   }
 
-  const sendInteractiveInput = (text: string) => {
-    if (!interactiveSession?.socket || interactiveSession.socket.readyState !== WebSocket.OPEN) {
+const sendInteractiveInput = (text: string) => {
+    if (!interactiveSession || interactiveSession.role !== 'writer') {
+      setInteractiveSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              error: 'You are viewing as a spectator. Use Take writer to gain control.'
+            }
+          : prev
+      )
+      return
+    }
+    if (!interactiveSession.socket || interactiveSession.socket.readyState !== WebSocket.OPEN) {
       return
     }
     try {
@@ -446,7 +488,10 @@ function App() {
   }
 
   const stopInteractiveSession = () => {
-    if (interactiveSession?.socket && interactiveSession.socket.readyState === WebSocket.OPEN) {
+    if (!interactiveSession) {
+      return
+    }
+    if (interactiveSession.socket && interactiveSession.socket.readyState === WebSocket.OPEN) {
       try {
         interactiveSession.socket.send(JSON.stringify({ type: 'close' }))
       } catch {
@@ -454,11 +499,48 @@ function App() {
       }
       interactiveSession.socket.close()
     }
+    apiFetch(`/api/sessions/${interactiveSession.sessionId}/close`, {
+      method: 'POST'
+    }).catch(() => {
+      /* noop */
+    })
     setInteractiveSession(null)
   }
 
+  const takeInteractiveWriter = async () => {
+    if (!interactiveSession) {
+      return
+    }
+    try {
+      const resp = await apiFetch(`/api/sessions/${interactiveSession.sessionId}/take-writer`, {
+        method: 'POST'
+      })
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${resp.status}`)
+      }
+      const data = (await resp.json()) as { attach_token: string }
+      if (interactiveSession.socket && interactiveSession.socket.readyState === WebSocket.OPEN) {
+        interactiveSession.socket.close()
+      }
+      setInteractiveSession((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          attachToken: data.attach_token,
+          socket: null,
+          status: 'connecting',
+          role: 'spectator',
+          error: null
+        }
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to take writer control')
+    }
+  }
+
   const fetchBuds = useCallback(async () => {
-    const resp = await fetch('/api/buds')
+    const resp = await apiFetch('/api/buds')
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}))
       throw new Error(body.error ?? `HTTP ${resp.status}`)
@@ -488,7 +570,7 @@ function App() {
       return
     }
     const query = bud ? `?bud_id=${encodeURIComponent(bud)}` : ''
-    const resp = await fetch(`/api/threads${query}`)
+    const resp = await apiFetch(`/api/threads${query}`)
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}))
       throw new Error(body.error ?? `HTTP ${resp.status}`)
@@ -516,7 +598,7 @@ function App() {
       if (options.cursor) {
         params.set('cursor', options.cursor)
       }
-      const resp = await fetch(`/api/threads/${thread}/runs?${params.toString()}`)
+      const resp = await apiFetch(`/api/threads/${thread}/runs?${params.toString()}`)
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${resp.status}`)
@@ -547,7 +629,7 @@ function App() {
       setMessages([])
       return
     }
-    const resp = await fetch(`/api/threads/${thread}/messages?limit=200`)
+    const resp = await apiFetch(`/api/threads/${thread}/messages?limit=200`)
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}))
       throw new Error(body.error ?? `HTTP ${resp.status}`)
@@ -575,37 +657,37 @@ function App() {
   }, [threadId])
 
   useEffect(() => {
-    if (!interactiveSession || interactiveSession.socket || typeof window === 'undefined') {
+    if (!interactiveSession || typeof window === 'undefined') {
       return
     }
-    if (!interactiveSession.sessionId) {
-      return
-    }
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/term?session_id=${encodeURIComponent(interactiveSession.sessionId)}&attach_token=${encodeURIComponent(interactiveSession.attachToken)}`
-    const ws = new WebSocket(url)
-    setInteractiveSession((prev) => {
-      if (!prev || prev.sessionId !== interactiveSession.sessionId) {
-        return prev
-      }
-      return { ...prev, socket: ws, status: 'connecting', error: null }
+    const sessionId = interactiveSession.sessionId
+    const attachToken = interactiveSession.attachToken
+    const query = new URLSearchParams({
+      session_id: sessionId,
+      attach_token: attachToken
     })
-    ws.onopen = () => {
+    termSocketRef.current?.close()
+    const ws = new WebSocket(buildWsUrl(`/term?${query.toString()}`))
+    termSocketRef.current = ws
+
+    ws.addEventListener('open', () => {
+      console.log('[session] ws open', sessionId)
       setInteractiveSession((prev) => {
-        if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+        if (!prev || prev.sessionId !== sessionId) {
           return prev
         }
-        return { ...prev, status: 'open' }
+        return { ...prev, status: 'open', error: null }
       })
-    }
-    ws.onmessage = (event) => {
+    })
+
+    ws.addEventListener('message', (event) => {
       try {
         const payload = JSON.parse(event.data as string) as Record<string, unknown>
         if (payload.type === 'output' && typeof payload.data === 'string') {
           const decoded = decodeTerminalData(payload.data)
           if (decoded) {
             setInteractiveSession((prev) => {
-              if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+              if (!prev || prev.sessionId !== sessionId) {
                 return prev
               }
               const merged = [...prev.output, decoded]
@@ -615,40 +697,70 @@ function App() {
           }
         } else if (payload.type === 'status' && typeof payload.status === 'string') {
           setInteractiveSession((prev) => {
-            if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+            if (!prev || prev.sessionId !== sessionId) {
               return prev
             }
+            const nextRole =
+              payload.role === 'writer'
+                ? 'writer'
+                : payload.role === 'spectator'
+                  ? 'spectator'
+                  : prev.role
+            const nextStatus =
+              payload.status === 'open'
+                ? 'open'
+                : payload.status === 'closed'
+                  ? 'closed'
+                  : payload.status === 'failed'
+                    ? 'error'
+                    : prev.status
+            const nextError =
+              typeof payload.error === 'string'
+                ? payload.error
+                : nextRole === 'writer'
+                  ? null
+                  : prev.error
             return {
               ...prev,
-              status: payload.status === 'open' ? 'open' : payload.status === 'closed' ? 'closed' : payload.status === 'failed' ? 'error' : prev.status,
-              error: typeof payload.error === 'string' ? payload.error : prev.error
+              status: nextStatus,
+              role: nextRole,
+              error: nextError,
+              truncated: payload.truncated === true ? true : prev.truncated
             }
           })
         }
       } catch (err) {
         console.error('Failed to parse terminal message', err)
       }
-    }
-    ws.onerror = () => {
+    })
+
+    ws.addEventListener('error', (event) => {
+      console.error('[session] ws error', event)
       setInteractiveSession((prev) => {
-        if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+        if (!prev || prev.sessionId !== sessionId) {
           return prev
         }
         return { ...prev, status: 'error', error: 'Connection lost' }
       })
-    }
-    ws.onclose = () => {
+    })
+
+    ws.addEventListener('close', (event) => {
+      console.warn('[session] ws close', sessionId, event.code, event.reason)
       setInteractiveSession((prev) => {
-        if (!prev || prev.sessionId !== interactiveSession.sessionId) {
+        if (!prev || prev.sessionId !== sessionId) {
           return prev
         }
-        return { ...prev, socket: null, status: prev.status === 'error' ? prev.status : 'closed' }
+        return { ...prev, status: prev.status === 'error' ? prev.status : 'closed' }
       })
-    }
+    })
+
     return () => {
-      ws.close()
+      if (termSocketRef.current === ws) {
+        ws.close()
+        termSocketRef.current = null
+      }
     }
-  }, [interactiveSession?.sessionId, interactiveSession?.attachToken, interactiveSession?.socket])
+  }, [interactiveSession?.sessionId, interactiveSession?.attachToken])
 
   useEffect(() => {
     if (!threadId) {
@@ -684,15 +796,13 @@ function App() {
 
   useEffect(() => {
     if (!interactiveSession) return
-    if (interactiveSession.socket) {
-      try {
-        interactiveSession.socket.close()
-      } catch {
-        /* noop */
-      }
+    if (termSocketRef.current) {
+      termSocketRef.current.close()
+      termSocketRef.current = null
     }
     setInteractiveSession(null)
-  }, [budId, interactiveSession])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [budId])
 
   const startStream = (id: string, thread: string) => {
     eventSourceRef.current?.close()
@@ -928,6 +1038,7 @@ function App() {
                       : interactiveStatus === 'error'
                         ? interactiveSession?.error ?? 'Session error'
                         : 'Start a live terminal on this Bud.'}
+                  {interactiveRole !== 'writer' && interactiveStatus === 'open' ? ' (read-only spectator)' : ''}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -939,6 +1050,15 @@ function App() {
                 >
                   {interactiveStatus === 'open' ? 'Session running' : 'Start session'}
                 </button>
+                {interactiveSession && interactiveRole !== 'writer' && (
+                  <button
+                    type="button"
+                    onClick={takeInteractiveWriter}
+                    className="rounded-lg border-2 border-black bg-amber-400 px-3 py-2 font-mono text-xs uppercase tracking-wide text-black transition hover:-translate-y-0.5"
+                  >
+                    Take writer
+                  </button>
+                )}
                 {interactiveSession && (
                   <button
                     type="button"
@@ -962,6 +1082,19 @@ function App() {
               ) : (
                 <pre className="whitespace-pre-wrap break-words text-green-300">{interactiveOutput.join('')}</pre>
               )}
+              <div className="mt-2 space-y-1">
+                {interactiveRole !== 'writer' && interactiveStatus === 'open' && (
+                  <p className="text-xs text-amber-300">Spectator mode — use Take writer if you need control.</p>
+                )}
+                {interactiveTruncated && (
+                  <p className="text-xs text-amber-400">
+                    Output truncated at 100MB. Older logs were dropped; download transcripts from the backend if needed.
+                  </p>
+                )}
+                {interactiveSession?.error && (
+                  <p className="text-xs text-destructive">{interactiveSession.error}</p>
+                )}
+              </div>
             </div>
           </div>
         )}

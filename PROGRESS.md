@@ -1,6 +1,6 @@
 # Bud PoC Progress — Phase 4 Snapshot
 
-_Last updated: 2025-11-18T09:42:39Z_
+_Last updated: 2025-11-18T10:05:21Z_
 
 ## What’s implemented
 - **Agent loop**: backend now uses OpenAI Responses tool-calling end-to-end—threads/messages hydrate context, we send `input_text` items, register the `shell.run` function schema, and parse structured `function_call` outputs before dispatching runs to Bud. SSE streams `agent.*` + `exec.*` events interleaved with stdout/stderr.
@@ -8,7 +8,7 @@ _Last updated: 2025-11-18T09:42:39Z_
 - **Run logging**: Bud stdout/stderr ingestion now trusts Bud-provided `seq` and de-duplicates inserts (`run_log` `(run_id, seq)` uniqueness) so retries or multi-step runs no longer crash; `logs_bytes` only advances on successful writes.
 - **Bud executor**: Rust agent handles enrollment (with optional dev-token bypass), WSS heartbeats, serial shell execution, and base64 log streaming with `run_finished` frames. Bud now owns its working directory, reports `cwd` + `error` in `run_finished`, and keeps running even if the backend omits `cwd`.
 - **Web console**: Vite helper now ships a Bud workbench—neo‑brutalist shadcn/Tailwind layout with a Bud rail, thread list, chat timeline, terminal/web viewport toggle, and composer that still speaks to today’s `/api/threads` + SSE stack. Optimistic user messages show instantly, the SSE stream updates messages + current `cwd` as the run finishes, assistant/tool entries render richly (Markdown via `react-markdown` + `remark-breaks`, structured tool call cards with expandable JSON viewer, and per-message collapse toggles for >500 px histories), the terminal pane mirrors a real shell transcript (prompt + command rows, streaming stdout/stderr, exit codes, inline “running…” indicators keyed off tool calls). We now archive live SSE entries into run history so multi-step commands persist, added a `/runs` history endpoint (with pagination) to hydrate the terminal on refresh, improved scroll-stickiness for both chat and terminal panes, smoothed terminal theming (prompt colors, bud header, overscroll removal), and moved the GPT‑5 reasoning selector into the composer. The send button now reflects the full run lifecycle (spinner while runs are active).
-- **Interactive sessions (PTY MVP)**: Bud now runs a PTY-backed SessionManager (native `openpty` per session) that streams `session_output` chunks and handles `session_input`/`session_resize`/`session_close`. The backend gained persistent `session`/`session_log` tables, `/api/sessions` creation/close endpoints, and a `/term` WebSocket bridge with attach tokens plus log persistence. The workbench exposes an “Interactive session (beta)” pane so users can start/stop a live terminal, stream output, and send keystrokes; the composer’s “keep running” toggle now actually selects between `pty` and `tmux` backends when available.
+- **Interactive sessions (PTY MVP)**: Bud now runs a PTY-backed SessionManager (native `openpty`) that streams `session_output` chunks and honors `session_input`/`session_resize`/`session_close`. The backend landed persistent `session`/`session_log` tables, `/api/sessions` create/close endpoints, and a `/term` WebSocket bridge with attach tokens plus log persistence. The workbench exposes an “Interactive session (beta)” pane so users can start/stop a live terminal, stream output, send keystrokes, rotate writer leases, and see truncation warnings; the composer’s “keep running” toggle still drives backend selection.
 - **Docs/Plans**: `service/README.md`, `docs/proto.md`, `plan/phase-4-agent-loop.md`, and `debug/` notes cover architecture, SSE payloads, and current gaps.
 
 ## Known gaps / next phases
@@ -18,7 +18,7 @@ _Last updated: 2025-11-18T09:42:39Z_
 - **Security & ergonomics**: workspace isolation, richer denylist, friendlier error reporting/testing knobs for mock LLMs.
 - **UI schema alignment**: wire the new workbench components to richer Bud metadata (availability, tags), tabbed log panes, and future settings drawers once backend schemas catch up.
 - **Rich transcripts**: persist the new shell transcript objects (Markdown/tool metadata + stdout/stderr chunks) downstream so uploads/export keep formatting (ties into upcoming schema doc in `plan/ui-schema-alignment.md`).
-- **Interactive sessions (Phase 4.7+)**: tighten writer leases/attach-token rotation, expose SSE status feeds, trim/GC `session_log`, and light up tmux durability + scrollback replay so sessions survive Bud restarts and support multiple viewers.
+- **Interactive sessions (Phase 4.7+)**: finish reliability polish—SSE session status feeds, structured metrics, backpressure, xterm.js terminal, and tmux groundwork (durability + scrollback). Current state already has attach-token rotation + writer leases; next up is SSE + UI polish before tmux.
 
 ## Quick start
 1. `pnpm db:migrate && pnpm db:seed` inside `service/` (local Postgres).

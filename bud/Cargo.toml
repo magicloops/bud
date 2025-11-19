@@ -10,7 +10,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 futures = "0.3"
 hmac = "0.12"
 libc = "0.2"
-nix = { version = "0.28", default-features = false, features = ["signal", "pty"] }
+nix = { version = "0.28", default-features = false, features = ["fs", "signal", "term"] }
 rustls = "0.23"
 rustls-native-certs = "0.7"
 serde = { version = "1.0", features = ["derive"] }

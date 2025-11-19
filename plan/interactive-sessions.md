@@ -31,8 +31,8 @@
 * **Session:** long‑lived interactive process with a TTY/PTY.
 * **Backend (for sessions):** implementation behind the scenes:
 
-  * `pty` — native pseudo‑terminal owned by Bud (default).
-  * `tmux` — session hosted inside a tmux server (durable).
+  * `pty` — native pseudo-terminal owned by Bud (default, implemented).
+  * `tmux` — session hosted inside a tmux server (durable; future phase).
 * **Writer:** the single client (UI or agent) allowed to send input.
 * **Spectator:** read‑only viewer(s).
 
@@ -336,10 +336,10 @@ trait SessionBackend {
 
 ## 9) Backend Implementation
 
-* **/ws Bud gateway:** route new `session_*` frames; enforce budgets (bytes/sec per session, total in‑flight).
-* **/term WebSocket:** multiplex multiple browser clients to one Bud session; lease a single **writer**; others are spectators.
-* **Attach tokens:** short‑lived JWT `{ session_id, role, user_id, exp }`.
-* **SSE:** emit high‑level events:
+* **/ws Bud gateway:** routes `session_*` frames; enforces budgets (bytes/sec per session, total in-flight). **Done**.
+* **/term WebSocket:** multiplexes browser clients; enforced single **writer**; spectators are read-only. **Done**.
+* **Attach tokens:** short-lived opaque IDs stored in `SessionManager`. Writer rotations via `/api/sessions/:id/take-writer`. **Done** for PTY MVP.
+* **SSE:** future work to emit session status events (Phase 4.7).
 
   * `session.status { session_id, status }`
   * `session.writer_changed { user_id }`
@@ -535,18 +535,18 @@ SESSION_DB_SOFT_CAP_BYTES=100000000
 
 ---
 
-### Phase 4.7 — Reliability & Perf
+### Phase 4.7 — Reliability & Perf (in progress)
 
 **Deliverables**
 
-* Backpressure windows, adaptive chunking, permessage‑deflate.
-* Attach tokens (JWT), “Take writer” flow.
+* Backpressure windows, adaptive chunking, permessage-deflate.
+* Attach tokens (rotation), “Take writer” flow. ✅
 * Observability: core metrics & structured logs.
-* UI: ANSI‑stripped “Copy as text”; 60fps render.
+* UI: ANSI-stripped “Copy as text”; 60fps render; xterm.js terminal.
 
 **Acceptance**
 
-* Survives backend restarts; throttles chatty TUIs; metrics visible.
+* Survives backend restarts; throttles chatty TUIs; metrics visible; writer handoffs work cleanly.
 
 ---
 

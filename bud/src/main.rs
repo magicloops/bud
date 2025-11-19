@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -16,9 +16,8 @@ use base64::Engine;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
-use nix::pty::{openpty, OpenptyResult as NixOpenptyResult};
-use nix::sys::signal::{killpg, Signal};
-use nix::unistd::{self, dup, close, Pid};
+use nix::pty::openpty;
+use nix::unistd::{self, dup, Pid};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Number, Value};
 use sha2::Sha256;
@@ -579,7 +578,7 @@ impl SessionManager {
     }
 
     async fn handle_close(&self, frame: SessionCloseFrame) -> Result<()> {
-        let mut inner = self.inner.lock().await;
+        let inner = self.inner.lock().await;
         if let Some(handle) = inner.sessions.get(&frame.session_id) {
             let _ = handle.command_tx.send(SessionCommand::Close);
         }
@@ -591,7 +590,12 @@ impl SessionManager {
         inner.sessions.remove(session_id);
     }
 
-    async fn send_session_error(&self, session_id: &str, code: &str, message: String) -> Result<()> {
+    async fn send_session_error<S: Into<String>>(
+        &self,
+        session_id: &str,
+        code: &str,
+        message: S,
+    ) -> Result<()> {
         let inner = self.inner.lock().await;
         if let Some(sender) = &inner.sender {
             send_ws_frame(
@@ -604,7 +608,7 @@ impl SessionManager {
                     "ext": {},
                     "session_id": session_id,
                     "code": code,
-                    "message": message
+                    "message": message.into()
                 }),
             )?;
         }
@@ -623,10 +627,14 @@ async fn run_pty_session(
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    let NixOpenptyResult { master, slave } = openpty(Some(&winsize), None)?;
-    let stdin_fd = dup(slave)?;
-    let stdout_fd = dup(slave)?;
-    let stderr_fd = dup(slave)?;
+    let pty = openpty(Some(&winsize), None)?;
+    let slave_fd = pty.slave.into_raw_fd();
+    let stdin_fd = dup(slave_fd)?;
+    let stdout_fd = dup(slave_fd)?;
+    let stderr_fd = dup(slave_fd)?;
+    unsafe {
+        libc::close(slave_fd);
+    }
 
     let mut command = Command::new(config.default_shell.clone());
     if let Some(cmd) = config.cmd.clone() {
@@ -640,8 +648,10 @@ async fn run_pty_session(
     command.envs(config.env.clone());
     unsafe {
         command.pre_exec(move || {
-            let _ = libc::setsid();
-            if libc::ioctl(slave, libc::TIOCSCTTY, 0) != 0 {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::ioctl(libc::STDIN_FILENO, libc::TIOCSCTTY.into(), 0) != 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
@@ -651,9 +661,10 @@ async fn run_pty_session(
     command.stdout(unsafe { Stdio::from_raw_fd(stdout_fd) });
     command.stderr(unsafe { Stdio::from_raw_fd(stderr_fd) });
     let mut child = command.spawn()?;
-    close(slave)?;
-
-    let reader_file = unsafe { File::from_raw_fd(master) };
+    let reader_file = {
+        let master_fd = pty.master.into_raw_fd();
+        unsafe { File::from_raw_fd(master_fd) }
+    };
     let writer_file = reader_file.try_clone()?;
     let writer = Arc::new(StdMutex::new(writer_file));
     let session_id = config.session_id.clone();
@@ -700,8 +711,14 @@ async fn run_pty_session(
         }),
     )?;
 
-    let mut child_wait = child.wait();
-    tokio::pin!(child_wait);
+    use futures::FutureExt;
+    let child_handle = Arc::new(tokio::sync::Mutex::new(child));
+    let wait_handle = child_handle.clone();
+    let mut child_wait = async move {
+        let mut guard = wait_handle.lock().await;
+        guard.wait().await
+    }
+    .boxed_local();
     loop {
         tokio::select! {
             Some(cmd) = command_rx.recv() => {
@@ -733,7 +750,12 @@ async fn run_pty_session(
                         }).await??;
                     }
                     SessionCommand::Close => {
-                        let _ = child.start_kill();
+                        let child_handle = child_handle.clone();
+                        tokio::task::spawn_local(async move {
+                            if let Ok(mut guard) = child_handle.try_lock() {
+                                let _ = guard.start_kill();
+                            }
+                        });
                     }
                 }
             }
@@ -757,7 +779,6 @@ async fn run_pty_session(
             }
         }
     }
-    Ok(())
 }
 
 async fn stream_pipe<R: AsyncRead + Unpin>(

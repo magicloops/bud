@@ -54,4 +54,17 @@ export async function registerSessionRoutes(server: FastifyInstance, sessionMana
     }
     reply.send({ ok: true });
   });
+
+  server.post("/api/sessions/:sessionId/take-writer", async (request, reply) => {
+    const sessionId = (request.params as { sessionId: string }).sessionId;
+    const result = sessionManager.takeWriter(sessionId);
+    if (!result.ok || !result.attachToken) {
+      reply.code(404).send({ error: result.error ?? "session not found" });
+      return;
+    }
+    reply.send({
+      session_id: sessionId,
+      attach_token: result.attachToken
+    });
+  });
 }
