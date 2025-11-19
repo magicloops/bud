@@ -52,8 +52,10 @@ type SessionContext = {
 export class SessionManager {
   private readonly sessions = new Map<string, SessionContext>();
   private readonly logLimit: number;
+  private readonly logger: FastifyBaseLogger;
 
-  constructor(private readonly logger: FastifyBaseLogger) {
+  constructor(logger: FastifyBaseLogger) {
+    this.logger = logger;
     this.logLimit = config.runLogMaxBytes;
   }
 
@@ -277,9 +279,11 @@ export class SessionManager {
   sendInput(sessionId: string, socket: WebSocket, dataB64: string): { ok: boolean; error?: string } {
     const ctx = this.sessions.get(sessionId);
     if (!ctx) {
+      this.logger.warn({ sessionId }, "sendInput failed: session missing");
       return { ok: false, error: "session not found" };
     }
     if (ctx.writer !== socket) {
+      this.logger.warn({ sessionId }, "sendInput failed: socket not writer");
       return { ok: false, error: "not_writer" };
     }
     const payload = {
@@ -292,8 +296,10 @@ export class SessionManager {
       data: dataB64
     };
     if (!sendFrameToBud(ctx.budId, payload)) {
+      this.logger.error({ sessionId }, "sendInput failed: Bud unavailable");
       return { ok: false, error: "session_closed" };
     }
+    this.logger.info({ sessionId, bytes: dataB64.length, component: "session_manager" }, "session input forwarded");
     return { ok: true };
   }
 

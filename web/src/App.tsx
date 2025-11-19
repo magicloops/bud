@@ -1,4 +1,4 @@
-import type { FormEvent, ClipboardEvent, KeyboardEvent } from 'react'
+import type { FormEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
@@ -7,6 +7,9 @@ import { RunView, type ShellEntry } from '@/components/workbench/run-view'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
+import { Terminal } from 'xterm'
+import { FitAddon } from 'xterm-addon-fit'
+import 'xterm/css/xterm.css'
 
 type ThreadMessage = {
   message_id: string
@@ -55,7 +58,6 @@ type InteractiveSessionState = {
   sessionId: string
   attachToken: string
   status: 'idle' | 'connecting' | 'open' | 'closed' | 'error'
-  output: string[]
   socket: WebSocket | null
   error?: string | null
   role: 'writer' | 'spectator'
@@ -155,6 +157,11 @@ function App() {
   const eventSourceRef = useRef<EventSource | null>(null)
   const termSocketRef = useRef<WebSocket | null>(null)
   const interactivePaneRef = useRef<HTMLDivElement | null>(null)
+  const interactiveTerminalRef = useRef<Terminal | null>(null)
+  const interactiveFitAddonRef = useRef<FitAddon | null>(null)
+  const sendInteractiveInputRef = useRef<(text: string) => void>(() => {})
+  const lastSessionIdRef = useRef<string | null>(null)
+  const [interactiveHasOutput, setInteractiveHasOutput] = useState(false)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
     if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
@@ -207,15 +214,131 @@ function App() {
     activeCapabilities.sessions_backends.includes('tmux')
   const durableSessionsSupported = sessionsSupported && tmuxSupported
   const interactiveStatus = interactiveSession?.status ?? 'idle'
-  const interactiveOutput = interactiveSession?.output ?? []
   const interactiveRole = interactiveSession?.role ?? 'spectator'
   const interactiveTruncated = interactiveSession?.truncated ?? false
+  const interactiveSessionId = interactiveSession?.sessionId ?? null
+  const interactiveAttachToken = interactiveSession?.attachToken ?? null
+  const interactiveOverlayMessage = useMemo(() => {
+    if (interactiveHasOutput) {
+      return null
+    }
+    if (!interactiveSession) {
+      return 'Focus this pane and start a session to view a live terminal.'
+    }
+    if (interactiveStatus === 'connecting') {
+      return 'Connecting to session…'
+    }
+    if (interactiveStatus === 'error') {
+      return interactiveSession.error ?? 'Session error'
+    }
+    if (interactiveStatus === 'closed') {
+      return 'Session closed.'
+    }
+    if (interactiveStatus === 'open') {
+      return interactiveRole === 'writer'
+        ? 'Session open — start typing to send commands.'
+        : 'Spectator mode — Take writer to send input.'
+    }
+    return 'Preparing session…'
+  }, [interactiveHasOutput, interactiveSession, interactiveStatus, interactiveRole])
 
   useEffect(() => {
     if (!durableSessionsSupported && prefersDurableSession) {
       setPrefersDurableSession(false)
     }
   }, [durableSessionsSupported, prefersDurableSession])
+
+  const fitInteractiveTerminal = useCallback(() => {
+    const addon = interactiveFitAddonRef.current
+    if (!addon) {
+      return
+    }
+    try {
+      addon.fit()
+    } catch (err) {
+      console.warn('Failed to fit interactive terminal', err)
+    }
+  }, [])
+
+  const resetInteractiveTerminal = useCallback(() => {
+    const term = interactiveTerminalRef.current
+    if (term) {
+      term.reset()
+    }
+    setInteractiveHasOutput(false)
+    requestAnimationFrame(() => {
+      fitInteractiveTerminal()
+    })
+  }, [fitInteractiveTerminal])
+
+  useEffect(() => {
+    if (interactiveSessionId && interactiveSessionId !== lastSessionIdRef.current) {
+      lastSessionIdRef.current = interactiveSessionId
+      resetInteractiveTerminal()
+    }
+    if (!interactiveSessionId && lastSessionIdRef.current !== null) {
+      lastSessionIdRef.current = null
+      resetInteractiveTerminal()
+    }
+  }, [interactiveSessionId, resetInteractiveTerminal])
+
+  useEffect(() => {
+    fitInteractiveTerminal()
+  }, [fitInteractiveTerminal, threadPanelOpen, viewMode, interactiveStatus])
+
+  useEffect(() => {
+    const term = interactiveTerminalRef.current
+    if (!term) return
+    const canType = interactiveSession?.status === 'open' && interactiveSession.role === 'writer'
+    if (canType) {
+      term.focus()
+    } else {
+      term.blur()
+    }
+  }, [interactiveSession?.role, interactiveSession?.status])
+
+  useEffect(() => {
+    if (!interactivePaneRef.current || interactiveTerminalRef.current) {
+      return
+    }
+    const term = new Terminal({
+      convertEol: true,
+      cursorBlink: true,
+      fontFamily: '"JetBrains Mono", SFMono-Regular, Menlo, monospace',
+      fontSize: 13,
+      theme: {
+        background: '#000000',
+        foreground: '#d1ffe1',
+        cursor: '#ffffff',
+        selectionBackground: '#195b3f'
+      }
+    })
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
+    term.open(interactivePaneRef.current)
+    interactiveTerminalRef.current = term
+    interactiveFitAddonRef.current = fitAddon
+    fitInteractiveTerminal()
+
+    const handleResize = () => {
+      fitInteractiveTerminal()
+    }
+    window.addEventListener('resize', handleResize)
+    const dataListener = term.onData((data) => {
+      console.debug('[session] onData', { len: data.length })
+      if (data.length > 0) {
+        sendInteractiveInputRef.current(data)
+      }
+    })
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      dataListener.dispose()
+      term.dispose()
+      interactiveTerminalRef.current = null
+      interactiveFitAddonRef.current = null
+    }
+  }, [fitInteractiveTerminal, sessionsSupported])
 
   const findActiveEntryIndex = (entries: ShellEntry[]) => {
     for (let i = entries.length - 1; i >= 0; i -= 1) {
@@ -411,10 +534,9 @@ function App() {
         sessionId: data.session_id,
         attachToken: data.attach_token,
         status: 'connecting',
-        output: [],
         socket: null,
         error: null,
-        role: 'spectator',
+        role: 'writer',
         truncated: false
       })
     } catch (err) {
@@ -422,72 +544,50 @@ function App() {
     }
   }
 
-const sendInteractiveInput = (text: string) => {
-    if (!interactiveSession || interactiveSession.role !== 'writer') {
-      setInteractiveSession((prev) =>
-        prev
-          ? {
-              ...prev,
-              error: 'You are viewing as a spectator. Use Take writer to gain control.'
-            }
-          : prev
-      )
-      return
-    }
-    if (!interactiveSession.socket || interactiveSession.socket.readyState !== WebSocket.OPEN) {
-      return
-    }
-    try {
-      interactiveSession.socket.send(JSON.stringify({ type: 'input', data: encodeTerminalData(text) }))
-    } catch (err) {
-      console.error('Failed to send terminal input', err)
-    }
-  }
+  const sendInteractiveInput = useCallback(
+    (text: string) => {
+      console.debug('[session] input', {
+        len: text.length,
+        role: interactiveSession?.role,
+        status: interactiveSession?.status,
+        socketReady: interactiveSession?.socket?.readyState
+      })
+      if (!interactiveSession || interactiveSession.role !== 'writer') {
+        console.warn('[session] blocked input — not writer', {
+          hasSession: Boolean(interactiveSession),
+          role: interactiveSession?.role
+        })
+        setInteractiveSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                error: 'You are viewing as a spectator. Use Take writer to gain control.'
+              }
+            : prev
+        )
+        return
+      }
+      if (!interactiveSession.socket || interactiveSession.socket.readyState !== WebSocket.OPEN) {
+        console.warn('[session] blocked input — socket not ready', {
+          hasSocket: Boolean(interactiveSession.socket),
+          readyState: interactiveSession.socket?.readyState
+        })
+        return
+      }
+      try {
+        interactiveSession.socket.send(JSON.stringify({ type: 'input', data: encodeTerminalData(text) }))
+      } catch (err) {
+        console.error('Failed to send terminal input', err)
+      }
+    },
+    [interactiveSession]
+  )
 
-  const handleTerminalKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!interactiveSession || interactiveSession.status !== 'open') {
-      return
-    }
-    event.preventDefault()
-    let payload = ''
-    if (event.ctrlKey && event.key.toLowerCase() === 'c') {
-      payload = '\u0003'
-    } else if (event.key.length === 1 && !event.metaKey && !event.altKey && !event.ctrlKey) {
-      payload = event.key
-    } else if (event.key === 'Enter') {
-      payload = '\r'
-    } else if (event.key === 'Backspace') {
-      payload = '\u007f'
-    } else if (event.key === 'Escape') {
-      payload = '\u001b'
-    } else if (event.key === 'ArrowUp') {
-      payload = '\u001b[A'
-    } else if (event.key === 'ArrowDown') {
-      payload = '\u001b[B'
-    } else if (event.key === 'ArrowRight') {
-      payload = '\u001b[C'
-    } else if (event.key === 'ArrowLeft') {
-      payload = '\u001b[D'
-    } else if (event.key === 'Tab') {
-      payload = '\t'
-    }
-    if (payload) {
-      sendInteractiveInput(payload)
-    }
-  }
+  useEffect(() => {
+    sendInteractiveInputRef.current = sendInteractiveInput
+  }, [sendInteractiveInput])
 
-  const handleTerminalPaste = (event: ClipboardEvent<HTMLDivElement>) => {
-    if (!interactiveSession || interactiveSession.status !== 'open') {
-      return
-    }
-    event.preventDefault()
-    const text = event.clipboardData?.getData('text') ?? ''
-    if (text) {
-      sendInteractiveInput(text)
-    }
-  }
-
-  const stopInteractiveSession = () => {
+  const stopInteractiveSession = useCallback(() => {
     if (!interactiveSession) {
       return
     }
@@ -504,8 +604,9 @@ const sendInteractiveInput = (text: string) => {
     }).catch(() => {
       /* noop */
     })
+    resetInteractiveTerminal()
     setInteractiveSession(null)
-  }
+  }, [interactiveSession, resetInteractiveTerminal])
 
   const takeInteractiveWriter = async () => {
     if (!interactiveSession) {
@@ -657,18 +758,22 @@ const sendInteractiveInput = (text: string) => {
   }, [threadId])
 
   useEffect(() => {
-    if (!interactiveSession || typeof window === 'undefined') {
+    if (!interactiveSessionId || !interactiveAttachToken || typeof window === 'undefined') {
       return
     }
-    const sessionId = interactiveSession.sessionId
-    const attachToken = interactiveSession.attachToken
-    const query = new URLSearchParams({
-      session_id: sessionId,
-      attach_token: attachToken
-    })
+    const sessionId = interactiveSessionId
+    const attachToken = interactiveAttachToken
+    const query = new URLSearchParams({ session_id: sessionId, attach_token: attachToken })
     termSocketRef.current?.close()
     const ws = new WebSocket(buildWsUrl(`/term?${query.toString()}`))
     termSocketRef.current = ws
+
+    setInteractiveSession((prev) => {
+      if (!prev || prev.sessionId !== sessionId) {
+        return prev
+      }
+      return { ...prev, socket: ws }
+    })
 
     ws.addEventListener('open', () => {
       console.log('[session] ws open', sessionId)
@@ -685,17 +790,13 @@ const sendInteractiveInput = (text: string) => {
         const payload = JSON.parse(event.data as string) as Record<string, unknown>
         if (payload.type === 'output' && typeof payload.data === 'string') {
           const decoded = decodeTerminalData(payload.data)
-          if (decoded) {
-            setInteractiveSession((prev) => {
-              if (!prev || prev.sessionId !== sessionId) {
-                return prev
-              }
-              const merged = [...prev.output, decoded]
-              const sliced = merged.slice(-500)
-              return { ...prev, output: sliced }
-            })
+          if (decoded && interactiveTerminalRef.current) {
+            interactiveTerminalRef.current.write(decoded)
+            setInteractiveHasOutput(true)
+            fitInteractiveTerminal()
           }
         } else if (payload.type === 'status' && typeof payload.status === 'string') {
+          console.log('[session] status payload', payload)
           setInteractiveSession((prev) => {
             if (!prev || prev.sessionId !== sessionId) {
               return prev
@@ -750,7 +851,7 @@ const sendInteractiveInput = (text: string) => {
         if (!prev || prev.sessionId !== sessionId) {
           return prev
         }
-        return { ...prev, status: prev.status === 'error' ? prev.status : 'closed' }
+        return { ...prev, status: prev.status === 'error' ? prev.status : 'closed', socket: null }
       })
     })
 
@@ -760,7 +861,7 @@ const sendInteractiveInput = (text: string) => {
         termSocketRef.current = null
       }
     }
-  }, [interactiveSession?.sessionId, interactiveSession?.attachToken])
+  }, [interactiveSessionId, interactiveAttachToken, fitInteractiveTerminal])
 
   useEffect(() => {
     if (!threadId) {
@@ -784,15 +885,10 @@ const sendInteractiveInput = (text: string) => {
   }, [threadId])
 
   useEffect(() => {
-    if (!interactivePaneRef.current) return
-    interactivePaneRef.current.scrollTop = interactivePaneRef.current.scrollHeight
-  }, [interactiveOutput])
-
-  useEffect(() => {
     if (!threadId && interactiveSession) {
       stopInteractiveSession()
     }
-  }, [threadId, interactiveSession])
+  }, [threadId, interactiveSession, stopInteractiveSession])
 
   useEffect(() => {
     if (!interactiveSession) return
@@ -800,6 +896,7 @@ const sendInteractiveInput = (text: string) => {
       termSocketRef.current.close()
       termSocketRef.current = null
     }
+    resetInteractiveTerminal()
     setInteractiveSession(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [budId])
@@ -1070,31 +1167,32 @@ const sendInteractiveInput = (text: string) => {
                 )}
               </div>
             </div>
-            <div
-              ref={interactivePaneRef}
-              tabIndex={0}
-              className="h-48 overflow-y-auto rounded-lg border-2 border-black bg-black p-3 font-mono text-sm text-green-300 focus:outline-none"
-              onKeyDown={handleTerminalKeyDown}
-              onPaste={handleTerminalPaste}
-            >
-              {interactiveOutput.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Focus this pane and start typing once the session is open.</p>
-              ) : (
-                <pre className="whitespace-pre-wrap break-words text-green-300">{interactiveOutput.join('')}</pre>
-              )}
-              <div className="mt-2 space-y-1">
-                {interactiveRole !== 'writer' && interactiveStatus === 'open' && (
-                  <p className="text-xs text-amber-300">Spectator mode — use Take writer if you need control.</p>
-                )}
-                {interactiveTruncated && (
-                  <p className="text-xs text-amber-400">
-                    Output truncated at 100MB. Older logs were dropped; download transcripts from the backend if needed.
-                  </p>
-                )}
-                {interactiveSession?.error && (
-                  <p className="text-xs text-destructive">{interactiveSession.error}</p>
-                )}
+            <div className="relative">
+              <div className="h-48 rounded-lg border-2 border-black bg-black p-3">
+                <div
+                  ref={interactivePaneRef}
+                  className="h-full w-full overflow-hidden font-mono text-sm"
+                  onClick={() => interactiveTerminalRef.current?.focus()}
+                />
               </div>
+              {interactiveOverlayMessage && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
+                  {interactiveOverlayMessage}
+                </div>
+              )}
+            </div>
+            <div className="mt-2 space-y-1">
+              {interactiveRole !== 'writer' && interactiveStatus === 'open' && (
+                <p className="text-xs text-amber-300">Spectator mode — use Take writer if you need control.</p>
+              )}
+              {interactiveTruncated && (
+                <p className="text-xs text-amber-400">
+                  Output truncated at 100MB. Older logs were dropped; download transcripts from the backend if needed.
+                </p>
+              )}
+              {interactiveSession?.error && (
+                <p className="text-xs text-destructive">{interactiveSession.error}</p>
+              )}
             </div>
           </div>
         )}

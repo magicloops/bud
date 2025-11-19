@@ -562,9 +562,12 @@ impl SessionManager {
         let data = BASE64_STANDARD
             .decode(frame.data.as_bytes())
             .map_err(|err| anyhow!("invalid session input data: {}", err))?;
+        info!(session_id = %frame.session_id, bytes = data.len(), "received session_input frame");
         let inner = self.inner.lock().await;
         if let Some(handle) = inner.sessions.get(&frame.session_id) {
             let _ = handle.command_tx.send(SessionCommand::Input(data));
+        } else {
+            warn!(session_id = %frame.session_id, "session_input dropped; session missing");
         }
         Ok(())
     }
@@ -724,6 +727,7 @@ async fn run_pty_session(
             Some(cmd) = command_rx.recv() => {
                 match cmd {
                     SessionCommand::Input(data) => {
+                        info!(session_id = %config.session_id, bytes = data.len(), "writing session input to PTY");
                         let writer = writer.clone();
                         tokio::task::spawn_blocking(move || -> Result<()> {
                             let mut guard = writer.lock().unwrap();

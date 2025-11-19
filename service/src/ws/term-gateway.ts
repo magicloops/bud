@@ -39,26 +39,39 @@ export async function registerTermGateway(server: FastifyInstance, sessionManage
     }
     server.log.info({ sessionId, role: attached.role, component: "term_gateway" }, "Client attached to session");
     socket.on("message", (raw: WebSocket.RawData) => {
-      handleClientMessage(socket, raw, sessionId, sessionManager);
+      handleClientMessage(server, socket, raw, sessionId, sessionManager);
     });
   });
 }
 
-function handleClientMessage(socket: WebSocket, raw: WebSocket.RawData, sessionId: string, sessionManager: SessionManager) {
-  if (typeof raw !== "string") {
+function handleClientMessage(
+  server: FastifyInstance,
+  socket: WebSocket,
+  raw: WebSocket.RawData,
+  sessionId: string,
+  sessionManager: SessionManager
+) {
+  const text = decodeRawData(raw);
+  if (text === null) {
+    server.log.warn({ sessionId, component: "term_gateway" }, "Dropping non-text WS frame");
     return;
   }
   let parsed: ClientMessage | undefined;
   try {
-    parsed = z.union([InputMessageSchema, ResizeMessageSchema, CloseMessageSchema]).parse(JSON.parse(raw));
+    parsed = z.union([InputMessageSchema, ResizeMessageSchema, CloseMessageSchema]).parse(JSON.parse(text));
   } catch {
     send(socket, { type: "error", code: "bad_request", message: "invalid payload" });
     return;
   }
   switch (parsed.type) {
     case "input": {
+      server.log.info({ sessionId, len: parsed.data.length, component: "term_gateway" }, "session input received");
       const result = sessionManager.sendInput(sessionId, socket, parsed.data);
       if (!result.ok) {
+        server.log.warn(
+          { sessionId, error: result.error, component: "term_gateway" },
+          "session input rejected"
+        );
         const code = result.error === "not_writer" ? "writer_required" : "session_closed";
         const message =
           result.error === "not_writer"
@@ -88,6 +101,22 @@ function handleClientMessage(socket: WebSocket, raw: WebSocket.RawData, sessionI
       return;
     }
   }
+}
+
+function decodeRawData(raw: WebSocket.RawData): string | null {
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (raw instanceof ArrayBuffer) {
+    return Buffer.from(raw).toString("utf8");
+  }
+  if (Array.isArray(raw)) {
+    return Buffer.concat(raw).toString("utf8");
+  }
+  if (Buffer.isBuffer(raw)) {
+    return raw.toString("utf8");
+  }
+  return null;
 }
 
 function send(socket: WebSocket, payload: Record<string, unknown>) {
