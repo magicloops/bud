@@ -564,6 +564,18 @@ _Status (Nov 2025): `/api/sessions/:id/stream` now emits `session.status`/`sess
 
 * Attempting “durable” on a non‑tmux Bud yields clean, actionable error; standard PTY still works.
 
+### Future Durability Exploration — dtach / abduco
+
+While tmux remains the long-term durable backend, we should evaluate lighter-weight options (e.g., **dtach**, **abduco**) that could keep PTY sessions alive across Bud crashes/restarts without the overhead of a full tmux server.
+
+**Next steps**
+
+* Investigate how dtach/abduco handle process groups, environment variables, and attach permissions (per-Bud sockets, ACLs).
+* Prototype a Bud `SessionBackend` using one of these tools to confirm we can list/adopt sessions after a restart.
+* Decide whether these tools can serve as an interim durability mode (surfaced via `sessions_backends`) or complement tmux later.
+
+_Out of scope for the current PTY MVP, but worth tracking if tmux proves too heavy for the PoC timeline._
+
 ---
 
 ### Phase 5.0 — tmux (Minimal Durable) — **Pattern A**
