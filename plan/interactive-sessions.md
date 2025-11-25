@@ -544,6 +544,8 @@ SESSION_DB_SOFT_CAP_BYTES=100000000
 * Observability: core metrics & structured logs.
 * UI: ANSI-stripped “Copy as text”; 60fps render; xterm.js terminal.
 
+_Status (Nov 2025): `/api/sessions/:id/stream` now emits `session.status`/`session.final`/`session.writer_changed`, Fastify negotiates permessage-deflate on `/ws` + `/term`, and Bud clamps PTY output via a 128-frame bounded queue. Remaining reliability work: download/export UX, richer metrics dashboards, and SSE-driven session inventory so users can reattach outside the chat pane._
+
 **Acceptance**
 
 * Survives backend restarts; throttles chatty TUIs; metrics visible; writer handoffs work cleanly.

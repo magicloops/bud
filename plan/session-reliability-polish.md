@@ -25,6 +25,12 @@
 - Unit tests for SessionManager attach token rotation + log cap behavior.
 - Integration flow: start session, rotate writer, simulate detach/attach, verify SSE + UI updates.
 - Manual tmux smoke test (when available) to ensure graceful fallback when unsupported.
+- Manual session recipe:
+  1. Launch service (`pnpm dev`), Bud (`cargo run -- --server ws://localhost:3000/ws --token DEV-LOCAL-ONLY`), and web (`pnpm dev`).
+  2. Start a PTY session, type commands, and confirm `/term` WS plus `/api/sessions/:id/stream` both show `session.status` ➜ `open`.
+  3. Click **Take writer** in a second browser window, ensure the original writer socket closes (code `4401`) and SSE emits `session.writer_changed` with `writer_present:false`.
+  4. Resize the terminal, watch `session_resize` hit Bud and confirm the PTY responds.
+  5. Stop the session; verify `session.final` SSE payload includes `exit_code`, `bytes_in/out`, and the UI badge switches to “Session closed”.
 
 ## Rollout
 - Update `/docs/proto.md` with new `session_status` frame schema.

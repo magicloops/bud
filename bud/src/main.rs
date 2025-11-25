@@ -44,6 +44,7 @@ const DEFAULT_HEARTBEAT_SEC: u64 = 30;
 const MAX_QUEUE_DEPTH: usize = 10;
 const DEFAULT_PTY_ROWS: u16 = 24;
 const DEFAULT_PTY_COLS: u16 = 80;
+const SESSION_OUTPUT_INFLIGHT: usize = 128;
 
 /// Bud (device agent) CLI arguments.
 #[derive(Debug, Parser, Clone)]
@@ -672,9 +673,9 @@ async fn run_pty_session(
     let writer = Arc::new(StdMutex::new(writer_file));
     let session_id = config.session_id.clone();
     let seq = Arc::new(AtomicU64::new(0));
-    let sender_output = sender.clone();
-    let session_id_clone = session_id.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
+    let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(SESSION_OUTPUT_INFLIGHT);
+    let reader_sender = output_tx.clone();
+    let reader_handle = tokio::task::spawn_blocking(move || -> Result<()> {
         let mut reader = reader_file;
         let mut buffer = vec![0u8; 16 * 1024];
         loop {
@@ -682,9 +683,19 @@ async fn run_pty_session(
             if read == 0 {
                 break;
             }
-            let chunk = &buffer[..read];
+            let chunk = buffer[..read].to_vec();
+            if reader_sender.blocking_send(chunk).is_err() {
+                break;
+            }
+        }
+        Ok(())
+    });
+    let sender_output = sender.clone();
+    let session_id_clone = session_id.clone();
+    let forward_handle = tokio::task::spawn_local(async move {
+        while let Some(chunk) = output_rx.recv().await {
             let seq_no = seq.fetch_add(1, Ordering::SeqCst);
-            send_ws_frame(
+            if let Err(err) = send_ws_frame(
                 &sender_output,
                 json!({
                     "proto": PROTO_VERSION,
@@ -694,11 +705,13 @@ async fn run_pty_session(
                     "ext": {},
                     "session_id": session_id_clone,
                     "seq": seq_no,
-                    "data": BASE64_STANDARD.encode(chunk)
+                    "data": BASE64_STANDARD.encode(&chunk)
                 }),
-            )?;
+            ) {
+                warn!(session_id = %session_id_clone, error = %err, "failed to forward session output");
+                break;
+            }
         }
-        Ok(())
     });
 
     send_ws_frame(
@@ -722,6 +735,7 @@ async fn run_pty_session(
         guard.wait().await
     }
     .boxed_local();
+    let mut exit_status: Option<std::process::ExitStatus> = None;
     loop {
         tokio::select! {
             Some(cmd) = command_rx.recv() => {
@@ -764,25 +778,39 @@ async fn run_pty_session(
                 }
             }
             status = &mut child_wait => {
-                let exit_status = status?;
-                send_ws_frame(
-                    &sender,
-                    json!({
-                        "proto": PROTO_VERSION,
-                        "type": "session_closed",
-                        "id": new_message_id(),
-                        "ts": now_millis(),
-                        "ext": {},
-                        "session_id": config.session_id,
-                        "exit_code": exit_status.code(),
-                        "signal": exit_status.signal(),
-                        "canceled": false
-                    }),
-                )?;
-                return Ok(());
+                exit_status = Some(status?);
+                break;
             }
         }
     }
+
+    drop(output_tx);
+    match reader_handle.await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => warn!(session_id = %config.session_id, error = %err, "PTY reader error"),
+        Err(err) => warn!(session_id = %config.session_id, error = %err, "PTY reader join error"),
+    }
+    if let Err(err) = forward_handle.await {
+        warn!(session_id = %config.session_id, error = %err, "PTY output forwarder error");
+    }
+
+    if let Some(status) = exit_status {
+        send_ws_frame(
+            &sender,
+            json!({
+                "proto": PROTO_VERSION,
+                "type": "session_closed",
+                "id": new_message_id(),
+                "ts": now_millis(),
+                "ext": {},
+                "session_id": config.session_id,
+                "exit_code": status.code(),
+                "signal": status.signal(),
+                "canceled": false
+            }),
+        )?;
+    }
+    Ok(())
 }
 
 async fn stream_pipe<R: AsyncRead + Unpin>(

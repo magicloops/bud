@@ -5,7 +5,7 @@ import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
-import { RunEventBus } from "./runtime/event-bus.js";
+import { RunEventBus, SessionEventBus } from "./runtime/event-bus.js";
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes } from "./routes/threads.js";
@@ -25,7 +25,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   const runLogger = server.log.child({ component: "run_manager" });
   const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
   const sessionLogger = server.log.child({ component: "session_manager" });
-  const sessionManager = new SessionManager(sessionLogger);
+  const sessionEvents = new SessionEventBus();
+  const sessionManager = new SessionManager(sessionLogger, sessionEvents);
   const openai = new OpenAI({ apiKey: config.openaiApiKey });
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
@@ -37,7 +38,15 @@ export async function buildServer(): Promise<FastifyInstance> {
     config.agentOpenaiDebug
   );
 
-  await server.register(websocketPlugin);
+  await server.register(websocketPlugin, {
+    options: {
+      perMessageDeflate: {
+        threshold: 1024,
+        serverNoContextTakeover: true,
+        clientNoContextTakeover: true
+      }
+    }
+  });
   await server.register(fastifySseV2);
   await registerBudRoutes(server);
   await registerThreadRoutes(server, runManager, agentService);
@@ -59,6 +68,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   server.get("/api/runs/:runId/stream", (request, reply) => {
     const runId = (request.params as { runId: string }).runId;
     const detach = eventBus.attach(runId, reply);
+    reply.raw.on("close", detach);
+  });
+
+  server.get("/api/sessions/:sessionId/stream", (request, reply) => {
+    const sessionId = (request.params as { sessionId: string }).sessionId;
+    const detach = sessionEvents.attach(sessionId, reply);
     reply.raw.on("close", detach);
   });
 

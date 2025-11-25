@@ -68,6 +68,13 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 - Keep‑alive comment every **15 s**.
 - Client MAY use `Last-Event-ID` to resume.
 
+### 2.3 Session Status Stream (Browser)
+
+- URL: `GET /api/sessions/:session_id/stream`
+- Same SSE headers + keep-alive semantics as runs.
+- Events: `session.status`, `session.final`, `session.writer_changed`.
+- Used by the workbench to update the xterm pane even if `/term` WS reconnects.
+
 ---
 
 ## 3. Frame Envelope (Bud ⇄ Backend)
@@ -296,6 +303,95 @@ Used by either side for latency checks.
 
 **Codes**: see §8.
 
+### 4.4 Interactive Sessions
+
+Bud and the backend exchange dedicated control/data frames for PTY/tmux sessions.
+
+#### 4.4.1 `session_open` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_open","id":"01...","ts":1731,
+  "session_id":"sess_01H...",
+  "backend":"pty",
+  "cmd":"/bin/bash -l",
+  "cwd":"~",
+  "env":{"LANG":"C.UTF-8","TERM":"xterm-256color"},
+  "pty":{"rows":24,"cols":80},
+  "timeouts":{"idle_kill_sec":1200,"hard_ttl_sec":43200,"linger_on_disconnect_sec":600},
+  "ext":{}
+}
+```
+
+#### 4.4.2 `session_opened` (Bud → Backend)
+
+```json
+{
+  "proto":"0.1","type":"session_opened","id":"01...","ts":1731,
+  "session_id":"sess_01H...","backend":"pty","ext":{}
+}
+```
+
+#### 4.4.3 `session_output` (Bud → Backend)
+
+```json
+{
+  "proto":"0.1","type":"session_output","id":"01...","ts":1731,
+  "session_id":"sess_01H...","seq":42,"data":"base64url-pty-bytes","ext":{}
+}
+```
+
+* `seq` increases per session; Bud MUST keep ≤128 in-flight chunks (16 KB each).
+
+#### 4.4.4 `session_input` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_input","id":"01...","ts":1731,
+  "session_id":"sess_01H...","data":"base64url-pty-bytes","ext":{}
+}
+```
+
+#### 4.4.5 `session_resize` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_resize","id":"01...","ts":1731,
+  "session_id":"sess_01H...","rows":40,"cols":120,"ext":{}
+}
+```
+
+#### 4.4.6 `session_close` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_close","id":"01...","ts":1731,
+  "session_id":"sess_01H...","reason":"user_request","ext":{}
+}
+```
+
+#### 4.4.7 `session_error` (Bud → Backend)
+
+```json
+{
+  "proto":"0.1","type":"session_error","id":"01...","ts":1731,
+  "session_id":"sess_01H...","code":"backend_unsupported","message":"tmux not installed","ext":{}
+}
+```
+
+#### 4.4.8 `/term` WebSocket (Browser ⇄ Backend)
+
+* URL: `ws(s)://<host>/term?session_id=...&attach_token=...`
+* Client messages (JSON):
+  * `{"type":"attach","session_id":"...","attach_token":"...","from_seq":0}` *(implicit on connect)*
+  * `{"type":"input","data":"base64url"}` – forwarded as `session_input`.
+  * `{"type":"resize","rows":40,"cols":120}`
+  * `{"type":"close"}` – graceful stop.
+* Server messages (JSON):
+  * `{"type":"output","data":"base64url"}` – PTY bytes.
+  * `{"type":"status","status":"open|closed|failed","role":"writer|spectator","truncated":false}`
+  * `{"type":"error","code":"writer_required","message":"..."}`
+
 ---
 
 ## 5. Ordering, Delivery, and Limits
@@ -355,6 +451,15 @@ Used by either side for latency checks.
 * `final`
   `{ "event_id":"...", "ts":1731, "status":"succeeded|failed|canceled", "text":"Done.", "log_truncated":false }`
 
+* `session.status`
+  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "status":"opening|open|closed|failed|canceled", "truncated":false }`
+
+* `session.final`
+  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "status":"closed|failed|canceled", "exit_code":0, "bytes_out":1234, "bytes_in":512 }`
+
+* `session.writer_changed`
+  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "writer_present":true }`
+
 ### 7.2 SSE framing
 
 Server MUST emit in this format:
@@ -405,6 +510,8 @@ Sent in `hello.capabilities` to let the backend adapt:
   "max_concurrency": 1,         // integer >= 1
   "supports_pty": false,        // reserved for future
   "shell_default": "/bin/sh",   // default shell path
+  "sessions": true,
+  "sessions_backends": ["pty"],
   "os_release": "Ubuntu 22.04", // optional
   "ext": {}
 }

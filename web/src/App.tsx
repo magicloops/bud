@@ -62,6 +62,7 @@ type InteractiveSessionState = {
   error?: string | null
   role: 'writer' | 'spectator'
   truncated: boolean
+  writerPresent: boolean
 }
 
 const mapHistoryRunToEntry = (run: RunHistoryEntry): ShellEntry => {
@@ -110,6 +111,23 @@ const decodeTerminalData = (data: string) => {
   }
 }
 
+const mapSessionStatus = (status?: string | null): InteractiveSessionState['status'] | null => {
+  if (!status) return null
+  switch (status) {
+    case 'open':
+      return 'open'
+    case 'opening':
+      return 'connecting'
+    case 'failed':
+      return 'error'
+    case 'canceled':
+    case 'closed':
+      return 'closed'
+    default:
+      return null
+  }
+}
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined
 
 const buildApiUrl = (path: string) => {
@@ -155,6 +173,7 @@ function App() {
   const [prefersDurableSession, setPrefersDurableSession] = useState(false)
   const [interactiveSession, setInteractiveSession] = useState<InteractiveSessionState | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const sessionEventSourceRef = useRef<EventSource | null>(null)
   const termSocketRef = useRef<WebSocket | null>(null)
   const interactivePaneRef = useRef<HTMLDivElement | null>(null)
   const interactiveTerminalRef = useRef<Terminal | null>(null)
@@ -197,6 +216,7 @@ function App() {
   useEffect(() => {
     return () => {
       eventSourceRef.current?.close()
+      sessionEventSourceRef.current?.close()
     }
   }, [])
 
@@ -218,6 +238,7 @@ function App() {
   const interactiveTruncated = interactiveSession?.truncated ?? false
   const interactiveSessionId = interactiveSession?.sessionId ?? null
   const interactiveAttachToken = interactiveSession?.attachToken ?? null
+  const writerSeatOpen = interactiveSession?.writerPresent === false
   const interactiveOverlayMessage = useMemo(() => {
     if (interactiveHasOutput) {
       return null
@@ -235,12 +256,16 @@ function App() {
       return 'Session closed.'
     }
     if (interactiveStatus === 'open') {
-      return interactiveRole === 'writer'
-        ? 'Session open — start typing to send commands.'
-        : 'Spectator mode — Take writer to send input.'
+      if (interactiveRole === 'writer') {
+        return 'Session open — start typing to send commands.'
+      }
+      if (writerSeatOpen) {
+        return 'Writer seat open — Take writer to control this session.'
+      }
+      return 'Spectator mode — Take writer to send input.'
     }
     return 'Preparing session…'
-  }, [interactiveHasOutput, interactiveSession, interactiveStatus, interactiveRole])
+  }, [interactiveHasOutput, interactiveSession, interactiveStatus, interactiveRole, writerSeatOpen])
 
   useEffect(() => {
     if (!durableSessionsSupported && prefersDurableSession) {
@@ -537,7 +562,8 @@ function App() {
         socket: null,
         error: null,
         role: 'writer',
-        truncated: false
+        truncated: false,
+        writerPresent: true
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start interactive session')
@@ -864,6 +890,105 @@ function App() {
   }, [interactiveSessionId, interactiveAttachToken, fitInteractiveTerminal])
 
   useEffect(() => {
+    if (!interactiveSessionId) {
+      sessionEventSourceRef.current?.close()
+      sessionEventSourceRef.current = null
+      return
+    }
+    const currentSessionId = interactiveSessionId
+    const url = buildApiUrl(`/api/sessions/${currentSessionId}/stream`)
+    const source = new EventSource(url)
+    sessionEventSourceRef.current = source
+
+    const handleStatus = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data ?? '{}') as {
+          status?: string
+          truncated?: boolean
+          error?: string | null
+        }
+        setInteractiveSession((prev) => {
+          if (!prev || prev.sessionId !== currentSessionId) {
+            return prev
+          }
+          const nextStatus = mapSessionStatus(payload.status) ?? prev.status
+          const nextError =
+            typeof payload.error === 'string'
+              ? payload.error
+              : nextStatus === 'error'
+                ? prev.error ?? 'Session failed'
+                : prev.error
+          return {
+            ...prev,
+            status: nextStatus,
+            truncated: payload.truncated === true ? true : prev.truncated,
+            error: nextError
+          }
+        })
+      } catch (err) {
+        console.error('Failed to parse session.status SSE', err)
+      }
+    }
+
+    const handleFinal = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data ?? '{}') as {
+          status?: string
+          error?: string | null
+          exit_code?: number | null
+        }
+        setInteractiveSession((prev) => {
+          if (!prev || prev.sessionId !== currentSessionId) {
+            return prev
+          }
+          const nextStatus = mapSessionStatus(payload.status) ?? 'closed'
+          return {
+            ...prev,
+            status: nextStatus,
+            error: payload.error ?? prev.error
+          }
+        })
+      } catch (err) {
+        console.error('Failed to parse session.final SSE', err)
+      }
+    }
+
+    const handleWriter = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data ?? '{}') as { writer_present?: boolean }
+        setInteractiveSession((prev) => {
+          if (!prev || prev.sessionId !== currentSessionId) {
+            return prev
+          }
+          return {
+            ...prev,
+            writerPresent: payload.writer_present !== false
+          }
+        })
+      } catch (err) {
+        console.error('Failed to parse session.writer_changed SSE', err)
+      }
+    }
+
+    source.addEventListener('session.status', handleStatus)
+    source.addEventListener('session.final', handleFinal)
+    source.addEventListener('session.writer_changed', handleWriter)
+    source.onerror = (event) => {
+      console.warn('[session] SSE error', event)
+    }
+
+    return () => {
+      source.removeEventListener('session.status', handleStatus)
+      source.removeEventListener('session.final', handleFinal)
+      source.removeEventListener('session.writer_changed', handleWriter)
+      source.close()
+      if (sessionEventSourceRef.current === source) {
+        sessionEventSourceRef.current = null
+      }
+    }
+  }, [interactiveSessionId])
+
+  useEffect(() => {
     if (!threadId) {
       setRunHistory([])
       setRunHistoryCursor(null)
@@ -896,6 +1021,8 @@ function App() {
       termSocketRef.current.close()
       termSocketRef.current = null
     }
+    sessionEventSourceRef.current?.close()
+    sessionEventSourceRef.current = null
     resetInteractiveTerminal()
     setInteractiveSession(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1183,7 +1310,11 @@ function App() {
             </div>
             <div className="mt-2 space-y-1">
               {interactiveRole !== 'writer' && interactiveStatus === 'open' && (
-                <p className="text-xs text-amber-300">Spectator mode — use Take writer if you need control.</p>
+                <p className="text-xs text-amber-300">
+                  {writerSeatOpen
+                    ? 'Writer seat available — use Take writer to control the session.'
+                    : 'Spectator mode — use Take writer if you need control.'}
+                </p>
               )}
               {interactiveTruncated && (
                 <p className="text-xs text-amber-400">

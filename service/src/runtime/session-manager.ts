@@ -11,6 +11,7 @@ import {
 } from "../db/schema.js";
 import { PROTO_VERSION, config } from "../config.js";
 import { sendFrameToBud } from "../ws/gateway.js";
+import { SessionEventBus } from "./event-bus.js";
 
 type SessionBackend = "pty" | "tmux";
 
@@ -47,20 +48,30 @@ type SessionContext = {
   logsBytes: number;
   logTruncated: boolean;
   bytesOut: number;
+  bytesIn: number;
+  lastActivity: number;
 };
 
 export class SessionManager {
   private readonly sessions = new Map<string, SessionContext>();
   private readonly logLimit: number;
   private readonly logger: FastifyBaseLogger;
+  private readonly events: SessionEventBus;
+  private readonly dbClient: typeof db;
 
-  constructor(logger: FastifyBaseLogger) {
+  constructor(
+    logger: FastifyBaseLogger,
+    events: SessionEventBus,
+    options: { db?: typeof db; logLimit?: number } = {}
+  ) {
     this.logger = logger;
-    this.logLimit = config.runLogMaxBytes;
+    this.events = events;
+    this.dbClient = options.db ?? db;
+    this.logLimit = options.logLimit ?? config.runLogMaxBytes;
   }
 
   async createSession(options: SessionCreateOptions): Promise<{ sessionId: string; attachToken: string }> {
-    const thread = await db.query.threadTable.findFirst({
+    const thread = await this.dbClient.query.threadTable.findFirst({
       where: eq(threadTable.threadId, options.threadId)
     });
     if (!thread) {
@@ -69,7 +80,7 @@ export class SessionManager {
     if (thread.budId !== options.budId) {
       throw new Error("thread does not belong to bud");
     }
-    const bud = await db.query.budTable.findFirst({
+    const bud = await this.dbClient.query.budTable.findFirst({
       where: eq(budTable.budId, options.budId)
     });
     if (!bud) {
@@ -93,13 +104,14 @@ export class SessionManager {
     const backend: SessionBackend = options.backend === "tmux" ? "tmux" : "pty";
     const now = new Date();
 
-    await db.insert(sessionTable).values({
+    await this.dbClient.insert(sessionTable).values({
       sessionId,
       budId: options.budId,
       threadId: options.threadId,
       backend,
       status: "opening",
       startedAt: now,
+      lastActivityAt: now,
       hardTtlSec: 12 * 60 * 60,
       idleKillSec: 20 * 60
     });
@@ -115,8 +127,16 @@ export class SessionManager {
       spectators: new Set(),
       logsBytes: 0,
       logTruncated: false,
-      bytesOut: 0
+      bytesOut: 0,
+      bytesIn: 0,
+      lastActivity: now.getTime()
     });
+    this.logger.info(
+      { sessionId, budId: options.budId, backend, component: "session_manager" },
+      "Session created"
+    );
+
+    this.emitStatus(sessionId, "opening", { truncated: false });
 
     const payload: Record<string, unknown> = {
       proto: PROTO_VERSION,
@@ -137,10 +157,11 @@ export class SessionManager {
     const sent = sendFrameToBud(options.budId, payload);
     if (!sent) {
       this.sessions.delete(sessionId);
-      await db
+      await this.dbClient
         .update(sessionTable)
         .set({ status: "failed", finishedAt: new Date(), error: "BUD_OFFLINE" })
         .where(eq(sessionTable.sessionId, sessionId));
+      this.emitStatus(sessionId, "failed", { error: "bud disconnected" });
       throw new Error("bud disconnected");
     }
 
@@ -151,22 +172,24 @@ export class SessionManager {
     const ctx = this.sessions.get(payload.session_id);
     if (!ctx) return;
     ctx.status = "open";
-    await db
+    await this.dbClient
       .update(sessionTable)
       .set({ status: "open" })
       .where(eq(sessionTable.sessionId, payload.session_id));
     this.broadcast(ctx, { type: "status", status: "open", truncated: ctx.logTruncated });
+    this.emitStatus(payload.session_id, "open", { truncated: ctx.logTruncated });
   }
 
   async handleSessionOutput(payload: { session_id: string; seq: number; data: string }): Promise<void> {
     const ctx = this.sessions.get(payload.session_id);
     if (!ctx) return;
     const buffer = Buffer.from(payload.data, "base64");
+    const now = new Date();
     const remaining = Math.max(this.logLimit - ctx.logsBytes, 0);
     const toStore = remaining >= buffer.length ? buffer : buffer.subarray(0, remaining);
     let truncatedNow = false;
     if (toStore.length > 0) {
-      await db
+      await this.dbClient
         .insert(sessionLogTable)
         .values({
           sessionId: payload.session_id,
@@ -181,19 +204,26 @@ export class SessionManager {
         ctx.logTruncated = true;
         truncatedNow = true;
       }
-      await db
+      await this.dbClient
         .update(sessionTable)
         .set({
           logsBytes: ctx.logsBytes,
           logTruncated: ctx.logTruncated,
-          bytesOut: ctx.bytesOut + buffer.length
+          bytesOut: ctx.bytesOut + buffer.length,
+          lastActivityAt: now
         })
         .where(eq(sessionTable.sessionId, payload.session_id));
     }
     ctx.bytesOut += buffer.length;
+    ctx.lastActivity = now.getTime();
     this.broadcast(ctx, { type: "output", data: payload.data });
     if (truncatedNow) {
       this.broadcast(ctx, { type: "status", status: ctx.status, truncated: true });
+      this.logger.warn(
+        { sessionId: payload.session_id, component: "session_manager" },
+        "session logs truncated at soft cap"
+      );
+      this.emitStatus(payload.session_id, ctx.status, { truncated: true });
     }
   }
 
@@ -204,22 +234,44 @@ export class SessionManager {
     canceled?: boolean;
   }): Promise<void> {
     const ctx = this.sessions.get(payload.session_id);
-    await db
+    await this.dbClient
       .update(sessionTable)
       .set({
-        status: payload.canceled ? "closed" : "closed",
+        status: payload.canceled ? "canceled" : "closed",
         finishedAt: new Date(),
+        lastActivityAt: new Date(),
         exitCode: payload.exit_code ?? null,
         signal: payload.signal ?? null
       })
       .where(eq(sessionTable.sessionId, payload.session_id));
     if (ctx) {
-      ctx.status = "closed";
+      const nextStatus = payload.canceled ? "canceled" : "closed";
+      ctx.status = nextStatus;
       this.broadcast(ctx, {
         type: "status",
-        status: "closed",
+        status: nextStatus,
         exit_code: payload.exit_code ?? null
       });
+      this.emitStatus(payload.session_id, nextStatus, {
+        exit_code: payload.exit_code ?? null,
+        truncated: ctx.logTruncated
+      });
+      this.emitFinal(payload.session_id, nextStatus, {
+        exit_code: payload.exit_code ?? null,
+        signal: payload.signal ?? null,
+        canceled: payload.canceled ?? false,
+        bytes_out: ctx.bytesOut,
+        bytes_in: ctx.bytesIn
+      });
+      this.logger.info(
+        {
+          sessionId: payload.session_id,
+          bytesOut: ctx.bytesOut,
+          bytesIn: ctx.bytesIn,
+          component: "session_manager"
+        },
+        "Session closed"
+      );
       this.closeAllSockets(ctx);
       this.sessions.delete(payload.session_id);
     }
@@ -227,11 +279,12 @@ export class SessionManager {
 
   async handleSessionError(payload: { session_id: string; code: string; message: string }): Promise<void> {
     const ctx = this.sessions.get(payload.session_id);
-    await db
+    await this.dbClient
       .update(sessionTable)
       .set({
         status: "failed",
         finishedAt: new Date(),
+        lastActivityAt: new Date(),
         error: payload.code
       })
       .where(eq(sessionTable.sessionId, payload.session_id));
@@ -242,6 +295,19 @@ export class SessionManager {
         status: "failed",
         error: payload.message
       });
+      this.emitStatus(payload.session_id, "failed", { error: payload.message });
+      this.emitFinal(payload.session_id, "failed", {
+        exit_code: null,
+        signal: null,
+        canceled: false,
+        error: payload.message,
+        bytes_out: ctx.bytesOut,
+        bytes_in: ctx.bytesIn
+      });
+      this.logger.error(
+        { sessionId: payload.session_id, error: payload.code, component: "session_manager" },
+        "Session failed"
+      );
       this.closeAllSockets(ctx);
       this.sessions.delete(payload.session_id);
     }
@@ -265,6 +331,7 @@ export class SessionManager {
     if (!ctx.writer) {
       ctx.writer = socket;
       role = "writer";
+      this.emitWriter(sessionId, true);
     } else {
       ctx.spectators.add(socket);
     }
@@ -295,11 +362,18 @@ export class SessionManager {
       session_id: sessionId,
       data: dataB64
     };
+    const bytes = Buffer.from(dataB64, "base64").length;
     if (!sendFrameToBud(ctx.budId, payload)) {
       this.logger.error({ sessionId }, "sendInput failed: Bud unavailable");
       return { ok: false, error: "session_closed" };
     }
-    this.logger.info({ sessionId, bytes: dataB64.length, component: "session_manager" }, "session input forwarded");
+    ctx.bytesIn += bytes;
+    ctx.lastActivity = Date.now();
+    this.touchSession(sessionId);
+    this.logger.info(
+      { sessionId, bytes, component: "session_manager" },
+      "session input forwarded"
+    );
     return { ok: true };
   }
 
@@ -324,6 +398,7 @@ export class SessionManager {
     if (!sendFrameToBud(ctx.budId, payload)) {
       return { ok: false, error: "session_closed" };
     }
+    this.touchSession(sessionId);
     return { ok: true };
   }
 
@@ -357,6 +432,7 @@ export class SessionManager {
         /* noop */
       }
       ctx.writer = null;
+      this.emitWriter(sessionId, false);
     }
     return { ok: true, attachToken: ctx.attachToken };
   }
@@ -366,6 +442,7 @@ export class SessionManager {
     if (!ctx) return;
     if (ctx.writer === socket) {
       ctx.writer = null;
+      this.emitWriter(sessionId, false);
     }
     if (ctx.spectators.has(socket)) {
       ctx.spectators.delete(socket);
@@ -380,6 +457,7 @@ export class SessionManager {
         /* noop */
       }
       ctx.writer = null;
+      this.emitWriter(ctx.sessionId, false);
     }
     for (const socket of ctx.spectators) {
       try {
@@ -406,6 +484,51 @@ export class SessionManager {
       status,
       role,
       truncated
+    });
+  }
+
+  private touchSession(sessionId: string) {
+    void this.dbClient
+      .update(sessionTable)
+      .set({ lastActivityAt: new Date() })
+      .where(eq(sessionTable.sessionId, sessionId))
+      .catch((err) => {
+        this.logger.warn({ err, sessionId, component: "session_manager" }, "Failed to update session activity");
+      });
+  }
+
+  private emitStatus(sessionId: string, status: string, extra?: Record<string, unknown>) {
+    this.events.emit(sessionId, {
+      event: "session.status",
+      data: { session_id: sessionId, status, ...(extra ?? {}) },
+      id: ulid()
+    });
+  }
+
+  private emitFinal(
+    sessionId: string,
+    status: string,
+    payload: {
+      exit_code: number | null;
+      signal: string | null;
+      canceled: boolean;
+      bytes_out: number;
+      bytes_in: number;
+      error?: string | null;
+    }
+  ) {
+    this.events.emit(sessionId, {
+      event: "session.final",
+      data: { session_id: sessionId, status, ...payload },
+      id: ulid()
+    });
+  }
+
+  private emitWriter(sessionId: string, writerPresent: boolean) {
+    this.events.emit(sessionId, {
+      event: "session.writer_changed",
+      data: { session_id: sessionId, writer_present: writerPresent },
+      id: ulid()
     });
   }
 
