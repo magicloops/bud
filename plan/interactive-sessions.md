@@ -46,6 +46,17 @@
 
 ---
 
+## Unified Thread Terminal Decisions (PoC alignment)
+
+* **Thread-owned session:** Each thread auto-creates a session on first load, reuses it across reconnects, and treats idle/hard TTLs as effectively infinite for the PoC. When a session closes, clear the pointer and create a new one on next visit.
+* **Session-only agent flow:** Drop `run_id`/legacy run terminal for the Workbench. The agent/tool calls borrow the thread’s writer lease, write into the session, capture tails, then release. “Stop” cancels the OpenAI Responses call but keeps the session running.
+* **Writer semantics & UX:** The thread/session owns the lease; the agent borrows per tool call. Users can type directly without an explicit acquire step; the chat textarea stays enabled and may queue one message while the agent is running.
+* **UI consolidation:** Terminal is always attached to the thread’s session; remove the “start session” button and legacy run history panel. Keep lightweight timeline markers for agent commands and manual input (from `session_log`), easy to change later.
+* **Tool result tails:** Default to last ~200 lines per stream (bounded bytes, ANSI stripped); include stdout and stderr separately, flag non-zero exits, and prefix truncation notices (e.g., “856 lines omitted…”).
+* **Failure handling:** On session crash, prompt to restart and repoint the thread; do not tear down sessions on stop/cancel otherwise.
+
+---
+
 ## 3) Capabilities & Discovery
 
 ### 3.1 Bud Hello Extension (WSS)
