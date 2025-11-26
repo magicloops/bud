@@ -62,6 +62,7 @@ export const threadTable = pgTable(
     budId: text("bud_id")
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
+    currentSessionId: text("current_session_id"),
     title: text("title"),
     lastMessagePreview: text("last_message_preview"),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).default(sql`now()`).notNull(),
@@ -73,7 +74,8 @@ export const threadTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
   },
   (table) => ({
-    budIdx: index("thread_bud_idx").on(table.budId)
+    budIdx: index("thread_bud_idx").on(table.budId),
+    currentSessionIdx: index("thread_current_session_idx").on(table.currentSessionId)
   })
 );
 
@@ -207,8 +209,8 @@ export const sessionTable = pgTable(
     signal: text("signal"),
     bytesOut: bigint("bytes_out", { mode: "number" }).notNull().default(0),
     writerUserId: text("writer_user_id"),
-    hardTtlSec: integer("hard_ttl_sec").notNull().default(12 * 60 * 60),
-    idleKillSec: integer("idle_kill_sec").notNull().default(20 * 60),
+    hardTtlSec: integer("hard_ttl_sec").notNull().default(365 * 24 * 60 * 60), // effectively infinite for PoC
+    idleKillSec: integer("idle_kill_sec").notNull().default(365 * 24 * 60 * 60),
     logsBytes: bigint("logs_bytes", { mode: "number" }).notNull().default(0),
     logTruncated: boolean("log_truncated").notNull().default(false),
     logsBlobUrl: text("logs_blob_url"),

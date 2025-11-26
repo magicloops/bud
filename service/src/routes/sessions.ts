@@ -1,6 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { SessionManager } from "../runtime/session-manager.js";
+import { db } from "../db/client.js";
+import { eq } from "drizzle-orm";
+import { threadTable } from "../db/schema.js";
 
 const CreateSessionSchema = z.object({
   thread_id: z.string().min(1),
@@ -34,6 +37,10 @@ export async function registerSessionRoutes(server: FastifyInstance, sessionMana
         rows: result.data.rows ?? null,
         cols: result.data.cols ?? null
       });
+      await db
+        .update(threadTable)
+        .set({ currentSessionId: created.sessionId })
+        .where(eq(threadTable.threadId, result.data.thread_id));
       reply.code(201).send({
         session_id: created.sessionId,
         attach_token: created.attachToken,

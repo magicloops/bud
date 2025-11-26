@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
-import { RunView, type ShellEntry } from '@/components/workbench/run-view'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
@@ -37,23 +36,6 @@ type ApiBud = {
   } | null
 }
 
-type RunHistoryEntry = {
-  run_id: string
-  status: string
-  exit_code: number | null
-  started_at: string | null
-  finished_at: string | null
-  cwd: string | null
-  error: string | null
-  command: string | null
-  stdout: string
-  stderr: string
-  stdout_truncated: boolean
-  stderr_truncated: boolean
-  stdout_bytes: number
-  stderr_bytes: number
-}
-
 type InteractiveSessionState = {
   sessionId: string
   attachToken: string
@@ -63,25 +45,6 @@ type InteractiveSessionState = {
   role: 'writer' | 'spectator'
   truncated: boolean
   writerPresent: boolean
-}
-
-const mapHistoryRunToEntry = (run: RunHistoryEntry): ShellEntry => {
-  const status: ShellEntry['status'] =
-    run.status === 'failed' ? 'failed' : run.status === 'succeeded' ? 'succeeded' : 'running'
-  const command =
-    run.command && run.command.length > 0 ? run.command : `run ${run.run_id.slice(-6)}`
-  return {
-    runId: run.run_id,
-    id: `history_${run.run_id}`,
-    command,
-    cwd: run.cwd,
-    status,
-    stdout: run.stdout ? [run.stdout] : [],
-    stderr: run.stderr ? [run.stderr] : [],
-    exitCode: typeof run.exit_code === 'number' ? run.exit_code : null,
-    startedAt: run.started_at ? Date.parse(run.started_at) : Date.now(),
-    finishedAt: run.finished_at ? Date.parse(run.finished_at) : undefined
-  }
 }
 
 const encodeTerminalData = (text: string) => {
@@ -159,20 +122,12 @@ function App() {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadId, setThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ThreadMessage[]>([])
-  const [terminalEntries, setTerminalEntries] = useState<ShellEntry[]>([])
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [threadPanelOpen, setThreadPanelOpen] = useState(true)
-  const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
-  const [currentCwd, setCurrentCwd] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
-  const [runHistory, setRunHistory] = useState<ShellEntry[]>([])
-  const [runHistoryCursor, setRunHistoryCursor] = useState<string | null>(null)
-  const [runHistoryHasMore, setRunHistoryHasMore] = useState(false)
-  const [runHistoryLoading, setRunHistoryLoading] = useState(false)
   const [prefersDurableSession, setPrefersDurableSession] = useState(false)
   const [interactiveSession, setInteractiveSession] = useState<InteractiveSessionState | null>(null)
-  const eventSourceRef = useRef<EventSource | null>(null)
   const sessionEventSourceRef = useRef<EventSource | null>(null)
   const termSocketRef = useRef<WebSocket | null>(null)
   const interactivePaneRef = useRef<HTMLDivElement | null>(null)
@@ -180,6 +135,7 @@ function App() {
   const interactiveFitAddonRef = useRef<FitAddon | null>(null)
   const sendInteractiveInputRef = useRef<(text: string) => void>(() => {})
   const lastSessionIdRef = useRef<string | null>(null)
+  const lastThreadIdRef = useRef<string | null>(null)
   const [interactiveHasOutput, setInteractiveHasOutput] = useState(false)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
@@ -215,8 +171,8 @@ function App() {
 
   useEffect(() => {
     return () => {
-      eventSourceRef.current?.close()
       sessionEventSourceRef.current?.close()
+      termSocketRef.current?.close()
     }
   }, [])
 
@@ -226,6 +182,22 @@ function App() {
     root.style.setProperty('--bud-accent-muted', palette.muted)
     root.style.setProperty('--bud-accent-soft', palette.soft)
   }, [palette])
+
+  useEffect(() => {
+    setStatus('idle')
+  }, [threadId])
+
+  useEffect(() => {
+    if (
+      lastThreadIdRef.current &&
+      threadId &&
+      lastThreadIdRef.current !== threadId &&
+      interactiveSession
+    ) {
+      stopInteractiveSession()
+    }
+    lastThreadIdRef.current = threadId
+  }, [threadId, interactiveSession, stopInteractiveSession])
 
   const activeCapabilities = activeBudProfile?.capabilities ?? null
   const sessionsSupported = Boolean(activeCapabilities?.sessions)
@@ -244,7 +216,7 @@ function App() {
       return null
     }
     if (!interactiveSession) {
-      return 'Focus this pane and start a session to view a live terminal.'
+      return 'Session will attach automatically when you open a thread.'
     }
     if (interactiveStatus === 'connecting') {
       return 'Connecting to session…'
@@ -309,7 +281,7 @@ function App() {
 
   useEffect(() => {
     fitInteractiveTerminal()
-  }, [fitInteractiveTerminal, threadPanelOpen, viewMode, interactiveStatus])
+  }, [fitInteractiveTerminal, threadPanelOpen, interactiveStatus])
 
   useEffect(() => {
     const term = interactiveTerminalRef.current
@@ -365,171 +337,7 @@ function App() {
     }
   }, [fitInteractiveTerminal, sessionsSupported])
 
-  const findActiveEntryIndex = (entries: ShellEntry[]) => {
-    for (let i = entries.length - 1; i >= 0; i -= 1) {
-      if (entries[i].status === 'running') {
-        return i
-      }
-    }
-    return -1
-  }
-
-  const startShellEntry = (payload: Record<string, unknown>) => {
-    const args = (payload.args ?? {}) as Record<string, unknown>
-    const entry: ShellEntry = {
-      id: typeof payload.id === 'string' ? payload.id : `call_${Date.now()}`,
-      runId: typeof payload.run_id === 'string' ? payload.run_id : null,
-      command: typeof args.command === 'string' && args.command.length > 0 ? args.command : 'shell.run',
-      cwd: typeof args.cwd === 'string' && args.cwd.length > 0 ? args.cwd : null,
-      status: 'running',
-      stdout: [],
-      stderr: [],
-      exitCode: null,
-      startedAt: Date.now()
-    }
-    setTerminalEntries((prev) => [...prev, entry])
-  }
-
-  const archiveRunEntries = (runId: string) => {
-    setTerminalEntries((prev) => {
-      if (!runId) return prev
-      const archive: ShellEntry[] = []
-      const remaining: ShellEntry[] = []
-      for (const entry of prev) {
-        if (entry.runId === runId) {
-          archive.push(entry)
-        } else {
-          remaining.push(entry)
-        }
-      }
-      if (archive.length > 0) {
-        setRunHistory((prevHistory) => {
-          const existing = new Map(prevHistory.map((entry) => [entry.id, entry]))
-          for (const entry of archive) {
-            const historyId = `history_${entry.id}`
-            existing.set(historyId, { ...entry, id: historyId })
-          }
-          return Array.from(existing.values()).sort((a, b) => a.startedAt - b.startedAt)
-        })
-      }
-      return remaining
-    })
-  }
-
-  const appendStreamChunk = (stream: 'stdout' | 'stderr', payload: Record<string, unknown>) => {
-    const chunk = typeof payload.chunk === 'string' ? payload.chunk : ''
-    if (!chunk) {
-      return
-    }
-    setTerminalEntries((prev) => {
-      const next = [...prev]
-      const idx = findActiveEntryIndex(next)
-      if (idx === -1) {
-        const fallback: ShellEntry = {
-          id: `stream_${Date.now()}`,
-          runId: typeof payload.run_id === 'string' ? payload.run_id : null,
-          command: 'shell.run',
-          cwd: null,
-          status: 'running',
-          stdout: stream === 'stdout' ? [chunk] : [],
-          stderr: stream === 'stderr' ? [chunk] : [],
-          exitCode: null,
-          startedAt: Date.now()
-        }
-        next.push(fallback)
-        return next
-      }
-      const target = next[idx]
-      next[idx] = {
-        ...target,
-        stdout: stream === 'stdout' ? [...target.stdout, chunk] : target.stdout,
-        stderr: stream === 'stderr' ? [...target.stderr, chunk] : target.stderr
-      }
-      return next
-    })
-  }
-
-  const finalizeShellEntry = (payload: Record<string, unknown>) => {
-    setTerminalEntries((prev) => {
-      if (prev.length === 0) {
-        return prev
-      }
-      const next = [...prev]
-      const idx = findActiveEntryIndex(next)
-      if (idx === -1) {
-        return prev
-      }
-      const entry = next[idx]
-      const exit = typeof payload.exit_code === 'number' ? payload.exit_code : null
-      let stdout = entry.stdout
-      let stderr = entry.stderr
-      let addedError = false
-      if (stdout.length === 0 && typeof payload.stdout === 'string' && payload.stdout.length > 0) {
-        stdout = [...stdout, payload.stdout]
-      }
-      if (stderr.length === 0 && typeof payload.stderr === 'string' && payload.stderr.length > 0) {
-        stderr = [...stderr, payload.stderr]
-        addedError = true
-      }
-      const status: ShellEntry['status'] =
-        exit === null ? (addedError ? 'failed' : 'succeeded') : exit === 0 ? 'succeeded' : 'failed'
-      next[idx] = {
-        ...entry,
-        stdout,
-        stderr,
-        exitCode: exit,
-        status,
-        finishedAt: Date.now()
-      }
-      return next
-    })
-  }
-
-  const recordTerminalError = (message: string, cwd?: string | null) => {
-    if (!message) {
-      return
-    }
-    setTerminalEntries((prev) => {
-      const next = [...prev]
-      if (next.length === 0) {
-        const entry: ShellEntry = {
-          id: `error_${Date.now()}`,
-          runId: null,
-          command: 'shell.run',
-          cwd: typeof cwd === 'string' && cwd.length > 0 ? cwd : null,
-          status: 'failed',
-          stdout: [],
-          stderr: [message],
-          exitCode: null,
-          startedAt: Date.now(),
-          finishedAt: Date.now()
-        }
-        return [entry]
-      }
-      const idx = findActiveEntryIndex(next)
-      if (idx === -1) {
-        const lastIdx = next.length - 1
-        const last = next[lastIdx]
-        next[lastIdx] = {
-          ...last,
-          stderr: [...last.stderr, message],
-          status: 'failed',
-          finishedAt: Date.now()
-        }
-        return next
-      }
-      const entry = next[idx]
-      next[idx] = {
-        ...entry,
-        stderr: [...entry.stderr, message],
-        status: 'failed',
-        finishedAt: Date.now()
-      }
-      return next
-    })
-  }
-
-  const startInteractiveSession = async () => {
+  const startInteractiveSession = useCallback(async () => {
     if (!budId) {
       setError('Select a Bud before starting a session.')
       return
@@ -539,22 +347,16 @@ function App() {
       return
     }
     try {
-      const resp = await apiFetch('/api/sessions', {
+      const resp = await apiFetch(`/api/threads/${threadId}/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bud_id: budId,
-          thread_id: threadId,
-          backend: prefersDurableSession && durableSessionsSupported ? 'tmux' : 'pty',
-          rows: 24,
-          cols: 80
-        })
+        body: JSON.stringify({})
       })
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${resp.status}`)
       }
-      const data = (await resp.json()) as { session_id: string; attach_token: string; backend: string }
+      const data = (await resp.json()) as { session_id: string; attach_token: string }
       setInteractiveSession({
         sessionId: data.session_id,
         attachToken: data.attach_token,
@@ -568,7 +370,7 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start interactive session')
     }
-  }
+  }, [budId, threadId])
 
   const sendInteractiveInput = useCallback(
     (text: string) => {
@@ -712,45 +514,6 @@ function App() {
     }
   }
 
-  type LoadHistoryOptions = {
-    mode: 'replace' | 'append' | 'refresh'
-    cursor?: string | null
-    onComplete?: () => void
-  }
-
-  const loadRunHistory = useCallback(async (thread: string, options: LoadHistoryOptions) => {
-    setRunHistoryLoading(true)
-    try {
-      const params = new URLSearchParams({ limit: '5' })
-      if (options.cursor) {
-        params.set('cursor', options.cursor)
-      }
-      const resp = await apiFetch(`/api/threads/${thread}/runs?${params.toString()}`)
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}))
-        throw new Error(body.error ?? `HTTP ${resp.status}`)
-      }
-      const data = (await resp.json()) as { runs: RunHistoryEntry[]; next_cursor: string | null }
-      const mapped = data.runs.map(mapHistoryRunToEntry).reverse()
-      setRunHistoryCursor(data.next_cursor ?? null)
-      setRunHistoryHasMore(Boolean(data.next_cursor))
-      setRunHistory((prev) => {
-        const existing = new Map(prev.map((entry) => [entry.id, entry]))
-        for (const entry of mapped) {
-          existing.set(entry.id, entry)
-        }
-        return Array.from(existing.values()).sort((a, b) => a.startedAt - b.startedAt)
-      })
-      options.onComplete?.()
-    } catch (err) {
-      console.error('Failed to load run history', err)
-      options.onComplete?.()
-    } finally {
-      setRunHistoryLoading(false)
-      options.onComplete?.()
-    }
-  }, [])
-
   const fetchMessages = async (thread: string | null) => {
     if (!thread) {
       setMessages([])
@@ -782,6 +545,16 @@ function App() {
       setError(err instanceof Error ? err.message : 'Failed to load messages')
     })
   }, [threadId])
+
+  useEffect(() => {
+    if (!threadId || !sessionsSupported) {
+      return
+    }
+    startInteractiveSession().catch((err) => {
+      console.error('Failed to ensure session', err)
+      setError(err instanceof Error ? err.message : 'Failed to ensure session for thread')
+    })
+  }, [threadId, sessionsSupported, startInteractiveSession])
 
   useEffect(() => {
     if (!interactiveSessionId || !interactiveAttachToken || typeof window === 'undefined') {
@@ -970,9 +743,45 @@ function App() {
       }
     }
 
+    const handleAgentMessage = () => {
+      if (!threadId) return
+      fetchMessages(threadId).catch((err) => {
+        console.error('Failed to refresh messages after agent message', err)
+      })
+    }
+
+    const handleAgentToolCall = () => {
+      setStatus('streaming')
+    }
+
+    const handleAgentToolResult = () => {
+      setStatus('streaming')
+    }
+
+    const handleAgentFinal = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data ?? '{}') as { status?: string; error?: string | null }
+        setStatus('idle')
+        if (payload?.error) {
+          setError(payload.error)
+        }
+        if (threadId) {
+          fetchMessages(threadId).catch((err) => {
+            console.error('Failed to refresh messages after agent final', err)
+          })
+        }
+      } catch (err) {
+        console.error('Failed to parse agent final SSE', err)
+      }
+    }
+
     source.addEventListener('session.status', handleStatus)
     source.addEventListener('session.final', handleFinal)
     source.addEventListener('session.writer_changed', handleWriter)
+    source.addEventListener('agent.message', handleAgentMessage)
+    source.addEventListener('agent.tool_call', handleAgentToolCall)
+    source.addEventListener('agent.tool_result', handleAgentToolResult)
+    source.addEventListener('final', handleAgentFinal)
     source.onerror = (event) => {
       console.warn('[session] SSE error', event)
     }
@@ -981,33 +790,16 @@ function App() {
       source.removeEventListener('session.status', handleStatus)
       source.removeEventListener('session.final', handleFinal)
       source.removeEventListener('session.writer_changed', handleWriter)
+      source.removeEventListener('agent.message', handleAgentMessage)
+      source.removeEventListener('agent.tool_call', handleAgentToolCall)
+      source.removeEventListener('agent.tool_result', handleAgentToolResult)
+      source.removeEventListener('final', handleAgentFinal)
       source.close()
       if (sessionEventSourceRef.current === source) {
         sessionEventSourceRef.current = null
       }
     }
-  }, [interactiveSessionId])
-
-  useEffect(() => {
-    if (!threadId) {
-      setRunHistory([])
-      setRunHistoryCursor(null)
-      setRunHistoryHasMore(false)
-      return
-    }
-    setRunHistory([])
-    setRunHistoryCursor(null)
-    setRunHistoryHasMore(false)
-    setTerminalEntries([])
-    void loadRunHistory(threadId, {
-      mode: 'replace'
-    })
-  }, [threadId, loadRunHistory])
-
-  useEffect(() => {
-    eventSourceRef.current?.close()
-    setStatus('idle')
-  }, [threadId])
+  }, [interactiveSessionId, threadId])
 
   useEffect(() => {
     if (!threadId && interactiveSession) {
@@ -1028,97 +820,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [budId])
 
-  const startStream = (id: string, thread: string) => {
-    eventSourceRef.current?.close()
-    const source = new EventSource(`/api/runs/${id}/stream`)
-    eventSourceRef.current = source
-    setStatus('streaming')
-    const activeRunId = id
-
-    source.addEventListener('status', (evt) => {
-      try {
-        const data = JSON.parse(evt.data) as { phase?: string }
-        if (data.phase === 'planning') {
-          setStatus('dispatching')
-        } else if (data.phase === 'running') {
-          setStatus('streaming')
-        }
-      } catch (err) {
-        console.error('Failed to parse status event', err)
-      }
-    })
-    source.addEventListener('exec.stdout', (evt) => {
-      try {
-        appendStreamChunk('stdout', { ...(JSON.parse(evt.data) as Record<string, unknown>), run_id: activeRunId })
-      } catch (err) {
-        console.error('Failed to parse stdout event', err)
-      }
-    })
-    source.addEventListener('exec.stderr', (evt) => {
-      try {
-        appendStreamChunk('stderr', { ...(JSON.parse(evt.data) as Record<string, unknown>), run_id: activeRunId })
-      } catch (err) {
-        console.error('Failed to parse stderr event', err)
-      }
-    })
-    source.addEventListener('agent.message', () => {
-      fetchMessages(thread).catch((err) => {
-        console.error('Failed to refresh messages after agent message', err)
-      })
-    })
-    source.addEventListener('agent.tool_call', (evt) => {
-      try {
-        const data = JSON.parse(evt.data) as Record<string, unknown>
-        startShellEntry({ ...data, run_id: activeRunId })
-      } catch (err) {
-        console.error('Failed to parse tool call event', err)
-      }
-    })
-    source.addEventListener('agent.tool_result', (evt) => {
-      try {
-        const data = JSON.parse(evt.data) as Record<string, unknown>
-        finalizeShellEntry({ ...data, run_id: activeRunId })
-      } catch (err) {
-        console.error('Failed to parse tool result event', err)
-      }
-    })
-    source.addEventListener('final', (evt) => {
-      try {
-        const data = JSON.parse(evt.data) as Record<string, unknown>
-        archiveRunEntries(activeRunId)
-        if (typeof data.cwd === 'string') {
-          setCurrentCwd(data.cwd)
-        }
-        if (typeof data.error === 'string' && data.error.length > 0) {
-          recordTerminalError(data.error, typeof data.cwd === 'string' ? data.cwd : null)
-        }
-        fetchMessages(thread).catch((err) => {
-          console.error('Failed to refresh messages after final event', err)
-        })
-        if (threadId === thread) {
-          loadRunHistory(thread, {
-            mode: 'refresh',
-            onComplete: () => {
-              archiveRunEntries(activeRunId)
-            }
-          }).catch((err) => {
-            console.error('Failed to refresh run history after final event', err)
-          })
-        }
-      } catch (err) {
-        console.error('Failed to process final event', err)
-      } finally {
-        source.close()
-        setStatus('idle')
-      }
-    })
-    source.onerror = () => {
-      source.close()
-      setStatus('idle')
-      recordTerminalError('SSE connection closed unexpectedly')
-    }
-  }
-
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (!budId) {
@@ -1131,9 +832,7 @@ function App() {
       return
     }
     setError(null)
-    setTerminalEntries([])
     setStatus('dispatching')
-    eventSourceRef.current?.close()
     setMessageText('')
     const optimisticId =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -1175,15 +874,17 @@ function App() {
         const body = await messageResp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
-      const messageData = (await messageResp.json()) as { runId: string; messageId: string }
+      const messageData = (await messageResp.json()) as { sessionId: string; messageId: string }
       await fetchMessages(currentThreadId)
-      startStream(messageData.runId, currentThreadId)
+      if (!interactiveSession || interactiveSession.sessionId !== messageData.sessionId) {
+        await startInteractiveSession()
+      }
+      setStatus('streaming')
     } catch (err) {
       setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
       setStatus('idle')
-      const message = err instanceof Error ? err.message : 'Failed to start run'
+      const message = err instanceof Error ? err.message : 'Failed to start agent turn'
       setError(message)
-      recordTerminalError(message)
     }
   }
 
@@ -1199,15 +900,6 @@ function App() {
       })),
     [messages]
   )
-
-  const handleLoadMoreHistory = useCallback(() => {
-    if (!threadId || !runHistoryHasMore || !runHistoryCursor || runHistoryLoading) {
-      return
-    }
-    loadRunHistory(threadId, { mode: 'append', cursor: runHistoryCursor }).catch((err) => {
-      console.error('Failed to load older run history', err)
-    })
-  }, [threadId, runHistoryHasMore, runHistoryCursor, runHistoryLoading, loadRunHistory])
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -1231,102 +923,65 @@ function App() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <WorkspaceTopBar
           budLabel={activeBudProfile?.label ?? 'Select a Bud'}
-          currentCwd={currentCwd}
-          view={viewMode}
-          onViewChange={setViewMode}
           onToggleThreads={() => setThreadPanelOpen((open) => !open)}
           status={status}
         />
         <div className="flex flex-1 overflow-hidden">
           <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
-          <RunView
-            historyEntries={runHistory}
-            liveEntries={terminalEntries}
-            view={viewMode}
-            status={status}
-            hasMoreHistory={runHistoryHasMore}
-            historyLoading={runHistoryLoading}
-            onLoadMoreHistory={handleLoadMoreHistory}
-          />
-        </div>
-        {sessionsSupported && (
-          <div className="border-t-4 border-black bg-muted/20 p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="font-mono text-sm font-semibold">Interactive session (beta)</p>
-                <p className="text-xs text-muted-foreground">
-                  {interactiveStatus === 'open'
-                    ? 'Session active — focus terminal to send input.'
-                    : interactiveStatus === 'connecting'
-                      ? 'Connecting…'
-                      : interactiveStatus === 'error'
-                        ? interactiveSession?.error ?? 'Session error'
-                        : 'Start a live terminal on this Bud.'}
-                  {interactiveRole !== 'writer' && interactiveStatus === 'open' ? ' (read-only spectator)' : ''}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={startInteractiveSession}
-                  disabled={interactiveStatus === 'open' || interactiveStatus === 'connecting'}
-                  className="rounded-lg border-2 border-black bg-[var(--bud-accent-muted)] px-4 py-2 font-mono text-xs uppercase tracking-wide text-black transition hover:-translate-y-0.5 disabled:opacity-60"
-                >
-                  {interactiveStatus === 'open' ? 'Session running' : 'Start session'}
-                </button>
-                {interactiveSession && interactiveRole !== 'writer' && (
-                  <button
-                    type="button"
-                    onClick={takeInteractiveWriter}
-                    className="rounded-lg border-2 border-black bg-amber-400 px-3 py-2 font-mono text-xs uppercase tracking-wide text-black transition hover:-translate-y-0.5"
-                  >
-                    Take writer
-                  </button>
-                )}
-                {interactiveSession && (
-                  <button
-                    type="button"
-                    onClick={stopInteractiveSession}
-                    className="rounded-lg border-2 border-black bg-destructive px-3 py-2 font-mono text-xs uppercase tracking-wide text-destructive-foreground transition hover:-translate-y-0.5"
-                  >
-                    Stop
-                  </button>
-                )}
-              </div>
+          <div className="relative flex flex-1 flex-col border-l-4 border-black bg-black">
+            <div className="flex-1">
+              <div
+                ref={interactivePaneRef}
+                className="h-full w-full overflow-hidden font-mono text-sm"
+                onClick={() => interactiveTerminalRef.current?.focus()}
+              />
             </div>
-            <div className="relative">
-              <div className="h-48 rounded-lg border-2 border-black bg-black p-3">
-                <div
-                  ref={interactivePaneRef}
-                  className="h-full w-full overflow-hidden font-mono text-sm"
-                  onClick={() => interactiveTerminalRef.current?.focus()}
-                />
+            {interactiveOverlayMessage && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
+                {interactiveOverlayMessage}
               </div>
-              {interactiveOverlayMessage && (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
-                  {interactiveOverlayMessage}
+            )}
+            {sessionsSupported && (
+              <div className="flex items-center justify-between border-t-4 border-black bg-muted/20 px-4 py-2 text-xs">
+                <div className="flex flex-col">
+                  <span className="font-mono font-semibold uppercase tracking-wide">
+                    {interactiveStatus === 'open'
+                      ? 'Session active'
+                      : interactiveStatus === 'connecting'
+                        ? 'Connecting session...'
+                        : interactiveStatus === 'error'
+                          ? 'Session error'
+                          : 'Session idle'}
+                  </span>
+                  {interactiveSession?.error && <span className="text-destructive">{interactiveSession.error}</span>}
+                  {interactiveTruncated && (
+                    <span className="text-amber-400">Output truncated at 100MB.</span>
+                  )}
                 </div>
-              )}
-            </div>
-            <div className="mt-2 space-y-1">
-              {interactiveRole !== 'writer' && interactiveStatus === 'open' && (
-                <p className="text-xs text-amber-300">
-                  {writerSeatOpen
-                    ? 'Writer seat available — use Take writer to control the session.'
-                    : 'Spectator mode — use Take writer if you need control.'}
-                </p>
-              )}
-              {interactiveTruncated && (
-                <p className="text-xs text-amber-400">
-                  Output truncated at 100MB. Older logs were dropped; download transcripts from the backend if needed.
-                </p>
-              )}
-              {interactiveSession?.error && (
-                <p className="text-xs text-destructive">{interactiveSession.error}</p>
-              )}
-            </div>
+                <div className="flex items-center gap-2">
+                  {interactiveSession && interactiveRole !== 'writer' && (
+                    <button
+                      type="button"
+                      onClick={takeInteractiveWriter}
+                      className="rounded-lg border-2 border-black bg-amber-400 px-3 py-2 font-mono uppercase tracking-wide text-black transition hover:-translate-y-0.5"
+                    >
+                      Take writer
+                    </button>
+                  )}
+                  {interactiveSession && (
+                    <button
+                      type="button"
+                      onClick={stopInteractiveSession}
+                      className="rounded-lg border-2 border-black bg-destructive px-3 py-2 font-mono uppercase tracking-wide text-destructive-foreground transition hover:-translate-y-0.5"
+                    >
+                      Stop
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
         <CommandComposer
           messageText={messageText}
           onMessageChange={setMessageText}

@@ -31,8 +31,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
     openai,
-    runManager,
-    eventBus,
+    sessionManager,
+    sessionEvents,
     agentLogger,
     config.agentDebug,
     config.agentOpenaiDebug
@@ -49,7 +49,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   await server.register(fastifySseV2);
   await registerBudRoutes(server);
-  await registerThreadRoutes(server, runManager, agentService);
+  await registerThreadRoutes(server, runManager, agentService, sessionManager);
   await registerRunRoutes(server, runManager);
   await registerSessionRoutes(server, sessionManager);
   await registerWsGateway(server, runManager, sessionManager);

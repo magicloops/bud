@@ -52,6 +52,8 @@ type SessionContext = {
   lastActivity: number;
 };
 
+const LONG_TTL_SEC = 365 * 24 * 60 * 60;
+
 export class SessionManager {
   private readonly sessions = new Map<string, SessionContext>();
   private readonly logLimit: number;
@@ -112,8 +114,8 @@ export class SessionManager {
       status: "opening",
       startedAt: now,
       lastActivityAt: now,
-      hardTtlSec: 12 * 60 * 60,
-      idleKillSec: 20 * 60
+      hardTtlSec: LONG_TTL_SEC,
+      idleKillSec: LONG_TTL_SEC
     });
 
     this.sessions.set(sessionId, {
@@ -166,6 +168,32 @@ export class SessionManager {
     }
 
     return { sessionId, attachToken };
+  }
+
+  async ensureThreadSession(threadId: string): Promise<{ sessionId: string; attachToken: string }> {
+    const thread = await this.dbClient.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, threadId)
+    });
+    if (!thread) {
+      throw new Error("thread not found");
+    }
+    const existingId = thread.currentSessionId;
+    if (existingId) {
+      const ctx = this.sessions.get(existingId);
+      if (ctx) {
+        return { sessionId: existingId, attachToken: ctx.attachToken };
+      }
+    }
+    const created = await this.createSession({
+      budId: thread.budId,
+      threadId: thread.threadId,
+      backend: "pty"
+    });
+    await this.dbClient
+      .update(threadTable)
+      .set({ currentSessionId: created.sessionId })
+      .where(eq(threadTable.threadId, thread.threadId));
+    return created;
   }
 
   async handleSessionOpened(payload: { session_id: string; backend: string }): Promise<void> {
@@ -244,6 +272,10 @@ export class SessionManager {
         signal: payload.signal ?? null
       })
       .where(eq(sessionTable.sessionId, payload.session_id));
+    await this.dbClient
+      .update(threadTable)
+      .set({ currentSessionId: null })
+      .where(eq(threadTable.currentSessionId, payload.session_id));
     if (ctx) {
       const nextStatus = payload.canceled ? "canceled" : "closed";
       ctx.status = nextStatus;
@@ -288,6 +320,10 @@ export class SessionManager {
         error: payload.code
       })
       .where(eq(sessionTable.sessionId, payload.session_id));
+    await this.dbClient
+      .update(threadTable)
+      .set({ currentSessionId: null })
+      .where(eq(threadTable.currentSessionId, payload.session_id));
     if (ctx) {
       ctx.status = "failed";
       this.broadcast(ctx, {
@@ -374,6 +410,33 @@ export class SessionManager {
       { sessionId, bytes, component: "session_manager" },
       "session input forwarded"
     );
+    return { ok: true };
+  }
+
+  sendInputDirect(sessionId: string, dataB64: string): { ok: boolean; error?: string } {
+    const ctx = this.sessions.get(sessionId);
+    if (!ctx) {
+      this.logger.warn({ sessionId }, "sendInputDirect failed: session missing");
+      return { ok: false, error: "session not found" };
+    }
+    const payload = {
+      proto: PROTO_VERSION,
+      type: "session_input",
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
+      session_id: sessionId,
+      data: dataB64
+    };
+    const bytes = Buffer.from(dataB64, "base64").length;
+    if (!sendFrameToBud(ctx.budId, payload)) {
+      this.logger.error({ sessionId }, "sendInputDirect failed: Bud unavailable");
+      return { ok: false, error: "session_closed" };
+    }
+    ctx.bytesIn += bytes;
+    ctx.lastActivity = Date.now();
+    this.touchSession(sessionId);
+    this.logger.info({ sessionId, bytes, component: "session_manager" }, "session input forwarded (direct)");
     return { ok: true };
   }
 
