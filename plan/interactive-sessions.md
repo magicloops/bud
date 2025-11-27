@@ -54,6 +54,7 @@
 * **UI consolidation:** Terminal is always attached to the thread’s session; remove the “start session” button and legacy run history panel. Keep lightweight timeline markers for agent commands and manual input (from `session_log`), easy to change later.
 * **Tool result tails:** Default to last ~200 lines per stream (bounded bytes, ANSI stripped); include stdout and stderr separately, flag non-zero exits, and prefix truncation notices (e.g., “856 lines omitted…”).
 * **Failure handling:** On session crash, prompt to restart and repoint the thread; do not tear down sessions on stop/cancel otherwise.
+* **REPL consideration:** The current agent tool path injects start/finish sentinels for non-interactive commands. REPL support will require a raw input mode (no sentinels) and prompt-based boundary detection rather than injected markers.
 
 ---
 

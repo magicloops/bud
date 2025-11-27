@@ -18,7 +18,17 @@ import { SessionManager } from "./runtime/session-manager.js";
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
     logger: {
-      level: config.logLevel
+      level: config.logLevel,
+      transport:
+        process.env.NODE_ENV !== "production"
+          ? {
+              target: "pino-pretty",
+              options: {
+                colorize: true,
+                singleLine: false
+              }
+            }
+          : undefined
     }
   });
   const eventBus = new RunEventBus();

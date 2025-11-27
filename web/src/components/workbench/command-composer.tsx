@@ -92,7 +92,7 @@ export function CommandComposer({
       <Button
         type="submit"
         size="icon"
-        disabled={status !== 'idle'}
+        disabled={status === 'dispatching'}
         className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
         style={{ backgroundColor: 'var(--bud-accent-muted)' }}
       >

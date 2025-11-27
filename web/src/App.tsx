@@ -117,7 +117,7 @@ const apiFetch = (path: string, init?: RequestInit) => fetch(buildApiUrl(path), 
 
 function App() {
   const [budId, setBudId] = useState<string | null>(null)
-  const [messageText, setMessageText] = useState('Clone a repo and list files.')
+  const [messageText, setMessageText] = useState('List the files in the directory')
   const [buds, setBuds] = useState<BudProfile[]>([])
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -133,7 +133,7 @@ function App() {
   const interactivePaneRef = useRef<HTMLDivElement | null>(null)
   const interactiveTerminalRef = useRef<Terminal | null>(null)
   const interactiveFitAddonRef = useRef<FitAddon | null>(null)
-  const sendInteractiveInputRef = useRef<(text: string) => void>(() => {})
+  const sendInteractiveInputRef = useRef<(text: string) => void>(() => { })
   const lastSessionIdRef = useRef<string | null>(null)
   const lastThreadIdRef = useRef<string | null>(null)
   const [interactiveHasOutput, setInteractiveHasOutput] = useState(false)
@@ -187,18 +187,6 @@ function App() {
     setStatus('idle')
   }, [threadId])
 
-  useEffect(() => {
-    if (
-      lastThreadIdRef.current &&
-      threadId &&
-      lastThreadIdRef.current !== threadId &&
-      interactiveSession
-    ) {
-      stopInteractiveSession()
-    }
-    lastThreadIdRef.current = threadId
-  }, [threadId, interactiveSession, stopInteractiveSession])
-
   const activeCapabilities = activeBudProfile?.capabilities ?? null
   const sessionsSupported = Boolean(activeCapabilities?.sessions)
   const tmuxSupported =
@@ -247,7 +235,9 @@ function App() {
 
   const fitInteractiveTerminal = useCallback(() => {
     const addon = interactiveFitAddonRef.current
-    if (!addon) {
+    const term = interactiveTerminalRef.current
+    const pane = interactivePaneRef.current
+    if (!addon || !term || !pane || !pane.isConnected) {
       return
     }
     try {
@@ -298,6 +288,10 @@ function App() {
     if (!interactivePaneRef.current || interactiveTerminalRef.current) {
       return
     }
+    const container = interactivePaneRef.current
+    if (!container.isConnected) {
+      return
+    }
     const term = new Terminal({
       convertEol: true,
       cursorBlink: true,
@@ -312,10 +306,10 @@ function App() {
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
-    term.open(interactivePaneRef.current)
+    term.open(container)
     interactiveTerminalRef.current = term
     interactiveFitAddonRef.current = fitAddon
-    fitInteractiveTerminal()
+    requestAnimationFrame(() => fitInteractiveTerminal())
 
     const handleResize = () => {
       fitInteractiveTerminal()
@@ -331,6 +325,7 @@ function App() {
     return () => {
       window.removeEventListener('resize', handleResize)
       dataListener.dispose()
+      fitAddon.dispose()
       term.dispose()
       interactiveTerminalRef.current = null
       interactiveFitAddonRef.current = null
@@ -388,9 +383,9 @@ function App() {
         setInteractiveSession((prev) =>
           prev
             ? {
-                ...prev,
-                error: 'You are viewing as a spectator. Use Take writer to gain control.'
-              }
+              ...prev,
+              error: 'You are viewing as a spectator. Use Take writer to gain control.'
+            }
             : prev
         )
         return
@@ -416,25 +411,32 @@ function App() {
   }, [sendInteractiveInput])
 
   const stopInteractiveSession = useCallback(() => {
-    if (!interactiveSession) {
-      return
-    }
-    if (interactiveSession.socket && interactiveSession.socket.readyState === WebSocket.OPEN) {
-      try {
-        interactiveSession.socket.send(JSON.stringify({ type: 'close' }))
-      } catch {
-        /* noop */
-      }
-      interactiveSession.socket.close()
-    }
-    apiFetch(`/api/sessions/${interactiveSession.sessionId}/close`, {
-      method: 'POST'
-    }).catch(() => {
-      /* noop */
-    })
     resetInteractiveTerminal()
     setInteractiveSession(null)
-  }, [interactiveSession, resetInteractiveTerminal])
+  }, [resetInteractiveTerminal])
+
+  const cancelAgentTurn = useCallback(async () => {
+    if (!threadId) return
+    try {
+      await apiFetch(`/api/threads/${threadId}/cancel`, { method: 'POST' })
+      setStatus('idle')
+    } catch (err) {
+      console.error('Failed to cancel agent turn', err)
+      setError(err instanceof Error ? err.message : 'Failed to cancel agent')
+    }
+  }, [threadId])
+
+  useEffect(() => {
+    if (
+      lastThreadIdRef.current &&
+      threadId &&
+      lastThreadIdRef.current !== threadId &&
+      interactiveSession
+    ) {
+      stopInteractiveSession()
+    }
+    lastThreadIdRef.current = threadId
+  }, [threadId, interactiveSession, stopInteractiveSession])
 
   const takeInteractiveWriter = async () => {
     if (!interactiveSession) {
@@ -971,7 +973,7 @@ function App() {
                   {interactiveSession && (
                     <button
                       type="button"
-                      onClick={stopInteractiveSession}
+                      onClick={cancelAgentTurn}
                       className="rounded-lg border-2 border-black bg-destructive px-3 py-2 font-mono uppercase tracking-wide text-destructive-foreground transition hover:-translate-y-0.5"
                     >
                       Stop

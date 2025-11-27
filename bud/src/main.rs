@@ -241,6 +241,7 @@ enum SessionCommand {
     Input(Vec<u8>),
     Resize(u16, u16),
     Close,
+    Log(String),
 }
 
 struct SessionConfig {
@@ -743,12 +744,18 @@ async fn run_pty_session(
                     SessionCommand::Input(data) => {
                         info!(session_id = %config.session_id, bytes = data.len(), "writing session input to PTY");
                         let writer = writer.clone();
+                        let data_for_write = data.clone();
                         tokio::task::spawn_blocking(move || -> Result<()> {
                             let mut guard = writer.lock().unwrap();
-                            guard.write_all(&data)?;
+                            guard.write_all(&data_for_write)?;
                             guard.flush()?;
                             Ok(())
                         }).await??;
+                        if let Ok(text) = String::from_utf8(data) {
+                            info!(session_id = %config.session_id, input_preview = %text, "session input text (debug)");
+                        } else {
+                            info!(session_id = %config.session_id, "session input not UTF-8");
+                        }
                     }
                     SessionCommand::Resize(rows, cols) => {
                         let writer = writer.clone();
@@ -774,6 +781,9 @@ async fn run_pty_session(
                                 let _ = guard.start_kill();
                             }
                         });
+                    }
+                    SessionCommand::Log(msg) => {
+                        info!(session_id = %config.session_id, message = %msg, "session debug log");
                     }
                 }
             }

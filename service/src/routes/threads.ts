@@ -314,4 +314,17 @@ export async function registerThreadRoutes(
       reply.code(500).send({ error: (err as Error).message });
     }
   });
+
+  server.post("/api/threads/:threadId/cancel", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, params.threadId)
+    });
+    if (!thread) {
+      reply.code(404).send({ error: "thread not found" });
+      return;
+    }
+    agentService.cancelThread(thread.threadId);
+    reply.send({ ok: true });
+  });
 }

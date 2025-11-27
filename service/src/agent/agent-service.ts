@@ -80,6 +80,7 @@ export class AgentService {
   private readonly openaiDebugEnabled: boolean;
   private readonly defaultReasoningEffort: ReasoningEffortSetting;
   private readonly supportsReasoningNone: boolean;
+  private readonly cancellations = new Map<string, AbortController>();
 
   constructor(
     client: OpenAI,
@@ -108,7 +109,14 @@ export class AgentService {
   ): Promise<{ sessionId: string }> {
     const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
     const ensured = await this.sessionManager.ensureThreadSession(threadId);
-    void this.runAgentFlow({ threadId, sessionId: ensured.sessionId, reasoningEffort: requestedEffort }).catch((err) => {
+    const controller = new AbortController();
+    this.cancellations.set(threadId, controller);
+    void this.runAgentFlow({
+      threadId,
+      sessionId: ensured.sessionId,
+      reasoningEffort: requestedEffort,
+      controller
+    }).catch((err) => {
       this.logger.error({ err, sessionId: ensured.sessionId, threadId, component: "agent" }, "Agent flow failed");
     });
     return { sessionId: ensured.sessionId };
@@ -117,18 +125,23 @@ export class AgentService {
   private async runAgentFlow({
     threadId,
     sessionId,
-    reasoningEffort
+    reasoningEffort,
+    controller
   }: {
     threadId: string;
     sessionId: string;
     reasoningEffort: ReasoningEffortSetting;
+    controller: AbortController;
   }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
     this.debug("Starting agent run", { threadId, sessionId, entries: conversation.length, reasoningEffort });
     try {
       let steps = 0;
       while (steps < config.agentMaxSteps) {
-        const response = await this.invokeModel(conversation, reasoningEffort);
+        if (controller.signal.aborted) {
+          throw new Error("agent_canceled");
+        }
+        const response = await this.invokeModel(conversation, reasoningEffort, controller.signal);
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           this.events.emit(sessionId, {
@@ -217,11 +230,29 @@ export class AgentService {
           status: directive.status,
           textLength: directive.message.length
         });
+        this.cancellations.delete(threadId);
         return;
       }
 
       throw new Error("agent reached max steps");
     } catch (err) {
+      const canceled = err instanceof Error && err.message === "agent_canceled";
+      this.cancellations.delete(threadId);
+      const abortLike =
+        canceled ||
+        (err instanceof Error && (err.name === "AbortError" || err.message === "The operation was aborted."));
+      if (abortLike) {
+        this.events.emit(sessionId, {
+          event: "final",
+          data: {
+            status: "canceled",
+            error: "Agent turn canceled"
+          },
+          id: ulid()
+        });
+        this.debug("Agent turn canceled", { threadId, sessionId });
+        return;
+      }
       this.events.emit(sessionId, {
         event: "final",
         data: {
@@ -331,7 +362,8 @@ export class AgentService {
 
   private async invokeModel(
     input: InputItem[],
-    reasoningEffort: ReasoningEffortSetting
+    reasoningEffort: ReasoningEffortSetting,
+    signal?: AbortSignal
   ): Promise<OpenAIResponse> {
     const last = input.at(-1);
     const lastRole = last && "type" in last && last?.type === "message" ? last.role : "n/a";
@@ -340,14 +372,17 @@ export class AgentService {
       lastRole,
       reasoningEffort
     });
-    const response = await this.client.responses.create({
-      model: config.openaiModel,
-      input,
-      tools: [SHELL_TOOL],
-      tool_choice: "auto",
-      max_output_tokens: config.agentMaxOutputTokens,
-      reasoning: { effort: reasoningEffort }
-    });
+    const response = await this.client.responses.create(
+      {
+        model: config.openaiModel,
+        input,
+        tools: [SHELL_TOOL],
+        tool_choice: "auto",
+        max_output_tokens: config.agentMaxOutputTokens,
+        reasoning: { effort: reasoningEffort }
+      },
+      signal ? { signal } : undefined
+    );
     const outputItems =
       (response as { output?: Array<{ type?: string }> }).output ?? [];
     this.debug("OpenAI response received", {
@@ -537,6 +572,14 @@ export class AgentService {
     const donePrefix = `__BUD_CMD_DONE__ ${marker} `;
     const script = this.buildCommandScript(command, cwd, marker);
     const encoded = Buffer.from(script, "utf-8").toString("base64");
+    this.debug("Agent session command dispatch", {
+      sessionId,
+      marker,
+      command,
+      cwd: cwd ?? "~",
+      script_bytes: Buffer.byteLength(script, "utf-8"),
+      encoded_bytes: Buffer.byteLength(encoded, "utf-8")
+    });
     const sent = this.sessionManager.sendInputDirect(sessionId, encoded);
     if (!sent.ok) {
       throw new Error(sent.error ?? "failed to send session input");
@@ -588,6 +631,16 @@ export class AgentService {
     const rawOutput = buffer.slice(contentStart, contentEnd);
     const cleanedOutput = rawOutput.replace(/^\s*\n?/, "");
     const tail = this.tailLines(cleanedOutput, 200);
+    this.debug("Agent session command completed", {
+      sessionId,
+      marker,
+      exitCode,
+      bytes: {
+        total: Buffer.byteLength(cleanedOutput, "utf-8"),
+        tail: Buffer.byteLength(tail.text, "utf-8")
+      },
+      omitted_lines: tail.omitted
+    });
 
     return {
       exitCode,
@@ -605,17 +658,20 @@ export class AgentService {
   private buildCommandScript(command: string, cwd: string | undefined, marker: string): string {
     const lines: string[] = [];
     lines.push(`printf '\\n__BUD_CMD_START__ ${marker}\\n'`);
-    if (cwd && cwd.trim().length > 0) {
-      lines.push(`cd ${this.shellEscape(cwd.trim())}`);
+    const trimmedCwd = cwd?.trim();
+    if (trimmedCwd && trimmedCwd.length > 0) {
+      lines.push(`cd ${this.shellEscapeForTilde(trimmedCwd)}`);
     }
     lines.push(command);
     lines.push("__BUD_EXIT=$?");
-    lines.push(`printf '\\n__BUD_CMD_DONE__ ${marker} %s\\n' \"$__BUD_EXIT\"`);
+    lines.push(`printf '\\n__BUD_CMD_DONE__ ${marker} %s\\n' "$__BUD_EXIT"`);
     return `${lines.join("\n")}\n`;
   }
 
-  private shellEscape(value: string): string {
-    return `'${value.replace(/'/g, "'\"'\"'")}'`;
+  private shellEscapeForTilde(value: string): string {
+    // Avoid single quotes so ~ expands; wrap in double quotes and escape inner quotes.
+    const escaped = value.replace(/"/g, '\\"');
+    return `"${escaped}"`;
   }
 
   private async latestSessionSeq(sessionId: string): Promise<number> {
@@ -661,6 +717,14 @@ export class AgentService {
         { err, component: "agent" },
         "Failed to serialize OpenAI response for debug logging"
       );
+    }
+  }
+
+  cancelThread(threadId: string): void {
+    const controller = this.cancellations.get(threadId);
+    if (controller) {
+      controller.abort();
+      this.cancellations.delete(threadId);
     }
   }
 }

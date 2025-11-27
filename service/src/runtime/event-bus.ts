@@ -9,7 +9,8 @@ export type SseEvent = {
 export type RunEvent = SseEvent;
 export type SessionEvent = SseEvent;
 
-type Listener = (event: SseEvent) => void;
+// eslint-disable-next-line no-unused-vars
+type Listener = (evt: SseEvent) => void;
 
 class SseEventBus {
   private readonly listeners = new Map<string, Set<Listener>>();

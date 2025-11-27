@@ -21,14 +21,14 @@ const CloseMessageSchema = z.object({
 type ClientMessage = z.infer<typeof InputMessageSchema> | z.infer<typeof ResizeMessageSchema> | z.infer<typeof CloseMessageSchema>;
 
 export async function registerTermGateway(server: FastifyInstance, sessionManager: SessionManager): Promise<void> {
-  server.get("/term", { websocket: true }, (socket: WebSocket, request) => {
+  server.get("/term", { websocket: true }, async (socket: WebSocket, request) => {
     const { session_id: sessionId, attach_token: attachToken } = request.query as Record<string, string | undefined>;
     if (!sessionId || !attachToken) {
       server.log.warn({ sessionId, component: "term_gateway" }, "Missing session_id or attach_token");
       sendAndClose(socket, { type: "error", code: "bad_request", message: "session_id and attach_token required" });
       return;
     }
-    const attached = sessionManager.attachClient(sessionId, attachToken, socket);
+    const attached = await sessionManager.attachClient(sessionId, attachToken, socket);
     if (!attached.ok) {
       server.log.warn(
         { sessionId, error: attached.error, component: "term_gateway" },

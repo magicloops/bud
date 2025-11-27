@@ -1,32 +1,16 @@
-# Bud PoC Progress — Phase 4 Snapshot
+# Bud PoC Progress — Unified Session Terminal
 
-_Last updated: 2025-11-18T10:05:21Z_
+_Last updated: 2025-11-18_
 
-## What’s implemented
-- **Agent loop**: backend now uses OpenAI Responses tool-calling end-to-end—threads/messages hydrate context, we send `input_text` items, register the `shell.run` function schema, and parse structured `function_call` outputs before dispatching runs to Bud. SSE streams `agent.*` + `exec.*` events interleaved with stdout/stderr.
-- **Threaded runs**: Run creation is tied to threads, `run_step` rows and log tails are recorded per tool call, and the event bus assigns ULID IDs for resume.
-- **Run logging**: Bud stdout/stderr ingestion now trusts Bud-provided `seq` and de-duplicates inserts (`run_log` `(run_id, seq)` uniqueness) so retries or multi-step runs no longer crash; `logs_bytes` only advances on successful writes.
-- **Bud executor**: Rust agent handles enrollment (with optional dev-token bypass), WSS heartbeats, serial shell execution, and base64 log streaming with `run_finished` frames. Bud now owns its working directory, reports `cwd` + `error` in `run_finished`, and keeps running even if the backend omits `cwd`.
-- **Web console**: Vite helper now ships a Bud workbench—neo‑brutalist shadcn/Tailwind layout with a Bud rail, thread list, chat timeline, terminal/web viewport toggle, and composer that still speaks to today’s `/api/threads` + SSE stack. Optimistic user messages show instantly, the SSE stream updates messages + current `cwd` as the run finishes, assistant/tool entries render richly (Markdown via `react-markdown` + `remark-breaks`, structured tool call cards with expandable JSON viewer, and per-message collapse toggles for >500 px histories), the terminal pane mirrors a real shell transcript (prompt + command rows, streaming stdout/stderr, exit codes, inline “running…” indicators keyed off tool calls). We now archive live SSE entries into run history so multi-step commands persist, added a `/runs` history endpoint (with pagination) to hydrate the terminal on refresh, improved scroll-stickiness for both chat and terminal panes, smoothed terminal theming (prompt colors, bud header, overscroll removal), and moved the GPT‑5 reasoning selector into the composer. The send button now reflects the full run lifecycle (spinner while runs are active).
-- **Interactive sessions (PTY MVP)**: Bud now runs a PTY-backed SessionManager (native `openpty`) that streams `session_output` chunks and honors `session_input`/`session_resize`/`session_close`. The backend landed persistent `session`/`session_log` tables, `/api/sessions` create/close endpoints, and a `/term` WebSocket bridge with attach tokens plus log persistence. The workbench exposes an “Interactive session (beta)” pane so users can start/stop a live terminal, stream output, send keystrokes, rotate writer leases, and see truncation warnings; the composer’s “keep running” toggle still drives backend selection. New `session.status` / `session.final` / `session.writer_changed` SSE events keep the UI updated even if `/term` reconnects, Fastify negotiates permessage-deflate on `/ws` + `/term`, Bud throttles PTY output with a bounded queue, and we added unit coverage for attach-token rotation + log truncation plus a manual verification recipe.
-- **Docs/Plans**: `service/README.md`, `docs/proto.md`, `plan/phase-4-agent-loop.md`, and `debug/` notes cover architecture, SSE payloads, and current gaps.
+## What’s implemented (recent)
+- Thread-scoped sessions: `thread.current_session_id`, long TTL defaults, auto-create/attach per thread; pointer clears on close/fail.
+- Agent runs via session writer (no `run_id`): inject commands with sentinels, capture 200-line tails with truncation markers, emit agent events on session SSE; cancel endpoint aborts agent turn (session stays alive).
+- UI consolidation: single always-on terminal per thread, no run history/start button; stop cancels agent turn, composer stays enabled (queues one message). Session attach backfills recent output so the prompt is visible immediately.
+- Migration added for `current_session_id`; xterm fitting stabilized, attach backfill implemented.
 
-## Known gaps / next phases
-- **Phase 5 (Cancel semantics)**: propagate `/api/runs/:id/cancel` through the agent + OpenAI request and send Bud `cancel` (TERM→KILL).
-- **Streaming & robustness**: adopt Responses streaming events (`response.output_text.delta`, `response.function_call_arguments.delta`) so we can stream agent tokens, detect tool calls earlier, and capture token usage from `response.completed`.
-- **Reliability polish**: SSE replay/`Last-Event-ID`, run log truncation UX/downloads, and queue/backpressure on Bud dispatch.
-- **Security & ergonomics**: workspace isolation, richer denylist, friendlier error reporting/testing knobs for mock LLMs.
-- **UI schema alignment**: wire the new workbench components to richer Bud metadata (availability, tags), tabbed log panes, and future settings drawers once backend schemas catch up.
-- **Rich transcripts**: persist the new shell transcript objects (Markdown/tool metadata + stdout/stderr chunks) downstream so uploads/export keep formatting (ties into upcoming schema doc in `plan/ui-schema-alignment.md`).
-- **Interactive sessions (Phase 4.7+)**: polish the PTY UX (session roster + reattach, transcript downloads, richer metrics dashboards) and keep tmux readiness work staged behind caps.
-
-## Quick start
-1. `pnpm db:migrate && pnpm db:seed` inside `service/` (local Postgres).
-2. Provide `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`) in `service/.env`.
-3. `pnpm dev` (backend) and `cargo run -- --server ws://localhost:3000/ws --token DEV-ENROLL-0001` (Bud).
-4. `pnpm dev` inside `web/`, create a thread, and chat with Bud; watch SSE logs interleave agent chatter + stdout.
-5. Alternatively, use `curl` as shown in `service/README.md` to post a thread message and stream `/api/runs/:id/stream`.
-
-## Notes
-- LLM cancels are deferred to Phase 5; for now, long-running commands must finish naturally.
-- Keep `AGENTS.md` invariants in mind (plan/debug docs, protocol updates, safety posture).
+## Next actions
+- Split stdout/stderr tails and harden sentinel parsing; expose truncation counts.
+- Timeline markers (agent commands/manual input) in UI using `session_log`; show “canceled/in-progress” banners and optional manual session restart.
+- Doc updates: new endpoints (`/api/threads/:id/session`, `/api/threads/:id/cancel`), tail policy, and updated setup.
+- Add basic integration tests: ensure session per thread + agent command roundtrip.
+- Optional: throttle/timeout guardrails for agent log polling; manual “close session” control for crash recovery.

@@ -1,7 +1,7 @@
 import type WebSocket from "ws";
 import { ulid } from "ulid";
 import type { FastifyBaseLogger } from "fastify";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   budTable,
@@ -349,7 +349,7 @@ export class SessionManager {
     }
   }
 
-  attachClient(
+  async attachClient(
     sessionId: string,
     token: string,
     socket: WebSocket
@@ -376,6 +376,7 @@ export class SessionManager {
     });
     this.logger.info({ sessionId, role }, "Client attached to session");
     this.sendStatus(socket, ctx.status, role, ctx.logTruncated);
+    void this.sendTailBackfill(sessionId, socket);
     return { ok: true, role };
   }
 
@@ -550,6 +551,17 @@ export class SessionManager {
     });
   }
 
+  private async sendTailBackfill(sessionId: string, socket: WebSocket) {
+    const tail = await this.readTail(sessionId, 4096);
+    if (!tail) {
+      return;
+    }
+    this.broadcastToSocket(socket, {
+      type: "output",
+      data: tail
+    });
+  }
+
   private touchSession(sessionId: string) {
     void this.dbClient
       .update(sessionTable)
@@ -604,6 +616,40 @@ export class SessionManager {
     } catch (err) {
       this.logger.warn({ err, component: "session_manager" }, "Failed to send session message");
     }
+  }
+
+  private async readTail(sessionId: string, maxBytes: number): Promise<string | null> {
+    const rows = await this.dbClient
+      .select({
+        seq: sessionLogTable.seq,
+        data: sessionLogTable.data
+      })
+      .from(sessionLogTable)
+      .where(eq(sessionLogTable.sessionId, sessionId))
+      .orderBy(desc(sessionLogTable.seq))
+      .limit(200);
+    if (rows.length === 0) {
+      return null;
+    }
+    let remaining = maxBytes;
+    const buffers: Buffer[] = [];
+    for (const row of rows) {
+      if (remaining <= 0) break;
+      const buf = Buffer.from(row.data);
+      if (buf.length > remaining) {
+        buffers.push(buf.subarray(buf.length - remaining));
+        remaining = 0;
+      } else {
+        buffers.push(buf);
+        remaining -= buf.length;
+      }
+    }
+    buffers.reverse();
+    const combined = Buffer.concat(buffers);
+    if (combined.length === 0) {
+      return null;
+    }
+    return combined.toString("base64");
   }
 }
 

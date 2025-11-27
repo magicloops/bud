@@ -73,6 +73,8 @@ This approach gives a clean 1:1 mapping (thread ↔ session), keeps the chat abo
 - Chat history remains user↔assistant text; **no per-command cards** live in the UI. The PTY pane shows the raw session stream, and we only feed the most recent truncated tail (e.g., 4 KB) back to the Responses API between tool calls.
 - Timeline markers record “agent command” and “user manual input” events using `session_log` as source; keep this minimal so it’s easy to swap out later.
 - For transcript downloads we’ll stub blob storage by writing capped chunks to temporary files, returning paths/URLs with TODOs to swap in real blob storage later.
+- **Backfill on attach:** When the UI (or agent) attaches to a session, backfill a small tail (e.g., 4 KB) from `session_log` so the prompt/last output is visible immediately.
+- **REPL nuance:** Current agent tool path injects start/finish sentinels (printf markers) around non-interactive commands to detect completion/exit codes. This does **not** fit REPLs; to support REPLs we’ll need a separate “raw session input” mode that sends lines/keystrokes without synthetic markers and detects boundaries via REPL prompts instead of injected sentinels.
 
 ### 4.6 Testing & Observability
 - Integration tests: “open thread → session auto-creates → agent runs command → user takes writer → agent resumes”.
