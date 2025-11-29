@@ -1,6 +1,7 @@
 import "dotenv/config";
 
 export const PROTO_VERSION = "0.1";
+export const TERMINAL_PROTO_VERSION = "0.2";
 
 const toNumber = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
@@ -37,5 +38,13 @@ export const config = {
   agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "none"),
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
-  agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI)
+  agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI),
+  terminalEnabled: toBool(process.env.TERMINAL_ENABLED),
+  terminalOutputSoftCapBytes: toNumber(
+    process.env.TERMINAL_OUTPUT_SOFT_CAP_BYTES,
+    100 * 1024 * 1024
+  ),
+  terminalOutputBackfillBytes: toNumber(process.env.TERMINAL_OUTPUT_BACKFILL_BYTES, 4096),
+  terminalOutputInflightMax: toNumber(process.env.TERMINAL_OUTPUT_INFLIGHT_MAX, 128),
+  terminalOutputRetentionDays: toNumber(process.env.TERMINAL_OUTPUT_RETENTION_DAYS, 7)
 };

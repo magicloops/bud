@@ -29,6 +29,13 @@
       "when": 1764125000000,
       "tag": "0003_thread_current_session",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1764256196453,
+      "tag": "0004_smart_joystick",
+      "breakpoints": true
     }
   ]
 }

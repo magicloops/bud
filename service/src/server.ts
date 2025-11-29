@@ -5,7 +5,7 @@ import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
-import { RunEventBus, SessionEventBus } from "./runtime/event-bus.js";
+import { RunEventBus, SessionEventBus, TerminalEventBus } from "./runtime/event-bus.js";
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes } from "./routes/threads.js";
@@ -14,6 +14,8 @@ import OpenAI from "openai";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerTermGateway } from "./ws/term-gateway.js";
 import { SessionManager } from "./runtime/session-manager.js";
+import { TerminalManager } from "./runtime/terminal-manager.js";
+import { registerTerminalRoutes } from "./routes/terminals.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -37,11 +39,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   const sessionLogger = server.log.child({ component: "session_manager" });
   const sessionEvents = new SessionEventBus();
   const sessionManager = new SessionManager(sessionLogger, sessionEvents);
+  const terminalLogger = server.log.child({ component: "terminal_manager" });
+  const terminalEvents = new TerminalEventBus();
+  const terminalManager = new TerminalManager(terminalLogger, terminalEvents);
   const openai = new OpenAI({ apiKey: config.openaiApiKey });
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
     openai,
     sessionManager,
+    terminalManager,
     sessionEvents,
     agentLogger,
     config.agentDebug,
@@ -62,7 +68,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerThreadRoutes(server, runManager, agentService, sessionManager);
   await registerRunRoutes(server, runManager);
   await registerSessionRoutes(server, sessionManager);
-  await registerWsGateway(server, runManager, sessionManager);
+  await registerTerminalRoutes(server, terminalManager);
+  await registerWsGateway(server, runManager, sessionManager, terminalManager);
   await registerTermGateway(server, sessionManager);
 
   server.addHook("onClose", async () => {
@@ -84,6 +91,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   server.get("/api/sessions/:sessionId/stream", (request, reply) => {
     const sessionId = (request.params as { sessionId: string }).sessionId;
     const detach = sessionEvents.attach(sessionId, reply);
+    reply.raw.on("close", detach);
+  });
+
+  server.get("/api/terminals/:budId/stream", (request, reply) => {
+    const budId = (request.params as { budId: string }).budId;
+    const detach = terminalEvents.attach(budId, reply);
     reply.raw.on("close", detach);
   });
 

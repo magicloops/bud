@@ -1,14 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io;
-use std::io::{Read, Write};
+use std::io::{Read, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Number, Value};
 use sha2::Sha256;
 use tokio::fs;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::process::Command;
 use tokio::sync::{mpsc, Mutex};
@@ -40,6 +40,7 @@ type HmacSha256 = Hmac<Sha256>;
 type OutboundSender = Arc<mpsc::UnboundedSender<Message>>;
 
 const PROTO_VERSION: &str = "0.1";
+const TERMINAL_PROTO_VERSION: &str = "0.2";
 const DEFAULT_HEARTBEAT_SEC: u64 = 30;
 const MAX_QUEUE_DEPTH: usize = 10;
 const DEFAULT_PTY_ROWS: u16 = 24;
@@ -75,6 +76,25 @@ struct BudArgs {
 
     #[arg(long, env = "BUD_RECONNECT_BASE_SEC", default_value_t = 5)]
     reconnect_base_sec: u64,
+
+    #[arg(long, env = "BUD_TERMINAL_ENABLED", default_value_t = false)]
+    terminal_enabled: bool,
+
+    #[arg(long, env = "BUD_TERMINAL_SESSION", default_value = "bud_terminal")]
+    terminal_session: String,
+
+    #[arg(
+        long,
+        env = "BUD_TERMINAL_LOG",
+        default_value = "/tmp/bud_terminal.log"
+    )]
+    terminal_log: String,
+
+    #[arg(long, env = "BUD_TERMINAL_COLS", default_value_t = 200)]
+    terminal_cols: u16,
+
+    #[arg(long, env = "BUD_TERMINAL_ROWS", default_value_t = 50)]
+    terminal_rows: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -92,6 +112,7 @@ struct BudApp {
     identity: Option<DeviceIdentity>,
     run_executor: RunExecutor,
     session_manager: SessionManager,
+    terminal_manager: TerminalManager,
 }
 
 struct SessionMeta {
@@ -101,6 +122,7 @@ struct SessionMeta {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct Envelope {
     #[serde(rename = "type")]
     kind: String,
@@ -112,6 +134,7 @@ struct Envelope {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct HelloAckFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -122,6 +145,7 @@ struct HelloAckFrame {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct HelloChallengeFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -129,6 +153,7 @@ struct HelloChallengeFrame {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ErrorFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -137,6 +162,7 @@ struct ErrorFrame {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct RunFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -149,6 +175,7 @@ struct RunFrame {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct SessionOpenFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -168,6 +195,7 @@ struct SessionPtyOptions {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct SessionInputFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -176,6 +204,7 @@ struct SessionInputFrame {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct SessionResizeFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -185,6 +214,7 @@ struct SessionResizeFrame {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct SessionCloseFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -198,6 +228,7 @@ struct RunCommand {
     cmd: String,
     cwd: PathBuf,
     env: HashMap<String, String>,
+    #[allow(dead_code)]
     timeout_ms: u64,
 }
 
@@ -210,15 +241,18 @@ struct ExecutorState {
     queue: VecDeque<RunCommand>,
     current_run: Option<String>,
     sender: Option<OutboundSender>,
+    #[allow(dead_code)]
     active: HashMap<String, RunHandle>,
     current_dir: PathBuf,
 }
 
 struct RunHandle {
+    #[allow(dead_code)]
     cancel_tx: mpsc::UnboundedSender<CancelCommand>,
 }
 
 enum CancelCommand {
+    #[allow(dead_code)]
     Terminate,
 }
 
@@ -241,11 +275,109 @@ enum SessionCommand {
     Input(Vec<u8>),
     Resize(u16, u16),
     Close,
+    #[allow(dead_code)]
     Log(String),
+}
+
+#[derive(Clone)]
+struct TerminalConfig {
+    enabled: bool,
+    session_name: String,
+    log_path: PathBuf,
+    cols: u16,
+    rows: u16,
+    shell: String,
+    tmux_available: bool,
+    tmux_version: Option<String>,
+}
+
+#[derive(Clone)]
+struct TerminalManager {
+    inner: Arc<Mutex<TerminalState>>,
+    config: TerminalConfig,
+}
+
+struct TerminalState {
+    sender: Option<OutboundSender>,
+    handle: Option<Arc<TerminalHandle>>,
+}
+
+struct TerminalHandle {
+    session_name: String,
+    #[allow(dead_code)]
+    log_path: PathBuf,
+    watcher: tokio::task::JoinHandle<()>,
+    #[allow(dead_code)]
+    seq: Arc<AtomicU64>,
+    #[allow(dead_code)]
+    offset: Arc<AtomicU64>,
+    cols: u16,
+    rows: u16,
+}
+
+struct ReadinessDetector {
+    handle: Arc<TerminalHandle>,
+    sender: OutboundSender,
+    start_offset: u64,
+    await_ready: Option<AwaitReady>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct TerminalEnsureConfig {
+    shell: Option<String>,
+    cwd: Option<String>,
+    env: Option<HashMap<String, String>>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalEnsureFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    config: Option<TerminalEnsureConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalInputFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    data: String,
+    await_ready: Option<AwaitReady>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalResizeFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    cols: u16,
+    rows: u16,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalInterruptFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    await_ready: Option<AwaitReady>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalCloseFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct AwaitReady {
+    enabled: bool,
+    quiescence_ms: Option<u64>,
+    max_wait_ms: Option<u64>,
 }
 
 struct SessionConfig {
     session_id: String,
+    #[allow(dead_code)]
     backend: String,
     cmd: Option<String>,
     cwd: Option<PathBuf>,
@@ -351,7 +483,7 @@ impl RunExecutor {
                             "canceled": false,
                             "cwd": cmd.cwd.to_string_lossy(),
                             "error": err.to_string()
-                        })
+                        }),
                     );
                 }
             }
@@ -509,8 +641,12 @@ impl SessionManager {
     async fn handle_open(&self, frame: SessionOpenFrame) -> Result<()> {
         let backend = frame.backend.clone().unwrap_or_else(|| "pty".to_string());
         if backend.as_str() != "pty" {
-            self.send_session_error(&frame.session_id, "backend_unsupported", "Unsupported session backend")
-                .await?;
+            self.send_session_error(
+                &frame.session_id,
+                "backend_unsupported",
+                "Unsupported session backend",
+            )
+            .await?;
             return Ok(());
         }
         let mut inner = self.inner.lock().await;
@@ -523,7 +659,8 @@ impl SessionManager {
             .ok_or_else(|| anyhow!("no websocket writer available"))?;
         let mut env = frame.env.unwrap_or_default();
         env.entry("LANG".into()).or_insert_with(|| "C.UTF-8".into());
-        env.entry("TERM".into()).or_insert_with(|| "xterm-256color".into());
+        env.entry("TERM".into())
+            .or_insert_with(|| "xterm-256color".into());
         let cwd = frame
             .cwd
             .and_then(|value| expand_path(&value))
@@ -577,7 +714,9 @@ impl SessionManager {
     async fn handle_resize(&self, frame: SessionResizeFrame) -> Result<()> {
         let inner = self.inner.lock().await;
         if let Some(handle) = inner.sessions.get(&frame.session_id) {
-            let _ = handle.command_tx.send(SessionCommand::Resize(frame.rows, frame.cols));
+            let _ = handle
+                .command_tx
+                .send(SessionCommand::Resize(frame.rows, frame.cols));
         }
         Ok(())
     }
@@ -619,6 +758,676 @@ impl SessionManager {
         }
         Ok(())
     }
+}
+
+impl TerminalManager {
+    fn new(config: TerminalConfig) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TerminalState {
+                sender: None,
+                handle: None,
+            })),
+            config,
+        }
+    }
+
+    async fn set_sender(&self, sender: OutboundSender) {
+        let mut inner = self.inner.lock().await;
+        inner.sender = Some(sender);
+    }
+
+    async fn clear_sender(&self) {
+        let mut inner = self.inner.lock().await;
+        if let Some(handle) = inner.handle.take() {
+            handle.watcher.abort();
+        }
+        inner.sender = None;
+    }
+
+    async fn handle_ensure(&self, cfg: Option<TerminalEnsureConfig>) -> Result<()> {
+        if !self.config.enabled {
+            info!("terminal support disabled; ignoring terminal_ensure");
+            return Ok(());
+        }
+        let inner = self.inner.lock().await;
+        if inner.handle.is_some() {
+            if let Some(sender) = inner.sender.clone() {
+                self.send_status(&sender, "ready", None).await?;
+            }
+            return Ok(());
+        }
+        let sender = inner
+            .sender
+            .clone()
+            .ok_or_else(|| anyhow!("no websocket writer available"))?;
+        drop(inner);
+
+        if !self.config.tmux_available {
+            warn!("tmux not available; cannot create terminal");
+            self.send_status(
+                &sender,
+                "none",
+                Some(json!({ "error": "tmux_unavailable" })),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let ensured = self.ensure_tmux_session(cfg).await?;
+        if let Some(handle) = ensured {
+            let mut inner = self.inner.lock().await;
+            inner.handle = Some(handle.clone());
+            drop(inner);
+            self.send_status(&sender, "ready", None).await?;
+        } else {
+            self.send_status(&sender, "none", Some(json!({ "error": "terminal_create_failed" })))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn handle_input(&self, frame: TerminalInputFrame) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        let data = BASE64_STANDARD
+            .decode(frame.data.as_bytes())
+            .map_err(|err| anyhow!("invalid terminal input data: {}", err))?;
+        let handle = self.ensure_handle_if_missing(None).await?;
+        let Some(handle) = handle else {
+            warn!(message_id = %frame.envelope.id, "terminal_input dropped; no session");
+            return Ok(());
+        };
+        let start_offset = handle.offset.load(Ordering::SeqCst);
+        let input = String::from_utf8_lossy(&data).to_string();
+        let status = Command::new("tmux")
+            .args(["send-keys", "-t", &handle.session_name, "-l", &input])
+            .status()
+            .await
+            .with_context(|| "failed to dispatch tmux send-keys")?;
+        if !status.success() {
+            warn!(message_id = %frame.envelope.id, "tmux send-keys failed");
+        }
+        if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
+            if let Some(sender) = self.inner.lock().await.sender.clone() {
+                let detector = ReadinessDetector::new(
+                    handle.clone(),
+                    sender,
+                    start_offset,
+                    frame.await_ready.clone(),
+                );
+                tokio::spawn(async move {
+                    if let Err(err) = detector.run().await {
+                        warn!(error = %err, "readiness detection failed");
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_resize(&self, frame: TerminalResizeFrame) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        let handle = self.ensure_handle_if_missing(None).await?;
+        let Some(handle) = handle else {
+            warn!(message_id = %frame.envelope.id, "terminal_resize dropped; no session");
+            return Ok(());
+        };
+        let status = Command::new("tmux")
+            .args([
+                "resize-window",
+                "-t",
+                &handle.session_name,
+                "-x",
+                &frame.cols.to_string(),
+                "-y",
+                &frame.rows.to_string(),
+            ])
+            .status()
+            .await
+            .with_context(|| "failed to resize tmux window")?;
+        if !status.success() {
+            warn!(message_id = %frame.envelope.id, "tmux resize-window failed");
+        }
+        Ok(())
+    }
+
+    async fn handle_interrupt(&self, frame: TerminalInterruptFrame) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        let handle = self.ensure_handle_if_missing(None).await?;
+        let Some(handle) = handle else {
+            warn!(message_id = %frame.envelope.id, "terminal_interrupt dropped; no session");
+            return Ok(());
+        };
+        let start_offset = handle.offset.load(Ordering::SeqCst);
+        let status = Command::new("tmux")
+            .args(["send-keys", "-t", &handle.session_name, "C-c"])
+            .status()
+            .await
+            .with_context(|| "failed to send tmux interrupt")?;
+        if !status.success() {
+            warn!(message_id = %frame.envelope.id, "tmux interrupt failed");
+        }
+        if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
+            if let Some(sender) = self.inner.lock().await.sender.clone() {
+                let detector = ReadinessDetector::new(
+                    handle.clone(),
+                    sender,
+                    start_offset,
+                    frame.await_ready.clone(),
+                );
+                tokio::spawn(async move {
+                    if let Err(err) = detector.run().await {
+                        warn!(error = %err, "readiness detection failed");
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_close(&self, frame: TerminalCloseFrame) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let mut inner = self.inner.lock().await;
+        if let Some(handle) = inner.handle.take() {
+            handle.watcher.abort();
+            let _ = Command::new("tmux")
+                .args(["kill-session", "-t", &handle.session_name])
+                .status()
+                .await;
+        }
+        drop(inner);
+        if let Some(sender) = sender {
+            self.send_status(&sender, "closed", None).await?;
+        }
+        info!(
+            message_id = %frame.envelope.id,
+            reason = %frame.reason.clone().unwrap_or_default(),
+            "terminal_close handled"
+        );
+        Ok(())
+    }
+
+    async fn send_status(
+        &self,
+        sender: &OutboundSender,
+        state: &str,
+        info: Option<Value>,
+    ) -> Result<()> {
+        let mut payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_status",
+            "message_id": new_message_id(),
+            "sent_at": iso_now(),
+            "extensions": {},
+            "state": state,
+        });
+        if let Some(info_obj) = info {
+            if let Some(map) = payload.as_object_mut() {
+                map.insert("info".into(), info_obj);
+            }
+        }
+        send_ws_frame(sender, payload)
+    }
+
+    async fn ensure_handle_if_missing(
+        &self,
+        cfg: Option<TerminalEnsureConfig>,
+    ) -> Result<Option<Arc<TerminalHandle>>> {
+        {
+            let inner = self.inner.lock().await;
+            if let Some(handle) = &inner.handle {
+                return Ok(Some(handle.clone()));
+            }
+        }
+        let ensured = self.ensure_tmux_session(cfg).await?;
+        if let Some(handle) = ensured {
+            let mut inner = self.inner.lock().await;
+            inner.handle = Some(handle.clone());
+            return Ok(Some(handle));
+        }
+        Ok(None)
+    }
+
+    async fn ensure_tmux_session(
+        &self,
+        cfg: Option<TerminalEnsureConfig>,
+    ) -> Result<Option<Arc<TerminalHandle>>> {
+        if !self.config.tmux_available {
+            return Ok(None);
+        }
+        let cfg = cfg.unwrap_or_default();
+        let session_name = self.config.session_name.clone();
+        let log_path = self.config.log_path.clone();
+        let _ = cfg.env; // env passthrough not yet implemented
+        if let Some(parent) = log_path.parent() {
+            fs::create_dir_all(parent).await.ok();
+        }
+        let mut cols = cfg.cols.unwrap_or(self.config.cols);
+        let mut rows = cfg.rows.unwrap_or(self.config.rows);
+        if cols == 0 {
+            cols = 200;
+        }
+        if rows == 0 {
+            rows = 50;
+        }
+        let shell = cfg.shell.unwrap_or_else(|| self.config.shell.clone());
+        let cwd = cfg.cwd.unwrap_or_else(|| "~".to_string());
+        let session_exists = Command::new("tmux")
+            .args(["has-session", "-t", &session_name])
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !session_exists {
+            let status = Command::new("tmux")
+                .args([
+                    "new-session",
+                    "-d",
+                    "-s",
+                    &session_name,
+                    "-x",
+                    &cols.to_string(),
+                    "-y",
+                    &rows.to_string(),
+                    "-c",
+                    &cwd,
+                    &shell,
+                ])
+                .status()
+                .await
+                .with_context(|| "failed to create tmux session")?;
+            if !status.success() {
+                warn!(session = %session_name, "tmux new-session failed");
+                return Ok(None);
+            }
+        }
+
+        // Ensure pipe-pane to log
+        let pipe_cmd = format!("cat >> {}", log_path.display());
+        let _ = Command::new("tmux")
+            .args(["pipe-pane", "-t", &session_name, "-o", &pipe_cmd])
+            .status()
+            .await;
+
+        let metadata = fs::metadata(&log_path).await.ok();
+        let start_offset = metadata.map(|m| m.len()).unwrap_or(0);
+        let pid = tmux_pane_pid(&session_name).await.ok();
+        let cwd_reported = tmux_pane_cwd(&session_name).await.ok();
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let sender = match sender {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let seq = Arc::new(AtomicU64::new(0));
+        let offset = Arc::new(AtomicU64::new(start_offset));
+        let sender_clone = sender.clone();
+        let watcher = self.spawn_output_watcher(
+            session_name.clone(),
+            log_path.clone(),
+            sender_clone,
+            seq.clone(),
+            offset.clone(),
+        );
+        let handle = Arc::new(TerminalHandle {
+            session_name,
+            log_path,
+            watcher,
+            seq,
+            offset,
+            cols,
+            rows,
+        });
+        // Immediately send status with info
+        let info = json!({
+            "tmux_session": handle.session_name,
+            "pid": pid,
+            "cwd": cwd_reported,
+            "cols": handle.cols,
+            "rows": handle.rows,
+            "output_log_bytes": start_offset,
+        });
+        let _ = self.send_status(&sender, "ready", Some(info)).await;
+        Ok(Some(handle))
+    }
+
+    fn spawn_output_watcher(
+        &self,
+        session_name: String,
+        log_path: PathBuf,
+        sender: OutboundSender,
+        seq: Arc<AtomicU64>,
+        offset: Arc<AtomicU64>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                let size = match fs::metadata(&log_path).await {
+                    Ok(meta) => meta.len(),
+                    Err(_) => {
+                        time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
+                let current_offset = offset.load(Ordering::SeqCst);
+                if size > current_offset {
+                    match fs::File::open(&log_path).await {
+                        Ok(mut file) => {
+                            if file.seek(SeekFrom::Start(current_offset)).await.is_ok() {
+                                let mut buf = vec![0u8; (size - current_offset) as usize];
+                                if file.read_exact(&mut buf).await.is_ok() {
+                                    let seq_no = seq.fetch_add(1, Ordering::SeqCst);
+                                    let payload = json!({
+                                        "proto": TERMINAL_PROTO_VERSION,
+                                        "type": "terminal_output",
+                                        "message_id": new_message_id(),
+                                        "sent_at": iso_now(),
+                                        "extensions": {},
+                                        "seq": seq_no,
+                                        "data": BASE64_STANDARD.encode(&buf),
+                                        "byte_offset": current_offset,
+                                    });
+                                    if let Err(err) = send_ws_frame(&sender, payload) {
+                                        warn!(session = %session_name, error = %err, "failed to send terminal_output");
+                                    }
+                                    offset.store(size, Ordering::SeqCst);
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+                time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+    }
+
+    async fn tmux_available(&self) -> Result<bool> {
+        Ok(self.config.tmux_available)
+    }
+}
+
+impl ReadinessDetector {
+    fn new(
+        handle: Arc<TerminalHandle>,
+        sender: OutboundSender,
+        start_offset: u64,
+        await_ready: Option<AwaitReady>,
+    ) -> Self {
+        Self {
+            handle,
+            sender,
+            start_offset,
+            await_ready,
+        }
+    }
+
+    async fn run(self) -> Result<()> {
+        let quiescence_ms = self
+            .await_ready
+            .as_ref()
+            .and_then(|a| a.quiescence_ms)
+            .unwrap_or(1500);
+        let max_wait_ms = self
+            .await_ready
+            .as_ref()
+            .and_then(|a| a.max_wait_ms)
+            .unwrap_or(30_000);
+        let start = Instant::now();
+        let mut last_change = Instant::now();
+        let mut last_size = self.handle.offset.load(Ordering::SeqCst);
+        let log_path = self.handle.log_path.clone();
+        loop {
+            let size = match fs::metadata(&log_path).await {
+                Ok(meta) => meta.len(),
+                Err(_) => {
+                    time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
+            if size != last_size {
+                last_change = Instant::now();
+                last_size = size;
+            }
+            if last_change.elapsed() >= Duration::from_millis(quiescence_ms)
+                || start.elapsed() >= Duration::from_millis(max_wait_ms)
+            {
+                break;
+            }
+            time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let end_size = match fs::metadata(&log_path).await {
+            Ok(meta) => meta.len(),
+            Err(_) => last_size,
+        };
+        let (output_bytes, output, last_line) = self.read_tail(end_size).await;
+        let quiet_for_ms = last_change.elapsed().as_millis() as u64;
+        let assessment = Self::assess(&output, &last_line, quiet_for_ms, start.elapsed().as_millis() as u64);
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_ready",
+            "message_id": new_message_id(),
+            "sent_at": iso_now(),
+            "extensions": {},
+            "assessment": assessment,
+            "output_since_input": BASE64_STANDARD.encode(output.as_bytes()),
+            "output_bytes": output_bytes,
+            "last_line": last_line,
+        });
+        send_ws_frame(&self.sender, payload)?;
+        Ok(())
+    }
+
+    async fn read_tail(&self, end_size: u64) -> (usize, String, String) {
+        const MAX_READ: usize = 16 * 1024;
+        let start = self.start_offset;
+        if end_size <= start {
+            return (0, String::new(), String::new());
+        }
+        let to_read = std::cmp::min((end_size - start) as usize, MAX_READ);
+        let mut buf = vec![0u8; to_read];
+        if let Ok(mut file) = fs::File::open(&self.handle.log_path).await {
+            let _ = file.seek(SeekFrom::Start(end_size - to_read as u64)).await;
+            let _ = file.read_exact(&mut buf).await;
+        }
+        let text = String::from_utf8_lossy(&buf).to_string();
+        let last_line_owned = text
+            .lines()
+            .last()
+            .unwrap_or_else(|| text.trim_end_matches(&['\r', '\n'][..]))
+            .to_string();
+        (buf.len(), text, last_line_owned)
+    }
+
+    fn assess(output: &str, last_line: &str, quiet_for_ms: u64, elapsed_ms: u64) -> serde_json::Value {
+        let (prompt_type, prompt_conf, prompt_hints) = Self::detect_prompt(last_line);
+        if let Some((ptype, conf)) = prompt_type.zip(prompt_conf) {
+            return json!({
+                "ready": true,
+                "confidence": conf,
+                "trigger": "prompt_detected",
+                "prompt_type": ptype,
+                "hints": prompt_hints,
+                "quiet_for_ms": quiet_for_ms,
+            });
+        }
+        let mut confidence: f32 = 0.5;
+        let trimmed = last_line.trim_end_matches(&['\r', '\n'][..]);
+        if trimmed.ends_with('$') || trimmed.ends_with('#') || trimmed.ends_with('>') || trimmed.ends_with('%') {
+            confidence += 0.25;
+        }
+        if trimmed.len() < 60 {
+            confidence += 0.1;
+        }
+        if !trimmed.contains(' ') {
+            confidence += 0.1;
+        }
+        if !trimmed.is_empty() && !trimmed.ends_with('\n') {
+            confidence += 0.05;
+        }
+        if trimmed.len() > 150 {
+            confidence -= 0.2;
+        }
+        if output.contains("%") && output.to_lowercase().contains("eta") {
+            confidence -= 0.15;
+        }
+        if Self::looks_like_progress(output) {
+            confidence -= 0.1;
+        }
+        if quiet_for_ms < 500 {
+            confidence -= 0.1;
+        }
+        let ready = confidence >= 0.55;
+        let trigger = if elapsed_ms >= 30_000 { "timeout" } else { "quiescence" };
+        json!({
+            "ready": ready,
+            "confidence": confidence.clamp(0.0, 1.0),
+            "trigger": trigger,
+            "hints": {
+                "looks_like_prompt": false,
+                "looks_like_confirmation": false,
+                "looks_like_password": false,
+                "looks_like_pager": false,
+                "looks_like_error": output.to_lowercase().contains("error"),
+                "may_still_be_processing": !ready
+            },
+            "quiet_for_ms": quiet_for_ms,
+        })
+    }
+
+    fn detect_prompt(last_line: &str) -> (Option<&'static str>, Option<f64>, serde_json::Value) {
+        let line = last_line.trim();
+        if line.is_empty() {
+            return (None, None, Self::hints_none());
+        }
+        let lower = line.to_lowercase();
+        if line.ends_with('$') || line.ends_with('#') || line.ends_with('%') || line.contains(":~$") {
+            return (Some("shell"), Some(0.95), Self::hints_prompt());
+        }
+        if line.starts_with(">>>") || line.starts_with("...") || line.starts_with("In [") {
+            return (Some("python"), Some(0.95), Self::hints_prompt());
+        }
+        if line == ">" {
+            return (Some("node"), Some(0.85), Self::hints_prompt());
+        }
+        if line.contains("[y/n]") || line.contains("[Y/n]") || lower.contains("yes/no") || lower.contains("continue?") || lower.contains("(yes/no)") {
+            return (
+                Some("confirmation"),
+                Some(0.95),
+                json!({
+                    "looks_like_prompt": true,
+                    "looks_like_confirmation": true,
+                    "looks_like_password": false,
+                    "looks_like_pager": false,
+                    "looks_like_error": false,
+                    "may_still_be_processing": false
+                }),
+            );
+        }
+        if lower.ends_with("password:") || lower.contains("passphrase") {
+            return (
+                Some("password"),
+                Some(0.95),
+                json!({
+                    "looks_like_prompt": false,
+                    "looks_like_confirmation": false,
+                    "looks_like_password": true,
+                    "looks_like_pager": false,
+                    "looks_like_error": false,
+                    "may_still_be_processing": false
+                }),
+            );
+        }
+        if line == ":" || line == "(END)" || line.starts_with("--More--") {
+            return (
+                Some("pager"),
+                Some(0.9),
+                json!({
+                    "looks_like_prompt": false,
+                    "looks_like_confirmation": false,
+                    "looks_like_password": false,
+                    "looks_like_pager": true,
+                    "looks_like_error": false,
+                    "may_still_be_processing": false
+                }),
+            );
+        }
+        if lower.ends_with("mysql>") || lower.ends_with("postgres=#") || lower.ends_with("postgres=>") || lower.ends_with("sqlite>") {
+            return (Some("database"), Some(0.95), Self::hints_prompt());
+        }
+        (None, None, Self::hints_none())
+    }
+
+    fn hints_prompt() -> serde_json::Value {
+        json!({
+            "looks_like_prompt": true,
+            "looks_like_confirmation": false,
+            "looks_like_password": false,
+            "looks_like_pager": false,
+            "looks_like_error": false,
+            "may_still_be_processing": false
+        })
+    }
+
+    fn hints_none() -> serde_json::Value {
+        json!({
+            "looks_like_prompt": false,
+            "looks_like_confirmation": false,
+            "looks_like_password": false,
+            "looks_like_pager": false,
+            "looks_like_error": false,
+            "may_still_be_processing": true
+        })
+    }
+
+    fn looks_like_progress(output: &str) -> bool {
+        let lower = output.to_lowercase();
+        lower.contains("eta")
+            || lower.contains('%')
+            || lower.contains("download")
+            || lower.contains("fetching")
+            || lower.contains("progress")
+            || lower.contains("completed")
+    }
+}
+
+async fn tmux_pane_pid(session_name: &str) -> Result<i32> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", session_name, "-p", "#{pane_pid}"])
+        .output()
+        .await
+        .with_context(|| "failed to get tmux pane pid")?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    text.parse::<i32>()
+        .map_err(|err| anyhow!("failed to parse pane pid: {}", err))
+}
+
+async fn tmux_pane_cwd(session_name: &str) -> Result<String> {
+    let output = Command::new("tmux")
+        .args([
+            "display-message",
+            "-t",
+            session_name,
+            "-p",
+            "#{pane_current_path}",
+        ])
+        .output()
+        .await
+        .with_context(|| "failed to get tmux pane cwd")?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 async fn run_pty_session(
@@ -665,7 +1474,7 @@ async fn run_pty_session(
     command.stdin(unsafe { Stdio::from_raw_fd(stdin_fd) });
     command.stdout(unsafe { Stdio::from_raw_fd(stdout_fd) });
     command.stderr(unsafe { Stdio::from_raw_fd(stderr_fd) });
-    let mut child = command.spawn()?;
+        let child = command.spawn()?;
     let reader_file = {
         let master_fd = pty.master.into_raw_fd();
         unsafe { File::from_raw_fd(master_fd) }
@@ -867,18 +1676,31 @@ fn send_ws_message(sender: &OutboundSender, message: Message) -> Result<()> {
 }
 
 impl BudApp {
-    fn new(args: BudArgs) -> Self {
+    async fn new(args: BudArgs) -> Self {
         let identity_path = PathBuf::from(shellexpand::tilde(&args.identity_file).into_owned());
         let default_cwd = expand_path(&args.cwd)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
         let default_shell = default_shell().to_string();
+        let (tmux_available, tmux_version) = probe_tmux();
+        let terminal_config = TerminalConfig {
+            enabled: args.terminal_enabled,
+            session_name: args.terminal_session.clone(),
+            log_path: expand_path(&args.terminal_log)
+                .unwrap_or_else(|| PathBuf::from(&args.terminal_log)),
+            cols: args.terminal_cols,
+            rows: args.terminal_rows,
+            shell: default_shell.clone(),
+            tmux_available,
+            tmux_version,
+        };
         Self {
             args,
             identity_path,
             identity: None,
             run_executor: RunExecutor::new(default_cwd),
             session_manager: SessionManager::new(default_shell),
+            terminal_manager: TerminalManager::new(terminal_config),
         }
     }
 
@@ -1022,6 +1844,14 @@ impl BudApp {
 
         self.run_executor.set_sender(sender.clone()).await;
         self.session_manager.set_sender(sender.clone()).await;
+        self.terminal_manager.set_sender(sender.clone()).await;
+        if self.terminal_manager.config.enabled && self.terminal_manager.config.tmux_available {
+            if let Err(err) = self.terminal_manager.handle_ensure(None).await {
+                warn!(error = %err, "failed to initialize terminal on connect");
+            }
+        } else if self.terminal_manager.config.enabled {
+            info!("terminal enabled but tmux unavailable; skipping terminal init");
+        }
 
         loop {
             tokio::select! {
@@ -1037,6 +1867,7 @@ impl BudApp {
                     if let Err(err) = send_ws_frame(&sender, heartbeat) {
                         self.run_executor.clear_sender().await;
                         self.session_manager.clear_sender().await;
+                        self.terminal_manager.clear_sender().await;
                         drop(sender);
                         let _ = writer_handle.await;
                         return Err(err);
@@ -1051,6 +1882,7 @@ impl BudApp {
                             if let Err(err) = send_ws_message(&sender, Message::Pong(payload)) {
                                 self.run_executor.clear_sender().await;
                                 self.session_manager.clear_sender().await;
+                                self.terminal_manager.clear_sender().await;
                                 drop(sender);
                                 let _ = writer_handle.await;
                                 return Err(err);
@@ -1060,6 +1892,7 @@ impl BudApp {
                             info!(?frame, "Server closed connection");
                             self.run_executor.clear_sender().await;
                             self.session_manager.clear_sender().await;
+                            self.terminal_manager.clear_sender().await;
                             drop(sender);
                             let _ = writer_handle.await;
                             return Ok(());
@@ -1068,6 +1901,7 @@ impl BudApp {
                         Some(Err(err)) => {
                             self.run_executor.clear_sender().await;
                             self.session_manager.clear_sender().await;
+                            self.terminal_manager.clear_sender().await;
                             drop(sender);
                             let _ = writer_handle.await;
                             return Err(err.into());
@@ -1075,6 +1909,7 @@ impl BudApp {
                         None => {
                             self.run_executor.clear_sender().await;
                             self.session_manager.clear_sender().await;
+                            self.terminal_manager.clear_sender().await;
                             drop(sender);
                             let _ = writer_handle.await;
                             return Ok(());
@@ -1107,6 +1942,27 @@ impl BudApp {
             "session_close" => {
                 let frame: SessionCloseFrame = serde_json::from_str(text)?;
                 self.session_manager.handle_close(frame).await?;
+            }
+            "terminal_ensure" => {
+                let frame: TerminalEnsureFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_ensure(frame.config).await?;
+                info!(message_id = %frame.envelope.id, "terminal_ensure handled");
+            }
+            "terminal_input" => {
+                let frame: TerminalInputFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_input(frame).await?;
+            }
+            "terminal_resize" => {
+                let frame: TerminalResizeFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_resize(frame).await?;
+            }
+            "terminal_interrupt" => {
+                let frame: TerminalInterruptFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_interrupt(frame).await?;
+            }
+            "terminal_close" => {
+                let frame: TerminalCloseFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_close(frame).await?;
             }
             "error" => {
                 let err: ErrorFrame = serde_json::from_str(text)?;
@@ -1210,10 +2066,16 @@ impl BudApp {
             "capabilities".into(),
             json!({
                 "max_concurrency": 1,
-                "supports_pty": false,
+                "supports_pty": true,
                 "shell_default": "/bin/bash",
                 "sessions": true,
-                "sessions_backends": ["pty"]
+                "sessions_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available {
+                    json!(["pty","tmux"])
+                } else { json!(["pty"]) },
+                "terminal": self.args.terminal_enabled && self.terminal_manager.config.tmux_available,
+                "terminal_proto": TERMINAL_PROTO_VERSION,
+                "terminal_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available { json!(["tmux"]) } else { json!([]) },
+                "tmux_version": self.terminal_manager.config.tmux_version,
             }),
         );
 
@@ -1241,6 +2103,10 @@ fn new_message_id() -> String {
     Ulid::new().to_string()
 }
 
+fn iso_now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
 fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1260,11 +2126,28 @@ fn expand_path(path: &str) -> Option<PathBuf> {
     Some(PathBuf::from(shellexpand::tilde(path).into_owned()))
 }
 
+fn probe_tmux() -> (bool, Option<String>) {
+    use std::process::Command as StdCommand;
+    let output = StdCommand::new("tmux").arg("-V").output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let version = text
+                .split_whitespace()
+                .nth(1)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            (true, version)
+        }
+        _ => (false, None),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_tracing();
     let args = BudArgs::parse();
-    let app = BudApp::new(args);
+    let app = BudApp::new(args).await;
     LocalSet::new().run_until(app.run()).await
 }
 

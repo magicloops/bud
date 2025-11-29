@@ -14,6 +14,11 @@ Behind the scenes, **tmux** provides session persistence, ensuring the terminal 
 
 The agent operates in an **agentic loop**: send input → observe output → decide next action → repeat until task complete → return control to user.
 
+**Implementation status (Nov 2025):**
+- Bud: tmux-backed terminal skeleton is implemented behind a feature flag; hello caps advertise terminal + tmux version; can ensure/adopt tmux, pipe-pane logs, stream `terminal_output`, and send `terminal_status`. Readiness is still a stub.
+- Backend: terminal tables exist (`bud_terminal`, `terminal_output`, `terminal_input_log`), gateway parses `terminal_*` frames, TerminalManager skeleton stores output and emits terminal SSE (`/api/terminals/:budId/stream`). Agent/UI are not yet wired to terminal tools.
+- Next focus: readiness detection, agent tool refactor to `terminal.run/observe/interrupt`, terminal history/backfill endpoints, and UI hookup; then retire the legacy session/sentinel path.
+
 ---
 
 ## Table of Contents
@@ -1708,4 +1713,3 @@ terminal.run({ input: "curl localhost:8080/health\n" })
 
 Agent response: "Server is running in the background on port 8080 and responding to health checks."
 ```
-

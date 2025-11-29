@@ -242,3 +242,70 @@ export const sessionLogTable = pgTable(
     createdIdx: index("session_log_created_idx").on(table.sessionId, table.seq)
   })
 );
+
+export const budTerminalTable = pgTable(
+  "bud_terminal",
+  {
+    budId: text("bud_id")
+      .primaryKey()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    state: text("state").notNull().default("none"),
+    tmuxSessionName: text("tmux_session_name"),
+    pid: integer("pid"),
+    shell: text("shell"),
+    cols: integer("cols").notNull().default(200),
+    rows: integer("rows").notNull().default(50),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    lastInputAt: timestamp("last_input_at", { withTimezone: true }),
+    lastOutputAt: timestamp("last_output_at", { withTimezone: true }),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    outputLogBytes: bigint("output_log_bytes", { mode: "number" }).notNull().default(0),
+    totalInputBytes: bigint("total_input_bytes", { mode: "number" }).notNull().default(0),
+    totalOutputBytes: bigint("total_output_bytes", { mode: "number" }).notNull().default(0),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
+  },
+  (table) => ({
+    stateIdx: index("bud_terminal_state_idx").on(table.state),
+    lastActivityIdx: index("bud_terminal_last_activity_idx").on(table.lastActivityAt)
+  })
+);
+
+export const terminalOutputTable = pgTable(
+  "terminal_output",
+  {
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTerminalTable.budId, { onDelete: "cascade" }),
+    seq: bigint("seq", { mode: "number" }).notNull(),
+    data: byteaColumn("data").notNull(),
+    byteOffset: bigint("byte_offset", { mode: "number" }).notNull(),
+    tenantId: text("tenant_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.budId, table.seq], name: "terminal_output_pkey" }),
+    offsetIdx: index("terminal_output_offset_idx").on(table.budId, table.byteOffset)
+  })
+);
+
+export const terminalInputLogTable = pgTable(
+  "terminal_input_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTerminalTable.budId, { onDelete: "cascade" }),
+    data: byteaColumn("data").notNull(),
+    source: text("source").notNull(),
+    runId: text("run_id"),
+    userId: text("user_id"),
+    tenantId: text("tenant_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
+  },
+  (table) => ({
+    budIdx: index("terminal_input_log_bud_idx").on(table.budId, table.createdAt)
+  })
+);
