@@ -20,15 +20,16 @@
 - [x] Agent adapter/tool registry (new tools, semantics)
 - [ ] Web UI surfaces (terminal panel + states)
 
-## Status (2025-11-27)
-- Bud: tmux-backed terminal skeleton behind `BUD_TERMINAL_ENABLED`; probes tmux in hello caps, can ensure/adopt a tmux session, pipe-pane to log, stream `terminal_output`, handle input/resize/interrupt/close, and send `terminal_status`.
-- Backend: terminal tables/migration added; TerminalManager skeleton dispatches `terminal_ensure/input`, stores output with soft caps, emits terminal SSE events; WS gateway parses `terminal_status/output/ready`. Terminal SSE stream exposed at `/api/terminals/:budId/stream`.
-- Pending: readiness detection, agent tool refactor to `terminal.run/observe/interrupt`, UI wiring to terminal SSE/REST, history/backfill endpoints, and removal of legacy session path.
+## Status (2025-11-30)
+- Bud: tmux-backed terminal skeleton (flagged) probes tmux in hello caps, can ensure/adopt a tmux session, pipe-pane to log, stream `terminal_output`, handle input/resize/interrupt/close, and send `terminal_status`; readiness detector emits `terminal_ready`.
+- Backend: terminal tables/migration added; TerminalManager dispatches `terminal_ensure/input/interrupt`, stores output with soft caps, emits terminal SSE (`/api/terminals/:budId/stream`); REST endpoints for ensure/status/history/input/interrupt; gateway parses `terminal_status/output/ready`. Agent wired to terminal tools and readiness tailing.
+- UI: terminal panel streams terminal SSE, backfills history, sends input via REST; legacy session UI removed (needs readiness/controls polish).
+- Pending: envelope unification to `id/ts` for terminal_* frames (see `plan/terminal-envelope-unification.md`), agent readiness loop polish, UI controls/readiness display.
 
 ## Immediate next steps
-- Implement readiness detection in Bud (prompt/quiescence) and forward `terminal_ready` through the backend to agent/UI.
-- Add REST/SSE surfaces for terminal ensure/status/history/backfill; wire UI terminal panel to `/api/terminals/:budId/stream` with send/interrupt controls; drop session-specific UI remnants.
-- Refactor agent tools to terminal.* (raw input, no sentinels), integrate readiness/confidence loop, and gate via feature flag until stable.
+- Unify terminal_* envelope fields to `id`/`ts` across Bud and service; update docs.
+- Polish agent loop (ANSI/binary guards, readiness confidence driving observe vs next input).
+- UI polish: explicit input box + interrupt control, show readiness/last-line/truncation hints, stabilize resize/focus.
 
 ## Phases
 
