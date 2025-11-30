@@ -47,9 +47,11 @@ export class TerminalManager {
   private readonly events: TerminalEventBus;
   private readonly readiness = new Map<string, { assessment: unknown; updatedAt: number }>();
 
+  // Trivial touch to trigger service reload during debugging.
   constructor(logger: FastifyBaseLogger, events: TerminalEventBus) {
     this.logger = logger;
     this.events = events;
+    logger.debug({ component: "terminal_manager" }, "TerminalManager initialized (reload touch v2)");
   }
 
   async ensureTerminal(budId: string, configOverride?: TerminalEnsureConfig): Promise<{ ok: boolean; error?: string }> {
@@ -58,9 +60,9 @@ export class TerminalManager {
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_ensure",
-      message_id: `msg_${ulid()}`,
-      sent_at: new Date().toISOString(),
-      extensions: {},
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
       config: configOverride ?? {}
     };
     const sent = sendFrameToBud(budId, payload);
@@ -99,12 +101,16 @@ export class TerminalManager {
     data: Buffer,
     options: { source?: "agent" | "user" | "system"; runId?: string; userId?: string } = {}
   ): Promise<{ ok: boolean; error?: string }> {
+    this.logger.info(
+      { budId, bytes: data.length, source: options.source ?? "unknown", component: "terminal_manager" },
+      "terminal input dispatch requested"
+    );
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_input",
-      message_id: `msg_${ulid()}`,
-      sent_at: new Date().toISOString(),
-      extensions: {},
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
       data: data.toString("base64"),
       await_ready: { enabled: true }
     };
@@ -113,6 +119,10 @@ export class TerminalManager {
       this.logger.warn({ budId }, "Failed to send terminal_input (bud offline)");
       return { ok: false, error: "bud_offline" };
     }
+    this.logger.info(
+      { budId, bytes: data.length, message_id: payload.id, component: "terminal_manager" },
+      "terminal input forwarded to bud"
+    );
 
     await this.recordInput(budId, data, options);
     await this.bumpInputStats(budId, data.length);
@@ -128,9 +138,9 @@ export class TerminalManager {
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_interrupt",
-      message_id: `msg_${ulid()}`,
-      sent_at: new Date().toISOString(),
-      extensions: {},
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
       await_ready: { enabled: true }
     };
     const sent = sendFrameToBud(budId, payload);

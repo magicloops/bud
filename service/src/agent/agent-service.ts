@@ -81,10 +81,11 @@ const TERMINAL_RUN_TOOL = {
       },
       timeout_ms: {
         type: "integer",
-        description: "Optional max wait for readiness (ms)."
+        description: "Optional max wait for readiness (ms).",
+        nullable: true
       }
     },
-    required: ["input"],
+    required: ["input", "timeout_ms"],
     additionalProperties: false
   },
   strict: true
@@ -99,10 +100,11 @@ const TERMINAL_OBSERVE_TOOL = {
     properties: {
       timeout_ms: {
         type: "integer",
-        description: "Optional max wait for readiness (ms)."
+        description: "Optional max wait for readiness (ms).",
+        nullable: true
       }
     },
-    required: [],
+    required: ["timeout_ms"],
     additionalProperties: false
   },
   strict: true

@@ -21,15 +21,17 @@
 - [ ] Web UI surfaces (terminal panel + states)
 
 ## Status (2025-11-30)
-- Bud: tmux-backed terminal skeleton (flagged) probes tmux in hello caps, can ensure/adopt a tmux session, pipe-pane to log, stream `terminal_output`, handle input/resize/interrupt/close, and send `terminal_status`; readiness detector emits `terminal_ready`.
-- Backend: terminal tables/migration added; TerminalManager dispatches `terminal_ensure/input/interrupt`, stores output with soft caps, emits terminal SSE (`/api/terminals/:budId/stream`); REST endpoints for ensure/status/history/input/interrupt; gateway parses `terminal_status/output/ready`. Agent wired to terminal tools and readiness tailing.
-- UI: terminal panel streams terminal SSE, backfills history, sends input via REST; legacy session UI removed (needs readiness/controls polish).
-- Pending: envelope unification to `id/ts` for terminal_* frames (see `plan/terminal-envelope-unification.md`), agent readiness loop polish, UI controls/readiness display.
+- Bud: tmux-backed terminal runs with caps advertised; can ensure/adopt tmux, pipe-pane log, stream `terminal_output`, handle input/resize/interrupt/close, and send `terminal_status`; readiness detector emits `terminal_ready`. Envelope now uses `id`/`ts` for terminal_* frames.
+- Backend: terminal tables/migration added; TerminalManager dispatches `terminal_ensure/input/interrupt`, stores output with soft caps, emits terminal SSE (`/api/terminals/:budId/stream`); REST endpoints for ensure/status/history/input/interrupt; gateway parses terminal_* frames with the unified envelope. Agent wired to terminal tools and readiness tailing.
+- UI: terminal panel streams terminal SSE, backfills history, sends input via REST; legacy session UI removed; tmux terminal now visible in UI (needs readiness/controls polish).
+- Pending: polish agent readiness loop and ANSI/binary guards, UI controls/readiness display, and follow-up robustness items below.
 
 ## Immediate next steps
-- Unify terminal_* envelope fields to `id`/`ts` across Bud and service; update docs.
+- Verify terminal end-to-end with unified envelope (`terminal_ensure/input/output/ready`) and capture any remaining parse/log gaps.
 - Polish agent loop (ANSI/binary guards, readiness confidence driving observe vs next input).
 - UI polish: explicit input box + interrupt control, show readiness/last-line/truncation hints, stabilize resize/focus.
+- Document updated terminal proto (`id`/`ts`), tmux requirement, and readiness payloads in docs/AGENTS/README surfaces.
+- TODO: remove temporary terminal debug logs (service routes/manager and Bud terminal_input) once reload/input issues are fully resolved.
 
 ## Phases
 

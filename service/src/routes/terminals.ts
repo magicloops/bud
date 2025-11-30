@@ -18,6 +18,7 @@ export async function registerTerminalRoutes(server: FastifyInstance, terminalMa
     if (!body.success) {
       return reply.code(400).send({ error: "invalid_body" });
     }
+    request.log.info({ budId, path: "ensure", component: "terminal_routes" }, "terminal ensure requested");
     const result = await terminalManager.ensureTerminal(budId, body.data);
     if (!result.ok) {
       return reply.code(503).send({ error: result.error ?? "terminal_unavailable" });
@@ -50,6 +51,10 @@ export async function registerTerminalRoutes(server: FastifyInstance, terminalMa
     if (!body.input || typeof body.input !== "string") {
       return reply.code(400).send({ error: "input_required" });
     }
+    request.log.info(
+      { budId, bytes: body.input.length, component: "terminal_routes" },
+      "terminal input received from client"
+    );
     const sent = await terminalManager.sendInput(budId, Buffer.from(body.input, "utf-8"), {
       source: "user"
     });

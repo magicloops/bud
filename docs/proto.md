@@ -392,6 +392,30 @@ Bud and the backend exchange dedicated control/data frames for PTY/tmux sessions
   * `{"type":"status","status":"open|closed|failed","role":"writer|spectator","truncated":false}`
   * `{"type":"error","code":"writer_required","message":"..."}`
 
+### 4.5 Terminal (tmux-backed, proto `0.2`)
+
+Bud and the backend share a dedicated terminal protocol for the persistent tmux-backed terminal. It uses the same envelope keys as the primary protocol (`type`, `proto`, `id`, `ts`, `ext`), but with `proto: "0.2"` to track the terminal surface independently.
+
+*Envelope (terminal frames)*
+
+```json
+{ "proto": "0.2", "type": "terminal_…", "id": "msg_01H...", "ts": 1731, "ext": {} }
+```
+
+* Backend → Bud
+  * `terminal_ensure` — create/adopt the tmux session (optional `config:{shell,cwd,cols,rows}`).
+  * `terminal_input` — base64 terminal bytes, optional `await_ready` hint to request readiness assessment.
+  * `terminal_resize` — resize tmux pane (`rows`,`cols`).
+  * `terminal_interrupt` — send Ctrl+C (optional `await_ready`).
+
+* Bud → Backend
+  * `terminal_status` — current state (`none|creating|ready|active|closed`) plus tmux info.
+  * `terminal_output` — streamed output (`seq`, `data` base64, `byte_offset`).
+  * `terminal_ready` — readiness assessment (`assessment`, `output_since_input` base64, `output_bytes`, `last_line`).
+  * `terminal_close` — optional close/cleanup notification.
+
+> Implementations MUST treat `ext` as reserved for forward compatibility; unknown fields MUST be ignored.
+
 ---
 
 ## 5. Ordering, Delivery, and Limits

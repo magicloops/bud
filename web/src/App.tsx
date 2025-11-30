@@ -72,6 +72,8 @@ function App() {
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const sendTerminalInputRef = useRef<(text: string) => void>(() => { })
+  const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const terminalReconnectAttemptRef = useRef(0)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
     if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
@@ -179,6 +181,7 @@ function App() {
     window.addEventListener('resize', handleResize)
     const dataListener = term.onData((data) => {
       if (data.length > 0) {
+        console.info('[terminal] onData', { bytes: data.length })
         sendTerminalInputRef.current(data)
       }
     })
@@ -201,6 +204,7 @@ function App() {
     async (text: string) => {
       if (!budId) return
       try {
+        console.info('[terminal] send input', { budId, bytes: text.length })
         await apiFetch(`/api/terminals/${budId}/input`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -299,13 +303,17 @@ function App() {
   // Ensure terminal exists on bud selection
   useEffect(() => {
     if (!budId) return
+    console.info('[terminal] ensure + history start', { budId })
     apiFetch(`/api/terminals/${budId}/ensure`, { method: 'POST' }).catch((err) => {
       console.error('Failed to ensure terminal', err)
     })
     // backfill history
     apiFetch(`/api/terminals/${budId}/history?bytes=8192`)
       .then(async (resp) => {
-        if (!resp.ok) return
+        console.info('[terminal] history response', { status: resp.status })
+        if (!resp.ok) {
+          return
+        }
         const body = (await resp.json()) as { data_base64?: string }
         if (body.data_base64 && terminalRef.current) {
           const decoded = decodeTerminalData(body.data_base64)
@@ -321,56 +329,94 @@ function App() {
 
   // Terminal SSE stream
   useEffect(() => {
-    terminalEventSourceRef.current?.close()
+    const cleanupTimers = () => {
+      if (terminalReconnectTimerRef.current) {
+        clearTimeout(terminalReconnectTimerRef.current)
+        terminalReconnectTimerRef.current = null
+      }
+    }
+    const closeSource = () => {
+      terminalEventSourceRef.current?.close()
+      terminalEventSourceRef.current = null
+    }
+    cleanupTimers()
+    closeSource()
     resetTerminal()
+    terminalReconnectAttemptRef.current = 0
     if (!budId) {
       setTerminalState('idle')
-      terminalEventSourceRef.current = null
       return
     }
-    const source = new EventSource(buildApiUrl(`/api/terminals/${budId}/stream`))
-    terminalEventSourceRef.current = source
 
-    const handleOutput = (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data ?? '{}') as { data?: string }
-        if (payload.data && terminalRef.current) {
-          const decoded = decodeTerminalData(payload.data)
-          if (decoded) {
-            terminalRef.current.write(decoded)
-            setTerminalHasOutput(true)
-            fitTerminal()
+    const connect = () => {
+      const attempt = terminalReconnectAttemptRef.current
+      console.info('[terminal] opening SSE stream', { budId, attempt })
+      const source = new EventSource(buildApiUrl(`/api/terminals/${budId}/stream`))
+      terminalEventSourceRef.current = source
+
+      const handleOutput = (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data ?? '{}') as { data?: string }
+          if (payload.data && terminalRef.current) {
+            const decoded = decodeTerminalData(payload.data)
+            console.info('[terminal] output event', {
+              bytes_base64: payload.data.length,
+              decoded_len: decoded.length
+            })
+            if (decoded) {
+              terminalRef.current.write(decoded)
+              setTerminalHasOutput(true)
+              fitTerminal()
+            }
           }
+        } catch (err) {
+          console.error('Failed to parse terminal.output SSE', err)
         }
-      } catch (err) {
-        console.error('Failed to parse terminal.output SSE', err)
+      }
+
+      const handleStatus = (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data ?? '{}') as { state?: string }
+          if (payload.state) {
+            console.info('[terminal] status event', { state: payload.state })
+            setTerminalState(payload.state)
+          }
+        } catch (err) {
+          console.error('Failed to parse terminal.status SSE', err)
+        }
+      }
+
+      const scheduleReconnect = (reason: string) => {
+        if (terminalEventSourceRef.current === source) {
+          terminalEventSourceRef.current = null
+        }
+        source.removeEventListener('terminal.output', handleOutput)
+        source.removeEventListener('terminal.status', handleStatus)
+        source.close()
+        const nextAttempt = terminalReconnectAttemptRef.current + 1
+        terminalReconnectAttemptRef.current = nextAttempt
+        const delay = Math.min(5000, 500 * nextAttempt)
+        console.warn('[terminal] SSE closed; reconnecting', { budId, reason, attempt: nextAttempt, delay })
+        cleanupTimers()
+        terminalReconnectTimerRef.current = setTimeout(connect, delay)
+      }
+
+      source.addEventListener('open', () => {
+        console.info('[terminal] SSE opened', { budId })
+        terminalReconnectAttemptRef.current = 0
+      })
+      source.addEventListener('terminal.output', handleOutput)
+      source.addEventListener('terminal.status', handleStatus)
+      source.onerror = (err) => {
+        scheduleReconnect(`error ${JSON.stringify(err)}`)
       }
     }
 
-    const handleStatus = (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data ?? '{}') as { state?: string }
-        if (payload.state) {
-          setTerminalState(payload.state)
-        }
-      } catch (err) {
-        console.error('Failed to parse terminal.status SSE', err)
-      }
-    }
-
-    source.addEventListener('terminal.output', handleOutput)
-    source.addEventListener('terminal.status', handleStatus)
-    source.onerror = (err) => {
-      console.warn('Terminal SSE error', err)
-    }
+    connect()
 
     return () => {
-      source.removeEventListener('terminal.output', handleOutput)
-      source.removeEventListener('terminal.status', handleStatus)
-      source.close()
-      if (terminalEventSourceRef.current === source) {
-        terminalEventSourceRef.current = null
-      }
+      cleanupTimers()
+      closeSource()
     }
   }, [budId, fitTerminal, resetTerminal])
 

@@ -6,7 +6,7 @@ import { randomBytes, createHmac } from "node:crypto";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { budTable, enrollmentTokenTable } from "../db/schema.js";
-import { PROTO_VERSION, config } from "../config.js";
+import { PROTO_VERSION, TERMINAL_PROTO_VERSION, config } from "../config.js";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { RunManager } from "../runtime/run-manager.js";
 import { SessionManager } from "../runtime/session-manager.js";
@@ -17,6 +17,14 @@ type HelloWithBudId = HelloFrame & { bud_id: string };
 
 const EnvelopeSchema = z.object({
   proto: z.literal(PROTO_VERSION),
+  type: z.string(),
+  id: z.string(),
+  ts: z.number(),
+  ext: z.record(z.unknown()).default({})
+});
+
+const TerminalEnvelopeSchema = z.object({
+  proto: z.literal(TERMINAL_PROTO_VERSION),
   type: z.string(),
   id: z.string(),
   ts: z.number(),
@@ -106,7 +114,7 @@ const SessionErrorSchema = EnvelopeSchema.extend({
   message: z.string()
 });
 
-const TerminalStatusSchema = EnvelopeSchema.extend({
+const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_status"),
   state: z.string(),
   info: z
@@ -124,14 +132,14 @@ const TerminalStatusSchema = EnvelopeSchema.extend({
     .optional()
 });
 
-const TerminalOutputSchema = EnvelopeSchema.extend({
+const TerminalOutputSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_output"),
   seq: z.number().int().nonnegative(),
   data: z.string(),
   byte_offset: z.number().int().nonnegative()
 });
 
-const TerminalReadySchema = EnvelopeSchema.extend({
+const TerminalReadySchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_ready"),
   assessment: z.record(z.unknown())
 });
@@ -274,7 +282,7 @@ class BudConnection {
       return;
     }
 
-    const envelope = EnvelopeSchema.safeParse(parsed);
+    const envelope = z.union([EnvelopeSchema, TerminalEnvelopeSchema]).safeParse(parsed);
     if (!envelope.success) {
       await this.sendError("PROTO_VERSION_MISMATCH", "Invalid envelope");
       this.socket.close();

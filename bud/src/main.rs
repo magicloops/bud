@@ -95,6 +95,9 @@ struct BudArgs {
 
     #[arg(long, env = "BUD_TERMINAL_ROWS", default_value_t = 50)]
     terminal_rows: u16,
+
+    #[arg(long, env = "BUD_DEBUG", default_value_t = false)]
+    debug: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -113,6 +116,7 @@ struct BudApp {
     run_executor: RunExecutor,
     session_manager: SessionManager,
     terminal_manager: TerminalManager,
+    debug_enabled: bool,
 }
 
 struct SessionMeta {
@@ -839,6 +843,13 @@ impl TerminalManager {
             return Ok(());
         };
         let start_offset = handle.offset.load(Ordering::SeqCst);
+        info!(
+            message_id = %frame.envelope.id,
+            bytes = data.len(),
+            session = %handle.session_name,
+            start_offset = start_offset,
+            "terminal_input received"
+        );
         let input = String::from_utf8_lossy(&data).to_string();
         let status = Command::new("tmux")
             .args(["send-keys", "-t", &handle.session_name, "-l", &input])
@@ -847,6 +858,13 @@ impl TerminalManager {
             .with_context(|| "failed to dispatch tmux send-keys")?;
         if !status.success() {
             warn!(message_id = %frame.envelope.id, "tmux send-keys failed");
+        } else {
+            info!(
+                message_id = %frame.envelope.id,
+                bytes = input.len(),
+                session = %handle.session_name,
+                "tmux send-keys succeeded"
+            );
         }
         if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
@@ -967,9 +985,9 @@ impl TerminalManager {
         let mut payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
             "type": "terminal_status",
-            "message_id": new_message_id(),
-            "sent_at": iso_now(),
-            "extensions": {},
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
             "state": state,
         });
         if let Some(info_obj) = info {
@@ -1132,9 +1150,9 @@ impl TerminalManager {
                                     let payload = json!({
                                         "proto": TERMINAL_PROTO_VERSION,
                                         "type": "terminal_output",
-                                        "message_id": new_message_id(),
-                                        "sent_at": iso_now(),
-                                        "extensions": {},
+                                        "id": new_message_id(),
+                                        "ts": now_millis(),
+                                        "ext": {},
                                         "seq": seq_no,
                                         "data": BASE64_STANDARD.encode(&buf),
                                         "byte_offset": current_offset,
@@ -1219,9 +1237,9 @@ impl ReadinessDetector {
         let payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
             "type": "terminal_ready",
-            "message_id": new_message_id(),
-            "sent_at": iso_now(),
-            "extensions": {},
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
             "assessment": assessment,
             "output_since_input": BASE64_STANDARD.encode(output.as_bytes()),
             "output_bytes": output_bytes,
@@ -1683,6 +1701,7 @@ impl BudApp {
             .unwrap_or_else(|| PathBuf::from("."));
         let default_shell = default_shell().to_string();
         let (tmux_available, tmux_version) = probe_tmux();
+        let debug_enabled = args.debug;
         let terminal_config = TerminalConfig {
             enabled: args.terminal_enabled,
             session_name: args.terminal_session.clone(),
@@ -1701,6 +1720,7 @@ impl BudApp {
             run_executor: RunExecutor::new(default_cwd),
             session_manager: SessionManager::new(default_shell),
             terminal_manager: TerminalManager::new(terminal_config),
+            debug_enabled,
         }
     }
 
@@ -1899,6 +1919,9 @@ impl BudApp {
                         }
                         Some(Ok(_)) => {}
                         Some(Err(err)) => {
+                            if self.debug_enabled {
+                                info!(error = %err, "WS read error; reconnecting soon");
+                            }
                             self.run_executor.clear_sender().await;
                             self.session_manager.clear_sender().await;
                             self.terminal_manager.clear_sender().await;
@@ -1907,6 +1930,9 @@ impl BudApp {
                             return Err(err.into());
                         }
                         None => {
+                            if self.debug_enabled {
+                                info!("WS stream ended; reconnecting");
+                            }
                             self.run_executor.clear_sender().await;
                             self.session_manager.clear_sender().await;
                             self.terminal_manager.clear_sender().await;

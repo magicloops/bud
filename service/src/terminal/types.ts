@@ -19,9 +19,9 @@ export type TerminalReadyTrigger = "prompt_detected" | "quiescence" | "timeout";
 export interface TerminalEnvelope {
   type: string;
   proto: typeof TERMINAL_PROTO_VERSION;
-  message_id: string;
-  sent_at: string;
-  extensions?: Record<string, unknown>;
+  id: string;
+  ts: number;
+  ext?: Record<string, unknown>;
 }
 
 export interface TerminalEnsureMessage extends TerminalEnvelope {

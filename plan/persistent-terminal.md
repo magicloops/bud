@@ -15,10 +15,10 @@ Behind the scenes, **tmux** provides session persistence, ensuring the terminal 
 The agent operates in an **agentic loop**: send input → observe output → decide next action → repeat until task complete → return control to user.
 
 **Implementation status (Nov 2025):**
-- Bud: tmux-backed terminal skeleton implemented; hello caps advertise terminal + tmux version; can ensure/adopt tmux, pipe-pane logs, stream `terminal_output`, and send `terminal_status`; readiness detector emits `terminal_ready`.
-- Backend: terminal tables exist (`bud_terminal`, `terminal_output`, `terminal_input_log`), gateway parses `terminal_*` frames, TerminalManager stores output and emits terminal SSE (`/api/terminals/:budId/stream`), REST endpoints for ensure/status/history/input/interrupt; agent wired to terminal tools/readiness.
-- UI: terminal panel uses terminal stream/REST; legacy session UI removed. Needs readiness/controls polish.
-- Next focus: envelope unification to `id/ts` for terminal_* frames, agent readiness loop polish, UI controls/readiness display, docs update.
+- Bud: tmux-backed terminal implemented; hello caps advertise terminal + tmux version; can ensure/adopt tmux, pipe-pane logs, stream `terminal_output`, and send `terminal_status`; readiness detector emits `terminal_ready`; terminal_* frames now use `id`/`ts`.
+- Backend: terminal tables exist (`bud_terminal`, `terminal_output`, `terminal_input_log`); gateway parses `terminal_*` frames with the unified envelope; TerminalManager stores output and emits terminal SSE (`/api/terminals/:budId/stream`); REST endpoints for ensure/status/history/input/interrupt; agent wired to terminal tools/readiness.
+- UI: terminal panel uses terminal stream/REST; legacy session UI removed; tmux terminal now visible. Needs readiness/controls polish.
+- Next focus: agent readiness loop polish (ANSI/binary guardrails), UI controls/readiness display, docs refresh, and robustness checks on terminal history/backfill.
 
 ---
 

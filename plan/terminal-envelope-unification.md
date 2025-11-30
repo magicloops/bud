@@ -9,6 +9,10 @@
 - Ensure both service (backend) and Bud produce/accept this envelope for all terminal_* frames (ensure/input/output/ready/status/interrupt/close/resize).
 - Update docs/tests to reflect the unified contract.
 
+## Status (2025-11-30)
+- Implemented: service emits `id`/`ts`/`ext` for all terminal_* requests; gateway parses terminal frames via the terminal proto envelope; Bud sends terminal_status/output/ready with `id`/`ts`; docs updated.
+- Next: run end-to-end validation (ensure → input → output/ready) and clean up any lingering dual-field assumptions if discovered during testing.
+
 ## Scope / Impact
 - **Backend (service)**: change terminal_* emitters to use `id`/`ts`; adjust Zod schemas; adjust SSE payloads and any stored metadata if necessary.
 - **Bud**: adjust terminal frame serializers/deserializers to use `id`/`ts`; remove reliance on `message_id`/`sent_at`.
