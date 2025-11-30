@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { TerminalManager } from "../runtime/terminal-manager.js";
-import { config } from "../config.js";
 
 const ensureBodySchema = z
   .object({
@@ -14,9 +13,6 @@ const ensureBodySchema = z
 
 export async function registerTerminalRoutes(server: FastifyInstance, terminalManager: TerminalManager): Promise<void> {
   server.post("/api/terminals/:budId/ensure", async (request, reply) => {
-    if (!config.terminalEnabled) {
-      return reply.code(400).send({ error: "terminal_disabled" });
-    }
     const budId = (request.params as { budId: string }).budId;
     const body = ensureBodySchema.safeParse(request.body ?? {});
     if (!body.success) {
@@ -29,19 +25,13 @@ export async function registerTerminalRoutes(server: FastifyInstance, terminalMa
     return { ok: true };
   });
 
-  server.get("/api/terminals/:budId", async (request, reply) => {
-    if (!config.terminalEnabled) {
-      return reply.code(400).send({ error: "terminal_disabled" });
-    }
+  server.get("/api/terminals/:budId", async (request) => {
     const budId = (request.params as { budId: string }).budId;
     const status = await terminalManager.fetchStatus(budId);
     return status;
   });
 
-  server.get("/api/terminals/:budId/history", async (request, reply) => {
-    if (!config.terminalEnabled) {
-      return reply.code(400).send({ error: "terminal_disabled" });
-    }
+  server.get("/api/terminals/:budId/history", async (request) => {
     const params = request.params as { budId: string };
     const query = request.query as { bytes?: string };
     const maxBytes = Math.max(Number.parseInt(query.bytes ?? "4096", 10) || 4096, 0);
@@ -55,9 +45,6 @@ export async function registerTerminalRoutes(server: FastifyInstance, terminalMa
   });
 
   server.post("/api/terminals/:budId/input", async (request, reply) => {
-    if (!config.terminalEnabled) {
-      return reply.code(400).send({ error: "terminal_disabled" });
-    }
     const budId = (request.params as { budId: string }).budId;
     const body = (request.body ?? {}) as { input?: string };
     if (!body.input || typeof body.input !== "string") {
@@ -73,9 +60,6 @@ export async function registerTerminalRoutes(server: FastifyInstance, terminalMa
   });
 
   server.post("/api/terminals/:budId/interrupt", async (request, reply) => {
-    if (!config.terminalEnabled) {
-      return reply.code(400).send({ error: "terminal_disabled" });
-    }
     const budId = (request.params as { budId: string }).budId;
     const sent = await terminalManager.sendInterrupt(budId);
     if (!sent.ok) {

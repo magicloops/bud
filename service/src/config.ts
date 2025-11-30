@@ -39,7 +39,7 @@ export const config = {
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
   agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI),
-  terminalEnabled: toBool(process.env.TERMINAL_ENABLED),
+  terminalEnabled: true,
   terminalOutputSoftCapBytes: toNumber(
     process.env.TERMINAL_OUTPUT_SOFT_CAP_BYTES,
     100 * 1024 * 1024

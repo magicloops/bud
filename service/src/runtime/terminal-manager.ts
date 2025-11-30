@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import type { FastifyBaseLogger } from "fastify";
 import { ulid } from "ulid";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   budTerminalTable,
@@ -53,9 +53,6 @@ export class TerminalManager {
   }
 
   async ensureTerminal(budId: string, configOverride?: TerminalEnsureConfig): Promise<{ ok: boolean; error?: string }> {
-    if (!config.terminalEnabled) {
-      return { ok: false, error: "terminal_disabled" };
-    }
     const cols = configOverride?.cols ?? 200;
     const rows = configOverride?.rows ?? 50;
     const payload = {
@@ -102,9 +99,6 @@ export class TerminalManager {
     data: Buffer,
     options: { source?: "agent" | "user" | "system"; runId?: string; userId?: string } = {}
   ): Promise<{ ok: boolean; error?: string }> {
-    if (!config.terminalEnabled) {
-      return { ok: false, error: "terminal_disabled" };
-    }
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_input",
@@ -131,9 +125,6 @@ export class TerminalManager {
   }
 
   async sendInterrupt(budId: string): Promise<{ ok: boolean; error?: string }> {
-    if (!config.terminalEnabled) {
-      return { ok: false, error: "terminal_disabled" };
-    }
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_interrupt",
@@ -151,9 +142,6 @@ export class TerminalManager {
   }
 
   async handleTerminalStatus(budId: string, payload: TerminalStatusPayload): Promise<void> {
-    if (!config.terminalEnabled) {
-      return;
-    }
     const now = new Date();
     await db
       .insert(budTerminalTable)
@@ -195,9 +183,6 @@ export class TerminalManager {
   }
 
   async handleTerminalOutput(budId: string, payload: TerminalOutputPayload): Promise<void> {
-    if (!config.terminalEnabled) {
-      return;
-    }
     const buffer = Buffer.from(payload.data, "base64");
     const now = new Date();
     const row = await db.query.budTerminalTable.findFirst({
@@ -255,9 +240,6 @@ export class TerminalManager {
   }
 
   async handleTerminalReady(budId: string, assessment: unknown): Promise<void> {
-    if (!config.terminalEnabled) {
-      return;
-    }
     this.readiness.set(budId, { assessment, updatedAt: Date.now() });
     this.events.emit(budId, {
       event: "terminal.ready",
@@ -319,7 +301,7 @@ export class TerminalManager {
       })
       .from(terminalOutputTable)
       .where(eq(terminalOutputTable.budId, budId))
-      .orderBy(terminalOutputTable.seq.desc())
+      .orderBy(desc(terminalOutputTable.seq))
       .limit(200);
     if (rows.length === 0) {
       return { data: Buffer.alloc(0), totalBytes: 0 };
