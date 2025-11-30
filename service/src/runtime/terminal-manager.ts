@@ -194,6 +194,16 @@ export class TerminalManager {
 
   async handleTerminalOutput(budId: string, payload: TerminalOutputPayload): Promise<void> {
     const buffer = Buffer.from(payload.data, "base64");
+    this.logger.info(
+      {
+        budId,
+        seq: payload.seq,
+        bytes: buffer.length,
+        byte_offset: payload.byte_offset,
+        component: "terminal_manager"
+      },
+      "terminal_output received from bud"
+    );
     const now = new Date();
     const row = await db.query.budTerminalTable.findFirst({
       where: eq(budTerminalTable.budId, budId),
@@ -238,6 +248,16 @@ export class TerminalManager {
       );
     }
 
+    this.logger.info(
+      {
+        budId,
+        seq: payload.seq,
+        stored_bytes: toStore.length,
+        emitted: true,
+        component: "terminal_manager"
+      },
+      "terminal_output stored and emitting"
+    );
     this.events.emit(budId, {
       event: "terminal.output",
       data: {

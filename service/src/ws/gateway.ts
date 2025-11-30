@@ -458,6 +458,14 @@ class BudConnection {
       logDebug({ error: result.error.message }, "Invalid terminal_output frame");
       return;
     }
+    logDebug(
+      {
+        budId: this.state.budId,
+        seq: result.data.seq,
+        byte_offset: result.data.byte_offset
+      },
+      "terminal_output frame received"
+    );
     await this.terminalManager.handleTerminalOutput(this.state.budId, {
       seq: result.data.seq,
       data: result.data.data,

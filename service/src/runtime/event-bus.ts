@@ -41,6 +41,10 @@ class SseEventBus {
 
   attach(channelId: string, reply: FastifyReply): () => void {
     const listener: Listener = (event) => {
+      reply.log.info(
+        { channelId, event: event.event, component: "sse" },
+        "SSE event emit"
+      );
       reply.sse({ event: event.event, data: JSON.stringify(event.data), id: event.id });
     };
 
@@ -49,6 +53,10 @@ class SseEventBus {
     this.listeners.set(channelId, listeners);
 
     const buffer = this.buffers.get(channelId) ?? [];
+    reply.log.info(
+      { channelId, buffered: buffer.length, component: "sse" },
+      "SSE listener attached"
+    );
     for (const event of buffer) {
       listener(event);
     }
@@ -57,6 +65,10 @@ class SseEventBus {
       const set = this.listeners.get(channelId);
       if (!set) return;
       set.delete(listener);
+      reply.log.info(
+        { channelId, remaining: set.size, component: "sse" },
+        "SSE listener detached"
+      );
       if (set.size === 0) {
         this.listeners.delete(channelId);
       }

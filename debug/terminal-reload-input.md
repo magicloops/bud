@@ -44,6 +44,6 @@
 ## Next actions
 - [x] Add SSE reconnect logic (backoff) and log EventSource open/error to confirm closures (implemented in UI).
 - [ ] Capture network panel for `/api/terminals/:budId/stream` after restart/reload to see if the stream opens and events flow (check open/error/retry).
-- [ ] Add backend logging around terminal_output handling/gateway dispatch to confirm output is emitted after Bud reconnects.
+- [x] Add backend logging around terminal_output handling/gateway dispatch to confirm output is emitted after Bud reconnects (implemented).
 - [ ] Confirm UI state: ensure terminalRef is non-null when output events should fire; log raw SSE data and readyState on error/close.
 - [ ] Consider buffering/resending last output chunk server-side for new SSE subscribers to avoid losing early output after reset.
