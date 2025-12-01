@@ -72,4 +72,13 @@ export async function registerTerminalRoutes(server: FastifyInstance, terminalMa
     }
     return { ok: true };
   });
+
+  server.get("/api/terminals/:budId/metrics", async (request) => {
+    const budId = (request.params as { budId: string }).budId;
+    return terminalManager.fetchMetrics(budId);
+  });
+
+  server.get("/api/terminals/metrics", async () => {
+    return terminalManager.fetchAggregateMetrics();
+  });
 }

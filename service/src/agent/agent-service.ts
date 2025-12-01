@@ -1003,7 +1003,35 @@ export class AgentService {
     if (nonPrintable > 8) {
       return "[binary output omitted]";
     }
-    return text;
+    // Strip ANSI escape codes for agent consumption (UI gets raw via SSE)
+    const stripped = this.stripAnsi(text);
+    // Normalize CRLF to LF for consistent parsing
+    return this.normalizeCRLF(stripped);
+  }
+
+  /**
+   * Strip ANSI escape codes from terminal output.
+   * Handles:
+   * - CSI sequences: \x1b[...X (colors, cursor movement, etc.)
+   * - OSC sequences: \x1b]...(\x07|\x1b\\) (window titles, hyperlinks)
+   * - Simple escapes: \x1b[A-Z] (cursor keys, etc.)
+   */
+  private stripAnsi(text: string): string {
+    // CSI sequences: ESC [ followed by params and a final letter
+    // OSC sequences: ESC ] followed by text and terminated by BEL or ST
+    // Simple escapes: ESC followed by a single char
+    return text
+      .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")      // CSI sequences
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "") // OSC sequences
+      .replace(/\x1b[A-Z]/g, "");                   // Simple escapes
+  }
+
+  /**
+   * Normalize line endings to LF for consistent parsing.
+   * Handles CRLF (Windows) and standalone CR (old Mac).
+   */
+  private normalizeCRLF(text: string): string {
+    return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   }
 
   private async fetchBudForThread(threadId: string): Promise<{ budId: string }> {

@@ -42,6 +42,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   const terminalLogger = server.log.child({ component: "terminal_manager" });
   const terminalEvents = new TerminalEventBus();
   const terminalManager = new TerminalManager(terminalLogger, terminalEvents);
+  terminalManager.startIdleChecks();
   const openai = new OpenAI({ apiKey: config.openaiApiKey });
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
@@ -73,6 +74,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerTermGateway(server, sessionManager);
 
   server.addHook("onClose", async () => {
+    terminalManager.stopIdleChecks();
     await pool.end();
   });
 

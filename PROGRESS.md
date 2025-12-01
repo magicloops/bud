@@ -4,6 +4,17 @@ _Last updated: 2025-11-30_
 
 ## What's implemented (recent)
 
+### Phase 4: Readiness + Robustness (2025-11-30)
+- **ANSI stripping**: Added `stripAnsi()` method in agent-service to remove escape codes from agent output (UI still receives raw ANSI via SSE).
+- **CRLF normalization**: Added `normalizeCRLF()` method to normalize line endings to LF for consistent parsing.
+- **Idle/linger timers**: Added configurable idle management:
+  - `terminalIdleTimeoutMinutes` (default: 30) - marks terminals idle after no activity
+  - `terminalIdleCleanupHours` (default: 24) - closes terminals after extended idle
+  - Periodic check job starts on server startup, stops on shutdown
+- **Metrics endpoints**: Added REST endpoints for terminal metrics:
+  - `GET /api/terminals/:budId/metrics` - per-terminal metrics (bytes, uptime, idle time)
+  - `GET /api/terminals/metrics` - aggregate metrics across all terminals
+
 ### Phase 1-3 Review & Agent Fixes (2025-11-30)
 - **Phase review completed**: Created detailed review docs in `review/` for Phases 1-3 against design doc expectations.
 - **Agent readiness fallbacks**: Added `DEFAULT_READINESS_HINTS` constant and `normalizeReadiness()` helper to ensure all readiness objects have proper hints, even when Bud doesn't respond.
@@ -31,12 +42,15 @@ _Last updated: 2025-11-30_
 - Web UI: simplified terminal panel streams `/api/terminals/:budId/stream`, backfills history, sends input via REST; legacy session UI removed; tmux terminal now visible end-to-end.
 - Repo is `cargo check` clean; earlier Rust warnings addressed (only benign reminders remain).
 
-## Next actions (Phase 4: Readiness + Robustness)
-- ANSI stripping: strip ANSI escape codes from output sent to agent (keep raw for UI).
-- Binary output guard: detect binary output and return placeholder instead of raw bytes.
-- CRLF normalization: normalize line endings in output for consistent parsing.
-- Idle/linger timers: implement terminal idle detection and cleanup.
-- Metrics: track bytes in/out, readiness events, interrupts.
+## Phase Status
+
+| Phase | Status |
+|-------|--------|
+| Phase 1: Bud tmux foundation | ✅ Complete |
+| Phase 2: Backend terminal manager | ✅ Complete |
+| Phase 3: Agent tool refactor | ✅ Complete |
+| Phase 4: Readiness + Robustness | ✅ Complete |
+| Phase 5: UI alignment | 🔄 Partial |
 
 ## Next actions (Phase 5: UI Polish)
 - UI controls: add explicit input box + interrupt (Ctrl+C) button.

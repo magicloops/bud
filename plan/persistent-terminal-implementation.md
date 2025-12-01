@@ -24,15 +24,8 @@
 - **Phase 1 (Bud tmux foundation)**: ✅ COMPLETE - tmux-backed terminal runs with caps advertised; can ensure/adopt tmux, pipe-pane log, stream `terminal_output`, handle input/resize/interrupt/close, and send `terminal_status`; readiness detector emits `terminal_ready`. Envelope uses `id`/`ts` for terminal_* frames. Pipe-pane properly re-establishes on reconnect.
 - **Phase 2 (Backend terminal manager)**: ✅ COMPLETE - terminal tables/migration added; TerminalManager dispatches all terminal_* messages, stores output with soft caps, emits terminal SSE; REST endpoints for ensure/status/history/input/interrupt; gateway parses terminal_* frames. SSE heartbeat mechanism (1s dev, 5s prod) detects stale connections.
 - **Phase 3 (Agent tool refactor)**: ✅ COMPLETE - terminal.run/observe/interrupt tools wired to TerminalManager; system prompt enhanced with confidence thresholds and hints guidance; `normalizeReadiness()` ensures proper fallbacks with hints; `logReadinessDecision()` logs decisions for debugging; `outputBytes` added to results per design doc.
-- **Phase 4 (Readiness + robustness)**: 🔄 IN PROGRESS - Readiness detection works (Bud-side); remaining: ANSI stripping for agent, binary guards, CRLF normalization, idle timers, metrics.
+- **Phase 4 (Readiness + robustness)**: ✅ COMPLETE - Readiness detection works (Bud-side); ANSI stripping and CRLF normalization in agent-service; binary guards; idle timers with configurable thresholds; metrics endpoints.
 - **Phase 5 (UI alignment)**: 🔄 PARTIAL - Terminal panel streams SSE, backfills history, sends input via REST; connection status UI with reconnect overlay; remaining: explicit input box, interrupt control, readiness display, truncation hints.
-
-## Immediate next steps (Phase 4)
-- ANSI stripping: strip escape codes from agent output (keep raw for UI xterm.js).
-- Binary output guard: detect and replace binary output with placeholder.
-- CRLF normalization: normalize line endings for consistent readiness parsing.
-- Idle/linger timers: track terminal activity, implement cleanup.
-- Metrics: bytes in/out, readiness events, interrupt counts.
 
 ## Immediate next steps (Phase 5)
 - UI controls: explicit input box + interrupt (Ctrl+C) button.
