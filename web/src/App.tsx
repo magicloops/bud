@@ -63,7 +63,10 @@ function App() {
   const [messages, setMessages] = useState<ThreadMessage[]>([])
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [threadPanelOpen, setThreadPanelOpen] = useState(true)
+  const [threadPanelOpen, setThreadPanelOpen] = useState(() => {
+    const stored = localStorage.getItem('threadPanelOpen')
+    return stored === null ? true : stored === 'true'
+  })
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
   const [terminalState, setTerminalState] = useState<string>('idle')
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
@@ -120,6 +123,10 @@ function App() {
   }, [palette])
 
   useEffect(() => {
+    localStorage.setItem('threadPanelOpen', String(threadPanelOpen))
+  }, [threadPanelOpen])
+
+  useEffect(() => {
     return () => {
       terminalEventSourceRef.current?.close()
     }
@@ -129,7 +136,7 @@ function App() {
     const addon = fitAddonRef.current
     const term = terminalRef.current
     const pane = terminalPaneRef.current
-    if (!addon || !term || !pane || !pane.isConnected) {
+    if (!addon || !term || !pane || !pane.isConnected || !term.element) {
       return
     }
     try {
@@ -145,7 +152,12 @@ function App() {
       term.reset()
     }
     setTerminalHasOutput(false)
-    requestAnimationFrame(() => fitTerminal())
+    const current = term
+    requestAnimationFrame(() => {
+      if (!current || terminalRef.current !== current) return
+      current.focus()
+      fitTerminal()
+    })
   }, [fitTerminal])
 
   useEffect(() => {
@@ -173,7 +185,12 @@ function App() {
     term.open(container)
     terminalRef.current = term
     fitAddonRef.current = fitAddon
-    requestAnimationFrame(() => fitTerminal())
+    const current = term
+    requestAnimationFrame(() => {
+      if (!current || terminalRef.current !== current) return
+      current.focus()
+      fitTerminal()
+    })
 
     const handleResize = () => {
       fitTerminal()
@@ -354,25 +371,29 @@ function App() {
       const source = new EventSource(buildApiUrl(`/api/terminals/${budId}/stream`))
       terminalEventSourceRef.current = source
 
-      const handleOutput = (event: MessageEvent) => {
-        try {
-          const payload = JSON.parse(event.data ?? '{}') as { data?: string }
-          if (payload.data && terminalRef.current) {
-            const decoded = decodeTerminalData(payload.data)
-            console.info('[terminal] output event', {
-              bytes_base64: payload.data.length,
-              decoded_len: decoded.length
-            })
-            if (decoded) {
-              terminalRef.current.write(decoded)
-              setTerminalHasOutput(true)
-              fitTerminal()
-            }
+    const handleOutput = (event: MessageEvent) => {
+      try {
+        const raw = event.data ?? ''
+        console.info('[terminal] raw output event', { raw_len: raw.length })
+        const payload = JSON.parse(raw) as { data?: string }
+        if (payload.data) {
+          const decoded = decodeTerminalData(payload.data)
+          console.info('[terminal] output event', {
+            bytes_base64: payload.data.length,
+            decoded_len: decoded.length
+          })
+          if (decoded && terminalRef.current) {
+            terminalRef.current.write(decoded)
+            setTerminalHasOutput(true)
+            fitTerminal()
+          } else if (!terminalRef.current) {
+            console.warn('[terminal] output skipped; terminalRef missing')
           }
-        } catch (err) {
-          console.error('Failed to parse terminal.output SSE', err)
         }
+      } catch (err) {
+        console.error('Failed to parse terminal.output SSE', err)
       }
+    }
 
       const handleStatus = (event: MessageEvent) => {
         try {
@@ -405,9 +426,13 @@ function App() {
         console.info('[terminal] SSE opened', { budId })
         terminalReconnectAttemptRef.current = 0
       })
+      source.onmessage = (event) => {
+        console.info('[terminal] SSE generic message', { type: event.type, data: event.data?.slice(0, 100) })
+      }
       source.addEventListener('terminal.output', handleOutput)
       source.addEventListener('terminal.status', handleStatus)
       source.onerror = (err) => {
+        console.warn('[terminal] SSE error', { err, readyState: source.readyState })
         scheduleReconnect(`error ${JSON.stringify(err)}`)
       }
     }

@@ -153,18 +153,18 @@ const ErrorFrameSchema = EnvelopeSchema.extend({
 type ConnectionState =
   | { kind: "awaiting_hello" }
   | {
-      kind: "awaiting_proof";
-      budId: string;
-      deviceSecret: string;
-      nonce: string;
-      hello: HelloFrame;
-    }
+    kind: "awaiting_proof";
+    budId: string;
+    deviceSecret: string;
+    nonce: string;
+    hello: HelloFrame;
+  }
   | {
-      kind: "connected";
-      budId: string;
-      sessionId: string;
-      hello: HelloFrame;
-    }
+    kind: "connected";
+    budId: string;
+    sessionId: string;
+    hello: HelloFrame;
+  }
   | { kind: "closed" };
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
@@ -183,7 +183,7 @@ let gatewayLogger: FastifyBaseLogger | null = null;
 export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
   const session = sessions.get(budId);
   if (!session) {
-    logDebug({ budId }, "No active session for bud; dropping frame");
+    logDebug({ budId }, "No active session for bud; dropping frame ");
     return false;
   }
   if (session.socket.readyState !== session.socket.OPEN) {
@@ -447,24 +447,26 @@ class BudConnection {
 
   private async handleTerminalOutput(raw: unknown) {
     if (!config.terminalEnabled) {
+      this.server.log.warn({ component: "ws_gateway" }, "terminal_output ignored; terminalEnabled=false");
       return;
     }
     if (this.state.kind !== "connected") {
-      logDebug({}, "terminal_output received before hello");
+      this.server.log.warn({ component: "ws_gateway" }, "terminal_output received before hello");
       return;
     }
     const result = TerminalOutputSchema.safeParse(raw);
     if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid terminal_output frame");
+      this.server.log.warn({ error: result.error.message, component: "ws_gateway" }, "Invalid terminal_output frame");
       return;
     }
-    logDebug(
+    this.server.log.info(
       {
         budId: this.state.budId,
         seq: result.data.seq,
-        byte_offset: result.data.byte_offset
+        byte_offset: result.data.byte_offset,
+        component: "ws_gateway"
       },
-      "terminal_output frame received"
+      "terminal_output frame received from bud"
     );
     await this.terminalManager.handleTerminalOutput(this.state.budId, {
       seq: result.data.seq,

@@ -1071,12 +1071,29 @@ impl TerminalManager {
             }
         }
 
-        // Ensure pipe-pane to log
-        let pipe_cmd = format!("cat >> {}", log_path.display());
+        // Ensure pipe-pane to log - first stop any existing pipe, then start fresh
+        // The -o flag would skip if already piping, but after disconnect the old pipe
+        // process may have died while tmux still thinks it's piping
         let _ = Command::new("tmux")
-            .args(["pipe-pane", "-t", &session_name, "-o", &pipe_cmd])
+            .args(["pipe-pane", "-t", &session_name])  // Stop existing pipe
             .status()
             .await;
+        let pipe_cmd = format!("cat >> {}", log_path.display());
+        let pipe_status = Command::new("tmux")
+            .args(["pipe-pane", "-t", &session_name, &pipe_cmd])  // Start new pipe (no -o)
+            .status()
+            .await;
+        match &pipe_status {
+            Ok(status) if status.success() => {
+                info!(session = %session_name, "tmux pipe-pane established");
+            }
+            Ok(status) => {
+                warn!(session = %session_name, exit_code = ?status.code(), "tmux pipe-pane failed");
+            }
+            Err(err) => {
+                warn!(session = %session_name, error = %err, "tmux pipe-pane command failed");
+            }
+        }
 
         let metadata = fs::metadata(&log_path).await.ok();
         let start_offset = metadata.map(|m| m.len()).unwrap_or(0);
@@ -1130,17 +1147,21 @@ impl TerminalManager {
         seq: Arc<AtomicU64>,
         offset: Arc<AtomicU64>,
     ) -> tokio::task::JoinHandle<()> {
+        info!(session = %session_name, log_path = %log_path.display(), "spawning terminal output watcher");
         tokio::spawn(async move {
+            info!(session = %session_name, "output watcher task started");
             loop {
                 let size = match fs::metadata(&log_path).await {
                     Ok(meta) => meta.len(),
-                    Err(_) => {
+                    Err(err) => {
+                        warn!(session = %session_name, error = %err, "failed to stat log file");
                         time::sleep(Duration::from_millis(100)).await;
                         continue;
                     }
                 };
                 let current_offset = offset.load(Ordering::SeqCst);
                 if size > current_offset {
+                    info!(session = %session_name, size = size, current_offset = current_offset, "new output detected");
                     match fs::File::open(&log_path).await {
                         Ok(mut file) => {
                             if file.seek(SeekFrom::Start(current_offset)).await.is_ok() {
@@ -1157,18 +1178,27 @@ impl TerminalManager {
                                         "data": BASE64_STANDARD.encode(&buf),
                                         "byte_offset": current_offset,
                                     });
+                                    info!(session = %session_name, seq = seq_no, bytes = buf.len(), "sending terminal_output");
                                     if let Err(err) = send_ws_frame(&sender, payload) {
                                         warn!(session = %session_name, error = %err, "failed to send terminal_output");
+                                        break; // Exit loop if send fails - channel is dead
                                     }
                                     offset.store(size, Ordering::SeqCst);
+                                } else {
+                                    warn!(session = %session_name, "failed to read log file");
                                 }
+                            } else {
+                                warn!(session = %session_name, "failed to seek log file");
                             }
                         }
-                        Err(_) => {}
+                        Err(err) => {
+                            warn!(session = %session_name, error = %err, "failed to open log file");
+                        }
                     }
                 }
                 time::sleep(Duration::from_millis(50)).await;
             }
+            info!(session = %session_name, "output watcher task exiting");
         })
     }
 

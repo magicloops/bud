@@ -25,6 +25,7 @@
   - Backend SSE: `/api/terminals/:budId/stream` in `service/src/server.ts` attaches to `terminalEvents` (event-bus).
   - Terminal emit: `TerminalManager.handleTerminalOutput` stores output and `events.emit` (`terminal.output`), gateway parses `terminal_output` frames.
   - Bud: handles `terminal_input` → tmux send-keys → emits `terminal_output` frames (base64) watched from log file.
+  - Logs now confirm backend receives terminal_output, stores it, and emits via event-bus; SSE listeners attach after refresh, yet xterm remains blank/unstyled and keystrokes still send. EventSource shows open in network; no output-handler logs fire, suggesting handler not firing or empty data.
 
 ## Expected
 - After reload, terminal should reattach to the existing tmux session and accept input normally.

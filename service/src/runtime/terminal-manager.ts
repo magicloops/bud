@@ -51,7 +51,7 @@ export class TerminalManager {
   constructor(logger: FastifyBaseLogger, events: TerminalEventBus) {
     this.logger = logger;
     this.events = events;
-    logger.debug({ component: "terminal_manager" }, "TerminalManager initialized (reload touch v2)");
+    logger.debug({ component: "terminal_manager" }, "TerminalManager initialized (reload touch v3)");
   }
 
   async ensureTerminal(budId: string, configOverride?: TerminalEnsureConfig): Promise<{ ok: boolean; error?: string }> {
