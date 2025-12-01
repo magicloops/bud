@@ -4,6 +4,12 @@ _Last updated: 2025-11-30_
 
 ## What's implemented (recent)
 
+### Phase 5: UI Alignment (2025-11-30)
+- **Interrupt button**: Added "Ctrl+C" button that sends interrupt signal to terminal via `/api/terminals/:budId/interrupt`.
+- **Explicit input box**: Added command input bar with $ prompt, text input, and Send button for typing commands.
+- **Readiness display**: Status bar shows readiness indicator (Ready/Waiting/Processing) with hint icons (🔐 password, ❓ confirmation, 📄 pager, ⚠️ error).
+- **Truncation hints**: Yellow warning banner when output is truncated, dismissible with X button.
+
 ### Phase 4: Readiness + Robustness (2025-11-30)
 - **ANSI stripping**: Added `stripAnsi()` method in agent-service to remove escape codes from agent output (UI still receives raw ANSI via SSE).
 - **CRLF normalization**: Added `normalizeCRLF()` method to normalize line endings to LF for consistent parsing.
@@ -50,15 +56,18 @@ _Last updated: 2025-11-30_
 | Phase 2: Backend terminal manager | ✅ Complete |
 | Phase 3: Agent tool refactor | ✅ Complete |
 | Phase 4: Readiness + Robustness | ✅ Complete |
-| Phase 5: UI alignment | 🔄 Partial |
+| Phase 5: UI alignment | ✅ Complete |
 
-## Next actions (Phase 5: UI Polish)
-- UI controls: add explicit input box + interrupt (Ctrl+C) button.
-- Readiness display: show readiness indicator and last-line hint in terminal panel.
-- Truncation hints: surface when output is truncated.
-- Resize/focus: stabilize terminal resize and focus behavior.
+## All Phases Complete!
 
-## Cleanup & Docs
+The Persistent Terminal feature is now fully implemented across all five phases:
+- Bud-side tmux terminal with pipe-pane output capture
+- Backend terminal manager with DB persistence and SSE streaming
+- Agent tools (terminal.run/observe/interrupt) with readiness integration
+- Robustness features (ANSI stripping, CRLF normalization, idle timers, metrics)
+- UI features (input box, interrupt button, readiness display, truncation hints)
+
+## Cleanup & Docs (remaining)
 - Remove temporary terminal debug logs once reconnect behavior is fully validated.
 - Docs: update proto/AGENTS/README for terminal proto (`id`/`ts`), tmux requirement, readiness payload.
 - Tests: integration path for ensure→input→readiness→history; Bud detector samples for prompts/quiescence.

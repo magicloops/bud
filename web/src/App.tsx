@@ -71,6 +71,21 @@ function App() {
   const [terminalState, setTerminalState] = useState<string>('idle')
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
   const [terminalConnection, setTerminalConnection] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
+  const [terminalCommandInput, setTerminalCommandInput] = useState('')
+  const [terminalReadiness, setTerminalReadiness] = useState<{
+    ready: boolean
+    confidence: number
+    trigger: string
+    hints: {
+      looks_like_prompt?: boolean
+      looks_like_confirmation?: boolean
+      looks_like_password?: boolean
+      looks_like_pager?: boolean
+      looks_like_error?: boolean
+      may_still_be_processing?: boolean
+    }
+  } | null>(null)
+  const [terminalOutputTruncated, setTerminalOutputTruncated] = useState(false)
   const [terminalDisconnectTime, setTerminalDisconnectTime] = useState<number | null>(null)
   const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
   const [sseReconnectTrigger, setSseReconnectTrigger] = useState(0)
@@ -363,6 +378,8 @@ function App() {
     const budIdChanged = budId !== lastConnectedBudIdRef.current
     if (budIdChanged) {
       resetTerminal()
+      setTerminalOutputTruncated(false)
+      setTerminalReadiness(null)
       lastConnectedBudIdRef.current = budId
     }
 
@@ -442,6 +459,24 @@ function App() {
         lastSseEventTimeRef.current = Date.now()
       }
 
+      const handleReady = (event: MessageEvent) => {
+        try {
+          lastSseEventTimeRef.current = Date.now()
+          const payload = JSON.parse(event.data ?? '{}') as { assessment?: {
+            ready: boolean
+            confidence: number
+            trigger: string
+            hints: Record<string, boolean>
+          } }
+          if (payload.assessment) {
+            console.info('[terminal] readiness event', { assessment: payload.assessment })
+            setTerminalReadiness(payload.assessment)
+          }
+        } catch (err) {
+          console.error('Failed to parse terminal.ready SSE', err)
+        }
+      }
+
       const scheduleReconnect = (reason: string) => {
         if (terminalEventSourceRef.current === source) {
           terminalEventSourceRef.current = null
@@ -453,6 +488,7 @@ function App() {
         source.removeEventListener('heartbeat', handleHeartbeat)
         source.removeEventListener('terminal.output', handleOutput)
         source.removeEventListener('terminal.status', handleStatus)
+        source.removeEventListener('terminal.ready', handleReady)
         source.close()
         setTerminalConnection('reconnecting')
         terminalConnectionRef.current = 'reconnecting'
@@ -496,7 +532,11 @@ function App() {
         apiFetch(`/api/terminals/${budId}/history?bytes=16384`)
           .then(async (resp) => {
             if (!resp.ok) return
-            const body = (await resp.json()) as { data_base64?: string }
+            const body = (await resp.json()) as { data_base64?: string; bytes?: number; total_bytes_available?: number }
+            // Check if output was truncated
+            if (body.bytes !== undefined && body.total_bytes_available !== undefined) {
+              setTerminalOutputTruncated(body.bytes < body.total_bytes_available)
+            }
             if (body.data_base64 && terminalRef.current) {
               const decoded = decodeTerminalData(body.data_base64)
               if (decoded) {
@@ -520,6 +560,7 @@ function App() {
       source.addEventListener('heartbeat', handleHeartbeat)
       source.addEventListener('terminal.output', handleOutput)
       source.addEventListener('terminal.status', handleStatus)
+      source.addEventListener('terminal.ready', handleReady)
       source.onerror = (err) => {
         console.warn('[terminal] SSE error', { err, readyState: source.readyState })
         scheduleReconnect(`error ${JSON.stringify(err)}`)
@@ -585,6 +626,27 @@ function App() {
       setError(err instanceof Error ? err.message : 'Failed to cancel agent')
     }
   }, [threadId])
+
+  const sendTerminalInterrupt = useCallback(async () => {
+    if (!budId) return
+    try {
+      console.info('[terminal] sending interrupt', { budId })
+      const resp = await apiFetch(`/api/terminals/${budId}/interrupt`, { method: 'POST' })
+      if (!resp.ok) {
+        console.warn('[terminal] interrupt request failed', { status: resp.status })
+      }
+    } catch (err) {
+      console.error('Failed to send terminal interrupt', err)
+      setError(err instanceof Error ? err.message : 'Failed to interrupt')
+    }
+  }, [budId])
+
+  const handleTerminalCommandSubmit = useCallback(() => {
+    if (!terminalCommandInput.trim()) return
+    // Send command with newline to execute it
+    sendTerminalInput(terminalCommandInput + '\n')
+    setTerminalCommandInput('')
+  }, [terminalCommandInput, sendTerminalInput])
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -750,6 +812,44 @@ function App() {
                 {terminalOverlayMessage}
               </div>
             )}
+            {terminalOutputTruncated && (
+              <div className="flex items-center gap-2 border-t border-yellow-600/30 bg-yellow-600/10 px-3 py-1.5 text-xs text-yellow-400">
+                <span>⚠️</span>
+                <span>Output truncated. Some earlier output may be missing.</span>
+                <button
+                  type="button"
+                  onClick={() => setTerminalOutputTruncated(false)}
+                  className="ml-auto text-yellow-600 hover:text-yellow-400"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            <div className="flex items-center gap-2 border-t border-border/50 bg-black/50 px-3 py-2">
+              <span className="text-green-500 font-mono text-sm">$</span>
+              <input
+                type="text"
+                value={terminalCommandInput}
+                onChange={(e) => setTerminalCommandInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleTerminalCommandSubmit()
+                  }
+                }}
+                placeholder="Type command and press Enter..."
+                disabled={terminalConnection !== 'connected'}
+                className="flex-1 bg-transparent text-green-400 font-mono text-sm placeholder:text-muted-foreground/50 focus:outline-none disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={handleTerminalCommandSubmit}
+                disabled={terminalConnection !== 'connected' || !terminalCommandInput.trim()}
+                className="rounded border border-green-600/50 bg-green-600/20 px-3 py-1 font-mono text-xs uppercase tracking-wide text-green-400 transition hover:bg-green-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Send
+              </button>
+            </div>
             <div className="flex items-center justify-between border-t-4 border-black bg-muted/20 px-4 py-2 text-xs">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
@@ -768,15 +868,56 @@ function App() {
                       : 'Terminal unavailable'}
                   </span>
                 </div>
+                {terminalReadiness && terminalConnection === 'connected' && (
+                  <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        terminalReadiness.ready
+                          ? 'bg-green-400'
+                          : terminalReadiness.confidence > 0.5
+                            ? 'bg-yellow-400'
+                            : 'bg-orange-400 animate-pulse'
+                      }`}
+                    />
+                    <span className="font-mono text-muted-foreground">
+                      {terminalReadiness.ready
+                        ? 'Ready'
+                        : terminalReadiness.confidence > 0.5
+                          ? 'Waiting...'
+                          : 'Processing...'}
+                    </span>
+                    {terminalReadiness.hints.looks_like_password && (
+                      <span className="text-yellow-400" title="Password prompt detected">🔐</span>
+                    )}
+                    {terminalReadiness.hints.looks_like_confirmation && (
+                      <span className="text-blue-400" title="Confirmation prompt (y/n)">❓</span>
+                    )}
+                    {terminalReadiness.hints.looks_like_pager && (
+                      <span className="text-cyan-400" title="In pager (press q to exit)">📄</span>
+                    )}
+                    {terminalReadiness.hints.looks_like_error && (
+                      <span className="text-red-400" title="Error detected">⚠️</span>
+                    )}
+                  </div>
+                )}
                 {error && <span className="text-destructive">{error}</span>}
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={cancelAgentTurn}
-                  className="rounded-lg border-2 border-black bg-destructive px-3 py-2 font-mono uppercase tracking-wide text-destructive-foreground transition hover:-translate-y-0.5"
+                  onClick={sendTerminalInterrupt}
+                  disabled={terminalConnection !== 'connected'}
+                  className="rounded-lg border-2 border-red-600 bg-red-600/20 px-3 py-2 font-mono text-xs uppercase tracking-wide text-red-400 transition hover:bg-red-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Send Ctrl+C to terminal"
                 >
-                  Stop
+                  Ctrl+C
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelAgentTurn}
+                  className="rounded-lg border-2 border-black bg-destructive px-3 py-2 font-mono text-xs uppercase tracking-wide text-destructive-foreground transition hover:-translate-y-0.5"
+                >
+                  Stop Agent
                 </button>
               </div>
             </div>

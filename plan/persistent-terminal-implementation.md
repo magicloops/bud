@@ -25,13 +25,7 @@
 - **Phase 2 (Backend terminal manager)**: ✅ COMPLETE - terminal tables/migration added; TerminalManager dispatches all terminal_* messages, stores output with soft caps, emits terminal SSE; REST endpoints for ensure/status/history/input/interrupt; gateway parses terminal_* frames. SSE heartbeat mechanism (1s dev, 5s prod) detects stale connections.
 - **Phase 3 (Agent tool refactor)**: ✅ COMPLETE - terminal.run/observe/interrupt tools wired to TerminalManager; system prompt enhanced with confidence thresholds and hints guidance; `normalizeReadiness()` ensures proper fallbacks with hints; `logReadinessDecision()` logs decisions for debugging; `outputBytes` added to results per design doc.
 - **Phase 4 (Readiness + robustness)**: ✅ COMPLETE - Readiness detection works (Bud-side); ANSI stripping and CRLF normalization in agent-service; binary guards; idle timers with configurable thresholds; metrics endpoints.
-- **Phase 5 (UI alignment)**: 🔄 PARTIAL - Terminal panel streams SSE, backfills history, sends input via REST; connection status UI with reconnect overlay; remaining: explicit input box, interrupt control, readiness display, truncation hints.
-
-## Immediate next steps (Phase 5)
-- UI controls: explicit input box + interrupt (Ctrl+C) button.
-- Readiness display: show indicator and last-line hint.
-- Truncation hints: surface when output exceeds cap.
-- Resize/focus: stabilize behavior.
+- **Phase 5 (UI alignment)**: ✅ COMPLETE - Terminal panel streams SSE, backfills history, sends input via REST; connection status UI with reconnect overlay; explicit input box with Send button; interrupt (Ctrl+C) button; readiness display with hint icons; truncation warning banner.
 
 ## Documentation & Cleanup
 - Document terminal proto (`id`/`ts`), tmux requirement, readiness payloads in docs/AGENTS/README.
