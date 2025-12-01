@@ -97,7 +97,22 @@ export async function buildServer(): Promise<FastifyInstance> {
   server.get("/api/terminals/:budId/stream", (request, reply) => {
     const budId = (request.params as { budId: string }).budId;
     const detach = terminalEvents.attach(budId, reply);
-    reply.raw.on("close", detach);
+
+    // Send periodic heartbeat to detect stale connections
+    // 1s in dev for faster detection, 5s in production
+    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
+    const heartbeatInterval = setInterval(() => {
+      try {
+        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
+      } catch {
+        clearInterval(heartbeatInterval);
+      }
+    }, heartbeatMs);
+
+    reply.raw.on("close", () => {
+      clearInterval(heartbeatInterval);
+      detach();
+    });
   });
 
   return server;

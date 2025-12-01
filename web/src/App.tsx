@@ -70,6 +70,10 @@ function App() {
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
   const [terminalState, setTerminalState] = useState<string>('idle')
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
+  const [terminalConnection, setTerminalConnection] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
+  const [terminalDisconnectTime, setTerminalDisconnectTime] = useState<number | null>(null)
+  const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
+  const [sseReconnectTrigger, setSseReconnectTrigger] = useState(0)
   const terminalEventSourceRef = useRef<EventSource | null>(null)
   const terminalPaneRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -77,6 +81,8 @@ function App() {
   const sendTerminalInputRef = useRef<(text: string) => void>(() => { })
   const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const terminalReconnectAttemptRef = useRef(0)
+  const lastSseEventTimeRef = useRef<number>(Date.now())
+  const lastConnectedBudIdRef = useRef<string | null>(null)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
     if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
@@ -220,15 +226,36 @@ function App() {
   const sendTerminalInput = useCallback(
     async (text: string) => {
       if (!budId) return
+      if (terminalConnectionRef.current !== 'connected') {
+        console.warn('[terminal] input blocked - not connected', {
+          budId,
+          bytes: text.length,
+          connection: terminalConnectionRef.current
+        })
+        return
+      }
       try {
         console.info('[terminal] send input', { budId, bytes: text.length })
-        await apiFetch(`/api/terminals/${budId}/input`, {
+        const resp = await apiFetch(`/api/terminals/${budId}/input`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ input: text })
         })
+        if (!resp.ok) {
+          console.warn('[terminal] input request failed', { status: resp.status })
+          // Service might be down - trigger reconnect state
+          if (resp.status >= 500 || resp.status === 0) {
+            setTerminalConnection('reconnecting')
+            terminalConnectionRef.current = 'reconnecting'
+            setTerminalDisconnectTime((prev) => prev ?? Date.now())
+          }
+        }
       } catch (err) {
         console.error('Failed to send terminal input', err)
+        // Network error - service is likely down
+        setTerminalConnection('reconnecting')
+        terminalConnectionRef.current = 'reconnecting'
+        setTerminalDisconnectTime((prev) => prev ?? Date.now())
         setError(err instanceof Error ? err.message : 'Failed to send input')
       }
     },
@@ -317,34 +344,7 @@ function App() {
     })
   }, [threadId])
 
-  // Ensure terminal exists on bud selection
-  useEffect(() => {
-    if (!budId) return
-    console.info('[terminal] ensure + history start', { budId })
-    apiFetch(`/api/terminals/${budId}/ensure`, { method: 'POST' }).catch((err) => {
-      console.error('Failed to ensure terminal', err)
-    })
-    // backfill history
-    apiFetch(`/api/terminals/${budId}/history?bytes=8192`)
-      .then(async (resp) => {
-        console.info('[terminal] history response', { status: resp.status })
-        if (!resp.ok) {
-          return
-        }
-        const body = (await resp.json()) as { data_base64?: string }
-        if (body.data_base64 && terminalRef.current) {
-          const decoded = decodeTerminalData(body.data_base64)
-          if (decoded) {
-            terminalRef.current.write(decoded)
-            setTerminalHasOutput(true)
-            fitTerminal()
-          }
-        }
-      })
-      .catch((err) => console.error('Failed to backfill terminal history', err))
-  }, [budId, fitTerminal])
-
-  // Terminal SSE stream
+  // Terminal SSE stream (also handles ensure + history fetch)
   useEffect(() => {
     const cleanupTimers = () => {
       if (terminalReconnectTimerRef.current) {
@@ -358,10 +358,21 @@ function App() {
     }
     cleanupTimers()
     closeSource()
-    resetTerminal()
+
+    // Only reset terminal when budId changes, not on SSE reconnect
+    const budIdChanged = budId !== lastConnectedBudIdRef.current
+    if (budIdChanged) {
+      resetTerminal()
+      lastConnectedBudIdRef.current = budId
+    }
+
     terminalReconnectAttemptRef.current = 0
+    setTerminalConnection('disconnected')
+    terminalConnectionRef.current = 'disconnected'
+    setTerminalDisconnectTime(null)
     if (!budId) {
       setTerminalState('idle')
+      lastConnectedBudIdRef.current = null
       return
     }
 
@@ -371,35 +382,55 @@ function App() {
       const source = new EventSource(buildApiUrl(`/api/terminals/${budId}/stream`))
       terminalEventSourceRef.current = source
 
-    const handleOutput = (event: MessageEvent) => {
-      try {
-        const raw = event.data ?? ''
-        console.info('[terminal] raw output event', { raw_len: raw.length })
-        const payload = JSON.parse(raw) as { data?: string }
-        if (payload.data) {
-          const decoded = decodeTerminalData(payload.data)
-          console.info('[terminal] output event', {
-            bytes_base64: payload.data.length,
-            decoded_len: decoded.length
-          })
-          if (decoded && terminalRef.current) {
-            terminalRef.current.write(decoded)
-            setTerminalHasOutput(true)
-            fitTerminal()
-          } else if (!terminalRef.current) {
-            console.warn('[terminal] output skipped; terminalRef missing')
+      // Track heartbeat check interval for cleanup
+      let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
+
+      const handleOutput = (event: MessageEvent) => {
+        try {
+          lastSseEventTimeRef.current = Date.now()
+          const raw = event.data ?? ''
+          console.info('[terminal] raw output event', { raw_len: raw.length })
+          const payload = JSON.parse(raw) as { data?: string }
+          if (payload.data) {
+            const decoded = decodeTerminalData(payload.data)
+            console.info('[terminal] output event', {
+              bytes_base64: payload.data.length,
+              decoded_len: decoded.length
+            })
+            if (decoded && terminalRef.current) {
+              terminalRef.current.write(decoded)
+              setTerminalHasOutput(true)
+              fitTerminal()
+            } else if (!terminalRef.current) {
+              console.warn('[terminal] output skipped; terminalRef missing')
+            }
           }
+        } catch (err) {
+          console.error('Failed to parse terminal.output SSE', err)
         }
-      } catch (err) {
-        console.error('Failed to parse terminal.output SSE', err)
       }
-    }
 
       const handleStatus = (event: MessageEvent) => {
         try {
           const payload = JSON.parse(event.data ?? '{}') as { state?: string }
           if (payload.state) {
-            console.info('[terminal] status event', { state: payload.state })
+            const now = Date.now()
+            const timeSinceLastEvent = now - lastSseEventTimeRef.current
+            lastSseEventTimeRef.current = now
+
+            console.info('[terminal] status event', {
+              state: payload.state,
+              timeSinceLastEvent
+            })
+
+            // If we receive a status event after a long gap (>5s), the service likely restarted
+            // and this SSE connection is stale. Force reconnect.
+            if (timeSinceLastEvent > 5000) {
+              console.info('[terminal] detected service restart (status event after gap), forcing SSE reconnect')
+              scheduleReconnect('service_restart_detected')
+              return
+            }
+
             setTerminalState(payload.state)
           }
         } catch (err) {
@@ -407,13 +438,25 @@ function App() {
         }
       }
 
+      const handleHeartbeat = () => {
+        lastSseEventTimeRef.current = Date.now()
+      }
+
       const scheduleReconnect = (reason: string) => {
         if (terminalEventSourceRef.current === source) {
           terminalEventSourceRef.current = null
         }
+        if (heartbeatCheckInterval) {
+          clearInterval(heartbeatCheckInterval)
+          heartbeatCheckInterval = null
+        }
+        source.removeEventListener('heartbeat', handleHeartbeat)
         source.removeEventListener('terminal.output', handleOutput)
         source.removeEventListener('terminal.status', handleStatus)
         source.close()
+        setTerminalConnection('reconnecting')
+        terminalConnectionRef.current = 'reconnecting'
+        setTerminalDisconnectTime((prev) => prev ?? Date.now())
         const nextAttempt = terminalReconnectAttemptRef.current + 1
         terminalReconnectAttemptRef.current = nextAttempt
         const delay = Math.min(5000, 500 * nextAttempt)
@@ -424,11 +467,57 @@ function App() {
 
       source.addEventListener('open', () => {
         console.info('[terminal] SSE opened', { budId })
+        const wasReconnect = terminalReconnectAttemptRef.current > 0
         terminalReconnectAttemptRef.current = 0
+        lastSseEventTimeRef.current = Date.now()
+        setTerminalConnection('connected')
+        terminalConnectionRef.current = 'connected'
+        setTerminalDisconnectTime(null)
+
+        // Start heartbeat monitoring - use shorter timeout in development
+        // Dev: 1s heartbeat, 3s timeout, check every 1s
+        // Prod: 5s heartbeat, 15s timeout, check every 5s
+        const heartbeatTimeout = import.meta.env.DEV ? 3000 : 15000
+        const checkInterval = import.meta.env.DEV ? 1000 : 5000
+        heartbeatCheckInterval = setInterval(() => {
+          const timeSinceLastEvent = Date.now() - lastSseEventTimeRef.current
+          if (timeSinceLastEvent > heartbeatTimeout) {
+            console.warn(`[terminal] no heartbeat received for ${heartbeatTimeout / 1000}s, connection is stale`)
+            scheduleReconnect('heartbeat_timeout')
+          }
+        }, checkInterval)
+
+        // Ensure terminal exists and fetch history
+        console.info('[terminal] SSE connected, ensuring terminal and fetching history', { budId, wasReconnect, budIdChanged })
+        apiFetch(`/api/terminals/${budId}/ensure`, { method: 'POST' }).catch((err) => {
+          console.error('Failed to ensure terminal', err)
+        })
+        // Fetch history to populate/restore terminal content
+        apiFetch(`/api/terminals/${budId}/history?bytes=16384`)
+          .then(async (resp) => {
+            if (!resp.ok) return
+            const body = (await resp.json()) as { data_base64?: string }
+            if (body.data_base64 && terminalRef.current) {
+              const decoded = decodeTerminalData(body.data_base64)
+              if (decoded) {
+                // Only reset if this is a reconnect (not initial load, which was already reset)
+                if (!budIdChanged) {
+                  terminalRef.current.reset()
+                }
+                terminalRef.current.write(decoded)
+                setTerminalHasOutput(true)
+                fitTerminal()
+                console.info('[terminal] history loaded', { bytes: decoded.length, wasReconnect, budIdChanged })
+              }
+            }
+          })
+          .catch((err) => console.error('Failed to load terminal history', err))
       })
       source.onmessage = (event) => {
         console.info('[terminal] SSE generic message', { type: event.type, data: event.data?.slice(0, 100) })
       }
+
+      source.addEventListener('heartbeat', handleHeartbeat)
       source.addEventListener('terminal.output', handleOutput)
       source.addEventListener('terminal.status', handleStatus)
       source.onerror = (err) => {
@@ -443,7 +532,48 @@ function App() {
       cleanupTimers()
       closeSource()
     }
-  }, [budId, fitTerminal, resetTerminal])
+  }, [budId, fitTerminal, resetTerminal, sseReconnectTrigger])
+
+  // Force SSE reconnect when we detect service is down via failed requests
+  useEffect(() => {
+    if (terminalConnection !== 'reconnecting' || !budId) return
+
+    // Close existing SSE - it's stale
+    const existingSource = terminalEventSourceRef.current
+    if (existingSource) {
+      console.info('[terminal] closing stale SSE due to detected service failure')
+      existingSource.close()
+      terminalEventSourceRef.current = null
+    }
+
+    // Poll for service availability and reconnect
+    let cancelled = false
+    const pollAndReconnect = async () => {
+      while (!cancelled) {
+        try {
+          console.info('[terminal] polling service availability...')
+          const resp = await apiFetch(`/api/terminals/${budId}/ensure`, {
+            method: 'POST'
+          })
+          if (resp.ok) {
+            console.info('[terminal] service is back, triggering SSE reconnect')
+            // Trigger SSE effect to re-run and open new connection
+            setSseReconnectTrigger((n) => n + 1)
+            break
+          }
+        } catch {
+          // Still down, keep polling
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      }
+    }
+
+    pollAndReconnect()
+
+    return () => {
+      cancelled = true
+    }
+  }, [terminalConnection, budId])
 
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return
@@ -547,6 +677,25 @@ function App() {
     return 'Terminal awaiting activity…'
   }, [terminalHasOutput, terminalState, terminalSupported])
 
+  // Show dimming after 2 seconds of disconnect
+  const [showDisconnectOverlay, setShowDisconnectOverlay] = useState(false)
+  useEffect(() => {
+    if (terminalConnection === 'connected') {
+      setShowDisconnectOverlay(false)
+      return
+    }
+    const timer = setTimeout(() => {
+      setShowDisconnectOverlay(true)
+    }, 2000)
+    return () => clearTimeout(timer)
+  }, [terminalConnection])
+
+  const terminalConnectionLabel = useMemo(() => {
+    if (terminalConnection === 'reconnecting') return 'Reconnecting…'
+    if (terminalConnection === 'disconnected') return 'Disconnected'
+    return null
+  }, [terminalConnection])
+
   return (
     <div className="flex h-screen bg-background text-foreground">
       <BudRail
@@ -575,23 +724,50 @@ function App() {
         <div className="flex flex-1 overflow-hidden">
           <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
           <div className="relative flex flex-1 flex-col border-l-4 border-black bg-black">
-            <div className="flex-1">
+            <div className="flex-1 relative">
               <div
                 ref={terminalPaneRef}
-                className="h-full w-full overflow-hidden font-mono text-sm"
+                className={`h-full w-full overflow-hidden font-mono text-sm transition-opacity duration-300 ${
+                  showDisconnectOverlay ? 'opacity-40' : 'opacity-100'
+                }`}
+                style={{ pointerEvents: terminalConnection === 'connected' ? 'auto' : 'none' }}
                 onClick={() => terminalRef.current?.focus()}
               />
+              {showDisconnectOverlay && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <div className="flex items-center gap-2 rounded-lg border-2 border-yellow-500/50 bg-yellow-500/20 px-4 py-2 text-yellow-200">
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span className="font-mono text-sm">Reconnecting to terminal…</span>
+                  </div>
+                </div>
+              )}
             </div>
-            {terminalOverlayMessage && (
+            {terminalOverlayMessage && !showDisconnectOverlay && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
                 {terminalOverlayMessage}
               </div>
             )}
             <div className="flex items-center justify-between border-t-4 border-black bg-muted/20 px-4 py-2 text-xs">
-              <div className="flex flex-col">
-                <span className="font-mono font-semibold uppercase tracking-wide">
-                  {terminalSupported ? `Terminal: ${terminalState}` : 'Terminal unavailable'}
-                </span>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      terminalConnection === 'connected'
+                        ? 'bg-green-500'
+                        : terminalConnection === 'reconnecting'
+                          ? 'bg-yellow-500 animate-pulse'
+                          : 'bg-red-500'
+                    }`}
+                  />
+                  <span className="font-mono font-semibold uppercase tracking-wide">
+                    {terminalSupported
+                      ? terminalConnectionLabel ?? `Terminal: ${terminalState}`
+                      : 'Terminal unavailable'}
+                  </span>
+                </div>
                 {error && <span className="text-destructive">{error}</span>}
               </div>
               <div className="flex items-center gap-2">

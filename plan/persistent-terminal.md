@@ -15,10 +15,12 @@ Behind the scenes, **tmux** provides session persistence, ensuring the terminal 
 The agent operates in an **agentic loop**: send input → observe output → decide next action → repeat until task complete → return control to user.
 
 **Implementation status (Nov 2025):**
-- Bud: tmux-backed terminal implemented; hello caps advertise terminal + tmux version; can ensure/adopt tmux, pipe-pane logs, stream `terminal_output`, and send `terminal_status`; readiness detector emits `terminal_ready`; terminal_* frames now use `id`/`ts`.
-- Backend: terminal tables exist (`bud_terminal`, `terminal_output`, `terminal_input_log`); gateway parses `terminal_*` frames with the unified envelope; TerminalManager stores output and emits terminal SSE (`/api/terminals/:budId/stream`); REST endpoints for ensure/status/history/input/interrupt; agent wired to terminal tools/readiness.
-- UI: terminal panel uses terminal stream/REST; legacy session UI removed; tmux terminal now visible. Needs readiness/controls polish.
-- Next focus: agent readiness loop polish (ANSI/binary guardrails), UI controls/readiness display, docs refresh, and robustness checks on terminal history/backfill.
+- **Phase 1 (Bud tmux)**: ✅ Complete — tmux-backed terminal with hello caps, pipe-pane logging, terminal_* frames with `id`/`ts` envelope, readiness detector.
+- **Phase 2 (Backend)**: ✅ Complete — terminal tables, TerminalManager, REST/SSE endpoints, gateway parsing, SSE heartbeat for stale detection.
+- **Phase 3 (Agent tools)**: ✅ Complete — terminal.run/observe/interrupt tools; enhanced system prompt with confidence thresholds and hints guidance; `normalizeReadiness()` for proper fallbacks; `logReadinessDecision()` for debugging; `outputBytes` in results.
+- **Phase 4 (Robustness)**: 🔄 In progress — readiness detection works; remaining: ANSI stripping, binary guards, CRLF normalization, idle timers, metrics.
+- **Phase 5 (UI)**: 🔄 Partial — terminal panel with SSE/REST, connection status UI, auto-reconnect; remaining: input box, interrupt control, readiness display, truncation hints.
+- See `plan/persistent-terminal-implementation.md` for detailed status and `review/` for phase completion docs.
 
 ---
 

@@ -21,17 +21,29 @@
 - [ ] Web UI surfaces (terminal panel + states)
 
 ## Status (2025-11-30)
-- Bud: tmux-backed terminal runs with caps advertised; can ensure/adopt tmux, pipe-pane log, stream `terminal_output`, handle input/resize/interrupt/close, and send `terminal_status`; readiness detector emits `terminal_ready`. Envelope now uses `id`/`ts` for terminal_* frames.
-- Backend: terminal tables/migration added; TerminalManager dispatches `terminal_ensure/input/interrupt`, stores output with soft caps, emits terminal SSE (`/api/terminals/:budId/stream`); REST endpoints for ensure/status/history/input/interrupt; gateway parses terminal_* frames with the unified envelope. Agent wired to terminal tools and readiness tailing.
-- UI: terminal panel streams terminal SSE, backfills history, sends input via REST; legacy session UI removed; tmux terminal now visible in UI (needs readiness/controls polish).
-- Pending: polish agent readiness loop and ANSI/binary guards, UI controls/readiness display, and follow-up robustness items below.
+- **Phase 1 (Bud tmux foundation)**: ✅ COMPLETE - tmux-backed terminal runs with caps advertised; can ensure/adopt tmux, pipe-pane log, stream `terminal_output`, handle input/resize/interrupt/close, and send `terminal_status`; readiness detector emits `terminal_ready`. Envelope uses `id`/`ts` for terminal_* frames. Pipe-pane properly re-establishes on reconnect.
+- **Phase 2 (Backend terminal manager)**: ✅ COMPLETE - terminal tables/migration added; TerminalManager dispatches all terminal_* messages, stores output with soft caps, emits terminal SSE; REST endpoints for ensure/status/history/input/interrupt; gateway parses terminal_* frames. SSE heartbeat mechanism (1s dev, 5s prod) detects stale connections.
+- **Phase 3 (Agent tool refactor)**: ✅ COMPLETE - terminal.run/observe/interrupt tools wired to TerminalManager; system prompt enhanced with confidence thresholds and hints guidance; `normalizeReadiness()` ensures proper fallbacks with hints; `logReadinessDecision()` logs decisions for debugging; `outputBytes` added to results per design doc.
+- **Phase 4 (Readiness + robustness)**: 🔄 IN PROGRESS - Readiness detection works (Bud-side); remaining: ANSI stripping for agent, binary guards, CRLF normalization, idle timers, metrics.
+- **Phase 5 (UI alignment)**: 🔄 PARTIAL - Terminal panel streams SSE, backfills history, sends input via REST; connection status UI with reconnect overlay; remaining: explicit input box, interrupt control, readiness display, truncation hints.
 
-## Immediate next steps
-- Verify terminal end-to-end with unified envelope (`terminal_ensure/input/output/ready`) and capture any remaining parse/log gaps.
-- Polish agent loop (ANSI/binary guards, readiness confidence driving observe vs next input).
-- UI polish: explicit input box + interrupt control, show readiness/last-line/truncation hints, stabilize resize/focus.
-- Document updated terminal proto (`id`/`ts`), tmux requirement, and readiness payloads in docs/AGENTS/README surfaces.
-- TODO: remove temporary terminal debug logs (service routes/manager and Bud terminal_input) once reload/input issues are fully resolved.
+## Immediate next steps (Phase 4)
+- ANSI stripping: strip escape codes from agent output (keep raw for UI xterm.js).
+- Binary output guard: detect and replace binary output with placeholder.
+- CRLF normalization: normalize line endings for consistent readiness parsing.
+- Idle/linger timers: track terminal activity, implement cleanup.
+- Metrics: bytes in/out, readiness events, interrupt counts.
+
+## Immediate next steps (Phase 5)
+- UI controls: explicit input box + interrupt (Ctrl+C) button.
+- Readiness display: show indicator and last-line hint.
+- Truncation hints: surface when output exceeds cap.
+- Resize/focus: stabilize behavior.
+
+## Documentation & Cleanup
+- Document terminal proto (`id`/`ts`), tmux requirement, readiness payloads in docs/AGENTS/README.
+- Remove temporary terminal debug logs once reconnect is fully validated.
+- Review docs in `review/` folder for phase completion criteria.
 
 ## Phases
 

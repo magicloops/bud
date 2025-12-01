@@ -8,6 +8,7 @@ import { messageTable, sessionLogTable, threadTable } from "../db/schema.js";
 import { SessionManager } from "../runtime/session-manager.js";
 import { TerminalManager } from "../runtime/terminal-manager.js";
 import { SessionEventBus } from "../runtime/event-bus.js";
+import type { ReadinessHints } from "../terminal/types.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 
@@ -44,6 +45,7 @@ type SessionCommandResult = {
 
 type TerminalCallResult = {
   output: string;
+  outputBytes: number;
   readiness: Record<string, unknown>;
   lastLine: string;
   truncated: boolean;
@@ -61,12 +63,30 @@ Tools:
 
 Guidelines:
 - Include \\n to press Enter. For confirmations, send "y\\n". For single-key prompts (like q to exit pager), send just the key.
-- Check readiness from tool results: if confidence < 0.5, observe before sending more input.
+- Check readiness from tool results to decide your next action:
+  - confidence >= 0.8: Terminal is ready, send next command
+  - confidence 0.5-0.8: Probably ready, verify output makes sense before proceeding
+  - confidence < 0.5: Likely still processing, use terminal.observe to wait
+- Use the hints object to understand terminal state:
+  - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
+  - looks_like_confirmation: Waiting for y/n or yes/no response
+  - looks_like_password: Waiting for password input (won't echo)
+  - looks_like_pager: In a pager like less/more (send 'q' to exit, space to continue)
+  - may_still_be_processing: Output suggests command is still running
 - Use interrupt if a command hangs or you need to stop it.
 - When done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
 `.trim();
 
 const TOOL_RESULT_PREFIX = "TOOL_RESULT";
+
+const DEFAULT_READINESS_HINTS: ReadinessHints = {
+  looks_like_prompt: false,
+  looks_like_confirmation: false,
+  looks_like_password: false,
+  looks_like_pager: false,
+  looks_like_error: false,
+  may_still_be_processing: false
+};
 
 const TERMINAL_RUN_TOOL = {
   type: "function" as const,
@@ -241,6 +261,7 @@ export class AgentService {
               data: {
                 name: toolCall.tool,
                 output: result.output,
+                output_bytes: result.outputBytes,
                 readiness: result.readiness,
                 last_line: result.lastLine,
                 truncated: result.truncated,
@@ -825,9 +846,17 @@ export class AgentService {
       );
       const tail = await this.terminalManager.tailOutput(bud.budId, config.terminalOutputBackfillBytes);
       const decoded = this.decodeTail(tail.data);
+      const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
+        ready: true,
+        confidence: 0.6,
+        trigger: "interrupt",
+        hints: DEFAULT_READINESS_HINTS
+      });
+      this.logReadinessDecision(directive.tool, finalReadiness);
       return {
         output: decoded,
-        readiness: readiness ?? { ready: true, confidence: 0.6, trigger: "interrupt" },
+        outputBytes: tail.totalBytes,
+        readiness: finalReadiness,
         lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
         truncated: tail.data.length < tail.totalBytes,
         omittedLines: 0
@@ -840,9 +869,17 @@ export class AgentService {
       );
       const tail = await this.terminalManager.tailOutput(bud.budId, config.terminalOutputBackfillBytes);
       const decoded = this.decodeTail(tail.data);
+      const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
+        ready: false,
+        confidence: 0.3,
+        trigger: "observe",
+        hints: { ...DEFAULT_READINESS_HINTS, may_still_be_processing: true }
+      });
+      this.logReadinessDecision(directive.tool, finalReadiness);
       return {
         output: decoded,
-        readiness: readiness ?? { ready: false, confidence: 0.3, trigger: "observe" },
+        outputBytes: tail.totalBytes,
+        readiness: finalReadiness,
         lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
         truncated: tail.data.length < tail.totalBytes,
         omittedLines: 0
@@ -864,13 +901,68 @@ export class AgentService {
     );
     const tail = await this.terminalManager.tailOutput(bud.budId, config.terminalOutputBackfillBytes);
     const decoded = this.decodeTail(tail.data);
+    const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
+      ready: true,
+      confidence: 0.5,
+      trigger: "quiescence",
+      hints: DEFAULT_READINESS_HINTS
+    });
+    this.logReadinessDecision(directive.tool, finalReadiness);
     return {
       output: decoded,
-      readiness: readiness ?? { ready: true, confidence: 0.5, trigger: "quiescence" },
+      outputBytes: tail.totalBytes,
+      readiness: finalReadiness,
       lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
       truncated: tail.data.length < tail.totalBytes,
       omittedLines: 0
     };
+  }
+
+  private logReadinessDecision(tool: string, readiness: Record<string, unknown>): void {
+    const confidence = typeof readiness.confidence === "number" ? readiness.confidence : 0;
+    const ready = readiness.ready === true;
+    const trigger = typeof readiness.trigger === "string" ? readiness.trigger : "unknown";
+    const hints = readiness.hints as Record<string, boolean> | undefined;
+
+    const decision =
+      confidence >= 0.8
+        ? "ready_to_proceed"
+        : confidence >= 0.5
+          ? "probably_ready"
+          : "should_observe";
+
+    this.debug("Terminal readiness assessment", {
+      tool,
+      ready,
+      confidence,
+      trigger,
+      decision,
+      hints: hints
+        ? Object.entries(hints)
+            .filter(([, v]) => v)
+            .map(([k]) => k)
+        : []
+    });
+  }
+
+  private normalizeReadiness(
+    readiness: unknown,
+    fallback: Record<string, unknown>
+  ): Record<string, unknown> {
+    // Use fallback if readiness is null, undefined, or doesn't look like a valid assessment
+    if (!readiness || typeof readiness !== "object") {
+      return fallback;
+    }
+    const obj = readiness as Record<string, unknown>;
+    // Check if it has the minimum expected fields
+    if (typeof obj.ready !== "boolean" || typeof obj.confidence !== "number") {
+      return fallback;
+    }
+    // Ensure hints exist (add default if missing)
+    if (!obj.hints || typeof obj.hints !== "object") {
+      return { ...obj, hints: DEFAULT_READINESS_HINTS };
+    }
+    return obj;
   }
 
   private async recordTerminalToolMessage(
@@ -883,6 +975,7 @@ export class AgentService {
       call_id: directive.callId,
       input: directive.input ?? directive.command ?? null,
       output: result.output,
+      output_bytes: result.outputBytes,
       readiness: result.readiness,
       last_line: result.lastLine,
       truncated: result.truncated,
