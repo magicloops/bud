@@ -67,7 +67,14 @@ The Persistent Terminal feature is now fully implemented across all five phases:
 - Robustness features (ANSI stripping, CRLF normalization, idle timers, metrics)
 - UI features (input box, interrupt button, readiness display, truncation hints)
 
-## Cleanup & Docs (remaining)
-- Remove temporary terminal debug logs once reconnect behavior is fully validated.
-- Docs: update proto/AGENTS/README for terminal proto (`id`/`ts`), tmux requirement, readiness payload.
-- Tests: integration path for ensure→input→readiness→history; Bud detector samples for prompts/quiescence.
+## Cleanup & Docs (2025-11-30)
+- ✅ Removed temporary debug logs from service and frontend
+- ✅ Updated `/docs/proto.md` §4.5 with full terminal protocol spec
+- ✅ Updated `/AGENTS.md` with terminal tools and protocol reference
+- ✅ Created `/docs/terminal-testing.md` with test strategy and coverage goals
+
+## Remaining TODOs
+- [ ] Implement Bud unit tests for readiness detector
+- [ ] Add backend integration tests with mock Bud WebSocket
+- [ ] Add frontend tests with mocked EventSource
+- [ ] Set up E2E tests with real tmux in CI

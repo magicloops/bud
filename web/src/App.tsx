@@ -1,13 +1,14 @@
 import type { FormEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { MoreVertical, Square } from 'lucide-react'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
-import { Terminal } from 'xterm'
-import { FitAddon } from 'xterm-addon-fit'
+import type { Terminal } from 'xterm'
+import type { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
 
 type ThreadMessage = {
@@ -71,7 +72,6 @@ function App() {
   const [terminalState, setTerminalState] = useState<string>('idle')
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
   const [terminalConnection, setTerminalConnection] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
-  const [terminalCommandInput, setTerminalCommandInput] = useState('')
   const [terminalReadiness, setTerminalReadiness] = useState<{
     ready: boolean
     confidence: number
@@ -86,7 +86,9 @@ function App() {
     }
   } | null>(null)
   const [terminalOutputTruncated, setTerminalOutputTruncated] = useState(false)
+  const [terminalScrolledToTop, setTerminalScrolledToTop] = useState(false)
   const [terminalDisconnectTime, setTerminalDisconnectTime] = useState<number | null>(null)
+  const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
   const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
   const [sseReconnectTrigger, setSseReconnectTrigger] = useState(0)
   const terminalEventSourceRef = useRef<EventSource | null>(null)
@@ -98,6 +100,7 @@ function App() {
   const terminalReconnectAttemptRef = useRef(0)
   const lastSseEventTimeRef = useRef<number>(Date.now())
   const lastConnectedBudIdRef = useRef<string | null>(null)
+  const terminalReadyRef = useRef(false)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
     if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
@@ -154,6 +157,9 @@ function App() {
   }, [])
 
   const fitTerminal = useCallback(() => {
+    if (!terminalReadyRef.current) {
+      return
+    }
     const addon = fitAddonRef.current
     const term = terminalRef.current
     const pane = terminalPaneRef.current
@@ -169,13 +175,14 @@ function App() {
 
   const resetTerminal = useCallback(() => {
     const term = terminalRef.current
-    if (term) {
+    if (term && term.element) {
       term.reset()
     }
     setTerminalHasOutput(false)
+    setTerminalScrolledToTop(false)
     const current = term
     requestAnimationFrame(() => {
-      if (!current || terminalRef.current !== current) return
+      if (!current || terminalRef.current !== current || !current.element) return
       current.focus()
       fitTerminal()
     })
@@ -189,52 +196,118 @@ function App() {
     if (!container.isConnected) {
       return
     }
-    const term = new Terminal({
-      convertEol: true,
-      cursorBlink: true,
-      fontFamily: '"JetBrains Mono", SFMono-Regular, Menlo, monospace',
-      fontSize: 13,
-      theme: {
-        background: '#000000',
-        foreground: '#d1ffe1',
-        cursor: '#ffffff',
-        selectionBackground: '#195b3f'
-      }
-    })
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
-    term.open(container)
-    terminalRef.current = term
-    fitAddonRef.current = fitAddon
-    const current = term
-    requestAnimationFrame(() => {
-      if (!current || terminalRef.current !== current) return
-      current.focus()
-      fitTerminal()
-    })
 
-    const handleResize = () => {
-      fitTerminal()
-    }
-    window.addEventListener('resize', handleResize)
-    const dataListener = term.onData((data) => {
-      if (data.length > 0) {
-        console.info('[terminal] onData', { bytes: data.length })
-        sendTerminalInputRef.current(data)
+    let cancelled = false
+    let term: Terminal | null = null
+    let fitAddon: FitAddon | null = null
+    let handleResize: (() => void) | null = null
+    let dataListener: { dispose: () => void } | null = null
+    let scrollListener: { dispose: () => void } | null = null
+
+    // Dynamic import to ensure xterm loads after DOM is ready
+    const initTerminal = async () => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import('xterm'),
+        import('xterm-addon-fit')
+      ])
+
+      if (cancelled) return
+
+      // Wait for container to have dimensions
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (cancelled) {
+            resolve()
+            return
+          }
+          const rect = container.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0) {
+            resolve()
+          } else {
+            requestAnimationFrame(check)
+          }
+        }
+        check()
+      })
+
+      if (cancelled) return
+
+      term = new Terminal({
+        convertEol: true,
+        cursorBlink: true,
+        fontFamily: '"JetBrains Mono", SFMono-Regular, Menlo, monospace',
+        fontSize: 13,
+        theme: {
+          background: '#000000',
+          foreground: '#d1ffe1',
+          cursor: '#ffffff',
+          selectionBackground: '#195b3f'
+        }
+      })
+      fitAddon = new FitAddon()
+      term.loadAddon(fitAddon)
+      term.open(container)
+
+      if (cancelled) {
+        fitAddon.dispose()
+        term.dispose()
+        return
       }
-    })
+
+      terminalRef.current = term
+      fitAddonRef.current = fitAddon
+
+      // xterm needs a few frames to fully initialize its renderer
+      let fitAttempts = 0
+      const tryFit = () => {
+        if (cancelled || terminalRef.current !== term) return
+        fitAttempts++
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const renderService = (term as any)._core?._renderService
+        if (renderService?.dimensions) {
+          terminalReadyRef.current = true
+          term.focus()
+          fitTerminal()
+        } else if (fitAttempts < 10) {
+          requestAnimationFrame(tryFit)
+        }
+      }
+      requestAnimationFrame(tryFit)
+
+      handleResize = () => {
+        fitTerminal()
+      }
+      window.addEventListener('resize', handleResize)
+
+      dataListener = term.onData((data) => {
+        if (data.length > 0) {
+          sendTerminalInputRef.current(data)
+        }
+      })
+
+      scrollListener = term.onScroll((scrollPosition) => {
+        // scrollPosition is the top visible row; 0 means scrolled to the very top
+        setTerminalScrolledToTop(scrollPosition === 0)
+      })
+    }
+
+    initTerminal()
 
     return () => {
-      window.removeEventListener('resize', handleResize)
-      dataListener.dispose()
-      fitAddon.dispose()
-      term.dispose()
+      cancelled = true
+      terminalReadyRef.current = false
+      if (handleResize) window.removeEventListener('resize', handleResize)
+      dataListener?.dispose()
+      scrollListener?.dispose()
+      fitAddon?.dispose()
+      term?.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
     }
   }, [fitTerminal])
 
   useEffect(() => {
+    // fitTerminal has internal guard via terminalReadyRef
     fitTerminal()
   }, [fitTerminal, threadPanelOpen])
 
@@ -250,7 +323,6 @@ function App() {
         return
       }
       try {
-        console.info('[terminal] send input', { budId, bytes: text.length })
         const resp = await apiFetch(`/api/terminals/${budId}/input`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -394,8 +466,6 @@ function App() {
     }
 
     const connect = () => {
-      const attempt = terminalReconnectAttemptRef.current
-      console.info('[terminal] opening SSE stream', { budId, attempt })
       const source = new EventSource(buildApiUrl(`/api/terminals/${budId}/stream`))
       terminalEventSourceRef.current = source
 
@@ -406,20 +476,13 @@ function App() {
         try {
           lastSseEventTimeRef.current = Date.now()
           const raw = event.data ?? ''
-          console.info('[terminal] raw output event', { raw_len: raw.length })
           const payload = JSON.parse(raw) as { data?: string }
           if (payload.data) {
             const decoded = decodeTerminalData(payload.data)
-            console.info('[terminal] output event', {
-              bytes_base64: payload.data.length,
-              decoded_len: decoded.length
-            })
             if (decoded && terminalRef.current) {
               terminalRef.current.write(decoded)
               setTerminalHasOutput(true)
               fitTerminal()
-            } else if (!terminalRef.current) {
-              console.warn('[terminal] output skipped; terminalRef missing')
             }
           }
         } catch (err) {
@@ -435,15 +498,9 @@ function App() {
             const timeSinceLastEvent = now - lastSseEventTimeRef.current
             lastSseEventTimeRef.current = now
 
-            console.info('[terminal] status event', {
-              state: payload.state,
-              timeSinceLastEvent
-            })
-
             // If we receive a status event after a long gap (>5s), the service likely restarted
             // and this SSE connection is stale. Force reconnect.
             if (timeSinceLastEvent > 5000) {
-              console.info('[terminal] detected service restart (status event after gap), forcing SSE reconnect')
               scheduleReconnect('service_restart_detected')
               return
             }
@@ -469,7 +526,6 @@ function App() {
             hints: Record<string, boolean>
           } }
           if (payload.assessment) {
-            console.info('[terminal] readiness event', { assessment: payload.assessment })
             setTerminalReadiness(payload.assessment)
           }
         } catch (err) {
@@ -502,7 +558,6 @@ function App() {
       }
 
       source.addEventListener('open', () => {
-        console.info('[terminal] SSE opened', { budId })
         const wasReconnect = terminalReconnectAttemptRef.current > 0
         terminalReconnectAttemptRef.current = 0
         lastSseEventTimeRef.current = Date.now()
@@ -524,12 +579,11 @@ function App() {
         }, checkInterval)
 
         // Ensure terminal exists and fetch history
-        console.info('[terminal] SSE connected, ensuring terminal and fetching history', { budId, wasReconnect, budIdChanged })
         apiFetch(`/api/terminals/${budId}/ensure`, { method: 'POST' }).catch((err) => {
           console.error('Failed to ensure terminal', err)
         })
         // Fetch history to populate/restore terminal content
-        apiFetch(`/api/terminals/${budId}/history?bytes=16384`)
+        apiFetch(`/api/terminals/${budId}/history?bytes=131072`)
           .then(async (resp) => {
             if (!resp.ok) return
             const body = (await resp.json()) as { data_base64?: string; bytes?: number; total_bytes_available?: number }
@@ -547,14 +601,18 @@ function App() {
                 terminalRef.current.write(decoded)
                 setTerminalHasOutput(true)
                 fitTerminal()
-                console.info('[terminal] history loaded', { bytes: decoded.length, wasReconnect, budIdChanged })
+                // After writing history, terminal is typically scrolled to bottom
+                // Check actual scroll position via buffer
+                const buffer = terminalRef.current.buffer.active
+                const isAtTop = buffer.viewportY === 0
+                setTerminalScrolledToTop(isAtTop)
               }
             }
           })
           .catch((err) => console.error('Failed to load terminal history', err))
       })
-      source.onmessage = (event) => {
-        console.info('[terminal] SSE generic message', { type: event.type, data: event.data?.slice(0, 100) })
+      source.onmessage = () => {
+        // Handled by specific event listeners
       }
 
       source.addEventListener('heartbeat', handleHeartbeat)
@@ -582,7 +640,6 @@ function App() {
     // Close existing SSE - it's stale
     const existingSource = terminalEventSourceRef.current
     if (existingSource) {
-      console.info('[terminal] closing stale SSE due to detected service failure')
       existingSource.close()
       terminalEventSourceRef.current = null
     }
@@ -592,12 +649,10 @@ function App() {
     const pollAndReconnect = async () => {
       while (!cancelled) {
         try {
-          console.info('[terminal] polling service availability...')
           const resp = await apiFetch(`/api/terminals/${budId}/ensure`, {
             method: 'POST'
           })
           if (resp.ok) {
-            console.info('[terminal] service is back, triggering SSE reconnect')
             // Trigger SSE effect to re-run and open new connection
             setSseReconnectTrigger((n) => n + 1)
             break
@@ -630,7 +685,6 @@ function App() {
   const sendTerminalInterrupt = useCallback(async () => {
     if (!budId) return
     try {
-      console.info('[terminal] sending interrupt', { budId })
       const resp = await apiFetch(`/api/terminals/${budId}/interrupt`, { method: 'POST' })
       if (!resp.ok) {
         console.warn('[terminal] interrupt request failed', { status: resp.status })
@@ -641,12 +695,6 @@ function App() {
     }
   }, [budId])
 
-  const handleTerminalCommandSubmit = useCallback(() => {
-    if (!terminalCommandInput.trim()) return
-    // Send command with newline to execute it
-    sendTerminalInput(terminalCommandInput + '\n')
-    setTerminalCommandInput('')
-  }, [terminalCommandInput, sendTerminalInput])
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -785,8 +833,8 @@ function App() {
         />
         <div className="flex flex-1 overflow-hidden">
           <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
-          <div className="relative flex flex-1 flex-col border-l-4 border-black bg-black">
-            <div className="flex-1 relative">
+          <div className="relative flex flex-1 flex-col overflow-hidden border-l-4 border-black bg-black">
+            <div className="flex-1 relative min-h-0 overflow-hidden">
               <div
                 ref={terminalPaneRef}
                 className={`h-full w-full overflow-hidden font-mono text-sm transition-opacity duration-300 ${
@@ -806,51 +854,21 @@ function App() {
                   </div>
                 </div>
               )}
+              {terminalOutputTruncated && terminalScrolledToTop && !showDisconnectOverlay && (
+                <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-2">
+                  <div className="flex items-center gap-2 rounded border border-yellow-600/50 bg-yellow-900/80 px-3 py-1 text-xs text-yellow-400 shadow-lg backdrop-blur-sm">
+                    <span>⚠️</span>
+                    <span>Earlier output truncated</span>
+                  </div>
+                </div>
+              )}
             </div>
             {terminalOverlayMessage && !showDisconnectOverlay && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
                 {terminalOverlayMessage}
               </div>
             )}
-            {terminalOutputTruncated && (
-              <div className="flex items-center gap-2 border-t border-yellow-600/30 bg-yellow-600/10 px-3 py-1.5 text-xs text-yellow-400">
-                <span>⚠️</span>
-                <span>Output truncated. Some earlier output may be missing.</span>
-                <button
-                  type="button"
-                  onClick={() => setTerminalOutputTruncated(false)}
-                  className="ml-auto text-yellow-600 hover:text-yellow-400"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-            <div className="flex items-center gap-2 border-t border-border/50 bg-black/50 px-3 py-2">
-              <span className="text-green-500 font-mono text-sm">$</span>
-              <input
-                type="text"
-                value={terminalCommandInput}
-                onChange={(e) => setTerminalCommandInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleTerminalCommandSubmit()
-                  }
-                }}
-                placeholder="Type command and press Enter..."
-                disabled={terminalConnection !== 'connected'}
-                className="flex-1 bg-transparent text-green-400 font-mono text-sm placeholder:text-muted-foreground/50 focus:outline-none disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={handleTerminalCommandSubmit}
-                disabled={terminalConnection !== 'connected' || !terminalCommandInput.trim()}
-                className="rounded border border-green-600/50 bg-green-600/20 px-3 py-1 font-mono text-xs uppercase tracking-wide text-green-400 transition hover:bg-green-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Send
-              </button>
-            </div>
-            <div className="flex items-center justify-between border-t-4 border-black bg-muted/20 px-4 py-2 text-xs">
+            <div className="flex items-center justify-between border-t border-border/50 bg-muted/20 px-4 py-2 text-xs">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
                   <span
@@ -903,22 +921,60 @@ function App() {
                 {error && <span className="text-destructive">{error}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={sendTerminalInterrupt}
-                  disabled={terminalConnection !== 'connected'}
-                  className="rounded-lg border-2 border-red-600 bg-red-600/20 px-3 py-2 font-mono text-xs uppercase tracking-wide text-red-400 transition hover:bg-red-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Send Ctrl+C to terminal"
-                >
-                  Ctrl+C
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelAgentTurn}
-                  className="rounded-lg border-2 border-black bg-destructive px-3 py-2 font-mono text-xs uppercase tracking-wide text-destructive-foreground transition hover:-translate-y-0.5"
-                >
-                  Stop Agent
-                </button>
+                {(status === 'streaming' || status === 'dispatching') && (
+                  <button
+                    type="button"
+                    onClick={cancelAgentTurn}
+                    className="relative flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition hover:bg-destructive/80"
+                    title="Stop agent"
+                  >
+                    <svg className="absolute h-8 w-8 animate-spin" viewBox="0 0 32 32" fill="none">
+                      <circle
+                        cx="16"
+                        cy="16"
+                        r="14"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeDasharray="60 28"
+                        strokeLinecap="round"
+                        className="opacity-50"
+                      />
+                    </svg>
+                    <Square className="h-3 w-3 fill-current" />
+                  </button>
+                )}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setTerminalMenuOpen((open) => !open)}
+                    className="flex h-8 w-8 items-center justify-center rounded text-muted-foreground transition hover:bg-muted/50 hover:text-foreground"
+                    title="Terminal options"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
+                  {terminalMenuOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setTerminalMenuOpen(false)}
+                      />
+                      <div className="absolute bottom-full right-0 z-20 mb-1 min-w-[160px] rounded-lg border border-border bg-popover py-1 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sendTerminalInterrupt()
+                            setTerminalMenuOpen(false)
+                          }}
+                          disabled={terminalConnection !== 'connected' || terminalReadiness?.ready !== false}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span className="font-mono text-xs text-muted-foreground">Ctrl+C</span>
+                          <span>Interrupt</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>

@@ -402,17 +402,101 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
 { "proto": "0.2", "type": "terminal_…", "id": "msg_01H...", "ts": 1731, "ext": {} }
 ```
 
-* Backend → Bud
-  * `terminal_ensure` — create/adopt the tmux session (optional `config:{shell,cwd,cols,rows}`).
-  * `terminal_input` — base64 terminal bytes, optional `await_ready` hint to request readiness assessment.
-  * `terminal_resize` — resize tmux pane (`rows`,`cols`).
-  * `terminal_interrupt` — send Ctrl+C (optional `await_ready`).
+#### 4.5.1 Backend → Bud Messages
 
-* Bud → Backend
-  * `terminal_status` — current state (`none|creating|ready|active|closed`) plus tmux info.
-  * `terminal_output` — streamed output (`seq`, `data` base64, `byte_offset`).
-  * `terminal_ready` — readiness assessment (`assessment`, `output_since_input` base64, `output_bytes`, `last_line`).
-  * `terminal_close` — optional close/cleanup notification.
+* `terminal_ensure` — create/adopt the tmux session
+  ```json
+  { "proto": "0.2", "type": "terminal_ensure", "id": "...", "ts": 1731,
+    "config": { "shell": "/bin/bash", "cwd": "~", "cols": 200, "rows": 50 }, "ext": {} }
+  ```
+
+* `terminal_input` — send input bytes to terminal
+  ```json
+  { "proto": "0.2", "type": "terminal_input", "id": "...", "ts": 1731,
+    "data": "base64-input-bytes", "await_ready": { "enabled": true }, "ext": {} }
+  ```
+
+* `terminal_resize` — resize tmux pane
+  ```json
+  { "proto": "0.2", "type": "terminal_resize", "id": "...", "ts": 1731,
+    "rows": 40, "cols": 120, "ext": {} }
+  ```
+
+* `terminal_interrupt` — send Ctrl+C (SIGINT)
+  ```json
+  { "proto": "0.2", "type": "terminal_interrupt", "id": "...", "ts": 1731,
+    "await_ready": { "enabled": true }, "ext": {} }
+  ```
+
+* `terminal_close` — close the terminal session
+  ```json
+  { "proto": "0.2", "type": "terminal_close", "id": "...", "ts": 1731,
+    "reason": "requested", "ext": {} }
+  ```
+
+#### 4.5.2 Bud → Backend Messages
+
+* `terminal_status` — current terminal state
+  ```json
+  { "proto": "0.2", "type": "terminal_status", "id": "...", "ts": 1731,
+    "state": "ready", "tmux_session": "bud_term_01H...", "ext": {} }
+  ```
+  States: `none`, `creating`, `ready`, `active`, `idle`, `closed`
+
+* `terminal_output` — streamed output bytes
+  ```json
+  { "proto": "0.2", "type": "terminal_output", "id": "...", "ts": 1731,
+    "seq": 42, "data": "base64-output-bytes", "byte_offset": 12345, "ext": {} }
+  ```
+
+* `terminal_ready` — readiness assessment after input/command
+  ```json
+  { "proto": "0.2", "type": "terminal_ready", "id": "...", "ts": 1731,
+    "assessment": {
+      "ready": true,
+      "confidence": 0.95,
+      "trigger": "prompt_detected",
+      "prompt_type": "shell",
+      "hints": {
+        "looks_like_prompt": true,
+        "looks_like_confirmation": false,
+        "looks_like_password": false,
+        "looks_like_pager": false,
+        "looks_like_error": false,
+        "may_still_be_processing": false
+      }
+    },
+    "output_bytes": 1234,
+    "last_line": "user@host:~$ ",
+    "ext": {}
+  }
+  ```
+
+  **Readiness Assessment Fields:**
+  * `ready`: boolean — terminal is ready for next input
+  * `confidence`: 0.0–1.0 — confidence level (≥0.8 high, 0.5–0.8 medium, <0.5 low)
+  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt`
+  * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
+  * `hints`: object of boolean flags for agent decision-making
+
+#### 4.5.3 Terminal SSE Events (Backend → Browser)
+
+The browser receives terminal events via SSE at `/api/terminals/:budId/stream`:
+
+* `terminal.output` — base64 output bytes for xterm.js
+* `terminal.status` — terminal state changes
+* `terminal.ready` — readiness assessments for UI display
+* `heartbeat` — keep-alive (1s dev, 5s prod)
+
+#### 4.5.4 Terminal REST Endpoints
+
+* `POST /api/terminals/:budId/ensure` — ensure terminal exists
+* `GET /api/terminals/:budId/status` — get current status
+* `GET /api/terminals/:budId/history?bytes=N` — fetch output history
+* `POST /api/terminals/:budId/input` — send input `{ input: "..." }`
+* `POST /api/terminals/:budId/interrupt` — send Ctrl+C
+* `GET /api/terminals/:budId/metrics` — per-terminal metrics
+* `GET /api/terminals/metrics` — aggregate metrics
 
 > Implementations MUST treat `ext` as reserved for forward compatibility; unknown fields MUST be ignored.
 
