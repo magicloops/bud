@@ -1037,11 +1037,12 @@ export class AgentService {
   private async fetchBudForThread(threadId: string): Promise<{ budId: string }> {
     const thread = await db.query.threadTable.findFirst({
       where: eq(threadTable.threadId, threadId),
-      columns: { budId: threadTable.budId }
+      columns: { budId: true }
     });
     if (!thread) {
       throw new Error("thread not found");
     }
+    this.logger.info({ threadId, budId: thread.budId }, "Resolved budId for thread");
     return { budId: thread.budId };
   }
 

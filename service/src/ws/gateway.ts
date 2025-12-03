@@ -180,10 +180,14 @@ interface SessionTracker {
 const sessions = new Map<string, SessionTracker>();
 let gatewayLogger: FastifyBaseLogger | null = null;
 
+export function getActiveBudIds(): string[] {
+  return Array.from(sessions.keys());
+}
+
 export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
   const session = sessions.get(budId);
   if (!session) {
-    logDebug({ budId }, "No active session for bud; dropping frame ");
+    logDebug({ budId, activeBuds: getActiveBudIds() }, "No active session for bud; dropping frame ");
     return false;
   }
   if (session.socket.readyState !== session.socket.OPEN) {

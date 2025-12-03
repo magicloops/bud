@@ -1,8 +1,21 @@
 # Bud PoC Progress — Persistent Terminal
 
-_Last updated: 2025-11-30_
+_Last updated: 2025-12-02_
 
 ## What's implemented (recent)
+
+### UI Fixes & View Toggle Restoration (2025-12-02)
+- **View toggle restored**: Re-added Terminal/Web view toggle to `WorkspaceTopBar` that was removed during refactor. Terminal pane stays mounted (preserving xterm instance) while web view placeholder overlays on top.
+- **Removed redundant command input bar**: Users type directly in xterm terminal.
+- **Fixed terminal overflow**: Added `min-h-0 overflow-hidden` to flex containers.
+- **Improved button UX**: Moved Ctrl+C behind menu (only enabled when terminal not ready), Stop Agent button only shows during streaming/dispatching with spinner.
+- **Fixed truncation banner**: Only shows when scrolled to top of terminal.
+- **Fixed xterm initialization error**: Changed to dynamic import + wait for container dimensions before `term.open()`.
+- **Added input batching**: 20ms debounce to reduce HTTP overhead for terminal input.
+
+### Agent-Terminal Bug Fix (2025-12-02)
+- **Fixed budId lookup**: Corrected Drizzle query syntax in `fetchBudForThread()` from `columns: { budId: threadTable.budId }` to `columns: { budId: true }`. This was causing the agent to look up an undefined budId.
+- **Added diagnostic logging**: `getActiveBudIds()` exported from gateway, logged when frame send fails.
 
 ### Phase 5: UI Alignment (2025-11-30)
 - **Interrupt button**: Added "Ctrl+C" button that sends interrupt signal to terminal via `/api/terminals/:budId/interrupt`.
@@ -58,23 +71,52 @@ _Last updated: 2025-11-30_
 | Phase 4: Readiness + Robustness | ✅ Complete |
 | Phase 5: UI alignment | ✅ Complete |
 
-## All Phases Complete!
+## Known Issues (2025-12-02)
 
-The Persistent Terminal feature is now fully implemented across all five phases:
-- Bud-side tmux terminal with pipe-pane output capture
-- Backend terminal manager with DB persistence and SSE streaming
-- Agent tools (terminal.run/observe/interrupt) with readiness integration
-- Robustness features (ANSI stripping, CRLF normalization, idle timers, metrics)
-- UI features (input box, interrupt button, readiness display, truncation hints)
+Three critical issues identified during agent testing:
 
-## Cleanup & Docs (2025-11-30)
-- ✅ Removed temporary debug logs from service and frontend
-- ✅ Updated `/docs/proto.md` §4.5 with full terminal protocol spec
-- ✅ Updated `/AGENTS.md` with terminal tools and protocol reference
-- ✅ Created `/docs/terminal-testing.md` with test strategy and coverage goals
+### Issue 1: Agent Messages Not Streaming
+- Agent messages don't appear in UI until page refresh
+- Web client never opens SSE for agent messages
+- Agent emits to `sessionId` but no listener exists
+- **Plan:** `plan/fix-agent-message-streaming.md`
+
+### Issue 2: Terminal Output Shows Stale/Mixed Data
+- `tailOutput()` has no cursor tracking - always returns last N rows
+- No way to request "output since sequence X"
+- Old session data appears mixed with new commands
+- **Plan:** `plan/fix-agent-terminal-output-race.md`
+
+### Issue 3: Agent Sees Stale Terminal Output
+- Race condition: readiness signal fires BEFORE output stored in DB
+- Agent reads from DB immediately after readiness, but output hasn't been persisted yet
+- Agent responds based on incomplete/stale data
+- **Plan:** `plan/fix-agent-terminal-output-race.md`
+
+## Debug Documentation (2025-12-02)
+- `debug/agent-terminal-bud-offline.md` - Investigation of "bud_offline" error (fixed)
+- `debug/agent-terminal-communication-issues.md` - Comprehensive analysis of agent-terminal issues
+- `debug/xterm-dimensions-error.md` - xterm initialization timing fix
+
+## Planning Documents
+- `plan/interactive-sessions-status.md` - Current branch status and what's working/missing
+- `plan/fix-agent-terminal-output-race.md` - Plan to fix Issues 2 & 3 (ring buffer approach)
+- `plan/fix-agent-message-streaming.md` - Plan to fix Issue 1 (restore SSE streaming)
+- `plan/terminal-tests.md` - Test plan for terminal features
 
 ## Remaining TODOs
+
+### Critical (Blocking Agent Use)
+- [ ] Fix agent terminal output race condition (Issues 2 & 3) - see `plan/fix-agent-terminal-output-race.md`
+- [ ] Fix agent message streaming (Issue 1) - see `plan/fix-agent-message-streaming.md`
+
+### Testing
 - [ ] Implement Bud unit tests for readiness detector
 - [ ] Add backend integration tests with mock Bud WebSocket
 - [ ] Add frontend tests with mocked EventSource
 - [ ] Set up E2E tests with real tmux in CI
+
+### Future
+- [ ] Terminal history pagination with S3 storage
+- [ ] Terminal resize handling
+- [ ] Multi-terminal support
