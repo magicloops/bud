@@ -33,7 +33,7 @@ export const config = {
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
-  agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 5),
+  agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 30),
   agentMaxOutputTokens: toNumber(process.env.AGENT_MAX_OUTPUT_TOKENS, 128000),
   agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "none"),
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),

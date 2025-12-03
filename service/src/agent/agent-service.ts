@@ -50,6 +50,13 @@ type TerminalCallResult = {
   lastLine: string;
   truncated: boolean;
   omittedLines: number;
+  context?: {
+    mode: "shell" | "repl" | "unknown";
+    program?: string;
+    programDisplayName?: string;
+    interactionStyle?: string;
+    hints?: string[];
+  };
 };
 
 const SYSTEM_PROMPT = `
@@ -74,6 +81,35 @@ Guidelines:
   - looks_like_pager: In a pager like less/more (send 'q' to exit, space to continue)
   - may_still_be_processing: Output suggests command is still running
 - Use interrupt if a command hangs or you need to stop it.
+
+CONTEXT AWARENESS (CRITICAL):
+Tool results include a "context" field indicating what program is currently running in the terminal.
+- When context.mode is "shell": You are at a shell prompt. Send shell commands.
+- When context.mode is "repl": You are INSIDE an interactive program, NOT at a shell.
+  * The context.program field tells you which program (e.g., "claude", "python", "node")
+  * The context.hints array provides program-specific interaction guidance
+  * DO NOT send shell commands - they will be interpreted as input to the REPL
+
+IMPORTANT REPL-SPECIFIC BEHAVIOR:
+- When context.program is "claude" (Claude Code):
+  * You are inside an AI coding assistant
+  * Use NATURAL LANGUAGE requests, not shell commands
+  * Ask Claude to perform tasks: "Please review src/main.rs for bugs"
+  * To run shell commands, ask Claude: "Run npm test"
+  * Do NOT send raw shell syntax like "cat file.txt" - Claude will misinterpret it
+  * To exit, send "exit\\n" or use terminal.interrupt
+- When context.program is "python" or "python3":
+  * Send Python code, not shell commands
+  * Use print() to display output
+- When context.program is "node":
+  * Send JavaScript code, not shell commands
+  * Use console.log() for output
+- When context.program is "psql", "mysql", or "sqlite3":
+  * Send SQL commands, not shell commands
+  * Commands typically end with semicolons
+
+Always check context.hints for additional program-specific guidance.
+
 - When done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
 `.trim();
 
@@ -839,6 +875,19 @@ export class AgentService {
   ): Promise<TerminalCallResult> {
     const bud = await this.fetchBudForThread(threadId);
     await this.terminalManager.ensureTerminal(bud.budId);
+
+    // Helper to get context for tool results
+    const getContext = () => {
+      const ctx = this.terminalManager.getTerminalContext(bud.budId);
+      return {
+        mode: ctx.mode,
+        program: ctx.program,
+        programDisplayName: ctx.programDisplayName,
+        interactionStyle: ctx.interactionStyle,
+        hints: ctx.hints
+      };
+    };
+
     if (directive.tool === "terminal.interrupt") {
       await this.terminalManager.sendInterrupt(bud.budId);
       const readiness = await this.terminalManager.waitForReadiness(
@@ -860,7 +909,8 @@ export class AgentService {
         readiness: finalReadiness,
         lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
         truncated: tail.data.length < tail.totalBytes,
-        omittedLines: 0
+        omittedLines: 0,
+        context: getContext()
       };
     }
     if (directive.tool === "terminal.observe") {
@@ -883,7 +933,8 @@ export class AgentService {
         readiness: finalReadiness,
         lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
         truncated: tail.data.length < tail.totalBytes,
-        omittedLines: 0
+        omittedLines: 0,
+        context: getContext()
       };
     }
     // terminal.run
@@ -948,7 +999,8 @@ export class AgentService {
       readiness: finalReadiness,
       lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
       truncated: tail.data.length < tail.totalBytes,
-      omittedLines: 0
+      omittedLines: 0,
+      context: getContext()
     };
   }
 
@@ -1013,7 +1065,8 @@ export class AgentService {
       readiness: result.readiness,
       last_line: result.lastLine,
       truncated: result.truncated,
-      omitted_lines: result.omittedLines
+      omitted_lines: result.omittedLines,
+      context: result.context
     };
     await db.insert(messageTable).values({
       threadId,
@@ -1022,7 +1075,8 @@ export class AgentService {
       content: JSON.stringify(payload),
       metadata: payload
     });
-      const preview = `${directive.tool} ready=${(result.readiness as { ready?: boolean }).ready ?? false}`;
+    const contextInfo = result.context?.mode === "repl" ? ` [${result.context.program}]` : "";
+    const preview = `${directive.tool} ready=${(result.readiness as { ready?: boolean }).ready ?? false}${contextInfo}`;
     await recordThreadMessageMetadata(threadId, preview);
     return payload;
   }

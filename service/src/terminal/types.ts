@@ -112,3 +112,23 @@ export interface TerminalReadyMessage extends TerminalEnvelope {
   output_bytes: number;
   last_line: string;
 }
+
+// Command stack tracking types
+
+export interface PendingCommand {
+  input: string; // Raw input sent, e.g., "claude\n"
+  command: string; // Parsed command name, e.g., "claude"
+  sentAt: number; // Timestamp when sent
+  source: "agent" | "user" | "system"; // Who sent this command
+}
+
+export type TerminalContextMode = "shell" | "repl" | "unknown";
+
+export interface TerminalContext {
+  mode: TerminalContextMode;
+  pendingCommand?: PendingCommand;
+  program?: string;
+  programDisplayName?: string;
+  interactionStyle?: string;
+  hints?: string[];
+}

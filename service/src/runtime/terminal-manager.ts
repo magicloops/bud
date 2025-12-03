@@ -10,8 +10,9 @@ import {
 } from "../db/schema.js";
 import { config, TERMINAL_PROTO_VERSION } from "../config.js";
 import { sendFrameToBud } from "../ws/gateway.js";
-import type { TerminalState } from "../terminal/types.js";
+import type { TerminalState, PendingCommand, TerminalContext, ReadinessAssessment } from "../terminal/types.js";
 import { TerminalEventBus } from "./event-bus.js";
+import { isKnownReplProgram, getProgramInfo } from "../terminal/known-programs.js";
 
 // =============================================================================
 // TODO: Terminal Output Storage Architecture
@@ -71,16 +72,93 @@ type TerminalOutputPayload = {
   byte_offset: number;
 };
 
+// Timeout for clearing stale pending commands (30 minutes)
+const STALE_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
+
 export class TerminalManager {
   private readonly logger: FastifyBaseLogger;
   private readonly events: TerminalEventBus;
   private readonly readiness = new Map<string, { assessment: unknown; updatedAt: number }>();
   // Track last known byte offset per terminal (see TODO comment at top of file)
   private readonly lastOffsets = new Map<string, number>();
+  // Track pending commands per terminal for context awareness
+  private readonly pendingCommands = new Map<string, PendingCommand | null>();
 
   constructor(logger: FastifyBaseLogger, events: TerminalEventBus) {
     this.logger = logger;
     this.events = events;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Command Stack Tracking (for REPL context awareness)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Parse the command name from raw terminal input.
+   * Extracts the first word (command) from input like "claude\n" or "python3 script.py\n".
+   */
+  private parseCommandFromInput(input: string): string | null {
+    // Remove trailing newlines and whitespace
+    const trimmed = input.replace(/[\r\n]+$/, "").trim();
+    if (!trimmed) return null;
+
+    // Extract first word (the command)
+    const firstWord = trimmed.split(/\s+/)[0];
+    if (!firstWord) return null;
+
+    // Handle common patterns:
+    // - "claude" -> "claude"
+    // - "./script.sh" -> "script.sh"
+    // - "/usr/bin/python" -> "python"
+    // - "python3 script.py" -> "python3"
+    const basename = firstWord.split("/").pop() || firstWord;
+    return basename.replace(/^\.\//, "");
+  }
+
+  /**
+   * Get the current terminal context (shell vs REPL).
+   * Used by the agent to understand how to interact with the terminal.
+   */
+  getTerminalContext(budId: string): TerminalContext {
+    // Clean up stale commands first
+    this.cleanupStaleCommand(budId);
+
+    const pending = this.pendingCommands.get(budId);
+
+    if (!pending) {
+      return { mode: "shell" };
+    }
+
+    const programInfo = getProgramInfo(pending.command);
+    if (!programInfo) {
+      return {
+        mode: "unknown",
+        pendingCommand: pending
+      };
+    }
+
+    return {
+      mode: "repl",
+      pendingCommand: pending,
+      program: programInfo.name,
+      programDisplayName: programInfo.displayName,
+      interactionStyle: programInfo.interactionStyle,
+      hints: programInfo.hints
+    };
+  }
+
+  /**
+   * Clean up commands that have been pending for too long.
+   */
+  private cleanupStaleCommand(budId: string): void {
+    const pending = this.pendingCommands.get(budId);
+    if (pending && Date.now() - pending.sentAt > STALE_COMMAND_TIMEOUT_MS) {
+      this.logger.warn(
+        { budId, command: pending.command, component: "terminal_manager" },
+        "Clearing stale pending command"
+      );
+      this.pendingCommands.set(budId, null);
+    }
   }
 
   /**
@@ -98,6 +176,7 @@ export class TerminalManager {
   clearTerminalCache(budId: string): void {
     this.readiness.delete(budId);
     this.lastOffsets.delete(budId);
+    this.pendingCommands.delete(budId);
   }
 
   async ensureTerminal(budId: string, configOverride?: TerminalEnsureConfig): Promise<{ ok: boolean; error?: string }> {
@@ -147,6 +226,26 @@ export class TerminalManager {
     data: Buffer,
     options: { source?: "agent" | "user" | "system"; runId?: string; userId?: string } = {}
   ): Promise<{ ok: boolean; error?: string }> {
+    const inputStr = data.toString("utf-8");
+    const source = options.source ?? "agent";
+
+    // Track command if:
+    // 1. We're currently in shell mode (no pending command)
+    // 2. Input contains a newline (actually executing something)
+    // 3. The command is a known REPL program
+    if (!this.pendingCommands.get(budId) && inputStr.includes("\n")) {
+      const command = this.parseCommandFromInput(inputStr);
+      if (command && isKnownReplProgram(command)) {
+        this.pendingCommands.set(budId, {
+          input: inputStr,
+          command,
+          sentAt: Date.now(),
+          source
+        });
+        this.debug("tracking pending command", { budId, command, source });
+      }
+    }
+
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_input",
@@ -167,7 +266,7 @@ export class TerminalManager {
     this.debug("terminal_input forwarded", {
       budId,
       bytes: data.length,
-      source: options.source ?? "agent"
+      source
     });
     return { ok: true };
   }
@@ -186,6 +285,14 @@ export class TerminalManager {
       this.logger.warn({ budId }, "Failed to send terminal_interrupt (bud offline)");
       return { ok: false, error: "bud_offline" };
     }
+
+    // Clear pending command - interrupt usually exits REPLs
+    const pending = this.pendingCommands.get(budId);
+    if (pending) {
+      this.debug("clearing pending command due to interrupt", { budId, command: pending.command });
+      this.pendingCommands.set(budId, null);
+    }
+
     return { ok: true };
   }
 
@@ -331,6 +438,26 @@ export class TerminalManager {
 
   async handleTerminalReady(budId: string, assessment: unknown): Promise<void> {
     this.readiness.set(budId, { assessment, updatedAt: Date.now() });
+
+    // Clear pending command if we're back at a shell prompt
+    const typed = assessment as ReadinessAssessment | undefined;
+    if (
+      typed?.prompt_type === "shell" &&
+      typed.confidence >= 0.8 &&
+      typed.hints?.looks_like_prompt
+    ) {
+      const pending = this.pendingCommands.get(budId);
+      if (pending) {
+        const durationMs = Date.now() - pending.sentAt;
+        this.debug("clearing pending command - returned to shell", {
+          budId,
+          command: pending.command,
+          durationMs
+        });
+        this.pendingCommands.set(budId, null);
+      }
+    }
+
     this.events.emit(budId, {
       event: "terminal.ready",
       data: { assessment },

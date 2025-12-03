@@ -851,21 +851,46 @@ impl TerminalManager {
             "terminal_input received"
         );
         let input = String::from_utf8_lossy(&data).to_string();
-        let status = Command::new("tmux")
-            .args(["send-keys", "-t", &handle.session_name, "-l", &input])
-            .status()
-            .await
-            .with_context(|| "failed to dispatch tmux send-keys")?;
-        if !status.success() {
-            warn!(message_id = %frame.envelope.id, "tmux send-keys failed");
-        } else {
-            info!(
-                message_id = %frame.envelope.id,
-                bytes = input.len(),
-                session = %handle.session_name,
-                "tmux send-keys succeeded"
-            );
+
+        // Split input into text and trailing newlines.
+        // Send text literally with -l (safe, no escaping needed), then send Enter keys separately.
+        // This ensures Enter is interpreted as the Enter key, not a literal newline character.
+        // Important for TUI applications like Claude Code that handle Enter specially.
+        let trimmed_end = input.trim_end_matches(|c| c == '\n' || c == '\r');
+        let newline_count = input.len() - trimmed_end.len();
+
+        // Send the text content (if any) literally
+        if !trimmed_end.is_empty() {
+            let status = Command::new("tmux")
+                .args(["send-keys", "-t", &handle.session_name, "-l", trimmed_end])
+                .status()
+                .await
+                .with_context(|| "failed to dispatch tmux send-keys (text)")?;
+            if !status.success() {
+                warn!(message_id = %frame.envelope.id, "tmux send-keys (text) failed");
+            }
         }
+
+        // Send Enter key(s) for each newline
+        for _ in 0..newline_count {
+            let status = Command::new("tmux")
+                .args(["send-keys", "-t", &handle.session_name, "Enter"])
+                .status()
+                .await
+                .with_context(|| "failed to dispatch tmux send-keys (Enter)")?;
+            if !status.success() {
+                warn!(message_id = %frame.envelope.id, "tmux send-keys (Enter) failed");
+            }
+        }
+
+        info!(
+            message_id = %frame.envelope.id,
+            bytes = input.len(),
+            text_bytes = trimmed_end.len(),
+            enter_count = newline_count,
+            session = %handle.session_name,
+            "tmux send-keys succeeded"
+        );
         if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
                 let detector = ReadinessDetector::new(
@@ -2171,6 +2196,14 @@ fn now_millis() -> u64 {
 }
 
 fn default_shell() -> &'static str {
+    // Respect user's configured shell from $SHELL
+    if let Ok(shell) = std::env::var("SHELL") {
+        if Path::new(&shell).exists() {
+            // Leak the string to get a static reference (acceptable for startup config)
+            return Box::leak(shell.into_boxed_str());
+        }
+    }
+    // Fallback to bash or sh
     if Path::new("/bin/bash").exists() {
         "/bin/bash"
     } else {

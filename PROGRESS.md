@@ -4,6 +4,18 @@ _Last updated: 2025-12-03_
 
 ## What's implemented (recent)
 
+### Agent Terminal Context Awareness (2025-12-03)
+- **Problem**: Agent didn't know when it was inside a REPL (Claude Code, python, node, etc.), causing it to send shell commands instead of REPL-appropriate input.
+- **Solution**: Command stack tracking - when agent starts a known REPL program, we track it as "pending" and provide context to subsequent tool calls.
+- **Implementation**:
+  - Added `KNOWN_PROGRAMS` registry in `service/src/terminal/known-programs.ts` with 20+ programs (claude, python, node, psql, etc.)
+  - Added `pendingCommands` tracking to TerminalManager
+  - Tool results now include `context` field with mode (shell/repl), program name, and interaction hints
+  - System prompt updated with REPL-specific guidance (e.g., "use natural language with Claude Code")
+  - Context clears on shell return (high-confidence shell prompt) or interrupt
+- **Design:** `design/agent-terminal-context-awareness.md`
+- **Plan:** `plan/agent-command-stack-tracking.md`
+
 ### Terminal Resize Sync (2025-12-03)
 - **Fixed TUI rendering**: Claude Code and other terminal UI applications now render correctly in the web terminal.
 - **Root cause**: Terminal dimensions weren't synchronized between xterm.js (80-120 cols) and tmux (default 200x50).
