@@ -69,6 +69,7 @@ function App() {
     return stored === null ? true : stored === 'true'
   })
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
+  const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
   const [terminalState, setTerminalState] = useState<string>('idle')
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
   const [terminalConnection, setTerminalConnection] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
@@ -855,22 +856,37 @@ function App() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <WorkspaceTopBar
           budLabel={activeBudProfile?.label ?? 'Select a Bud'}
+          view={viewMode}
+          onViewChange={setViewMode}
           onToggleThreads={() => setThreadPanelOpen((open) => !open)}
           status={status}
         />
         <div className="flex flex-1 overflow-hidden">
           <ChatTimeline messages={chatMessages} accentColor={palette.vibrant} />
           <div className="relative flex flex-1 flex-col overflow-hidden border-l-4 border-black bg-black">
-            <div className="flex-1 relative min-h-0 overflow-hidden">
+            {/* Web view placeholder - shown when viewMode is 'web' */}
+            {viewMode === 'web' && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-muted/30 p-8 text-center">
+                <div className="rounded-2xl border-4 border-black bg-card px-10 py-8 shadow-[6px_6px_0px_rgba(0,0,0,1)]">
+                  <p className="text-lg font-mono font-semibold text-card-foreground">Web preview placeholder</p>
+                  <p className="text-sm text-muted-foreground">Screencasts or browser mirroring will live here.</p>
+                </div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  {status === 'streaming' ? 'Collecting output…' : 'No remote output yet'}
+                </p>
+              </div>
+            )}
+            {/* Terminal pane - always mounted to preserve xterm instance */}
+            <div className={`flex-1 relative min-h-0 overflow-hidden ${viewMode === 'web' ? 'invisible' : ''}`}>
               <div
                 ref={terminalPaneRef}
                 className={`h-full w-full overflow-hidden font-mono text-sm transition-opacity duration-300 ${
                   showDisconnectOverlay ? 'opacity-40' : 'opacity-100'
                 }`}
-                style={{ pointerEvents: terminalConnection === 'connected' ? 'auto' : 'none' }}
+                style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
                 onClick={() => terminalRef.current?.focus()}
               />
-              {showDisconnectOverlay && (
+              {showDisconnectOverlay && viewMode === 'terminal' && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="flex items-center gap-2 rounded-lg border-2 border-yellow-500/50 bg-yellow-500/20 px-4 py-2 text-yellow-200">
                     <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -881,7 +897,7 @@ function App() {
                   </div>
                 </div>
               )}
-              {terminalOutputTruncated && terminalScrolledToTop && !showDisconnectOverlay && (
+              {terminalOutputTruncated && terminalScrolledToTop && !showDisconnectOverlay && viewMode === 'terminal' && (
                 <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center p-2">
                   <div className="flex items-center gap-2 rounded border border-yellow-600/50 bg-yellow-900/80 px-3 py-1 text-xs text-yellow-400 shadow-lg backdrop-blur-sm">
                     <span>⚠️</span>
@@ -890,120 +906,122 @@ function App() {
                 </div>
               )}
             </div>
-            {terminalOverlayMessage && !showDisconnectOverlay && (
+            {terminalOverlayMessage && !showDisconnectOverlay && viewMode === 'terminal' && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-muted-foreground">
                 {terminalOverlayMessage}
               </div>
             )}
-            <div className="flex items-center justify-between border-t border-border/50 bg-muted/20 px-4 py-2 text-xs">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`h-2 w-2 rounded-full ${
-                      terminalConnection === 'connected'
-                        ? 'bg-green-500'
-                        : terminalConnection === 'reconnecting'
-                          ? 'bg-yellow-500 animate-pulse'
-                          : 'bg-red-500'
-                    }`}
-                  />
-                  <span className="font-mono font-semibold uppercase tracking-wide">
-                    {terminalSupported
-                      ? terminalConnectionLabel ?? `Terminal: ${terminalState}`
-                      : 'Terminal unavailable'}
-                  </span>
-                </div>
-                {terminalReadiness && terminalConnection === 'connected' && (
-                  <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+            {viewMode === 'terminal' && (
+              <div className="flex items-center justify-between border-t border-border/50 bg-muted/20 px-4 py-2 text-xs">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <span
                       className={`h-2 w-2 rounded-full ${
-                        terminalReadiness.ready
-                          ? 'bg-green-400'
-                          : terminalReadiness.confidence > 0.5
-                            ? 'bg-yellow-400'
-                            : 'bg-orange-400 animate-pulse'
+                        terminalConnection === 'connected'
+                          ? 'bg-green-500'
+                          : terminalConnection === 'reconnecting'
+                            ? 'bg-yellow-500 animate-pulse'
+                            : 'bg-red-500'
                       }`}
                     />
-                    <span className="font-mono text-muted-foreground">
-                      {terminalReadiness.ready
-                        ? 'Ready'
-                        : terminalReadiness.confidence > 0.5
-                          ? 'Waiting...'
-                          : 'Processing...'}
+                    <span className="font-mono font-semibold uppercase tracking-wide">
+                      {terminalSupported
+                        ? terminalConnectionLabel ?? `Terminal: ${terminalState}`
+                        : 'Terminal unavailable'}
                     </span>
-                    {terminalReadiness.hints.looks_like_password && (
-                      <span className="text-yellow-400" title="Password prompt detected">🔐</span>
-                    )}
-                    {terminalReadiness.hints.looks_like_confirmation && (
-                      <span className="text-blue-400" title="Confirmation prompt (y/n)">❓</span>
-                    )}
-                    {terminalReadiness.hints.looks_like_pager && (
-                      <span className="text-cyan-400" title="In pager (press q to exit)">📄</span>
-                    )}
-                    {terminalReadiness.hints.looks_like_error && (
-                      <span className="text-red-400" title="Error detected">⚠️</span>
+                  </div>
+                  {terminalReadiness && terminalConnection === 'connected' && (
+                    <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          terminalReadiness.ready
+                            ? 'bg-green-400'
+                            : terminalReadiness.confidence > 0.5
+                              ? 'bg-yellow-400'
+                              : 'bg-orange-400 animate-pulse'
+                        }`}
+                      />
+                      <span className="font-mono text-muted-foreground">
+                        {terminalReadiness.ready
+                          ? 'Ready'
+                          : terminalReadiness.confidence > 0.5
+                            ? 'Waiting...'
+                            : 'Processing...'}
+                      </span>
+                      {terminalReadiness.hints.looks_like_password && (
+                        <span className="text-yellow-400" title="Password prompt detected">🔐</span>
+                      )}
+                      {terminalReadiness.hints.looks_like_confirmation && (
+                        <span className="text-blue-400" title="Confirmation prompt (y/n)">❓</span>
+                      )}
+                      {terminalReadiness.hints.looks_like_pager && (
+                        <span className="text-cyan-400" title="In pager (press q to exit)">📄</span>
+                      )}
+                      {terminalReadiness.hints.looks_like_error && (
+                        <span className="text-red-400" title="Error detected">⚠️</span>
+                      )}
+                    </div>
+                  )}
+                  {error && <span className="text-destructive">{error}</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {(status === 'streaming' || status === 'dispatching') && (
+                    <button
+                      type="button"
+                      onClick={cancelAgentTurn}
+                      className="relative flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition hover:bg-destructive/80"
+                      title="Stop agent"
+                    >
+                      <svg className="absolute h-8 w-8 animate-spin" viewBox="0 0 32 32" fill="none">
+                        <circle
+                          cx="16"
+                          cy="16"
+                          r="14"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeDasharray="60 28"
+                          strokeLinecap="round"
+                          className="opacity-50"
+                        />
+                      </svg>
+                      <Square className="h-3 w-3 fill-current" />
+                    </button>
+                  )}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setTerminalMenuOpen((open) => !open)}
+                      className="flex h-8 w-8 items-center justify-center rounded text-muted-foreground transition hover:bg-muted/50 hover:text-foreground"
+                      title="Terminal options"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </button>
+                    {terminalMenuOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-10"
+                          onClick={() => setTerminalMenuOpen(false)}
+                        />
+                        <div className="absolute bottom-full right-0 z-20 mb-1 min-w-[160px] rounded-lg border border-border bg-popover py-1 shadow-lg">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              sendTerminalInterrupt()
+                              setTerminalMenuOpen(false)
+                            }}
+                            disabled={terminalConnection !== 'connected' || terminalReadiness?.ready !== false}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <span className="font-mono text-xs text-muted-foreground">Ctrl+C</span>
+                            <span>Interrupt</span>
+                          </button>
+                        </div>
+                      </>
                     )}
                   </div>
-                )}
-                {error && <span className="text-destructive">{error}</span>}
-              </div>
-              <div className="flex items-center gap-2">
-                {(status === 'streaming' || status === 'dispatching') && (
-                  <button
-                    type="button"
-                    onClick={cancelAgentTurn}
-                    className="relative flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition hover:bg-destructive/80"
-                    title="Stop agent"
-                  >
-                    <svg className="absolute h-8 w-8 animate-spin" viewBox="0 0 32 32" fill="none">
-                      <circle
-                        cx="16"
-                        cy="16"
-                        r="14"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeDasharray="60 28"
-                        strokeLinecap="round"
-                        className="opacity-50"
-                      />
-                    </svg>
-                    <Square className="h-3 w-3 fill-current" />
-                  </button>
-                )}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setTerminalMenuOpen((open) => !open)}
-                    className="flex h-8 w-8 items-center justify-center rounded text-muted-foreground transition hover:bg-muted/50 hover:text-foreground"
-                    title="Terminal options"
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </button>
-                  {terminalMenuOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-10"
-                        onClick={() => setTerminalMenuOpen(false)}
-                      />
-                      <div className="absolute bottom-full right-0 z-20 mb-1 min-w-[160px] rounded-lg border border-border bg-popover py-1 shadow-lg">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            sendTerminalInterrupt()
-                            setTerminalMenuOpen(false)
-                          }}
-                          disabled={terminalConnection !== 'connected' || terminalReadiness?.ready !== false}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <span className="font-mono text-xs text-muted-foreground">Ctrl+C</span>
-                          <span>Interrupt</span>
-                        </button>
-                      </div>
-                    </>
-                  )}
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
         <CommandComposer
