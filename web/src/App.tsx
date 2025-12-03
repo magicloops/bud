@@ -104,6 +104,7 @@ function App() {
   const terminalReadyRef = useRef(false)
   const terminalInputBufferRef = useRef<string>('')
   const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentEventSourceRef = useRef<EventSource | null>(null)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
     if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
@@ -156,6 +157,7 @@ function App() {
   useEffect(() => {
     return () => {
       terminalEventSourceRef.current?.close()
+      agentEventSourceRef.current?.close()
       if (terminalInputFlushTimerRef.current) {
         clearTimeout(terminalInputFlushTimerRef.current)
       }
@@ -701,6 +703,9 @@ function App() {
 
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return
+    // Close agent SSE connection immediately
+    agentEventSourceRef.current?.close()
+    agentEventSourceRef.current = null
     try {
       await apiFetch(`/api/threads/${threadId}/cancel`, { method: 'POST' })
       setStatus('idle')
@@ -778,8 +783,63 @@ function App() {
         const body = await messageResp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
-      await fetchMessages(currentThreadId)
+
+      // Get sessionId from response and connect to SSE stream
+      const { sessionId } = (await messageResp.json()) as { messageId: string; sessionId: string }
+
+      // Close any existing agent SSE connection
+      agentEventSourceRef.current?.close()
+
+      // Connect to session stream for agent events
+      const source = new EventSource(buildApiUrl(`/api/sessions/${sessionId}/stream`))
+      agentEventSourceRef.current = source
       setStatus('streaming')
+
+      // Capture currentThreadId for use in event handlers
+      const threadIdForHandlers = currentThreadId
+
+      source.addEventListener('agent.tool_call', (evt) => {
+        try {
+          const data = JSON.parse(evt.data) as { name: string; args: unknown }
+          console.log('[Agent] Tool call:', data.name, data.args)
+        } catch (e) {
+          console.warn('Failed to parse agent.tool_call event', e)
+        }
+      })
+
+      source.addEventListener('agent.message', (evt) => {
+        try {
+          const data = JSON.parse(evt.data) as { text: string }
+          setMessages((prev) => [
+            ...prev,
+            {
+              message_id: `streaming_${Date.now()}`,
+              role: 'assistant',
+              display_role: 'Assistant',
+              content: data.text,
+              created_at: new Date().toISOString()
+            }
+          ])
+        } catch (e) {
+          console.warn('Failed to parse agent.message event', e)
+        }
+      })
+
+      source.addEventListener('final', () => {
+        source.close()
+        agentEventSourceRef.current = null
+        setStatus('idle')
+        // Fetch final messages to get real IDs and ensure consistency
+        fetchMessages(threadIdForHandlers)
+      })
+
+      source.addEventListener('error', () => {
+        source.close()
+        agentEventSourceRef.current = null
+        setStatus('idle')
+        // Fetch messages in case some were persisted before error
+        fetchMessages(threadIdForHandlers)
+      })
     } catch (err) {
       setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
       setStatus('idle')

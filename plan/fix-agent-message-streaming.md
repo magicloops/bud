@@ -1,260 +1,452 @@
 # Plan: Fix Agent Message Streaming to Web Client
 
+**Status: ✅ IMPLEMENTED (2025-12-02)**
+
 ## Problem Statement
 
 Agent messages don't stream to the web client in real-time. Users must refresh the page to see agent responses.
 
 ## Background
 
-This functionality **used to work** on `origin/main`. During the interactive sessions refactor, the streaming connection was likely broken or removed.
+This functionality **used to work** on `origin/main`. During the interactive sessions refactor, the streaming connection was broken.
 
-## Current Architecture (Broken)
+## Solution Implemented
 
+Used **Option A: Use Existing Session Stream** - wired up the web client to connect to `/api/sessions/:sessionId/stream` after posting a message.
+
+**Changes made to `web/src/App.tsx`:**
+1. Added `agentEventSourceRef` to track agent SSE connection
+2. Updated `handleSendMessage` to capture `sessionId` from POST response and open EventSource
+3. Added event handlers for `agent.tool_call`, `agent.message`, `final`, and `error`
+4. Updated `cancelAgentTurn` to close SSE immediately
+5. Updated cleanup effect to close agent SSE on unmount
+
+---
+
+## Investigation Results (2025-12-02)
+
+### What `origin/main` Had (Working)
+
+**1. Server (`service/src/server.ts`):**
+- Single SSE endpoint: `/api/runs/:runId/stream`
+- Agent emitted events to `runId`
+
+**2. Agent Service (`service/src/agent/agent-service.ts`):**
+```typescript
+// Emitted to runId
+this.events.emit(runId, {
+  event: "agent.tool_call",
+  data: { id, name: toolCall.tool, args: { command, cwd } }
+});
+
+this.events.emit(runId, {
+  event: "agent.message",
+  data: { text: directive.message }
+});
+
+this.events.emit(runId, {
+  event: "final",
+  data: { status, text }
+});
+```
+
+**3. Web Client (`web/src/App.tsx`):**
+```typescript
+// After getting runId, connected to SSE
+const source = new EventSource(`/api/runs/${id}/stream`)
+eventSourceRef.current = source
+setStatus('streaming')
+
+source.addEventListener('status', (evt) => { ... })
+source.addEventListener('exec.stdout', (evt) => { ... })
+source.addEventListener('exec.stderr', (evt) => { ... })
+// etc.
+```
+
+**Flow on `origin/main`:**
 ```
 Web Client                    Server                         Agent
     │                            │                              │
     │ POST /threads/:id/messages │                              │
     │───────────────────────────>│                              │
+    │                            │ returns { runId }            │
+    │<───────────────────────────│                              │
+    │                            │                              │
+    │ GET /api/runs/:runId/stream│                              │
+    │───────────────────────────>│ (SSE connected)              │
+    │                            │                              │
     │                            │ runAgentFlow()               │
     │                            │─────────────────────────────>│
     │                            │                              │
-    │ status='streaming'         │                              │
-    │ (no SSE connected!)        │                          [process]
+    │                            │<── emit(runId, msg) ─────────│
+    │<── SSE: agent.message ─────│                              │
+    │    (message appears!)      │                              │
+```
+
+### What Changed in This Branch (Broken)
+
+**1. Agent Service refactored:**
+- Changed from `runId` to `sessionId`
+- `startUserMessage()` returns `{ sessionId }` instead of `{ runId }`
+- Agent emits to `sessionId` instead of `runId`
+
+**2. Server added new SSE endpoint:**
+- `/api/sessions/:sessionId/stream` exists and works
+- Uses `SessionEventBus` (separate from `RunEventBus`)
+
+**3. Web Client removed SSE connection:**
+- Removed `eventSourceRef` for agent messages
+- `POST /api/threads/:id/messages` now returns `{ sessionId }` but client ignores it
+- Client just calls `fetchMessages()` after POST (polling, not streaming)
+
+**Current broken flow:**
+```
+Web Client                    Server                         Agent
+    │                            │                              │
+    │ POST /threads/:id/messages │                              │
+    │───────────────────────────>│                              │
+    │                            │ returns { sessionId }        │
+    │<───────────────────────────│                              │
+    │                            │                              │
+    │ (sessionId ignored!)       │                              │
+    │ fetchMessages() - polling  │                              │
+    │                            │                              │
+    │                            │ runAgentFlow()               │
+    │                            │─────────────────────────────>│
     │                            │                              │
     │                            │<── emit(sessionId, msg) ─────│
-    │ (nothing received)         │    (no listener for sessionId)
-    │                            │                              │
-    │                            │<── db.insert(message) ───────│
-    │                            │                              │
-    │ (waits... refreshes)       │                              │
-    │                            │                              │
-    │ GET /threads/:id/messages  │                              │
-    │───────────────────────────>│                              │
-    │<───────────────────────────│                              │
-    │   (finally sees messages)  │                              │
+    │ (nothing received!)        │    (SSE endpoint exists but  │
+    │                            │     client never connected!) │
 ```
 
-## Investigation Needed
+### Root Cause
 
-Before implementing a fix, we need to understand what changed:
+The refactor changed the identifier from `runId` to `sessionId` and added the SSE endpoint, but **forgot to update the web client** to:
+1. Capture the `sessionId` from the POST response
+2. Connect to `/api/sessions/:sessionId/stream`
+3. Handle the streaming events
 
-### Questions to Answer
+---
 
-1. **What did the old streaming look like on `origin/main`?**
-   - Was there a `/api/threads/:threadId/stream` endpoint?
-   - Or did messages stream via `/api/runs/:runId/stream`?
-   - How did the web client connect to receive agent messages?
+## Solution Options
 
-2. **What SSE endpoints exist now?**
-   - `/api/runs/:runId/stream` - Run-based streaming (legacy?)
-   - `/api/sessions/:sessionId/stream` - Session streaming
-   - `/api/terminals/:budId/stream` - Terminal output streaming
-   - Is there a thread-level stream?
+### Option A: Use Existing Session Stream (Minimal Changes) ⭐ RECOMMENDED
 
-3. **How does the agent emit messages?**
-   - `agent-service.ts:226-271` emits to `sessionId`
-   - What's the `sessionId`? Is it the agent session or terminal session?
-   - Should it emit to `threadId` instead?
+The infrastructure already exists! We just need to wire up the client.
 
-4. **How did the web client receive messages before?**
-   - Check `App.tsx` on `origin/main`
-   - Was there an EventSource connection?
-   - What events did it listen for?
+**Changes Required:**
 
-## Investigation Commands
+1. **Web Client (`web/src/App.tsx`):** ~30 lines
+   - Capture `sessionId` from POST response
+   - Create EventSource to `/api/sessions/${sessionId}/stream`
+   - Handle events: `agent.tool_call`, `agent.message`, `agent.error`, `final`
+   - Close EventSource on `final` event or error
 
-```bash
-# Check what SSE endpoints exist on main
-git show origin/main:service/src/server.ts | grep -A5 "stream"
+**Pros:**
+- Minimal code changes
+- Server-side infrastructure already works
+- Event bus and SSE endpoint already tested
 
-# Check how web client handled streaming on main
-git show origin/main:web/src/App.tsx | grep -A20 "EventSource\|stream"
+**Cons:**
+- Need to maintain `sessionId` state in client
+- One more SSE connection (already have terminal SSE)
 
-# Check agent event emission on main
-git show origin/main:service/src/agent/agent-service.ts | grep -A10 "emit"
+---
 
-# Diff the current vs main for relevant files
-git diff origin/main -- service/src/server.ts
-git diff origin/main -- web/src/App.tsx
-git diff origin/main -- service/src/agent/agent-service.ts
-```
+### Option B: Emit to threadId, Add Thread Stream
 
-## Potential Fixes
+Change agent to emit to `threadId` instead of `sessionId`, add `/api/threads/:threadId/stream`.
 
-### Option A: Restore Previous Implementation
+**Changes Required:**
 
-If streaming worked before, the simplest fix is to:
-1. Identify what was removed/changed
-2. Restore the working implementation
-3. Adapt it to work with the new terminal-based architecture
+1. **Agent Service:** Change all `emit(sessionId, ...)` to `emit(threadId, ...)`
+2. **Server:** Add `/api/threads/:threadId/stream` endpoint
+3. **Web Client:** Connect to thread stream (simpler - already have threadId)
 
-### Option B: Add Thread-Level SSE Endpoint
+**Pros:**
+- Thread-centric (conceptually cleaner)
+- Client already knows threadId
+- Could support multiple sessions per thread
 
-If no thread streaming existed, add a new endpoint:
+**Cons:**
+- More changes than Option A
+- Need to plumb threadId through more agent code
+- Existing session infrastructure unused
 
-**Server (`service/src/server.ts`):**
+---
+
+### Option C: Hybrid - Agent Emits to Both
+
+Agent emits to both `sessionId` (for existing session features) and `threadId` (for client streaming).
+
+**Pros:**
+- Backward compatible
+- Flexibility
+
+**Cons:**
+- Duplicate events
+- More complex
+- Over-engineered
+
+---
+
+## Recommended Solution: Option A
+
+Use the existing `/api/sessions/:sessionId/stream` endpoint. It requires the least changes and the infrastructure is already in place.
+
+### Implementation Plan
+
+#### Step 1: Update Web Client Message Posting
+
+**File: `web/src/App.tsx`**
+
+Update `handleSendMessage` to:
+1. Capture `sessionId` from POST response
+2. Connect EventSource before/after POST
+3. Handle streaming events
+
 ```typescript
-server.get("/api/threads/:threadId/stream", async (request, reply) => {
-  const { threadId } = request.params as { threadId: string };
+const handleSendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
+  e.preventDefault()
+  // ... existing validation and optimistic update ...
 
-  reply.raw.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive"
-  });
+  try {
+    // ... existing thread creation logic ...
 
-  const listener = (event: { event: string; data: unknown }) => {
-    reply.raw.write(`event: ${event.event}\n`);
-    reply.raw.write(`data: ${JSON.stringify(event.data)}\n\n`);
-  };
+    // Create SSE connection FIRST (so we don't miss events)
+    // Use a ref to track the active session EventSource
+    const sessionEventSource = new EventSource(
+      buildApiUrl(`/api/sessions/${currentThreadId}/stream`)
+    )
 
-  // Subscribe to agent events for this thread
-  agentService.events.on(threadId, listener);
+    // Wait for SSE to open before POST (or POST immediately with small delay)
+    // Actually: POST first, get sessionId, then connect
 
-  request.raw.on("close", () => {
-    agentService.events.off(threadId, listener);
-  });
-});
+    const messageResp = await fetch(`/api/threads/${currentThreadId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: trimmedMessage, reasoning_effort: reasoningEffort })
+    })
+
+    if (!messageResp.ok) {
+      throw new Error(...)
+    }
+
+    const { sessionId } = await messageResp.json() as { messageId: string; sessionId: string }
+
+    // Now connect to session stream
+    const source = new EventSource(buildApiUrl(`/api/sessions/${sessionId}/stream`))
+    agentEventSourceRef.current = source
+    setStatus('streaming')
+
+    source.addEventListener('agent.tool_call', (evt) => {
+      const data = JSON.parse(evt.data)
+      // Could show tool execution indicator
+      console.log('Tool call:', data)
+    })
+
+    source.addEventListener('agent.message', (evt) => {
+      const data = JSON.parse(evt.data) as { text: string }
+      // Append assistant message to UI
+      setMessages(prev => [...prev, {
+        message_id: `streaming_${Date.now()}`,
+        role: 'assistant',
+        display_role: 'Assistant',
+        content: data.text,
+        created_at: new Date().toISOString(),
+        metadata: null
+      }])
+    })
+
+    source.addEventListener('final', (evt) => {
+      source.close()
+      agentEventSourceRef.current = null
+      setStatus('idle')
+      // Fetch final messages to get real IDs and ensure consistency
+      fetchMessages(currentThreadId)
+    })
+
+    source.addEventListener('error', () => {
+      source.close()
+      agentEventSourceRef.current = null
+      setStatus('idle')
+      setError('Agent connection lost')
+    })
+
+  } catch (err) {
+    // ... existing error handling ...
+  }
+}
 ```
 
-**Agent Service (`service/src/agent/agent-service.ts`):**
+#### Step 2: Add Agent EventSource Ref
+
 ```typescript
-// Change emission from sessionId to threadId
-this.events.emit(threadId, {  // Was: sessionId
-  event: "agent.message",
-  data: { text: directive.message }
-});
+// Add near other refs
+const agentEventSourceRef = useRef<EventSource | null>(null)
+
+// Cleanup on unmount
+useEffect(() => {
+  return () => {
+    agentEventSourceRef.current?.close()
+    terminalEventSourceRef.current?.close()
+    // ... other cleanup ...
+  }
+}, [])
 ```
 
-**Web Client (`web/src/App.tsx`):**
+#### Step 3: Handle Cancellation
+
+Update `cancelAgentTurn` to also close the SSE:
+
 ```typescript
-// Before posting message, connect SSE
-const eventSource = new EventSource(`/api/threads/${threadId}/stream`);
-
-eventSource.addEventListener("agent.message", (e) => {
-  const data = JSON.parse(e.data);
-  setMessages(prev => [...prev, {
-    message_id: `temp_${Date.now()}`,
-    role: "assistant",
-    display_role: "Assistant",
-    content: data.text,
-    created_at: new Date().toISOString()
-  }]);
-});
-
-eventSource.addEventListener("agent.tool_call", (e) => {
-  // Update UI to show tool is being called
-});
-
-eventSource.addEventListener("agent.done", (e) => {
-  eventSource.close();
-  setStatus('idle');
-  // Fetch final messages to ensure consistency
-  await fetchMessages(threadId);
-});
-
-// Then post message
-const resp = await fetch(`/api/threads/${threadId}/messages`, {
-  method: 'POST',
-  // ...
-});
+const cancelAgentTurn = async () => {
+  if (!threadId) return
+  agentEventSourceRef.current?.close()
+  agentEventSourceRef.current = null
+  // ... existing cancel logic ...
+}
 ```
 
-### Option C: Use Existing Session Stream
+### Testing Plan
 
-If the agent already emits to `sessionId` and there's a `/api/sessions/:sessionId/stream`:
+#### Manual Testing
 
-1. Return `sessionId` from the POST `/api/threads/:threadId/messages` response
-2. Client connects to `/api/sessions/${sessionId}/stream`
-3. No server changes needed, just client-side wiring
+1. **Basic streaming:**
+   - Send message
+   - Verify agent response appears in real-time (not after refresh)
 
-## Implementation Plan
+2. **Tool calls:**
+   - Ask agent to run a terminal command
+   - Verify tool call events received (logged to console)
 
-### Phase 1: Investigation
+3. **Error handling:**
+   - Stop agent mid-execution
+   - Verify SSE closes cleanly
 
-1. Run the investigation commands above
-2. Document what existed on `origin/main`
-3. Understand the current event flow
-4. Decide which option to implement
+4. **Multiple messages:**
+   - Send several messages in sequence
+   - Verify each gets its own SSE that closes properly
 
-### Phase 2: Server Changes (if needed)
+5. **Page refresh during agent:**
+   - Start agent, refresh page
+   - Verify clean reconnection
 
-Depends on investigation findings:
-- If Option A: Restore removed code
-- If Option B: Add new SSE endpoint
-- If Option C: No server changes
+#### Automated Test Cases (Future)
 
-### Phase 3: Web Client Changes
+**Unit Tests (`web/src/App.test.tsx` or similar):**
 
-1. Add EventSource connection before posting message
-2. Handle streaming events:
-   - `agent.message` - Add assistant message to UI
-   - `agent.tool_call` - Show tool execution status
-   - `agent.error` - Handle errors
-   - `agent.done` - Clean up, fetch final state
-3. Update status indicators appropriately
-4. Handle reconnection/error cases
+1. **SSE Connection Lifecycle:**
+   - Mock `EventSource` and `fetch`
+   - Verify SSE opens after successful POST with correct URL (`/api/sessions/${sessionId}/stream`)
+   - Verify SSE closes on `final` event
+   - Verify SSE closes on `error` event
+   - Verify SSE closes on component unmount
 
-### Phase 4: Testing
+2. **Event Handling:**
+   - `agent.message` event appends message to state with correct structure
+   - `agent.tool_call` event logs to console (or updates UI state when implemented)
+   - `final` event triggers `fetchMessages()` for consistency
+   - Malformed event data doesn't crash (parse errors caught)
 
-1. Send message, verify streaming works
-2. Test error cases (agent fails, network issues)
-3. Test multiple concurrent agent runs
-4. Test page refresh during agent run
+3. **Cancel Flow:**
+   - `cancelAgentTurn()` closes SSE before calling cancel API
+   - Status resets to `idle` after cancel
+
+4. **Error Scenarios:**
+   - POST fails → no SSE opened, error displayed
+   - SSE connection error → SSE closed, status reset, messages fetched
+   - Network timeout → graceful degradation
+
+**Integration Tests (`service/src/agent/agent-service.test.ts`):**
+
+1. **Event Emission:**
+   - `startUserMessage()` returns valid `sessionId`
+   - Agent emits `agent.tool_call` when invoking terminal tools
+   - Agent emits `agent.message` with response text
+   - Agent emits `final` with status on completion
+   - Agent emits `final` with error on failure
+   - Agent emits `final` with canceled status on cancellation
+
+2. **SSE Endpoint (`/api/sessions/:sessionId/stream`):**
+   - Returns 200 with correct Content-Type headers
+   - Emitted events appear on SSE stream with correct format
+   - Connection closes cleanly when client disconnects
+
+**E2E Tests (Playwright or similar):**
+
+1. **Full Flow:**
+   - Send message via UI
+   - Verify assistant message appears without refresh
+   - Verify status transitions: `idle` → `dispatching` → `streaming` → `idle`
+
+2. **Cancellation:**
+   - Send message, click stop button mid-execution
+   - Verify agent stops, status returns to `idle`
+
+3. **Multiple Threads:**
+   - Switch threads while agent is running
+   - Verify old SSE closes, new thread loads correctly
+
+---
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `service/src/server.ts` | Add/restore SSE endpoint (if needed) |
-| `service/src/agent/agent-service.ts` | Fix event emission target (if needed) |
-| `web/src/App.tsx` | Add EventSource connection, handle events |
+| `web/src/App.tsx` | Add `agentEventSourceRef`, update `handleSendMessage` to connect SSE, handle events |
 
-## Success Criteria
-
-1. Agent messages appear in UI as they're generated (not after refresh)
-2. Tool call status shown during execution
-3. Error messages displayed if agent fails
-4. Clean connection lifecycle (connect before POST, close on done/error)
-
-## Dependencies
-
-- Issue 2 & 3 fixes (agent output race condition) should be done first
-- Agent needs to be producing correct output before we stream it
-
-## Open Questions
-
-1. What was the original streaming implementation on `origin/main`?
-2. Should we stream to `threadId` or `sessionId`?
-3. Do we need to handle multiple clients viewing the same thread?
-4. Should tool call details (input/output) be streamed or just status?
-
-## Next Steps
-
-1. **Immediate:** Run investigation commands to understand what changed
-2. **Then:** Choose implementation option based on findings
-3. **Finally:** Implement and test
+No server changes needed - the `/api/sessions/:sessionId/stream` endpoint already exists and works.
 
 ---
 
-## Appendix: Code Locations
+## Success Criteria
 
-### Current Code
+1. ✅ Agent messages appear in UI as they're generated
+2. ✅ Tool call events received (can log for now, UI indicator later)
+3. ✅ `final` event closes SSE and updates status
+4. ✅ Error events handled gracefully
+5. ✅ Cancel closes SSE
 
-**Agent event emission:**
-- `service/src/agent/agent-service.ts:226-227` - Tool call emission
-- `service/src/agent/agent-service.ts:317-321` - Message emission
+---
 
-**SSE endpoints:**
-- `service/src/server.ts:87-97` - Existing stream endpoints
+## Open Questions (Resolved)
 
-**Web client message handling:**
-- `web/src/App.tsx:772-789` - POST message, no SSE
+1. ~~What was the original streaming implementation?~~ → Used `/api/runs/:runId/stream`
+2. ~~Should we stream to threadId or sessionId?~~ → Use existing `sessionId` infrastructure
+3. ~~Do we need to handle multiple clients?~~ → Not for MVP; each client gets own session stream
+4. ~~Should tool call details be streamed?~~ → Yes, already emitted; can add UI later
 
-### To Investigate on origin/main
+---
 
-```bash
-git show origin/main:service/src/server.ts
-git show origin/main:web/src/App.tsx
-git show origin/main:service/src/agent/agent-service.ts
+## Appendix: Key Code Locations
+
+### Server (No Changes Needed)
+
+**SSE Endpoint (already exists):**
+- `service/src/server.ts:93-97`
+```typescript
+server.get("/api/sessions/:sessionId/stream", (request, reply) => {
+  const sessionId = (request.params as { sessionId: string }).sessionId;
+  const detach = sessionEvents.attach(sessionId, reply);
+  reply.raw.on("close", detach);
+});
 ```
+
+**POST returns sessionId (already works):**
+- `service/src/routes/threads.ts:308-311`
+```typescript
+const { sessionId } = await agentService.startUserMessage(thread.threadId, {...});
+reply.code(201).send({ messageId: message.messageId, sessionId });
+```
+
+**Agent emits to sessionId (already works):**
+- `service/src/agent/agent-service.ts` - multiple emit calls
+
+### Web Client (Needs Changes)
+
+**Current (broken):**
+- `web/src/App.tsx:772-782` - POST but ignores `sessionId`, no SSE
+
+**Fix location:**
+- Same function, add SSE connection after POST

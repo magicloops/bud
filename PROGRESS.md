@@ -75,10 +75,11 @@ _Last updated: 2025-12-02_
 
 Three critical issues identified during agent testing:
 
-### Issue 1: Agent Messages Not Streaming
+### Issue 1: Agent Messages Not Streaming — ✅ FIXED
 - Agent messages don't appear in UI until page refresh
 - Web client never opens SSE for agent messages
 - Agent emits to `sessionId` but no listener exists
+- **Fix:** Wired up web client to connect to `/api/sessions/:sessionId/stream` after POST
 - **Plan:** `plan/fix-agent-message-streaming.md`
 
 ### Issue 2: Terminal Output Shows Stale/Mixed Data
@@ -108,7 +109,7 @@ Three critical issues identified during agent testing:
 
 ### Critical (Blocking Agent Use)
 - [ ] Fix agent terminal output race condition (Issues 2 & 3) - see `plan/fix-agent-terminal-output-race.md`
-- [ ] Fix agent message streaming (Issue 1) - see `plan/fix-agent-message-streaming.md`
+- [x] Fix agent message streaming (Issue 1) - see `plan/fix-agent-message-streaming.md`
 
 ### Testing
 - [ ] Implement Bud unit tests for readiness detector
