@@ -101,6 +101,8 @@ function App() {
   const lastSseEventTimeRef = useRef<number>(Date.now())
   const lastConnectedBudIdRef = useRef<string | null>(null)
   const terminalReadyRef = useRef(false)
+  const terminalInputBufferRef = useRef<string>('')
+  const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
     if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
@@ -153,6 +155,9 @@ function App() {
   useEffect(() => {
     return () => {
       terminalEventSourceRef.current?.close()
+      if (terminalInputFlushTimerRef.current) {
+        clearTimeout(terminalInputFlushTimerRef.current)
+      }
     }
   }, [])
 
@@ -311,13 +316,16 @@ function App() {
     fitTerminal()
   }, [fitTerminal, threadPanelOpen])
 
-  const sendTerminalInput = useCallback(
-    async (text: string) => {
-      if (!budId) return
+  const flushTerminalInput = useCallback(
+    async () => {
+      const input = terminalInputBufferRef.current
+      if (!input || !budId) return
+      terminalInputBufferRef.current = ''
+
       if (terminalConnectionRef.current !== 'connected') {
         console.warn('[terminal] input blocked - not connected', {
           budId,
-          bytes: text.length,
+          bytes: input.length,
           connection: terminalConnectionRef.current
         })
         return
@@ -326,7 +334,7 @@ function App() {
         const resp = await apiFetch(`/api/terminals/${budId}/input`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ input: text })
+          body: JSON.stringify({ input })
         })
         if (!resp.ok) {
           console.warn('[terminal] input request failed', { status: resp.status })
@@ -347,6 +355,25 @@ function App() {
       }
     },
     [budId]
+  )
+
+  const sendTerminalInput = useCallback(
+    (text: string) => {
+      if (!budId) return
+      // Accumulate input in buffer
+      terminalInputBufferRef.current += text
+
+      // Clear existing timer and set new one
+      if (terminalInputFlushTimerRef.current) {
+        clearTimeout(terminalInputFlushTimerRef.current)
+      }
+      // Flush after 20ms of no new input
+      terminalInputFlushTimerRef.current = setTimeout(() => {
+        terminalInputFlushTimerRef.current = null
+        flushTerminalInput()
+      }, 20)
+    },
+    [budId, flushTerminalInput]
   )
 
   useEffect(() => {
