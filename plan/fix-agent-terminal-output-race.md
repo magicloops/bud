@@ -8,229 +8,242 @@ The agent doesn't see the actual output from terminal commands due to two relate
 
 2. **No Cursor Tracking (Issue 2):** `tailOutput()` always returns the last N rows with no way to track "what I've already seen", causing duplicate/stale data.
 
-## Current Architecture (Broken)
+## Current Architecture Analysis
+
+### Data Flow (Broken)
 
 ```
-Bud                    Gateway                      TerminalManager              Agent
- │                        │                               │                        │
- │                        │                               │<── sendInput("ls") ────│
- │<── terminal_input ─────│                               │                        │
- │                        │                               │                        │
- │ (executes)             │                               │                        │
- │                        │                               │                        │
- │── terminal_output(1) ──>│                               │                        │
- │── terminal_output(2) ──>│── handleTerminalOutput() ───>│ async DB insert...     │
- │── terminal_ready ──────>│── handleTerminalReady() ────>│ readiness.set() ───────>│
- │                        │                               │                        │ waitForReadiness()
- │                        │                               │                        │ returns!
- │                        │                               │                        │
- │                        │                               │<── tailOutput() ───────│
- │                        │                               │                        │
- │                        │                    (DB insert still in progress!)      │
- │                        │                               │── stale data ─────────>│
- │                        │                               │                        │
- │                        │                               │                    [wrong response]
+Bud (Rust)                      Service (Node)                    Agent
+    │                               │                                │
+    │ tmux pipe-pane >> file        │                                │
+    │ watcher reads file            │                                │
+    │─── terminal_output (WS) ─────>│                                │
+    │                               │ handleTerminalOutput()         │
+    │                               │   await db.insert(...) 🐢      │
+    │                               │   events.emit(SSE)             │
+    │                               │                                │
+    │─── terminal_ready (WS) ──────>│                                │
+    │                               │ handleTerminalReady()          │
+    │                               │   readiness.set() ⚡ (sync)    │
+    │                               │────────────────────────────────>│
+    │                               │                         waitForReadiness() returns!
+    │                               │<────────────────────────────────│
+    │                               │                         tailOutput() 🐢
+    │                               │                           (reads from DB)
+    │                               │────────────────────────────────>│
+    │                               │                         STALE DATA!
 ```
 
-## Root Cause Analysis
+### Key Insight: Output is Stored Twice
 
-### Race Condition
+1. **Bud writes to temp file** via `tmux pipe-pane >> /tmp/bud-terminal-{session}.log`
+2. **Service stores chunks in PostgreSQL** via `terminal_output` table
 
-1. `handleTerminalReady()` updates in-memory cache synchronously:
-   ```typescript
-   // terminal-manager.ts:242-249
-   async handleTerminalReady(budId: string, assessment: unknown) {
-     this.readiness.set(budId, { assessment, updatedAt: Date.now() });  // Instant
-     this.events.emit(budId, { event: "terminal.ready", data: { assessment } });
-   }
-   ```
+The file IS the source of truth. We're duplicating it into the database just to read it back—and that duplication creates the race condition.
 
-2. `handleTerminalOutput()` does async DB insert:
-   ```typescript
-   // terminal-manager.ts:185-240
-   async handleTerminalOutput(budId: string, frame: TerminalOutputFrame) {
-     await db.insert(terminalOutputTable).values({ ... });  // Slow!
-     this.events.emit(budId, { event: "terminal.output", data: { ... } });
-   }
-   ```
+### Code Locations
 
-3. Agent reads from DB immediately after readiness:
-   ```typescript
-   // agent-service.ts:898-902
-   const readiness = await this.terminalManager.waitForReadiness(budId, timeout);
-   const tail = await this.terminalManager.tailOutput(budId, maxBytes);  // DB read
-   ```
-
-### No Cursor Tracking
-
-`tailOutput()` has no way to request "output since sequence X":
-```typescript
-// terminal-manager.ts:296-326
-async tailOutput(budId: string, maxBytes: number) {
-  const rows = await db
-    .select({ seq, data })
-    .from(terminalOutputTable)
-    .where(eq(terminalOutputTable.budId, budId))
-    .orderBy(desc(terminalOutputTable.seq))
-    .limit(200);  // Always returns same last 200 rows
-  // ...
+**Bud file watcher** (`bud/src/main.rs:1142-1203`):
+```rust
+fn spawn_output_watcher(...) {
+    // Reads from log file, sends terminal_output frames via WebSocket
+    loop {
+        let size = fs::metadata(&log_path).await?.len();
+        if size > current_offset {
+            // Read new bytes, send as terminal_output
+            let payload = json!({
+                "type": "terminal_output",
+                "seq": seq_no,
+                "data": BASE64_STANDARD.encode(&buf),
+                "byte_offset": current_offset,
+            });
+            send_ws_frame(&sender, payload);
+        }
+        time::sleep(Duration::from_millis(50)).await;
+    }
 }
 ```
 
-## Proposed Solution
-
-### Approach: In-Memory Output Ring Buffer
-
-Instead of relying on the database for recent output, maintain an in-memory ring buffer per terminal. This provides:
-
-1. **Instant availability** - Output is available immediately when readiness fires
-2. **Sequence tracking** - Can request "output since seq X"
-3. **Consistent ordering** - Ring buffer maintains insertion order
-4. **DB as backup** - Database still used for persistence/history, but not for real-time reads
-
-### Design
-
-```
-Bud                    Gateway                      TerminalManager              Agent
- │                        │                               │                        │
- │                        │                               │<── sendInput("ls") ────│
- │<── terminal_input ─────│                               │ lastSeqBeforeInput=N   │
- │                        │                               │                        │
- │ (executes)             │                               │                        │
- │                        │                               │                        │
- │── terminal_output(1) ──>│── handleTerminalOutput() ───>│                        │
- │                        │                               │ ringBuffer.push(1)     │
- │                        │                               │ async DB insert...     │
- │── terminal_output(2) ──>│── handleTerminalOutput() ───>│                        │
- │                        │                               │ ringBuffer.push(2)     │
- │── terminal_ready ──────>│── handleTerminalReady() ────>│                        │
- │                        │                               │ readiness.set() ───────>│
- │                        │                               │                        │ waitForReadiness()
- │                        │                               │                        │ returns!
- │                        │                               │                        │
- │                        │                               │<── getOutputSince(N) ──│
- │                        │                               │                        │
- │                        │                               │── chunks 1,2 ─────────>│
- │                        │                               │   (from ring buffer!)  │
- │                        │                               │                        │
- │                        │                               │                    [correct response]
+**Service stores in DB** (`service/src/runtime/terminal-manager.ts:185-240`):
+```typescript
+async handleTerminalOutput(budId: string, payload: TerminalOutputPayload) {
+    await db.insert(terminalOutputTable).values({
+        budId,
+        seq: payload.seq,
+        data: toStore,
+        byteOffset: payload.byte_offset
+    });
+    this.events.emit(budId, { event: "terminal.output", data: {...} });
+}
 ```
 
-## Implementation Plan
+**Agent reads from DB** (`service/src/agent/agent-service.ts:898-902`):
+```typescript
+const readiness = await this.terminalManager.waitForReadiness(budId, timeout);
+const tail = await this.terminalManager.tailOutput(budId, maxBytes);  // DB read - STALE!
+```
 
-### Phase 1: Add In-Memory Ring Buffer
+---
+
+## Solution Options
+
+### ❌ Original Plan: In-Memory Ring Buffer
+
+The previous plan proposed adding an in-memory ring buffer in the Service to cache output before it's written to the DB.
+
+**Problems:**
+- Adds complexity (another caching layer)
+- Still duplicates storage (file → WS → memory → DB)
+- Memory pressure with many terminals
+- Doesn't solve the underlying design issue
+
+### ✅ Recommended: Byte Offset Tracking (Minimal Change)
+
+The simplest fix: track the byte offset before sending input, then use that offset to request "output since X".
+
+**Why this works:**
+- Bud already sends `byte_offset` in every `terminal_output` frame
+- We already store `byte_offset` in the database
+- Agent just needs to record offset before command, request offset after
+
+**Changes required:**
+1. Add method to get current byte offset from Bud status
+2. Agent captures offset before `sendInput()`
+3. Agent requests output `sinceOffset` after readiness
+4. Add `sinceOffset` parameter to `tailOutput()`
+
+**Flow:**
+```
+Agent                    TerminalManager              Bud
+  │                           │                        │
+  │── getLastOffset() ───────>│                        │
+  │<── offset=1234 ───────────│                        │
+  │                           │                        │
+  │── sendInput("ls") ───────>│                        │
+  │                           │─── terminal_input ────>│
+  │                           │                        │ (executes)
+  │                           │<── terminal_output ────│
+  │                           │<── terminal_ready ─────│
+  │                           │                        │
+  │── waitForReadiness() ────>│                        │
+  │<── ready! ────────────────│                        │
+  │                           │                        │
+  │── tailOutput(sinceOffset=1234) ──>│                │
+  │<── only NEW output ───────│                        │
+```
+
+### 🔮 Future: File-Based Storage (For Scale)
+
+For production with S3, we'd eventually want:
+
+1. **Local dev**: Use the file Bud already writes to (no DB storage needed)
+2. **Production**: Stream file to S3, store S3 key in DB
+
+This eliminates the race entirely because the file is always current. But this is a larger refactor for later.
+
+---
+
+## Implementation Plan: Byte Offset Tracking
+
+### Phase 1: Track Last Byte Offset in Memory
 
 **File: `service/src/runtime/terminal-manager.ts`**
 
-1. Add ring buffer data structure:
-   ```typescript
-   interface OutputChunk {
-     seq: number;
-     data: Buffer;
-     timestamp: number;
-   }
+Add tracking for the last known byte offset per terminal:
 
-   interface TerminalBuffer {
-     chunks: OutputChunk[];
-     totalBytes: number;
-     maxBytes: number;  // e.g., 1MB per terminal
-   }
+```typescript
+class TerminalManager {
+  // Add alongside existing readiness map
+  private lastOffsets = new Map<string, number>();
 
-   // Add to TerminalManager class
-   private outputBuffers = new Map<string, TerminalBuffer>();
-   ```
+  async handleTerminalOutput(budId: string, payload: TerminalOutputPayload) {
+    // Track the latest byte offset (sync, before any async work)
+    const endOffset = payload.byte_offset + Buffer.from(payload.data, "base64").length;
+    this.lastOffsets.set(budId, endOffset);
 
-2. Update `handleTerminalOutput()` to write to ring buffer first:
-   ```typescript
-   async handleTerminalOutput(budId: string, frame: TerminalOutputFrame) {
-     const data = Buffer.from(frame.data, "base64");
+    // ... rest of existing implementation
+  }
 
-     // Write to ring buffer immediately (sync)
-     this.appendToBuffer(budId, {
-       seq: frame.seq,
-       data,
-       timestamp: Date.now()
-     });
+  getLastOffset(budId: string): number {
+    return this.lastOffsets.get(budId) ?? 0;
+  }
 
-     // Emit SSE event immediately (from buffer)
-     this.events.emit(budId, {
-       event: "terminal.output",
-       data: { data: frame.data, seq: frame.seq }
-     });
+  clearOffset(budId: string): void {
+    this.lastOffsets.delete(budId);
+  }
+}
+```
 
-     // Async DB insert (for persistence)
-     await db.insert(terminalOutputTable).values({
-       budId,
-       seq: frame.seq,
-       data: frame.data,
-       byteOffset: frame.offset ?? 0
-     }).onConflictDoNothing();  // Handle duplicates
-   }
-   ```
-
-3. Add buffer management methods:
-   ```typescript
-   private appendToBuffer(budId: string, chunk: OutputChunk): void {
-     let buffer = this.outputBuffers.get(budId);
-     if (!buffer) {
-       buffer = { chunks: [], totalBytes: 0, maxBytes: 1024 * 1024 };  // 1MB
-       this.outputBuffers.set(budId, buffer);
-     }
-
-     buffer.chunks.push(chunk);
-     buffer.totalBytes += chunk.data.length;
-
-     // Trim old chunks if over limit
-     while (buffer.totalBytes > buffer.maxBytes && buffer.chunks.length > 1) {
-       const removed = buffer.chunks.shift()!;
-       buffer.totalBytes -= removed.data.length;
-     }
-   }
-
-   getLastSeq(budId: string): number {
-     const buffer = this.outputBuffers.get(budId);
-     if (!buffer || buffer.chunks.length === 0) return 0;
-     return buffer.chunks[buffer.chunks.length - 1].seq;
-   }
-   ```
-
-### Phase 2: Add `getOutputSince()` Method
+### Phase 2: Add `sinceOffset` Parameter to tailOutput
 
 **File: `service/src/runtime/terminal-manager.ts`**
 
 ```typescript
-getOutputSince(budId: string, sinceSeq: number, maxBytes: number): {
-  data: Buffer;
-  lastSeq: number;
-  totalBytes: number;
-} {
-  const buffer = this.outputBuffers.get(budId);
-  if (!buffer) {
-    return { data: Buffer.alloc(0), lastSeq: 0, totalBytes: 0 };
+async tailOutput(
+  budId: string,
+  maxBytes: number,
+  options?: { sinceOffset?: number }
+): Promise<{ data: Buffer; totalBytes: number; startOffset: number }> {
+
+  let query = db
+    .select({
+      seq: terminalOutputTable.seq,
+      data: terminalOutputTable.data,
+      byteOffset: terminalOutputTable.byteOffset
+    })
+    .from(terminalOutputTable)
+    .where(eq(terminalOutputTable.budId, budId));
+
+  // If sinceOffset provided, only get rows after that offset
+  if (options?.sinceOffset !== undefined) {
+    query = query.where(gte(terminalOutputTable.byteOffset, options.sinceOffset));
   }
 
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-  let lastSeq = sinceSeq;
+  const rows = await query
+    .orderBy(asc(terminalOutputTable.byteOffset))  // Chronological order
+    .limit(200);
 
-  for (const chunk of buffer.chunks) {
-    if (chunk.seq > sinceSeq) {
-      if (totalBytes + chunk.data.length > maxBytes) break;
-      chunks.push(chunk.data);
-      totalBytes += chunk.data.length;
-      lastSeq = chunk.seq;
+  if (rows.length === 0) {
+    return {
+      data: Buffer.alloc(0),
+      totalBytes: 0,
+      startOffset: options?.sinceOffset ?? 0
+    };
+  }
+
+  // For sinceOffset queries, we may need to trim the first chunk
+  const buffers: Buffer[] = [];
+  let startOffset = rows[0].byteOffset;
+
+  for (const row of rows) {
+    let buf = Buffer.from(row.data);
+
+    // If first row starts before sinceOffset, trim it
+    if (options?.sinceOffset !== undefined && row.byteOffset < options.sinceOffset) {
+      const skip = options.sinceOffset - row.byteOffset;
+      buf = buf.subarray(skip);
+      startOffset = options.sinceOffset;
     }
+
+    buffers.push(buf);
   }
+
+  const combined = Buffer.concat(buffers);
+
+  // Apply maxBytes limit from the end if needed
+  const result = combined.length > maxBytes
+    ? combined.subarray(combined.length - maxBytes)
+    : combined;
 
   return {
-    data: Buffer.concat(chunks),
-    lastSeq,
-    totalBytes
+    data: result,
+    totalBytes: combined.length,
+    startOffset
   };
 }
 ```
 
-### Phase 3: Update Agent to Use New Method
+### Phase 3: Update Agent to Use Byte Offset
 
 **File: `service/src/agent/agent-service.ts`**
 
@@ -240,156 +253,169 @@ private async executeTerminalCall(
   directive: Extract<AgentDirective, { type: "tool_call"; tool: string }>
 ): Promise<TerminalCallResult> {
   const bud = await this.fetchBudForThread(threadId);
-
-  // Capture current sequence before sending input
-  const seqBeforeInput = this.terminalManager.getLastSeq(bud.budId);
-
   await this.terminalManager.ensureTerminal(bud.budId);
 
-  if (directive.tool === "terminal.run") {
-    const input = directive.input ?? directive.command ?? "";
-    const sent = await this.terminalManager.sendInput(
+  if (directive.tool === "terminal.observe") {
+    // For observe, just get recent output (no offset tracking)
+    const tail = await this.terminalManager.tailOutput(
       bud.budId,
-      Buffer.from(input, "utf-8"),
-      { source: "agent" }
-    );
-    if (!sent.ok) {
-      throw new Error(sent.error ?? "terminal_input_failed");
-    }
-
-    // Wait for terminal to be ready
-    const readiness = await this.terminalManager.waitForReadiness(
-      bud.budId,
-      directive.timeoutMs ?? 5000
-    );
-
-    // Get output SINCE we sent the input (from ring buffer - instant!)
-    const output = this.terminalManager.getOutputSince(
-      bud.budId,
-      seqBeforeInput,
       config.terminalOutputBackfillBytes
     );
-
-    const decoded = this.decodeTail(output.data);
-    // ... rest of method
+    // ... existing handling
   }
-  // ... handle other tools
+
+  // terminal.run - capture offset BEFORE sending input
+  const offsetBeforeInput = this.terminalManager.getLastOffset(bud.budId);
+
+  const input = directive.input ?? directive.command ?? "";
+  const sent = await this.terminalManager.sendInput(
+    bud.budId,
+    Buffer.from(input, "utf-8"),
+    { source: "agent" }
+  );
+  if (!sent.ok) {
+    throw new Error(sent.error ?? "terminal_input_failed");
+  }
+
+  // Wait for terminal to be ready
+  const readiness = await this.terminalManager.waitForReadiness(
+    bud.budId,
+    directive.timeoutMs ?? 5000
+  );
+
+  // Get output SINCE we sent the input
+  const tail = await this.terminalManager.tailOutput(
+    bud.budId,
+    config.terminalOutputBackfillBytes,
+    { sinceOffset: offsetBeforeInput }
+  );
+
+  const decoded = this.decodeTail(tail.data);
+  // ... rest of existing handling
 }
 ```
 
-### Phase 4: Update `tailOutput()` for History/Backfill
+### Phase 4: Cleanup on Disconnect
 
-Keep `tailOutput()` for historical data but add optional `sinceSeq` parameter:
+**File: `service/src/ws/gateway.ts`**
 
 ```typescript
-async tailOutput(
-  budId: string,
-  maxBytes: number,
-  options?: { sinceSeq?: number; useBuffer?: boolean }
-): Promise<{ data: Buffer; totalBytes: number; lastSeq: number }> {
-  // For real-time reads, use buffer
-  if (options?.useBuffer) {
-    return this.getOutputSince(budId, options.sinceSeq ?? 0, maxBytes);
-  }
-
-  // For history/backfill, use database
-  let query = db
-    .select({ seq: terminalOutputTable.seq, data: terminalOutputTable.data })
-    .from(terminalOutputTable)
-    .where(eq(terminalOutputTable.budId, budId));
-
-  if (options?.sinceSeq !== undefined) {
-    query = query.where(gt(terminalOutputTable.seq, options.sinceSeq));
-  }
-
-  const rows = await query
-    .orderBy(asc(terminalOutputTable.seq))  // Chronological order
-    .limit(200);
-
-  // ... rest of implementation
-}
+// In handleDisconnect or similar:
+this.terminalManager.clearOffset(budId);
 ```
 
-### Phase 5: Handle Terminal Reset/Clear
-
-When terminal is reset or bud reconnects:
+**File: `service/src/runtime/terminal-manager.ts`**
 
 ```typescript
-clearBuffer(budId: string): void {
-  this.outputBuffers.delete(budId);
-}
+async closeTerminal(budId: string, reason: string = "requested") {
+  // ... existing code ...
 
-// Call from appropriate places:
-// - When terminal is closed
-// - When bud disconnects
-// - When terminal is explicitly cleared
+  // Clear cached state
+  this.readiness.delete(budId);
+  this.lastOffsets.delete(budId);  // Add this
+
+  return { ok: true };
+}
 ```
+
+---
+
+## Why This Is Simpler
+
+| Aspect | Ring Buffer Approach | Byte Offset Approach |
+|--------|---------------------|---------------------|
+| New data structures | `Map<string, { chunks[], totalBytes }>` | `Map<string, number>` |
+| Memory overhead | ~1MB per terminal | 8 bytes per terminal |
+| Code changes | ~100 lines | ~30 lines |
+| Race condition fix | Avoids DB read | Still reads DB, but correct data |
+| Complexity | High | Low |
+
+The byte offset approach is simpler because:
+1. We already track `byte_offset` in the data
+2. We just need to remember "where were we before the command"
+3. DB query filters by offset (existing indexed column)
+
+---
 
 ## Testing Plan
 
+### Manual Testing
+
+1. **Basic flow:**
+   - Send terminal command
+   - Verify agent sees correct output (not stale)
+   - Verify no duplicate output
+
+2. **Rapid commands:**
+   - Send `echo 1`, `echo 2`, `echo 3` quickly
+   - Each should see only its own output
+
+3. **Large output:**
+   - Run `cat /usr/share/dict/words` or similar
+   - Verify agent gets truncated but recent output
+
 ### Unit Tests
 
-1. **Ring buffer append and trim:**
-   - Append chunks, verify order preserved
-   - Exceed maxBytes, verify oldest chunks removed
-   - Verify seq tracking
+```typescript
+describe('TerminalManager offset tracking', () => {
+  it('tracks byte offset from terminal_output frames', () => {
+    manager.handleTerminalOutput(budId, {
+      seq: 0,
+      data: Buffer.from('hello').toString('base64'),
+      byte_offset: 0
+    });
+    expect(manager.getLastOffset(budId)).toBe(5);
 
-2. **getOutputSince():**
-   - Empty buffer returns empty
-   - sinceSeq=0 returns all
-   - sinceSeq=N returns only chunks after N
-   - maxBytes limit respected
+    manager.handleTerminalOutput(budId, {
+      seq: 1,
+      data: Buffer.from(' world').toString('base64'),
+      byte_offset: 5
+    });
+    expect(manager.getLastOffset(budId)).toBe(11);
+  });
 
-3. **Race condition simulation:**
-   - Send output chunks
-   - Fire readiness before DB insert completes
-   - Verify getOutputSince() returns correct data
+  it('tailOutput with sinceOffset returns only new data', async () => {
+    // Insert test data with various offsets
+    // Query with sinceOffset
+    // Verify only data after offset returned
+  });
+});
+```
 
-### Integration Tests
-
-1. **Agent terminal.run flow:**
-   - Agent sends command
-   - Bud executes and returns output
-   - Agent receives correct output (not stale)
-
-2. **Multiple rapid commands:**
-   - Send several commands quickly
-   - Each command sees only its own output
-
-3. **Large output handling:**
-   - Command produces >1MB output
-   - Buffer trims correctly
-   - Agent still gets recent output
-
-## Rollback Plan
-
-If issues arise:
-1. Revert to DB-only reads
-2. Add configurable delay after readiness as stopgap:
-   ```typescript
-   const readiness = await this.terminalManager.waitForReadiness(budId, timeout);
-   await new Promise(r => setTimeout(r, 200));  // Wait for DB flush
-   const tail = await this.terminalManager.tailOutput(budId, maxBytes);
-   ```
+---
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| `service/src/runtime/terminal-manager.ts` | Add ring buffer, `getOutputSince()`, update `handleTerminalOutput()` |
-| `service/src/agent/agent-service.ts` | Use `getLastSeq()` before input, `getOutputSince()` after readiness |
-| `service/src/ws/gateway.ts` | Call `clearBuffer()` on terminal close/disconnect |
+| `service/src/runtime/terminal-manager.ts` | Add `lastOffsets` map, `getLastOffset()`, `clearOffset()`, update `tailOutput()` with `sinceOffset` |
+| `service/src/agent/agent-service.ts` | Capture offset before `sendInput()`, pass `sinceOffset` to `tailOutput()` |
+| `service/src/ws/gateway.ts` | Call `clearOffset()` on disconnect |
+
+---
 
 ## Success Criteria
 
-1. Agent sees correct output for commands it executes
-2. No race condition between readiness and output availability
-3. `getOutputSince()` returns only new output since specified sequence
-4. Performance: Output available to agent within 10ms of readiness signal
-5. Memory: Ring buffer stays under 1MB per terminal
+1. ✅ Agent sees only output from its own command (not stale/mixed)
+2. ✅ No race condition between readiness and output availability
+3. ✅ `tailOutput({ sinceOffset })` returns output after specified offset
+4. ✅ Minimal memory overhead (~8 bytes per terminal)
+5. ✅ Existing tests pass
+6. ✅ UI terminal view still works (no changes to SSE streaming)
 
-## Open Questions
+---
 
-1. Should we keep the DB insert synchronous (await) or fire-and-forget for better performance?
-2. What's the right maxBytes for the ring buffer? 1MB? 512KB?
-3. Should we expose `sinceSeq` in the REST API for client use?
+## Future: File-Based Storage
+
+For production scale, consider:
+
+1. **Eliminate DB storage for output** - Bud's file is the source of truth
+2. **Service requests output directly from Bud** via new `terminal_read` frame
+3. **S3 streaming** - Bud uploads to S3, Service reads from S3
+
+This would eliminate:
+- `terminal_output` table (or use only for metadata)
+- Race condition entirely (file is always current)
+- WS bandwidth for output streaming
+
+But this is a larger architectural change for a future phase.

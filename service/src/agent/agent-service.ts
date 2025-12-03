@@ -512,7 +512,8 @@ export class AgentService {
         tools: [TERMINAL_RUN_TOOL, TERMINAL_OBSERVE_TOOL, TERMINAL_INTERRUPT_TOOL],
         tool_choice: "auto",
         max_output_tokens: config.agentMaxOutputTokens,
-        reasoning: { effort: reasoningEffort }
+        reasoning: { effort: reasoningEffort },
+        text: { format: { type: "json_object" } }
       },
       signal ? { signal } : undefined
     );
@@ -886,6 +887,15 @@ export class AgentService {
       };
     }
     // terminal.run
+    // Capture byte offset BEFORE sending input so we can request only NEW output afterward.
+    // This avoids the race condition where readiness fires before output is stored in DB.
+    // See: service/src/runtime/terminal-manager.ts TODO comment for full context.
+    const offsetBeforeInput = this.terminalManager.getLastOffset(bud.budId);
+    this.debug("terminal.run capturing offset before input", {
+      budId: bud.budId,
+      offsetBeforeInput
+    });
+
     const input = directive.input ?? directive.command ?? "";
     const sent = await this.terminalManager.sendInput(
       bud.budId,
@@ -899,8 +909,32 @@ export class AgentService {
       bud.budId,
       directive.timeoutMs ?? 5000
     );
-    const tail = await this.terminalManager.tailOutput(bud.budId, config.terminalOutputBackfillBytes);
+    const offsetAfterReadiness = this.terminalManager.getLastOffset(bud.budId);
+    this.debug("terminal.run after readiness", {
+      budId: bud.budId,
+      offsetBeforeInput,
+      offsetAfterReadiness,
+      offsetDelta: offsetAfterReadiness - offsetBeforeInput
+    });
+
+    // Get output SINCE we sent the input (only new output from this command)
+    const tail = await this.terminalManager.tailOutput(
+      bud.budId,
+      config.terminalOutputBackfillBytes,
+      { sinceOffset: offsetBeforeInput }
+    );
     const decoded = this.decodeTail(tail.data);
+
+    // Diagnostic logging for debugging stale output issue
+    this.debug("terminal.run received output", {
+      budId: bud.budId,
+      offsetBeforeInput,
+      tailBytes: tail.totalBytes,
+      tailDataLength: tail.data.length,
+      decodedLength: decoded.length,
+      decodedPreview: decoded.slice(0, 300).replace(/\n/g, "\\n")
+    });
+
     const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
       ready: true,
       confidence: 0.5,

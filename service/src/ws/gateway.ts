@@ -717,6 +717,8 @@ class BudConnection {
   private async handleClose() {
     if (this.state.kind === "connected") {
       sessions.delete(this.state.budId);
+      // Clear terminal caches (readiness, byte offsets) to avoid stale data on reconnect
+      this.terminalManager.clearTerminalCache(this.state.budId);
       await markBudOffline(this.state.budId, this.server);
     }
     this.state = { kind: "closed" };

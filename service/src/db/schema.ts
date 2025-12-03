@@ -279,6 +279,8 @@ export const terminalOutputTable = pgTable(
     budId: text("bud_id")
       .notNull()
       .references(() => budTerminalTable.budId, { onDelete: "cascade" }),
+    // Note: seq is kept for backwards compatibility but is NOT reliable across reconnections.
+    // byte_offset is the true unique identifier and should be used for ordering.
     seq: bigint("seq", { mode: "number" }).notNull(),
     data: byteaColumn("data").notNull(),
     byteOffset: bigint("byte_offset", { mode: "number" }).notNull(),
@@ -286,8 +288,11 @@ export const terminalOutputTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
   },
   (table) => ({
-    pk: primaryKey({ columns: [table.budId, table.seq], name: "terminal_output_pkey" }),
-    offsetIdx: index("terminal_output_offset_idx").on(table.budId, table.byteOffset)
+    // Primary key changed from (bud_id, seq) to (bud_id, byte_offset) because:
+    // - seq resets to 0 when Bud reconnects, causing silent data loss via onConflictDoNothing
+    // - byte_offset is monotonically increasing (file position) and never collides
+    pk: primaryKey({ columns: [table.budId, table.byteOffset], name: "terminal_output_pkey" }),
+    seqIdx: index("terminal_output_seq_idx").on(table.budId, table.seq)
   })
 );
 

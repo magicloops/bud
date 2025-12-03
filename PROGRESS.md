@@ -1,8 +1,20 @@
 # Bud PoC Progress — Persistent Terminal
 
-_Last updated: 2025-12-02_
+_Last updated: 2025-12-03_
 
 ## What's implemented (recent)
+
+### Message Display & OpenAI Response Fix (2025-12-03)
+- **Fixed message fetch ordering**: Changed `/api/threads/:threadId/messages` to order by `createdAt DESC` instead of `ASC`. With `ASC` + `LIMIT 200`, the query returned the oldest 200 messages, cutting off the newest ones when thread exceeded 200 messages.
+- **Fixed OpenAI response format**: Added `text: { format: { type: "json_object" } }` to OpenAI Responses API call to force JSON output instead of YAML.
+- **Debug script**: `service/scripts/query-messages.ts` for analyzing message storage.
+
+### Terminal Output Storage Fix (2025-12-03)
+- **Fixed `seq` collision bug**: Changed `terminal_output` primary key from `(bud_id, seq)` to `(bud_id, byte_offset)`. The `seq` counter resets to 0 when Bud reconnects, causing `onConflictDoNothing` to silently drop ALL new data. `byte_offset` is monotonically increasing (file position) and never collides.
+- **Fixed output ordering**: Changed `tailOutput()` to order by `byte_offset DESC` instead of `seq DESC`. After reconnection, `seq` doesn't correlate with chronological order, but `byte_offset` always does.
+- **Added byte offset tracking**: Agent now captures `getLastOffset()` before sending input and requests `tailOutput({ sinceOffset })` after readiness to get only new output.
+- **Migration**: `0005_terminal_output_pk_byte_offset.sql` changes the PK constraint.
+- **Debug script**: `service/scripts/query-terminal-output.ts` for analyzing terminal output storage.
 
 ### UI Fixes & View Toggle Restoration (2025-12-02)
 - **View toggle restored**: Re-added Terminal/Web view toggle to `WorkspaceTopBar` that was removed during refactor. Terminal pane stays mounted (preserving xterm instance) while web view placeholder overlays on top.
@@ -82,34 +94,55 @@ Three critical issues identified during agent testing:
 - **Fix:** Wired up web client to connect to `/api/sessions/:sessionId/stream` after POST
 - **Plan:** `plan/fix-agent-message-streaming.md`
 
-### Issue 2: Terminal Output Shows Stale/Mixed Data
+### Issue 2: Terminal Output Shows Stale/Mixed Data — ✅ FIXED
 - `tailOutput()` has no cursor tracking - always returns last N rows
 - No way to request "output since sequence X"
 - Old session data appears mixed with new commands
+- **Fix:** Changed ordering from `seq` to `byte_offset`, added `sinceOffset` parameter
 - **Plan:** `plan/fix-agent-terminal-output-race.md`
 
-### Issue 3: Agent Sees Stale Terminal Output
+### Issue 3: Agent Sees Stale Terminal Output — ✅ FIXED
 - Race condition: readiness signal fires BEFORE output stored in DB
 - Agent reads from DB immediately after readiness, but output hasn't been persisted yet
 - Agent responds based on incomplete/stale data
+- **Fix:** Changed PK from `(bud_id, seq)` to `(bud_id, byte_offset)`, added in-memory offset tracking
+- **Verified:** Diagnostic logs show agent receiving correct output (see `offsetDelta: 1132`, `decodedPreview` matches command output)
 - **Plan:** `plan/fix-agent-terminal-output-race.md`
 
-## Debug Documentation (2025-12-02)
+### Issue 4: OpenAI Returns YAML Instead of JSON — ✅ FIXED
+- OpenAI (gpt-5-2025-08-07) returned YAML format despite system prompt requesting JSON
+- **Fix:** Added `text: { format: { type: "json_object" } }` to OpenAI Responses API call
+- **Debug:** `debug/openai-response-format.md`
+
+### Issue 5: Messages Not Showing After Page Refresh — ✅ FIXED
+- Newest messages not appearing in UI even after page refresh
+- **Root cause:** Message query used `ORDER BY createdAt ASC` with `LIMIT 200`, returning oldest 200 instead of newest
+- **Fix:** Changed to `ORDER BY createdAt DESC` in `service/src/routes/threads.ts`
+- **Debug:** `debug/missing-messages-in-ui.md`
+
+## Debug Documentation (2025-12-03)
 - `debug/agent-terminal-bud-offline.md` - Investigation of "bud_offline" error (fixed)
 - `debug/agent-terminal-communication-issues.md` - Comprehensive analysis of agent-terminal issues
 - `debug/xterm-dimensions-error.md` - xterm initialization timing fix
+- `debug/terminal-output-ordering.md` - Investigation of terminal output storage bug (fixed)
+- `debug/agent-stale-output-and-json-parsing.md` - Investigation of Issue 3 + OpenAI JSON parsing
+- `debug/openai-response-format.md` - OpenAI returning YAML instead of JSON for final messages (fixed)
+- `debug/missing-messages-in-ui.md` - Messages not showing after page refresh (fixed)
 
 ## Planning Documents
 - `plan/interactive-sessions-status.md` - Current branch status and what's working/missing
-- `plan/fix-agent-terminal-output-race.md` - Plan to fix Issues 2 & 3 (ring buffer approach)
-- `plan/fix-agent-message-streaming.md` - Plan to fix Issue 1 (restore SSE streaming)
+- `plan/fix-agent-terminal-output-race.md` - Plan to fix Issues 2 & 3 (byte offset approach) ✅
+- `plan/fix-agent-message-streaming.md` - Plan to fix Issue 1 (restore SSE streaming) ✅
 - `plan/terminal-tests.md` - Test plan for terminal features
 
 ## Remaining TODOs
 
 ### Critical (Blocking Agent Use)
-- [ ] Fix agent terminal output race condition (Issues 2 & 3) - see `plan/fix-agent-terminal-output-race.md`
+- [x] Fix agent terminal output UI ordering (Issue 2) - see `plan/fix-agent-terminal-output-race.md`
+- [x] Fix agent seeing stale output (Issue 3) - see `plan/fix-agent-terminal-output-race.md`
 - [x] Fix agent message streaming (Issue 1) - see `plan/fix-agent-message-streaming.md`
+- [x] Fix OpenAI YAML response format (Issue 4) - see `debug/openai-response-format.md`
+- [x] Fix messages not showing after refresh (Issue 5) - see `debug/missing-messages-in-ui.md`
 
 ### Testing
 - [ ] Implement Bud unit tests for readiness detector

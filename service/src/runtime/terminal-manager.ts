@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import type { FastifyBaseLogger } from "fastify";
 import { ulid } from "ulid";
-import { eq, desc, and, inArray, lt } from "drizzle-orm";
+import { eq, desc, asc, gte, and, inArray, lt } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   budTerminalTable,
@@ -12,6 +12,35 @@ import { config, TERMINAL_PROTO_VERSION } from "../config.js";
 import { sendFrameToBud } from "../ws/gateway.js";
 import type { TerminalState } from "../terminal/types.js";
 import { TerminalEventBus } from "./event-bus.js";
+
+// =============================================================================
+// TODO: Terminal Output Storage Architecture
+// =============================================================================
+//
+// CURRENT STATE (TEMPORARY):
+// Terminal output is stored in PostgreSQL (terminal_output table) as a series
+// of chunks with sequence numbers and byte offsets. This works but has issues:
+//
+// 1. RACE CONDITION: Output chunks are inserted async, but readiness signals
+//    are processed sync. The agent may read from DB before output is written.
+//    We work around this by tracking byte offsets in memory (lastOffsets map)
+//    and querying "sinceOffset" to get only new output.
+//
+// 2. DUPLICATE STORAGE: Bud already writes output to a local file via tmux
+//    pipe-pane. We're duplicating that data into the DB just to read it back.
+//
+// 3. SCALE: PostgreSQL isn't ideal for high-volume binary log data.
+//
+// FUTURE STATE (S3 STREAMING):
+// - Bud streams output directly to S3 (or local file in dev)
+// - Service stores only metadata (S3 key, byte offsets) in DB
+// - Agent reads output from S3/file, not from DB
+// - Eliminates race condition (file is always current)
+// - Eliminates duplicate storage
+// - Scales naturally with S3
+//
+// See: plan/fix-agent-terminal-output-race.md for full design discussion.
+// =============================================================================
 
 type TerminalEnsureConfig = {
   shell?: string;
@@ -46,10 +75,29 @@ export class TerminalManager {
   private readonly logger: FastifyBaseLogger;
   private readonly events: TerminalEventBus;
   private readonly readiness = new Map<string, { assessment: unknown; updatedAt: number }>();
+  // Track last known byte offset per terminal (see TODO comment at top of file)
+  private readonly lastOffsets = new Map<string, number>();
 
   constructor(logger: FastifyBaseLogger, events: TerminalEventBus) {
     this.logger = logger;
     this.events = events;
+  }
+
+  /**
+   * Get the last known byte offset for a terminal's output.
+   * Used by the agent to capture position before sending input,
+   * then request only output since that position after readiness.
+   */
+  getLastOffset(budId: string): number {
+    return this.lastOffsets.get(budId) ?? 0;
+  }
+
+  /**
+   * Clear cached state for a terminal (call on disconnect/close).
+   */
+  clearTerminalCache(budId: string): void {
+    this.readiness.delete(budId);
+    this.lastOffsets.delete(budId);
   }
 
   async ensureTerminal(budId: string, configOverride?: TerminalEnsureConfig): Promise<{ ok: boolean; error?: string }> {
@@ -184,6 +232,13 @@ export class TerminalManager {
 
   async handleTerminalOutput(budId: string, payload: TerminalOutputPayload): Promise<void> {
     const buffer = Buffer.from(payload.data, "base64");
+
+    // Track byte offset SYNCHRONOUSLY before any async work.
+    // This ensures the agent can read the correct offset even if DB inserts are slow.
+    // See TODO comment at top of file for why this workaround exists.
+    const endOffset = payload.byte_offset + buffer.length;
+    this.lastOffsets.set(budId, endOffset);
+
     const now = new Date();
     const row = await db.query.budTerminalTable.findFirst({
       where: eq(budTerminalTable.budId, budId),
@@ -206,8 +261,18 @@ export class TerminalManager {
           byteOffset: payload.byte_offset
         })
         .onConflictDoNothing({
-          target: [terminalOutputTable.budId, terminalOutputTable.seq]
+          // Use byte_offset for conflict detection, NOT seq.
+          // seq resets to 0 when Bud reconnects, but byte_offset is monotonically increasing.
+          target: [terminalOutputTable.budId, terminalOutputTable.byteOffset]
         });
+      this.logger.info({
+        budId,
+        seq: payload.seq,
+        byteOffset: payload.byte_offset,
+        endOffset,
+        storedBytes: toStore.length,
+        component: "terminal_manager"
+      }, "terminal_output stored in DB");
     }
     const newOutputBytes = currentTotalBytes + buffer.length;
     const newLogBytes = currentLogBytes + toStore.length;
@@ -293,15 +358,92 @@ export class TerminalManager {
     return { state: (row.state as TerminalState) ?? "none", info };
   }
 
-  async tailOutput(budId: string, maxBytes: number): Promise<{ data: Buffer; totalBytes: number }> {
+  /**
+   * Get terminal output, optionally filtering to only output after a specific byte offset.
+   *
+   * @param budId - The bud/terminal ID
+   * @param maxBytes - Maximum bytes to return
+   * @param options.sinceOffset - If provided, only return output after this byte offset.
+   *                              Used by the agent to get only output from its command.
+   *                              See TODO comment at top of file for context.
+   */
+  async tailOutput(
+    budId: string,
+    maxBytes: number,
+    options?: { sinceOffset?: number }
+  ): Promise<{ data: Buffer; totalBytes: number }> {
+    const currentInMemoryOffset = this.lastOffsets.get(budId) ?? 0;
+    this.logger.info({
+      budId,
+      maxBytes,
+      sinceOffset: options?.sinceOffset,
+      currentInMemoryOffset,
+      component: "terminal_manager"
+    }, "tailOutput called");
+
+    // When sinceOffset is provided, query chronologically for output after that offset
+    if (options?.sinceOffset !== undefined) {
+      const rows = await db
+        .select({
+          data: terminalOutputTable.data,
+          byteOffset: terminalOutputTable.byteOffset
+        })
+        .from(terminalOutputTable)
+        .where(
+          and(
+            eq(terminalOutputTable.budId, budId),
+            gte(terminalOutputTable.byteOffset, options.sinceOffset)
+          )
+        )
+        .orderBy(asc(terminalOutputTable.byteOffset))
+        .limit(200);
+
+      this.logger.info({
+        budId,
+        sinceOffset: options.sinceOffset,
+        rowCount: rows.length,
+        firstRowOffset: rows[0]?.byteOffset ?? null,
+        lastRowOffset: rows[rows.length - 1]?.byteOffset ?? null,
+        component: "terminal_manager"
+      }, "tailOutput sinceOffset query result");
+
+      if (rows.length === 0) {
+        return { data: Buffer.alloc(0), totalBytes: 0 };
+      }
+
+      const buffers: Buffer[] = [];
+      for (const row of rows) {
+        let buf = Buffer.from(row.data);
+
+        // If first chunk starts before sinceOffset, trim the beginning
+        if (row.byteOffset < options.sinceOffset) {
+          const skip = options.sinceOffset - row.byteOffset;
+          buf = buf.subarray(skip);
+        }
+
+        buffers.push(buf);
+      }
+
+      const combined = Buffer.concat(buffers);
+      // Apply maxBytes limit from the end if needed
+      const result = combined.length > maxBytes
+        ? combined.subarray(combined.length - maxBytes)
+        : combined;
+
+      return { data: result, totalBytes: combined.length };
+    }
+
+    // Default behavior: get last N bytes (for observe/backfill)
+    // Order by byte_offset (NOT seq) because seq resets on Bud reconnection.
+    // byte_offset is the file position and is monotonically increasing.
     const rows = await db
       .select({
-        seq: terminalOutputTable.seq,
-        data: terminalOutputTable.data
+        data: terminalOutputTable.data,
+        byteOffset: terminalOutputTable.byteOffset
       })
       .from(terminalOutputTable)
       .where(eq(terminalOutputTable.budId, budId))
-      .orderBy(desc(terminalOutputTable.seq))
+      .orderBy(desc(terminalOutputTable.byteOffset))
       .limit(200);
     if (rows.length === 0) {
       return { data: Buffer.alloc(0), totalBytes: 0 };
@@ -587,8 +729,8 @@ export class TerminalManager {
       id: ulid()
     });
 
-    // Clear cached readiness
-    this.readiness.delete(budId);
+    // Clear all cached state for this terminal
+    this.clearTerminalCache(budId);
 
     return { ok: true };
   }

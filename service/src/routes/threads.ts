@@ -189,7 +189,7 @@ export async function registerThreadRoutes(
       .select()
       .from(messageTable)
       .where(eq(messageTable.threadId, thread.threadId))
-      .orderBy(asc(messageTable.createdAt))
+      .orderBy(desc(messageTable.createdAt))
       .limit(query.limit);
     reply.send(rows.map(serializeMessage));
   });
