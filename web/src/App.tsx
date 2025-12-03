@@ -97,6 +97,7 @@ function App() {
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const sendTerminalInputRef = useRef<(text: string) => void>(() => { })
+  const sendTerminalResizeRef = useRef<(cols: number, rows: number) => void>(() => { })
   const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const terminalReconnectAttemptRef = useRef(0)
   const lastSseEventTimeRef = useRef<number>(Date.now())
@@ -176,6 +177,12 @@ function App() {
     }
     try {
       addon.fit()
+      // Send resize to backend after fit
+      const cols = term.cols
+      const rows = term.rows
+      if (cols > 0 && rows > 0) {
+        sendTerminalResizeRef.current(cols, rows)
+      }
     } catch (err) {
       console.warn('Failed to fit terminal', err)
     }
@@ -382,6 +389,29 @@ function App() {
   useEffect(() => {
     sendTerminalInputRef.current = sendTerminalInput
   }, [sendTerminalInput])
+
+  const sendTerminalResize = useCallback(
+    async (cols: number, rows: number) => {
+      if (!budId) return
+      try {
+        const resp = await apiFetch(`/api/terminals/${budId}/resize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cols, rows })
+        })
+        if (!resp.ok) {
+          console.warn('[terminal] resize request failed', { status: resp.status })
+        }
+      } catch (err) {
+        console.error('Failed to send terminal resize', err)
+      }
+    },
+    [budId]
+  )
+
+  useEffect(() => {
+    sendTerminalResizeRef.current = sendTerminalResize
+  }, [sendTerminalResize])
 
   const fetchBuds = useCallback(async () => {
     const resp = await apiFetch('/api/buds')

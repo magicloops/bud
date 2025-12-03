@@ -189,6 +189,31 @@ export class TerminalManager {
     return { ok: true };
   }
 
+  async sendResize(budId: string, cols: number, rows: number): Promise<{ ok: boolean; error?: string }> {
+    const payload = {
+      proto: TERMINAL_PROTO_VERSION,
+      type: "terminal_resize",
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
+      cols,
+      rows
+    };
+    const sent = sendFrameToBud(budId, payload);
+    if (!sent) {
+      this.logger.warn({ budId }, "Failed to send terminal_resize (bud offline)");
+      return { ok: false, error: "bud_offline" };
+    }
+
+    await db
+      .update(budTerminalTable)
+      .set({ cols, rows, lastActivityAt: new Date() })
+      .where(eq(budTerminalTable.budId, budId));
+
+    this.debug("terminal_resize forwarded", { budId, cols, rows });
+    return { ok: true };
+  }
+
   async handleTerminalStatus(budId: string, payload: TerminalStatusPayload): Promise<void> {
     const now = new Date();
     await db

@@ -4,6 +4,16 @@ _Last updated: 2025-12-03_
 
 ## What's implemented (recent)
 
+### Terminal Resize Sync (2025-12-03)
+- **Fixed TUI rendering**: Claude Code and other terminal UI applications now render correctly in the web terminal.
+- **Root cause**: Terminal dimensions weren't synchronized between xterm.js (80-120 cols) and tmux (default 200x50).
+- **Implementation**:
+  - Added `TerminalManager.sendResize(budId, cols, rows)` to forward resize frames to Bud
+  - Added `POST /api/terminals/:budId/resize` REST endpoint
+  - Frontend now sends resize after every `fitAddon.fit()` (on init, window resize, panel toggle)
+  - Bud runs `tmux resize-window` which sends SIGWINCH to foreground process
+- **Plan:** `plan/terminal-resize-sync.md`
+
 ### Message Display & OpenAI Response Fix (2025-12-03)
 - **Fixed message fetch ordering**: Changed `/api/threads/:threadId/messages` to order by `createdAt DESC` instead of `ASC`. With `ASC` + `LIMIT 200`, the query returned the oldest 200 messages, cutting off the newest ones when thread exceeded 200 messages.
 - **Fixed OpenAI response format**: Added `text: { format: { type: "json_object" } }` to OpenAI Responses API call to force JSON output instead of YAML.
@@ -133,6 +143,7 @@ Three critical issues identified during agent testing:
 - `plan/interactive-sessions-status.md` - Current branch status and what's working/missing
 - `plan/fix-agent-terminal-output-race.md` - Plan to fix Issues 2 & 3 (byte offset approach) ✅
 - `plan/fix-agent-message-streaming.md` - Plan to fix Issue 1 (restore SSE streaming) ✅
+- `plan/terminal-resize-sync.md` - Plan for terminal resize synchronization ✅
 - `plan/terminal-tests.md` - Test plan for terminal features
 
 ## Remaining TODOs
@@ -152,5 +163,5 @@ Three critical issues identified during agent testing:
 
 ### Future
 - [ ] Terminal history pagination with S3 storage
-- [ ] Terminal resize handling
+- [x] Terminal resize handling - see `plan/terminal-resize-sync.md`
 - [ ] Multi-terminal support

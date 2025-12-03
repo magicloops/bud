@@ -11,6 +11,11 @@ const ensureBodySchema = z
   })
   .partial();
 
+const resizeBodySchema = z.object({
+  cols: z.number().int().positive().min(1).max(500),
+  rows: z.number().int().positive().min(1).max(200)
+});
+
 export async function registerTerminalRoutes(server: FastifyInstance, terminalManager: TerminalManager): Promise<void> {
   server.post("/api/terminals/:budId/ensure", async (request, reply) => {
     const budId = (request.params as { budId: string }).budId;
@@ -69,6 +74,23 @@ export async function registerTerminalRoutes(server: FastifyInstance, terminalMa
     const sent = await terminalManager.sendInterrupt(budId);
     if (!sent.ok) {
       return reply.code(503).send({ error: sent.error ?? "terminal_unavailable" });
+    }
+    return { ok: true };
+  });
+
+  server.post("/api/terminals/:budId/resize", async (request, reply) => {
+    const budId = (request.params as { budId: string }).budId;
+    const body = resizeBodySchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: "invalid_body", details: body.error.message });
+    }
+    request.log.info(
+      { budId, cols: body.data.cols, rows: body.data.rows, component: "terminal_routes" },
+      "terminal resize requested"
+    );
+    const result = await terminalManager.sendResize(budId, body.data.cols, body.data.rows);
+    if (!result.ok) {
+      return reply.code(503).send({ error: result.error ?? "terminal_unavailable" });
     }
     return { ok: true };
   });
