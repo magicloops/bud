@@ -579,12 +579,14 @@ function App() {
       const handleReady = (event: MessageEvent) => {
         try {
           lastSseEventTimeRef.current = Date.now()
-          const payload = JSON.parse(event.data ?? '{}') as { assessment?: {
-            ready: boolean
-            confidence: number
-            trigger: string
-            hints: Record<string, boolean>
-          } }
+          const payload = JSON.parse(event.data ?? '{}') as {
+            assessment?: {
+              ready: boolean
+              confidence: number
+              trigger: string
+              hints: Record<string, boolean>
+            }
+          }
           if (payload.assessment) {
             setTerminalReadiness(payload.assessment)
           }
@@ -970,9 +972,8 @@ function App() {
             <div className={`flex-1 relative min-h-0 overflow-hidden ${viewMode === 'web' ? 'invisible' : ''}`}>
               <div
                 ref={terminalPaneRef}
-                className={`h-full w-full overflow-hidden font-mono text-sm transition-opacity duration-300 ${
-                  showDisconnectOverlay ? 'opacity-40' : 'opacity-100'
-                }`}
+                className={`h-full w-full overflow-hidden font-mono text-sm transition-opacity duration-300 ${showDisconnectOverlay ? 'opacity-40' : 'opacity-100'
+                  }`}
                 style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
                 onClick={() => terminalRef.current?.focus()}
               />
@@ -1006,13 +1007,12 @@ function App() {
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`h-2 w-2 rounded-full ${
-                        terminalConnection === 'connected'
+                      className={`h-2 w-2 rounded-full ${terminalConnection === 'connected'
                           ? 'bg-green-500'
                           : terminalConnection === 'reconnecting'
                             ? 'bg-yellow-500 animate-pulse'
                             : 'bg-red-500'
-                      }`}
+                        }`}
                     />
                     <span className="font-mono font-semibold uppercase tracking-wide">
                       {terminalSupported
@@ -1023,13 +1023,12 @@ function App() {
                   {terminalReadiness && terminalConnection === 'connected' && (
                     <div className="flex items-center gap-2 border-l border-border/50 pl-3">
                       <span
-                        className={`h-2 w-2 rounded-full ${
-                          terminalReadiness.ready
+                        className={`h-2 w-2 rounded-full ${terminalReadiness.ready
                             ? 'bg-green-400'
                             : terminalReadiness.confidence > 0.5
                               ? 'bg-yellow-400'
                               : 'bg-orange-400 animate-pulse'
-                        }`}
+                          }`}
                       />
                       <span className="font-mono text-muted-foreground">
                         {terminalReadiness.ready

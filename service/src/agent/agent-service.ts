@@ -658,7 +658,17 @@ export class AgentService {
 
   private detectReasoningNoneSupport(model: string): boolean {
     const normalized = model.toLowerCase();
-    return normalized.includes("gpt-5.1") || normalized.includes("gpt-5o") || normalized.includes("o1");
+    // Models that REQUIRE reasoning effort (don't support "none"):
+    // - gpt-5.1-codex, gpt-5o, o1, o3, etc.
+    // These models only accept "low", "medium", "high"
+    const requiresReasoning =
+      normalized.includes("gpt-5.1") ||
+      normalized.includes("gpt-5o") ||
+      normalized.includes("o1") ||
+      normalized.includes("o3") ||
+      normalized.includes("codex");
+    // Return true if model supports "none" (i.e., does NOT require reasoning)
+    return !requiresReasoning;
   }
 
   private extractFunctionCall(response: OpenAIResponse): AgentDirective | null {

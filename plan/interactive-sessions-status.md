@@ -1,6 +1,6 @@
 # Interactive Sessions Branch Status
 
-_Last updated: 2025-12-03_
+_Last updated: 2025-12-04_
 
 ## Branch: `adam/interactive-sessions`
 
@@ -12,7 +12,13 @@ This document tracks the current implementation status, what's working, what's m
 
 The **Persistent Terminal** feature (Phases 1-5 from `plan/persistent-terminal.md`) is **fully implemented** and working correctly. All critical agent integration bugs have been fixed. The **PTY-based interactive sessions MVP is complete** and ready for use.
 
-**Recent milestone**: Terminal resize sync implemented (2025-12-03), enabling Claude Code and other TUI applications to render correctly in the web terminal.
+**Recent milestones (2025-12-04)**:
+- Agent terminal context awareness - agent now knows when inside REPLs (Claude Code, python, node)
+- Shell respects `$SHELL` env var (was hardcoded to bash)
+- Enter key handling fixed for TUI apps
+- Session SSE heartbeat added (fixes spinner stopping mid-execution)
+- OpenAI request timeout added (2 min default)
+- Reasoning effort fix for newer models
 
 ---
 

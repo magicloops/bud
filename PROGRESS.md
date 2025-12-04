@@ -1,10 +1,21 @@
 # Bud PoC Progress — Persistent Terminal
 
-_Last updated: 2025-12-03_
+_Last updated: 2025-12-04_
 
 ## What's implemented (recent)
 
-### Agent Terminal Context Awareness (2025-12-03)
+### Agent & OpenAI Reliability Fixes (2025-12-04)
+- **Session SSE heartbeat**: Added heartbeat to `/api/sessions/:sessionId/stream` to keep connection alive during long OpenAI calls. Without this, the frontend spinner would stop mid-execution because proxies/browsers closed the "stale" connection.
+- **OpenAI request timeout**: Added 2-minute timeout to OpenAI client (configurable via `OPENAI_TIMEOUT_MS`). Previously, hanging requests would wait forever.
+- **Reasoning effort fix**: Fixed inverted logic in `detectReasoningNoneSupport()` - models like `gpt-5.1-codex` now correctly fall back to "low" instead of unsupported "none".
+- **Debug docs**: `debug/agent-progress-indicators.md`, `debug/openai-responses-hanging.md`
+
+### Bud Shell & Input Fixes (2025-12-04)
+- **Default shell**: Bud now respects `$SHELL` environment variable instead of hardcoding `/bin/bash`. Users get their preferred shell (zsh, fish, etc.).
+- **Enter key handling**: tmux `send-keys` now sends actual Enter key instead of literal `\n`. Fixed by splitting input: text sent with `-l` (literal), then Enter sent separately. This fixes input submission in TUI apps like Claude Code.
+- **Files**: `bud/src/main.rs` (default_shell, handle_input)
+
+### Agent Terminal Context Awareness (2025-12-04)
 - **Problem**: Agent didn't know when it was inside a REPL (Claude Code, python, node, etc.), causing it to send shell commands instead of REPL-appropriate input.
 - **Solution**: Command stack tracking - when agent starts a known REPL program, we track it as "pending" and provide context to subsequent tool calls.
 - **Implementation**:

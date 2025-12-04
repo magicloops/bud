@@ -43,7 +43,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   const terminalEvents = new TerminalEventBus();
   const terminalManager = new TerminalManager(terminalLogger, terminalEvents);
   terminalManager.startIdleChecks();
-  const openai = new OpenAI({ apiKey: config.openaiApiKey });
+  const openai = new OpenAI({
+    apiKey: config.openaiApiKey,
+    timeout: config.openaiTimeout
+  });
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
     openai,
@@ -93,7 +96,22 @@ export async function buildServer(): Promise<FastifyInstance> {
   server.get("/api/sessions/:sessionId/stream", (request, reply) => {
     const sessionId = (request.params as { sessionId: string }).sessionId;
     const detach = sessionEvents.attach(sessionId, reply);
-    reply.raw.on("close", detach);
+
+    // Send periodic heartbeat to keep connection alive during long model invocations
+    // Without this, proxies/browsers may close the connection as "stale"
+    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
+    const heartbeatInterval = setInterval(() => {
+      try {
+        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
+      } catch {
+        clearInterval(heartbeatInterval);
+      }
+    }, heartbeatMs);
+
+    reply.raw.on("close", () => {
+      clearInterval(heartbeatInterval);
+      detach();
+    });
   });
 
   server.get("/api/terminals/:budId/stream", (request, reply) => {

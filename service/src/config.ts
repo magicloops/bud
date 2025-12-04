@@ -39,6 +39,8 @@ export const config = {
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
   agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI),
+  // OpenAI request timeout in milliseconds (default: 2 minutes)
+  openaiTimeout: toNumber(process.env.OPENAI_TIMEOUT_MS, 120000),
   terminalEnabled: true,
   terminalOutputSoftCapBytes: toNumber(
     process.env.TERMINAL_OUTPUT_SOFT_CAP_BYTES,
