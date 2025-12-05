@@ -379,6 +379,23 @@ struct AwaitReady {
     max_wait_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalCaptureFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    request_id: String,
+    #[serde(default)]
+    options: CaptureOptions,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct CaptureOptions {
+    start_line: Option<i32>,    // -N for scrollback, 0 for top, None for all
+    end_line: Option<i32>,      // None for bottom
+    escape_sequences: bool,     // -e flag (include ANSI colors)
+    join_lines: bool,           // -J flag (join wrapped lines)
+}
+
 struct SessionConfig {
     session_id: String,
     #[allow(dead_code)]
@@ -1001,6 +1018,109 @@ impl TerminalManager {
         Ok(())
     }
 
+    async fn handle_capture(&self, frame: TerminalCaptureFrame) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        let handle = {
+            let inner = self.inner.lock().await;
+            inner.handle.clone()
+        };
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let Some(sender) = sender else {
+            warn!(request_id = %frame.request_id, "terminal_capture dropped; no sender");
+            return Ok(());
+        };
+
+        // If no session handle, send error response
+        let Some(handle) = handle else {
+            let response = json!({
+                "proto": TERMINAL_PROTO_VERSION,
+                "type": "terminal_capture_response",
+                "id": new_message_id(),
+                "ts": now_millis(),
+                "ext": {},
+                "request_id": frame.request_id,
+                "output": "",
+                "output_bytes": 0,
+                "lines_captured": 0,
+                "error": "no_session"
+            });
+            send_ws_frame(&sender, response)?;
+            return Ok(());
+        };
+
+        // Build capture-pane command
+        let mut args = vec!["capture-pane", "-p", "-t", &handle.session_name];
+
+        // Temporary storage for string representations
+        let start_str;
+        let end_str;
+
+        if frame.options.join_lines {
+            args.push("-J");
+        }
+        if frame.options.escape_sequences {
+            args.push("-e");
+        }
+        if let Some(start) = frame.options.start_line {
+            start_str = start.to_string();
+            args.extend(["-S", &start_str]);
+        }
+        if let Some(end) = frame.options.end_line {
+            end_str = end.to_string();
+            args.extend(["-E", &end_str]);
+        }
+
+        info!(
+            request_id = %frame.request_id,
+            session = %handle.session_name,
+            start_line = ?frame.options.start_line,
+            end_line = ?frame.options.end_line,
+            "executing capture-pane"
+        );
+
+        let output = Command::new("tmux")
+            .args(&args)
+            .output()
+            .await
+            .with_context(|| "failed to execute tmux capture-pane")?;
+
+        let lines_captured = output.stdout.iter().filter(|&&b| b == b'\n').count();
+        let error = if output.status.success() {
+            Value::Null
+        } else {
+            Value::String(String::from_utf8_lossy(&output.stderr).to_string())
+        };
+
+        let response = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_capture_response",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "request_id": frame.request_id,
+            "output": BASE64_STANDARD.encode(&output.stdout),
+            "output_bytes": output.stdout.len(),
+            "lines_captured": lines_captured,
+            "error": error
+        });
+
+        info!(
+            request_id = %frame.request_id,
+            output_bytes = output.stdout.len(),
+            lines_captured = lines_captured,
+            success = output.status.success(),
+            "capture-pane response"
+        );
+
+        send_ws_frame(&sender, response)?;
+        Ok(())
+    }
+
     async fn send_status(
         &self,
         sender: &OutboundSender,
@@ -1094,6 +1214,13 @@ impl TerminalManager {
                 warn!(session = %session_name, "tmux new-session failed");
                 return Ok(None);
             }
+
+            // Set history-limit to allow capture-pane to retrieve scrollback
+            // Agent can request up to 1000 lines; 5000 gives headroom
+            let _ = Command::new("tmux")
+                .args(["set-option", "-t", &session_name, "history-limit", "5000"])
+                .status()
+                .await;
         }
 
         // Ensure pipe-pane to log - first stop any existing pipe, then start fresh
@@ -2044,6 +2171,10 @@ impl BudApp {
             "terminal_close" => {
                 let frame: TerminalCloseFrame = serde_json::from_str(text)?;
                 self.terminal_manager.handle_close(frame).await?;
+            }
+            "terminal_capture" => {
+                let frame: TerminalCaptureFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_capture(frame).await?;
             }
             "error" => {
                 let err: ErrorFrame = serde_json::from_str(text)?;

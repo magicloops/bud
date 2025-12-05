@@ -18,11 +18,13 @@ type InputItem = OpenAI.Responses.CreateParams["input"][number];
 type AgentDirective =
   | {
       type: "tool_call";
-      tool: "shell.run" | "terminal.run" | "terminal.observe" | "terminal.interrupt";
+      tool: "shell.run" | "terminal.run" | "terminal.interrupt" | "terminal.capture";
       command?: string;
       cwd?: string;
       input?: string;
       timeoutMs?: number;
+      lines?: number;  // For terminal.capture: scrollback lines
+      wait?: boolean;  // For terminal.capture: wait for readiness first
       callId: string;
     }
   | {
@@ -65,7 +67,8 @@ You have a persistent terminal; state (cwd, env, running processes) persists acr
 
 Tools:
 - {"type":"tool_call","tool":"terminal.run","input":"ls -la\\n","timeout_ms":30000}
-- {"type":"tool_call","tool":"terminal.observe","timeout_ms":30000}
+- {"type":"tool_call","tool":"terminal.capture"}
+- {"type":"tool_call","tool":"terminal.capture","wait":true}
 - {"type":"tool_call","tool":"terminal.interrupt"}
 
 Guidelines:
@@ -73,7 +76,7 @@ Guidelines:
 - Check readiness from tool results to decide your next action:
   - confidence >= 0.8: Terminal is ready, send next command
   - confidence 0.5-0.8: Probably ready, verify output makes sense before proceeding
-  - confidence < 0.5: Likely still processing, use terminal.observe to wait
+  - confidence < 0.5: Likely still processing, use terminal.capture with wait:true
 - Use the hints object to understand terminal state:
   - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
   - looks_like_confirmation: Waiting for y/n or yes/no response
@@ -81,6 +84,10 @@ Guidelines:
   - looks_like_pager: In a pager like less/more (send 'q' to exit, space to continue)
   - may_still_be_processing: Output suggests command is still running
 - Use interrupt if a command hangs or you need to stop it.
+- Use terminal.capture to get terminal screen output:
+  - Add wait:true if a command might still be running (waits for readiness first)
+  - Add lines:-500 or lines:-1000 for more scrollback history
+  - Works well for TUI apps (rendered screen instead of raw byte stream)
 
 CONTEXT AWARENESS (CRITICAL):
 Tool results include a "context" field indicating what program is currently running in the terminal.
@@ -147,25 +154,6 @@ const TERMINAL_RUN_TOOL = {
   strict: true
 };
 
-const TERMINAL_OBSERVE_TOOL = {
-  type: "function" as const,
-  name: "terminal_observe",
-  description: "Wait for more terminal output without sending input.",
-  parameters: {
-    type: "object",
-    properties: {
-      timeout_ms: {
-        type: "integer",
-        description: "Optional max wait for readiness (ms).",
-        nullable: true
-      }
-    },
-    required: ["timeout_ms"],
-    additionalProperties: false
-  },
-  strict: true
-};
-
 const TERMINAL_INTERRUPT_TOOL = {
   type: "function" as const,
   name: "terminal_interrupt",
@@ -173,6 +161,41 @@ const TERMINAL_INTERRUPT_TOOL = {
   parameters: {
     type: "object",
     properties: {},
+    required: [],
+    additionalProperties: false
+  },
+  strict: true
+};
+
+const TERMINAL_CAPTURE_TOOL = {
+  type: "function" as const,
+  name: "terminal_capture",
+  description:
+    "Get terminal screen output. Use to see TUI app content, scroll through history, " +
+    "or wait for a command to finish. Returns the rendered screen (what you would see visually).",
+  parameters: {
+    type: "object",
+    properties: {
+      wait: {
+        type: "boolean",
+        description:
+          "Wait for terminal to become ready before capturing. " +
+          "Use after terminal.run returns low confidence. Default: false.",
+        nullable: true
+      },
+      lines: {
+        type: "integer",
+        description:
+          "Lines of scrollback history. Negative = from current position. " +
+          "Default: -200. Use -500 or -1000 for more history.",
+        nullable: true
+      },
+      timeout_ms: {
+        type: "integer",
+        description: "Max wait time in ms (only applies if wait=true). Default: 5000.",
+        nullable: true
+      }
+    },
     required: [],
     additionalProperties: false
   },
@@ -256,7 +279,7 @@ export class AgentService {
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           const callMeta =
-            toolCall.tool === "terminal.run" || toolCall.tool === "terminal.observe" || toolCall.tool === "terminal.interrupt"
+            toolCall.tool === "terminal.run" || toolCall.tool === "terminal.interrupt" || toolCall.tool === "terminal.capture"
               ? { input: toolCall.input ?? toolCall.command ?? "", cwd: toolCall.cwd ?? null }
               : { command: toolCall.command, cwd: toolCall.cwd ?? null };
           this.events.emit(sessionId, {
@@ -465,11 +488,11 @@ export class AgentService {
               name: this.toolNameForConversation("terminal.run"),
               arguments: JSON.stringify({ input })
             });
-          } else if (toolName === "terminal.observe") {
+          } else if (toolName === "terminal.capture") {
             items.push({
               type: "function_call",
               call_id: callId,
-              name: this.toolNameForConversation("terminal.observe"),
+              name: this.toolNameForConversation("terminal.capture"),
               arguments: JSON.stringify({})
             });
           } else if (toolName === "terminal.interrupt") {
@@ -545,7 +568,7 @@ export class AgentService {
       {
         model: config.openaiModel,
         input,
-        tools: [TERMINAL_RUN_TOOL, TERMINAL_OBSERVE_TOOL, TERMINAL_INTERRUPT_TOOL],
+        tools: [TERMINAL_RUN_TOOL, TERMINAL_INTERRUPT_TOOL, TERMINAL_CAPTURE_TOOL],
         tool_choice: "auto",
         max_output_tokens: config.agentMaxOutputTokens,
         reasoning: { effort: reasoningEffort },
@@ -646,10 +669,10 @@ export class AgentService {
     switch (tool) {
       case "terminal.run":
         return "terminal_run";
-      case "terminal.observe":
-        return "terminal_observe";
       case "terminal.interrupt":
         return "terminal_interrupt";
+      case "terminal.capture":
+        return "terminal_capture";
       case "shell.run":
       default:
         return "shell_run";
@@ -699,17 +722,19 @@ export class AgentService {
               timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
               callId
             };
-          case "terminal_observe":
-            return {
-              type: "tool_call",
-              tool: "terminal.observe",
-              timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
-              callId
-            };
           case "terminal_interrupt":
             return {
               type: "tool_call",
               tool: "terminal.interrupt",
+              callId
+            };
+          case "terminal_capture":
+            return {
+              type: "tool_call",
+              tool: "terminal.capture",
+              wait: args.wait === true,
+              lines: typeof args.lines === "number" ? args.lines : undefined,
+              timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
               callId
             };
           case "shell_run": {
@@ -923,29 +948,64 @@ export class AgentService {
         context: getContext()
       };
     }
-    if (directive.tool === "terminal.observe") {
-      const readiness = await this.terminalManager.waitForReadiness(
-        bud.budId,
-        directive.timeoutMs ?? 5000
-      );
-      const tail = await this.terminalManager.tailOutput(bud.budId, config.terminalOutputBackfillBytes);
-      const decoded = this.decodeTail(tail.data);
-      const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
-        ready: false,
-        confidence: 0.3,
-        trigger: "observe",
-        hints: { ...DEFAULT_READINESS_HINTS, may_still_be_processing: true }
+    // terminal.capture - uses tmux capture-pane for TUI/REPL visibility
+    // Optional wait parameter: wait for readiness before capturing
+    if (directive.tool === "terminal.capture") {
+      const lines = directive.lines ?? -200;
+      const shouldWait = directive.wait === true;
+
+      this.debug("terminal.capture", {
+        budId: bud.budId,
+        lines,
+        wait: shouldWait
       });
-      this.logReadinessDecision(directive.tool, finalReadiness);
-      return {
-        output: decoded,
-        outputBytes: tail.totalBytes,
-        readiness: finalReadiness,
-        lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
-        truncated: tail.data.length < tail.totalBytes,
-        omittedLines: 0,
-        context: getContext()
-      };
+
+      let readiness: Record<string, unknown>;
+
+      if (shouldWait) {
+        // Wait for terminal to settle before capturing
+        const budReadiness = await this.terminalManager.waitForReadiness(
+          bud.budId,
+          directive.timeoutMs ?? 5000
+        );
+        readiness = this.normalizeReadiness(budReadiness, {
+          ready: false,
+          confidence: 0.3,
+          trigger: "wait_timeout",
+          hints: { ...DEFAULT_READINESS_HINTS, may_still_be_processing: true }
+        });
+        this.logReadinessDecision(directive.tool, readiness);
+      } else {
+        // Immediate capture - snapshot readiness
+        readiness = { ready: true, confidence: 1.0, trigger: "capture" };
+      }
+
+      try {
+        const capture = await this.terminalManager.capturePane(
+          bud.budId,
+          { startLine: lines, joinLines: true },
+          directive.timeoutMs ?? 5000
+        );
+        if (capture.error) {
+          throw new Error(capture.error);
+        }
+        return {
+          output: capture.output,
+          outputBytes: capture.outputBytes,
+          readiness,
+          lastLine: capture.output.trim().split(/\r?\n/).pop() ?? "",
+          truncated: false,
+          omittedLines: 0,
+          context: getContext()
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          { budId: bud.budId, error: message, component: "agent_terminal" },
+          "capture-pane failed"
+        );
+        throw err;
+      }
     }
     // terminal.run
     // Capture byte offset BEFORE sending input so we can request only NEW output afterward.
@@ -978,20 +1038,63 @@ export class AgentService {
       offsetDelta: offsetAfterReadiness - offsetBeforeInput
     });
 
-    // Get output SINCE we sent the input (only new output from this command)
-    const tail = await this.terminalManager.tailOutput(
-      bud.budId,
-      config.terminalOutputBackfillBytes,
-      { sinceOffset: offsetBeforeInput }
-    );
-    const decoded = this.decodeTail(tail.data);
+    // Get output based on context mode
+    // REPL/TUI apps use capture-pane for accurate rendered output
+    // Shell commands use pipe-pane (works well for line-based output)
+    const context = getContext();
+    let decoded: string;
+    let outputBytes: number;
+    let truncated: boolean;
 
-    // Diagnostic logging for debugging stale output issue
+    if (context.mode === "repl") {
+      // REPL/TUI: use capture-pane for accurate rendered output
+      this.debug("terminal.run using capture-pane for REPL context", {
+        budId: bud.budId,
+        program: context.program
+      });
+
+      try {
+        const capture = await this.terminalManager.capturePane(bud.budId, {
+          startLine: -200,
+          joinLines: true
+        });
+        decoded = capture.output;
+        outputBytes = capture.outputBytes;
+        truncated = false; // capture-pane returns complete screen
+      } catch (err) {
+        // Fallback to pipe-pane if capture fails
+        this.logger.warn(
+          { budId: bud.budId, err, component: "agent_terminal" },
+          "capture-pane failed, falling back to pipe-pane"
+        );
+        const tail = await this.terminalManager.tailOutput(
+          bud.budId,
+          config.terminalOutputBackfillBytes,
+          { sinceOffset: offsetBeforeInput }
+        );
+        decoded = this.decodeTail(tail.data);
+        outputBytes = tail.totalBytes;
+        truncated = tail.data.length < tail.totalBytes;
+      }
+    } else {
+      // Shell: use pipe-pane (works well for line-based output)
+      const tail = await this.terminalManager.tailOutput(
+        bud.budId,
+        config.terminalOutputBackfillBytes,
+        { sinceOffset: offsetBeforeInput }
+      );
+      decoded = this.decodeTail(tail.data);
+      outputBytes = tail.totalBytes;
+      truncated = tail.data.length < tail.totalBytes;
+    }
+
+    // Diagnostic logging for debugging output
     this.debug("terminal.run received output", {
       budId: bud.budId,
       offsetBeforeInput,
-      tailBytes: tail.totalBytes,
-      tailDataLength: tail.data.length,
+      mode: context.mode,
+      program: context.program,
+      outputBytes,
       decodedLength: decoded.length,
       decodedPreview: decoded.slice(0, 300).replace(/\n/g, "\\n")
     });
@@ -1005,12 +1108,12 @@ export class AgentService {
     this.logReadinessDecision(directive.tool, finalReadiness);
     return {
       output: decoded,
-      outputBytes: tail.totalBytes,
+      outputBytes,
       readiness: finalReadiness,
       lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
-      truncated: tail.data.length < tail.totalBytes,
+      truncated,
       omittedLines: 0,
-      context: getContext()
+      context
     };
   }
 

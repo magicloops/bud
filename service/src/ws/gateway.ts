@@ -144,6 +144,15 @@ const TerminalReadySchema = TerminalEnvelopeSchema.extend({
   assessment: z.record(z.unknown())
 });
 
+const TerminalCaptureResponseSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_capture_response"),
+  request_id: z.string(),
+  output: z.string(),  // base64
+  output_bytes: z.number().int().nonnegative(),
+  lines_captured: z.number().int().nonnegative(),
+  error: z.string().nullable()
+});
+
 const ErrorFrameSchema = EnvelopeSchema.extend({
   type: z.literal("error"),
   code: z.string(),
@@ -331,6 +340,9 @@ class BudConnection {
       case "terminal_ready":
         await this.handleTerminalReady(parsed);
         break;
+      case "terminal_capture_response":
+        await this.handleTerminalCaptureResponse(parsed);
+        break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
         break;
@@ -492,6 +504,27 @@ class BudConnection {
       return;
     }
     await this.terminalManager.handleTerminalReady(this.state.budId, result.data.assessment);
+  }
+
+  private async handleTerminalCaptureResponse(raw: unknown) {
+    if (!config.terminalEnabled) {
+      return;
+    }
+    if (this.state.kind !== "connected") {
+      return;
+    }
+    const result = TerminalCaptureResponseSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid terminal_capture_response frame");
+      return;
+    }
+    this.terminalManager.handleCaptureResponse(this.state.budId, {
+      requestId: result.data.request_id,
+      output: result.data.output,
+      outputBytes: result.data.output_bytes,
+      linesCaptured: result.data.lines_captured,
+      error: result.data.error
+    });
   }
 
   private async handleHello(raw: unknown) {

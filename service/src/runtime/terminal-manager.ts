@@ -72,6 +72,31 @@ type TerminalOutputPayload = {
   byte_offset: number;
 };
 
+// Options for tmux capture-pane
+export type CaptureOptions = {
+  startLine?: number;   // -S flag: negative for scrollback, 0 for top, undefined for default
+  endLine?: number;     // -E flag: undefined for visible bottom
+  escapeSequences?: boolean;  // -e flag: include ANSI colors (default false)
+  joinLines?: boolean;  // -J flag: join wrapped lines (default true)
+};
+
+// Result of a capture-pane operation
+export type CaptureResult = {
+  output: string;
+  outputBytes: number;
+  linesCaptured: number;
+  error?: string;
+};
+
+// Payload for capture response from Bud
+type CaptureResponsePayload = {
+  requestId: string;
+  output: string;  // base64
+  outputBytes: number;
+  linesCaptured: number;
+  error: string | null;
+};
+
 // Timeout for clearing stale pending commands (30 minutes)
 const STALE_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -83,6 +108,15 @@ export class TerminalManager {
   private readonly lastOffsets = new Map<string, number>();
   // Track pending commands per terminal for context awareness
   private readonly pendingCommands = new Map<string, PendingCommand | null>();
+  // Track pending capture requests for async correlation
+  private readonly pendingCaptures = new Map<
+    string,
+    {
+      resolve: (result: CaptureResult) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   constructor(logger: FastifyBaseLogger, events: TerminalEventBus) {
     this.logger = logger;
@@ -885,5 +919,102 @@ export class TerminalManager {
     this.clearTerminalCache(budId);
 
     return { ok: true };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Capture-pane Support (for TUI/REPL visibility)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Capture the rendered terminal screen using tmux capture-pane.
+   * Returns the visible screen content as plain text.
+   *
+   * This is preferred over tailOutput for TUI applications (Claude Code, vim, etc.)
+   * because it captures the rendered screen buffer instead of raw byte stream.
+   */
+  async capturePane(
+    budId: string,
+    options: CaptureOptions = {},
+    timeoutMs = 5000
+  ): Promise<CaptureResult> {
+    const requestId = `cap_${ulid()}`;
+
+    const payload = {
+      proto: TERMINAL_PROTO_VERSION,
+      type: "terminal_capture",
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
+      request_id: requestId,
+      options: {
+        start_line: options.startLine ?? -200,
+        end_line: options.endLine ?? null,
+        escape_sequences: options.escapeSequences ?? false,
+        join_lines: options.joinLines ?? true
+      }
+    };
+
+    const sent = sendFrameToBud(budId, payload);
+    if (!sent) {
+      throw new Error("bud_offline");
+    }
+
+    this.logger.info(
+      { budId, requestId, startLine: options.startLine, component: "terminal_manager" },
+      "Sending capture-pane request"
+    );
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingCaptures.delete(requestId);
+        reject(new Error("capture_timeout"));
+      }, timeoutMs);
+
+      this.pendingCaptures.set(requestId, { resolve, reject, timeout });
+    });
+  }
+
+  /**
+   * Handle capture response from Bud.
+   * Called by gateway when terminal_capture_response frame is received.
+   */
+  handleCaptureResponse(budId: string, payload: CaptureResponsePayload): void {
+    const pending = this.pendingCaptures.get(payload.requestId);
+    if (!pending) {
+      this.logger.warn(
+        { budId, requestId: payload.requestId, component: "terminal_manager" },
+        "Orphaned capture response"
+      );
+      return;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingCaptures.delete(payload.requestId);
+
+    if (payload.error) {
+      pending.reject(new Error(payload.error));
+      return;
+    }
+
+    // Decode base64 output
+    const buffer = Buffer.from(payload.output, "base64");
+    const output = buffer.toString("utf-8");
+
+    this.logger.info(
+      {
+        budId,
+        requestId: payload.requestId,
+        outputBytes: payload.outputBytes,
+        linesCaptured: payload.linesCaptured,
+        component: "terminal_manager"
+      },
+      "Capture response received"
+    );
+
+    pending.resolve({
+      output,
+      outputBytes: payload.outputBytes,
+      linesCaptured: payload.linesCaptured
+    });
   }
 }
