@@ -86,7 +86,7 @@ Guidelines:
 - Use interrupt if a command hangs or you need to stop it.
 - Use terminal.capture to get terminal screen output:
   - Add wait:true if a command might still be running (waits for readiness first)
-  - Add lines:-500 or lines:-1000 for more scrollback history
+  - Add lines:-200 or lines:-500 for more scrollback history
   - Works well for TUI apps (rendered screen instead of raw byte stream)
 
 CONTEXT AWARENESS (CRITICAL):
@@ -187,7 +187,7 @@ const TERMINAL_CAPTURE_TOOL = {
         type: "integer",
         description:
           "Lines of scrollback history. Negative = from current position. " +
-          "Default: -200. Use -500 or -1000 for more history.",
+          "Default: -50. Use -200 or -500 for more history.",
         nullable: true
       },
       timeout_ms: {
@@ -196,7 +196,7 @@ const TERMINAL_CAPTURE_TOOL = {
         nullable: true
       }
     },
-    required: [],
+    required: ["wait", "lines", "timeout_ms"],
     additionalProperties: false
   },
   strict: true
@@ -951,7 +951,7 @@ export class AgentService {
     // terminal.capture - uses tmux capture-pane for TUI/REPL visibility
     // Optional wait parameter: wait for readiness before capturing
     if (directive.tool === "terminal.capture") {
-      const lines = directive.lines ?? -200;
+      const lines = directive.lines ?? -50;
       const shouldWait = directive.wait === true;
 
       this.debug("terminal.capture", {
@@ -1055,7 +1055,7 @@ export class AgentService {
 
       try {
         const capture = await this.terminalManager.capturePane(bud.budId, {
-          startLine: -200,
+          startLine: -50,
           joinLines: true
         });
         decoded = capture.output;
