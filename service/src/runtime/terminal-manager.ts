@@ -280,6 +280,12 @@ export class TerminalManager {
       }
     }
 
+    // Determine detection mode based on terminal context
+    // Use activity-based detection for REPL/TUI apps (screen stability)
+    // Use quiescence-based detection for shell commands (byte output)
+    const context = this.getTerminalContext(budId);
+    const useActivityBased = context.mode === "repl";
+
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_input",
@@ -287,8 +293,31 @@ export class TerminalManager {
       ts: Date.now(),
       ext: {},
       data: data.toString("base64"),
-      await_ready: { enabled: true }
+      await_ready: {
+        enabled: true,
+        // Activity-based: compare capture-pane hashes at intervals
+        // Quiescence-based: watch for no new output bytes
+        activity_based: useActivityBased,
+        ...(useActivityBased
+          ? {
+              activity_interval_ms: 5000,      // Check every 5s
+              activity_stable_count: 2,        // 2 consecutive stable = ready
+              activity_initial_delay_ms: 2000, // Wait 2s before first check
+              max_wait_ms: 60000               // Timeout after 60s
+            }
+          : {
+              max_wait_ms: 30000               // Shell commands timeout after 30s
+            })
+      }
     };
+
+    this.debug("sendInput with readiness config", {
+      budId,
+      mode: context.mode,
+      program: context.program,
+      useActivityBased
+    });
+
     const sent = sendFrameToBud(budId, payload);
     if (!sent) {
       this.logger.warn({ budId }, "Failed to send terminal_input (bud offline)");
@@ -306,14 +335,39 @@ export class TerminalManager {
   }
 
   async sendInterrupt(budId: string): Promise<{ ok: boolean; error?: string }> {
+    // Use activity-based detection if we're currently in a REPL
+    // (we need to wait for the REPL to settle after interrupt)
+    const context = this.getTerminalContext(budId);
+    const useActivityBased = context.mode === "repl";
+
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_interrupt",
       id: `msg_${ulid()}`,
       ts: Date.now(),
       ext: {},
-      await_ready: { enabled: true }
+      await_ready: {
+        enabled: true,
+        activity_based: useActivityBased,
+        ...(useActivityBased
+          ? {
+              activity_interval_ms: 5000,
+              activity_stable_count: 2,
+              max_wait_ms: 60000
+            }
+          : {
+              max_wait_ms: 5000  // Shell interrupt should settle quickly
+            })
+      }
     };
+
+    this.debug("sendInterrupt with readiness config", {
+      budId,
+      mode: context.mode,
+      program: context.program,
+      useActivityBased
+    });
+
     const sent = sendFrameToBud(budId, payload);
     if (!sent) {
       this.logger.warn({ budId }, "Failed to send terminal_interrupt (bud offline)");

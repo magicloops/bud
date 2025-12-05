@@ -1,6 +1,7 @@
 # Implementation Plan: Activity-Based Readiness Detection
 
 _Created: 2025-12-05_
+_Updated: 2025-12-05 (code review findings)_
 
 ## Overview
 
@@ -14,6 +15,19 @@ Replace quiescence-based readiness detection with activity-based detection for R
 2. Avoid false "ready" signals during natural pauses in AI processing
 3. Keep quiescence detection for shell commands (fast, works well)
 4. Minimal changes to Service - most logic lives in Bud
+
+---
+
+## Key Concepts
+
+**Two detection modes:**
+
+| Mode | Used For | How It Works | Readiness Signal |
+|------|----------|--------------|------------------|
+| Quiescence | Shell commands | Watch pipe-pane log for new bytes | No new bytes for 1.5s |
+| Activity | REPL/TUI apps | Compare capture-pane hashes at intervals | Screen unchanged for 2-3 checks (10-15s) |
+
+**Why "activity-based"?** We're detecting *activity* (screen changes), then declaring ready when activity *stops*. The quiescence approach fails for TUI apps because they have natural output pauses during processing.
 
 ---
 
@@ -423,6 +437,56 @@ If wait times are too long:
 To disable activity-based detection:
 1. Service: Set `activity_based: false` in `sendInput()`
 2. Falls back to existing quiescence detection
+
+---
+
+## Code Review Findings (2025-12-05)
+
+### Existing Infrastructure We Can Reuse
+
+1. **`getTerminalContext(budId)`** (terminal-manager.ts:156-182)
+   - Already correctly identifies `mode: "repl"` vs `mode: "shell"`
+   - Tracks `pendingCommand` state for REPL programs
+   - Uses `isKnownReplProgram()` to detect Claude, Python, Node, etc.
+
+2. **`simple_hash()`** (main.rs:802-808)
+   - Already implemented for capture-pane deduplication
+   - Can reuse for activity detection
+
+3. **`ReadinessDetector`** (main.rs:1465-1708)
+   - Existing quiescence-based detector
+   - New `ActivityDetector` follows same pattern
+
+### Required Type Updates
+
+1. **`TerminalReadyTrigger`** (types.ts:17)
+   - Current: `"prompt_detected" | "quiescence" | "timeout"`
+   - Add: `"activity_stable"`
+
+2. **`ReadinessAssessment`** (types.ts:99-106)
+   - Add optional fields: `activity_checks?: number`, `stable_checks?: number`
+
+### Current Code Locations
+
+| Component | File | Lines | Notes |
+|-----------|------|-------|-------|
+| `AwaitReady` struct | main.rs | 381-386 | Extend with activity fields |
+| `ReadinessDetector` | main.rs | 1465-1708 | Reference for `ActivityDetector` pattern |
+| `handle_input()` | main.rs | 914-991 | Dispatch to `ActivityDetector` when `activity_based` |
+| `handle_interrupt()` | main.rs | 1027-1060 | Same pattern |
+| `TerminalInputMessage` | types.ts | 38-46 | Extend `await_ready` |
+| `TerminalInterruptMessage` | types.ts | 48-54 | Extend `await_ready` |
+| `sendInput()` | terminal-manager.ts | 258-306 | Add context-aware `await_ready` |
+| `sendInterrupt()` | terminal-manager.ts | 308-331 | Same pattern |
+
+### Interrupt Behavior
+
+When interrupt is sent while in REPL mode:
+1. Current behavior: `pendingCommands.set(budId, null)` clears the command
+2. The interrupt readiness check should still use activity-based (we're in REPL until proven otherwise)
+3. After interrupt completes and shell prompt detected, context returns to "shell" mode
+
+This is correct - keep this behavior.
 
 ---
 

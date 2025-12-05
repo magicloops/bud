@@ -378,11 +378,25 @@ struct TerminalCloseFrame {
     reason: Option<String>,
 }
 
+// Activity-based readiness detection defaults (for TUI/REPL apps)
+const ACTIVITY_DEFAULT_INITIAL_DELAY_MS: u64 = 2000;
+const ACTIVITY_DEFAULT_INTERVAL_MS: u64 = 5000;
+const ACTIVITY_DEFAULT_STABLE_COUNT: u32 = 2;
+const ACTIVITY_DEFAULT_MAX_WAIT_MS: u64 = 60_000;
+
 #[derive(Debug, Deserialize, Clone, Default)]
 struct AwaitReady {
     enabled: bool,
     quiescence_ms: Option<u64>,
     max_wait_ms: Option<u64>,
+    // Activity-based detection for TUI/REPL apps (e.g., Claude Code)
+    // Instead of watching for byte output quiescence, we compare capture-pane
+    // hashes at intervals to detect when the screen stops changing.
+    #[serde(default)]
+    activity_based: bool,
+    activity_interval_ms: Option<u64>,      // Default: 5000ms between checks
+    activity_stable_count: Option<u32>,     // Default: 2 consecutive stable checks
+    activity_initial_delay_ms: Option<u64>, // Default: 2000ms before first check
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -974,17 +988,37 @@ impl TerminalManager {
         );
         if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
-                let detector = ReadinessDetector::new(
-                    handle.clone(),
-                    sender,
-                    start_offset,
-                    frame.await_ready.clone(),
-                );
-                tokio::spawn(async move {
-                    if let Err(err) = detector.run().await {
-                        warn!(error = %err, "readiness detection failed");
-                    }
-                });
+                let await_ready = frame.await_ready.clone().unwrap_or_default();
+
+                if await_ready.activity_based {
+                    // Use activity-based detection for TUI/REPL apps
+                    // Compares capture-pane hashes at intervals to detect screen stability
+                    info!(
+                        message_id = %frame.envelope.id,
+                        session = %handle.session_name,
+                        "using activity-based readiness detection"
+                    );
+                    let detector = ActivityDetector::new(handle.clone(), sender, &await_ready);
+                    tokio::spawn(async move {
+                        if let Err(err) = detector.run().await {
+                            warn!(error = %err, "activity detection failed");
+                        }
+                    });
+                } else {
+                    // Use quiescence-based detection for shell commands
+                    // Watches pipe-pane log for new bytes
+                    let detector = ReadinessDetector::new(
+                        handle.clone(),
+                        sender,
+                        start_offset,
+                        frame.await_ready.clone(),
+                    );
+                    tokio::spawn(async move {
+                        if let Err(err) = detector.run().await {
+                            warn!(error = %err, "readiness detection failed");
+                        }
+                    });
+                }
             }
         }
         Ok(())
@@ -1044,17 +1078,35 @@ impl TerminalManager {
         }
         if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
-                let detector = ReadinessDetector::new(
-                    handle.clone(),
-                    sender,
-                    start_offset,
-                    frame.await_ready.clone(),
-                );
-                tokio::spawn(async move {
-                    if let Err(err) = detector.run().await {
-                        warn!(error = %err, "readiness detection failed");
-                    }
-                });
+                let await_ready = frame.await_ready.clone().unwrap_or_default();
+
+                if await_ready.activity_based {
+                    // Use activity-based detection for TUI/REPL apps
+                    info!(
+                        message_id = %frame.envelope.id,
+                        session = %handle.session_name,
+                        "using activity-based readiness detection after interrupt"
+                    );
+                    let detector = ActivityDetector::new(handle.clone(), sender, &await_ready);
+                    tokio::spawn(async move {
+                        if let Err(err) = detector.run().await {
+                            warn!(error = %err, "activity detection failed");
+                        }
+                    });
+                } else {
+                    // Use quiescence-based detection for shell commands
+                    let detector = ReadinessDetector::new(
+                        handle.clone(),
+                        sender,
+                        start_offset,
+                        frame.await_ready.clone(),
+                    );
+                    tokio::spawn(async move {
+                        if let Err(err) = detector.run().await {
+                            warn!(error = %err, "readiness detection failed");
+                        }
+                    });
+                }
             }
         }
         Ok(())
@@ -1704,6 +1756,204 @@ impl ReadinessDetector {
             || lower.contains("fetching")
             || lower.contains("progress")
             || lower.contains("completed")
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity-based readiness detection (for TUI/REPL apps like Claude Code)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Instead of watching for byte output quiescence (which fails for TUI apps that
+// have natural pauses during processing), we compare capture-pane screen hashes
+// at intervals. When the screen is unchanged for N consecutive checks, we
+// declare the terminal "ready".
+//
+// This approach works because TUI apps like Claude Code update the screen
+// frequently during processing (tool calls, thinking indicators, output
+// streaming), and become visually stable when idle.
+
+struct ActivityDetector {
+    handle: Arc<TerminalHandle>,
+    sender: OutboundSender,
+    initial_delay_ms: u64,
+    interval_ms: u64,
+    stable_count_required: u32,
+    max_wait_ms: u64,
+}
+
+impl ActivityDetector {
+    fn new(
+        handle: Arc<TerminalHandle>,
+        sender: OutboundSender,
+        await_ready: &AwaitReady,
+    ) -> Self {
+        Self {
+            handle,
+            sender,
+            initial_delay_ms: await_ready
+                .activity_initial_delay_ms
+                .unwrap_or(ACTIVITY_DEFAULT_INITIAL_DELAY_MS),
+            interval_ms: await_ready
+                .activity_interval_ms
+                .unwrap_or(ACTIVITY_DEFAULT_INTERVAL_MS),
+            stable_count_required: await_ready
+                .activity_stable_count
+                .unwrap_or(ACTIVITY_DEFAULT_STABLE_COUNT),
+            max_wait_ms: await_ready
+                .max_wait_ms
+                .unwrap_or(ACTIVITY_DEFAULT_MAX_WAIT_MS),
+        }
+    }
+
+    async fn run(self) -> Result<()> {
+        let start = Instant::now();
+        let mut last_hash: Option<u64> = None;
+        let mut stable_count: u32 = 0;
+        let mut check_count: u32 = 0;
+
+        info!(
+            session = %self.handle.session_name,
+            initial_delay_ms = self.initial_delay_ms,
+            interval_ms = self.interval_ms,
+            stable_count_required = self.stable_count_required,
+            max_wait_ms = self.max_wait_ms,
+            "activity detection started"
+        );
+
+        // Initial delay - let the program start processing
+        time::sleep(Duration::from_millis(self.initial_delay_ms)).await;
+
+        loop {
+            // Check timeout first
+            if start.elapsed() >= Duration::from_millis(self.max_wait_ms) {
+                info!(
+                    session = %self.handle.session_name,
+                    check_count,
+                    stable_count,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "activity detection timeout"
+                );
+                self.send_ready(0.5, "timeout", stable_count, check_count)
+                    .await?;
+                return Ok(());
+            }
+
+            // Capture pane and hash
+            let output = match self.capture_pane().await {
+                Ok(out) => out,
+                Err(err) => {
+                    warn!(
+                        session = %self.handle.session_name,
+                        error = %err,
+                        "capture-pane failed, retrying"
+                    );
+                    time::sleep(Duration::from_millis(self.interval_ms)).await;
+                    continue;
+                }
+            };
+            let current_hash = simple_hash(output.as_bytes());
+            check_count += 1;
+
+            match last_hash {
+                Some(prev) if prev == current_hash => {
+                    stable_count += 1;
+                    info!(
+                        session = %self.handle.session_name,
+                        check_count,
+                        stable_count,
+                        required = self.stable_count_required,
+                        "activity check: stable"
+                    );
+
+                    if stable_count >= self.stable_count_required {
+                        // Ready!
+                        info!(
+                            session = %self.handle.session_name,
+                            check_count,
+                            stable_count,
+                            elapsed_ms = start.elapsed().as_millis(),
+                            "activity detection: ready (screen stable)"
+                        );
+                        self.send_ready(0.9, "activity_stable", stable_count, check_count)
+                            .await?;
+                        return Ok(());
+                    }
+                }
+                Some(_) => {
+                    // Content changed - activity detected
+                    info!(
+                        session = %self.handle.session_name,
+                        check_count,
+                        prev_stable_count = stable_count,
+                        "activity check: content changed"
+                    );
+                    stable_count = 0;
+                }
+                None => {
+                    // First capture
+                    info!(
+                        session = %self.handle.session_name,
+                        check_count,
+                        "activity check: first capture"
+                    );
+                }
+            }
+
+            last_hash = Some(current_hash);
+
+            // Wait for next check
+            time::sleep(Duration::from_millis(self.interval_ms)).await;
+        }
+    }
+
+    async fn capture_pane(&self) -> Result<String> {
+        let output = Command::new("tmux")
+            .args(["capture-pane", "-p", "-t", &self.handle.session_name])
+            .output()
+            .await
+            .with_context(|| "failed to execute tmux capture-pane for activity detection")?;
+
+        if !output.status.success() {
+            bail!(
+                "tmux capture-pane failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    async fn send_ready(
+        &self,
+        confidence: f64,
+        trigger: &str,
+        stable_count: u32,
+        check_count: u32,
+    ) -> Result<()> {
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_ready",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "assessment": {
+                "ready": confidence >= 0.5,
+                "confidence": confidence,
+                "trigger": trigger,
+                "hints": {
+                    "looks_like_prompt": false,
+                    "looks_like_confirmation": false,
+                    "looks_like_password": false,
+                    "looks_like_pager": false,
+                    "looks_like_error": false,
+                    "may_still_be_processing": confidence < 0.7
+                },
+                "activity_checks": check_count,
+                "stable_checks": stable_count
+            }
+        });
+        send_ws_frame(&self.sender, payload)?;
+        Ok(())
     }
 }
 

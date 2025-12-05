@@ -14,7 +14,7 @@ export type TerminalPromptType =
   | "database"
   | "unknown";
 
-export type TerminalReadyTrigger = "prompt_detected" | "quiescence" | "timeout";
+export type TerminalReadyTrigger = "prompt_detected" | "quiescence" | "timeout" | "activity_stable";
 
 export interface TerminalEnvelope {
   type: string;
@@ -42,6 +42,11 @@ export interface TerminalInputMessage extends TerminalEnvelope {
     enabled: boolean;
     quiescence_ms?: number;
     max_wait_ms?: number;
+    // Activity-based detection for TUI/REPL apps (e.g., Claude Code)
+    activity_based?: boolean;
+    activity_interval_ms?: number;      // Default: 5000ms between checks
+    activity_stable_count?: number;     // Default: 2 consecutive stable checks
+    activity_initial_delay_ms?: number; // Default: 2000ms before first check
   };
 }
 
@@ -50,6 +55,10 @@ export interface TerminalInterruptMessage extends TerminalEnvelope {
   await_ready?: {
     enabled: boolean;
     max_wait_ms?: number;
+    // Activity-based detection for TUI/REPL apps
+    activity_based?: boolean;
+    activity_interval_ms?: number;
+    activity_stable_count?: number;
   };
 }
 
@@ -103,6 +112,9 @@ export interface ReadinessAssessment {
   prompt_type?: TerminalPromptType;
   hints: ReadinessHints;
   quiet_for_ms?: number;
+  // Activity-based detection metrics (when trigger is "activity_stable" or "timeout")
+  activity_checks?: number;  // Total capture-pane comparisons performed
+  stable_checks?: number;    // Consecutive stable (unchanged) comparisons
 }
 
 export interface TerminalReadyMessage extends TerminalEnvelope {
