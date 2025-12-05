@@ -989,6 +989,10 @@ export class AgentService {
         if (capture.error) {
           throw new Error(capture.error);
         }
+
+        // Pretty print terminal output for debugging
+        this.logTerminalOutput("terminal.capture", capture.output);
+
         return {
           output: capture.output,
           outputBytes: capture.outputBytes,
@@ -1058,6 +1062,10 @@ export class AgentService {
           startLine: -50,
           joinLines: true
         });
+
+        // Pretty print terminal output for debugging
+        this.logTerminalOutput("terminal.run (REPL)", capture.output);
+
         decoded = capture.output;
         outputBytes = capture.outputBytes;
         truncated = false; // capture-pane returns complete screen
@@ -1142,6 +1150,29 @@ export class AgentService {
             .map(([k]) => k)
         : []
     });
+  }
+
+  /**
+   * Pretty print terminal output for debugging.
+   * Only outputs when openaiDebugEnabled is true.
+   */
+  private logTerminalOutput(tool: string, output: string): void {
+    if (!this.openaiDebugEnabled) return;
+
+    const lines = output.split("\n");
+    const maxLines = 30;
+
+    console.log(`\n┌─ ${tool} output (${lines.length} lines) ─────────────────────`);
+
+    for (const line of lines.slice(0, maxLines)) {
+      console.log(`│ ${line}`);
+    }
+
+    if (lines.length > maxLines) {
+      console.log(`│ ... (${lines.length - maxLines} more lines)`);
+    }
+
+    console.log(`└${"─".repeat(50)}\n`);
   }
 
   private normalizeReadiness(

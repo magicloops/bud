@@ -304,6 +304,12 @@ struct TerminalManager {
 struct TerminalState {
     sender: Option<OutboundSender>,
     handle: Option<Arc<TerminalHandle>>,
+    capture_state: Option<CaptureState>,
+}
+
+/// State for capture-pane deduplication (hash-only approach)
+struct CaptureState {
+    content_hash: u64,
 }
 
 struct TerminalHandle {
@@ -781,12 +787,70 @@ impl SessionManager {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Capture-pane deduplication helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct DedupResult {
+    output: String,
+    deduplicated: bool,
+    lines_removed: usize,
+    reason: &'static str,
+}
+
+/// Simple hash for change detection
+fn simple_hash(data: &[u8]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Deduplicate capture-pane output using hash-only approach.
+///
+/// Simple algorithm:
+/// - If hash matches previous capture → return empty ("no_change")
+/// - Otherwise → return full capture
+///
+/// This is simpler and more reliable than overlap detection, which can fail
+/// when TUI content contains volatile data like timestamps ("2m ago" → "3m ago").
+fn deduplicate_capture(
+    state: &Option<CaptureState>,
+    output: &str,
+    current_hash: u64,
+) -> DedupResult {
+    let line_count = output.lines().count();
+
+    // Check for no change (hash match)
+    if let Some(prev) = state {
+        if prev.content_hash == current_hash {
+            return DedupResult {
+                output: String::new(),
+                deduplicated: true,
+                lines_removed: line_count,
+                reason: "no_change",
+            };
+        }
+    }
+
+    // First capture or content changed - return full output
+    let reason = if state.is_none() { "first_capture" } else { "changed" };
+    DedupResult {
+        output: output.to_string(),
+        deduplicated: false,
+        lines_removed: 0,
+        reason,
+    }
+}
+
 impl TerminalManager {
     fn new(config: TerminalConfig) -> Self {
         Self {
             inner: Arc::new(Mutex::new(TerminalState {
                 sender: None,
                 handle: None,
+                capture_state: None,
             })),
             config,
         }
@@ -951,6 +1015,12 @@ impl TerminalManager {
         if !status.success() {
             warn!(message_id = %frame.envelope.id, "tmux resize-window failed");
         }
+
+        // Reset dedup state - screen layout changed
+        {
+            let mut inner = self.inner.lock().await;
+            inner.capture_state = None;
+        }
         Ok(())
     }
 
@@ -1006,6 +1076,7 @@ impl TerminalManager {
                 .status()
                 .await;
         }
+        inner.capture_state = None; // Reset dedup state on close
         drop(inner);
         if let Some(sender) = sender {
             self.send_status(&sender, "closed", None).await?;
@@ -1089,13 +1160,53 @@ impl TerminalManager {
             .await
             .with_context(|| "failed to execute tmux capture-pane")?;
 
-        let lines_captured = output.stdout.iter().filter(|&&b| b == b'\n').count();
-        let error = if output.status.success() {
-            Value::Null
-        } else {
-            Value::String(String::from_utf8_lossy(&output.stderr).to_string())
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr).to_string();
+            let response = json!({
+                "proto": TERMINAL_PROTO_VERSION,
+                "type": "terminal_capture_response",
+                "id": new_message_id(),
+                "ts": now_millis(),
+                "ext": {},
+                "request_id": frame.request_id,
+                "output": "",
+                "output_bytes": 0,
+                "lines_captured": 0,
+                "error": error
+            });
+            send_ws_frame(&sender, response)?;
+            return Ok(());
+        }
+
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let current_hash = simple_hash(&output.stdout);
+
+        // Apply deduplication
+        let dedup = {
+            let inner = self.inner.lock().await;
+            deduplicate_capture(&inner.capture_state, &output_str, current_hash)
         };
 
+        // Update state with hash (for next comparison)
+        {
+            let mut inner = self.inner.lock().await;
+            inner.capture_state = Some(CaptureState {
+                content_hash: current_hash,
+            });
+        }
+
+        // Log dedup metrics (Bud-side only, for debugging)
+        info!(
+            request_id = %frame.request_id,
+            deduplicated = dedup.deduplicated,
+            lines_removed = dedup.lines_removed,
+            reason = dedup.reason,
+            output_lines = dedup.output.lines().count(),
+            original_lines = output_str.lines().count(),
+            "capture-pane deduplication"
+        );
+
+        // Send response with deduplicated output (no dedup metadata - would confuse agent)
         let response = json!({
             "proto": TERMINAL_PROTO_VERSION,
             "type": "terminal_capture_response",
@@ -1103,19 +1214,11 @@ impl TerminalManager {
             "ts": now_millis(),
             "ext": {},
             "request_id": frame.request_id,
-            "output": BASE64_STANDARD.encode(&output.stdout),
-            "output_bytes": output.stdout.len(),
-            "lines_captured": lines_captured,
-            "error": error
+            "output": BASE64_STANDARD.encode(dedup.output.as_bytes()),
+            "output_bytes": dedup.output.len(),
+            "lines_captured": dedup.output.lines().count(),
+            "error": Value::Null
         });
-
-        info!(
-            request_id = %frame.request_id,
-            output_bytes = output.stdout.len(),
-            lines_captured = lines_captured,
-            success = output.status.success(),
-            "capture-pane response"
-        );
 
         send_ws_frame(&sender, response)?;
         Ok(())
