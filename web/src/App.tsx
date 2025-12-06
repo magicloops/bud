@@ -105,7 +105,14 @@ function App() {
   const terminalReadyRef = useRef(false)
   const terminalInputBufferRef = useRef<string>('')
   const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Agent/session stream state (with reconnection support)
   const agentEventSourceRef = useRef<EventSource | null>(null)
+  const agentReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentReconnectAttemptRef = useRef(0)
+  const lastAgentEventTimeRef = useRef<number>(Date.now())
+  const agentSessionIdRef = useRef<string | null>(null)
+  const agentThreadIdRef = useRef<string | null>(null)
 
   const normalizeCapabilities = useCallback((caps: unknown): BudCapabilities | null => {
     if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
@@ -473,6 +480,172 @@ function App() {
     setMessages(data)
   }
 
+  // Agent/session SSE stream with reconnection support
+  // Mirrors the terminal stream's reconnection pattern
+  const connectAgentStream = (sessionId: string, threadId: string) => {
+    // Store for reconnection
+    agentSessionIdRef.current = sessionId
+    agentThreadIdRef.current = threadId
+
+    const source = new EventSource(buildApiUrl(`/api/sessions/${sessionId}/stream`))
+    agentEventSourceRef.current = source
+
+    let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
+
+    const cleanupAgent = () => {
+      if (heartbeatCheckInterval) {
+        clearInterval(heartbeatCheckInterval)
+        heartbeatCheckInterval = null
+      }
+      source.close()
+      if (agentEventSourceRef.current === source) {
+        agentEventSourceRef.current = null
+      }
+    }
+
+    const scheduleReconnect = (reason: string) => {
+      // Clean up current connection
+      cleanupAgent()
+
+      // Exponential backoff: 500ms, 1s, 1.5s, 2s, 2.5s, ... max 5s
+      const nextAttempt = agentReconnectAttemptRef.current + 1
+      agentReconnectAttemptRef.current = nextAttempt
+      const delay = Math.min(5000, 500 * nextAttempt)
+
+      console.warn('[agent-sse] reconnecting', { sessionId, reason, attempt: nextAttempt, delay })
+
+      // Clear any existing reconnect timer
+      if (agentReconnectTimerRef.current) {
+        clearTimeout(agentReconnectTimerRef.current)
+      }
+
+      agentReconnectTimerRef.current = setTimeout(() => {
+        // Only reconnect if we still have session/thread context
+        if (agentSessionIdRef.current && agentThreadIdRef.current) {
+          connectAgentStream(agentSessionIdRef.current, agentThreadIdRef.current)
+        }
+      }, delay)
+    }
+
+    // Connection opened
+    source.addEventListener('open', () => {
+      const wasReconnect = agentReconnectAttemptRef.current > 0
+      agentReconnectAttemptRef.current = 0
+      lastAgentEventTimeRef.current = Date.now()
+
+      console.log('[agent-sse] connected', { sessionId, wasReconnect })
+
+      // If this is a reconnect, fetch messages to fill any gaps
+      if (wasReconnect && threadId) {
+        fetchMessages(threadId).catch((err) => {
+          console.error('[agent-sse] failed to fetch messages on reconnect', err)
+        })
+      }
+
+      // Start heartbeat monitoring
+      // Dev: 1s heartbeat from server, 3s timeout, check every 1s
+      // Prod: 5s heartbeat from server, 15s timeout, check every 5s
+      const heartbeatTimeout = import.meta.env.DEV ? 3000 : 15000
+      const checkInterval = import.meta.env.DEV ? 1000 : 5000
+
+      heartbeatCheckInterval = setInterval(() => {
+        const timeSinceLastEvent = Date.now() - lastAgentEventTimeRef.current
+        if (timeSinceLastEvent > heartbeatTimeout) {
+          console.warn(`[agent-sse] no heartbeat for ${heartbeatTimeout / 1000}s, connection stale`)
+          scheduleReconnect('heartbeat_timeout')
+        }
+      }, checkInterval)
+    })
+
+    // Heartbeat handler
+    source.addEventListener('heartbeat', () => {
+      lastAgentEventTimeRef.current = Date.now()
+    })
+
+    // Tool call handler (for logging)
+    source.addEventListener('agent.tool_call', (evt) => {
+      lastAgentEventTimeRef.current = Date.now()
+      try {
+        const data = JSON.parse(evt.data) as { name: string; args: unknown }
+        console.log('[agent-sse] tool_call', data.name, data.args)
+      } catch (e) {
+        console.warn('[agent-sse] failed to parse tool_call', e)
+      }
+    })
+
+    // Tool result handler (for logging)
+    source.addEventListener('agent.tool_result', () => {
+      lastAgentEventTimeRef.current = Date.now()
+    })
+
+    // Agent message handler
+    source.addEventListener('agent.message', (evt) => {
+      lastAgentEventTimeRef.current = Date.now()
+      try {
+        const data = JSON.parse(evt.data) as { text: string }
+        setMessages((prev) => [
+          ...prev,
+          {
+            message_id: `streaming_${Date.now()}`,
+            role: 'assistant',
+            display_role: 'Assistant',
+            content: data.text,
+            created_at: new Date().toISOString()
+          }
+        ])
+      } catch (e) {
+        console.warn('[agent-sse] failed to parse agent.message', e)
+      }
+    })
+
+    // Final event - agent completed successfully
+    source.addEventListener('final', () => {
+      lastAgentEventTimeRef.current = Date.now()
+      console.log('[agent-sse] final event received')
+
+      // Clear reconnect timer - we're done
+      if (agentReconnectTimerRef.current) {
+        clearTimeout(agentReconnectTimerRef.current)
+        agentReconnectTimerRef.current = null
+      }
+
+      // Clear session/thread refs to prevent reconnection
+      agentSessionIdRef.current = null
+      agentThreadIdRef.current = null
+
+      cleanupAgent()
+      setStatus('idle')
+
+      // Fetch final messages to get real IDs
+      if (threadId) {
+        fetchMessages(threadId).catch((err) => {
+          console.error('[agent-sse] failed to fetch final messages', err)
+        })
+      }
+    })
+
+    // Error handler - attempt reconnect
+    source.addEventListener('error', (evt) => {
+      console.warn('[agent-sse] error', { readyState: source.readyState, evt })
+
+      // Only reconnect if we still have session context (not after final)
+      if (agentSessionIdRef.current && agentThreadIdRef.current) {
+        scheduleReconnect('connection_error')
+      } else {
+        // No session context - just clean up
+        cleanupAgent()
+        setStatus('idle')
+        if (threadId) {
+          fetchMessages(threadId).catch((err) => {
+            console.error('[agent-sse] failed to fetch messages after error', err)
+          })
+        }
+      }
+    })
+
+    return cleanupAgent
+  }
+
   useEffect(() => {
     fetchBuds().catch((err) => {
       setError(err instanceof Error ? err.message : 'Failed to load buds')
@@ -735,9 +908,20 @@ function App() {
 
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return
+
+    // Clear reconnection state to prevent automatic reconnection
+    agentSessionIdRef.current = null
+    agentThreadIdRef.current = null
+    if (agentReconnectTimerRef.current) {
+      clearTimeout(agentReconnectTimerRef.current)
+      agentReconnectTimerRef.current = null
+    }
+    agentReconnectAttemptRef.current = 0
+
     // Close agent SSE connection immediately
     agentEventSourceRef.current?.close()
     agentEventSourceRef.current = null
+
     try {
       await apiFetch(`/api/threads/${threadId}/cancel`, { method: 'POST' })
       setStatus('idle')
@@ -819,59 +1003,20 @@ function App() {
       // Get sessionId from response and connect to SSE stream
       const { sessionId } = (await messageResp.json()) as { messageId: string; sessionId: string }
 
-      // Close any existing agent SSE connection
-      agentEventSourceRef.current?.close()
+      // Close any existing agent SSE connection and clear reconnect state
+      if (agentEventSourceRef.current) {
+        agentEventSourceRef.current.close()
+        agentEventSourceRef.current = null
+      }
+      if (agentReconnectTimerRef.current) {
+        clearTimeout(agentReconnectTimerRef.current)
+        agentReconnectTimerRef.current = null
+      }
+      agentReconnectAttemptRef.current = 0
 
-      // Connect to session stream for agent events
-      const source = new EventSource(buildApiUrl(`/api/sessions/${sessionId}/stream`))
-      agentEventSourceRef.current = source
+      // Connect to session stream with reconnection support
       setStatus('streaming')
-
-      // Capture currentThreadId for use in event handlers
-      const threadIdForHandlers = currentThreadId
-
-      source.addEventListener('agent.tool_call', (evt) => {
-        try {
-          const data = JSON.parse(evt.data) as { name: string; args: unknown }
-          console.log('[Agent] Tool call:', data.name, data.args)
-        } catch (e) {
-          console.warn('Failed to parse agent.tool_call event', e)
-        }
-      })
-
-      source.addEventListener('agent.message', (evt) => {
-        try {
-          const data = JSON.parse(evt.data) as { text: string }
-          setMessages((prev) => [
-            ...prev,
-            {
-              message_id: `streaming_${Date.now()}`,
-              role: 'assistant',
-              display_role: 'Assistant',
-              content: data.text,
-              created_at: new Date().toISOString()
-            }
-          ])
-        } catch (e) {
-          console.warn('Failed to parse agent.message event', e)
-        }
-      })
-
-      source.addEventListener('final', () => {
-        source.close()
-        agentEventSourceRef.current = null
-        setStatus('idle')
-        // Fetch final messages to get real IDs and ensure consistency
-        fetchMessages(threadIdForHandlers)
-      })
-
-      source.addEventListener('error', () => {
-        source.close()
-        agentEventSourceRef.current = null
-        setStatus('idle')
-        // Fetch messages in case some were persisted before error
-        fetchMessages(threadIdForHandlers)
-      })
+      connectAgentStream(sessionId, currentThreadId)
     } catch (err) {
       setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
       setStatus('idle')
@@ -1020,7 +1165,7 @@ function App() {
                         : 'Terminal unavailable'}
                     </span>
                   </div>
-                  {terminalReadiness && terminalConnection === 'connected' && (
+                  {terminalReadiness && terminalConnection === 'connected' && (status === 'streaming' || status === 'dispatching') && (
                     <div className="flex items-center gap-2 border-l border-border/50 pl-3">
                       <span
                         className={`h-2 w-2 rounded-full ${terminalReadiness.ready

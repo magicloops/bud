@@ -35,7 +35,12 @@ class SseEventBus {
     const listeners = this.listeners.get(channelId);
     if (!listeners) return;
     for (const listener of listeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // Listener failed (likely disconnected client) - continue to others
+        // Don't log here to avoid spam when clients disconnect normally
+      }
     }
   }
 
