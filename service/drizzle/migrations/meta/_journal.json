@@ -15,6 +15,34 @@
       "when": 1763200266137,
       "tag": "0001_stiff_magdalene",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1763459146104,
+      "tag": "0002_glorious_james_howlett",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1764125000000,
+      "tag": "0003_thread_current_session",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1764256196453,
+      "tag": "0004_smart_joystick",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1733212800000,
+      "tag": "0005_terminal_output_pk_byte_offset",
+      "breakpoints": true
     }
   ]
 }

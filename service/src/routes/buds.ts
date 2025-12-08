@@ -5,6 +5,16 @@ import { budTable, runSummaryTable } from "../db/schema.js";
 
 type BudRow = typeof budTable.$inferSelect;
 
+function normalizeCapabilities(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (Array.isArray(raw)) {
+    return { legacy: raw };
+  }
+  return {};
+}
+
 function serializeBud(bud: BudRow) {
   return {
     bud_id: bud.budId,
@@ -15,7 +25,7 @@ function serializeBud(bud: BudRow) {
     version: bud.version,
     accent_color: bud.accentColor,
     tags: bud.tags ?? [],
-    capabilities: bud.capabilities ?? [],
+    capabilities: normalizeCapabilities(bud.capabilities),
     status: bud.status,
     last_seen_at: bud.lastSeenAt,
     created_at: bud.createdAt

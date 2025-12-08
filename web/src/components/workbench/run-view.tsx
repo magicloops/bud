@@ -56,11 +56,9 @@ const RunViewComponent = ({
   const lastEntryId = combinedEntries.at(-1)?.runId ?? combinedEntries.at(-1)?.id ?? null
   const combinedLength = combinedEntries.length
   const lastEntrySignature = combinedEntries.length
-    ? `${combinedEntries[combinedEntries.length - 1]?.id ?? 'n/a'}:${
-        combinedEntries[combinedEntries.length - 1]?.stdout.length ?? 0
-      }:${combinedEntries[combinedEntries.length - 1]?.stderr.length ?? 0}:${
-        combinedEntries[combinedEntries.length - 1]?.status ?? 'unknown'
-      }`
+    ? `${combinedEntries[combinedEntries.length - 1]?.id ?? 'n/a'}:${combinedEntries[combinedEntries.length - 1]?.stdout.length ?? 0
+    }:${combinedEntries[combinedEntries.length - 1]?.stderr.length ?? 0}:${combinedEntries[combinedEntries.length - 1]?.status ?? 'unknown'
+    }`
     : null
 
   useEffect(() => {

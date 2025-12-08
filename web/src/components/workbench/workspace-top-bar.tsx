@@ -6,7 +6,6 @@ type ViewMode = 'terminal' | 'web'
 
 type WorkspaceTopBarProps = {
   budLabel: string
-  currentCwd?: string | null
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
@@ -15,7 +14,6 @@ type WorkspaceTopBarProps = {
 
 export function WorkspaceTopBar({
   budLabel,
-  currentCwd,
   view,
   onViewChange,
   onToggleThreads,
@@ -36,9 +34,6 @@ export function WorkspaceTopBar({
           </Button>
           <div className="flex flex-col">
             <p className="font-mono text-lg font-semibold">{budLabel}</p>
-            {currentCwd && (
-              <p className="text-[11px] font-mono text-muted-foreground">{currentCwd}</p>
-            )}
           </div>
         </div>
       <div className="flex items-center gap-2">

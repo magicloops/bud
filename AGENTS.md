@@ -82,9 +82,19 @@ OpenAI **Responses API (GPT‑5)**, JSON protocols, ULIDs for IDs.
   - Use **ULIDs** for `run_id`, `event_id` when possible.  
   - `run_log` primary key is `(run_id, seq)`; DB soft log cap of **100 MB** per run; `logs_blob_url` is present for future S3 offload.
 
-- **Agent adapter**  
-  - Keep a provider‑agnostic interface (`LLMAdapter`)—do not leak vendor‑specific shapes upstream.  
-  - Single tool now: `shell.run`. Additional tools must register in a small **tool registry** without rewiring the loop.
+- **Agent adapter**
+  - Keep a provider‑agnostic interface (`LLMAdapter`)—do not leak vendor‑specific shapes upstream.
+  - Tools:
+    - `shell.run` — legacy single-command execution (deprecated in favor of terminal tools).
+    - `terminal.run` — send input to persistent terminal, await readiness.
+    - `terminal.observe` — wait for readiness without sending input.
+    - `terminal.interrupt` — send Ctrl+C to stop running process.
+  - Agent uses readiness confidence to decide next action (≥0.8 ready, 0.5–0.8 observe, <0.5 wait).
+
+- **Terminal protocol (proto 0.2)**
+  - tmux-backed persistent terminal per Bud (survives reconnects).
+  - Readiness detection: prompt patterns + quiescence.
+  - See `/docs/proto.md` §4.5 for full protocol spec.
 
 ---
 

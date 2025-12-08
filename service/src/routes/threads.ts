@@ -15,6 +15,7 @@ import { AgentService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import { and, asc, desc, eq, lt } from "drizzle-orm";
+import { SessionManager } from "../runtime/session-manager.js";
 
 const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),
@@ -117,7 +118,8 @@ function serializeMessage(row: typeof messageTable.$inferSelect) {
 export async function registerThreadRoutes(
   server: FastifyInstance,
   _runManager: RunManager,
-  agentService: AgentService
+  agentService: AgentService,
+  sessionManager: SessionManager
 ): Promise<void> {
   server.get("/api/threads", async (request) => {
     const query = ThreadListQuerySchema.parse(request.query ?? {});
@@ -162,6 +164,17 @@ export async function registerThreadRoutes(
     reply.send(serializeThread(thread));
   });
 
+  server.post("/api/threads/:threadId/session", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    try {
+      const ensured = await sessionManager.ensureThreadSession(params.threadId);
+      reply.send({ session_id: ensured.sessionId, attach_token: ensured.attachToken });
+    } catch (err) {
+      server.log.error({ err, threadId: params.threadId }, "Failed to ensure session for thread");
+      reply.code(400).send({ error: (err as Error).message });
+    }
+  });
+
   server.get("/api/threads/:threadId/messages", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const query = MessagesQuerySchema.parse(request.query ?? {});
@@ -176,7 +189,7 @@ export async function registerThreadRoutes(
       .select()
       .from(messageTable)
       .where(eq(messageTable.threadId, thread.threadId))
-      .orderBy(asc(messageTable.createdAt))
+      .orderBy(desc(messageTable.createdAt))
       .limit(query.limit);
     reply.send(rows.map(serializeMessage));
   });
@@ -292,13 +305,26 @@ export async function registerThreadRoutes(
     await recordThreadMessageMetadata(thread.threadId, body.text);
 
     try {
-      const { runId } = await agentService.startUserMessage(thread.threadId, {
+      const { sessionId } = await agentService.startUserMessage(thread.threadId, {
         reasoningEffort: body.reasoning_effort ?? null
       });
-      reply.code(201).send({ messageId: message.messageId, runId });
+      reply.code(201).send({ messageId: message.messageId, sessionId });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");
       reply.code(500).send({ error: (err as Error).message });
     }
+  });
+
+  server.post("/api/threads/:threadId/cancel", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, params.threadId)
+    });
+    if (!thread) {
+      reply.code(404).send({ error: "thread not found" });
+      return;
+    }
+    agentService.cancelThread(thread.threadId);
+    reply.send({ ok: true });
   });
 }

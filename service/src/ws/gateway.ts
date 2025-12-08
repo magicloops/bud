@@ -6,9 +6,11 @@ import { randomBytes, createHmac } from "node:crypto";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { budTable, enrollmentTokenTable } from "../db/schema.js";
-import { PROTO_VERSION, config } from "../config.js";
+import { PROTO_VERSION, TERMINAL_PROTO_VERSION, config } from "../config.js";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { RunManager } from "../runtime/run-manager.js";
+import { SessionManager } from "../runtime/session-manager.js";
+import { TerminalManager } from "../runtime/terminal-manager.js";
 
 type HelloFrame = z.infer<typeof HelloSchema>;
 type HelloWithBudId = HelloFrame & { bud_id: string };
@@ -21,15 +23,33 @@ const EnvelopeSchema = z.object({
   ext: z.record(z.unknown()).default({})
 });
 
+const TerminalEnvelopeSchema = z.object({
+  proto: z.literal(TERMINAL_PROTO_VERSION),
+  type: z.string(),
+  id: z.string(),
+  ts: z.number(),
+  ext: z.record(z.unknown()).default({})
+});
+
 const CapabilitiesSchema = z
   .object({
     max_concurrency: z.number().int().positive().default(1),
     supports_pty: z.boolean().default(false),
-    shell_default: z.string().optional()
+    shell_default: z.string().optional(),
+    sessions: z.boolean().default(false),
+    sessions_backends: z.array(z.string()).default([]),
+    tmux_version: z.string().optional(),
+    terminal: z.boolean().optional().default(false),
+    terminal_proto: z.string().optional(),
+    terminal_backends: z.array(z.string()).optional().default([])
   })
   .default({
     max_concurrency: 1,
-    supports_pty: false
+    supports_pty: false,
+    sessions: false,
+    sessions_backends: [],
+    terminal: false,
+    terminal_backends: []
   });
 
 const HelloSchema = EnvelopeSchema.extend({
@@ -66,6 +86,73 @@ const RunFinishedSchema = EnvelopeSchema.extend({
   error: z.string().optional()
 });
 
+const SessionOpenedSchema = EnvelopeSchema.extend({
+  type: z.literal("session_opened"),
+  session_id: z.string(),
+  backend: z.string()
+});
+
+const SessionOutputSchema = EnvelopeSchema.extend({
+  type: z.literal("session_output"),
+  session_id: z.string(),
+  seq: z.number().int().nonnegative(),
+  data: z.string()
+});
+
+const SessionClosedSchema = EnvelopeSchema.extend({
+  type: z.literal("session_closed"),
+  session_id: z.string(),
+  exit_code: z.number().int().nullable().optional(),
+  signal: z.string().nullable().optional(),
+  canceled: z.boolean().optional()
+});
+
+const SessionErrorSchema = EnvelopeSchema.extend({
+  type: z.literal("session_error"),
+  session_id: z.string(),
+  code: z.string(),
+  message: z.string()
+});
+
+const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_status"),
+  state: z.string(),
+  info: z
+    .object({
+      tmux_session: z.string().optional(),
+      pid: z.number().int().optional(),
+      shell: z.string().optional(),
+      cwd: z.string().optional(),
+      cols: z.number().int().optional(),
+      rows: z.number().int().optional(),
+      output_log_bytes: z.number().int().optional(),
+      started_at: z.string().optional(),
+      last_activity_at: z.string().optional()
+    })
+    .optional()
+});
+
+const TerminalOutputSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_output"),
+  seq: z.number().int().nonnegative(),
+  data: z.string(),
+  byte_offset: z.number().int().nonnegative()
+});
+
+const TerminalReadySchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_ready"),
+  assessment: z.record(z.unknown())
+});
+
+const TerminalCaptureResponseSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_capture_response"),
+  request_id: z.string(),
+  output: z.string(),  // base64
+  output_bytes: z.number().int().nonnegative(),
+  lines_captured: z.number().int().nonnegative(),
+  error: z.string().nullable()
+});
+
 const ErrorFrameSchema = EnvelopeSchema.extend({
   type: z.literal("error"),
   code: z.string(),
@@ -75,18 +162,18 @@ const ErrorFrameSchema = EnvelopeSchema.extend({
 type ConnectionState =
   | { kind: "awaiting_hello" }
   | {
-      kind: "awaiting_proof";
-      budId: string;
-      deviceSecret: string;
-      nonce: string;
-      hello: HelloFrame;
-    }
+    kind: "awaiting_proof";
+    budId: string;
+    deviceSecret: string;
+    nonce: string;
+    hello: HelloFrame;
+  }
   | {
-      kind: "connected";
-      budId: string;
-      sessionId: string;
-      hello: HelloFrame;
-    }
+    kind: "connected";
+    budId: string;
+    sessionId: string;
+    hello: HelloFrame;
+  }
   | { kind: "closed" };
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
@@ -102,10 +189,14 @@ interface SessionTracker {
 const sessions = new Map<string, SessionTracker>();
 let gatewayLogger: FastifyBaseLogger | null = null;
 
+export function getActiveBudIds(): string[] {
+  return Array.from(sessions.keys());
+}
+
 export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
   const session = sessions.get(budId);
   if (!session) {
-    logDebug({ budId }, "No active session for bud; dropping frame");
+    logDebug({ budId, activeBuds: getActiveBudIds() }, "No active session for bud; dropping frame ");
     return false;
   }
   if (session.socket.readyState !== session.socket.OPEN) {
@@ -125,11 +216,13 @@ export function sendFrameToBud(budId: string, payload: Record<string, unknown>):
 
 export async function registerWsGateway(
   server: FastifyInstance,
-  runManager: RunManager
+  runManager: RunManager,
+  sessionManager: SessionManager,
+  terminalManager: TerminalManager
 ): Promise<void> {
   gatewayLogger = server.log.child({ component: "ws_gateway" });
   server.get("/ws", { websocket: true }, (socket: WebSocket) => {
-    const connection = new BudConnection(server, socket, runManager);
+    const connection = new BudConnection(server, socket, runManager, sessionManager, terminalManager);
     connection.start().catch((err) => {
       server.log.error({ err }, "WS connection failed");
       try {
@@ -147,11 +240,21 @@ class BudConnection {
   private readonly server: FastifyInstance;
   private readonly socket: WebSocket;
   private readonly runManager: RunManager;
+  private readonly sessionManager: SessionManager;
+  private readonly terminalManager: TerminalManager;
 
-  constructor(server: FastifyInstance, socket: WebSocket, runManager: RunManager) {
+  constructor(
+    server: FastifyInstance,
+    socket: WebSocket,
+    runManager: RunManager,
+    sessionManager: SessionManager,
+    terminalManager: TerminalManager
+  ) {
     this.server = server;
     this.socket = socket;
     this.runManager = runManager;
+    this.sessionManager = sessionManager;
+    this.terminalManager = terminalManager;
     socket.on("close", () => {
       void this.handleClose();
     });
@@ -192,7 +295,7 @@ class BudConnection {
       return;
     }
 
-    const envelope = EnvelopeSchema.safeParse(parsed);
+    const envelope = z.union([EnvelopeSchema, TerminalEnvelopeSchema]).safeParse(parsed);
     if (!envelope.success) {
       await this.sendError("PROTO_VERSION_MISMATCH", "Invalid envelope");
       this.socket.close();
@@ -215,6 +318,30 @@ class BudConnection {
         break;
       case "run_finished":
         await this.handleRunFinished(parsed);
+        break;
+      case "session_opened":
+        await this.handleSessionOpened(parsed);
+        break;
+      case "session_output":
+        await this.handleSessionOutput(parsed);
+        break;
+      case "session_closed":
+        await this.handleSessionClosed(parsed);
+        break;
+      case "session_error":
+        await this.handleSessionError(parsed);
+        break;
+      case "terminal_status":
+        await this.handleTerminalStatus(parsed);
+        break;
+      case "terminal_output":
+        await this.handleTerminalOutput(parsed);
+        break;
+      case "terminal_ready":
+        await this.handleTerminalReady(parsed);
+        break;
+      case "terminal_capture_response":
+        await this.handleTerminalCaptureResponse(parsed);
         break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
@@ -260,6 +387,143 @@ class BudConnection {
       canceled: result.data.canceled,
       signal: result.data.signal,
       cwd: result.data.cwd
+    });
+  }
+
+  private async handleSessionOpened(raw: unknown) {
+    const result = SessionOpenedSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid session_opened frame");
+      return;
+    }
+    await this.sessionManager.handleSessionOpened({
+      session_id: result.data.session_id,
+      backend: result.data.backend
+    });
+  }
+
+  private async handleSessionOutput(raw: unknown) {
+    const result = SessionOutputSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid session_output frame");
+      return;
+    }
+    await this.sessionManager.handleSessionOutput({
+      session_id: result.data.session_id,
+      seq: result.data.seq,
+      data: result.data.data
+    });
+  }
+
+  private async handleSessionClosed(raw: unknown) {
+    const result = SessionClosedSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid session_closed frame");
+      return;
+    }
+    await this.sessionManager.handleSessionClosed({
+      session_id: result.data.session_id,
+      exit_code: result.data.exit_code,
+      signal: result.data.signal,
+      canceled: result.data.canceled
+    });
+  }
+
+  private async handleSessionError(raw: unknown) {
+    const result = SessionErrorSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid session_error frame");
+      return;
+    }
+    await this.sessionManager.handleSessionError({
+      session_id: result.data.session_id,
+      code: result.data.code,
+      message: result.data.message
+    });
+  }
+
+  private async handleTerminalStatus(raw: unknown) {
+    if (!config.terminalEnabled) {
+      return;
+    }
+    if (this.state.kind !== "connected") {
+      logDebug({}, "terminal_status received before hello");
+      return;
+    }
+    const result = TerminalStatusSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid terminal_status frame");
+      return;
+    }
+    await this.terminalManager.handleTerminalStatus(this.state.budId, {
+      state: result.data.state,
+      info: result.data.info
+    });
+  }
+
+  private async handleTerminalOutput(raw: unknown) {
+    if (!config.terminalEnabled) {
+      this.server.log.warn({ component: "ws_gateway" }, "terminal_output ignored; terminalEnabled=false");
+      return;
+    }
+    if (this.state.kind !== "connected") {
+      this.server.log.warn({ component: "ws_gateway" }, "terminal_output received before hello");
+      return;
+    }
+    const result = TerminalOutputSchema.safeParse(raw);
+    if (!result.success) {
+      this.server.log.warn({ error: result.error.message, component: "ws_gateway" }, "Invalid terminal_output frame");
+      return;
+    }
+    this.server.log.info(
+      {
+        budId: this.state.budId,
+        seq: result.data.seq,
+        byte_offset: result.data.byte_offset,
+        component: "ws_gateway"
+      },
+      "terminal_output frame received from bud"
+    );
+    await this.terminalManager.handleTerminalOutput(this.state.budId, {
+      seq: result.data.seq,
+      data: result.data.data,
+      byte_offset: result.data.byte_offset
+    });
+  }
+
+  private async handleTerminalReady(raw: unknown) {
+    if (!config.terminalEnabled) {
+      return;
+    }
+    if (this.state.kind !== "connected") {
+      return;
+    }
+    const result = TerminalReadySchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid terminal_ready frame");
+      return;
+    }
+    await this.terminalManager.handleTerminalReady(this.state.budId, result.data.assessment);
+  }
+
+  private async handleTerminalCaptureResponse(raw: unknown) {
+    if (!config.terminalEnabled) {
+      return;
+    }
+    if (this.state.kind !== "connected") {
+      return;
+    }
+    const result = TerminalCaptureResponseSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid terminal_capture_response frame");
+      return;
+    }
+    this.terminalManager.handleCaptureResponse(this.state.budId, {
+      requestId: result.data.request_id,
+      output: result.data.output,
+      outputBytes: result.data.output_bytes,
+      linesCaptured: result.data.lines_captured,
+      error: result.data.error
     });
   }
 
@@ -324,7 +588,8 @@ class BudConnection {
           version: frame.version,
           status: "online",
           lastSeenAt: now,
-          deviceSecret
+          deviceSecret,
+          capabilities: frame.capabilities
         })
         .onConflictDoUpdate({
           target: budTable.budId,
@@ -334,7 +599,8 @@ class BudConnection {
             arch: frame.arch,
             version: frame.version,
             status: "online",
-            lastSeenAt: now
+            lastSeenAt: now,
+            capabilities: frame.capabilities
           }
         });
 
@@ -416,7 +682,8 @@ class BudConnection {
         name: hello.name,
         os: hello.os,
         arch: hello.arch,
-        version: hello.version
+        version: hello.version,
+        capabilities: hello.capabilities
       })
       .where(eq(budTable.budId, budId));
 
@@ -483,6 +750,8 @@ class BudConnection {
   private async handleClose() {
     if (this.state.kind === "connected") {
       sessions.delete(this.state.budId);
+      // Clear terminal caches (readiness, byte offsets) to avoid stale data on reconnect
+      this.terminalManager.clearTerminalCache(this.state.budId);
       await markBudOffline(this.state.budId, this.server);
     }
     this.state = { kind: "closed" };

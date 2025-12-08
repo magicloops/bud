@@ -68,6 +68,13 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 - Keep‑alive comment every **15 s**.
 - Client MAY use `Last-Event-ID` to resume.
 
+### 2.3 Session Status Stream (Browser)
+
+- URL: `GET /api/sessions/:session_id/stream`
+- Same SSE headers + keep-alive semantics as runs.
+- Events: `session.status`, `session.final`, `session.writer_changed`.
+- Used by the workbench to update the xterm pane even if `/term` WS reconnects.
+
 ---
 
 ## 3. Frame Envelope (Bud ⇄ Backend)
@@ -296,6 +303,203 @@ Used by either side for latency checks.
 
 **Codes**: see §8.
 
+### 4.4 Interactive Sessions
+
+Bud and the backend exchange dedicated control/data frames for PTY/tmux sessions.
+
+#### 4.4.1 `session_open` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_open","id":"01...","ts":1731,
+  "session_id":"sess_01H...",
+  "backend":"pty",
+  "cmd":"/bin/bash -l",
+  "cwd":"~",
+  "env":{"LANG":"C.UTF-8","TERM":"xterm-256color"},
+  "pty":{"rows":24,"cols":80},
+  "timeouts":{"idle_kill_sec":1200,"hard_ttl_sec":43200,"linger_on_disconnect_sec":600},
+  "ext":{}
+}
+```
+
+#### 4.4.2 `session_opened` (Bud → Backend)
+
+```json
+{
+  "proto":"0.1","type":"session_opened","id":"01...","ts":1731,
+  "session_id":"sess_01H...","backend":"pty","ext":{}
+}
+```
+
+#### 4.4.3 `session_output` (Bud → Backend)
+
+```json
+{
+  "proto":"0.1","type":"session_output","id":"01...","ts":1731,
+  "session_id":"sess_01H...","seq":42,"data":"base64url-pty-bytes","ext":{}
+}
+```
+
+* `seq` increases per session; Bud MUST keep ≤128 in-flight chunks (16 KB each).
+
+#### 4.4.4 `session_input` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_input","id":"01...","ts":1731,
+  "session_id":"sess_01H...","data":"base64url-pty-bytes","ext":{}
+}
+```
+
+#### 4.4.5 `session_resize` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_resize","id":"01...","ts":1731,
+  "session_id":"sess_01H...","rows":40,"cols":120,"ext":{}
+}
+```
+
+#### 4.4.6 `session_close` (Backend → Bud)
+
+```json
+{
+  "proto":"0.1","type":"session_close","id":"01...","ts":1731,
+  "session_id":"sess_01H...","reason":"user_request","ext":{}
+}
+```
+
+#### 4.4.7 `session_error` (Bud → Backend)
+
+```json
+{
+  "proto":"0.1","type":"session_error","id":"01...","ts":1731,
+  "session_id":"sess_01H...","code":"backend_unsupported","message":"tmux not installed","ext":{}
+}
+```
+
+#### 4.4.8 `/term` WebSocket (Browser ⇄ Backend)
+
+* URL: `ws(s)://<host>/term?session_id=...&attach_token=...`
+* Client messages (JSON):
+  * `{"type":"attach","session_id":"...","attach_token":"...","from_seq":0}` *(implicit on connect)*
+  * `{"type":"input","data":"base64url"}` – forwarded as `session_input`.
+  * `{"type":"resize","rows":40,"cols":120}`
+  * `{"type":"close"}` – graceful stop.
+* Server messages (JSON):
+  * `{"type":"output","data":"base64url"}` – PTY bytes.
+  * `{"type":"status","status":"open|closed|failed","role":"writer|spectator","truncated":false}`
+  * `{"type":"error","code":"writer_required","message":"..."}`
+
+### 4.5 Terminal (tmux-backed, proto `0.2`)
+
+Bud and the backend share a dedicated terminal protocol for the persistent tmux-backed terminal. It uses the same envelope keys as the primary protocol (`type`, `proto`, `id`, `ts`, `ext`), but with `proto: "0.2"` to track the terminal surface independently.
+
+*Envelope (terminal frames)*
+
+```json
+{ "proto": "0.2", "type": "terminal_…", "id": "msg_01H...", "ts": 1731, "ext": {} }
+```
+
+#### 4.5.1 Backend → Bud Messages
+
+* `terminal_ensure` — create/adopt the tmux session
+  ```json
+  { "proto": "0.2", "type": "terminal_ensure", "id": "...", "ts": 1731,
+    "config": { "shell": "/bin/bash", "cwd": "~", "cols": 200, "rows": 50 }, "ext": {} }
+  ```
+
+* `terminal_input` — send input bytes to terminal
+  ```json
+  { "proto": "0.2", "type": "terminal_input", "id": "...", "ts": 1731,
+    "data": "base64-input-bytes", "await_ready": { "enabled": true }, "ext": {} }
+  ```
+
+* `terminal_resize` — resize tmux pane
+  ```json
+  { "proto": "0.2", "type": "terminal_resize", "id": "...", "ts": 1731,
+    "rows": 40, "cols": 120, "ext": {} }
+  ```
+
+* `terminal_interrupt` — send Ctrl+C (SIGINT)
+  ```json
+  { "proto": "0.2", "type": "terminal_interrupt", "id": "...", "ts": 1731,
+    "await_ready": { "enabled": true }, "ext": {} }
+  ```
+
+* `terminal_close` — close the terminal session
+  ```json
+  { "proto": "0.2", "type": "terminal_close", "id": "...", "ts": 1731,
+    "reason": "requested", "ext": {} }
+  ```
+
+#### 4.5.2 Bud → Backend Messages
+
+* `terminal_status` — current terminal state
+  ```json
+  { "proto": "0.2", "type": "terminal_status", "id": "...", "ts": 1731,
+    "state": "ready", "tmux_session": "bud_term_01H...", "ext": {} }
+  ```
+  States: `none`, `creating`, `ready`, `active`, `idle`, `closed`
+
+* `terminal_output` — streamed output bytes
+  ```json
+  { "proto": "0.2", "type": "terminal_output", "id": "...", "ts": 1731,
+    "seq": 42, "data": "base64-output-bytes", "byte_offset": 12345, "ext": {} }
+  ```
+
+* `terminal_ready` — readiness assessment after input/command
+  ```json
+  { "proto": "0.2", "type": "terminal_ready", "id": "...", "ts": 1731,
+    "assessment": {
+      "ready": true,
+      "confidence": 0.95,
+      "trigger": "prompt_detected",
+      "prompt_type": "shell",
+      "hints": {
+        "looks_like_prompt": true,
+        "looks_like_confirmation": false,
+        "looks_like_password": false,
+        "looks_like_pager": false,
+        "looks_like_error": false,
+        "may_still_be_processing": false
+      }
+    },
+    "output_bytes": 1234,
+    "last_line": "user@host:~$ ",
+    "ext": {}
+  }
+  ```
+
+  **Readiness Assessment Fields:**
+  * `ready`: boolean — terminal is ready for next input
+  * `confidence`: 0.0–1.0 — confidence level (≥0.8 high, 0.5–0.8 medium, <0.5 low)
+  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt`
+  * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
+  * `hints`: object of boolean flags for agent decision-making
+
+#### 4.5.3 Terminal SSE Events (Backend → Browser)
+
+The browser receives terminal events via SSE at `/api/terminals/:budId/stream`:
+
+* `terminal.output` — base64 output bytes for xterm.js
+* `terminal.status` — terminal state changes
+* `terminal.ready` — readiness assessments for UI display
+* `heartbeat` — keep-alive (1s dev, 5s prod)
+
+#### 4.5.4 Terminal REST Endpoints
+
+* `POST /api/terminals/:budId/ensure` — ensure terminal exists
+* `GET /api/terminals/:budId/status` — get current status
+* `GET /api/terminals/:budId/history?bytes=N` — fetch output history
+* `POST /api/terminals/:budId/input` — send input `{ input: "..." }`
+* `POST /api/terminals/:budId/interrupt` — send Ctrl+C
+* `GET /api/terminals/:budId/metrics` — per-terminal metrics
+* `GET /api/terminals/metrics` — aggregate metrics
+
+> Implementations MUST treat `ext` as reserved for forward compatibility; unknown fields MUST be ignored.
+
 ---
 
 ## 5. Ordering, Delivery, and Limits
@@ -355,6 +559,15 @@ Used by either side for latency checks.
 * `final`
   `{ "event_id":"...", "ts":1731, "status":"succeeded|failed|canceled", "text":"Done.", "log_truncated":false }`
 
+* `session.status`
+  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "status":"opening|open|closed|failed|canceled", "truncated":false }`
+
+* `session.final`
+  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "status":"closed|failed|canceled", "exit_code":0, "bytes_out":1234, "bytes_in":512 }`
+
+* `session.writer_changed`
+  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "writer_present":true }`
+
 ### 7.2 SSE framing
 
 Server MUST emit in this format:
@@ -405,6 +618,8 @@ Sent in `hello.capabilities` to let the backend adapt:
   "max_concurrency": 1,         // integer >= 1
   "supports_pty": false,        // reserved for future
   "shell_default": "/bin/sh",   // default shell path
+  "sessions": true,
+  "sessions_backends": ["pty"],
   "os_release": "Ubuntu 22.04", // optional
   "ext": {}
 }
