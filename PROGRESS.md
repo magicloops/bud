@@ -1,8 +1,38 @@
 # Bud PoC Progress — Persistent Terminal
 
-_Last updated: 2025-12-04_
+_Last updated: 2025-12-07_
 
 ## What's implemented (recent)
+
+### Activity-Based Readiness Detection (2025-12-07)
+- **Problem**: Quiescence-based detection (1.5s no output = ready) fails for TUI apps like Claude Code, which have natural pauses during processing. Agent would send commands while Claude was still thinking.
+- **Solution**: Activity-based detection for REPL/TUI contexts. Instead of watching for byte output, we compare capture-pane screen hashes at intervals.
+- **Implementation**:
+  - Added `ActivityDetector` struct in Bud with configurable parameters
+  - Extended `AwaitReady` struct with `activity_based`, `activity_interval_ms`, `activity_stable_count`, `activity_initial_delay_ms`
+  - Service passes `activity_based: true` when `context.mode === "repl"`
+  - Default: 2s initial delay, 5s check interval, 2 stable checks required (10-15s minimum wait)
+  - 60s timeout with low confidence fallback
+- **Debug doc**: `debug/claude-in-terminal-context-loss.md`
+- **Plan**: `plan/activity-based-readiness.md`
+
+### Agent SSE Stream Reconnection (2025-12-07)
+- **Problem**: Agent/session SSE stream had no reconnection logic. When connection broke during long-running tasks (dev server restart, network blip), frontend missed remaining events. Terminal stream worked (has reconnection) but agent messages were lost.
+- **Solution**: Added reconnection logic to agent stream, mirroring terminal stream's implementation.
+- **Implementation**:
+  - Added `connectAgentStream()` function with heartbeat monitoring and exponential backoff
+  - Heartbeat timeout: 3s (dev) / 15s (prod)
+  - Reconnect delay: 500ms × attempt, max 5s
+  - Fetches messages from DB on reconnect to fill gaps
+  - Updated `cancelAgentTurn` to properly clear reconnection state
+  - Added try-catch to `event-bus.ts` `emit()` to prevent one failed listener from breaking others
+- **Debug doc**: `debug/sse-stream-premature-close.md`
+- **Plan**: `plan/agent-stream-reconnection.md`
+
+### Terminal Readiness Indicator Fix (2025-12-07)
+- **Problem**: Terminal footer showed "Processing..." even when no agent request was in-flight. Stale readiness state persisted after agent completed.
+- **Solution**: Only show readiness indicator when there's an active agent request (`status === 'streaming' || status === 'dispatching'`).
+- **File**: `web/src/App.tsx` line 1168
 
 ### Agent & OpenAI Reliability Fixes (2025-12-04)
 - **Session SSE heartbeat**: Added heartbeat to `/api/sessions/:sessionId/stream` to keep connection alive during long OpenAI calls. Without this, the frontend spinner would stop mid-execution because proxies/browsers closed the "stale" connection.
@@ -153,7 +183,10 @@ Three critical issues identified during agent testing:
 - **Fix:** Changed to `ORDER BY createdAt DESC` in `service/src/routes/threads.ts`
 - **Debug:** `debug/missing-messages-in-ui.md`
 
-## Debug Documentation (2025-12-03)
+## Debug Documentation
+- `debug/claude-in-terminal-context-loss.md` - Analysis of agent losing context when Claude Code is running (2025-12-07)
+- `debug/sse-stream-premature-close.md` - Analysis of SSE stream closing during long tasks (2025-12-07)
+- `debug/capture-pane-dedup-failure.md` - Analysis of capture-pane deduplication issues (2025-12-05)
 - `debug/agent-terminal-bud-offline.md` - Investigation of "bud_offline" error (fixed)
 - `debug/agent-terminal-communication-issues.md` - Comprehensive analysis of agent-terminal issues
 - `debug/xterm-dimensions-error.md` - xterm initialization timing fix
@@ -163,6 +196,8 @@ Three critical issues identified during agent testing:
 - `debug/missing-messages-in-ui.md` - Messages not showing after page refresh (fixed)
 
 ## Planning Documents
+- `plan/activity-based-readiness.md` - Activity-based readiness detection for TUI/REPL apps ✅
+- `plan/agent-stream-reconnection.md` - Agent SSE stream reconnection logic ✅
 - `plan/interactive-sessions-status.md` - Current branch status and what's working/missing
 - `plan/fix-agent-terminal-output-race.md` - Plan to fix Issues 2 & 3 (byte offset approach) ✅
 - `plan/fix-agent-message-streaming.md` - Plan to fix Issue 1 (restore SSE streaming) ✅

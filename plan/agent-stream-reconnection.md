@@ -317,20 +317,22 @@ emit(channelId: string, event: SseEvent): void {
 
 ### Frontend (web/src/App.tsx)
 
-- [ ] Add new refs: `agentReconnectTimerRef`, `agentReconnectAttemptRef`, `lastAgentEventTimeRef`, `agentSessionIdRef`, `agentThreadIdRef`
-- [ ] Add optional state: `agentConnection` for UI indicator
-- [ ] Create `connectAgentStream` function with:
-  - [ ] Heartbeat monitoring
-  - [ ] `scheduleReconnect` with exponential backoff
-  - [ ] Event handlers for all agent events
-  - [ ] Cleanup function
-- [ ] Update `handleSubmit` to use `connectAgentStream`
-- [ ] Add cleanup in useEffect for component unmount
-- [ ] (Optional) Add UI indicator for agent connection status
+- [x] Add new refs: `agentReconnectTimerRef`, `agentReconnectAttemptRef`, `lastAgentEventTimeRef`, `agentSessionIdRef`, `agentThreadIdRef`
+- [ ] Add optional state: `agentConnection` for UI indicator (skipped - not needed)
+- [x] Create `connectAgentStream` function with:
+  - [x] Heartbeat monitoring
+  - [x] `scheduleReconnect` with exponential backoff
+  - [x] Event handlers for all agent events
+  - [x] Cleanup function
+- [x] Update `handleSubmit` to use `connectAgentStream`
+- [x] Update `cancelAgentTurn` to clear reconnection state
+- [ ] Add cleanup in useEffect for component unmount (handled by connectAgentStream cleanup)
 
 ### Backend (service/src/runtime/event-bus.ts)
 
-- [ ] Add try-catch wrapper around listener calls in `emit()`
+- [x] Add try-catch wrapper around listener calls in `emit()`
+
+**Status: ✅ IMPLEMENTED (2025-12-07)**
 
 ---
 

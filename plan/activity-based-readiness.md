@@ -373,23 +373,25 @@ const ACTIVITY_DEFAULT_MAX_WAIT_MS: u64 = 60_000;
 
 ### Bud (Rust) - `bud/src/main.rs`
 
-- [ ] Add activity fields to `AwaitReady` struct
-- [ ] Add `ActivityDetector` struct
-- [ ] Implement `ActivityDetector::new()`
-- [ ] Implement `ActivityDetector::run()` with capture-pane loop
-- [ ] Implement `ActivityDetector::capture_pane()`
-- [ ] Implement `ActivityDetector::send_ready()`
-- [ ] Update `handle_input()` to dispatch to ActivityDetector when `activity_based`
-- [ ] Update `handle_interrupt()` similarly
-- [ ] Add logging for activity detection flow
-- [ ] Add constants for default values
+- [x] Add activity fields to `AwaitReady` struct
+- [x] Add `ActivityDetector` struct
+- [x] Implement `ActivityDetector::new()`
+- [x] Implement `ActivityDetector::run()` with capture-pane loop
+- [x] Implement `ActivityDetector::capture_pane()`
+- [x] Implement `ActivityDetector::send_ready()`
+- [x] Update `handle_input()` to dispatch to ActivityDetector when `activity_based`
+- [x] Update `handle_interrupt()` similarly
+- [x] Add logging for activity detection flow
+- [x] Add constants for default values
 
 ### Service (TypeScript)
 
-- [ ] Update `TerminalInputMessage` type with activity fields
-- [ ] Update `TerminalInterruptMessage` type with activity fields
-- [ ] Update `sendInput()` to pass `activity_based: true` for REPL context
-- [ ] Update `sendInterrupt()` similarly
+- [x] Update `TerminalInputMessage` type with activity fields
+- [x] Update `TerminalInterruptMessage` type with activity fields
+- [x] Update `sendInput()` to pass `activity_based: true` for REPL context
+- [x] Update `sendInterrupt()` similarly
+
+**Status: ✅ IMPLEMENTED (2025-12-07)**
 
 ---
 
