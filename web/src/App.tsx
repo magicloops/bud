@@ -88,7 +88,7 @@ function App() {
   } | null>(null)
   const [terminalOutputTruncated, setTerminalOutputTruncated] = useState(false)
   const [terminalScrolledToTop, setTerminalScrolledToTop] = useState(false)
-  const [terminalDisconnectTime, setTerminalDisconnectTime] = useState<number | null>(null)
+  const [_terminalDisconnectTime, setTerminalDisconnectTime] = useState<number | null>(null)
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
   const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
   const [sseReconnectTrigger, setSseReconnectTrigger] = useState(0)
@@ -283,7 +283,7 @@ function App() {
       // xterm needs a few frames to fully initialize its renderer
       let fitAttempts = 0
       const tryFit = () => {
-        if (cancelled || terminalRef.current !== term) return
+        if (cancelled || terminalRef.current !== term || !term) return
         fitAttempts++
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const renderService = (term as any)._core?._renderService

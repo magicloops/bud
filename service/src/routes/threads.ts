@@ -9,7 +9,8 @@ import {
   runStepTable,
   runSummaryTable,
   runTable,
-  threadTable
+  threadTable,
+  terminalSessionTable
 } from "../db/schema.js";
 import { AgentService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
@@ -145,11 +146,38 @@ export async function registerThreadRoutes(
   server.get("/api/threads", async (request) => {
     const query = ThreadListQuerySchema.parse(request.query ?? {});
     const threads = await db
-      .select()
+      .select({
+        threadId: threadTable.threadId,
+        budId: threadTable.budId,
+        title: threadTable.title,
+        createdAt: threadTable.createdAt,
+        lastActivityAt: threadTable.lastActivityAt,
+        lastMessagePreview: threadTable.lastMessagePreview,
+        messageCount: threadTable.messageCount,
+        pinned: threadTable.pinned,
+        archived: threadTable.archived,
+        sessionId: terminalSessionTable.sessionId,
+        sessionState: terminalSessionTable.state
+      })
       .from(threadTable)
+      .leftJoin(terminalSessionTable, eq(threadTable.threadId, terminalSessionTable.threadId))
       .where(query.bud_id ? eq(threadTable.budId, query.bud_id) : undefined)
       .orderBy(desc(threadTable.lastActivityAt));
-    return threads.map(serializeThread);
+
+    return threads.map((row) => ({
+      thread_id: row.threadId,
+      bud_id: row.budId,
+      title: row.title,
+      created_at: row.createdAt,
+      last_activity_at: row.lastActivityAt,
+      last_message_preview: row.lastMessagePreview,
+      message_count: row.messageCount,
+      pinned: row.pinned,
+      archived: row.archived,
+      has_terminal_session: row.sessionId !== null,
+      session_state: row.sessionState,
+      session_id: row.sessionId
+    }));
   });
 
   server.post("/api/threads", async (request, reply) => {
