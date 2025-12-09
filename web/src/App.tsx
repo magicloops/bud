@@ -101,7 +101,8 @@ function App() {
   const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const terminalReconnectAttemptRef = useRef(0)
   const lastSseEventTimeRef = useRef<number>(Date.now())
-  const lastConnectedBudIdRef = useRef<string | null>(null)
+  const lastConnectedThreadIdRef = useRef<string | null>(null)
+  const currentSessionIdRef = useRef<string | null>(null)
   const terminalReadyRef = useRef(false)
   const terminalInputBufferRef = useRef<string>('')
   const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -336,19 +337,19 @@ function App() {
   const flushTerminalInput = useCallback(
     async () => {
       const input = terminalInputBufferRef.current
-      if (!input || !budId) return
+      if (!input || !threadId) return
       terminalInputBufferRef.current = ''
 
       if (terminalConnectionRef.current !== 'connected') {
         console.warn('[terminal] input blocked - not connected', {
-          budId,
+          threadId,
           bytes: input.length,
           connection: terminalConnectionRef.current
         })
         return
       }
       try {
-        const resp = await apiFetch(`/api/terminals/${budId}/input`, {
+        const resp = await apiFetch(`/api/threads/${threadId}/terminal/input`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ input })
@@ -371,12 +372,12 @@ function App() {
         setError(err instanceof Error ? err.message : 'Failed to send input')
       }
     },
-    [budId]
+    [threadId]
   )
 
   const sendTerminalInput = useCallback(
     (text: string) => {
-      if (!budId) return
+      if (!threadId) return
       // Accumulate input in buffer
       terminalInputBufferRef.current += text
 
@@ -390,7 +391,7 @@ function App() {
         flushTerminalInput()
       }, 20)
     },
-    [budId, flushTerminalInput]
+    [threadId, flushTerminalInput]
   )
 
   useEffect(() => {
@@ -399,9 +400,9 @@ function App() {
 
   const sendTerminalResize = useCallback(
     async (cols: number, rows: number) => {
-      if (!budId) return
+      if (!threadId) return
       try {
-        const resp = await apiFetch(`/api/terminals/${budId}/resize`, {
+        const resp = await apiFetch(`/api/threads/${threadId}/terminal/resize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cols, rows })
@@ -413,7 +414,7 @@ function App() {
         console.error('Failed to send terminal resize', err)
       }
     },
-    [budId]
+    [threadId]
   )
 
   useEffect(() => {
@@ -665,6 +666,7 @@ function App() {
   }, [threadId])
 
   // Terminal SSE stream (also handles ensure + history fetch)
+  // Now connects via threadId instead of budId
   useEffect(() => {
     const cleanupTimers = () => {
       if (terminalReconnectTimerRef.current) {
@@ -679,27 +681,72 @@ function App() {
     cleanupTimers()
     closeSource()
 
-    // Only reset terminal when budId changes, not on SSE reconnect
-    const budIdChanged = budId !== lastConnectedBudIdRef.current
-    if (budIdChanged) {
+    // Only reset terminal when threadId changes, not on SSE reconnect
+    const threadIdChanged = threadId !== lastConnectedThreadIdRef.current
+    if (threadIdChanged) {
       resetTerminal()
       setTerminalOutputTruncated(false)
       setTerminalReadiness(null)
-      lastConnectedBudIdRef.current = budId
+      currentSessionIdRef.current = null
+      lastConnectedThreadIdRef.current = threadId
     }
 
     terminalReconnectAttemptRef.current = 0
     setTerminalConnection('disconnected')
     terminalConnectionRef.current = 'disconnected'
     setTerminalDisconnectTime(null)
-    if (!budId) {
+    if (!threadId) {
       setTerminalState('idle')
-      lastConnectedBudIdRef.current = null
+      lastConnectedThreadIdRef.current = null
+      currentSessionIdRef.current = null
       return
     }
 
-    const connect = () => {
-      const source = new EventSource(buildApiUrl(`/api/terminals/${budId}/stream`))
+    let cancelled = false
+
+    const connect = async () => {
+      if (cancelled) return
+
+      // First, ensure terminal session exists for this thread
+      try {
+        const ensureResp = await apiFetch(`/api/threads/${threadId}/terminal`, {
+          method: 'POST'
+        })
+
+        if (!ensureResp.ok || cancelled) {
+          if (!cancelled) {
+            console.warn('[terminal] Failed to ensure terminal session', { status: ensureResp.status })
+            setTerminalConnection('disconnected')
+            terminalConnectionRef.current = 'disconnected'
+          }
+          return
+        }
+
+        const { session_id, resumed, created } = (await ensureResp.json()) as {
+          session_id: string
+          resumed?: boolean
+          created?: boolean
+        }
+        currentSessionIdRef.current = session_id
+
+        if (resumed) {
+          console.log('[terminal] Resumed existing session', { sessionId: session_id, threadId })
+        } else if (created) {
+          console.log('[terminal] Created new session', { sessionId: session_id, threadId })
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('[terminal] Failed to ensure terminal session', err)
+          setTerminalConnection('disconnected')
+          terminalConnectionRef.current = 'disconnected'
+        }
+        return
+      }
+
+      if (cancelled) return
+
+      // Now connect to the SSE stream
+      const source = new EventSource(buildApiUrl(`/api/threads/${threadId}/terminal/stream`))
       terminalEventSourceRef.current = source
 
       // Track heartbeat check interval for cleanup
@@ -769,6 +816,7 @@ function App() {
       }
 
       const scheduleReconnect = (reason: string) => {
+        if (cancelled) return
         if (terminalEventSourceRef.current === source) {
           terminalEventSourceRef.current = null
         }
@@ -787,9 +835,11 @@ function App() {
         const nextAttempt = terminalReconnectAttemptRef.current + 1
         terminalReconnectAttemptRef.current = nextAttempt
         const delay = Math.min(5000, 500 * nextAttempt)
-        console.warn('[terminal] SSE closed; reconnecting', { budId, reason, attempt: nextAttempt, delay })
+        console.warn('[terminal] SSE closed; reconnecting', { threadId, reason, attempt: nextAttempt, delay })
         cleanupTimers()
-        terminalReconnectTimerRef.current = setTimeout(connect, delay)
+        terminalReconnectTimerRef.current = setTimeout(() => {
+          if (!cancelled) connect()
+        }, delay)
       }
 
       source.addEventListener('open', () => {
@@ -799,6 +849,8 @@ function App() {
         setTerminalConnection('connected')
         terminalConnectionRef.current = 'connected'
         setTerminalDisconnectTime(null)
+
+        console.log('[terminal] SSE connected', { threadId, sessionId: currentSessionIdRef.current, wasReconnect })
 
         // Start heartbeat monitoring - use shorter timeout in development
         // Dev: 1s heartbeat, 3s timeout, check every 1s
@@ -813,12 +865,8 @@ function App() {
           }
         }, checkInterval)
 
-        // Ensure terminal exists and fetch history
-        apiFetch(`/api/terminals/${budId}/ensure`, { method: 'POST' }).catch((err) => {
-          console.error('Failed to ensure terminal', err)
-        })
         // Fetch history to populate/restore terminal content
-        apiFetch(`/api/terminals/${budId}/history?bytes=131072`)
+        apiFetch(`/api/threads/${threadId}/terminal/history?bytes=131072`)
           .then(async (resp) => {
             if (!resp.ok) return
             const body = (await resp.json()) as { data_base64?: string; bytes?: number; total_bytes_available?: number }
@@ -830,7 +878,7 @@ function App() {
               const decoded = decodeTerminalData(body.data_base64)
               if (decoded) {
                 // Only reset if this is a reconnect (not initial load, which was already reset)
-                if (!budIdChanged) {
+                if (!threadIdChanged) {
                   terminalRef.current.reset()
                 }
                 terminalRef.current.write(decoded)
@@ -863,14 +911,15 @@ function App() {
     connect()
 
     return () => {
+      cancelled = true
       cleanupTimers()
       closeSource()
     }
-  }, [budId, fitTerminal, resetTerminal, sseReconnectTrigger])
+  }, [threadId, fitTerminal, resetTerminal, sseReconnectTrigger])
 
   // Force SSE reconnect when we detect service is down via failed requests
   useEffect(() => {
-    if (terminalConnection !== 'reconnecting' || !budId) return
+    if (terminalConnection !== 'reconnecting' || !threadId) return
 
     // Close existing SSE - it's stale
     const existingSource = terminalEventSourceRef.current
@@ -884,7 +933,7 @@ function App() {
     const pollAndReconnect = async () => {
       while (!cancelled) {
         try {
-          const resp = await apiFetch(`/api/terminals/${budId}/ensure`, {
+          const resp = await apiFetch(`/api/threads/${threadId}/terminal`, {
             method: 'POST'
           })
           if (resp.ok) {
@@ -904,7 +953,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [terminalConnection, budId])
+  }, [terminalConnection, threadId])
 
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return
@@ -932,9 +981,9 @@ function App() {
   }, [threadId])
 
   const sendTerminalInterrupt = useCallback(async () => {
-    if (!budId) return
+    if (!threadId) return
     try {
-      const resp = await apiFetch(`/api/terminals/${budId}/interrupt`, { method: 'POST' })
+      const resp = await apiFetch(`/api/threads/${threadId}/terminal/interrupt`, { method: 'POST' })
       if (!resp.ok) {
         console.warn('[terminal] interrupt request failed', { status: resp.status })
       }
@@ -942,7 +991,7 @@ function App() {
       console.error('Failed to send terminal interrupt', err)
       setError(err instanceof Error ? err.message : 'Failed to interrupt')
     }
-  }, [budId])
+  }, [threadId])
 
 
   const handleSubmit = async (event: FormEvent) => {

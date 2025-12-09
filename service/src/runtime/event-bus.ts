@@ -79,6 +79,31 @@ class SseEventBus {
       }
     };
   }
+
+  /**
+   * Attach a callback-style listener for use in manual SSE streams.
+   * Replays buffered events immediately.
+   */
+  attachCallback(channelId: string, callback: Listener): () => void {
+    const listeners = this.listeners.get(channelId) ?? new Set();
+    listeners.add(callback);
+    this.listeners.set(channelId, listeners);
+
+    // Replay buffered events
+    const buffer = this.buffers.get(channelId) ?? [];
+    for (const event of buffer) {
+      callback(event);
+    }
+
+    return () => {
+      const set = this.listeners.get(channelId);
+      if (!set) return;
+      set.delete(callback);
+      if (set.size === 0) {
+        this.listeners.delete(channelId);
+      }
+    };
+  }
 }
 
 export class RunEventBus extends SseEventBus {}

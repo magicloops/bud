@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { desc, inArray } from "drizzle-orm";
+import { desc, inArray, eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { budTable, runSummaryTable } from "../db/schema.js";
+import { budTable, runSummaryTable, terminalSessionTable } from "../db/schema.js";
 
 type BudRow = typeof budTable.$inferSelect;
 
@@ -80,5 +80,31 @@ export async function registerBudRoutes(server: FastifyInstance): Promise<void> 
       ...serializeBud(bud),
       last_run: lastRuns.get(bud.budId) ?? null
     }));
+  });
+
+  // GET /api/buds/:budId/sessions - List active terminal sessions on Bud
+  server.get("/api/buds/:budId/sessions", async (request) => {
+    const { budId } = request.params as { budId: string };
+
+    const sessions = await db.query.terminalSessionTable.findMany({
+      where: and(
+        eq(terminalSessionTable.budId, budId),
+        isNull(terminalSessionTable.closedAt)
+      ),
+      orderBy: [desc(terminalSessionTable.lastActivityAt)]
+    });
+
+    return {
+      bud_id: budId,
+      sessions: sessions.map((s) => ({
+        session_id: s.sessionId,
+        thread_id: s.threadId,
+        state: s.state,
+        cols: s.cols,
+        rows: s.rows,
+        created_at: s.createdAt?.toISOString(),
+        last_activity_at: s.lastActivityAt?.toISOString()
+      }))
+    };
   });
 }

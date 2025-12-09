@@ -158,9 +158,10 @@ CREATE INDEX terminal_session_input_log_idx ON terminal_session_input_log(sessio
 ```
 
 **Key design decisions:**
-- `thread_id` is `UNIQUE` - enforces 1:1 relationship
+- `thread_id` is `UNIQUE` - enforces 1:1 relationship for active sessions
+- `thread_id` uses `ON DELETE SET NULL` - sessions persist when thread soft-deleted
 - New tables (not modifying `bud_terminal`) - clean break, no migration complexity
-- `instance_id` ready for future VM assignment
+- `instance_id` = connected Bud's WS session ID (supports multiple Buds per machine)
 
 ### Schema (TypeScript)
 
@@ -205,6 +206,26 @@ export const terminalSessionTable = pgTable(
   })
 );
 ```
+
+### Thread Table: Add Soft Delete
+
+```sql
+-- Add to migration 0006_terminal_sessions.sql
+
+ALTER TABLE thread ADD COLUMN deleted_at TIMESTAMPTZ;
+CREATE INDEX thread_deleted_idx ON thread(deleted_at) WHERE deleted_at IS NOT NULL;
+```
+
+```typescript
+// service/src/db/schema.ts - update threadTable
+deletedAt: timestamp("deleted_at", { withTimezone: true }),
+```
+
+**Soft delete behavior:**
+- `deleted_at = NULL` → thread is active
+- `deleted_at = timestamp` → thread is soft-deleted
+- All queries filter `WHERE deleted_at IS NULL` by default
+- Thread can only be soft-deleted when its session is confirmed closed
 
 ---
 
@@ -671,68 +692,94 @@ Show which threads have active terminal sessions:
 
 ## Implementation Phases
 
-### Phase 1: Database Schema
+Each phase has a detailed plan document in `plan/thread-scoped-sessions/`.
 
-- [ ] Create migration `0006_terminal_sessions.sql`
-- [ ] Add TypeScript schema for new tables
-- [ ] Keep old `bud_terminal` tables (backward compatibility)
+| Phase | Document | Status |
+|-------|----------|--------|
+| 1 | [phase-1-schema.md](thread-scoped-sessions/phase-1-schema.md) | Complete |
+| 2 | [phase-2-bud.md](thread-scoped-sessions/phase-2-bud.md) | Complete |
+| 3 | [phase-3-session-manager.md](thread-scoped-sessions/phase-3-session-manager.md) | Complete |
+| 4 | [phase-4-api.md](thread-scoped-sessions/phase-4-api.md) | Complete |
+| 5 | [phase-5-events.md](thread-scoped-sessions/phase-5-events.md) | Complete |
+| 6 | [phase-6-agent.md](thread-scoped-sessions/phase-6-agent.md) | Complete |
+| 7 | [phase-7-frontend.md](thread-scoped-sessions/phase-7-frontend.md) | Complete |
+| 8 | [phase-8-frontend-ux.md](thread-scoped-sessions/phase-8-frontend-ux.md) | Planning |
+
+### Phase 1: Database Schema
+**Doc:** `thread-scoped-sessions/phase-1-schema.md`
+- [x] Create migration `0006_terminal_sessions.sql`
+- [x] Add TypeScript schema for new tables
+- [x] Remove old `bud_terminal` tables and code
 
 ### Phase 2: Bud Multi-Session Support
-
-- [ ] Add `session_id` to all terminal frame types
-- [ ] Implement `HashMap<String, TerminalHandle>` for multiple sessions
-- [ ] Dynamic tmux session naming
-- [ ] Per-session log paths (`~/.bud/sessions/{session_id}/`)
-- [ ] Route all terminal frames by session_id
+**Doc:** `thread-scoped-sessions/phase-2-bud.md`
+- [x] Add `session_id` to all terminal frame types
+- [x] Implement multi-session `HashMap<String, TerminalHandle>`
+- [x] Dynamic tmux session naming and log paths
+- [x] Route all terminal frames by `session_id`
 
 ### Phase 3: TerminalSessionManager
-
-- [ ] Create `TerminalSessionManager` class
-- [ ] Session lifecycle: create, ensure, close
-- [ ] Session lookup by threadId
-- [ ] Session-keyed in-memory state (readiness, offsets)
+**Doc:** `thread-scoped-sessions/phase-3-session-manager.md`
+- [x] Create `TerminalSessionManager` class
+- [x] Session lifecycle: create, ensure, close
+- [x] Session lookup by threadId
+- [x] Remove `TerminalManager` class
 
 ### Phase 4: API Endpoints
+**Doc:** `thread-scoped-sessions/phase-4-api.md`
+- [x] Add thread-based terminal endpoints
+- [x] Add session inventory endpoint
+- [x] Remove legacy bud-based endpoints
 
-- [ ] `POST/GET /api/threads/:threadId/terminal`
-- [ ] `GET /api/threads/:threadId/terminal/stream`
-- [ ] `POST /api/threads/:threadId/terminal/input`
-- [ ] `GET /api/buds/:budId/sessions`
-- [ ] Update gateway to route by session_id
+### Phase 5: Event Bus & Gateway
+**Doc:** `thread-scoped-sessions/phase-5-events.md`
+- [x] Update event bus to session-keyed channels
+- [x] Update gateway for session_id routing
 
-### Phase 5: Agent Integration
+### Phase 6: Agent Integration
+**Doc:** `thread-scoped-sessions/phase-6-agent.md`
+- [x] Update `executeTerminalCall` to use session manager
+- [x] Create session on first terminal tool use
 
-- [ ] Update `executeTerminalCall` to use TerminalSessionManager
-- [ ] Create session on first terminal tool use for thread
-- [ ] All terminal operations use sessionId
+### Phase 7: Frontend
+**Doc:** `thread-scoped-sessions/phase-7-frontend.md`
+- [x] Thread-based terminal connection
+- [x] Remove bud-based terminal code
+- [x] Handle resumed/created status
 
-### Phase 6: Frontend
+### Phase 8: Frontend Thread & Session UX
+**Doc:** `thread-scoped-sessions/phase-8-frontend-ux.md`
 
-- [ ] BudPage component with session list
-- [ ] Thread-based terminal connection (by threadId)
-- [ ] Session indicator in thread list
-- [ ] Handle `resumed` status in UI
+**Completed (Cleanup):**
+- [x] Remove legacy `TerminalManager` and `terminals.ts` routes
+- [x] Register `registerThreadTerminalRoutes` in server.ts
+- [x] Fix SSE heartbeat to use `reply.sse()` instead of manual `reply.raw.write()`
+- [x] Apply database migrations (0005, 0006)
+
+**Minimal (Required for Testing):**
+- [ ] "New Thread" visual indicator in thread panel
+- [ ] Update terminal overlay for null threadId
+- [ ] Add thread delete button (with confirmation)
+- [ ] Handle thread deletion in App.tsx
+- [ ] Show session dot indicator (client-side only)
+
+**Full (Recommended):**
+- [ ] URL routing with react-router-dom
+- [ ] Extend threads API to include session info
+- [ ] Display session state in thread list
+- [ ] Remove legacy `/api/terminals/:budId/stream` endpoint from server.ts
 
 ---
 
-## Migration Strategy
+## Deployment Order
 
-### Backward Compatibility
+**Clean Break** (no backward compatibility needed for PoC):
 
-1. **Old Bud**: Works with `session_id = "default"` (falls back to single session)
-2. **Old `bud_terminal` data**: Remains in place, not migrated
-3. **New sessions**: Use `terminal_session` table exclusively
-4. **Feature flag**: `THREAD_SCOPED_SESSIONS=true` (default off initially)
-
-### Rollout
-
-1. Deploy schema changes
-2. Deploy Bud with multi-session support
-3. Deploy service with TerminalSessionManager
-4. Deploy frontend changes
-5. Enable feature flag
-6. Monitor
-7. Eventually deprecate old `bud_terminal` code path
+1. **Schema** - Deploy migration (creates new tables, adds `deleted_at` to thread)
+2. **Bud** - Deploy updated binary (multi-session support, `session_id` required)
+3. **Service** - Deploy TerminalSessionManager, new endpoints, gateway changes
+4. **Frontend** - Deploy thread-based terminal connection
+5. **Cleanup** - Remove old `bud_terminal` tables in future migration
 
 ---
 
@@ -763,16 +810,35 @@ The service routes `terminal_ensure` to the correct instance based on `instanceI
 
 ---
 
-## Open Questions
+## Design Decisions (Resolved)
 
-1. **Session limit per Bud**: Max concurrent sessions on one instance?
-   - **Recommendation**: 20 initially, configurable
+1. **Session limit per Bud**: 20 sessions per instance (configurable via `MAX_SESSIONS_PER_INSTANCE`)
 
-2. **Orphaned sessions**: Thread deleted, session exists?
-   - **Recommendation**: Mark orphaned, cleanup after 7 days
+2. **Thread deletion**: Soft-delete only. Threads cannot be deleted unless:
+   - Bud is connected AND session can be actively killed
+   - Session confirmed dead before thread removal
+   - Use `deleted_at` timestamp instead of hard delete
 
-3. **Instance assignment** (future): How to allocate VMs?
-   - **Recommendation**: Defer until multi-instance is implemented
+3. **Instance assignment**: Use connected Bud's identity as `instance_id`. This supports:
+   - Multiple identical Buds on same machine (dev scenario)
+   - Future VM pool allocation
+
+4. **API pattern**: Thread-based endpoints only (`/api/threads/:threadId/terminal/*`)
+   - Remove legacy `/api/buds/:budId/terminal/*` endpoints
+   - Session lookup happens internally via thread→session mapping
+
+5. **Migration approach**: Clean break (no backward compatibility needed for PoC)
+
+6. **Protocol**: `session_id` required in all terminal frames (no backward compat for old Buds)
+
+7. **Event routing**: Session-keyed channels replace Bud-keyed channels
+   - `TerminalEventBus.emit(sessionId, event)` instead of `emit(budId, event)`
+   - Remove legacy budId-based terminal event routing
+
+8. **Thread-Session relationship**: 1:1 for active sessions, but threads can have multiple sessions over lifetime
+   - `terminal_session` table with `thread_id UNIQUE` constraint
+   - Closed sessions remain for audit (not deleted with thread)
+   - New session created if previous was closed
 
 ---
 

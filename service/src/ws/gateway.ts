@@ -10,7 +10,7 @@ import { PROTO_VERSION, TERMINAL_PROTO_VERSION, config } from "../config.js";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { RunManager } from "../runtime/run-manager.js";
 import { SessionManager } from "../runtime/session-manager.js";
-import { TerminalManager } from "../runtime/terminal-manager.js";
+import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 
 type HelloFrame = z.infer<typeof HelloSchema>;
 type HelloWithBudId = HelloFrame & { bud_id: string };
@@ -116,6 +116,7 @@ const SessionErrorSchema = EnvelopeSchema.extend({
 
 const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_status"),
+  session_id: z.string(),
   state: z.string(),
   info: z
     .object({
@@ -134,6 +135,7 @@ const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
 
 const TerminalOutputSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_output"),
+  session_id: z.string(),
   seq: z.number().int().nonnegative(),
   data: z.string(),
   byte_offset: z.number().int().nonnegative()
@@ -141,11 +143,13 @@ const TerminalOutputSchema = TerminalEnvelopeSchema.extend({
 
 const TerminalReadySchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_ready"),
+  session_id: z.string(),
   assessment: z.record(z.unknown())
 });
 
 const TerminalCaptureResponseSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_capture_response"),
+  session_id: z.string(),
   request_id: z.string(),
   output: z.string(),  // base64
   output_bytes: z.number().int().nonnegative(),
@@ -218,11 +222,11 @@ export async function registerWsGateway(
   server: FastifyInstance,
   runManager: RunManager,
   sessionManager: SessionManager,
-  terminalManager: TerminalManager
+  terminalSessionManager: TerminalSessionManager
 ): Promise<void> {
   gatewayLogger = server.log.child({ component: "ws_gateway" });
   server.get("/ws", { websocket: true }, (socket: WebSocket) => {
-    const connection = new BudConnection(server, socket, runManager, sessionManager, terminalManager);
+    const connection = new BudConnection(server, socket, runManager, sessionManager, terminalSessionManager);
     connection.start().catch((err) => {
       server.log.error({ err }, "WS connection failed");
       try {
@@ -241,20 +245,20 @@ class BudConnection {
   private readonly socket: WebSocket;
   private readonly runManager: RunManager;
   private readonly sessionManager: SessionManager;
-  private readonly terminalManager: TerminalManager;
+  private readonly terminalSessionManager: TerminalSessionManager;
 
   constructor(
     server: FastifyInstance,
     socket: WebSocket,
     runManager: RunManager,
     sessionManager: SessionManager,
-    terminalManager: TerminalManager
+    terminalSessionManager: TerminalSessionManager
   ) {
     this.server = server;
     this.socket = socket;
     this.runManager = runManager;
     this.sessionManager = sessionManager;
-    this.terminalManager = terminalManager;
+    this.terminalSessionManager = terminalSessionManager;
     socket.on("close", () => {
       void this.handleClose();
     });
@@ -455,7 +459,9 @@ class BudConnection {
       logDebug({ error: result.error.message }, "Invalid terminal_status frame");
       return;
     }
-    await this.terminalManager.handleTerminalStatus(this.state.budId, {
+
+    const sessionId = result.data.session_id;
+    await this.terminalSessionManager.handleTerminalStatus(sessionId, {
       state: result.data.state,
       info: result.data.info
     });
@@ -475,8 +481,11 @@ class BudConnection {
       this.server.log.warn({ error: result.error.message, component: "ws_gateway" }, "Invalid terminal_output frame");
       return;
     }
+
+    const sessionId = result.data.session_id;
     this.server.log.info(
       {
+        sessionId,
         budId: this.state.budId,
         seq: result.data.seq,
         byte_offset: result.data.byte_offset,
@@ -484,7 +493,8 @@ class BudConnection {
       },
       "terminal_output frame received from bud"
     );
-    await this.terminalManager.handleTerminalOutput(this.state.budId, {
+
+    await this.terminalSessionManager.handleTerminalOutput(sessionId, {
       seq: result.data.seq,
       data: result.data.data,
       byte_offset: result.data.byte_offset
@@ -503,7 +513,9 @@ class BudConnection {
       logDebug({ error: result.error.message }, "Invalid terminal_ready frame");
       return;
     }
-    await this.terminalManager.handleTerminalReady(this.state.budId, result.data.assessment);
+
+    const sessionId = result.data.session_id;
+    await this.terminalSessionManager.handleTerminalReady(sessionId, result.data.assessment as unknown as import("../terminal/types.js").ReadinessAssessment);
   }
 
   private async handleTerminalCaptureResponse(raw: unknown) {
@@ -518,7 +530,9 @@ class BudConnection {
       logDebug({ error: result.error.message }, "Invalid terminal_capture_response frame");
       return;
     }
-    this.terminalManager.handleCaptureResponse(this.state.budId, {
+
+    const sessionId = result.data.session_id;
+    this.terminalSessionManager.handleCaptureResponse(sessionId, {
       requestId: result.data.request_id,
       output: result.data.output,
       outputBytes: result.data.output_bytes,
@@ -751,7 +765,7 @@ class BudConnection {
     if (this.state.kind === "connected") {
       sessions.delete(this.state.budId);
       // Clear terminal caches (readiness, byte offsets) to avoid stale data on reconnect
-      this.terminalManager.clearTerminalCache(this.state.budId);
+      await this.terminalSessionManager.clearCachesForBud(this.state.budId);
       await markBudOffline(this.state.budId, this.server);
     }
     this.state = { kind: "closed" };
