@@ -7,6 +7,7 @@ import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-time
 import { DebugPanel } from '@/components/debug-panel'
 import { apiFetch, buildApiUrl, decodeTerminalData, type ApiMessage } from '@/lib/api'
 import { useLayout } from '@/contexts/layout-context'
+import { useBudStatus } from '@/contexts/bud-status-context'
 import type { Terminal } from 'xterm'
 import type { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
@@ -27,6 +28,9 @@ function ThreadView() {
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen, toggleThreadPanel } = useLayout()
 
+  // Bud status - update context when SSE events indicate bud online/offline
+  const { updateStatus: updateBudStatus } = useBudStatus()
+
   const [messageText, setMessageText] = useState('')
   const [messages, setMessages] = useState<ApiMessage[]>(initialMessages)
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
@@ -37,7 +41,7 @@ function ThreadView() {
   // Terminal state
   const [terminalState, setTerminalState] = useState<string>('idle')
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
-  const [terminalConnection, setTerminalConnection] = useState<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
+  const [terminalConnection, setTerminalConnection] = useState<'connected' | 'reconnecting' | 'offline' | 'disconnected'>('disconnected')
   const [terminalReadiness, setTerminalReadiness] = useState<{
     ready: boolean
     confidence: number
@@ -58,7 +62,7 @@ function ThreadView() {
   const [showDisconnectOverlay, setShowDisconnectOverlay] = useState(false)
 
   // Terminal refs
-  const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'disconnected'>('disconnected')
+  const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'offline' | 'disconnected'>('disconnected')
   const [sseReconnectTrigger, setSseReconnectTrigger] = useState(0)
   const terminalEventSourceRef = useRef<EventSource | null>(null)
   const terminalPaneRef = useRef<HTMLDivElement | null>(null)
@@ -509,36 +513,35 @@ function ThreadView() {
     const connect = async () => {
       if (cancelled) return
 
-      // First, ensure terminal session exists for this thread
+      // Step 1: Create/get session record in DB (doesn't require bud to be online)
       try {
-        const ensureResp = await apiFetch(`/api/threads/${threadId}/terminal`, {
+        const sessionResp = await apiFetch(`/api/threads/${threadId}/terminal`, {
           method: 'POST'
         })
 
-        if (!ensureResp.ok || cancelled) {
+        if (!sessionResp.ok || cancelled) {
           if (!cancelled) {
-            console.warn('[terminal] Failed to ensure terminal session', { status: ensureResp.status })
+            console.error('[terminal] Failed to create session record', { status: sessionResp.status })
             setTerminalConnection('disconnected')
             terminalConnectionRef.current = 'disconnected'
           }
           return
         }
 
-        const { session_id, resumed, created } = (await ensureResp.json()) as {
+        const { session_id, created } = (await sessionResp.json()) as {
           session_id: string
-          resumed?: boolean
           created?: boolean
         }
         currentSessionIdRef.current = session_id
 
-        if (resumed) {
-          console.log('[terminal] Resumed existing session', { sessionId: session_id, threadId })
-        } else if (created) {
-          console.log('[terminal] Created new session', { sessionId: session_id, threadId })
+        if (created) {
+          console.log('[terminal] Created new session record', { sessionId: session_id, threadId })
+        } else {
+          console.log('[terminal] Using existing session record', { sessionId: session_id, threadId })
         }
       } catch (err) {
         if (!cancelled) {
-          console.error('[terminal] Failed to ensure terminal session', err)
+          console.error('[terminal] Failed to create session record', err)
           setTerminalConnection('disconnected')
           terminalConnectionRef.current = 'disconnected'
         }
@@ -547,7 +550,7 @@ function ThreadView() {
 
       if (cancelled) return
 
-      // Now connect to the SSE stream
+      // Step 2: Connect to SSE immediately (session exists, won't 404)
       const source = new EventSource(buildApiUrl(`/api/threads/${threadId}/terminal/stream`))
       terminalEventSourceRef.current = source
 
@@ -584,6 +587,14 @@ function ThreadView() {
               return
             }
 
+            // Don't let status events override bud_offline state
+            // This prevents stale buffered events from showing terminal as ready
+            if (terminalConnectionRef.current === 'reconnecting' ||
+                terminalConnectionRef.current === 'offline') {
+              console.log('[terminal] Ignoring status event while disconnected', { state: payload.state, connection: terminalConnectionRef.current })
+              return
+            }
+
             setTerminalState(payload.state)
           }
         } catch (err) {
@@ -614,6 +625,52 @@ function ThreadView() {
         }
       }
 
+      // Handler for bud going offline
+      const handleBudOffline = (event: MessageEvent) => {
+        try {
+          lastSseEventTimeRef.current = Date.now()
+          const payload = JSON.parse(event.data ?? '{}') as { budId?: string; reason?: string }
+          console.warn('[terminal] Bud went offline', payload)
+          setTerminalConnection('reconnecting')
+          terminalConnectionRef.current = 'reconnecting'
+          setTerminalDisconnectTime((prev) => prev ?? Date.now())
+          setTerminalState('bud_offline')
+          // Update global bud status context
+          updateBudStatus(budId, 'offline')
+        } catch (err) {
+          console.error('Failed to parse terminal.bud_offline SSE', err)
+        }
+      }
+
+      // Handler for bud coming back online
+      const handleBudOnline = (event: MessageEvent) => {
+        try {
+          lastSseEventTimeRef.current = Date.now()
+          const payload = JSON.parse(event.data ?? '{}') as { budId?: string }
+          console.log('[terminal] Bud came online', payload)
+
+          // Update global bud status context
+          updateBudStatus(budId, 'online')
+
+          // Re-ensure terminal is running on bud
+          apiFetch(`/api/threads/${threadId}/terminal/ensure`, { method: 'POST' })
+            .then(resp => {
+              if (resp.ok) {
+                console.log('[terminal] Terminal re-ensured after bud reconnect')
+                setTerminalConnection('connected')
+                terminalConnectionRef.current = 'connected'
+                setTerminalDisconnectTime(null)
+              } else {
+                console.warn('[terminal] Failed to re-ensure terminal after bud reconnect', { status: resp.status })
+                // Stay in current state (reconnecting or offline)
+              }
+            })
+            .catch(err => console.error('[terminal] Failed to re-ensure terminal', err))
+        } catch (err) {
+          console.error('Failed to parse terminal.bud_online SSE', err)
+        }
+      }
+
       const scheduleReconnect = (reason: string) => {
         if (cancelled) return
         if (terminalEventSourceRef.current === source) {
@@ -627,6 +684,8 @@ function ThreadView() {
         source.removeEventListener('terminal.output', handleOutput)
         source.removeEventListener('terminal.status', handleStatus)
         source.removeEventListener('terminal.ready', handleReady)
+        source.removeEventListener('terminal.bud_offline', handleBudOffline)
+        source.removeEventListener('terminal.bud_online', handleBudOnline)
         source.close()
         setTerminalConnection('reconnecting')
         terminalConnectionRef.current = 'reconnecting'
@@ -650,6 +709,26 @@ function ThreadView() {
         setTerminalDisconnectTime(null)
 
         console.log('[terminal] SSE connected', { threadId, sessionId: currentSessionIdRef.current, wasReconnect })
+
+        // Step 3: Ensure terminal is running on bud
+        apiFetch(`/api/threads/${threadId}/terminal/ensure`, { method: 'POST' })
+          .then(async resp => {
+            if (!resp.ok) {
+              const body = await resp.json().catch(() => ({})) as { error?: string }
+              const isBudOffline = body.error === 'bud_offline'
+              console.warn('[terminal] Bud offline, terminal not ready yet - will be notified when bud comes online', { error: body.error })
+
+              if (isBudOffline) {
+                // Bud is offline - show reconnecting overlay
+                // We'll be notified via terminal.bud_online when bud reconnects
+                setTerminalConnection('reconnecting')
+                terminalConnectionRef.current = 'reconnecting'
+                setTerminalDisconnectTime(Date.now())
+                setTerminalState('bud_offline')
+              }
+            }
+          })
+          .catch(err => console.error('[terminal] Failed to ensure terminal', err))
 
         const heartbeatTimeout = import.meta.env.DEV ? 3000 : 15000
         const checkInterval = import.meta.env.DEV ? 1000 : 5000
@@ -691,6 +770,8 @@ function ThreadView() {
       source.addEventListener('terminal.output', handleOutput)
       source.addEventListener('terminal.status', handleStatus)
       source.addEventListener('terminal.ready', handleReady)
+      source.addEventListener('terminal.bud_offline', handleBudOffline)
+      source.addEventListener('terminal.bud_online', handleBudOnline)
       source.onerror = (err) => {
         console.warn('[terminal] SSE error', { err, readyState: source.readyState })
         scheduleReconnect(`error ${JSON.stringify(err)}`)
@@ -704,17 +785,23 @@ function ThreadView() {
       cleanupTimers()
       closeSource()
     }
-  }, [threadId, fitTerminal, resetTerminal, sseReconnectTrigger])
+  }, [threadId, budId, fitTerminal, resetTerminal, sseReconnectTrigger, updateBudStatus])
 
-  // Force SSE reconnect when service is down
+  // Force SSE reconnect when SERVICE is down (not when bud is offline)
+  // When bud is offline but service is up, SSE stays connected and we'll receive bud_online event
   useEffect(() => {
     if (terminalConnection !== 'reconnecting' || !threadId) return
 
+    // Check if SSE is still connected - if so, bud is just offline, don't poll
+    // We'll receive terminal.bud_online event when bud connects
     const existingSource = terminalEventSourceRef.current
-    if (existingSource) {
-      existingSource.close()
-      terminalEventSourceRef.current = null
+    if (existingSource && existingSource.readyState !== EventSource.CLOSED) {
+      console.log('[terminal] SSE still connected, waiting for bud_online event (no polling)')
+      return
     }
+
+    // SSE is down - service must be unreachable, poll to detect recovery
+    console.log('[terminal] SSE disconnected, polling for service recovery')
 
     let cancelled = false
     const pollAndReconnect = async () => {
@@ -751,6 +838,19 @@ function ThreadView() {
       setShowDisconnectOverlay(true)
     }, 2000)
     return () => clearTimeout(timer)
+  }, [terminalConnection])
+
+  // Transition from 'reconnecting' to 'offline' after 30 seconds
+  useEffect(() => {
+    if (terminalConnection !== 'reconnecting') return
+
+    const offlineTimer = setTimeout(() => {
+      console.warn('[terminal] Bud has been offline for 30s, transitioning to offline state')
+      setTerminalConnection('offline')
+      terminalConnectionRef.current = 'offline'
+    }, 30000) // 30 seconds
+
+    return () => clearTimeout(offlineTimer)
   }, [terminalConnection])
 
   const cancelAgentTurn = useCallback(async () => {
@@ -908,13 +1008,24 @@ function ThreadView() {
             />
             {showDisconnectOverlay && viewMode === 'terminal' && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="flex items-center gap-2 rounded-lg border-2 border-yellow-500/50 bg-yellow-500/20 px-4 py-2 text-yellow-200">
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  <span className="font-mono text-sm">Reconnecting to terminal…</span>
-                </div>
+                {terminalState === 'bud_offline' ? (
+                  <div className="flex items-center gap-2 rounded-lg border-2 border-orange-500/50 bg-orange-500/20 px-4 py-2 text-orange-200">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                      <line x1="12" y1="9" x2="12" y2="13" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                    <span className="font-mono text-sm">Bud offline</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 rounded-lg border-2 border-yellow-500/50 bg-yellow-500/20 px-4 py-2 text-yellow-200">
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span className="font-mono text-sm">Reconnecting to terminal…</span>
+                  </div>
+                )}
               </div>
             )}
             {terminalOutputTruncated && terminalScrolledToTop && !showDisconnectOverlay && viewMode === 'terminal' && (

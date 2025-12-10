@@ -387,13 +387,10 @@ export async function registerThreadTerminalRoutes(
   terminalSessionManager: TerminalSessionManager,
   terminalEvents: TerminalEventBus
 ): Promise<void> {
-  // POST /api/threads/:threadId/terminal - Create/ensure terminal session
+  // POST /api/threads/:threadId/terminal - Create/get terminal session (DB only, no bud communication)
+  // This always succeeds if the thread exists, regardless of bud online status
   server.post("/api/threads/:threadId/terminal", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
-    const body = TerminalEnsureBodySchema.safeParse(request.body ?? {});
-    if (!body.success) {
-      return reply.code(400).send({ error: "invalid_body" });
-    }
 
     // Get thread to find budId
     const thread = await db.query.threadTable.findFirst({
@@ -406,7 +403,7 @@ export async function registerThreadTerminalRoutes(
       return reply.code(404).send({ error: "thread_not_found" });
     }
 
-    // Get or create session
+    // Get or create session record in DB
     let session = await terminalSessionManager.getSessionForThread(params.threadId);
     const created = !session;
 
@@ -422,17 +419,39 @@ export async function registerThreadTerminalRoutes(
       return reply.code(500).send({ error: "session_create_failed" });
     }
 
-    // Ensure running on Bud
-    const { ok, resumed, error } = await terminalSessionManager.ensureSession(session.sessionId);
-    if (!ok) {
-      return reply.code(503).send({ error: error ?? "terminal_unavailable" });
-    }
-
     return {
       session_id: session.sessionId,
       bud_id: session.budId,
       state: session.state,
-      created,
+      created
+    };
+  });
+
+  // POST /api/threads/:threadId/terminal/ensure - Ensure terminal is running on bud
+  // This may fail if bud is offline - caller should handle gracefully
+  server.post("/api/threads/:threadId/terminal/ensure", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+
+    const session = await terminalSessionManager.getSessionForThread(params.threadId);
+    if (!session) {
+      return reply.code(404).send({ error: "no_terminal_session" });
+    }
+
+    const { ok, resumed, error } = await terminalSessionManager.ensureSession(session.sessionId);
+    if (!ok) {
+      // Return 503 with error details - caller can decide how to handle
+      return reply.code(503).send({
+        error: error ?? "terminal_unavailable",
+        session_id: session.sessionId,
+        bud_id: session.budId
+      });
+    }
+
+    return {
+      ok: true,
+      session_id: session.sessionId,
+      bud_id: session.budId,
+      state: session.state,
       resumed
     };
   });

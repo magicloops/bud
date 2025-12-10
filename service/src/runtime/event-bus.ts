@@ -44,6 +44,14 @@ class SseEventBus {
     }
   }
 
+  /**
+   * Clear the event buffer for a channel.
+   * Used when bud disconnects to prevent stale events from being replayed.
+   */
+  clearBuffer(channelId: string): void {
+    this.buffers.delete(channelId);
+  }
+
   attach(channelId: string, reply: FastifyReply): () => void {
     const listener: Listener = (event) => {
       reply.log.info(

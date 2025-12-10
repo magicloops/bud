@@ -9,7 +9,7 @@ import {
   terminalSessionInputLogTable
 } from "../db/schema.js";
 import { config, TERMINAL_PROTO_VERSION } from "../config.js";
-import { sendFrameToBud } from "../ws/gateway.js";
+import { sendFrameToBud, isBudOnline } from "../ws/gateway.js";
 import type {
   PendingCommand,
   TerminalContext,
@@ -199,8 +199,12 @@ export class TerminalSessionManager {
       return { ok: false, resumed: false, error: "session_closed" };
     }
 
-    // If already ready/active/idle, just return success (resumed)
+    // If already ready/active/idle, verify bud is actually online before returning success
     if (session.state === "ready" || session.state === "active" || session.state === "idle") {
+      if (!isBudOnline(session.budId)) {
+        this.logger.warn({ sessionId, budId: session.budId, state: session.state }, "Session state is ready but bud is offline");
+        return { ok: false, resumed: false, error: "bud_offline" };
+      }
       return { ok: true, resumed: true };
     }
 
@@ -1079,6 +1083,107 @@ export class TerminalSessionManager {
     this.logger.info(
       { budId, sessionCount: sessions.length, component: "terminal_session_manager" },
       "Cleared terminal caches for bud"
+    );
+  }
+
+  /**
+   * Suspend all active sessions for a bud when it disconnects.
+   * This prevents ensureSession from short-circuiting on stale "ready" state.
+   */
+  async suspendSessionsForBud(budId: string): Promise<void> {
+    const result = await db
+      .update(terminalSessionTable)
+      .set({ state: "pending" })  // Reset to pending so ensureSession will try to reconnect
+      .where(
+        and(
+          eq(terminalSessionTable.budId, budId),
+          inArray(terminalSessionTable.state, ["ready", "active", "idle", "creating"]),
+          isNull(terminalSessionTable.closedAt)
+        )
+      );
+
+    this.logger.info(
+      { budId, updatedCount: result.rowCount, component: "terminal_session_manager" },
+      "Suspended terminal sessions for offline bud"
+    );
+  }
+
+  /**
+   * Clear event buffers for all sessions belonging to a bud.
+   * Called when a bud disconnects to prevent stale events from being replayed.
+   */
+  async clearEventBuffersForBud(budId: string): Promise<void> {
+    const sessions = await db.query.terminalSessionTable.findMany({
+      where: and(
+        eq(terminalSessionTable.budId, budId),
+        isNull(terminalSessionTable.closedAt)
+      ),
+      columns: { sessionId: true }
+    });
+
+    for (const session of sessions) {
+      this.events.clearBuffer(session.sessionId);
+    }
+
+    this.logger.info(
+      { budId, sessionCount: sessions.length, component: "terminal_session_manager" },
+      "Cleared event buffers for bud sessions"
+    );
+  }
+
+  /**
+   * Emit bud_offline event for all active sessions belonging to a bud.
+   * Called when a bud WebSocket disconnects.
+   */
+  async emitBudOfflineForSessions(budId: string): Promise<void> {
+    // Find all non-closed sessions for this bud
+    const sessions = await db.query.terminalSessionTable.findMany({
+      where: and(
+        eq(terminalSessionTable.budId, budId),
+        isNull(terminalSessionTable.closedAt)
+      ),
+      columns: { sessionId: true }
+    });
+
+    for (const session of sessions) {
+      this.events.emit(session.sessionId, {
+        event: "terminal.bud_offline",
+        data: { budId, reason: "disconnected" },
+        id: ulid()
+      });
+    }
+
+    this.logger.info(
+      { budId, sessionCount: sessions.length, component: "terminal_session_manager" },
+      "Emitted bud_offline events for sessions"
+    );
+  }
+
+  /**
+   * Emit bud_online event for all active sessions belonging to a bud.
+   * Called when a bud WebSocket connects/reconnects.
+   */
+  async emitBudOnlineForSessions(budId: string): Promise<void> {
+    // Find all non-closed sessions for this bud
+    const sessions = await db.query.terminalSessionTable.findMany({
+      where: and(
+        eq(terminalSessionTable.budId, budId),
+        isNull(terminalSessionTable.closedAt)
+      ),
+      columns: { sessionId: true }
+    });
+
+    for (const session of sessions) {
+      this.events.emit(session.sessionId, {
+        event: "terminal.bud_online",
+        data: { budId },
+        id: ulid()
+      });
+    }
+
+    this.logger.info(
+      { budId, sessionCount: sessions.length, component: "terminal_session_manager" },
+      "Emitted bud_online events for sessions"
     );
   }
 

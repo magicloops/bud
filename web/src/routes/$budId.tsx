@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, Outlet, useNavigate, useMatches } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo } from 'react'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
@@ -33,6 +33,13 @@ function BudLayout() {
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen } = useLayout()
+
+  // Get threadId from child route match (if we're on /$budId/$threadId)
+  const matches = useMatches()
+  const activeThreadId = useMemo(() => {
+    const threadMatch = matches.find(m => m.routeId === '/$budId/$threadId')
+    return (threadMatch?.params as { threadId?: string })?.threadId ?? null
+  }, [matches])
 
   // Convert API buds to BudProfile format
   const buds: BudProfile[] = useMemo(() => {
@@ -116,7 +123,7 @@ function BudLayout() {
       {threadPanelOpen && activeBudProfile && (
         <ThreadPanel
           threads={threads}
-          activeThreadId={null} // Will be overridden by child route
+          activeThreadId={activeThreadId}
           onSelectThread={handleSelectThread}
           onThreadDeleted={handleThreadDeleted}
           accentColor={palette.vibrant}

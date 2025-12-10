@@ -197,6 +197,11 @@ export function getActiveBudIds(): string[] {
   return Array.from(sessions.keys());
 }
 
+export function isBudOnline(budId: string): boolean {
+  const session = sessions.get(budId);
+  return session !== undefined && session.socket.readyState === session.socket.OPEN;
+}
+
 export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
   const session = sessions.get(budId);
   if (!session) {
@@ -630,6 +635,10 @@ class BudConnection {
       this.server.log.warn({ budId }, "Dev token bypass used for enrollment");
     }
     this.server.log.info({ budId }, "Bud enrolled");
+
+    // Notify all SSE clients that this bud is online (in case of re-enrollment)
+    await this.terminalSessionManager.emitBudOnlineForSessions(budId);
+
     await this.sendFrame("hello_ack", {
       session_id: sessionId,
       bud_id: budId,
@@ -701,6 +710,9 @@ class BudConnection {
       })
       .where(eq(budTable.budId, budId));
 
+    // Notify all SSE clients that this bud is back online
+    await this.terminalSessionManager.emitBudOnlineForSessions(budId);
+
     await this.sendFrame("hello_ack", {
       session_id: sessionId,
       bud_id: budId,
@@ -766,6 +778,12 @@ class BudConnection {
       sessions.delete(this.state.budId);
       // Clear terminal caches (readiness, byte offsets) to avoid stale data on reconnect
       await this.terminalSessionManager.clearCachesForBud(this.state.budId);
+      // Clear event buffers to prevent stale events from being replayed
+      await this.terminalSessionManager.clearEventBuffersForBud(this.state.budId);
+      // Suspend terminal sessions so ensureSession won't short-circuit on stale "ready" state
+      await this.terminalSessionManager.suspendSessionsForBud(this.state.budId);
+      // Notify all SSE clients that this bud went offline
+      await this.terminalSessionManager.emitBudOfflineForSessions(this.state.budId);
       await markBudOffline(this.state.budId, this.server);
     }
     this.state = { kind: "closed" };
