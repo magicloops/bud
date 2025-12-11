@@ -78,6 +78,7 @@ function getSessionStateLabel(state: string | null | undefined): string {
 
 export function ThreadPanel({ threads, activeThreadId, onSelectThread, onThreadDeleted, onOpenSettings, accentColor, budLabel, budId }: ThreadPanelProps) {
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<ThreadSummary | null>(null)
 
   const accentBorder = useMemo(() => {
     const resolved = resolveCssVar(accentColor ?? 'var(--accent)')
@@ -94,14 +95,21 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, onThreadD
     [threads]
   )
 
-  const handleDeleteThread = async (e: React.MouseEvent, threadId: string) => {
+  const handleDeleteClick = (e: React.MouseEvent, thread: ThreadSummary) => {
     e.stopPropagation()
     if (!budId || deletingThreadId) return
+    setConfirmDelete(thread)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDelete || deletingThreadId) return
+    const threadId = confirmDelete.thread_id
 
     setDeletingThreadId(threadId)
     try {
       const resp = await apiFetch(`/api/threads/${threadId}`, { method: 'DELETE' })
       if (resp.ok) {
+        setConfirmDelete(null)
         onThreadDeleted?.(threadId)
       } else {
         console.error('Failed to delete thread', await resp.text())
@@ -177,7 +185,7 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, onThreadD
               {/* Delete button - shown on hover */}
               <button
                 type="button"
-                onClick={(e) => handleDeleteThread(e, thread.thread_id)}
+                onClick={(e) => handleDeleteClick(e, thread)}
                 disabled={isDeleting}
                 className={cn(
                   'absolute -right-2 -top-2 z-10 h-6 w-6 rounded-full border-2 border-black bg-destructive text-destructive-foreground opacity-0 transition-opacity hover:bg-destructive/80 group-hover:opacity-100',
@@ -217,6 +225,50 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, onThreadD
           )
         })}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      {confirmDelete && (
+        <>
+          <div
+            className="fixed inset-0 z-50 bg-black/40"
+            onClick={() => setConfirmDelete(null)}
+          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+            <div
+              className="pointer-events-auto w-full max-w-sm rounded-xl border-4 border-black bg-background p-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="font-mono text-sm font-bold uppercase">Delete Thread?</h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                This will permanently delete the thread and all messages.
+              </p>
+              <p className="mt-2 text-sm font-medium line-clamp-2">
+                "{confirmDelete.title ?? 'Untitled thread'}"
+              </p>
+              {confirmDelete.has_terminal_session && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Note: The associated terminal session will also be closed.
+                </p>
+              )}
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDelete(null)}
+                  className="rounded-md border-2 border-black px-3 py-1.5 font-mono text-[11px] font-bold uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-0.5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmDelete}
+                  disabled={deletingThreadId !== null}
+                  className="rounded-md border-2 border-black bg-destructive px-3 py-1.5 font-mono text-[11px] font-bold uppercase text-destructive-foreground shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-0.5 disabled:opacity-50"
+                >
+                  {deletingThreadId ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

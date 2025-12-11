@@ -981,7 +981,7 @@ function ThreadView() {
         status={status}
       />
       <div className="flex flex-1 overflow-hidden">
-        {/* Chat timeline - fixed width, matches original App.tsx structure */}
+        {/* Chat timeline - fixed width */}
         <ChatTimeline messages={chatMessages} accentColor="var(--bud-accent-vibrant)" />
 
         {/* Terminal pane - takes remaining space with flex-1 */}
