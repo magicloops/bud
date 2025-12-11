@@ -1,7 +1,8 @@
 import { createFileRoute, Outlet, useNavigate, useMatches } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
+import { BudSessionsModal } from '@/components/bud-sessions-modal'
 import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
 import { normalizeCapabilities, type ApiBud, type ApiThread } from '@/lib/api'
 import { useLayout } from '@/contexts/layout-context'
@@ -33,6 +34,9 @@ function BudLayout() {
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen } = useLayout()
+
+  // Sessions modal state
+  const [sessionsModalOpen, setSessionsModalOpen] = useState(false)
 
   // Get threadId from child route match (if we're on /$budId/$threadId)
   const matches = useMatches()
@@ -113,6 +117,14 @@ function BudLayout() {
     navigate({ to: '/$budId', params: { budId } })
   }, [navigate, budId])
 
+  const handleOpenSettings = useCallback(() => {
+    setSessionsModalOpen(true)
+  }, [])
+
+  const handleNavigateToThread = useCallback((threadId: string) => {
+    navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
+  }, [navigate, budId])
+
   return (
     <div className="flex h-screen bg-background text-foreground">
       <BudRail
@@ -126,9 +138,21 @@ function BudLayout() {
           activeThreadId={activeThreadId}
           onSelectThread={handleSelectThread}
           onThreadDeleted={handleThreadDeleted}
+          onOpenSettings={handleOpenSettings}
           accentColor={palette.vibrant}
           budLabel={activeBudProfile.label}
           budId={budId}
+        />
+      )}
+
+      {/* Sessions Modal */}
+      {activeBudProfile && (
+        <BudSessionsModal
+          budId={budId}
+          budName={activeBudProfile.label}
+          isOpen={sessionsModalOpen}
+          onClose={() => setSessionsModalOpen(false)}
+          onNavigateToThread={handleNavigateToThread}
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">

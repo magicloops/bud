@@ -67,7 +67,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
   });
   await server.register(fastifySseV2);
-  await registerBudRoutes(server);
+  await registerBudRoutes(server, terminalSessionManager);
   await registerThreadRoutes(server, runManager, agentService, sessionManager);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);

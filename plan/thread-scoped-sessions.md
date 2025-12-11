@@ -704,7 +704,7 @@ Each phase has a detailed plan document in `plan/thread-scoped-sessions/`.
 | 6 | [phase-6-agent.md](thread-scoped-sessions/phase-6-agent.md) | Complete |
 | 7 | [phase-7-frontend.md](thread-scoped-sessions/phase-7-frontend.md) | Complete |
 | 8 | [phase-8-frontend-ux.md](thread-scoped-sessions/phase-8-frontend-ux.md) | Complete |
-| 9 | [phase-9-bud-session-management.md](thread-scoped-sessions/phase-9-bud-session-management.md) | Planning |
+| 9 | [phase-9-bud-session-management.md](thread-scoped-sessions/phase-9-bud-session-management.md) | Complete |
 | 10 | [phase-10-ui-polish-cleanup.md](thread-scoped-sessions/phase-10-ui-polish-cleanup.md) | Planning |
 
 ### Phase 1: Database Schema
@@ -759,13 +759,13 @@ Each phase has a detailed plan document in `plan/thread-scoped-sessions/`.
 
 ### Phase 9: Bud Session Management Modal
 **Doc:** `thread-scoped-sessions/phase-9-bud-session-management.md`
-- [ ] Add `GET /api/buds/:budId/sessions` endpoint
-- [ ] Add `DELETE /api/buds/:budId/sessions/:sessionId` endpoint
-- [ ] Create `BudSessionsModal` component
-- [ ] Settings gear icon in thread panel header
-- [ ] Session list with state indicators
-- [ ] Delete sessions without deleting threads
-- [ ] Confirmation dialog for session deletion
+- [x] Add `GET /api/buds/:budId/sessions` endpoint
+- [x] Add `DELETE /api/buds/:budId/sessions/:sessionId` endpoint
+- [x] Create `BudSessionsModal` component
+- [x] Settings gear icon in thread panel header
+- [x] Session list with state indicators
+- [x] Delete sessions without deleting threads
+- [x] Confirmation dialog for session deletion
 
 ### Phase 10: UI Polish & Cleanup
 **Doc:** `thread-scoped-sessions/phase-10-ui-polish-cleanup.md`
