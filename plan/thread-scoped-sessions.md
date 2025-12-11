@@ -703,7 +703,9 @@ Each phase has a detailed plan document in `plan/thread-scoped-sessions/`.
 | 5 | [phase-5-events.md](thread-scoped-sessions/phase-5-events.md) | Complete |
 | 6 | [phase-6-agent.md](thread-scoped-sessions/phase-6-agent.md) | Complete |
 | 7 | [phase-7-frontend.md](thread-scoped-sessions/phase-7-frontend.md) | Complete |
-| 8 | [phase-8-frontend-ux.md](thread-scoped-sessions/phase-8-frontend-ux.md) | Planning |
+| 8 | [phase-8-frontend-ux.md](thread-scoped-sessions/phase-8-frontend-ux.md) | Complete |
+| 9 | [phase-9-bud-session-management.md](thread-scoped-sessions/phase-9-bud-session-management.md) | Planning |
+| 10 | [phase-10-ui-polish-cleanup.md](thread-scoped-sessions/phase-10-ui-polish-cleanup.md) | Planning |
 
 ### Phase 1: Database Schema
 **Doc:** `thread-scoped-sessions/phase-1-schema.md`
@@ -749,25 +751,31 @@ Each phase has a detailed plan document in `plan/thread-scoped-sessions/`.
 
 ### Phase 8: Frontend Thread & Session UX
 **Doc:** `thread-scoped-sessions/phase-8-frontend-ux.md`
-
-**Completed (Cleanup):**
+- [x] URL routing with TanStack Router (file-based routing)
 - [x] Remove legacy `TerminalManager` and `terminals.ts` routes
 - [x] Register `registerThreadTerminalRoutes` in server.ts
 - [x] Fix SSE heartbeat to use `reply.sse()` instead of manual `reply.raw.write()`
 - [x] Apply database migrations (0005, 0006)
 
-**Minimal (Required for Testing):**
+### Phase 9: Bud Session Management Modal
+**Doc:** `thread-scoped-sessions/phase-9-bud-session-management.md`
+- [ ] Add `GET /api/buds/:budId/sessions` endpoint
+- [ ] Add `DELETE /api/buds/:budId/sessions/:sessionId` endpoint
+- [ ] Create `BudSessionsModal` component
+- [ ] Settings gear icon in thread panel header
+- [ ] Session list with state indicators
+- [ ] Delete sessions without deleting threads
+- [ ] Confirmation dialog for session deletion
+
+### Phase 10: UI Polish & Cleanup
+**Doc:** `thread-scoped-sessions/phase-10-ui-polish-cleanup.md`
 - [ ] "New Thread" visual indicator in thread panel
 - [ ] Update terminal overlay for null threadId
-- [ ] Add thread delete button (with confirmation)
-- [ ] Handle thread deletion in App.tsx
-- [ ] Show session dot indicator (client-side only)
-
-**Full (Recommended):**
-- [ ] URL routing with react-router-dom
-- [ ] Extend threads API to include session info
-- [ ] Display session state in thread list
-- [ ] Remove legacy `/api/terminals/:budId/stream` endpoint from server.ts
+- [ ] Session dot indicator on threads
+- [ ] Thread delete confirmation dialog (upgrade from window.confirm)
+- [ ] Delete legacy `web/src/App.tsx`
+- [ ] Clean up console.log statements
+- [ ] Archive resolved debug documentation
 
 ---
 
@@ -850,9 +858,13 @@ The service routes `terminal_ensure` to the correct instance based on `instanceI
 | Migration | `service/migrations/0006_terminal_sessions.sql` | DDL |
 | Session Manager | `service/src/runtime/terminal-session-manager.ts` | New file |
 | Routes | `service/src/routes/threads.ts` | Terminal endpoints |
-| Routes | `service/src/routes/buds.ts` | Session inventory |
+| Routes | `service/src/routes/buds.ts` | Session inventory endpoints (Phase 9) |
 | Agent | `service/src/agent/agent-service.ts` | Session integration |
 | Gateway | `service/src/ws/gateway.ts` | Session routing |
 | Bud | `bud/src/main.rs` | Multi-session support |
-| Frontend | `web/src/App.tsx` | Thread-based terminal |
-| Frontend | `web/src/components/workbench/bud-page.tsx` | New component |
+| Frontend Routes | `web/src/routes/$budId/$threadId.tsx` | Thread workspace (TanStack Router) |
+| Frontend Routes | `web/src/routes/$budId.tsx` | Bud layout route |
+| Frontend Routes | `web/src/routes/__root.tsx` | Root layout with providers |
+| Frontend | `web/src/components/bud-sessions-modal.tsx` | Session management modal (Phase 9) |
+| Frontend | `web/src/components/workbench/thread-panel.tsx` | Settings gear, session indicators |
+| ~~Legacy~~ | `web/src/App.tsx` | To be deleted (Phase 10) |
