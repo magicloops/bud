@@ -9,9 +9,50 @@ message-renderers/
 ├── README.md           # This file
 ├── index.ts            # Public API exports
 ├── types.ts            # Shared TypeScript types
-└── tools/              # Tool-specific content renderers
-    ├── index.ts        # Tool renderer registry
-    └── terminal-run.tsx
+├── tools/              # Tool-specific content renderers
+│   ├── index.ts        # Tool renderer registry
+│   └── terminal-run.tsx
+└── roles/              # Role-based message renderers
+    ├── index.ts        # Role renderer registry
+    ├── assistant.tsx   # Assistant messages (with syntax highlighting)
+    └── user.tsx        # User messages
+```
+
+## Quick Start: Adding a Role Renderer
+
+### 1. Create the Component
+
+Create a new file in `roles/`, e.g., `roles/system.tsx`:
+
+```typescript
+import { memo } from 'react'
+import type { MessageContentRendererProps } from '../types'
+
+export const SystemContent = memo(function SystemContent({
+  content,
+}: MessageContentRendererProps) {
+  if (!content) return null
+
+  return (
+    <div className="rounded-md bg-yellow-500/10 p-2 text-sm italic">
+      {content}
+    </div>
+  )
+})
+```
+
+### 2. Register It
+
+Add to `roles/index.ts`:
+
+```typescript
+import { SystemContent } from './system'
+
+export const roleContentRenderers: Record<string, MessageContentRenderer> = {
+  assistant: AssistantContent,
+  user: UserContent,
+  system: SystemContent,  // Add your renderer here
+}
 ```
 
 ## Quick Start: Adding a Tool Renderer
@@ -65,11 +106,23 @@ The message shell (header, timestamp, payload toggle, JSON viewer) is handled by
 
 Returns the content renderer for a tool, or `null` if none exists.
 
+### `getRoleContentRenderer(role: string): MessageContentRenderer | null`
+
+Returns the content renderer for a message role, or `null` if none exists.
+
 ### `ToolContentRendererProps`
 
 ```typescript
 type ToolContentRendererProps = {
   payload: Record<string, unknown>  // The parsed tool result
+}
+```
+
+### `MessageContentRendererProps`
+
+```typescript
+type MessageContentRendererProps = {
+  content: string  // The message content text
 }
 ```
 

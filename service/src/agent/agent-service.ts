@@ -117,7 +117,13 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
 
 Always check context.hints for additional program-specific guidance.
 
+OUTPUT FORMAT:
 - When done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
+- The "message" field supports markdown formatting. Use it for clarity:
+  * **bold** for emphasis
+  * \`code\` for commands, paths, and technical terms
+  * Code blocks with language tags for multi-line code
+  * Lists for multiple items or steps
 `.trim();
 
 const TOOL_RESULT_PREFIX = "TOOL_RESULT";

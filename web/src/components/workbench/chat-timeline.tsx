@@ -1,11 +1,9 @@
 import ReactJsonView from '@microlink/react-json-view'
-import remarkBreaks from 'remark-breaks'
-import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
-import { getToolContentRenderer } from '@/components/message-renderers'
+import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 
-const Markdown = lazy(async () => await import('react-markdown'))
 const MAX_MESSAGE_HEIGHT = 500
 
 export type ChatMessage = {
@@ -114,6 +112,9 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
                 }
               : undefined
 
+          // Get role-based content renderer for user/assistant messages
+          const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
+
           const contentNode = isTool ? (
             <div className="space-y-2 text-xs">
               {ToolContentRenderer && payload && (
@@ -162,20 +163,10 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
                 </div>
               )}
             </div>
+          ) : RoleContentRenderer ? (
+            <RoleContentRenderer content={message.content} />
           ) : (
-            <div className="space-y-2">
-              {isAssistant && message.content ? (
-                <Suspense
-                  fallback={
-                    <pre className="whitespace-pre-wrap text-sm">{message.content}</pre>
-                  }
-                >
-                  <Markdown remarkPlugins={[remarkBreaks]}>{message.content}</Markdown>
-                </Suspense>
-              ) : (
-                <p>{message.content}</p>
-              )}
-            </div>
+            <p>{message.content}</p>
           )
 
           return (
