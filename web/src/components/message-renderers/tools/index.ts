@@ -1,0 +1,13 @@
+import type { ToolContentRenderer } from '../types'
+import { TerminalRunContent } from './terminal-run'
+
+/**
+ * Registry mapping tool names to their content renderers.
+ *
+ * To add a new tool renderer:
+ * 1. Create a component file in this directory (e.g., `my-tool.tsx`)
+ * 2. Import and add it to this registry
+ */
+export const toolContentRenderers: Record<string, ToolContentRenderer> = {
+  'terminal.run': TerminalRunContent,
+}

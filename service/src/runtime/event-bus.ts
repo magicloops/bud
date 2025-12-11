@@ -44,6 +44,14 @@ class SseEventBus {
     }
   }
 
+  /**
+   * Clear the event buffer for a channel.
+   * Used when bud disconnects to prevent stale events from being replayed.
+   */
+  clearBuffer(channelId: string): void {
+    this.buffers.delete(channelId);
+  }
+
   attach(channelId: string, reply: FastifyReply): () => void {
     const listener: Listener = (event) => {
       reply.log.info(
@@ -74,6 +82,31 @@ class SseEventBus {
         { channelId, remaining: set.size, component: "sse" },
         "SSE listener detached"
       );
+      if (set.size === 0) {
+        this.listeners.delete(channelId);
+      }
+    };
+  }
+
+  /**
+   * Attach a callback-style listener for use in manual SSE streams.
+   * Replays buffered events immediately.
+   */
+  attachCallback(channelId: string, callback: Listener): () => void {
+    const listeners = this.listeners.get(channelId) ?? new Set();
+    listeners.add(callback);
+    this.listeners.set(channelId, listeners);
+
+    // Replay buffered events
+    const buffer = this.buffers.get(channelId) ?? [];
+    for (const event of buffer) {
+      callback(event);
+    }
+
+    return () => {
+      const set = this.listeners.get(channelId);
+      if (!set) return;
+      set.delete(callback);
       if (set.size === 0) {
         this.listeners.delete(channelId);
       }

@@ -6,7 +6,7 @@ import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { messageTable, sessionLogTable, threadTable } from "../db/schema.js";
 import { SessionManager } from "../runtime/session-manager.js";
-import { TerminalManager } from "../runtime/terminal-manager.js";
+import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
 import { SessionEventBus } from "../runtime/event-bus.js";
 import type { ReadinessHints } from "../terminal/types.js";
 import type { FastifyBaseLogger } from "fastify";
@@ -117,7 +117,13 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
 
 Always check context.hints for additional program-specific guidance.
 
+OUTPUT FORMAT:
 - When done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
+- The "message" field supports markdown formatting. Use it for clarity:
+  * **bold** for emphasis
+  * \`code\` for commands, paths, and technical terms
+  * Code blocks with language tags for multi-line code
+  * Lists for multiple items or steps
 `.trim();
 
 const TOOL_RESULT_PREFIX = "TOOL_RESULT";
@@ -205,7 +211,7 @@ const TERMINAL_CAPTURE_TOOL = {
 export class AgentService {
   private readonly client: OpenAI;
   private readonly sessionManager: SessionManager;
-  private readonly terminalManager: TerminalManager;
+  private readonly terminalSessionManager: TerminalSessionManager;
   private readonly events: SessionEventBus;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
@@ -217,7 +223,7 @@ export class AgentService {
   constructor(
     client: OpenAI,
     sessionManager: SessionManager,
-    terminalManager: TerminalManager,
+    terminalSessionManager: TerminalSessionManager,
     events: SessionEventBus,
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
@@ -225,7 +231,7 @@ export class AgentService {
   ) {
     this.client = client;
     this.sessionManager = sessionManager;
-    this.terminalManager = terminalManager;
+    this.terminalSessionManager = terminalSessionManager;
     this.events = events;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
@@ -908,12 +914,12 @@ export class AgentService {
     threadId: string,
     directive: Extract<AgentDirective, { type: "tool_call"; tool: string }>
   ): Promise<TerminalCallResult> {
-    const bud = await this.fetchBudForThread(threadId);
-    await this.terminalManager.ensureTerminal(bud.budId);
+    const session = await this.getOrCreateSession(threadId);
+    const sessionId = session.sessionId;
 
     // Helper to get context for tool results
     const getContext = () => {
-      const ctx = this.terminalManager.getTerminalContext(bud.budId);
+      const ctx = this.terminalSessionManager.getSessionContext(sessionId);
       return {
         mode: ctx.mode,
         program: ctx.program,
@@ -924,12 +930,12 @@ export class AgentService {
     };
 
     if (directive.tool === "terminal.interrupt") {
-      await this.terminalManager.sendInterrupt(bud.budId);
-      const readiness = await this.terminalManager.waitForReadiness(
-        bud.budId,
+      await this.terminalSessionManager.sendInterrupt(sessionId);
+      const readiness = await this.terminalSessionManager.waitForReadiness(
+        sessionId,
         directive.timeoutMs ?? 5000
       );
-      const tail = await this.terminalManager.tailOutput(bud.budId, config.terminalOutputBackfillBytes);
+      const tail = await this.terminalSessionManager.tailOutput(sessionId, config.terminalOutputBackfillBytes);
       const decoded = this.decodeTail(tail.data);
       const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
         ready: true,
@@ -948,27 +954,22 @@ export class AgentService {
         context: getContext()
       };
     }
+
     // terminal.capture - uses tmux capture-pane for TUI/REPL visibility
-    // Optional wait parameter: wait for readiness before capturing
     if (directive.tool === "terminal.capture") {
       const lines = directive.lines ?? -50;
       const shouldWait = directive.wait === true;
 
-      this.debug("terminal.capture", {
-        budId: bud.budId,
-        lines,
-        wait: shouldWait
-      });
+      this.debug("terminal.capture", { sessionId, lines, wait: shouldWait });
 
       let readiness: Record<string, unknown>;
 
       if (shouldWait) {
-        // Wait for terminal to settle before capturing
-        const budReadiness = await this.terminalManager.waitForReadiness(
-          bud.budId,
+        const sessionReadiness = await this.terminalSessionManager.waitForReadiness(
+          sessionId,
           directive.timeoutMs ?? 5000
         );
-        readiness = this.normalizeReadiness(budReadiness, {
+        readiness = this.normalizeReadiness(sessionReadiness, {
           ready: false,
           confidence: 0.3,
           trigger: "wait_timeout",
@@ -976,13 +977,12 @@ export class AgentService {
         });
         this.logReadinessDecision(directive.tool, readiness);
       } else {
-        // Immediate capture - snapshot readiness
         readiness = { ready: true, confidence: 1.0, trigger: "capture" };
       }
 
       try {
-        const capture = await this.terminalManager.capturePane(
-          bud.budId,
+        const capture = await this.terminalSessionManager.capturePane(
+          sessionId,
           { startLine: lines, joinLines: true },
           directive.timeoutMs ?? 5000
         );
@@ -990,7 +990,6 @@ export class AgentService {
           throw new Error(capture.error);
         }
 
-        // Pretty print terminal output for debugging
         this.logTerminalOutput("terminal.capture", capture.output);
 
         return {
@@ -1005,78 +1004,68 @@ export class AgentService {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(
-          { budId: bud.budId, error: message, component: "agent_terminal" },
+          { sessionId, error: message, component: "agent_terminal" },
           "capture-pane failed"
         );
         throw err;
       }
     }
+
     // terminal.run
-    // Capture byte offset BEFORE sending input so we can request only NEW output afterward.
-    // This avoids the race condition where readiness fires before output is stored in DB.
-    // See: service/src/runtime/terminal-manager.ts TODO comment for full context.
-    const offsetBeforeInput = this.terminalManager.getLastOffset(bud.budId);
-    this.debug("terminal.run capturing offset before input", {
-      budId: bud.budId,
-      offsetBeforeInput
-    });
+    const offsetBeforeInput = this.terminalSessionManager.getLastOffset(sessionId);
+    this.debug("terminal.run capturing offset before input", { sessionId, offsetBeforeInput });
 
     const input = directive.input ?? directive.command ?? "";
-    const sent = await this.terminalManager.sendInput(
-      bud.budId,
+    const sent = await this.terminalSessionManager.sendInput(
+      sessionId,
       Buffer.from(input, "utf-8"),
       { source: "agent" }
     );
     if (!sent.ok) {
       throw new Error(sent.error ?? "terminal_input_failed");
     }
-    const readiness = await this.terminalManager.waitForReadiness(
-      bud.budId,
+
+    const readiness = await this.terminalSessionManager.waitForReadiness(
+      sessionId,
       directive.timeoutMs ?? 5000
     );
-    const offsetAfterReadiness = this.terminalManager.getLastOffset(bud.budId);
+    const offsetAfterReadiness = this.terminalSessionManager.getLastOffset(sessionId);
+
     this.debug("terminal.run after readiness", {
-      budId: bud.budId,
+      sessionId,
       offsetBeforeInput,
       offsetAfterReadiness,
       offsetDelta: offsetAfterReadiness - offsetBeforeInput
     });
 
     // Get output based on context mode
-    // REPL/TUI apps use capture-pane for accurate rendered output
-    // Shell commands use pipe-pane (works well for line-based output)
     const context = getContext();
     let decoded: string;
     let outputBytes: number;
     let truncated: boolean;
 
     if (context.mode === "repl") {
-      // REPL/TUI: use capture-pane for accurate rendered output
       this.debug("terminal.run using capture-pane for REPL context", {
-        budId: bud.budId,
+        sessionId,
         program: context.program
       });
 
       try {
-        const capture = await this.terminalManager.capturePane(bud.budId, {
+        const capture = await this.terminalSessionManager.capturePane(sessionId, {
           startLine: -50,
           joinLines: true
         });
-
-        // Pretty print terminal output for debugging
         this.logTerminalOutput("terminal.run (REPL)", capture.output);
-
         decoded = capture.output;
         outputBytes = capture.outputBytes;
-        truncated = false; // capture-pane returns complete screen
+        truncated = false;
       } catch (err) {
-        // Fallback to pipe-pane if capture fails
         this.logger.warn(
-          { budId: bud.budId, err, component: "agent_terminal" },
+          { sessionId, err, component: "agent_terminal" },
           "capture-pane failed, falling back to pipe-pane"
         );
-        const tail = await this.terminalManager.tailOutput(
-          bud.budId,
+        const tail = await this.terminalSessionManager.tailOutput(
+          sessionId,
           config.terminalOutputBackfillBytes,
           { sinceOffset: offsetBeforeInput }
         );
@@ -1085,9 +1074,8 @@ export class AgentService {
         truncated = tail.data.length < tail.totalBytes;
       }
     } else {
-      // Shell: use pipe-pane (works well for line-based output)
-      const tail = await this.terminalManager.tailOutput(
-        bud.budId,
+      const tail = await this.terminalSessionManager.tailOutput(
+        sessionId,
         config.terminalOutputBackfillBytes,
         { sinceOffset: offsetBeforeInput }
       );
@@ -1096,9 +1084,8 @@ export class AgentService {
       truncated = tail.data.length < tail.totalBytes;
     }
 
-    // Diagnostic logging for debugging output
     this.debug("terminal.run received output", {
-      budId: bud.budId,
+      sessionId,
       offsetBeforeInput,
       mode: context.mode,
       program: context.program,
@@ -1114,6 +1101,7 @@ export class AgentService {
       hints: DEFAULT_READINESS_HINTS
     });
     this.logReadinessDecision(directive.tool, finalReadiness);
+
     return {
       output: decoded,
       outputBytes,
@@ -1276,6 +1264,46 @@ export class AgentService {
     }
     this.logger.info({ threadId, budId: thread.budId }, "Resolved budId for thread");
     return { budId: thread.budId };
+  }
+
+  /**
+   * Get or create the terminal session for a thread.
+   * Creates session on first terminal tool use.
+   */
+  private async getOrCreateSession(threadId: string): Promise<TerminalSession> {
+    // Check for existing session
+    let session = await this.terminalSessionManager.getSessionForThread(threadId);
+
+    if (!session) {
+      // Create new session
+      const bud = await this.fetchBudForThread(threadId);
+      await this.terminalSessionManager.createSessionForThread(threadId, bud.budId);
+      session = await this.terminalSessionManager.getSessionForThread(threadId);
+
+      if (!session) {
+        throw new Error("Failed to create terminal session for thread");
+      }
+
+      this.logger.info(
+        { threadId, sessionId: session.sessionId, budId: bud.budId, component: "agent" },
+        "Created new terminal session for thread"
+      );
+    }
+
+    // Ensure session is running on Bud
+    const { ok, resumed, error } = await this.terminalSessionManager.ensureSession(session.sessionId);
+    if (!ok) {
+      throw new Error(error ?? "Failed to ensure terminal session");
+    }
+
+    if (resumed) {
+      this.logger.info(
+        { sessionId: session.sessionId, component: "agent" },
+        "Resumed existing terminal session"
+      );
+    }
+
+    return session;
   }
 
   private buildCommandScript(command: string, cwd: string | undefined, marker: string): string {

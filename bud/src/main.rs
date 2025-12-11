@@ -80,15 +80,12 @@ struct BudArgs {
     #[arg(long, env = "BUD_TERMINAL_ENABLED", default_value_t = false)]
     terminal_enabled: bool,
 
-    #[arg(long, env = "BUD_TERMINAL_SESSION", default_value = "bud_terminal")]
-    terminal_session: String,
-
     #[arg(
         long,
-        env = "BUD_TERMINAL_LOG",
-        default_value = "/tmp/bud_terminal.log"
+        env = "BUD_TERMINAL_BASE_DIR",
+        default_value = "~/.bud"
     )]
-    terminal_log: String,
+    terminal_base_dir: String,
 
     #[arg(long, env = "BUD_TERMINAL_COLS", default_value_t = 200)]
     terminal_cols: u16,
@@ -286,8 +283,7 @@ enum SessionCommand {
 #[derive(Clone)]
 struct TerminalConfig {
     enabled: bool,
-    session_name: String,
-    log_path: PathBuf,
+    base_log_dir: PathBuf,
     cols: u16,
     rows: u16,
     shell: String,
@@ -303,8 +299,8 @@ struct TerminalManager {
 
 struct TerminalState {
     sender: Option<OutboundSender>,
-    handle: Option<Arc<TerminalHandle>>,
-    capture_state: Option<CaptureState>,
+    sessions: HashMap<String, Arc<TerminalHandle>>,
+    capture_states: HashMap<String, CaptureState>,
 }
 
 /// State for capture-pane deduplication (hash-only approach)
@@ -313,6 +309,7 @@ struct CaptureState {
 }
 
 struct TerminalHandle {
+    session_id: String,
     session_name: String,
     #[allow(dead_code)]
     log_path: PathBuf,
@@ -326,6 +323,7 @@ struct TerminalHandle {
 }
 
 struct ReadinessDetector {
+    session_id: String,
     handle: Arc<TerminalHandle>,
     sender: OutboundSender,
     start_offset: u64,
@@ -345,6 +343,7 @@ struct TerminalEnsureConfig {
 struct TerminalEnsureFrame {
     #[serde(flatten)]
     envelope: Envelope,
+    session_id: String,
     config: Option<TerminalEnsureConfig>,
 }
 
@@ -352,6 +351,7 @@ struct TerminalEnsureFrame {
 struct TerminalInputFrame {
     #[serde(flatten)]
     envelope: Envelope,
+    session_id: String,
     data: String,
     await_ready: Option<AwaitReady>,
 }
@@ -360,6 +360,7 @@ struct TerminalInputFrame {
 struct TerminalResizeFrame {
     #[serde(flatten)]
     envelope: Envelope,
+    session_id: String,
     cols: u16,
     rows: u16,
 }
@@ -368,6 +369,7 @@ struct TerminalResizeFrame {
 struct TerminalInterruptFrame {
     #[serde(flatten)]
     envelope: Envelope,
+    session_id: String,
     await_ready: Option<AwaitReady>,
 }
 
@@ -375,6 +377,7 @@ struct TerminalInterruptFrame {
 struct TerminalCloseFrame {
     #[serde(flatten)]
     envelope: Envelope,
+    session_id: String,
     reason: Option<String>,
 }
 
@@ -403,6 +406,7 @@ struct AwaitReady {
 struct TerminalCaptureFrame {
     #[serde(flatten)]
     envelope: Envelope,
+    session_id: String,
     request_id: String,
     #[serde(default)]
     options: CaptureOptions,
@@ -830,7 +834,7 @@ fn simple_hash(data: &[u8]) -> u64 {
 /// This is simpler and more reliable than overlap detection, which can fail
 /// when TUI content contains volatile data like timestamps ("2m ago" → "3m ago").
 fn deduplicate_capture(
-    state: &Option<CaptureState>,
+    state: Option<&CaptureState>,
     output: &str,
     current_hash: u64,
 ) -> DedupResult {
@@ -863,8 +867,8 @@ impl TerminalManager {
         Self {
             inner: Arc::new(Mutex::new(TerminalState {
                 sender: None,
-                handle: None,
-                capture_state: None,
+                sessions: HashMap::new(),
+                capture_states: HashMap::new(),
             })),
             config,
         }
@@ -877,24 +881,32 @@ impl TerminalManager {
 
     async fn clear_sender(&self) {
         let mut inner = self.inner.lock().await;
-        if let Some(handle) = inner.handle.take() {
+        // Abort all session watchers
+        for (_, handle) in inner.sessions.drain() {
             handle.watcher.abort();
         }
+        inner.capture_states.clear();
         inner.sender = None;
     }
 
-    async fn handle_ensure(&self, cfg: Option<TerminalEnsureConfig>) -> Result<()> {
+    async fn handle_ensure(&self, frame: TerminalEnsureFrame) -> Result<()> {
         if !self.config.enabled {
             info!("terminal support disabled; ignoring terminal_ensure");
             return Ok(());
         }
+
+        let session_id = &frame.session_id;
         let inner = self.inner.lock().await;
-        if inner.handle.is_some() {
+
+        // Check if session already exists
+        if inner.sessions.contains_key(session_id) {
             if let Some(sender) = inner.sender.clone() {
-                self.send_status(&sender, "ready", None).await?;
+                drop(inner);
+                self.send_status(&sender, session_id, "ready", None).await?;
             }
             return Ok(());
         }
+
         let sender = inner
             .sender
             .clone()
@@ -905,6 +917,7 @@ impl TerminalManager {
             warn!("tmux not available; cannot create terminal");
             self.send_status(
                 &sender,
+                session_id,
                 "none",
                 Some(json!({ "error": "tmux_unavailable" })),
             )
@@ -912,14 +925,14 @@ impl TerminalManager {
             return Ok(());
         }
 
-        let ensured = self.ensure_tmux_session(cfg).await?;
+        let ensured = self.ensure_tmux_session(session_id, frame.config).await?;
         if let Some(handle) = ensured {
             let mut inner = self.inner.lock().await;
-            inner.handle = Some(handle.clone());
+            inner.sessions.insert(session_id.clone(), handle.clone());
             drop(inner);
-            self.send_status(&sender, "ready", None).await?;
+            self.send_status(&sender, session_id, "ready", None).await?;
         } else {
-            self.send_status(&sender, "none", Some(json!({ "error": "terminal_create_failed" })))
+            self.send_status(&sender, session_id, "none", Some(json!({ "error": "terminal_create_failed" })))
                 .await?;
         }
         Ok(())
@@ -929,17 +942,27 @@ impl TerminalManager {
         if !self.config.enabled {
             return Ok(());
         }
+
+        let session_id = &frame.session_id;
         let data = BASE64_STANDARD
             .decode(frame.data.as_bytes())
             .map_err(|err| anyhow!("invalid terminal input data: {}", err))?;
-        let handle = self.ensure_handle_if_missing(None).await?;
+
+        // Get or create handle for this session
+        let handle = self.ensure_handle_for_session(session_id, None).await?;
         let Some(handle) = handle else {
-            warn!(message_id = %frame.envelope.id, "terminal_input dropped; no session");
+            warn!(
+                message_id = %frame.envelope.id,
+                session_id = session_id,
+                "terminal_input dropped; no session"
+            );
             return Ok(());
         };
+
         let start_offset = handle.offset.load(Ordering::SeqCst);
         info!(
             message_id = %frame.envelope.id,
+            session_id = session_id,
             bytes = data.len(),
             session = %handle.session_name,
             start_offset = start_offset,
@@ -980,25 +1003,29 @@ impl TerminalManager {
 
         info!(
             message_id = %frame.envelope.id,
+            session_id = session_id,
             bytes = input.len(),
             text_bytes = trimmed_end.len(),
             enter_count = newline_count,
             session = %handle.session_name,
             "tmux send-keys succeeded"
         );
+
         if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
                 let await_ready = frame.await_ready.clone().unwrap_or_default();
+                let session_id_owned = session_id.clone();
 
                 if await_ready.activity_based {
                     // Use activity-based detection for TUI/REPL apps
                     // Compares capture-pane hashes at intervals to detect screen stability
                     info!(
                         message_id = %frame.envelope.id,
+                        session_id = session_id,
                         session = %handle.session_name,
                         "using activity-based readiness detection"
                     );
-                    let detector = ActivityDetector::new(handle.clone(), sender, &await_ready);
+                    let detector = ActivityDetector::new(session_id_owned, handle.clone(), sender, &await_ready);
                     tokio::spawn(async move {
                         if let Err(err) = detector.run().await {
                             warn!(error = %err, "activity detection failed");
@@ -1008,6 +1035,7 @@ impl TerminalManager {
                     // Use quiescence-based detection for shell commands
                     // Watches pipe-pane log for new bytes
                     let detector = ReadinessDetector::new(
+                        session_id_owned,
                         handle.clone(),
                         sender,
                         start_offset,
@@ -1028,11 +1056,18 @@ impl TerminalManager {
         if !self.config.enabled {
             return Ok(());
         }
-        let handle = self.ensure_handle_if_missing(None).await?;
+
+        let session_id = &frame.session_id;
+        let handle = self.ensure_handle_for_session(session_id, None).await?;
         let Some(handle) = handle else {
-            warn!(message_id = %frame.envelope.id, "terminal_resize dropped; no session");
+            warn!(
+                message_id = %frame.envelope.id,
+                session_id = session_id,
+                "terminal_resize dropped; no session"
+            );
             return Ok(());
         };
+
         let status = Command::new("tmux")
             .args([
                 "resize-window",
@@ -1050,10 +1085,10 @@ impl TerminalManager {
             warn!(message_id = %frame.envelope.id, "tmux resize-window failed");
         }
 
-        // Reset dedup state - screen layout changed
+        // Reset dedup state for this session - screen layout changed
         {
             let mut inner = self.inner.lock().await;
-            inner.capture_state = None;
+            inner.capture_states.remove(session_id);
         }
         Ok(())
     }
@@ -1062,11 +1097,18 @@ impl TerminalManager {
         if !self.config.enabled {
             return Ok(());
         }
-        let handle = self.ensure_handle_if_missing(None).await?;
+
+        let session_id = &frame.session_id;
+        let handle = self.ensure_handle_for_session(session_id, None).await?;
         let Some(handle) = handle else {
-            warn!(message_id = %frame.envelope.id, "terminal_interrupt dropped; no session");
+            warn!(
+                message_id = %frame.envelope.id,
+                session_id = session_id,
+                "terminal_interrupt dropped; no session"
+            );
             return Ok(());
         };
+
         let start_offset = handle.offset.load(Ordering::SeqCst);
         let status = Command::new("tmux")
             .args(["send-keys", "-t", &handle.session_name, "C-c"])
@@ -1076,18 +1118,21 @@ impl TerminalManager {
         if !status.success() {
             warn!(message_id = %frame.envelope.id, "tmux interrupt failed");
         }
+
         if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
                 let await_ready = frame.await_ready.clone().unwrap_or_default();
+                let session_id_owned = session_id.clone();
 
                 if await_ready.activity_based {
                     // Use activity-based detection for TUI/REPL apps
                     info!(
                         message_id = %frame.envelope.id,
+                        session_id = session_id,
                         session = %handle.session_name,
                         "using activity-based readiness detection after interrupt"
                     );
-                    let detector = ActivityDetector::new(handle.clone(), sender, &await_ready);
+                    let detector = ActivityDetector::new(session_id_owned, handle.clone(), sender, &await_ready);
                     tokio::spawn(async move {
                         if let Err(err) = detector.run().await {
                             warn!(error = %err, "activity detection failed");
@@ -1096,6 +1141,7 @@ impl TerminalManager {
                 } else {
                     // Use quiescence-based detection for shell commands
                     let detector = ReadinessDetector::new(
+                        session_id_owned,
                         handle.clone(),
                         sender,
                         start_offset,
@@ -1116,25 +1162,36 @@ impl TerminalManager {
         if !self.config.enabled {
             return Ok(());
         }
+
+        let session_id = &frame.session_id;
         let sender = {
             let inner = self.inner.lock().await;
             inner.sender.clone()
         };
+
         let mut inner = self.inner.lock().await;
-        if let Some(handle) = inner.handle.take() {
+        if let Some(handle) = inner.sessions.remove(session_id) {
             handle.watcher.abort();
             let _ = Command::new("tmux")
                 .args(["kill-session", "-t", &handle.session_name])
                 .status()
                 .await;
+            info!(
+                session_id = session_id,
+                session_name = %handle.session_name,
+                "terminal session closed"
+            );
         }
-        inner.capture_state = None; // Reset dedup state on close
+        inner.capture_states.remove(session_id); // Reset dedup state on close
         drop(inner);
+
         if let Some(sender) = sender {
-            self.send_status(&sender, "closed", None).await?;
+            self.send_status(&sender, session_id, "closed", None).await?;
         }
+
         info!(
             message_id = %frame.envelope.id,
+            session_id = session_id,
             reason = %frame.reason.clone().unwrap_or_default(),
             "terminal_close handled"
         );
@@ -1145,16 +1202,19 @@ impl TerminalManager {
         if !self.config.enabled {
             return Ok(());
         }
-        let handle = {
+
+        let session_id = &frame.session_id;
+        let (handle, sender) = {
             let inner = self.inner.lock().await;
-            inner.handle.clone()
+            (inner.sessions.get(session_id).cloned(), inner.sender.clone())
         };
-        let sender = {
-            let inner = self.inner.lock().await;
-            inner.sender.clone()
-        };
+
         let Some(sender) = sender else {
-            warn!(request_id = %frame.request_id, "terminal_capture dropped; no sender");
+            warn!(
+                request_id = %frame.request_id,
+                session_id = session_id,
+                "terminal_capture dropped; no sender"
+            );
             return Ok(());
         };
 
@@ -1166,6 +1226,7 @@ impl TerminalManager {
                 "id": new_message_id(),
                 "ts": now_millis(),
                 "ext": {},
+                "session_id": session_id,
                 "request_id": frame.request_id,
                 "output": "",
                 "output_bytes": 0,
@@ -1200,6 +1261,7 @@ impl TerminalManager {
 
         info!(
             request_id = %frame.request_id,
+            session_id = session_id,
             session = %handle.session_name,
             start_line = ?frame.options.start_line,
             end_line = ?frame.options.end_line,
@@ -1220,6 +1282,7 @@ impl TerminalManager {
                 "id": new_message_id(),
                 "ts": now_millis(),
                 "ext": {},
+                "session_id": session_id,
                 "request_id": frame.request_id,
                 "output": "",
                 "output_bytes": 0,
@@ -1233,16 +1296,16 @@ impl TerminalManager {
         let output_str = String::from_utf8_lossy(&output.stdout);
         let current_hash = simple_hash(&output.stdout);
 
-        // Apply deduplication
+        // Apply deduplication (per-session)
         let dedup = {
             let inner = self.inner.lock().await;
-            deduplicate_capture(&inner.capture_state, &output_str, current_hash)
+            deduplicate_capture(inner.capture_states.get(session_id), &output_str, current_hash)
         };
 
         // Update state with hash (for next comparison)
         {
             let mut inner = self.inner.lock().await;
-            inner.capture_state = Some(CaptureState {
+            inner.capture_states.insert(session_id.clone(), CaptureState {
                 content_hash: current_hash,
             });
         }
@@ -1250,6 +1313,7 @@ impl TerminalManager {
         // Log dedup metrics (Bud-side only, for debugging)
         info!(
             request_id = %frame.request_id,
+            session_id = session_id,
             deduplicated = dedup.deduplicated,
             lines_removed = dedup.lines_removed,
             reason = dedup.reason,
@@ -1265,6 +1329,7 @@ impl TerminalManager {
             "id": new_message_id(),
             "ts": now_millis(),
             "ext": {},
+            "session_id": session_id,
             "request_id": frame.request_id,
             "output": BASE64_STANDARD.encode(dedup.output.as_bytes()),
             "output_bytes": dedup.output.len(),
@@ -1279,6 +1344,7 @@ impl TerminalManager {
     async fn send_status(
         &self,
         sender: &OutboundSender,
+        session_id: &str,
         state: &str,
         info: Option<Value>,
     ) -> Result<()> {
@@ -1288,6 +1354,7 @@ impl TerminalManager {
             "id": new_message_id(),
             "ts": now_millis(),
             "ext": {},
+            "session_id": session_id,
             "state": state,
         });
         if let Some(info_obj) = info {
@@ -1295,23 +1362,41 @@ impl TerminalManager {
                 map.insert("info".into(), info_obj);
             }
         }
+
+        // Add session info if we have a handle
+        {
+            let inner = self.inner.lock().await;
+            if let Some(handle) = inner.sessions.get(session_id) {
+                if let Some(map) = payload.as_object_mut() {
+                    map.insert("info".into(), json!({
+                        "tmux_session": handle.session_name,
+                        "cols": handle.cols,
+                        "rows": handle.rows,
+                    }));
+                }
+            }
+        }
+
         send_ws_frame(sender, payload)
     }
 
-    async fn ensure_handle_if_missing(
+    /// Get or create handle for a specific session
+    async fn ensure_handle_for_session(
         &self,
+        session_id: &str,
         cfg: Option<TerminalEnsureConfig>,
     ) -> Result<Option<Arc<TerminalHandle>>> {
         {
             let inner = self.inner.lock().await;
-            if let Some(handle) = &inner.handle {
+            if let Some(handle) = inner.sessions.get(session_id) {
                 return Ok(Some(handle.clone()));
             }
         }
-        let ensured = self.ensure_tmux_session(cfg).await?;
+        // Create session if not exists
+        let ensured = self.ensure_tmux_session(session_id, cfg).await?;
         if let Some(handle) = ensured {
             let mut inner = self.inner.lock().await;
-            inner.handle = Some(handle.clone());
+            inner.sessions.insert(session_id.to_string(), handle.clone());
             return Ok(Some(handle));
         }
         Ok(None)
@@ -1319,14 +1404,15 @@ impl TerminalManager {
 
     async fn ensure_tmux_session(
         &self,
+        session_id: &str,
         cfg: Option<TerminalEnsureConfig>,
     ) -> Result<Option<Arc<TerminalHandle>>> {
         if !self.config.tmux_available {
             return Ok(None);
         }
         let cfg = cfg.unwrap_or_default();
-        let session_name = self.config.session_name.clone();
-        let log_path = self.config.log_path.clone();
+        let tmux_name = tmux_session_name(session_id);
+        let log_path = session_log_path(&self.config.base_log_dir, session_id);
         let _ = cfg.env; // env passthrough not yet implemented
         if let Some(parent) = log_path.parent() {
             fs::create_dir_all(parent).await.ok();
@@ -1342,18 +1428,23 @@ impl TerminalManager {
         let shell = cfg.shell.unwrap_or_else(|| self.config.shell.clone());
         let cwd = cfg.cwd.unwrap_or_else(|| "~".to_string());
         let session_exists = Command::new("tmux")
-            .args(["has-session", "-t", &session_name])
+            .args(["has-session", "-t", &tmux_name])
             .status()
             .await
             .map(|s| s.success())
             .unwrap_or(false);
         if !session_exists {
+            info!(
+                session_id = session_id,
+                tmux_name = %tmux_name,
+                "creating new tmux session"
+            );
             let status = Command::new("tmux")
                 .args([
                     "new-session",
                     "-d",
                     "-s",
-                    &session_name,
+                    &tmux_name,
                     "-x",
                     &cols.to_string(),
                     "-y",
@@ -1366,46 +1457,52 @@ impl TerminalManager {
                 .await
                 .with_context(|| "failed to create tmux session")?;
             if !status.success() {
-                warn!(session = %session_name, "tmux new-session failed");
+                warn!(session_id = session_id, tmux_name = %tmux_name, "tmux new-session failed");
                 return Ok(None);
             }
 
             // Set history-limit to allow capture-pane to retrieve scrollback
             // Agent can request up to 1000 lines; 5000 gives headroom
             let _ = Command::new("tmux")
-                .args(["set-option", "-t", &session_name, "history-limit", "5000"])
+                .args(["set-option", "-t", &tmux_name, "history-limit", "5000"])
                 .status()
                 .await;
+        } else {
+            info!(
+                session_id = session_id,
+                tmux_name = %tmux_name,
+                "reattaching to existing tmux session"
+            );
         }
 
         // Ensure pipe-pane to log - first stop any existing pipe, then start fresh
         // The -o flag would skip if already piping, but after disconnect the old pipe
         // process may have died while tmux still thinks it's piping
         let _ = Command::new("tmux")
-            .args(["pipe-pane", "-t", &session_name])  // Stop existing pipe
+            .args(["pipe-pane", "-t", &tmux_name])  // Stop existing pipe
             .status()
             .await;
         let pipe_cmd = format!("cat >> {}", log_path.display());
         let pipe_status = Command::new("tmux")
-            .args(["pipe-pane", "-t", &session_name, &pipe_cmd])  // Start new pipe (no -o)
+            .args(["pipe-pane", "-t", &tmux_name, &pipe_cmd])  // Start new pipe (no -o)
             .status()
             .await;
         match &pipe_status {
             Ok(status) if status.success() => {
-                info!(session = %session_name, "tmux pipe-pane established");
+                info!(session_id = session_id, tmux_name = %tmux_name, "tmux pipe-pane established");
             }
             Ok(status) => {
-                warn!(session = %session_name, exit_code = ?status.code(), "tmux pipe-pane failed");
+                warn!(session_id = session_id, tmux_name = %tmux_name, exit_code = ?status.code(), "tmux pipe-pane failed");
             }
             Err(err) => {
-                warn!(session = %session_name, error = %err, "tmux pipe-pane command failed");
+                warn!(session_id = session_id, tmux_name = %tmux_name, error = %err, "tmux pipe-pane command failed");
             }
         }
 
         let metadata = fs::metadata(&log_path).await.ok();
         let start_offset = metadata.map(|m| m.len()).unwrap_or(0);
-        let pid = tmux_pane_pid(&session_name).await.ok();
-        let cwd_reported = tmux_pane_cwd(&session_name).await.ok();
+        let pid = tmux_pane_pid(&tmux_name).await.ok();
+        let cwd_reported = tmux_pane_cwd(&tmux_name).await.ok();
         let sender = {
             let inner = self.inner.lock().await;
             inner.sender.clone()
@@ -1418,14 +1515,16 @@ impl TerminalManager {
         let offset = Arc::new(AtomicU64::new(start_offset));
         let sender_clone = sender.clone();
         let watcher = self.spawn_output_watcher(
-            session_name.clone(),
+            session_id.to_string(),
+            tmux_name.clone(),
             log_path.clone(),
             sender_clone,
             seq.clone(),
             offset.clone(),
         );
         let handle = Arc::new(TerminalHandle {
-            session_name,
+            session_id: session_id.to_string(),
+            session_name: tmux_name,
             log_path,
             watcher,
             seq,
@@ -1442,33 +1541,34 @@ impl TerminalManager {
             "rows": handle.rows,
             "output_log_bytes": start_offset,
         });
-        let _ = self.send_status(&sender, "ready", Some(info)).await;
+        let _ = self.send_status(&sender, session_id, "ready", Some(info)).await;
         Ok(Some(handle))
     }
 
     fn spawn_output_watcher(
         &self,
+        session_id: String,
         session_name: String,
         log_path: PathBuf,
         sender: OutboundSender,
         seq: Arc<AtomicU64>,
         offset: Arc<AtomicU64>,
     ) -> tokio::task::JoinHandle<()> {
-        info!(session = %session_name, log_path = %log_path.display(), "spawning terminal output watcher");
+        info!(session_id = %session_id, session = %session_name, log_path = %log_path.display(), "spawning terminal output watcher");
         tokio::spawn(async move {
-            info!(session = %session_name, "output watcher task started");
+            info!(session_id = %session_id, session = %session_name, "output watcher task started");
             loop {
                 let size = match fs::metadata(&log_path).await {
                     Ok(meta) => meta.len(),
                     Err(err) => {
-                        warn!(session = %session_name, error = %err, "failed to stat log file");
+                        warn!(session_id = %session_id, session = %session_name, error = %err, "failed to stat log file");
                         time::sleep(Duration::from_millis(100)).await;
                         continue;
                     }
                 };
                 let current_offset = offset.load(Ordering::SeqCst);
                 if size > current_offset {
-                    info!(session = %session_name, size = size, current_offset = current_offset, "new output detected");
+                    info!(session_id = %session_id, session = %session_name, size = size, current_offset = current_offset, "new output detected");
                     match fs::File::open(&log_path).await {
                         Ok(mut file) => {
                             if file.seek(SeekFrom::Start(current_offset)).await.is_ok() {
@@ -1481,31 +1581,32 @@ impl TerminalManager {
                                         "id": new_message_id(),
                                         "ts": now_millis(),
                                         "ext": {},
+                                        "session_id": session_id,
                                         "seq": seq_no,
                                         "data": BASE64_STANDARD.encode(&buf),
                                         "byte_offset": current_offset,
                                     });
-                                    info!(session = %session_name, seq = seq_no, bytes = buf.len(), "sending terminal_output");
+                                    info!(session_id = %session_id, session = %session_name, seq = seq_no, bytes = buf.len(), "sending terminal_output");
                                     if let Err(err) = send_ws_frame(&sender, payload) {
-                                        warn!(session = %session_name, error = %err, "failed to send terminal_output");
+                                        warn!(session_id = %session_id, session = %session_name, error = %err, "failed to send terminal_output");
                                         break; // Exit loop if send fails - channel is dead
                                     }
                                     offset.store(size, Ordering::SeqCst);
                                 } else {
-                                    warn!(session = %session_name, "failed to read log file");
+                                    warn!(session_id = %session_id, session = %session_name, "failed to read log file");
                                 }
                             } else {
-                                warn!(session = %session_name, "failed to seek log file");
+                                warn!(session_id = %session_id, session = %session_name, "failed to seek log file");
                             }
                         }
                         Err(err) => {
-                            warn!(session = %session_name, error = %err, "failed to open log file");
+                            warn!(session_id = %session_id, session = %session_name, error = %err, "failed to open log file");
                         }
                     }
                 }
                 time::sleep(Duration::from_millis(50)).await;
             }
-            info!(session = %session_name, "output watcher task exiting");
+            info!(session_id = %session_id, session = %session_name, "output watcher task exiting");
         })
     }
 
@@ -1516,12 +1617,14 @@ impl TerminalManager {
 
 impl ReadinessDetector {
     fn new(
+        session_id: String,
         handle: Arc<TerminalHandle>,
         sender: OutboundSender,
         start_offset: u64,
         await_ready: Option<AwaitReady>,
     ) -> Self {
         Self {
+            session_id,
             handle,
             sender,
             start_offset,
@@ -1577,6 +1680,7 @@ impl ReadinessDetector {
             "id": new_message_id(),
             "ts": now_millis(),
             "ext": {},
+            "session_id": self.session_id,
             "assessment": assessment,
             "output_since_input": BASE64_STANDARD.encode(output.as_bytes()),
             "output_bytes": output_bytes,
@@ -1773,6 +1877,7 @@ impl ReadinessDetector {
 // streaming), and become visually stable when idle.
 
 struct ActivityDetector {
+    session_id: String,
     handle: Arc<TerminalHandle>,
     sender: OutboundSender,
     initial_delay_ms: u64,
@@ -1783,11 +1888,13 @@ struct ActivityDetector {
 
 impl ActivityDetector {
     fn new(
+        session_id: String,
         handle: Arc<TerminalHandle>,
         sender: OutboundSender,
         await_ready: &AwaitReady,
     ) -> Self {
         Self {
+            session_id,
             handle,
             sender,
             initial_delay_ms: await_ready
@@ -1812,6 +1919,7 @@ impl ActivityDetector {
         let mut check_count: u32 = 0;
 
         info!(
+            session_id = %self.session_id,
             session = %self.handle.session_name,
             initial_delay_ms = self.initial_delay_ms,
             interval_ms = self.interval_ms,
@@ -1827,6 +1935,7 @@ impl ActivityDetector {
             // Check timeout first
             if start.elapsed() >= Duration::from_millis(self.max_wait_ms) {
                 info!(
+                    session_id = %self.session_id,
                     session = %self.handle.session_name,
                     check_count,
                     stable_count,
@@ -1843,6 +1952,7 @@ impl ActivityDetector {
                 Ok(out) => out,
                 Err(err) => {
                     warn!(
+                        session_id = %self.session_id,
                         session = %self.handle.session_name,
                         error = %err,
                         "capture-pane failed, retrying"
@@ -1858,6 +1968,7 @@ impl ActivityDetector {
                 Some(prev) if prev == current_hash => {
                     stable_count += 1;
                     info!(
+                        session_id = %self.session_id,
                         session = %self.handle.session_name,
                         check_count,
                         stable_count,
@@ -1868,6 +1979,7 @@ impl ActivityDetector {
                     if stable_count >= self.stable_count_required {
                         // Ready!
                         info!(
+                            session_id = %self.session_id,
                             session = %self.handle.session_name,
                             check_count,
                             stable_count,
@@ -1882,6 +1994,7 @@ impl ActivityDetector {
                 Some(_) => {
                     // Content changed - activity detected
                     info!(
+                        session_id = %self.session_id,
                         session = %self.handle.session_name,
                         check_count,
                         prev_stable_count = stable_count,
@@ -1892,6 +2005,7 @@ impl ActivityDetector {
                 None => {
                     // First capture
                     info!(
+                        session_id = %self.session_id,
                         session = %self.handle.session_name,
                         check_count,
                         "activity check: first capture"
@@ -1936,6 +2050,7 @@ impl ActivityDetector {
             "id": new_message_id(),
             "ts": now_millis(),
             "ext": {},
+            "session_id": self.session_id,
             "assessment": {
                 "ready": confidence >= 0.5,
                 "confidence": confidence,
@@ -1955,6 +2070,25 @@ impl ActivityDetector {
         send_ws_frame(&self.sender, payload)?;
         Ok(())
     }
+}
+
+/// Derive tmux session name from session_id
+/// e.g., "sess_01HXYZ..." -> "s_01HXYZ"
+fn tmux_session_name(session_id: &str) -> String {
+    let suffix = session_id.strip_prefix("sess_").unwrap_or(session_id);
+    let name = format!("s_{}", suffix);
+    // tmux limits session names to 256 chars, but keep short for readability
+    if name.len() > 32 {
+        name[..32].to_string()
+    } else {
+        name
+    }
+}
+
+/// Get log path for a session
+/// base_dir/sessions/{session_id}/terminal.log
+fn session_log_path(base_dir: &Path, session_id: &str) -> PathBuf {
+    base_dir.join("sessions").join(session_id).join("terminal.log")
 }
 
 async fn tmux_pane_pid(session_name: &str) -> Result<i32> {
@@ -2239,9 +2373,8 @@ impl BudApp {
         let debug_enabled = args.debug;
         let terminal_config = TerminalConfig {
             enabled: args.terminal_enabled,
-            session_name: args.terminal_session.clone(),
-            log_path: expand_path(&args.terminal_log)
-                .unwrap_or_else(|| PathBuf::from(&args.terminal_log)),
+            base_log_dir: expand_path(&args.terminal_base_dir)
+                .unwrap_or_else(|| PathBuf::from(&args.terminal_base_dir)),
             cols: args.terminal_cols,
             rows: args.terminal_rows,
             shell: default_shell.clone(),
@@ -2400,12 +2533,10 @@ impl BudApp {
         self.run_executor.set_sender(sender.clone()).await;
         self.session_manager.set_sender(sender.clone()).await;
         self.terminal_manager.set_sender(sender.clone()).await;
-        if self.terminal_manager.config.enabled && self.terminal_manager.config.tmux_available {
-            if let Err(err) = self.terminal_manager.handle_ensure(None).await {
-                warn!(error = %err, "failed to initialize terminal on connect");
-            }
-        } else if self.terminal_manager.config.enabled {
-            info!("terminal enabled but tmux unavailable; skipping terminal init");
+        // Note: terminal sessions are now created on-demand via terminal_ensure
+        // No longer auto-creating a single session on connect
+        if self.terminal_manager.config.enabled && !self.terminal_manager.config.tmux_available {
+            info!("terminal enabled but tmux unavailable; terminal sessions will fail");
         }
 
         loop {
@@ -2506,8 +2637,12 @@ impl BudApp {
             }
             "terminal_ensure" => {
                 let frame: TerminalEnsureFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_ensure(frame.config).await?;
-                info!(message_id = %frame.envelope.id, "terminal_ensure handled");
+                info!(
+                    message_id = %frame.envelope.id,
+                    session_id = %frame.session_id,
+                    "terminal_ensure received"
+                );
+                self.terminal_manager.handle_ensure(frame).await?;
             }
             "terminal_input" => {
                 let frame: TerminalInputFrame = serde_json::from_str(text)?;

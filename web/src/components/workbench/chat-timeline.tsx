@@ -1,10 +1,9 @@
 import ReactJsonView from '@microlink/react-json-view'
-import remarkBreaks from 'remark-breaks'
-import { Suspense, lazy, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
+import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 
-const Markdown = lazy(async () => await import('react-markdown'))
 const MAX_MESSAGE_HEIGHT = 500
 
 export type ChatMessage = {
@@ -96,8 +95,9 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
           const payload = isTool ? resolveToolPayload(message) : null
           const toolName =
             (payload?.tool as string | undefined) ?? (message.displayRole || 'Tool')
-          const summaryText =
-            typeof payload?.command === 'string' ? payload.command : message.content
+          const ToolContentRenderer = payload?.tool
+            ? getToolContentRenderer(payload.tool as string)
+            : null
           const isPayloadExpanded = expandedPayloads[message.id] ?? false
           const isMessageExpanded = expandedMessages[message.id] ?? false
           const isOverflowing = overflowingMessages[message.id] ?? false
@@ -112,11 +112,14 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
                 }
               : undefined
 
+          // Get role-based content renderer for user/assistant messages
+          const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
+
           const contentNode = isTool ? (
             <div className="space-y-2 text-xs">
-              <div className="rounded-md border border-dashed border-black/20 bg-muted/60 p-2 font-mono text-[11px] leading-relaxed">
-                {summaryText}
-              </div>
+              {ToolContentRenderer && payload && (
+                <ToolContentRenderer payload={payload} />
+              )}
               <button
                 type="button"
                 onClick={() =>
@@ -160,20 +163,10 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
                 </div>
               )}
             </div>
+          ) : RoleContentRenderer ? (
+            <RoleContentRenderer content={message.content} />
           ) : (
-            <div className="space-y-2">
-              {isAssistant && message.content ? (
-                <Suspense
-                  fallback={
-                    <pre className="whitespace-pre-wrap text-sm">{message.content}</pre>
-                  }
-                >
-                  <Markdown remarkPlugins={[remarkBreaks]}>{message.content}</Markdown>
-                </Suspense>
-              ) : (
-                <p>{message.content}</p>
-              )}
-            </div>
+            <p>{message.content}</p>
           )
 
           return (

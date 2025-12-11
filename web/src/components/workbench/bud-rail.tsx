@@ -1,11 +1,14 @@
 import { Monitor, Moon, Plus, Server, Sun } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/components/theme-provider'
+import { useBudStatus } from '@/contexts/bud-status-context'
 
 export type BudCapabilities = {
   sessions?: boolean
   sessions_backends?: string[]
   tmux_version?: string
+  terminal?: boolean
+  terminal_backends?: string[]
 }
 
 export type BudProfile = {
@@ -32,6 +35,7 @@ type BudRailProps = {
 
 export function BudRail({ buds, activeBudId, onSelectBud }: BudRailProps) {
   const { theme, setTheme } = useTheme()
+  const { statuses: budStatuses } = useBudStatus()
 
   const cycleTheme = () => {
     if (theme === 'system') {
@@ -49,6 +53,9 @@ export function BudRail({ buds, activeBudId, onSelectBud }: BudRailProps) {
         {buds.map((bud, index) => {
           const isActive = bud.id === activeBudId
           const accent = bud.accentColor ?? 'var(--sidebar-primary)'
+          // Use real-time status from context if available, otherwise fall back to loader data
+          const liveStatus = budStatuses[bud.id] ?? bud.status
+          const isOnline = liveStatus === 'online'
           return (
             <button
               key={bud.id}
@@ -67,7 +74,7 @@ export function BudRail({ buds, activeBudId, onSelectBud }: BudRailProps) {
               <span className="mt-1 font-mono text-[11px] font-bold text-black">{index + 1}</span>
               <span
                 className="absolute bottom-2 right-2 h-3 w-3 rounded-full border border-black"
-                style={{ backgroundColor: bud.status === 'online' ? '#16a34a' : '#f97316' }}
+                style={{ backgroundColor: isOnline ? '#16a34a' : '#f97316' }}
               />
             </button>
           )
