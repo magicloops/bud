@@ -24,3 +24,5 @@ coverage/
 # Misc
 *.swp
 *.swo
+
+/old/
