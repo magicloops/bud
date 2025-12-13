@@ -159,9 +159,62 @@ After all spec files are written:
 
 | Order | Task | Status |
 |-------|------|--------|
-| 4.1 | Review all spec files for consistency | ⬜ Pending |
-| 4.2 | Consolidate and prioritize TODOs | ⬜ Pending |
-| 4.3 | Update this plan with final status | ⬜ Pending |
+| 4.1 | Review all spec files for consistency | ✅ Complete |
+| 4.2 | Consolidate and prioritize TODOs | ✅ Complete |
+| 4.3 | Update this plan with final status | ✅ Complete |
+
+### 4.1 Consistency Review
+
+All 29 spec files verified:
+- ✅ Consistent header format (`# folder-name`)
+- ✅ Parent/child references present (except root `bud.spec.md`)
+- ✅ Standard sections: Purpose, Files, Dependencies
+- ✅ Markdown tables for structured data
+
+### 4.2 Consolidated TODOs
+
+Found **9 files** with `SPEC:TODO` markers. Organized by priority:
+
+#### High Priority - Legacy Code Cleanup
+
+| Location | Issue |
+|----------|-------|
+| `service/src/runtime/runtime.spec.md` | `SessionManager` (legacy PTY) may be redundant with `TerminalSessionManager` |
+| `service/src/ws/ws.spec.md` | `term-gateway.ts` is for legacy PTY sessions; deprecate once thread-scoped stable |
+| `service/src/agent/agent.spec.md` | Legacy `shell.run` path still exists but appears unused |
+| `bud/src/src.spec.md` | Legacy `SessionManager` (non-tmux PTY) may be redundant |
+| `web/src/components/workbench/workbench.spec.md` | `run-view.tsx` may be deprecated in favor of terminal view |
+
+#### Medium Priority - Code Quality
+
+| Location | Issue |
+|----------|-------|
+| `bud/src/src.spec.md` | Single-file architecture (~2900 lines); consider splitting into modules |
+| `bud/src/src.spec.md` | `#[allow(dead_code)]` on several struct fields suggests unused protocol features |
+| `bud/src/src.spec.md` | Environment passthrough for `terminal_ensure` noted as "not yet implemented" |
+| `service/src/agent/agent.spec.md` | Type assertions could be improved with proper OpenAI response types |
+| `service/src/ws/ws.spec.md` | No rate limiting on WebSocket messages |
+| `service/src/ws/ws.spec.md` | Dev token bypass should be removed for production |
+
+#### Low Priority - Known Limitations
+
+| Location | Issue |
+|----------|-------|
+| `bud/bud.spec.md` | Reconnection can leave orphaned tmux sessions if daemon crashes |
+| `bud/bud.spec.md` | No graceful shutdown handling for terminal sessions |
+| `bud/bud.spec.md` | Identity file permissions not verified on load |
+
+#### Future Features
+
+| Location | Feature |
+|----------|---------|
+| `bud.spec.md` | Multi-tenant support (schema ready, not implemented) |
+| `bud.spec.md` | User authentication (columns exist but unused) |
+| `bud.spec.md` | File transfer capabilities |
+| `bud.spec.md` | Multiple terminal windows per thread |
+| `bud.spec.md` | Session sharing/collaboration |
+| `service/src/db/db.spec.md` | Multi-tenant isolation not implemented |
+| `web/src/components/message-renderers/tools/tools.spec.md` | Additional tool renderers (capture, interrupt, file ops) |
 
 ---
 
@@ -215,10 +268,30 @@ Last updated: 2025-12-12
 
 ## Summary
 
-All spec files have been created:
-- **Phase 1**: 2 specs (`/bud`)
-- **Phase 2**: 12 specs (`/service`)
-- **Phase 3**: 14 specs (`/web`)
-- **Root**: 1 spec (`/bud.spec.md`)
+All phases complete:
 
-Ready for **Phase 4: Review & Cleanup** when desired.
+| Phase | Scope | Specs | Status |
+|-------|-------|-------|--------|
+| 1 | `/bud` (Rust Daemon) | 2 | ✅ Complete |
+| 2 | `/service` (Node.js Backend) | 12 | ✅ Complete |
+| 3 | `/web` (React Frontend) | 14 | ✅ Complete |
+| 4 | Review & Cleanup | - | ✅ Complete |
+| Root | Project overview | 1 | ✅ Complete |
+
+**Total**: 29 spec files
+
+### Key Findings from Review
+
+1. **Legacy code identified**: Multiple components (SessionManager, term-gateway, shell.run, run-view) are candidates for deprecation once thread-scoped terminals are stable.
+
+2. **Architecture debt**: The Rust daemon's single-file design (~2900 lines) should be modularized.
+
+3. **Security items**: Dev token bypass and missing rate limiting should be addressed before production.
+
+4. **Schema readiness**: Multi-tenant and user auth columns exist but are not yet implemented.
+
+### Next Steps
+
+1. Prioritize legacy code cleanup after thread-scoped sessions are validated
+2. Address security items before production deployment
+3. Consider Rust daemon modularization in next refactor cycle
