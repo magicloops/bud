@@ -1,13 +1,12 @@
 import OpenAI from "openai";
 import { ulid } from "ulid";
-import { and, asc, desc, eq, gt } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { Buffer } from "node:buffer";
 import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
-import { messageTable, sessionLogTable, threadTable } from "../db/schema.js";
-import { SessionManager } from "../runtime/session-manager.js";
+import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
-import { SessionEventBus } from "../runtime/event-bus.js";
+import { TerminalEventBus } from "../runtime/event-bus.js";
 import type { ReadinessHints } from "../terminal/types.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
@@ -18,9 +17,7 @@ type InputItem = OpenAI.Responses.CreateParams["input"][number];
 type AgentDirective =
   | {
       type: "tool_call";
-      tool: "shell.run" | "terminal.run" | "terminal.interrupt" | "terminal.capture";
-      command?: string;
-      cwd?: string;
+      tool: "terminal.run" | "terminal.interrupt" | "terminal.capture";
       input?: string;
       timeoutMs?: number;
       lines?: number;  // For terminal.capture: scrollback lines
@@ -32,18 +29,6 @@ type AgentDirective =
       status: "succeeded" | "failed";
       message: string;
     };
-
-type SessionCommandResult = {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  truncated: boolean;
-  omittedLines: number;
-  bytes: {
-    stdout: number;
-    stderr: number;
-  };
-};
 
 type TerminalCallResult = {
   output: string;
@@ -210,9 +195,8 @@ const TERMINAL_CAPTURE_TOOL = {
 
 export class AgentService {
   private readonly client: OpenAI;
-  private readonly sessionManager: SessionManager;
   private readonly terminalSessionManager: TerminalSessionManager;
-  private readonly events: SessionEventBus;
+  private readonly events: TerminalEventBus;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
   private readonly openaiDebugEnabled: boolean;
@@ -222,15 +206,13 @@ export class AgentService {
 
   constructor(
     client: OpenAI,
-    sessionManager: SessionManager,
     terminalSessionManager: TerminalSessionManager,
-    events: SessionEventBus,
+    events: TerminalEventBus,
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
     openaiDebugEnabled: boolean
   ) {
     this.client = client;
-    this.sessionManager = sessionManager;
     this.terminalSessionManager = terminalSessionManager;
     this.events = events;
     this.logger = logger;
@@ -248,18 +230,19 @@ export class AgentService {
     options?: { reasoningEffort?: ReasoningEffortSetting | null }
   ): Promise<{ sessionId: string }> {
     const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
-    const ensured = await this.sessionManager.ensureThreadSession(threadId);
+    // Get or create terminal session for this thread
+    const session = await this.getOrCreateSession(threadId);
     const controller = new AbortController();
     this.cancellations.set(threadId, controller);
     void this.runAgentFlow({
       threadId,
-      sessionId: ensured.sessionId,
+      sessionId: session.sessionId,
       reasoningEffort: requestedEffort,
       controller
     }).catch((err) => {
-      this.logger.error({ err, sessionId: ensured.sessionId, threadId, component: "agent" }, "Agent flow failed");
+      this.logger.error({ err, sessionId: session.sessionId, threadId, component: "agent" }, "Agent flow failed");
     });
-    return { sessionId: ensured.sessionId };
+    return { sessionId: session.sessionId };
   }
 
   private async runAgentFlow({
@@ -284,10 +267,7 @@ export class AgentService {
         const response = await this.invokeModel(conversation, reasoningEffort, controller.signal);
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
-          const callMeta =
-            toolCall.tool === "terminal.run" || toolCall.tool === "terminal.interrupt" || toolCall.tool === "terminal.capture"
-              ? { input: toolCall.input ?? toolCall.command ?? "", cwd: toolCall.cwd ?? null }
-              : { command: toolCall.command, cwd: toolCall.cwd ?? null };
+          const callMeta = { input: toolCall.input ?? "" };
           this.events.emit(sessionId, {
             event: "agent.tool_call",
             data: {
@@ -301,8 +281,7 @@ export class AgentService {
             sessionId,
             threadId,
             tool: toolCall.tool,
-            command: toolCall.command ?? toolCall.input ?? "",
-            cwd: toolCall.cwd ?? "~",
+            input: toolCall.input ?? "",
             callId: toolCall.callId
           });
 
@@ -313,56 +292,26 @@ export class AgentService {
             arguments: JSON.stringify(callMeta)
           });
 
-          if (toolCall.tool.startsWith("terminal.")) {
-            const result = await this.executeTerminalCall(threadId, toolCall);
-            const toolPayload = await this.recordTerminalToolMessage(threadId, toolCall, result);
-            conversation.push({
-              type: "function_call_output",
-              call_id: toolCall.callId,
-              output: JSON.stringify(toolPayload)
-            });
-            this.events.emit(sessionId, {
-              event: "agent.tool_result",
-              data: {
-                name: toolCall.tool,
-                output: result.output,
-                output_bytes: result.outputBytes,
-                readiness: result.readiness,
-                last_line: result.lastLine,
-                truncated: result.truncated,
-                omitted_lines: result.omittedLines
-              },
-              id: ulid()
-            });
-          } else {
-            const result = await this.executeCommandInSession(sessionId, toolCall.command ?? "", toolCall.cwd);
-            const toolPayload = await this.recordToolMessage(threadId, toolCall, result);
-            conversation.push({
-              type: "function_call_output",
-              call_id: toolCall.callId,
-              output: JSON.stringify(toolPayload)
-            });
-            this.debug("Bud execution completed", {
-              sessionId,
-              callId: toolCall.callId,
-              exitCode: result.exitCode,
-              stdoutBytes: result.bytes.stdout,
-              stderrBytes: result.bytes.stderr
-            });
-
-            this.events.emit(sessionId, {
-              event: "agent.tool_result",
-              data: {
-                name: toolCall.tool,
-                exit_code: result.exitCode,
-                stdout: result.stdout,
-                stderr: result.stderr,
-                truncated: result.truncated,
-                omitted_lines: result.omittedLines
-              },
-              id: ulid()
-            });
-          }
+          const result = await this.executeTerminalCall(threadId, toolCall);
+          const toolPayload = await this.recordTerminalToolMessage(threadId, toolCall, result);
+          conversation.push({
+            type: "function_call_output",
+            call_id: toolCall.callId,
+            output: JSON.stringify(toolPayload)
+          });
+          this.events.emit(sessionId, {
+            event: "agent.tool_result",
+            data: {
+              name: toolCall.tool,
+              output: result.output,
+              output_bytes: result.outputBytes,
+              readiness: result.readiness,
+              last_line: result.lastLine,
+              truncated: result.truncated,
+              omitted_lines: result.omittedLines
+            },
+            id: ulid()
+          });
 
           steps += 1;
           continue;
@@ -468,8 +417,6 @@ export class AgentService {
           const raw = row.content;
           const payload = JSON.parse(raw) as {
             call_id?: string;
-            command?: string;
-            cwd?: string;
             tool?: string;
             input?: string;
           };
@@ -477,14 +424,9 @@ export class AgentService {
             typeof payload.call_id === "string" && payload.call_id
               ? payload.call_id
               : `tool_${ulid()}`;
-          const toolName = typeof payload.tool === "string" ? payload.tool : "shell.run";
+          const toolName = typeof payload.tool === "string" ? payload.tool : null;
           if (toolName === "terminal.run") {
-            const input =
-              typeof payload.input === "string" && payload.input
-                ? payload.input
-                : typeof payload.command === "string"
-                  ? payload.command
-                  : null;
+            const input = typeof payload.input === "string" ? payload.input : null;
             if (!input) {
               throw new Error("tool payload missing input");
             }
@@ -509,24 +451,8 @@ export class AgentService {
               arguments: JSON.stringify({})
             });
           } else {
-            const command =
-              typeof payload.command === "string" && payload.command
-                ? payload.command
-                : null;
-            const cwd =
-              typeof payload.cwd === "string" && payload.cwd ? payload.cwd : "~";
-            if (!command) {
-              throw new Error("tool payload missing command");
-            }
-            items.push({
-              type: "function_call",
-              call_id: callId,
-              name: this.toolNameForConversation("shell.run"),
-              arguments: JSON.stringify({
-                command,
-                cwd
-              })
-            });
+            // Skip unknown tools (legacy shell.run messages)
+            continue;
           }
           items.push({
             type: "function_call_output",
@@ -535,7 +461,7 @@ export class AgentService {
           });
           continue;
         } catch {
-          items.push(this.createMessageInput("assistant", `${TOOL_RESULT_PREFIX}\n${row.content}`));
+          // Skip malformed tool messages
           continue;
         }
       }
@@ -592,7 +518,7 @@ export class AgentService {
     return response;
   }
 
-  private parseResponse(response: OpenAIResponse): AgentDirective {
+  private parseResponse(response: OpenAIResponse): Extract<AgentDirective, { type: "final" }> {
     const status = (response as { status?: string }).status;
     const incompleteReason = (response as { incomplete_details?: { reason?: string } }).incomplete_details
       ?.reason;
@@ -637,20 +563,6 @@ export class AgentService {
     }
     const payload = parsed as Record<string, unknown>;
     const type = payload.type;
-    if (type === "tool_call") {
-      const command = payload.command;
-      if (typeof command !== "string" || !command.trim()) {
-        throw new Error("tool_call requires non-empty command");
-      }
-      const cwd = typeof payload.cwd === "string" ? payload.cwd : undefined;
-      return {
-        type: "tool_call",
-        tool: "shell.run",
-        command: command.trim(),
-        cwd,
-        callId: `txt_${ulid()}`
-      };
-    }
     if (type === "final") {
       const message = typeof payload.message === "string" ? payload.message : "";
       const status = payload.status === "failed" ? "failed" : "succeeded";
@@ -660,7 +572,8 @@ export class AgentService {
         message: message || (status === "failed" ? "Agent failed" : "Done.")
       };
     }
-    throw new Error("unknown agent directive");
+    // Model should use function calling API for tool calls, not raw JSON
+    throw new Error(`unknown agent directive type: ${type}`);
   }
 
   private normalizeReasoningEffort(requested?: ReasoningEffortSetting | null): ReasoningEffortSetting {
@@ -671,7 +584,7 @@ export class AgentService {
     return desired;
   }
 
-  private toolNameForConversation(tool: AgentDirective["tool"]) {
+  private toolNameForConversation(tool: "terminal.run" | "terminal.interrupt" | "terminal.capture") {
     switch (tool) {
       case "terminal.run":
         return "terminal_run";
@@ -679,9 +592,6 @@ export class AgentService {
         return "terminal_interrupt";
       case "terminal.capture":
         return "terminal_capture";
-      case "shell.run":
-      default:
-        return "shell_run";
     }
   }
 
@@ -700,7 +610,7 @@ export class AgentService {
     return !requiresReasoning;
   }
 
-  private extractFunctionCall(response: OpenAIResponse): AgentDirective | null {
+  private extractFunctionCall(response: OpenAIResponse): Extract<AgentDirective, { type: "tool_call" }> | null {
     const items = (response as { output?: Array<Record<string, unknown>> }).output;
     if (!Array.isArray(items)) {
       return null;
@@ -743,18 +653,6 @@ export class AgentService {
               timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
               callId
             };
-          case "shell_run": {
-            if (!args.command || typeof args.command !== "string") {
-              throw new Error("function_call missing command argument");
-            }
-            return {
-              type: "tool_call",
-              tool: "shell.run",
-              command: args.command,
-              cwd: typeof args.cwd === "string" ? args.cwd : undefined,
-              callId
-            };
-          }
           default:
             break;
         }
@@ -786,128 +684,6 @@ export class AgentService {
       }
     }
     return text;
-  }
-
-  private async recordToolMessage(
-    threadId: string,
-    directive: Extract<AgentDirective, { type: "tool_call" }>,
-    result: SessionCommandResult
-  ) {
-    const payload = {
-      tool: directive.tool,
-      call_id: directive.callId,
-      command: directive.command,
-      cwd: directive.cwd ?? null,
-      exit_code: result.exitCode,
-      stdout_tail: result.stdout,
-      stderr_tail: result.stderr,
-      bytes: result.bytes,
-      truncated: result.truncated,
-      omitted_lines: result.omittedLines
-    };
-    await db.insert(messageTable).values({
-      threadId,
-      role: "tool",
-      displayRole: "Tool",
-      content: JSON.stringify(payload),
-      metadata: payload
-    });
-    const preview = `${directive.tool} exit ${payload.exit_code ?? "?"}`;
-    await recordThreadMessageMetadata(threadId, preview);
-    return payload;
-  }
-
-  private async executeCommandInSession(
-    sessionId: string,
-    command: string,
-    cwd?: string
-  ): Promise<SessionCommandResult> {
-    const marker = `cmd_${ulid()}`;
-    const startMarker = `__BUD_CMD_START__ ${marker}`;
-    const donePrefix = `__BUD_CMD_DONE__ ${marker} `;
-    const script = this.buildCommandScript(command, cwd, marker);
-    const encoded = Buffer.from(script, "utf-8").toString("base64");
-    this.debug("Agent session command dispatch", {
-      sessionId,
-      marker,
-      command,
-      cwd: cwd ?? "~",
-      script_bytes: Buffer.byteLength(script, "utf-8"),
-      encoded_bytes: Buffer.byteLength(encoded, "utf-8")
-    });
-    const sent = this.sessionManager.sendInputDirect(sessionId, encoded);
-    if (!sent.ok) {
-      throw new Error(sent.error ?? "failed to send session input");
-    }
-
-    let lastSeq = await this.latestSessionSeq(sessionId);
-    const deadline = Date.now() + 5 * 60 * 1000;
-    let buffer = "";
-    let exitCode: number | null = null;
-
-    while (Date.now() < deadline) {
-      const rows = await db
-        .select({
-          seq: sessionLogTable.seq,
-          data: sessionLogTable.data
-        })
-        .from(sessionLogTable)
-        .where(and(eq(sessionLogTable.sessionId, sessionId), gt(sessionLogTable.seq, lastSeq)))
-        .orderBy(asc(sessionLogTable.seq))
-        .limit(200);
-
-      if (rows.length === 0) {
-        await this.delay(150);
-        continue;
-      }
-
-      for (const row of rows) {
-        buffer += Buffer.from(row.data).toString("utf-8");
-        lastSeq = row.seq;
-      }
-
-      const doneIdx = buffer.indexOf(donePrefix);
-      if (doneIdx !== -1) {
-        const doneLine = buffer.slice(doneIdx).split("\n")[0] ?? "";
-        const exitMatch = doneLine.match(new RegExp(`${donePrefix}(-?\\d+)`));
-        exitCode = exitMatch ? Number.parseInt(exitMatch[1] ?? "", 10) : null;
-        break;
-      }
-    }
-
-    if (exitCode === null) {
-      throw new Error("command did not complete before timeout");
-    }
-
-    const outputStartIdx = buffer.indexOf(startMarker);
-    const doneIdx = buffer.indexOf(donePrefix);
-    const contentStart = outputStartIdx !== -1 ? outputStartIdx + startMarker.length : 0;
-    const contentEnd = doneIdx !== -1 ? doneIdx : buffer.length;
-    const rawOutput = buffer.slice(contentStart, contentEnd);
-    const cleanedOutput = rawOutput.replace(/^\s*\n?/, "");
-    const tail = this.tailLines(cleanedOutput, 200);
-    this.debug("Agent session command completed", {
-      sessionId,
-      marker,
-      exitCode,
-      bytes: {
-        total: Buffer.byteLength(cleanedOutput, "utf-8"),
-        tail: Buffer.byteLength(tail.text, "utf-8")
-      },
-      omitted_lines: tail.omitted
-    });
-
-    return {
-      exitCode,
-      stdout: tail.text,
-      stderr: "",
-      truncated: tail.omitted > 0,
-      omittedLines: tail.omitted,
-      bytes: {
-        stdout: Buffer.byteLength(cleanedOutput, "utf-8"),
-        stderr: 0
-      }
-    };
   }
 
   private async executeTerminalCall(
@@ -1015,7 +791,7 @@ export class AgentService {
     const offsetBeforeInput = this.terminalSessionManager.getLastOffset(sessionId);
     this.debug("terminal.run capturing offset before input", { sessionId, offsetBeforeInput });
 
-    const input = directive.input ?? directive.command ?? "";
+    const input = directive.input ?? "";
     const sent = await this.terminalSessionManager.sendInput(
       sessionId,
       Buffer.from(input, "utf-8"),
@@ -1191,7 +967,7 @@ export class AgentService {
     const payload = {
       tool: directive.tool,
       call_id: directive.callId,
-      input: directive.input ?? directive.command ?? null,
+      input: directive.input ?? null,
       output: result.output,
       output_bytes: result.outputBytes,
       readiness: result.readiness,
@@ -1304,49 +1080,6 @@ export class AgentService {
     }
 
     return session;
-  }
-
-  private buildCommandScript(command: string, cwd: string | undefined, marker: string): string {
-    const lines: string[] = [];
-    lines.push(`printf '\\n__BUD_CMD_START__ ${marker}\\n'`);
-    const trimmedCwd = cwd?.trim();
-    if (trimmedCwd && trimmedCwd.length > 0) {
-      lines.push(`cd ${this.shellEscapeForTilde(trimmedCwd)}`);
-    }
-    lines.push(command);
-    lines.push("__BUD_EXIT=$?");
-    lines.push(`printf '\\n__BUD_CMD_DONE__ ${marker} %s\\n' "$__BUD_EXIT"`);
-    return `${lines.join("\n")}\n`;
-  }
-
-  private shellEscapeForTilde(value: string): string {
-    // Avoid single quotes so ~ expands; wrap in double quotes and escape inner quotes.
-    const escaped = value.replace(/"/g, '\\"');
-    return `"${escaped}"`;
-  }
-
-  private async latestSessionSeq(sessionId: string): Promise<number> {
-    const row = await db
-      .select({ seq: sessionLogTable.seq })
-      .from(sessionLogTable)
-      .where(eq(sessionLogTable.sessionId, sessionId))
-      .orderBy(desc(sessionLogTable.seq))
-      .limit(1);
-    return row[0]?.seq ?? -1;
-  }
-
-  private async delay(ms: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  private tailLines(text: string, maxLines: number): { text: string; omitted: number } {
-    const lines = text.split(/\r?\n/);
-    if (lines.length <= maxLines) {
-      return { text, omitted: 0 };
-    }
-    const omitted = lines.length - maxLines;
-    const tail = lines.slice(-maxLines).join("\n");
-    return { text: `${omitted} lines omitted...\n${tail}`, omitted };
   }
 
   private debug(message: string, meta?: Record<string, unknown>) {

@@ -51,12 +51,6 @@ Thread and message management, plus terminal operations (~650 lines).
 |--------|------|-------------|
 | `GET` | `/api/threads/:threadId/runs` | Get run history with cursor pagination |
 
-**Session Endpoints** (Legacy):
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/threads/:threadId/session` | Ensure legacy PTY session |
-
 **Terminal Endpoints** (Thread-Scoped):
 
 | Method | Path | Description |
@@ -96,32 +90,6 @@ Standalone command execution (separate from agent flow).
   cwd?: string,
   thread_id?: string,  // Use existing thread or create new
   title?: string       // Title for auto-created thread
-}
-```
-
-### `sessions.ts`
-
-Legacy PTY session management.
-
-**Endpoints**:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/sessions` | List sessions (currently returns empty) |
-| `POST` | `/api/sessions` | Create new PTY session |
-| `POST` | `/api/sessions/:sessionId/close` | Close session |
-| `POST` | `/api/sessions/:sessionId/take-writer` | Claim writer role |
-
-**Request Body** (`CreateSessionSchema`):
-```typescript
-{
-  thread_id: string,
-  bud_id: string,
-  backend: "pty" | "tmux",
-  cmd?: string,
-  cwd?: string,
-  rows?: number,
-  cols?: number
 }
 ```
 

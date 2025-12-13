@@ -7,7 +7,6 @@ export type SseEvent = {
 };
 
 export type RunEvent = SseEvent;
-export type SessionEvent = SseEvent;
 export type TerminalEvent = SseEvent;
 
 // eslint-disable-next-line no-unused-vars
@@ -115,5 +114,4 @@ class SseEventBus {
 }
 
 export class RunEventBus extends SseEventBus {}
-export class SessionEventBus extends SseEventBus {}
 export class TerminalEventBus extends SseEventBus {}

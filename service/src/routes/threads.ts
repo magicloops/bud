@@ -16,7 +16,6 @@ import { AgentService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import { and, asc, desc, eq, lt, isNull } from "drizzle-orm";
-import { SessionManager } from "../runtime/session-manager.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { TerminalEventBus } from "../runtime/event-bus.js";
 import { getActiveBudIds } from "../ws/gateway.js";
@@ -140,8 +139,7 @@ function serializeMessage(row: typeof messageTable.$inferSelect) {
 export async function registerThreadRoutes(
   server: FastifyInstance,
   _runManager: RunManager,
-  agentService: AgentService,
-  sessionManager: SessionManager
+  agentService: AgentService
 ): Promise<void> {
   server.get("/api/threads", async (request) => {
     const query = ThreadListQuerySchema.parse(request.query ?? {});
@@ -211,17 +209,6 @@ export async function registerThreadRoutes(
       return;
     }
     reply.send(serializeThread(thread));
-  });
-
-  server.post("/api/threads/:threadId/session", async (request, reply) => {
-    const params = ThreadParamsSchema.parse(request.params);
-    try {
-      const ensured = await sessionManager.ensureThreadSession(params.threadId);
-      reply.send({ session_id: ensured.sessionId, attach_token: ensured.attachToken });
-    } catch (err) {
-      server.log.error({ err, threadId: params.threadId }, "Failed to ensure session for thread");
-      reply.code(400).send({ error: (err as Error).message });
-    }
   });
 
   server.get("/api/threads/:threadId/messages", async (request, reply) => {
