@@ -108,22 +108,6 @@ Header bar with bud label and view toggle.
 - Status indicator (Idle/Dispatching/Streaming)
 - View mode toggle buttons
 
-### `run-view.tsx`
-
-Legacy run output display (pre-terminal era).
-
-**Type**: `ShellEntry` - Run data (runId, command, stdout, stderr, exitCode, status)
-
-**Features**:
-- Combined history and live entries
-- Auto-scroll with manual override
-- Load more pagination
-- Status-colored headers (green/red/yellow)
-- Stdout/stderr output display
-
-<!-- SPEC:TODO -->
-Note: `run-view.tsx` may be deprecated in favor of the terminal view.
-
 ## Dependencies
 
 | Import | Purpose |

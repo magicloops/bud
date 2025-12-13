@@ -1,12 +1,13 @@
 # ws
 
-WebSocket gateways for bud daemon connections and browser terminal access.
+WebSocket gateway for bud daemon connections.
 
 ## Purpose
 
-Handles real-time communication:
-1. **Bud Gateway** (`/ws`) - Daemon connections, command dispatch, output streaming
-2. **Term Gateway** (`/term`) - Browser WebSocket for legacy PTY sessions
+Handles real-time communication between the service and bud daemons via WebSocket:
+- Daemon connections and authentication
+- Command dispatch and output streaming
+- Terminal session management (tmux-backed)
 
 ## Files
 
@@ -42,9 +43,6 @@ Browser/Client                 Service                      Bud Daemon
 | `HelloProofSchema` | HMAC challenge response |
 | `StreamSchema` | stdout/stderr chunks |
 | `RunFinishedSchema` | Command completion |
-| `SessionOpenedSchema` | Legacy session ready |
-| `SessionOutputSchema` | Legacy session output |
-| `SessionClosedSchema` | Legacy session closed |
 | `TerminalStatusSchema` | Terminal state changes |
 | `TerminalOutputSchema` | Terminal output chunks |
 | `TerminalReadySchema` | Readiness assessments |
@@ -107,10 +105,6 @@ interface SessionTracker {
 | `heartbeat` | Update lastHeartbeat timestamp |
 | `stdout` / `stderr` | `runManager.handleStreamChunk()` |
 | `run_finished` | `runManager.handleRunFinished()` |
-| `session_opened` | `sessionManager.handleOpened()` |
-| `session_output` | `sessionManager.handleOutput()` |
-| `session_closed` | `sessionManager.handleClosed()` |
-| `session_error` | `sessionManager.handleError()` |
 | `terminal_status` | `terminalSessionManager.handleStatus()` |
 | `terminal_output` | `terminalSessionManager.handleOutput()` |
 | `terminal_ready` | `terminalSessionManager.handleReady()` |
@@ -122,52 +116,13 @@ Bud's `hello` frame includes capabilities:
 ```typescript
 {
   max_concurrency: number;
-  supports_pty: boolean;
   shell_default?: string;
-  sessions: boolean;
-  sessions_backends: string[];  // ["pty", "tmux"]
   terminal: boolean;
   terminal_proto?: string;      // "0.2"
   terminal_backends: string[];  // ["tmux"]
   tmux_version?: string;
 }
 ```
-
-### `term-gateway.ts`
-
-Browser WebSocket gateway for legacy PTY sessions.
-
-**Route**: `GET /term?session_id=...&attach_token=...`
-
-**Client Message Types**:
-
-| Type | Schema | Purpose |
-|------|--------|---------|
-| `input` | `{ type: "input", data: string }` | Send input to session |
-| `resize` | `{ type: "resize", rows, cols }` | Resize terminal |
-| `close` | `{ type: "close" }` | Close session |
-
-**Flow**:
-
-```
-Browser                        Service                      Bud Daemon
-   │                              │                              │
-   │── WS /term?session_id&token─►│                              │
-   │                              │                              │
-   │◄─── { type: "output", ... }──│◄───── session_output ────────│
-   │                              │                              │
-   │── { type: "input", data } ──►│───── session_input ─────────►│
-   │                              │                              │
-   │── { type: "resize", ... } ──►│───── session_resize ────────►│
-   │                              │                              │
-   │── { type: "close" } ────────►│───── session_close ─────────►│
-```
-
-**Writer/Spectator Model**:
-
-- Only one client can be "writer" at a time
-- Other clients are "spectators" (read-only)
-- `takeWriter` API allows claiming write access
 
 ## Configuration Used
 
@@ -192,7 +147,6 @@ Browser                        Service                      Bud Daemon
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- `term-gateway.ts` is for legacy PTY sessions; consider deprecating once thread-scoped terminals are stable
 - No rate limiting on WebSocket messages
 - Dev token bypass should be removed for production
 

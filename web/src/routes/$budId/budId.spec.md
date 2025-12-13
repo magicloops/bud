@@ -62,7 +62,7 @@ loader: async ({ params }) => {
    - Reconnection logic with exponential backoff
 
 3. **Agent Stream**
-   - SSE connection to `/api/sessions/:id/stream`
+   - SSE connection to `/api/threads/:id/agent/stream`
    - Event handling: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`
    - Message list updates from events
 

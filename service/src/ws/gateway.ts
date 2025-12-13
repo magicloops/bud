@@ -9,7 +9,6 @@ import { budTable, enrollmentTokenTable } from "../db/schema.js";
 import { PROTO_VERSION, TERMINAL_PROTO_VERSION, config } from "../config.js";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { RunManager } from "../runtime/run-manager.js";
-import { SessionManager } from "../runtime/session-manager.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 
 type HelloFrame = z.infer<typeof HelloSchema>;
@@ -84,34 +83,6 @@ const RunFinishedSchema = EnvelopeSchema.extend({
   signal: z.string().nullable().optional(),
   cwd: z.string().optional(),
   error: z.string().optional()
-});
-
-const SessionOpenedSchema = EnvelopeSchema.extend({
-  type: z.literal("session_opened"),
-  session_id: z.string(),
-  backend: z.string()
-});
-
-const SessionOutputSchema = EnvelopeSchema.extend({
-  type: z.literal("session_output"),
-  session_id: z.string(),
-  seq: z.number().int().nonnegative(),
-  data: z.string()
-});
-
-const SessionClosedSchema = EnvelopeSchema.extend({
-  type: z.literal("session_closed"),
-  session_id: z.string(),
-  exit_code: z.number().int().nullable().optional(),
-  signal: z.string().nullable().optional(),
-  canceled: z.boolean().optional()
-});
-
-const SessionErrorSchema = EnvelopeSchema.extend({
-  type: z.literal("session_error"),
-  session_id: z.string(),
-  code: z.string(),
-  message: z.string()
 });
 
 const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
@@ -226,12 +197,11 @@ export function sendFrameToBud(budId: string, payload: Record<string, unknown>):
 export async function registerWsGateway(
   server: FastifyInstance,
   runManager: RunManager,
-  sessionManager: SessionManager,
   terminalSessionManager: TerminalSessionManager
 ): Promise<void> {
   gatewayLogger = server.log.child({ component: "ws_gateway" });
   server.get("/ws", { websocket: true }, (socket: WebSocket) => {
-    const connection = new BudConnection(server, socket, runManager, sessionManager, terminalSessionManager);
+    const connection = new BudConnection(server, socket, runManager, terminalSessionManager);
     connection.start().catch((err) => {
       server.log.error({ err }, "WS connection failed");
       try {
@@ -249,20 +219,17 @@ class BudConnection {
   private readonly server: FastifyInstance;
   private readonly socket: WebSocket;
   private readonly runManager: RunManager;
-  private readonly sessionManager: SessionManager;
   private readonly terminalSessionManager: TerminalSessionManager;
 
   constructor(
     server: FastifyInstance,
     socket: WebSocket,
     runManager: RunManager,
-    sessionManager: SessionManager,
     terminalSessionManager: TerminalSessionManager
   ) {
     this.server = server;
     this.socket = socket;
     this.runManager = runManager;
-    this.sessionManager = sessionManager;
     this.terminalSessionManager = terminalSessionManager;
     socket.on("close", () => {
       void this.handleClose();
@@ -328,18 +295,6 @@ class BudConnection {
       case "run_finished":
         await this.handleRunFinished(parsed);
         break;
-      case "session_opened":
-        await this.handleSessionOpened(parsed);
-        break;
-      case "session_output":
-        await this.handleSessionOutput(parsed);
-        break;
-      case "session_closed":
-        await this.handleSessionClosed(parsed);
-        break;
-      case "session_error":
-        await this.handleSessionError(parsed);
-        break;
       case "terminal_status":
         await this.handleTerminalStatus(parsed);
         break;
@@ -396,58 +351,6 @@ class BudConnection {
       canceled: result.data.canceled,
       signal: result.data.signal,
       cwd: result.data.cwd
-    });
-  }
-
-  private async handleSessionOpened(raw: unknown) {
-    const result = SessionOpenedSchema.safeParse(raw);
-    if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid session_opened frame");
-      return;
-    }
-    await this.sessionManager.handleSessionOpened({
-      session_id: result.data.session_id,
-      backend: result.data.backend
-    });
-  }
-
-  private async handleSessionOutput(raw: unknown) {
-    const result = SessionOutputSchema.safeParse(raw);
-    if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid session_output frame");
-      return;
-    }
-    await this.sessionManager.handleSessionOutput({
-      session_id: result.data.session_id,
-      seq: result.data.seq,
-      data: result.data.data
-    });
-  }
-
-  private async handleSessionClosed(raw: unknown) {
-    const result = SessionClosedSchema.safeParse(raw);
-    if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid session_closed frame");
-      return;
-    }
-    await this.sessionManager.handleSessionClosed({
-      session_id: result.data.session_id,
-      exit_code: result.data.exit_code,
-      signal: result.data.signal,
-      canceled: result.data.canceled
-    });
-  }
-
-  private async handleSessionError(raw: unknown) {
-    const result = SessionErrorSchema.safeParse(raw);
-    if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid session_error frame");
-      return;
-    }
-    await this.sessionManager.handleSessionError({
-      session_id: result.data.session_id,
-      code: result.data.code,
-      message: result.data.message
     });
   }
 

@@ -53,13 +53,6 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 | `runLogTable` | Stdout/stderr chunks | `runId`, `seq`, `stream`, `data` (bytea) |
 | `runSummaryTable` | Denormalized run summaries | `runId`, `budId`, `status`, `exitCode`, `stdoutBytes` |
 
-#### Session Tables (Legacy PTY)
-
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `sessionTable` | PTY session records | `sessionId`, `budId`, `threadId`, `backend`, `status` |
-| `sessionLogTable` | Session output chunks | `sessionId`, `seq`, `data` (bytea) |
-
 #### Terminal Session Tables (Thread-Scoped)
 
 | Table | Purpose | Key Columns |
@@ -136,10 +129,8 @@ budTable
     │              │
     │              ├── 1:N ──► runTable ──► runStepTable, runLogTable
     │              │
-    │              ├── 1:1 ──► terminalSessionTable ──► terminalSessionOutputTable
-    │              │                                    terminalSessionInputLogTable
-    │              │
-    │              └── 1:N ──► sessionTable (legacy) ──► sessionLogTable
+    │              └── 1:1 ──► terminalSessionTable ──► terminalSessionOutputTable
+    │                                                   terminalSessionInputLogTable
     │
     └── enrollmentTokenTable (no FK)
 ```

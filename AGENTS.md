@@ -159,7 +159,7 @@ Provide the exact command and error output, **then stop**. Do not try multiple a
 If you change:
 - Bud↔Service WebSocket messages: Update `/docs/proto.md`
 - SSE event shapes: Update `/docs/proto.md`
-- Database schema: Add migration, update `db.spec.md`
+- Database schema: Update `schema.ts`, run `drizzle-kit push`, update `db.spec.md`
 
 ---
 
@@ -237,7 +237,7 @@ Hints: `looks_like_prompt`, `looks_like_confirmation`, `looks_like_password`, `l
 ## Impacted Contracts
 - [ ] WSS protocol
 - [ ] SSE events
-- [ ] DB schema (migration)
+- [ ] DB schema (drizzle-kit push)
 - [ ] Agent tools
 - [ ] Web UI
 
@@ -288,6 +288,32 @@ Hints: `looks_like_prompt`, `looks_like_confirmation`, `looks_like_password`, `l
 
 Full setup in each subproject's README or spec file.
 
+### 6.1) Database Schema Changes (Drizzle)
+
+This project uses **`drizzle-kit push`** (schema-first approach), NOT migration files.
+
+**Workflow for schema changes:**
+
+1. Edit `service/src/db/schema.ts` (source of truth)
+2. Run `npx drizzle-kit push` from `service/` directory
+3. Review the changes drizzle proposes (it will show SQL statements)
+4. Confirm to apply changes to database
+5. Update `service/src/db/db.spec.md` if needed
+
+**Commands (run from `service/`):**
+
+```bash
+npx drizzle-kit push      # Apply schema.ts changes to database
+npx drizzle-kit studio    # Open Drizzle Studio (database browser)
+```
+
+**Do NOT:**
+- Manually create migration files in `drizzle/migrations/`
+- Manually edit `drizzle/migrations/meta/_journal.json`
+- Use `drizzle-kit migrate` (we don't use migration-file workflow)
+
+See `debug/drizzle-migration-not-applied.md` for context on this decision.
+
 ---
 
 ## 7) Code Conventions
@@ -307,6 +333,7 @@ A task is complete when:
 - [ ] Code compiles and runs locally
 - [ ] **Spec files updated** for any changed folders/files
 - [ ] Protocol and schema docs updated (if touched)
+- [ ] Database schema changes applied via `drizzle-kit push` (if touched)
 - [ ] Tests added or updated
 - [ ] `plan/` or `debug/` doc exists and linked from PR
 - [ ] No new `SPEC:TODO` markers without justification
@@ -350,4 +377,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2025-12-12*
+*Last updated: 2025-12-13*

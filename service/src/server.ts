@@ -5,15 +5,12 @@ import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
-import { RunEventBus, SessionEventBus, TerminalEventBus } from "./runtime/event-bus.js";
+import { RunEventBus, TerminalEventBus, AgentEventBus } from "./runtime/event-bus.js";
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
 import { AgentService } from "./agent/index.js";
 import OpenAI from "openai";
-import { registerSessionRoutes } from "./routes/sessions.js";
-import { registerTermGateway } from "./ws/term-gateway.js";
-import { SessionManager } from "./runtime/session-manager.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
@@ -35,10 +32,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   const eventBus = new RunEventBus();
   const runLogger = server.log.child({ component: "run_manager" });
   const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
-  const sessionLogger = server.log.child({ component: "session_manager" });
-  const sessionEvents = new SessionEventBus();
-  const sessionManager = new SessionManager(sessionLogger, sessionEvents);
   const terminalEvents = new TerminalEventBus();
+  const agentEvents = new AgentEventBus();
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
   const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
   terminalSessionManager.startIdleChecks();
@@ -49,9 +44,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
     openai,
-    sessionManager,
     terminalSessionManager,
-    sessionEvents,
+    agentEvents,
     agentLogger,
     config.agentDebug,
     config.agentOpenaiDebug
@@ -68,12 +62,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   await server.register(fastifySseV2);
   await registerBudRoutes(server, terminalSessionManager);
-  await registerThreadRoutes(server, runManager, agentService, sessionManager);
+  await registerThreadRoutes(server, runManager, agentService, agentEvents);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);
-  await registerSessionRoutes(server, sessionManager);
-  await registerWsGateway(server, runManager, sessionManager, terminalSessionManager);
-  await registerTermGateway(server, sessionManager);
+  await registerWsGateway(server, runManager, terminalSessionManager);
 
   server.addHook("onClose", async () => {
     terminalSessionManager.stopIdleChecks();
@@ -90,27 +82,6 @@ export async function buildServer(): Promise<FastifyInstance> {
     const runId = (request.params as { runId: string }).runId;
     const detach = eventBus.attach(runId, reply);
     reply.raw.on("close", detach);
-  });
-
-  server.get("/api/sessions/:sessionId/stream", (request, reply) => {
-    const sessionId = (request.params as { sessionId: string }).sessionId;
-    const detach = sessionEvents.attach(sessionId, reply);
-
-    // Send periodic heartbeat to keep connection alive during long model invocations
-    // Without this, proxies/browsers may close the connection as "stale"
-    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
-    const heartbeatInterval = setInterval(() => {
-      try {
-        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
-      } catch {
-        clearInterval(heartbeatInterval);
-      }
-    }, heartbeatMs);
-
-    reply.raw.on("close", () => {
-      clearInterval(heartbeatInterval);
-      detach();
-    });
   });
 
   server.get("/api/terminals/:budId/stream", (request, reply) => {

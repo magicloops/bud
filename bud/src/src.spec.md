@@ -33,8 +33,6 @@ WebSocket message frame types matching the service protocol:
 | `HelloChallengeFrame` | ← Service | HMAC challenge with `nonce` |
 | `ErrorFrame` | ← Service | Error with `code` and `message` |
 | `RunFrame` | ← Service | Command execution request |
-| `SessionOpenFrame` | ← Service | Legacy PTY session open |
-| `SessionInputFrame` | ← Service | Legacy session input |
 | `TerminalEnsureFrame` | ← Service | Create/verify tmux session |
 | `TerminalInputFrame` | ← Service | Send input to terminal |
 | `TerminalCaptureFrame` | ← Service | Request capture-pane output |
@@ -50,16 +48,7 @@ WebSocket message frame types matching the service protocol:
 - Tracks current working directory across commands
 - Sends `run_finished` frame on completion
 
-#### Session Manager (Lines 660-810)
-
-**`SessionManager`** - Legacy PTY session management:
-
-- Opens raw PTY sessions (non-tmux)
-- Handles `session_open`, `session_input`, `session_resize`, `session_close`
-- Streams output via `session_output` frames
-- Used for direct PTY access (fallback when tmux unavailable)
-
-#### Capture Deduplication (Lines 810-865)
+#### Capture Deduplication (Lines 660-715)
 
 Hash-based deduplication for `capture-pane` output:
 
@@ -67,7 +56,7 @@ Hash-based deduplication for `capture-pane` output:
 - `deduplicate_capture()` - Returns empty if hash matches previous capture
 - Prevents redundant data transfer for unchanged terminal screens
 
-#### Terminal Manager (Lines 865-1615)
+#### Terminal Manager (Lines 715-1465)
 
 **`TerminalManager`** - tmux-based terminal session management:
 
@@ -146,15 +135,15 @@ Hash-based deduplication for `capture-pane` output:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                          BudApp                                  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ RunExecutor  │  │SessionManager│  │   TerminalManager    │  │
-│  │  (commands)  │  │ (legacy PTY) │  │       (tmux)         │  │
-│  └──────────────┘  └──────────────┘  └──────────┬───────────┘  │
-│                                                  │              │
-│                                      ┌───────────┴───────────┐ │
-│                                      │  ReadinessDetector    │ │
-│                                      │  ActivityDetector     │ │
-│                                      └───────────────────────┘ │
+│  ┌──────────────┐  ┌──────────────────────────────────────────┐ │
+│  │ RunExecutor  │  │           TerminalManager                │ │
+│  │  (commands)  │  │              (tmux)                      │ │
+│  └──────────────┘  └──────────────────┬───────────────────────┘ │
+│                                       │                         │
+│                           ┌───────────┴───────────┐             │
+│                           │  ReadinessDetector    │             │
+│                           │  ActivityDetector     │             │
+│                           └───────────────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
                             │
                      WebSocket (TLS)
@@ -175,7 +164,7 @@ External crates (from `Cargo.toml`):
 | `tokio-tungstenite` | WebSocket client |
 | `clap` | CLI argument parsing |
 | `serde` / `serde_json` | JSON serialization |
-| `nix` | PTY handling (`openpty`) |
+| `nix` | Unix utilities |
 | `anyhow` | Error handling |
 | `base64` | Data encoding for frames |
 | `hmac` / `sha2` | Authentication |
@@ -194,8 +183,7 @@ External crates (from `Cargo.toml`):
 <!-- SPEC:TODO -->
 - Single-file architecture makes navigation difficult; consider splitting into modules
 - `#[allow(dead_code)]` on several struct fields suggests unused protocol features
-- Environment passthrough for `terminal_ensure` noted as "not yet implemented" (line 1416)
-- Legacy `SessionManager` (non-tmux PTY) may be redundant now that tmux is preferred
+- Environment passthrough for `terminal_ensure` noted as "not yet implemented"
 
 ---
 

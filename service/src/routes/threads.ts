@@ -16,9 +16,8 @@ import { AgentService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import { and, asc, desc, eq, lt, isNull } from "drizzle-orm";
-import { SessionManager } from "../runtime/session-manager.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
-import type { TerminalEventBus } from "../runtime/event-bus.js";
+import type { TerminalEventBus, AgentEventBus } from "../runtime/event-bus.js";
 import { getActiveBudIds } from "../ws/gateway.js";
 
 const CreateThreadSchema = z.object({
@@ -141,7 +140,7 @@ export async function registerThreadRoutes(
   server: FastifyInstance,
   _runManager: RunManager,
   agentService: AgentService,
-  sessionManager: SessionManager
+  agentEvents: AgentEventBus
 ): Promise<void> {
   server.get("/api/threads", async (request) => {
     const query = ThreadListQuerySchema.parse(request.query ?? {});
@@ -211,17 +210,6 @@ export async function registerThreadRoutes(
       return;
     }
     reply.send(serializeThread(thread));
-  });
-
-  server.post("/api/threads/:threadId/session", async (request, reply) => {
-    const params = ThreadParamsSchema.parse(request.params);
-    try {
-      const ensured = await sessionManager.ensureThreadSession(params.threadId);
-      reply.send({ session_id: ensured.sessionId, attach_token: ensured.attachToken });
-    } catch (err) {
-      server.log.error({ err, threadId: params.threadId }, "Failed to ensure session for thread");
-      reply.code(400).send({ error: (err as Error).message });
-    }
   });
 
   server.get("/api/threads/:threadId/messages", async (request, reply) => {
@@ -354,14 +342,38 @@ export async function registerThreadRoutes(
     await recordThreadMessageMetadata(thread.threadId, body.text);
 
     try {
-      const { sessionId } = await agentService.startUserMessage(thread.threadId, {
+      await agentService.startUserMessage(thread.threadId, {
         reasoningEffort: body.reasoning_effort ?? null
       });
-      reply.code(201).send({ messageId: message.messageId, sessionId });
+      reply.code(201).send({ messageId: message.messageId });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");
       reply.code(500).send({ error: (err as Error).message });
     }
+  });
+
+  // GET /api/threads/:threadId/agent/stream - SSE for agent events
+  server.get("/api/threads/:threadId/agent/stream", (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+
+    // Subscribe to agent events for this thread
+    const detach = agentEvents.attach(params.threadId, reply);
+
+    // Send periodic heartbeat
+    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
+    const heartbeatInterval = setInterval(() => {
+      try {
+        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
+      } catch {
+        clearInterval(heartbeatInterval);
+      }
+    }, heartbeatMs);
+
+    // Cleanup on close
+    reply.raw.on("close", () => {
+      clearInterval(heartbeatInterval);
+      detach();
+    });
   });
 
   server.post("/api/threads/:threadId/cancel", async (request, reply) => {

@@ -7,7 +7,7 @@ This document specifies the on‑wire protocols used by Bud:
 - **Browser Event Stream (Backend → Web UI)** over **SSE**.
 - Minimal data types, sequencing, state, and error codes for the PoC.
 
-> **Non‑goals (for v0.1):** PTY/interactive sessions, file transfer, artifacts, multi‑concurrency per Bud, gRPC fallback.
+> **Non‑goals (for v0.1):** file transfer, artifacts, multi‑concurrency per Bud, gRPC fallback.
 
 ---
 
@@ -68,12 +68,20 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 - Keep‑alive comment every **15 s**.
 - Client MAY use `Last-Event-ID` to resume.
 
-### 2.3 Session Status Stream (Browser)
+### 2.3 Terminal Event Stream (Browser)
 
-- URL: `GET /api/sessions/:session_id/stream`
+- URL: `GET /api/threads/:threadId/terminal/stream`
 - Same SSE headers + keep-alive semantics as runs.
-- Events: `session.status`, `session.final`, `session.writer_changed`.
-- Used by the workbench to update the xterm pane even if `/term` WS reconnects.
+- Events: `terminal.output`, `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`.
+- Used by the workbench to receive terminal output.
+
+### 2.4 Agent Event Stream (Browser)
+
+- URL: `GET /api/threads/:threadId/agent/stream`
+- Same SSE headers + keep-alive semantics as runs.
+- Events: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat`.
+- Used by the workbench to receive agent conversation events.
+- Separate from terminal stream to support offline scenarios (conversation without terminal).
 
 ---
 
@@ -303,96 +311,7 @@ Used by either side for latency checks.
 
 **Codes**: see §8.
 
-### 4.4 Interactive Sessions
-
-Bud and the backend exchange dedicated control/data frames for PTY/tmux sessions.
-
-#### 4.4.1 `session_open` (Backend → Bud)
-
-```json
-{
-  "proto":"0.1","type":"session_open","id":"01...","ts":1731,
-  "session_id":"sess_01H...",
-  "backend":"pty",
-  "cmd":"/bin/bash -l",
-  "cwd":"~",
-  "env":{"LANG":"C.UTF-8","TERM":"xterm-256color"},
-  "pty":{"rows":24,"cols":80},
-  "timeouts":{"idle_kill_sec":1200,"hard_ttl_sec":43200,"linger_on_disconnect_sec":600},
-  "ext":{}
-}
-```
-
-#### 4.4.2 `session_opened` (Bud → Backend)
-
-```json
-{
-  "proto":"0.1","type":"session_opened","id":"01...","ts":1731,
-  "session_id":"sess_01H...","backend":"pty","ext":{}
-}
-```
-
-#### 4.4.3 `session_output` (Bud → Backend)
-
-```json
-{
-  "proto":"0.1","type":"session_output","id":"01...","ts":1731,
-  "session_id":"sess_01H...","seq":42,"data":"base64url-pty-bytes","ext":{}
-}
-```
-
-* `seq` increases per session; Bud MUST keep ≤128 in-flight chunks (16 KB each).
-
-#### 4.4.4 `session_input` (Backend → Bud)
-
-```json
-{
-  "proto":"0.1","type":"session_input","id":"01...","ts":1731,
-  "session_id":"sess_01H...","data":"base64url-pty-bytes","ext":{}
-}
-```
-
-#### 4.4.5 `session_resize` (Backend → Bud)
-
-```json
-{
-  "proto":"0.1","type":"session_resize","id":"01...","ts":1731,
-  "session_id":"sess_01H...","rows":40,"cols":120,"ext":{}
-}
-```
-
-#### 4.4.6 `session_close` (Backend → Bud)
-
-```json
-{
-  "proto":"0.1","type":"session_close","id":"01...","ts":1731,
-  "session_id":"sess_01H...","reason":"user_request","ext":{}
-}
-```
-
-#### 4.4.7 `session_error` (Bud → Backend)
-
-```json
-{
-  "proto":"0.1","type":"session_error","id":"01...","ts":1731,
-  "session_id":"sess_01H...","code":"backend_unsupported","message":"tmux not installed","ext":{}
-}
-```
-
-#### 4.4.8 `/term` WebSocket (Browser ⇄ Backend)
-
-* URL: `ws(s)://<host>/term?session_id=...&attach_token=...`
-* Client messages (JSON):
-  * `{"type":"attach","session_id":"...","attach_token":"...","from_seq":0}` *(implicit on connect)*
-  * `{"type":"input","data":"base64url"}` – forwarded as `session_input`.
-  * `{"type":"resize","rows":40,"cols":120}`
-  * `{"type":"close"}` – graceful stop.
-* Server messages (JSON):
-  * `{"type":"output","data":"base64url"}` – PTY bytes.
-  * `{"type":"status","status":"open|closed|failed","role":"writer|spectator","truncated":false}`
-  * `{"type":"error","code":"writer_required","message":"..."}`
-
-### 4.5 Terminal (tmux-backed, proto `0.2`)
+### 4.4 Terminal (tmux-backed, proto `0.2`)
 
 Bud and the backend share a dedicated terminal protocol for the persistent tmux-backed terminal. It uses the same envelope keys as the primary protocol (`type`, `proto`, `id`, `ts`, `ext`), but with `proto: "0.2"` to track the terminal surface independently.
 
@@ -402,7 +321,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
 { "proto": "0.2", "type": "terminal_…", "id": "msg_01H...", "ts": 1731, "ext": {} }
 ```
 
-#### 4.5.1 Backend → Bud Messages
+#### 4.4.1 Backend → Bud Messages
 
 * `terminal_ensure` — create/adopt the tmux session
   ```json
@@ -434,7 +353,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "reason": "requested", "ext": {} }
   ```
 
-#### 4.5.2 Bud → Backend Messages
+#### 4.4.2 Bud → Backend Messages
 
 * `terminal_status` — current terminal state
   ```json
@@ -479,7 +398,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
   * `hints`: object of boolean flags for agent decision-making
 
-#### 4.5.3 Terminal SSE Events (Backend → Browser)
+#### 4.4.3 Terminal SSE Events (Backend → Browser)
 
 The browser receives terminal events via SSE at `/api/terminals/:budId/stream`:
 
@@ -488,7 +407,7 @@ The browser receives terminal events via SSE at `/api/terminals/:budId/stream`:
 * `terminal.ready` — readiness assessments for UI display
 * `heartbeat` — keep-alive (1s dev, 5s prod)
 
-#### 4.5.4 Terminal REST Endpoints
+#### 4.4.4 Terminal REST Endpoints
 
 * `POST /api/terminals/:budId/ensure` — ensure terminal exists
 * `GET /api/terminals/:budId/status` — get current status
@@ -545,28 +464,23 @@ The browser receives terminal events via SSE at `/api/terminals/:budId/stream`:
   `{ "event_id":"...", "ts":1731, "text":"Cloning repository..." }`
 
 * `agent.tool_call`
-  `{ "event_id":"...", "ts":1731, "name":"shell.run", "args":{"command":"...", "cwd":"~"} }`
-
-* `exec.stdout`
-  `{ "event_id":"...", "ts":1731, "chunk":"base64url" }`
-
-* `exec.stderr`
-  `{ "event_id":"...", "ts":1731, "chunk":"base64url" }`
+  `{ "event_id":"...", "ts":1731, "name":"terminal.run", "args":{"input":"git status\n"} }`
 
 * `agent.tool_result`
-  `{ "event_id":"...", "ts":1731, "name":"shell.run", "exit_code":0, "stdout":"last 4KB...", "stderr":"" }`
+  `{ "event_id":"...", "ts":1731, "name":"terminal.run", "output":"..." }`
+
+* `terminal.output`
+  `{ "event_id":"...", "ts":1731, "data":"base64url" }`
+
+* `terminal.status`
+  `{ "event_id":"...", "ts":1731, "state":"ready|active|idle|closed" }`
+
+* `terminal.ready`
+  `{ "event_id":"...", "ts":1731, "ready":true, "confidence":0.95 }`
 
 * `final`
-  `{ "event_id":"...", "ts":1731, "status":"succeeded|failed|canceled", "text":"Done.", "log_truncated":false }`
+  `{ "event_id":"...", "ts":1731, "status":"succeeded|failed|canceled", "text":"Done." }`
 
-* `session.status`
-  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "status":"opening|open|closed|failed|canceled", "truncated":false }`
-
-* `session.final`
-  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "status":"closed|failed|canceled", "exit_code":0, "bytes_out":1234, "bytes_in":512 }`
-
-* `session.writer_changed`
-  `{ "event_id":"...", "ts":1731, "session_id":"sess_01H...", "writer_present":true }`
 
 ### 7.2 SSE framing
 
@@ -616,10 +530,8 @@ Sent in `hello.capabilities` to let the backend adapt:
 ```json
 {
   "max_concurrency": 1,         // integer >= 1
-  "supports_pty": false,        // reserved for future
   "shell_default": "/bin/sh",   // default shell path
-  "sessions": true,
-  "sessions_backends": ["pty"],
+  "terminal": true,             // supports tmux-backed terminal (proto 0.2)
   "os_release": "Ubuntu 22.04", // optional
   "ext": {}
 }

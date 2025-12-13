@@ -1,13 +1,12 @@
 # runtime
 
-Runtime managers for runs, sessions, and terminal sessions, plus event bus infrastructure.
+Runtime managers for runs and terminal sessions, plus event bus infrastructure.
 
 ## Purpose
 
 Orchestrates execution of commands and terminal sessions across connected bud daemons. Handles:
 - Command dispatch and result tracking
-- PTY session lifecycle (legacy)
-- Thread-scoped terminal sessions
+- Thread-scoped terminal sessions (tmux-backed)
 - SSE event broadcasting
 
 ## Files
@@ -19,8 +18,8 @@ Generic SSE event bus with buffering for replay.
 **Classes**:
 - `SseEventBus` - Base class with channel-keyed listeners and buffers
 - `RunEventBus` - For run execution events
-- `SessionEventBus` - For legacy PTY session events
 - `TerminalEventBus` - For terminal session events
+- `AgentEventBus` - For agent conversation events (tool calls, messages, final)
 
 **Key Features**:
 - **Buffering**: Stores up to 1000 events per channel for replay
@@ -63,45 +62,6 @@ Manages standalone command execution on buds.
 **Tail Tracking**:
 - Keeps last 4KB of stdout/stderr in memory for quick access
 - Full logs stored in `run_log` table up to `config.runLogMaxBytes`
-
-### `session-manager.ts`
-
-Legacy PTY session management (non-tmux).
-
-**SessionManager Class**:
-
-**State**:
-- `sessions` - Map of sessionId → SessionContext (in-memory)
-
-**SessionContext**:
-```typescript
-{
-  sessionId: string;
-  budId: string;
-  threadId: string;
-  backend: "pty" | "tmux";
-  attachToken: string;
-  status: "opening" | "open" | "closed" | "failed";
-  writer: WebSocket | null;
-  spectators: Set<WebSocket>;
-  logsBytes: number;
-  // ...
-}
-```
-
-**Key Methods**:
-
-| Method | Description |
-|--------|-------------|
-| `createSession(options)` | Create session, send `session_open` to bud |
-| `ensureThreadSession(threadId)` | Get or create session for thread |
-| `handleOpened(sessionId, backend)` | Bud confirmed session ready |
-| `handleOutput(sessionId, seq, dataB64)` | Process session output |
-| `handleClosed(sessionId, ...)` | Session terminated |
-| `sendInput(sessionId, data)` | Send input to session |
-| `sendInputDirect(sessionId, data)` | Send without readiness waiting |
-| `takeWriter(sessionId)` | Claim exclusive write access |
-| `close(sessionId)` | Request session close |
 
 ### `terminal-session-manager.ts`
 
@@ -178,9 +138,7 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- `SessionManager` (legacy PTY) may be redundant with `TerminalSessionManager`
-- Both managers coexist but serve different use cases (legacy vs thread-scoped)
-- Consider consolidating once thread-scoped is fully validated
+- Terminal session cleanup could be more aggressive for long-idle sessions
 
 ---
 

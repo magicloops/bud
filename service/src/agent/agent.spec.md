@@ -46,9 +46,8 @@ Three strict JSON schema tools for OpenAI function calling:
 
 **Constructor dependencies**:
 - `OpenAI` client
-- `SessionManager` (legacy PTY sessions)
 - `TerminalSessionManager` (thread-scoped tmux sessions)
-- `SessionEventBus` (SSE event emission)
+- `AgentEventBus` (SSE event emission for agent events)
 - Logger and debug flags
 
 **Key methods**:
@@ -62,7 +61,6 @@ Three strict JSON schema tools for OpenAI function calling:
 | `parseResponse(response)` | Extract directive (tool_call or final) |
 | `extractFunctionCall(response)` | Parse function_call items from output |
 | `executeTerminalCall(threadId, toolCall)` | Run terminal.* tools via TerminalSessionManager |
-| `executeCommandInSession(sessionId, command, cwd)` | Legacy shell.run execution |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 
 **Agent Loop Flow**:
@@ -102,7 +100,7 @@ private readonly cancellations = new Map<string, AbortController>();
 
 ## Events Emitted
 
-Via `SessionEventBus`:
+Via `AgentEventBus`, using `threadId` as the channel:
 
 | Event | Data | When |
 |-------|------|------|
@@ -110,6 +108,8 @@ Via `SessionEventBus`:
 | `agent.tool_result` | `{ name, output, readiness, ... }` | After tool execution |
 | `agent.message` | `{ text }` | Final response text |
 | `final` | `{ status, text }` or `{ status, error }` | Flow complete |
+
+Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 
 ## Dependencies
 
@@ -119,7 +119,6 @@ Via `SessionEventBus`:
 | `ulid` | Message ID generation |
 | `../db/client.js` | Database access |
 | `../db/schema.js` | Table schemas |
-| `../runtime/session-manager.js` | Legacy session management |
 | `../runtime/terminal-session-manager.js` | Thread-scoped terminal sessions |
 | `../runtime/event-bus.js` | SSE event emission |
 | `../terminal/types.js` | Readiness hints types |
@@ -138,8 +137,6 @@ From `../config.js`:
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Legacy `shell.run` path still exists but appears unused (terminal.* preferred)
-- `executeCommandInSession()` uses marker-based protocol that differs from terminal session flow
 - Some type assertions (`as Record<string, unknown>`) could be improved with proper OpenAI response types
 
 ---
