@@ -47,7 +47,7 @@ Three strict JSON schema tools for OpenAI function calling:
 **Constructor dependencies**:
 - `OpenAI` client
 - `TerminalSessionManager` (thread-scoped tmux sessions)
-- `TerminalEventBus` (SSE event emission)
+- `AgentEventBus` (SSE event emission for agent events)
 - Logger and debug flags
 
 **Key methods**:
@@ -100,7 +100,7 @@ private readonly cancellations = new Map<string, AbortController>();
 
 ## Events Emitted
 
-Via `TerminalEventBus`:
+Via `AgentEventBus`, using `threadId` as the channel:
 
 | Event | Data | When |
 |-------|------|------|
@@ -108,6 +108,8 @@ Via `TerminalEventBus`:
 | `agent.tool_result` | `{ name, output, readiness, ... }` | After tool execution |
 | `agent.message` | `{ text }` | Final response text |
 | `final` | `{ status, text }` or `{ status, error }` | Flow complete |
+
+Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 
 ## Dependencies
 

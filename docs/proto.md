@@ -72,8 +72,16 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 
 - URL: `GET /api/threads/:threadId/terminal/stream`
 - Same SSE headers + keep-alive semantics as runs.
-- Events: `terminal.output`, `terminal.status`, `terminal.ready`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`.
-- Used by the workbench to receive terminal output and agent events.
+- Events: `terminal.output`, `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`.
+- Used by the workbench to receive terminal output.
+
+### 2.4 Agent Event Stream (Browser)
+
+- URL: `GET /api/threads/:threadId/agent/stream`
+- Same SSE headers + keep-alive semantics as runs.
+- Events: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat`.
+- Used by the workbench to receive agent conversation events.
+- Separate from terminal stream to support offline scenarios (conversation without terminal).
 
 ---
 

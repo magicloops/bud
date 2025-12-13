@@ -43,6 +43,7 @@ Thread and message management, plus terminal operations (~650 lines).
 |--------|------|-------------|
 | `GET` | `/api/threads/:threadId/messages` | Get messages (limit configurable) |
 | `POST` | `/api/threads/:threadId/messages` | Send user message, triggers agent |
+| `GET` | `/api/threads/:threadId/agent/stream` | SSE for agent events |
 | `POST` | `/api/threads/:threadId/cancel` | Cancel running agent |
 
 **Run Endpoints**:

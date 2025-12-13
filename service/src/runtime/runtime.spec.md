@@ -19,6 +19,7 @@ Generic SSE event bus with buffering for replay.
 - `SseEventBus` - Base class with channel-keyed listeners and buffers
 - `RunEventBus` - For run execution events
 - `TerminalEventBus` - For terminal session events
+- `AgentEventBus` - For agent conversation events (tool calls, messages, final)
 
 **Key Features**:
 - **Buffering**: Stores up to 1000 events per channel for replay

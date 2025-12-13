@@ -5,7 +5,7 @@ import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
-import { RunEventBus, TerminalEventBus } from "./runtime/event-bus.js";
+import { RunEventBus, TerminalEventBus, AgentEventBus } from "./runtime/event-bus.js";
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
@@ -33,6 +33,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   const runLogger = server.log.child({ component: "run_manager" });
   const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
   const terminalEvents = new TerminalEventBus();
+  const agentEvents = new AgentEventBus();
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
   const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
   terminalSessionManager.startIdleChecks();
@@ -44,7 +45,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   const agentService = new AgentService(
     openai,
     terminalSessionManager,
-    terminalEvents,
+    agentEvents,
     agentLogger,
     config.agentDebug,
     config.agentOpenaiDebug
@@ -61,7 +62,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   await server.register(fastifySseV2);
   await registerBudRoutes(server, terminalSessionManager);
-  await registerThreadRoutes(server, runManager, agentService);
+  await registerThreadRoutes(server, runManager, agentService, agentEvents);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);
   await registerWsGateway(server, runManager, terminalSessionManager);

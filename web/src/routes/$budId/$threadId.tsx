@@ -79,12 +79,11 @@ function ThreadView() {
   const terminalInputBufferRef = useRef<string>('')
   const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Agent/session stream state
+  // Agent stream state
   const agentEventSourceRef = useRef<EventSource | null>(null)
   const agentReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentReconnectAttemptRef = useRef(0)
   const lastAgentEventTimeRef = useRef<number>(Date.now())
-  const agentSessionIdRef = useRef<string | null>(null)
   const agentThreadIdRef = useRef<string | null>(null)
 
   // Cleanup on unmount
@@ -339,12 +338,11 @@ function ThreadView() {
     setMessages(data)
   }, [])
 
-  // Agent/session SSE stream with reconnection support
-  const connectAgentStream = useCallback((sessionId: string, agentThreadId: string) => {
-    agentSessionIdRef.current = sessionId
+  // Agent SSE stream with reconnection support
+  const connectAgentStream = useCallback((agentThreadId: string) => {
     agentThreadIdRef.current = agentThreadId
 
-    const source = new EventSource(buildApiUrl(`/api/sessions/${sessionId}/stream`))
+    const source = new EventSource(buildApiUrl(`/api/threads/${agentThreadId}/agent/stream`))
     agentEventSourceRef.current = source
 
     let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
@@ -365,13 +363,13 @@ function ThreadView() {
       const nextAttempt = agentReconnectAttemptRef.current + 1
       agentReconnectAttemptRef.current = nextAttempt
       const delay = Math.min(5000, 500 * nextAttempt)
-      console.warn('[agent-sse] reconnecting', { sessionId, reason, attempt: nextAttempt, delay })
+      console.warn('[agent-sse] reconnecting', { threadId: agentThreadId, reason, attempt: nextAttempt, delay })
       if (agentReconnectTimerRef.current) {
         clearTimeout(agentReconnectTimerRef.current)
       }
       agentReconnectTimerRef.current = setTimeout(() => {
-        if (agentSessionIdRef.current && agentThreadIdRef.current) {
-          connectAgentStream(agentSessionIdRef.current, agentThreadIdRef.current)
+        if (agentThreadIdRef.current) {
+          connectAgentStream(agentThreadIdRef.current)
         }
       }, delay)
     }
@@ -380,7 +378,7 @@ function ThreadView() {
       const wasReconnect = agentReconnectAttemptRef.current > 0
       agentReconnectAttemptRef.current = 0
       lastAgentEventTimeRef.current = Date.now()
-      console.log('[agent-sse] connected', { sessionId, wasReconnect })
+      console.log('[agent-sse] connected', { threadId: agentThreadId, wasReconnect })
 
       if (wasReconnect && threadId) {
         fetchMessages(threadId).catch((err) => {
@@ -443,7 +441,6 @@ function ThreadView() {
         clearTimeout(agentReconnectTimerRef.current)
         agentReconnectTimerRef.current = null
       }
-      agentSessionIdRef.current = null
       agentThreadIdRef.current = null
       cleanupAgent()
       setStatus('idle')
@@ -456,7 +453,7 @@ function ThreadView() {
 
     source.addEventListener('error', (evt) => {
       console.warn('[agent-sse] error', { readyState: source.readyState, evt })
-      if (agentSessionIdRef.current && agentThreadIdRef.current) {
+      if (agentThreadIdRef.current) {
         scheduleReconnect('connection_error')
       } else {
         cleanupAgent()
@@ -856,7 +853,6 @@ function ThreadView() {
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return
 
-    agentSessionIdRef.current = null
     agentThreadIdRef.current = null
     if (agentReconnectTimerRef.current) {
       clearTimeout(agentReconnectTimerRef.current)
@@ -926,7 +922,7 @@ function ThreadView() {
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
 
-      const { sessionId } = (await messageResp.json()) as { messageId: string; sessionId: string }
+      await messageResp.json() as { messageId: string }
 
       if (agentEventSourceRef.current) {
         agentEventSourceRef.current.close()
@@ -939,7 +935,7 @@ function ThreadView() {
       agentReconnectAttemptRef.current = 0
 
       setStatus('streaming')
-      connectAgentStream(sessionId, threadId)
+      connectAgentStream(threadId)
     } catch (err) {
       setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
       setStatus('idle')

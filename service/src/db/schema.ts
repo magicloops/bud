@@ -62,7 +62,6 @@ export const threadTable = pgTable(
     budId: text("bud_id")
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
-    currentSessionId: text("current_session_id"),
     title: text("title"),
     lastMessagePreview: text("last_message_preview"),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).default(sql`now()`).notNull(),
@@ -76,7 +75,6 @@ export const threadTable = pgTable(
   },
   (table) => ({
     budIdx: index("thread_bud_idx").on(table.budId),
-    currentSessionIdx: index("thread_current_session_idx").on(table.currentSessionId),
     deletedIdx: index("thread_deleted_idx").on(table.deletedAt)
   })
 );

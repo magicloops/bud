@@ -6,7 +6,7 @@ import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
-import { TerminalEventBus } from "../runtime/event-bus.js";
+import { AgentEventBus } from "../runtime/event-bus.js";
 import type { ReadinessHints } from "../terminal/types.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
@@ -196,7 +196,7 @@ const TERMINAL_CAPTURE_TOOL = {
 export class AgentService {
   private readonly client: OpenAI;
   private readonly terminalSessionManager: TerminalSessionManager;
-  private readonly events: TerminalEventBus;
+  private readonly events: AgentEventBus;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
   private readonly openaiDebugEnabled: boolean;
@@ -207,7 +207,7 @@ export class AgentService {
   constructor(
     client: OpenAI,
     terminalSessionManager: TerminalSessionManager,
-    events: TerminalEventBus,
+    events: AgentEventBus,
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
     openaiDebugEnabled: boolean
@@ -268,7 +268,7 @@ export class AgentService {
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           const callMeta = { input: toolCall.input ?? "" };
-          this.events.emit(sessionId, {
+          this.events.emit(threadId, {
             event: "agent.tool_call",
             data: {
               id: ulid(),
@@ -299,7 +299,7 @@ export class AgentService {
             call_id: toolCall.callId,
             output: JSON.stringify(toolPayload)
           });
-          this.events.emit(sessionId, {
+          this.events.emit(threadId, {
             event: "agent.tool_result",
             data: {
               name: toolCall.tool,
@@ -328,12 +328,12 @@ export class AgentService {
         await recordThreadMessageMetadata(threadId, directive.message);
         conversation.push(this.createMessageInput("assistant", directive.message));
 
-        this.events.emit(sessionId, {
+        this.events.emit(threadId, {
           event: "agent.message",
           data: { text: directive.message },
           id: ulid()
         });
-        this.events.emit(sessionId, {
+        this.events.emit(threadId, {
           event: "final",
           data: { status: directive.status, text: directive.message },
           id: ulid()
@@ -356,7 +356,7 @@ export class AgentService {
         canceled ||
         (err instanceof Error && (err.name === "AbortError" || err.message === "The operation was aborted."));
       if (abortLike) {
-        this.events.emit(sessionId, {
+        this.events.emit(threadId, {
           event: "final",
           data: {
             status: "canceled",
@@ -367,7 +367,7 @@ export class AgentService {
         this.debug("Agent turn canceled", { threadId, sessionId });
         return;
       }
-      this.events.emit(sessionId, {
+      this.events.emit(threadId, {
         event: "final",
         data: {
           status: "failed",

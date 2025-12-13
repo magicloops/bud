@@ -115,3 +115,4 @@ class SseEventBus {
 
 export class RunEventBus extends SseEventBus {}
 export class TerminalEventBus extends SseEventBus {}
+export class AgentEventBus extends SseEventBus {}
