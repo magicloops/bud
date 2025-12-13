@@ -411,13 +411,39 @@ Thread-scoped sessions provide isolation and predictability.
 
 ---
 
+## Spec Documentation System
+
+This project uses a **hierarchical spec documentation system** where every folder with source files has a `folder-name.spec.md` file. These specs provide:
+
+- High-level understanding of each module's purpose
+- File descriptions and key exports
+- Cross-references to child and parent specs
+- Technical debt tracking via `SPEC:TODO` markers
+
+**Spec Maintenance**: When modifying code, you MUST update the relevant spec files. See [AGENTS.md](./AGENTS.md) §1 for detailed guidance on when and how to update specs.
+
+**Find all specs**:
+```bash
+find . -name "*.spec.md" -type f | head -30
+```
+
+**Find technical debt**:
+```bash
+grep -rn "SPEC:TODO" --include="*.spec.md" .
+```
+
+---
+
 ## Related Documentation
 
-- [AGENTS.md](./AGENTS.md) - Agent system design
-- [PROGRESS.md](./PROGRESS.md) - Development progress
-- [TODO.md](./TODO.md) - Pending tasks
-- [design/](./design/) - Design documents
-- [docs/](./docs/) - Additional documentation
+| Document | Purpose |
+|----------|---------|
+| [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
+| [docs/proto.md](./docs/proto.md) | Wire protocol specification |
+| [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
+| [PROGRESS.md](./PROGRESS.md) | Development progress |
+| [TODO.md](./TODO.md) | Pending tasks |
+| [design/](./design/) | Design documents |
 
 ---
 

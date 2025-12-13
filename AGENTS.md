@@ -1,112 +1,228 @@
 # AGENTS.md
 
-> How we (humans + code assistants) operate in this codebase while we build the Bud PoC.
-> The PoC follows `/plan/proof-of-concept.md`. We keep the process light but deliberate so we
-> can evolve this into a production, open‑source system without closing doors.
+> How we (humans + code assistants) operate in this codebase while building Bud.
+> This document complements the **architectural source of truth**: [`bud.spec.md`](./bud.spec.md).
 
 ---
 
-## 0) Scope (for now)
+## 0) Project Overview
 
-- We are building the **PoC described in `/plan/proof-of-concept.md`**:
-  - **Bud**: Rust daemon that connects to the backend via **WSS** and executes shell commands.
-  - **Backend**: Node/TypeScript monolith; **REST + SSE** to the web, **WSS** to Bud; uses **Supabase Postgres**.
-  - **Web**: Vite + React chat UI (threads, live logs, cancel).
-  - **Agent**: Multi‑turn, tool‑calling loop using **OpenAI GPT‑5 (Responses API)** with one tool: `shell.run`.
-- Non‑goals (PoC): proxy/MITM, RBAC/SSO, schedulers, artifact store beyond stdout/stderr, Windows, auto‑update/signing.
+Bud is a **device-agent platform** enabling AI-assisted terminal access and command execution across remote machines. The system has three tiers:
 
----
+- **Bud Daemon** (`/bud`): Rust CLI that connects to the backend via WebSocket and manages tmux-backed terminal sessions.
+- **Service** (`/service`): Node.js/Fastify backend with REST + SSE to the web, WebSocket to buds, and LLM integration via OpenAI Responses API.
+- **Web UI** (`/web`): React + Vite chat interface with real-time terminal streaming via xterm.js.
 
-## 1) Repo layout (top‑level subprojects)
+**Core Concepts**:
+- **Thread-Scoped Sessions**: Each conversation thread owns its terminal session, enabling parallel workstreams without state collision.
+- **Persistent Terminals**: tmux-backed sessions survive network disconnects and maintain state across agent interactions.
+- **Readiness Detection**: The system analyzes terminal output to detect prompts, REPLs, pagers, and processing states.
 
-| Path     | Purpose                                   | Language / Frameworks                                  |
-|----------|-------------------------------------------|--------------------------------------------------------|
-| `bud/`   | Device agent (daemon)                     | **Rust**, Tokio, Tungstenite (WSS), rustls             |
-| `service/` | Backend API + SSE + Agent + WS gateway  | **Node.js (TypeScript)**, Express/Fastify, `ws`, Postgres client/ORM |
-| `web/`   | Web UI (chat, streaming console)          | **Vite + React**, EventSource (SSE)                    |
-| `docs/`  | Design docs                               | Markdown (`proto.md`, etc.)             |
-| `plan/`  | Work plans for **larger tasks**           | Markdown (see template below)                          |
-| `debug/` | Debug notes for **issues/bugs**           | Markdown (see template below)                          |
-| `scripts/` | Utility scripts (optional)              | Shell/Node                                             |
-
-**Core technologies**: WSS (Bud⇄Backend), SSE (Browser⇄Backend), Postgres (Supabase),
-OpenAI **Responses API (GPT‑5)**, JSON protocols, ULIDs for IDs.
-
-**Design considerations**:
-- Must run **open‑source, free‑standing** (local Postgres + mock LLM possible).
-- Keep **doors open** for production (multi‑tenant fields, log offload to S3, provider adapters).
-- Protocols and schemas are **versioned** and **forwards‑compatible**.
+For full architectural details, see [`bud.spec.md`](./bud.spec.md).
 
 ---
 
-## 2) Operating rules (how we work)
+## 1) Spec Documentation System
 
-1) **Plan first for larger tasks**  
-   - Before writing code, create a markdown plan in `plan/` (template below) and link it from an issue.
-   - Keep scope small and traceable to `/plan/proof-of-concept.md`.
+The codebase uses a **hierarchical spec documentation system** to maintain high-level understanding while enabling rapid development. This is critical for AI agents working on the codebase.
 
-2) **Write a debug note before fixing any issue**  
-   - Create a markdown note in `debug/` (template below) that captures environment, steps to reproduce, logs, and hypotheses.
+### 1.1) Spec File Structure
 
-3) **Always read files in full**  
-   - Do **not** rely on partial snippets. Codex‑style defaults read ~200 lines; that is **not acceptable** here.
-   - Open/read the **entire file** before analyzing or editing. If tooling cannot load the full file, pause and ask a human for the full content or path.
+Every folder with source files has a `folder-name.spec.md` file that summarizes:
+- Folder purpose and responsibilities
+- File descriptions and key exports
+- Subfolder references (linking to child specs)
+- Dependencies and imports
+- TODOs and technical debt
 
-4) **Build/run failures → defer to humans**  
-   - Provide the exact command you attempted and the error output, **then stop**.  
-   - Do **not** try multiple alternative commands/flags on your own. The team will run locally and advise.
+```
+bud/
+├── bud.spec.md              # Root project spec (source of truth)
+├── bud/
+│   ├── bud.spec.md          # Rust daemon spec
+│   └── src/src.spec.md      # Source code details
+├── service/
+│   ├── service.spec.md      # Backend spec
+│   └── src/
+│       ├── src.spec.md      # Source overview
+│       ├── agent/agent.spec.md
+│       ├── db/db.spec.md
+│       ├── routes/routes.spec.md
+│       └── ...
+└── web/
+    ├── web.spec.md          # Frontend spec
+    └── src/
+        ├── src.spec.md
+        ├── components/components.spec.md
+        └── ...
+```
 
-5) **Protocol / schema changes require docs**  
-   - If you change Bud⇄Backend JSON or SSE event shapes: update `/docs/proto.md`, bump `proto` version if breaking, and include migration notes.
+**Total**: 29 spec files organized leaf-to-root.
 
-6) **Security posture (PoC)**  
-   - Treat the PoC as **unsafe**: never suggest `sudo` or destructive commands; prefer non‑privileged users and explicit prompts in the agent.
+### 1.2) When to Update Specs
+
+**You MUST update the relevant spec file(s) when you:**
+
+| Change Type | Spec Update Required |
+|-------------|---------------------|
+| Add a new file | Update parent folder's spec with file description |
+| Delete a file | Remove from parent folder's spec |
+| Add a new folder | Create new `folder-name.spec.md`, update parent spec |
+| Change a file's purpose/API | Update file description in spec |
+| Add/change dependencies | Update Dependencies section |
+| Add/fix technical debt | Update TODOs section (add or remove `SPEC:TODO` markers) |
+| Change architecture/flow | Update relevant spec diagrams and descriptions |
+
+### 1.3) Spec Markers
+
+Use these HTML comment markers for items needing attention:
+
+| Marker | Usage |
+|--------|-------|
+| `<!-- SPEC:TODO -->` | Technical debt, incomplete features, known issues |
+| `<!-- SPEC:UNKNOWN -->` | Reference to undocumented code (for later review) |
+| `<!-- SPEC:VERIFY -->` | Assumptions that should be validated |
+
+Find all markers:
+```bash
+grep -rn "SPEC:\(UNKNOWN\|TODO\|VERIFY\)" --include="*.spec.md" bud service web
+```
+
+### 1.4) Why Specs Matter
+
+- **Context for AI**: Specs give agents high-level understanding without reading thousands of lines
+- **Change tracking**: When modifying code, specs document what changed and why
+- **Consistency**: Prevents drift between code and documentation
+- **Onboarding**: New contributors (human or AI) can understand the system quickly
 
 ---
 
-## 3) Invariants & “do not break” contracts
+## 2) Repo Layout
 
-- **Wire protocol (WSS)**  
-  - Every frame includes: `type`, `proto`, `message_id`, `sent_at`, and reserved `extensions:{}`.  
-  - `hello` includes a **capabilities** object; `hello_ack` may issue `device_secret`.  
-  - Bud chunks logs ≤ **16 KB**, monotonically increasing `seq`.
+| Path | Purpose | Language/Frameworks |
+|------|---------|---------------------|
+| `bud/` | Device agent (Rust daemon) | Rust, Tokio, tokio-tungstenite, tmux |
+| `service/` | Backend API + Agent + WS gateway | Node.js, Fastify, Drizzle ORM, PostgreSQL |
+| `web/` | Web UI (chat, terminal streaming) | React 19, Vite, TanStack Router, xterm.js |
+| `docs/` | Protocol and design docs | Markdown |
+| `plan/` | Work plans for larger tasks | Markdown (see template) |
+| `debug/` | Debug notes for issues/bugs | Markdown (see template) |
+| `design/` | Design documents | Markdown |
 
-- **Cancel semantics (end‑to‑end)**  
-  - UI **Stop** cancels **both**:  
-    1) Bud process group: SIGTERM → 5s → SIGKILL.  
-    2) OpenAI Responses request: abort stream + **background cancel by id**.
-  - Runs transition through `canceling → canceled` (or `failed` with reason).
-
-- **Data model**  
-  - Include **`tenant_id`** and **`created_by_user_id`** in new top‑level tables (nullable for PoC).  
-  - Use **ULIDs** for `run_id`, `event_id` when possible.  
-  - `run_log` primary key is `(run_id, seq)`; DB soft log cap of **100 MB** per run; `logs_blob_url` is present for future S3 offload.
-
-- **Agent adapter**
-  - Keep a provider‑agnostic interface (`LLMAdapter`)—do not leak vendor‑specific shapes upstream.
-  - Tools:
-    - `shell.run` — legacy single-command execution (deprecated in favor of terminal tools).
-    - `terminal.run` — send input to persistent terminal, await readiness.
-    - `terminal.observe` — wait for readiness without sending input.
-    - `terminal.interrupt` — send Ctrl+C to stop running process.
-  - Agent uses readiness confidence to decide next action (≥0.8 ready, 0.5–0.8 observe, <0.5 wait).
-
-- **Terminal protocol (proto 0.2)**
-  - tmux-backed persistent terminal per Bud (survives reconnects).
-  - Readiness detection: prompt patterns + quiescence.
-  - See `/docs/proto.md` §4.5 for full protocol spec.
+**Key Files**:
+- [`bud.spec.md`](./bud.spec.md) — Architectural source of truth
+- [`AGENTS.md`](./AGENTS.md) — This file (operating procedures)
+- [`docs/proto.md`](./docs/proto.md) — Wire protocol specification
+- [`plan/spec-documentation-plan.md`](./plan/spec-documentation-plan.md) — Spec system tracking
 
 ---
 
-## 4) Task templates
+## 3) Operating Rules
 
-### `plan/` template (for larger tasks)
+### 3.1) Read specs first
+
+Before modifying any folder, **read its spec file**:
+```bash
+cat service/src/agent/agent.spec.md  # Before touching agent code
+```
+
+This gives you context on:
+- What the code does and why
+- What files exist and their purposes
+- Known issues and technical debt
+- Dependencies and contracts
+
+### 3.2) Plan first for larger tasks
+
+Before writing significant code, create a markdown plan in `plan/`:
+- Link to the relevant spec files
+- Identify which specs will need updates
+- Keep scope traceable to project goals
+
+### 3.3) Write a debug note before fixing issues
+
+Create a note in `debug/` that captures:
+- Environment and reproduction steps
+- Logs and observations
+- Hypotheses and proposed fix
+
+### 3.4) Always read files in full
+
+Do **not** rely on partial snippets. Open and read **entire files** before analyzing or editing. If tooling limits prevent this, ask for the full content.
+
+### 3.5) Build/run failures → defer to humans
+
+Provide the exact command and error output, **then stop**. Do not try multiple alternative commands/flags. The team will advise.
+
+### 3.6) Protocol/schema changes require docs
+
+If you change:
+- Bud↔Service WebSocket messages: Update `/docs/proto.md`
+- SSE event shapes: Update `/docs/proto.md`
+- Database schema: Add migration, update `db.spec.md`
+
+---
+
+## 4) Core Contracts (Do Not Break)
+
+### 4.1) Wire Protocol (WebSocket)
+
+- Every frame includes: `type`, `proto`, `message_id`, `sent_at`, `extensions:{}`
+- `hello` includes `capabilities` object
+- Terminal sessions use `proto: "0.2"` with thread-scoped session IDs
+- Daemon chunks output ≤ **16 KB** with monotonically increasing `seq`
+
+### 4.2) Terminal Session Model
+
+Sessions are **thread-scoped** (one terminal per thread):
+
+```
+pending → creating → ready ↔ active → idle → closed
+```
+
+- Sessions persist across reconnects (tmux-backed)
+- Session ID format: `bud-{budId}-thread-{threadId}`
+- Output stored in `terminal_session_output` with byte offsets
+
+### 4.3) Agent Tools
+
+The LLM agent has these tools (defined in `service/src/agent/`):
+
+| Tool | Purpose |
+|------|---------|
+| `terminal.run` | Send input to terminal (include `\n` for Enter) |
+| `terminal.capture` | Get current terminal screen content |
+| `terminal.interrupt` | Send SIGINT (Ctrl+C) |
+
+**Deprecated**: `shell.run` (legacy single-command execution)
+
+### 4.4) Readiness Detection
+
+Agent uses readiness confidence to decide actions:
+- `≥0.8`: Ready for input
+- `0.5–0.8`: Observe/wait
+- `<0.5`: Still processing
+
+Hints: `looks_like_prompt`, `looks_like_confirmation`, `looks_like_password`, `looks_like_pager`, `may_still_be_processing`
+
+### 4.5) Data Model Invariants
+
+- Include `tenant_id` and `created_by_user_id` in new tables (nullable for now)
+- Use ULIDs for IDs where possible
+- Terminal output stored with `(session_id, byte_offset)` for efficient streaming
+
+---
+
+## 5) Task Templates
+
+### `plan/` Template
+
 ```markdown
 # Plan: <short-title>
 
 ## Context
 - Link to issue(s):
-- Related docs/sections in `/plan/proof-of-concept.md`:
+- Related spec files:
 
 ## Objective
 - Desired outcome and acceptance criteria.
@@ -114,45 +230,40 @@ OpenAI **Responses API (GPT‑5)**, JSON protocols, ULIDs for IDs.
 ## Design / Approach
 - Summary of changes (APIs, protocol, data model).
 - Risks and mitigations.
-- Doors kept open (list any long-term considerations).
 
-## Impacted contracts
+## Spec Files to Update
+- [ ] List each spec file that will need changes
+
+## Impacted Contracts
 - [ ] WSS protocol
 - [ ] SSE events
 - [ ] DB schema (migration)
-- [ ] Agent adapter/tool registry
-- [ ] Web UI surfaces
+- [ ] Agent tools
+- [ ] Web UI
 
-## Test plan
+## Test Plan
 - Unit/Integration/E2E outline.
-- Manual steps to verify.
 
 ## Rollout
 - Migration steps if any.
-- Docs to update (`/docs/proto.md`, README, UI help).
+- Docs to update.
+```
 
-## Out of scope
-- Things we will not do here.
-````
-
-### `debug/` template (for issues/bugs)
+### `debug/` Template
 
 ```markdown
 # Debug: <short-title>
 
 ## Environment
-- OS / arch / versions (bud, backend, web)
-- DB (Supabase/Local) and connection string style (redact secrets)
+- OS / arch / versions
+- DB connection style
 - LLM mode (real/mocked)
 
-## Repro steps
+## Repro Steps
 1. …
-2. …
 
 ## Observed
-- Logs (full or linked)
-- Screenshots (if UI)
-- SSE/WS traces (if relevant)
+- Logs, screenshots, traces
 
 ## Expected
 - What should have happened
@@ -160,60 +271,83 @@ OpenAI **Responses API (GPT‑5)**, JSON protocols, ULIDs for IDs.
 ## Hypotheses
 - Root cause candidates
 
-## Proposed fix
+## Proposed Fix
 - Minimal patch outline
-- Side effects / risks
-
-## Next actions
-- [ ] Confirm repro
-- [ ] Implement fix
-- [ ] Add regression test
+- Spec files affected
 ```
 
 ---
 
-## 5) Build & run (guardrails)
+## 6) Build & Run
 
-> We intentionally keep this section minimal. If any command fails, **stop** and open a `debug/` note; do **not** try multiple alternative paths.
+> Minimal guidance. If commands fail, capture the **exact error** in `debug/` and defer.
 
-* **Bud**: typical workflow uses `cargo` (Rust stable).
-* **Service**: Node/TS with a Postgres connection (Supabase or local).
-* **Web**: Vite dev server.
+- **Bud**: `cargo build` / `cargo run` (Rust stable)
+- **Service**: `pnpm install && pnpm dev` (requires PostgreSQL)
+- **Web**: `pnpm install && pnpm dev` (Vite dev server)
 
-> Full commands and environment details live in each subproject `README.md`. If those steps fail, capture the **exact** command and **verbatim error** in `debug/` and defer to maintainers.
-
----
-
-## 6) Code conventions (short list)
-
-* **Rust**: `rustfmt`, `clippy` on `bud/`. Async with Tokio; avoid blocking calls.
-
-* **TypeScript**: strict mode, `eslint`/`prettier`. Use `pino` for structured logs with `run_id`/`bud_id` correlation.
-
-* **React**: small components, no global mutable state for SSE buffers; window/virtualize log panes.
-
-* **IDs**: use ULIDs for runs and events.
-
-* **Errors**: use canonical error codes: `AUTH_FAILED`, `PROTO_VERSION_MISMATCH`, `BUD_BUSY`, `EXEC_FAILED`, `TIMEOUT`, `CANCELED`, `BUD_DISCONNECTED`, `SERVER_RESTARTED`.
+Full setup in each subproject's README or spec file.
 
 ---
 
-## 7) When changing core contracts
+## 7) Code Conventions
 
-If your change affects any of the following, **open a `plan/` doc first** and update `/docs/proto.md`:
-
-* WSS message shapes or `proto` version.
-* SSE event names/payloads.
-* DB schema (add migration + backfill notes).
-* Agent tool schema or adapter interface.
-* Cancel semantics or run state machine.
+- **Rust**: `rustfmt`, `clippy`. Async with Tokio; avoid blocking.
+- **TypeScript**: Strict mode, ESLint/Prettier. Pino for structured logs.
+- **React**: Small components, no global mutable state for streams.
+- **IDs**: ULIDs for runs, events, sessions.
+- **Errors**: Canonical codes: `AUTH_FAILED`, `PROTO_VERSION_MISMATCH`, `BUD_BUSY`, `EXEC_FAILED`, `TIMEOUT`, `CANCELED`, `BUD_DISCONNECTED`, `SERVER_RESTARTED`.
 
 ---
 
-## 8) Definition of Done (PoC tasks)
+## 8) Definition of Done
 
-* Code compiles and runs locally on Linux with the documented commands.
-* Protocol and schema docs updated (if touched).
-* Added or updated tests (unit/integration/fixture or a manual test recipe).
-* `plan/` or `debug/` doc exists and is linked from the PR.
-* Doors stay open (no vendor lock‑in, multi‑tenant fields preserved, protocol remains versioned).
+A task is complete when:
+
+- [ ] Code compiles and runs locally
+- [ ] **Spec files updated** for any changed folders/files
+- [ ] Protocol and schema docs updated (if touched)
+- [ ] Tests added or updated
+- [ ] `plan/` or `debug/` doc exists and linked from PR
+- [ ] No new `SPEC:TODO` markers without justification
+- [ ] Contracts preserved (multi-tenant fields, protocol versioned)
+
+---
+
+## 9) Quick Reference
+
+### Find Spec Files
+```bash
+find . -name "*.spec.md" -type f | head -30
+```
+
+### Find TODOs in Specs
+```bash
+grep -rn "SPEC:TODO" --include="*.spec.md" .
+```
+
+### Read a Folder's Spec
+```bash
+cat service/src/runtime/runtime.spec.md
+```
+
+### Architectural Overview
+```bash
+cat bud.spec.md
+```
+
+---
+
+## 10) Related Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [`bud.spec.md`](./bud.spec.md) | Architectural source of truth |
+| [`docs/proto.md`](./docs/proto.md) | Wire protocol specification |
+| [`plan/spec-documentation-plan.md`](./plan/spec-documentation-plan.md) | Spec system details and TODOs |
+| [`PROGRESS.md`](./PROGRESS.md) | Development progress |
+| [`TODO.md`](./TODO.md) | Pending tasks |
+
+---
+
+*Last updated: 2025-12-12*
