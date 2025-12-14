@@ -49,15 +49,14 @@ Shared markdown renderer using `react-markdown` with:
 - Custom styling for headings, paragraphs, links
 
 **Performance**:
-- Lazy-loaded `Markdown` component
 - Memoized with `React.memo`
-- Suspense fallback shows raw text
+- Synchronous rendering (no lazy loading) to ensure consistent scroll behavior
 
 ## Dependencies
 
 | Import | Purpose |
 |--------|---------|
-| `react-markdown` | Markdown parsing and rendering (lazy) |
+| `react-markdown` | Markdown parsing and rendering |
 | `remark-gfm` | GitHub Flavored Markdown |
 | `remark-breaks` | Soft line breaks |
 | `react-syntax-highlighter` | Code highlighting |
