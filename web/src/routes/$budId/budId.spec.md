@@ -5,7 +5,8 @@ Nested routes for bud-specific views (new thread and existing thread).
 ## Purpose
 
 Provides the route components under `/$budId/`:
-- `/$budId/` (index) - New thread creation view
+- `/$budId/` (index) - Redirect to most recent thread or `/new`
+- `/$budId/new` - New thread creation view
 - `/$budId/$threadId` - Existing thread conversation view
 
 ## Files
@@ -14,7 +15,35 @@ Provides the route components under `/$budId/`:
 
 **Route**: `/$budId/`
 
+Redirect-only route that auto-selects content based on thread availability.
+
+**Behavior**:
+```typescript
+loader: async ({ params }) => {
+  const threads = await fetch(`/api/threads?bud_id=${params.budId}`)
+
+  if (threads.length === 0) {
+    throw redirect({ to: '/$budId/new' })
+  }
+
+  const mostRecent = threads.reduce(/* by last_activity_at */)
+  throw redirect({ to: '/$budId/$threadId', params: { threadId: mostRecent.thread_id } })
+}
+```
+
+**Features**:
+- Fetches threads for the current bud
+- Redirects to most recent thread (by `last_activity_at`, fallback to `created_at`)
+- Redirects to `/new` if no threads exist
+- Error handling: throws on fetch failure (doesn't mask errors)
+
+### `new.tsx`
+
+**Route**: `/$budId/new`
+
 New thread creation view - allows users to start a new conversation.
+
+**IMPORTANT**: See bidirectional comment in file header linking to `$threadId.tsx`. These routes share layout structure and must be updated together.
 
 **Features**:
 - Empty terminal display with placeholder message
@@ -38,6 +67,8 @@ New thread creation view - allows users to start a new conversation.
 **Route**: `/$budId/$threadId`
 
 Main thread view with full chat and terminal functionality (~1000 lines).
+
+**IMPORTANT**: See bidirectional comment in file header linking to `new.tsx`. These routes share layout structure and must be updated together.
 
 **Loader**:
 ```typescript

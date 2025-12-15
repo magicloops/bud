@@ -99,7 +99,8 @@ useEffect(() => {
 ### `$budId/` → [budId.spec.md](./$budId/budId.spec.md)
 
 Nested routes for thread views:
-- `/$budId/` (index) - New thread creation
+- `/$budId/` (index) - Redirect to most recent thread or `/new`
+- `/$budId/new` - New thread creation view
 - `/$budId/$threadId` - Existing thread conversation
 
 ## Route Tree
@@ -107,9 +108,16 @@ Nested routes for thread views:
 ```
 /                    → index.tsx (redirect to first bud)
 /$budId              → $budId.tsx (bud layout)
-  ├── /             → $budId/index.tsx (new thread)
+  ├── /             → $budId/index.tsx (redirect to most recent thread or /new)
+  ├── /new          → $budId/new.tsx (new thread creation)
   └── /$threadId    → $budId/$threadId.tsx (thread view)
 ```
+
+**Auto-Selection Behavior**: When navigating to `/$budId/`, users are automatically redirected to either:
+- The most recent thread (sorted by `last_activity_at`) if threads exist
+- `/$budId/new` if no threads exist
+
+This ensures users always land on meaningful content rather than an empty view.
 
 ## Generated Files
 

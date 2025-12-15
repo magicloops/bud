@@ -107,7 +107,7 @@ function BudLayout() {
     if (threadId) {
       navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
     } else {
-      navigate({ to: '/$budId', params: { budId } })
+      navigate({ to: '/$budId/new', params: { budId } })
     }
   }, [navigate, budId])
 
