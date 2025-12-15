@@ -67,7 +67,7 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Phase 3: OpenAI Reasoning Support                                           │
 │ - Add reasoning types to canonical format                                   │
-│ - Update OpenAI provider for o1/o3/o4 models                                │
+│ - Update OpenAI provider for GPT-5 series models                            │
 │ - Add reasoning streaming events                                            │
 │ - Update AgentService for reasoning blocks                                  │
 │ - VALIDATION: Reasoning models work with new abstraction                    │

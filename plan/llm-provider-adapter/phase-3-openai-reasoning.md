@@ -1,6 +1,6 @@
 # Phase 3: OpenAI Reasoning Support
 
-> Add reasoning model support for OpenAI o1/o3/o4 series with streaming summaries.
+> Add reasoning model support for OpenAI GPT-5 series with streaming summaries.
 
 **Parent Plan**: [../llm-provider-adapter.md](../llm-provider-adapter.md)
 **Prerequisite**: [Phase 2: OpenAI Extraction](./phase-2-openai-extraction.md) completed
@@ -9,7 +9,7 @@
 
 ## Objective
 
-Extend the OpenAI provider to support reasoning models (o1, o3, o4 series) with:
+Extend the OpenAI provider to support reasoning models (GPT-5 series) with:
 
 1. **Reasoning configuration** (`effort`, `summary` level)
 2. **Streaming reasoning summaries** to the UI
@@ -194,44 +194,32 @@ export class OpenAIProvider implements LLMProvider {
     "gpt-4.1",
     "gpt-4.1-mini",
     "gpt-4.1-nano",
-    // Reasoning models (NEW)
-    "o1",
-    "o1-mini",
-    "o1-pro",
-    "o3",
-    "o3-mini",
-    "o4-mini",
+    // GPT-5 series with reasoning (NEW)
+    "gpt-5",
+    "gpt-5.1",
+    "gpt-5.2",
   ] as const;
 
   supportsModel(model: string): boolean {
-    return (
-      model.startsWith("gpt-") ||
-      model.startsWith("o1") ||
-      model.startsWith("o3") ||
-      model.startsWith("o4")
-    );
+    return model.startsWith("gpt-");
   }
 
   /**
-   * Check if model is a reasoning model (o-series).
+   * Check if model is a reasoning model (GPT-5 series).
    */
   private isReasoningModel(model: string): boolean {
-    return (
-      model.startsWith("o1") ||
-      model.startsWith("o3") ||
-      model.startsWith("o4")
-    );
+    return model.startsWith("gpt-5");
   }
 
   getModelCapabilities(model: string): ModelCapabilities {
     const isReasoning = this.isReasoningModel(model);
     return {
-      supportsVision: model.includes("4o") || model.includes("4.1") || isReasoning,
+      supportsVision: model.includes("4o") || model.includes("4.1") || model.startsWith("gpt-5"),
       supportsTools: true,
       supportsStreaming: true,
-      supportsJsonMode: !isReasoning, // Reasoning models handle JSON differently
-      maxContextTokens: 128000,
-      maxOutputTokens: isReasoning ? 100000 : 16384,
+      supportsJsonMode: true,
+      maxContextTokens: model.startsWith("gpt-5") ? 256000 : 128000,
+      maxOutputTokens: model.startsWith("gpt-5") ? 32768 : 16384,
       supportsReasoning: isReasoning,   // NEW
       supportsThinking: false,           // OpenAI doesn't use "thinking"
       supportsInterleavedThinking: false,
@@ -243,9 +231,12 @@ export class OpenAIProvider implements LLMProvider {
 
     const params: OpenAI.Responses.ResponseCreateParams = {
       // ... existing params ...
+      // GPT-5 series doesn't support temperature/top_p
+      temperature: this.isReasoningModel(config.model) ? undefined : config.temperature,
+      top_p: this.isReasoningModel(config.model) ? undefined : config.topP,
     };
 
-    // ADD: Reasoning configuration for o-series models
+    // ADD: Reasoning configuration for GPT-5 series
     if (this.isReasoningModel(config.model) && config.reasoning?.enabled) {
       params.reasoning = {
         effort: config.reasoning.effort ?? "medium",
@@ -253,10 +244,7 @@ export class OpenAIProvider implements LLMProvider {
       };
     }
 
-    // ADD: Reasoning models don't support temperature
-    if (this.isReasoningModel(config.model)) {
-      delete params.temperature;
-      delete params.top_p;
+    // Note: GPT-5 series doesn't support temperature/top_p (handled above)
     }
 
     // ... rest of invoke ...
@@ -529,12 +517,9 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
   // ... existing models ...
 
   // OpenAI reasoning models (NEW)
-  "o1": "openai",
-  "o1-mini": "openai",
-  "o1-pro": "openai",
-  "o3": "openai",
-  "o3-mini": "openai",
-  "o4-mini": "openai",
+  "gpt-5": "openai",
+  "gpt-5.1": "openai",
+  "gpt-5.2": "openai",
 };
 ```
 
@@ -544,7 +529,7 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
 
 ### Basic Functionality
 - [ ] Standard GPT models still work (no regression)
-- [ ] Can invoke o1/o3 models with reasoning enabled
+- [ ] Can invoke GPT-5 models with reasoning enabled
 - [ ] Reasoning summaries stream to UI
 - [ ] `reasoning_tokens` appears in usage stats
 

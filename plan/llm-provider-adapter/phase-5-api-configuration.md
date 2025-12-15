@@ -176,10 +176,9 @@ function getDisplayName(modelId: string): string {
     "gpt-4o-mini": "GPT-4o Mini",
     "gpt-4.1": "GPT-4.1",
     "gpt-4.1-mini": "GPT-4.1 Mini",
-    "o1": "o1",
-    "o1-mini": "o1 Mini",
-    "o3": "o3",
-    "o3-mini": "o3 Mini",
+    "gpt-5": "GPT-5",
+    "gpt-5.1": "GPT-5.1",
+    "gpt-5.2": "GPT-5.2",
     "claude-sonnet": "Claude Sonnet",
     "claude-opus": "Claude Opus",
     "claude-haiku": "Claude Haiku",
@@ -364,9 +363,7 @@ export function ThreadPage() {
 
 function isReasoningCapable(model: string): boolean {
   return (
-    model.startsWith("o1") ||
-    model.startsWith("o3") ||
-    model.startsWith("o4") ||
+    model.startsWith("gpt-5") ||
     model.startsWith("claude-")
   );
 }

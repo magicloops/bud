@@ -429,7 +429,7 @@ export interface LLMProvider {
 
 ### 4.1 Reasoning Support
 
-OpenAI's reasoning models (o1, o3, etc.) use a unique approach:
+OpenAI's reasoning models (GPT-5 series) use a unique approach:
 
 1. **Reasoning effort** controls compute: `reasoning.effort: "low" | "medium" | "high"`
 2. **Reasoning summary** controls visibility: `reasoning.summary: "auto" | "concise" | "detailed"`
@@ -466,13 +466,10 @@ export class OpenAIProvider implements LLMProvider {
     "gpt-4.1",
     "gpt-4.1-mini",
     "gpt-4.1-nano",
-    // Reasoning models
-    "o1",
-    "o1-mini",
-    "o1-pro",
-    "o3",
-    "o3-mini",
-    "o4-mini",
+    // GPT-5 series (with reasoning support)
+    "gpt-5",
+    "gpt-5.1",
+    "gpt-5.2",
   ] as const;
 
   private client: OpenAI;
@@ -482,23 +479,18 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   supportsModel(model: string): boolean {
-    return (
-      model.startsWith("gpt-") ||
-      model.startsWith("o1") ||
-      model.startsWith("o3") ||
-      model.startsWith("o4")
-    );
+    return model.startsWith("gpt-");
   }
 
   getModelCapabilities(model: string): ModelCapabilities {
     const isReasoning = this.isReasoningModel(model);
     return {
-      supportsVision: model.includes("4o") || model.includes("4.1") || model.includes("o1") || model.includes("o3"),
+      supportsVision: model.includes("4o") || model.includes("4.1") || model.startsWith("gpt-5"),
       supportsTools: true,
       supportsStreaming: true,
-      supportsJsonMode: !isReasoning, // Reasoning models have different JSON handling
-      maxContextTokens: 128000,
-      maxOutputTokens: isReasoning ? 100000 : 16384,
+      supportsJsonMode: true,
+      maxContextTokens: model.startsWith("gpt-5") ? 256000 : 128000,
+      maxOutputTokens: model.startsWith("gpt-5") ? 32768 : 16384,
       supportsReasoning: isReasoning,
       supportsThinking: false,
       supportsInterleavedThinking: false,
@@ -506,8 +498,11 @@ export class OpenAIProvider implements LLMProvider {
     };
   }
 
+  /**
+   * Check if model is a reasoning model (GPT-5 series).
+   */
   private isReasoningModel(model: string): boolean {
-    return model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4");
+    return model.startsWith("gpt-5");
   }
 
   async *invoke(
@@ -526,12 +521,13 @@ export class OpenAIProvider implements LLMProvider {
       tools: openaiTools.length > 0 ? openaiTools : undefined,
       tool_choice: this.transformToolChoice(config.toolChoice),
       max_output_tokens: config.maxTokens,
+      // GPT-5 series doesn't support temperature/top_p
       temperature: this.isReasoningModel(config.model) ? undefined : config.temperature,
       top_p: this.isReasoningModel(config.model) ? undefined : config.topP,
       stream: true,
     };
 
-    // Add reasoning configuration for reasoning models
+    // Add reasoning configuration for GPT-5 series
     if (this.isReasoningModel(config.model) && config.reasoning?.enabled) {
       params.reasoning = {
         effort: config.reasoning.effort ?? "medium",
@@ -1368,13 +1364,10 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
   "gpt-4.1-mini": "openai",
   "gpt-4.1-nano": "openai",
 
-  // OpenAI reasoning models
-  "o1": "openai",
-  "o1-mini": "openai",
-  "o1-pro": "openai",
-  "o3": "openai",
-  "o3-mini": "openai",
-  "o4-mini": "openai",
+  // OpenAI GPT-5 series (with reasoning)
+  "gpt-5": "openai",
+  "gpt-5.1": "openai",
+  "gpt-5.2": "openai",
 
   // Anthropic Claude 3.5 models
   "claude-3-5-sonnet-20241022": "anthropic",
@@ -1403,8 +1396,7 @@ const MODEL_ALIASES: Record<string, string> = {
   "claude-opus": "claude-opus-4-5-20251101",
   "claude-haiku": "claude-3-5-haiku-20241022",
   "gpt-4o-latest": "gpt-4o",
-  "o1-latest": "o1",
-  "o3-latest": "o3",
+  "gpt-5-latest": "gpt-5.2",
 };
 
 export class ProviderRegistry {

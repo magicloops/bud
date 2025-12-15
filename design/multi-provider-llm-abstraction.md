@@ -604,10 +604,9 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
   "gpt-4.1": "openai",
   "gpt-4.1-mini": "openai",
   "gpt-4.1-nano": "openai",
-  "o1": "openai",
-  "o1-mini": "openai",
-  "o3": "openai",
-  "o3-mini": "openai",
+  "gpt-5": "openai",
+  "gpt-5.1": "openai",
+  "gpt-5.2": "openai",
 
   // Anthropic models
   "claude-3-5-sonnet-20241022": "anthropic",
@@ -692,10 +691,9 @@ export class OpenAIProvider implements LLMProvider {
     "gpt-4.1",
     "gpt-4.1-mini",
     "gpt-4.1-nano",
-    "o1",
-    "o1-mini",
-    "o3",
-    "o3-mini",
+    "gpt-5",
+    "gpt-5.1",
+    "gpt-5.2",
   ] as const;
 
   private client: OpenAI;
@@ -705,11 +703,11 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   supportsModel(model: string): boolean {
-    return model.startsWith("gpt-") || model.startsWith("o1") || model.startsWith("o3");
+    return model.startsWith("gpt-");
   }
 
   getModelCapabilities(model: string): ModelCapabilities {
-    const isReasoning = model.startsWith("o1") || model.startsWith("o3");
+    const isReasoning = model.startsWith("gpt-5");
     return {
       supportsVision: model.includes("4o") || model.includes("4.1"),
       supportsTools: true,
