@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as BudIdRouteImport } from './routes/$budId'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BudIdIndexRouteImport } from './routes/$budId/index'
+import { Route as BudIdNewRouteImport } from './routes/$budId/new'
 import { Route as BudIdThreadIdRouteImport } from './routes/$budId/$threadId'
 
 const BudIdRoute = BudIdRouteImport.update({
@@ -29,6 +30,11 @@ const BudIdIndexRoute = BudIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => BudIdRoute,
 } as any)
+const BudIdNewRoute = BudIdNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => BudIdRoute,
+} as any)
 const BudIdThreadIdRoute = BudIdThreadIdRouteImport.update({
   id: '/$threadId',
   path: '/$threadId',
@@ -39,11 +45,13 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
   '/$budId/$threadId': typeof BudIdThreadIdRoute
+  '/$budId/new': typeof BudIdNewRoute
   '/$budId/': typeof BudIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
+  '/$budId/new': typeof BudIdNewRoute
   '/$budId': typeof BudIdIndexRoute
 }
 export interface FileRoutesById {
@@ -51,14 +59,21 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
   '/$budId/$threadId': typeof BudIdThreadIdRoute
+  '/$budId/new': typeof BudIdNewRoute
   '/$budId/': typeof BudIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$budId' | '/$budId/$threadId' | '/$budId/'
+  fullPaths: '/' | '/$budId' | '/$budId/$threadId' | '/$budId/new' | '/$budId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$budId/$threadId' | '/$budId'
-  id: '__root__' | '/' | '/$budId' | '/$budId/$threadId' | '/$budId/'
+  to: '/' | '/$budId/$threadId' | '/$budId/new' | '/$budId'
+  id:
+    | '__root__'
+    | '/'
+    | '/$budId'
+    | '/$budId/$threadId'
+    | '/$budId/new'
+    | '/$budId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -89,6 +104,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BudIdIndexRouteImport
       parentRoute: typeof BudIdRoute
     }
+    '/$budId/new': {
+      id: '/$budId/new'
+      path: '/new'
+      fullPath: '/$budId/new'
+      preLoaderRoute: typeof BudIdNewRouteImport
+      parentRoute: typeof BudIdRoute
+    }
     '/$budId/$threadId': {
       id: '/$budId/$threadId'
       path: '/$threadId'
@@ -101,11 +123,13 @@ declare module '@tanstack/react-router' {
 
 interface BudIdRouteChildren {
   BudIdThreadIdRoute: typeof BudIdThreadIdRoute
+  BudIdNewRoute: typeof BudIdNewRoute
   BudIdIndexRoute: typeof BudIdIndexRoute
 }
 
 const BudIdRouteChildren: BudIdRouteChildren = {
   BudIdThreadIdRoute: BudIdThreadIdRoute,
+  BudIdNewRoute: BudIdNewRoute,
   BudIdIndexRoute: BudIdIndexRoute,
 }
 

@@ -1,3 +1,13 @@
+/**
+ * Thread View - workspace for an existing thread
+ *
+ * RELATED FILE: See new.tsx for the new thread workspace.
+ * These two routes share similar layout structure and components.
+ * When modifying layout or shared behavior, check BOTH files.
+ *
+ * DO NOT REMOVE THIS COMMENT - it prevents accidental divergence.
+ */
+
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { MoreVertical, Square } from 'lucide-react'
@@ -403,9 +413,24 @@ function ThreadView() {
 
     source.addEventListener('agent.tool_call', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
+      // Set status to streaming when we detect agent activity
+      setStatus((prev) => prev === 'idle' ? 'streaming' : prev)
       try {
         const data = JSON.parse(evt.data) as { name: string; args: unknown }
         console.log('[agent-sse] tool_call', data.name, data.args)
+        // Add tool call to messages for real-time streaming display
+        const argsObj = (typeof data.args === 'object' && data.args !== null) ? data.args as Record<string, unknown> : {}
+        setMessages((prev) => [
+          ...prev,
+          {
+            message_id: `tool_call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            role: 'tool',
+            display_role: data.name,
+            content: JSON.stringify({ tool: data.name, ...argsObj }),
+            created_at: new Date().toISOString(),
+            metadata: { tool: data.name, ...argsObj }
+          }
+        ])
       } catch (e) {
         console.warn('[agent-sse] failed to parse tool_call', e)
       }
@@ -468,6 +493,31 @@ function ThreadView() {
 
     return cleanupAgent
   }, [threadId, fetchMessages])
+
+  // Auto-connect agent SSE on mount to catch in-progress agent runs
+  // This handles the case where we navigate from /new after posting a message
+  useEffect(() => {
+    if (!threadId) return
+
+    // Close any existing connection first
+    if (agentEventSourceRef.current) {
+      agentEventSourceRef.current.close()
+      agentEventSourceRef.current = null
+    }
+    if (agentReconnectTimerRef.current) {
+      clearTimeout(agentReconnectTimerRef.current)
+      agentReconnectTimerRef.current = null
+    }
+    agentReconnectAttemptRef.current = 0
+
+    // Connect to agent stream - will receive events if agent is running
+    const cleanup = connectAgentStream(threadId)
+
+    return () => {
+      cleanup()
+      agentThreadIdRef.current = null
+    }
+  }, [threadId, connectAgentStream])
 
   // Terminal SSE stream
   useEffect(() => {
