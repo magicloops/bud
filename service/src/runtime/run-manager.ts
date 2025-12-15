@@ -168,7 +168,7 @@ export class RunManager {
     const now = new Date();
     const previousStep = await db.query.runStepTable.findFirst({
       where: eq(runStepTable.runId, params.runId),
-      columns: { idx: runStepTable.idx },
+      columns: { idx: true },
       orderBy: desc(runStepTable.idx)
     });
     const idx = previousStep?.idx != null ? previousStep.idx + 1 : 0;
@@ -282,7 +282,7 @@ export class RunManager {
     const buffer = Buffer.from(dataB64, "base64");
     const runRow = await db.query.runTable.findFirst({
       where: eq(runTable.runId, runId),
-      columns: { logsBytes: runTable.logsBytes, logTruncated: runTable.logTruncated }
+      columns: { logsBytes: true, logTruncated: true }
     });
 
     if (runRow?.logTruncated) {

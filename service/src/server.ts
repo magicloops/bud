@@ -10,7 +10,7 @@ import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
 import { AgentService } from "./agent/index.js";
-import OpenAI from "openai";
+import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
@@ -37,13 +37,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
   const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
   terminalSessionManager.startIdleChecks();
-  const openai = new OpenAI({
-    apiKey: config.openaiApiKey,
-    timeout: config.openaiTimeout
-  });
+
+  // Initialize LLM providers
+  initializeProviders();
+
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
-    openai,
     terminalSessionManager,
     agentEvents,
     agentLogger,
