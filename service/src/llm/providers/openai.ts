@@ -282,15 +282,72 @@ export class OpenAIProvider implements LLMProvider {
   // Tool Transformation
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Transform canonical tools to OpenAI strict mode format.
+   *
+   * OpenAI's strict mode requires:
+   * - ALL properties must be in the `required` array
+   * - Optional fields must use `type: ["type", "null"]` pattern
+   * - `additionalProperties: false` on all objects
+   *
+   * This method transforms standard JSON Schema (where optional fields
+   * are simply omitted from `required`) to OpenAI's strict format.
+   */
   private transformTools(tools: CanonicalTool[]): OpenAITool[] {
     return tools.map(tool => ({
       type: "function" as const,
       name: tool.name,
       description: tool.description,
-      // Cast through unknown since JSONSchema7 doesn't have index signature
-      parameters: tool.parameters as unknown as Record<string, unknown>,
+      parameters: this.transformSchemaForStrictMode(
+        tool.parameters as unknown as Record<string, unknown>
+      ),
       strict: true,
     }));
+  }
+
+  /**
+   * Transform a JSON Schema to OpenAI strict mode format.
+   * - Adds null to type for optional properties
+   * - Adds all properties to required array
+   * - Ensures additionalProperties is false
+   */
+  private transformSchemaForStrictMode(
+    schema: Record<string, unknown>
+  ): Record<string, unknown> {
+    // Deep clone to avoid mutating original
+    const result = JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
+
+    if (result.type !== "object" || !result.properties) {
+      return result;
+    }
+
+    const properties = result.properties as Record<string, Record<string, unknown>>;
+    const required = new Set<string>(
+      Array.isArray(result.required) ? result.required as string[] : []
+    );
+    const allPropertyNames = Object.keys(properties);
+
+    // Transform optional properties to include null type
+    for (const propName of allPropertyNames) {
+      if (!required.has(propName)) {
+        const prop = properties[propName];
+        const currentType = prop.type;
+
+        // Add null to the type
+        if (typeof currentType === "string") {
+          prop.type = [currentType, "null"];
+        } else if (Array.isArray(currentType) && !currentType.includes("null")) {
+          prop.type = [...currentType, "null"];
+        }
+        // If already includes null or is complex, leave as-is
+      }
+    }
+
+    // All properties must be in required for strict mode
+    result.required = allPropertyNames;
+    result.additionalProperties = false;
+
+    return result;
   }
 
   private transformToolChoice(

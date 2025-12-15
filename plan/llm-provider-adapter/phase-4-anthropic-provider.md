@@ -99,54 +99,89 @@ This is **OpenAI-specific** because:
 - OpenAI strict mode requires ALL properties in `required`
 - Optional fields must use `type: ["type", "null"]` pattern
 
-### Investigation Tasks
+### Research Findings (Completed 2025-12-15)
 
-1. **Research Anthropic Tool Schema**
-   - How does Anthropic handle optional parameters?
-   - Do they support standard JSON Schema `required` array semantics?
-   - What happens if a parameter is in `properties` but not in `required`?
+#### Anthropic Tool Schema Handling
 
-2. **Compare Provider Requirements**
-   | Provider | Optional Params Handling |
-   |----------|-------------------------|
-   | OpenAI (strict) | Must use `["type", "null"]` + in `required` |
-   | OpenAI (non-strict) | Standard JSON Schema (omit from `required`) |
-   | Anthropic | **TBD - investigate** |
+**Non-Strict Mode (Default)**:
+- Uses **standard JSON Schema semantics**
+- Optional parameters are simply **omitted from the `required` array**
+- No special handling needed for optional fields
 
-3. **Proposed Canonical Schema** (if Anthropic supports standard JSON Schema)
-   ```typescript
-   // Simpler canonical format - standard JSON Schema
-   {
-     type: "object",
-     properties: {
-       required_field: { type: "string" },
-       optional_field: { type: "integer" }  // No null union
-     },
-     required: ["required_field"],  // Only truly required fields
-     additionalProperties: false
-   }
-   ```
+Example from Anthropic docs:
+```json
+{
+  "type": "object",
+  "properties": {
+    "location": {"type": "string"},
+    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+  },
+  "required": ["location"]  // Only location required, unit is optional
+}
+```
 
-4. **Provider Transformation**
-   - OpenAI provider transforms canonical → OpenAI strict:
-     - Add missing props to `required`
-     - Transform `type` to `["type", "null"]` for optional fields
-   - Anthropic provider uses canonical as-is (if standard JSON Schema)
+**Strict Mode (`strict: true`)**:
+- Available as **beta feature** (header: `anthropic-beta: structured-outputs-2025-11-13`)
+- Guarantees schema conformance via constrained decoding
+- **Still uses standard JSON Schema** - optional fields simply omitted from `required`
+- Requires `additionalProperties: false` on all objects
 
-### Benefits of Simpler Canonical Schema
+Example from Anthropic docs (strict mode with optional param):
+```json
+{
+  "strict": true,
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "destination": {"type": "string"},
+      "departure_date": {"type": "string"},
+      "passengers": {"type": "integer"}
+    },
+    "required": ["destination", "departure_date"],  // passengers is optional!
+    "additionalProperties": false
+  }
+}
+```
 
-1. **Cleaner definitions**: No OpenAI-specific patterns in canonical types
-2. **Provider-agnostic**: True canonical format that maps naturally to each provider
-3. **Less confusion**: Optional fields are clearly optional (not in `required`)
-4. **Easier testing**: Standard JSON Schema semantics
+#### Provider Comparison (Final)
 
-### Decision Point
+| Provider | Strict Mode | Optional Params Handling |
+|----------|-------------|-------------------------|
+| OpenAI | `strict: true` (default for us) | Must use `["type", "null"]` + ALL props in `required` |
+| Anthropic | `strict: true` (beta) | Standard JSON Schema - omit from `required` |
+| Anthropic | Non-strict (default) | Standard JSON Schema - omit from `required` |
 
-After investigation, decide:
-- [ ] **Option A**: Keep current OpenAI-centric schema, Anthropic provider adapts
-- [ ] **Option B**: Simplify canonical schema, OpenAI provider adds null unions during transform
+#### Key Insight
 
-Document findings and decision in this section before proceeding with implementation.
+OpenAI's strict mode has a **unique requirement** that differs from standard JSON Schema:
+> "'required' is required to be supplied and to be an array including every key in properties"
+
+Anthropic follows **standard JSON Schema** even in strict mode.
+
+### Decision: Option B ✓
+
+**Simplify canonical schema, OpenAI provider adds null unions during transform.**
+
+**Rationale**:
+1. Standard JSON Schema is the industry norm
+2. Anthropic (our second provider) uses standard semantics
+3. Future providers likely use standard semantics too
+4. OpenAI's requirement is the exception, not the rule
+5. Cleaner tool definitions in application code
+
+### Implementation Plan
+
+1. **Update OpenAI provider `transformTools()`**:
+   - For each property NOT in `required`:
+     - Change `type: "X"` to `type: ["X", "null"]`
+   - Add all property names to `required` array
+   - Ensure `additionalProperties: false`
+
+2. **Update canonical tool definitions** in `AgentService`:
+   - Remove `["type", "null"]` patterns
+   - Only include truly required fields in `required`
+
+3. **Anthropic provider** can pass tools through with minimal transformation
 
 ---
 

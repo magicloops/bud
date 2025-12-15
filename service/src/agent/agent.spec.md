@@ -34,7 +34,7 @@ Defines agent behavior as "Bud Agent" with:
 
 #### Tool Definitions (Lines 130-191)
 
-Three canonical tool definitions (JSON Schema format):
+Three canonical tool definitions using standard JSON Schema format:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
@@ -42,7 +42,7 @@ Three canonical tool definitions (JSON Schema format):
 | `terminal_interrupt` | none | Send Ctrl+C |
 | `terminal_capture` | `wait?`, `lines?`, `timeout_ms?` | Capture terminal screen with optional readiness wait |
 
-**Note**: Optional parameters use `type: ["type", "null"]` pattern for OpenAI strict mode compatibility.
+**Note**: Optional parameters (`?`) are simply omitted from the `required` array. The OpenAI provider transforms these to the null-union pattern required by OpenAI strict mode during tool transformation.
 
 #### AgentService Class
 
@@ -141,7 +141,6 @@ From `../config.js`:
 
 <!-- SPEC:TODO -->
 - Consider: Move tool definitions to a shared location if multiple agents need them
-- Consider: Canonical tool schema that auto-transforms for provider requirements (e.g., OpenAI null types)
 
 ---
 

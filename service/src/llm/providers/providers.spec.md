@@ -38,18 +38,17 @@ OpenAI provider using the Responses API (~580 lines).
 | Tool use | `{ type: "function_call", call_id, name, arguments }` |
 | Tool result | `{ type: "function_call_output", call_id, output }` |
 
-**Tool Schema Requirements** (Strict Mode):
-```typescript
-{
-  type: "object",
-  properties: {
-    required_field: { type: "string" },
-    optional_field: { type: ["integer", "null"] }  // null for optional
-  },
-  required: ["required_field", "optional_field"],  // ALL props required
-  additionalProperties: false
-}
-```
+**Tool Schema Transformation** (Strict Mode):
+
+The OpenAI provider transforms canonical JSON Schema to OpenAI strict mode format via `transformSchemaForStrictMode()`:
+
+| Canonical (Input) | OpenAI Strict (Output) |
+|-------------------|----------------------|
+| `required: ["input"]` | `required: ["input", "timeout_ms"]` (all props) |
+| `type: "integer"` (optional) | `type: ["integer", "null"]` |
+| Standard JSON Schema | OpenAI strict mode |
+
+This allows tool definitions to use clean standard JSON Schema while ensuring OpenAI strict mode compliance.
 
 **Streaming Events Mapped**:
 | OpenAI Event | Canonical Event |

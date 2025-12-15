@@ -159,25 +159,35 @@ if (response.toolCalls?.length) {
 }
 ```
 
-## OpenAI Strict Mode Tool Schema
+## Canonical Tool Schema
 
-For OpenAI's strict mode (`strict: true`), tool schemas require:
-- `additionalProperties: false` on all objects
-- All properties listed in `required` array
-- Optional fields use `type: ["type", "null"]` pattern
+Canonical tool schemas use **standard JSON Schema** where optional fields are simply omitted from the `required` array:
 
 ```typescript
-// Example: optional timeout_ms parameter
+// Canonical format - standard JSON Schema
 {
   type: "object",
   properties: {
-    input: { type: "string" },
-    timeout_ms: { type: ["integer", "null"] }  // Optional via null union
+    input: { type: "string" },           // Required
+    timeout_ms: { type: "integer" }      // Optional (not in required)
   },
-  required: ["input", "timeout_ms"],  // All props required
+  required: ["input"],                   // Only truly required fields
   additionalProperties: false
 }
 ```
+
+### Provider Transformation
+
+Each provider transforms canonical schemas to their specific requirements:
+
+**OpenAI** (strict mode):
+- Transforms optional fields to `type: ["type", "null"]`
+- Adds ALL properties to `required` array
+- Sets `additionalProperties: false`
+
+**Anthropic** (standard JSON Schema):
+- Uses canonical schema directly with minimal transformation
+- Optional fields remain outside `required` array
 
 ## Dependencies
 
@@ -192,7 +202,6 @@ For OpenAI's strict mode (`strict: true`), tool schemas require:
 <!-- SPEC:TODO -->
 - Phase 4: Add AnthropicProvider implementation
 - Phase 5: Add API endpoint for model/provider configuration
-- Consider: Canonical tool schema that transforms to provider-specific formats
 
 ---
 

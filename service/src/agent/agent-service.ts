@@ -127,8 +127,8 @@ const DEFAULT_READINESS_HINTS: ReadinessHints = {
   may_still_be_processing: false
 };
 
-// Canonical tool definitions
-// Note: For OpenAI strict mode, optional fields use type: ["type", "null"] and must be in required
+// Canonical tool definitions using standard JSON Schema
+// Optional fields are simply omitted from `required` - providers handle transformation
 const CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_run",
@@ -141,11 +141,11 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
           description: "Exact input to send (include \\n for Enter)."
         },
         timeout_ms: {
-          type: ["integer", "null"],
+          type: "integer",
           description: "Optional max wait for readiness (ms)."
         }
       },
-      required: ["input", "timeout_ms"],
+      required: ["input"],
       additionalProperties: false
     }
   },
@@ -168,23 +168,23 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
       type: "object",
       properties: {
         wait: {
-          type: ["boolean", "null"],
+          type: "boolean",
           description:
             "Wait for terminal to become ready before capturing. " +
             "Use after terminal.run returns low confidence. Default: false."
         },
         lines: {
-          type: ["integer", "null"],
+          type: "integer",
           description:
             "Lines of scrollback history. Negative = from current position. " +
             "Default: -50. Use -200 or -500 for more history."
         },
         timeout_ms: {
-          type: ["integer", "null"],
+          type: "integer",
           description: "Max wait time in ms (only applies if wait=true). Default: 5000."
         }
       },
-      required: ["wait", "lines", "timeout_ms"],
+      required: [],
       additionalProperties: false
     }
   }
