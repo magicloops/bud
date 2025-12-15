@@ -67,11 +67,86 @@ message_stop
 - Extended thinking support
 - Interleaved thinking (Claude 4 beta)
 - Signature preservation for multi-turn
+- **Investigate**: Canonical tool schema for optional parameters
 
 ### Out of Scope
 - Prompt caching (can be added later)
 - Computer use tools
 - PDF/document support (beta)
+
+---
+
+## Pre-Implementation: Tool Schema Investigation
+
+Before implementing the Anthropic provider, investigate how Anthropic handles optional tool parameters and consider simplifying our canonical tool schema.
+
+### Current State (OpenAI-Specific)
+
+Currently, our canonical tool definitions use OpenAI's strict mode pattern:
+```typescript
+{
+  type: "object",
+  properties: {
+    required_field: { type: "string" },
+    optional_field: { type: ["integer", "null"] }  // OpenAI-specific null union
+  },
+  required: ["required_field", "optional_field"],  // All props in required
+  additionalProperties: false
+}
+```
+
+This is **OpenAI-specific** because:
+- OpenAI strict mode requires ALL properties in `required`
+- Optional fields must use `type: ["type", "null"]` pattern
+
+### Investigation Tasks
+
+1. **Research Anthropic Tool Schema**
+   - How does Anthropic handle optional parameters?
+   - Do they support standard JSON Schema `required` array semantics?
+   - What happens if a parameter is in `properties` but not in `required`?
+
+2. **Compare Provider Requirements**
+   | Provider | Optional Params Handling |
+   |----------|-------------------------|
+   | OpenAI (strict) | Must use `["type", "null"]` + in `required` |
+   | OpenAI (non-strict) | Standard JSON Schema (omit from `required`) |
+   | Anthropic | **TBD - investigate** |
+
+3. **Proposed Canonical Schema** (if Anthropic supports standard JSON Schema)
+   ```typescript
+   // Simpler canonical format - standard JSON Schema
+   {
+     type: "object",
+     properties: {
+       required_field: { type: "string" },
+       optional_field: { type: "integer" }  // No null union
+     },
+     required: ["required_field"],  // Only truly required fields
+     additionalProperties: false
+   }
+   ```
+
+4. **Provider Transformation**
+   - OpenAI provider transforms canonical → OpenAI strict:
+     - Add missing props to `required`
+     - Transform `type` to `["type", "null"]` for optional fields
+   - Anthropic provider uses canonical as-is (if standard JSON Schema)
+
+### Benefits of Simpler Canonical Schema
+
+1. **Cleaner definitions**: No OpenAI-specific patterns in canonical types
+2. **Provider-agnostic**: True canonical format that maps naturally to each provider
+3. **Less confusion**: Optional fields are clearly optional (not in `required`)
+4. **Easier testing**: Standard JSON Schema semantics
+
+### Decision Point
+
+After investigation, decide:
+- [ ] **Option A**: Keep current OpenAI-centric schema, Anthropic provider adapts
+- [ ] **Option B**: Simplify canonical schema, OpenAI provider adds null unions during transform
+
+Document findings and decision in this section before proceeding with implementation.
 
 ---
 
@@ -99,6 +174,23 @@ service/
 ---
 
 ## Implementation Tasks
+
+### Task 0: Investigate Anthropic Tool Schema (Pre-requisite)
+
+Before writing code, research Anthropic's tool parameter handling:
+
+```bash
+# Review Anthropic documentation
+# - Tool use guide: https://docs.anthropic.com/en/docs/build-with-claude/tool-use
+# - Look for optional parameter handling
+# - Check if they use standard JSON Schema semantics
+```
+
+**Deliverables**:
+- [ ] Document how Anthropic handles optional tool parameters
+- [ ] Update the comparison table above
+- [ ] Make decision on canonical schema approach
+- [ ] If Option B chosen, update `transformTools` in OpenAI provider first
 
 ### Task 1: Add Anthropic SDK Dependency
 

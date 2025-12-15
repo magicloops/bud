@@ -1,12 +1,12 @@
 # agent
 
-LLM integration layer using OpenAI's Responses API to orchestrate tool-calling agent loops.
+Agent orchestration layer for AI-assisted terminal interactions using the LLM provider abstraction.
 
 ## Purpose
 
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
-1. Builds conversation context from thread history
-2. Calls OpenAI with terminal tools
+1. Builds conversation context from thread history (canonical format)
+2. Calls the LLM provider (OpenAI, Anthropic) via `providerRegistry`
 3. Executes tool calls on the connected bud daemon
 4. Loops until a final response or max steps reached
 
@@ -32,23 +32,26 @@ Defines agent behavior as "Bud Agent" with:
 - REPL context awareness (detecting when inside Python/Node/Claude Code vs shell)
 - Output format requirements (JSON with `type`, `status`, `message`)
 
-#### Tool Definitions (Lines 140-209)
+#### Tool Definitions (Lines 130-191)
 
-Three strict JSON schema tools for OpenAI function calling:
+Three canonical tool definitions (JSON Schema format):
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `terminal_run` | `input`, `timeout_ms` | Send input to terminal (include `\n` for Enter) |
+| `terminal_run` | `input`, `timeout_ms?` | Send input to terminal (include `\n` for Enter) |
 | `terminal_interrupt` | none | Send Ctrl+C |
-| `terminal_capture` | `wait`, `lines`, `timeout_ms` | Capture terminal screen with optional readiness wait |
+| `terminal_capture` | `wait?`, `lines?`, `timeout_ms?` | Capture terminal screen with optional readiness wait |
+
+**Note**: Optional parameters use `type: ["type", "null"]` pattern for OpenAI strict mode compatibility.
 
 #### AgentService Class
 
 **Constructor dependencies**:
-- `OpenAI` client
 - `TerminalSessionManager` (thread-scoped tmux sessions)
 - `AgentEventBus` (SSE event emission for agent events)
 - Logger and debug flags
+
+**LLM Provider**: Uses `providerRegistry.getProviderForModel()` to get the appropriate provider based on configured model.
 
 **Key methods**:
 
@@ -56,10 +59,10 @@ Three strict JSON schema tools for OpenAI function calling:
 |--------|---------|
 | `startUserMessage(threadId, options)` | Entry point - spawns async agent flow |
 | `runAgentFlow(...)` | Main loop - invoke model, handle tools, emit events |
-| `buildConversation(threadId)` | Load message history into OpenAI format |
-| `invokeModel(input, reasoningEffort, signal)` | Call OpenAI Responses API |
-| `parseResponse(response)` | Extract directive (tool_call or final) |
-| `extractFunctionCall(response)` | Parse function_call items from output |
+| `buildConversation(threadId)` | Load message history into canonical `CanonicalMessage[]` format |
+| `invokeModel(messages, reasoningEffort, signal)` | Call LLM via provider's `invokeSync()` |
+| `parseResponse(response)` | Extract final directive from `CanonicalResponse` |
+| `extractFunctionCall(response)` | Extract tool calls from `response.toolCalls` |
 | `executeTerminalCall(threadId, toolCall)` | Run terminal.* tools via TerminalSessionManager |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 
@@ -115,7 +118,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 
 | Import | Purpose |
 |--------|---------|
-| `openai` | OpenAI SDK for Responses API |
+| `../llm/index.js` | Provider registry and canonical types |
 | `ulid` | Message ID generation |
 | `../db/client.js` | Database access |
 | `../db/schema.js` | Table schemas |
@@ -137,7 +140,8 @@ From `../config.js`:
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Some type assertions (`as Record<string, unknown>`) could be improved with proper OpenAI response types
+- Consider: Move tool definitions to a shared location if multiple agents need them
+- Consider: Canonical tool schema that auto-transforms for provider requirements (e.g., OpenAI null types)
 
 ---
 

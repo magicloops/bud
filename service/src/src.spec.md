@@ -7,7 +7,7 @@ Main source code for the Bud service - a Node.js backend handling API requests, 
 The service acts as the central hub:
 - Accepts WebSocket connections from bud daemons
 - Serves REST API and SSE streams to web clients
-- Orchestrates AI agent loops via OpenAI
+- Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic)
 - Persists all data to PostgreSQL
 
 ## Files
@@ -26,9 +26,12 @@ Application entry point and Fastify server setup.
 **Manager Instantiation**:
 ```typescript
 const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
-const sessionManager = new SessionManager(sessionLogger, sessionEvents);
 const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
-const agentService = new AgentService(openai, sessionManager, terminalSessionManager, ...);
+
+// Initialize LLM providers (OpenAI, Anthropic based on config)
+initializeProviders();
+
+const agentService = new AgentService(terminalSessionManager, agentEvents, ...);
 ```
 
 **SSE Streaming Routes** (defined inline):
@@ -73,7 +76,11 @@ Environment-based configuration with defaults.
 
 ### `agent/` → [agent.spec.md](./agent/agent.spec.md)
 
-LLM integration using OpenAI Responses API for tool-calling agent loops.
+Agent orchestration for tool-calling loops using the LLM provider abstraction.
+
+### `llm/` → [llm.spec.md](./llm/llm.spec.md)
+
+Provider-agnostic LLM abstraction layer with canonical types and provider implementations (OpenAI, Anthropic).
 
 ### `db/` → [db.spec.md](./db/db.spec.md)
 
@@ -107,14 +114,22 @@ Database utility scripts for development (seeding, migrations, inspection).
                               │         (Fastify instance)          │
                               └───────────────┬─────────────────────┘
                                               │
-              ┌───────────────┬───────────────┼───────────────┬───────────────┐
-              │               │               │               │               │
-              ▼               ▼               ▼               ▼               ▼
-        ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
-        │  routes/ │   │    ws/   │   │  agent/  │   │ runtime/ │   │   db/    │
-        │          │   │          │   │          │   │          │   │          │
-        │ REST API │   │ WS gates │   │ OpenAI   │   │ Managers │   │ Drizzle  │
-        └──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
+        ┌───────────────┬───────────────┬─────┴─────┬───────────────┬───────────────┐
+        │               │               │           │               │               │
+        ▼               ▼               ▼           ▼               ▼               ▼
+  ┌──────────┐   ┌──────────┐   ┌──────────┐ ┌──────────┐   ┌──────────┐   ┌──────────┐
+  │  routes/ │   │    ws/   │   │  agent/  │ │   llm/   │   │ runtime/ │   │   db/    │
+  │          │   │          │   │          │ │          │   │          │   │          │
+  │ REST API │   │ WS gates │   │ Agent    │ │ Provider │   │ Managers │   │ Drizzle  │
+  │          │   │          │   │ Service  │ │ Registry │   │          │   │          │
+  └──────────┘   └──────────┘   └────┬─────┘ └────┬─────┘   └──────────┘   └──────────┘
+                                     │            │
+                                     └─────┬──────┘
+                                           ▼
+                                   ┌──────────────┐
+                                   │  providers/  │
+                                   │ OpenAI, etc. │
+                                   └──────────────┘
 ```
 
 ## Request Flow Examples
@@ -134,9 +149,15 @@ POST /api/threads/:id/messages
                   ▼
              agent/agent-service.ts
                   │
-                  ├─► Build conversation from history
+                  ├─► Build conversation (canonical format)
                   │
-                  ├─► Call OpenAI Responses API
+                  ├─► providerRegistry.getProviderForModel()
+                  │         │
+                  │         ▼
+                  ├─► provider.invokeSync() ─► llm/providers/openai.ts
+                  │                                    │
+                  │                                    ▼
+                  │                            OpenAI Responses API
                   │
                   ├─► Extract tool_call or final
                   │
