@@ -154,6 +154,40 @@ export function isKnownReplProgram(command: string): boolean;
 export function getProgramInfo(command: string): ProgramInfo | undefined;
 ```
 
+### `context-sync-service.ts`
+
+Pre-flight terminal context synchronization service.
+
+**Purpose**: Detects terminal state changes before user messages are processed and injects context update messages to keep the agent informed. This solves the "stale context" problem where the agent thinks it's in a REPL when it's actually back at a shell prompt.
+
+**Key Method**:
+```typescript
+async checkAndSync(sessionId: string, threadId: string): Promise<string | null>
+```
+
+**Workflow**:
+1. Capture current terminal state (last 30 lines via `capturePane`)
+2. Compute SHA256 hash of screen content
+3. Detect mode heuristically (shell/repl/tui/unknown)
+4. Compare to last snapshot stored in `terminalSessionTable.stateSnapshot`
+5. If mode or prompt changed:
+   - Generate human-readable summary using Haiku
+   - Insert system message into thread
+6. Update snapshot in database
+
+**Mode Detection Heuristics**:
+| Pattern | Detected Mode |
+|---------|---------------|
+| Line ends with `$`, `#`, `%`, `❯`, `➜`, `>` | shell |
+| Line starts with `>>>`, `...`, `In [N]:` | repl (Python/IPython) |
+| Screen contains box drawing chars (`╭╰`) + "Claude" | tui (Claude Code) |
+| Screen has vim-style line numbers | tui |
+
+**Integration Points**:
+- Clears `pendingCommands` when shell detected (fixes `terminal.run` output method selection)
+- Uses `claude-haiku-4-5` for fast, cheap LLM summaries
+- Injects messages with `role: "system"` (transformed in provider layer for Anthropic)
+
 ## Usage
 
 The agent service uses these types for:
@@ -174,6 +208,10 @@ if (context.mode === "repl" && context.program === "claude") {
 | Import | Purpose |
 |--------|---------|
 | `../config.js` | `TERMINAL_PROTO_VERSION` constant |
+| `../db/client.js` | Database access (context-sync-service) |
+| `../db/schema.js` | Table schemas (context-sync-service) |
+| `../llm/index.js` | LLM provider registry (context-sync-service) |
+| `../runtime/terminal-session-manager.js` | capturePane access (context-sync-service) |
 
 ---
 

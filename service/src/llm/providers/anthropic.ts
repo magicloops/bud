@@ -216,13 +216,28 @@ export class AnthropicProvider implements LLMProvider {
   } {
     let systemPrompt = "";
     const anthropicMessages: AnthropicMessage[] = [];
+    let isFirstSystemMessage = true;
 
     for (const msg of messages) {
       if (msg.role === "system") {
-        // Anthropic: system prompt is separate
-        systemPrompt += this.getTextContent(msg.content) + "\n";
+        const text = this.getTextContent(msg.content);
+        if (isFirstSystemMessage) {
+          // First system message becomes the Anthropic system parameter
+          systemPrompt += text + "\n";
+          isFirstSystemMessage = false;
+        } else {
+          // Mid-conversation system messages (e.g., context sync)
+          // Transform to user message with [System Note] prefix
+          anthropicMessages.push({
+            role: "user",
+            content: [{ type: "text", text: `[System Note] ${text}` }],
+          });
+        }
         continue;
       }
+
+      // After any non-system message, subsequent system messages are mid-conversation
+      isFirstSystemMessage = false;
 
       if (msg.role === "user") {
         const blocks = this.normalizeContent(msg.content);

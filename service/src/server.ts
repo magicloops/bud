@@ -13,6 +13,7 @@ import { registerModelsRoutes } from "./routes/models.js";
 import { AgentService } from "./agent/index.js";
 import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
+import { ContextSyncService } from "./terminal/context-sync-service.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -51,6 +52,13 @@ export async function buildServer(): Promise<FastifyInstance> {
     config.agentOpenaiDebug
   );
 
+  // Context sync service for pre-flight terminal state checks
+  const contextSyncLogger = server.log.child({ component: "context_sync" });
+  const contextSyncService = new ContextSyncService(
+    terminalSessionManager,
+    contextSyncLogger
+  );
+
   await server.register(websocketPlugin, {
     options: {
       perMessageDeflate: {
@@ -62,7 +70,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   await server.register(fastifySseV2);
   await registerBudRoutes(server, terminalSessionManager);
-  await registerThreadRoutes(server, runManager, agentService, agentEvents);
+  await registerThreadRoutes(server, runManager, agentService, agentEvents, contextSyncService);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);
   await registerModelsRoutes(server);

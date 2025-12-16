@@ -1,6 +1,7 @@
 import ReactJsonView from '@microlink/react-json-view'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 
@@ -34,10 +35,13 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
     setSystemColor(getMutedColor(resolved, 0.4))
   }, [accentColor])
 
-  const orderedMessages = useMemo(
-    () => [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-    [messages]
-  )
+  const orderedMessages = useMemo(() => {
+    const sorted = [...messages].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    )
+    // Filter out system messages unless config.showSystemMessages is enabled
+    return config.showSystemMessages ? sorted : sorted.filter((m) => m.role !== 'system')
+  }, [messages])
 
   useEffect(() => {
     const node = scrollRef.current
@@ -91,8 +95,25 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
         {orderedMessages.map((message) => {
           const isUser = message.role === 'user'
           const isTool = message.role === 'tool'
+          const isSystem = message.role === 'system'
           const isAssistant = message.role === 'assistant' && !isTool
           const payload = isTool ? resolveToolPayload(message) : null
+
+          // System messages have distinct minimal styling
+          if (isSystem) {
+            return (
+              <article
+                key={message.id}
+                className="rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 px-3 py-2 text-xs italic text-muted-foreground"
+              >
+                <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase">
+                  <span>{message.displayRole || 'System'}</span>
+                  <time>{new Date(message.createdAt).toLocaleTimeString()}</time>
+                </div>
+                <p>{message.content}</p>
+              </article>
+            )
+          }
           const toolName =
             (payload?.tool as string | undefined) ?? (message.displayRole || 'Tool')
           const ToolContentRenderer = payload?.tool

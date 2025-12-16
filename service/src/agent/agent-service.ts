@@ -483,6 +483,12 @@ export class AgentService {
           : row.content;
         messages.push(this.createMessageInput("user", content));
       }
+      // Handle context sync messages (stored as "system" role)
+      if (row.role === "system") {
+        // These are mid-conversation system messages from context sync
+        // Provider transformation will handle conversion for Anthropic
+        messages.push(this.createMessageInput("system", row.content));
+      }
     }
     return messages;
   }
@@ -1105,5 +1111,13 @@ export class AgentService {
       controller.abort();
       this.cancellations.delete(threadId);
     }
+  }
+
+  /**
+   * Check if a thread has an active agent run.
+   * Used by ContextSyncService to skip sync if agent is streaming.
+   */
+  isThreadActive(threadId: string): boolean {
+    return this.cancellations.has(threadId);
   }
 }

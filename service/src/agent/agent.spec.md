@@ -65,6 +65,7 @@ Three canonical tool definitions using standard JSON Schema format:
 | `extractFunctionCall(response)` | Extract tool calls from `response.toolCalls` |
 | `executeTerminalCall(threadId, toolCall)` | Run terminal.* tools via TerminalSessionManager |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
+| `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
 
 **Agent Loop Flow**:
 ```

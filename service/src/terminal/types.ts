@@ -144,3 +144,31 @@ export interface TerminalContext {
   interactionStyle?: string;
   hints?: string[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Context Sync Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Snapshot of terminal state for context sync comparison.
+ * Stored in terminalSessionTable.stateSnapshot.
+ */
+export interface TerminalStateSnapshot {
+  screenHash: string;
+  lastLine: string;
+  detectedMode: "shell" | "repl" | "tui" | "unknown";
+  detectedProgram: string | null;
+  capturedAt: Date;
+}
+
+/**
+ * Details about a detected state change for LLM summarization.
+ */
+export interface StateChangeDetails {
+  previousMode: string;
+  previousProgram: string | null;
+  previousLastLine: string;
+  currentCapture: string;
+  currentLastLine: string;
+  currentModeHint: string;
+}

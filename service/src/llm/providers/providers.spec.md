@@ -100,12 +100,16 @@ Anthropic provider using the Messages API (~550 lines).
 **Message Transformation**:
 | Canonical | Anthropic Messages API |
 |-----------|----------------------|
-| System message | Separate `system` param (not in messages array) |
+| System message (first) | Separate `system` param (not in messages array) |
+| System message (mid-conversation) | `{ role: "user", content: "[System Note] ..." }` |
 | User message | `{ role: "user", content: [...] }` |
 | Assistant text | `{ role: "assistant", content: [...] }` |
 | Tool use | `{ type: "tool_use", id, name, input }` content block |
 | Tool result | `{ type: "tool_result", tool_use_id, content }` content block in user message |
 | Reasoning | `{ type: "thinking", thinking, signature }` content block |
+
+**Mid-Conversation System Messages**:
+Context sync injects system messages between user messages to inform the agent about terminal state changes. Since Anthropic doesn't support mid-conversation system messages, these are transformed to user messages with a `[System Note]` prefix. The transformation logic checks if a system message appears after any non-system message.
 
 **Thinking Budget Calculation**:
 | Reasoning Effort | Budget Tokens |

@@ -18,6 +18,7 @@ import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import { and, asc, desc, eq, lt, isNull } from "drizzle-orm";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { TerminalEventBus, AgentEventBus } from "../runtime/event-bus.js";
+import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import { getActiveBudIds } from "../ws/gateway.js";
 
 const CreateThreadSchema = z.object({
@@ -141,7 +142,8 @@ export async function registerThreadRoutes(
   server: FastifyInstance,
   _runManager: RunManager,
   agentService: AgentService,
-  agentEvents: AgentEventBus
+  agentEvents: AgentEventBus,
+  contextSyncService: ContextSyncService
 ): Promise<void> {
   server.get("/api/threads", async (request) => {
     const query = ThreadListQuerySchema.parse(request.query ?? {});
@@ -329,6 +331,46 @@ export async function registerThreadRoutes(
       return;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pre-flight context sync
+    // Check for terminal state changes and inject context message if needed
+    // ─────────────────────────────────────────────────────────────────────────
+    const session = await db.query.terminalSessionTable.findFirst({
+      where: and(
+        eq(terminalSessionTable.threadId, params.threadId),
+        isNull(terminalSessionTable.closedAt)
+      ),
+      columns: { sessionId: true }
+    });
+
+    if (session) {
+      const isAgentActive = agentService.isThreadActive(params.threadId);
+
+      if (!isAgentActive) {
+        try {
+          const contextUpdate = await contextSyncService.checkAndSync(
+            session.sessionId,
+            params.threadId
+          );
+
+          if (contextUpdate) {
+            server.log.info(
+              { threadId: params.threadId, update: contextUpdate },
+              "Context sync: injected state change message"
+            );
+          }
+        } catch (err) {
+          // Log but don't fail the request if context sync fails
+          server.log.warn({ threadId: params.threadId, err }, "Context sync failed");
+        }
+      } else {
+        server.log.debug({ threadId: params.threadId }, "Skipping context sync - agent active");
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Create user message and start agent
+    // ─────────────────────────────────────────────────────────────────────────
     const metadata: Record<string, unknown> = body.cwd ? { preferred_cwd: body.cwd } : {};
     const [message] = await db
       .insert(messageTable)
