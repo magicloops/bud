@@ -9,6 +9,7 @@ import { RunEventBus, TerminalEventBus, AgentEventBus } from "./runtime/event-bu
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
+import { registerModelsRoutes } from "./routes/models.js";
 import { AgentService } from "./agent/index.js";
 import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
@@ -64,6 +65,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerThreadRoutes(server, runManager, agentService, agentEvents);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);
+  await registerModelsRoutes(server);
   await registerWsGateway(server, runManager, terminalSessionManager);
 
   server.addHook("onClose", async () => {

@@ -213,14 +213,18 @@ export class AgentService {
     this.debugEnabled = debugEnabled;
     this.openaiDebugEnabled = openaiDebugEnabled;
     this.defaultReasoningEffort = config.agentReasoningEffortDefault;
-    this.supportsReasoningNone = this.detectReasoningNoneSupport(config.openaiModel);
+    this.supportsReasoningNone = this.detectReasoningNoneSupport(config.defaultModel);
   }
 
   async startUserMessage(
     threadId: string,
-    options?: { reasoningEffort?: ReasoningEffortSetting | null }
+    options?: {
+      model?: string | null;
+      reasoningEffort?: ReasoningEffortSetting | null;
+    }
   ): Promise<{ sessionId: string }> {
     const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
+    const model = options?.model ?? config.defaultModel;
     // Get or create terminal session for this thread
     const session = await this.getOrCreateSession(threadId);
     const controller = new AbortController();
@@ -228,6 +232,7 @@ export class AgentService {
     void this.runAgentFlow({
       threadId,
       sessionId: session.sessionId,
+      model,
       reasoningEffort: requestedEffort,
       controller
     }).catch((err) => {
@@ -239,23 +244,25 @@ export class AgentService {
   private async runAgentFlow({
     threadId,
     sessionId,
+    model,
     reasoningEffort,
     controller
   }: {
     threadId: string;
     sessionId: string;
+    model: string;
     reasoningEffort: ReasoningEffortSetting;
     controller: AbortController;
   }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
-    this.debug("Starting agent run", { threadId, sessionId, entries: conversation.length, reasoningEffort });
+    this.debug("Starting agent run", { threadId, sessionId, model, entries: conversation.length, reasoningEffort });
     try {
       let steps = 0;
       while (steps < config.agentMaxSteps) {
         if (controller.signal.aborted) {
           throw new Error("agent_canceled");
         }
-        const response = await this.invokeModel(conversation, reasoningEffort, controller.signal);
+        const response = await this.invokeModel(conversation, model, reasoningEffort, controller.signal);
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           const callMeta = { input: toolCall.input ?? "" };
@@ -482,6 +489,7 @@ export class AgentService {
 
   private async invokeModel(
     messages: CanonicalMessage[],
+    model: string,
     reasoningEffort: ReasoningEffortSetting,
     signal?: AbortSignal
   ): Promise<CanonicalResponse> {
@@ -491,10 +499,12 @@ export class AgentService {
       entries: messages.length,
       lastRole,
       reasoningEffort,
-      model: config.openaiModel
+      model
     });
 
-    const provider = providerRegistry.getProviderForModel(config.openaiModel);
+    const provider = providerRegistry.getProviderForModel(model);
+    // Resolve alias to actual model ID (e.g., "claude-opus" -> "claude-opus-4-5-20251101")
+    const resolvedModel = providerRegistry.resolveModelAlias(model);
 
     // Build reasoning config - "none" means disabled
     const reasoning = reasoningEffort === "none"
@@ -502,7 +512,7 @@ export class AgentService {
       : { enabled: true, effort: reasoningEffort as "low" | "medium" | "high" };
 
     const modelConfig: ModelConfig = {
-      model: config.openaiModel,
+      model: resolvedModel,
       maxOutputTokens: config.agentMaxOutputTokens,
       reasoning,
       responseFormat: "json"

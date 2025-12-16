@@ -83,15 +83,17 @@ Message input form with options.
 - `messageText` / `onMessageChange` - Controlled input
 - `status` - UI state (idle, dispatching, streaming)
 - `onSubmit` - Form submission handler
+- `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
-- `durablePreferred` / `onDurablePreferredChange` - tmux toggle
-- `durableSupported`, `sessionsSupported` - Capability flags
+
+**Exported Types**:
+- `ModelInfo` - Model metadata (id, provider, displayName, capabilities, isAlias)
 
 **Features**:
 - Multi-line textarea
 - Enter to submit (Shift+Enter for newline)
+- Model selector dropdown (grouped by provider)
 - Reasoning effort dropdown (Fast/Think/Deep/Max)
-- "Keep running" tmux checkbox
 - Submit button with loading state
 
 ### `workspace-top-bar.tsx`

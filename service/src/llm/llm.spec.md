@@ -120,14 +120,16 @@ interface LLMProvider {
 
 Barrel exports and provider initialization.
 
-**Exports**: All types, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`
+**Exports**: All types, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`
 
 **`initializeProviders()`**: Called at startup to register providers based on config:
 ```typescript
 if (config.openaiApiKey) {
   providerRegistry.register(new OpenAIProvider(config.openaiApiKey, { ... }));
 }
-// Anthropic registration added in Phase 4
+if (config.anthropicApiKey) {
+  providerRegistry.register(new AnthropicProvider(config.anthropicApiKey, { ... }));
+}
 ```
 
 ## Subfolders
@@ -195,12 +197,11 @@ Each provider transforms canonical schemas to their specific requirements:
 |---------|---------|
 | `openai` | OpenAI SDK for Responses API |
 | `@types/json-schema` | JSONSchema7 type definitions |
-| `@anthropic-ai/sdk` | Anthropic SDK (Phase 4) |
+| `@anthropic-ai/sdk` | Anthropic SDK for Messages API |
 
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Phase 4: Add AnthropicProvider implementation
 - Phase 5: Add API endpoint for model/provider configuration
 
 ---

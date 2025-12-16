@@ -80,18 +80,73 @@ This allows tool definitions to use clean standard JSON Schema while ensuring Op
 | `parseResponse()` | OpenAI response → CanonicalResponse |
 | `isReasoningModel()` | Check if model supports reasoning |
 
-### `anthropic.ts` (Phase 4)
+### `anthropic.ts`
 
-Anthropic provider using the Messages API.
+Anthropic provider using the Messages API (~550 lines).
 
-<!-- SPEC:TODO -->
-**Not yet implemented** - See [Phase 4 plan](../../../../plan/llm-provider-adapter/phase-4-anthropic-provider.md)
+**Supported Models**:
+| Model | Type | Notes |
+|-------|------|-------|
+| `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022` | Claude 3.5 | Vision, tools, thinking |
+| `claude-3-opus-20240229`, `claude-3-sonnet-20240229`, `claude-3-haiku-20240307` | Claude 3 | Vision, tools |
+| `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101` | Claude 4 | Interleaved thinking support |
 
-**Planned Features**:
-- Extended thinking with `thinking.budget_tokens`
-- Interleaved thinking for Claude 4 models
-- Signature preservation for multi-turn thinking
-- Tool result as content block (vs OpenAI's separate item)
+**Key Features**:
+- **Extended thinking**: Budget-based thinking with `thinking.budget_tokens`
+- **Interleaved thinking**: Claude 4 models support thinking between tool calls
+- **Signature preservation**: Thinking blocks include cryptographic signatures for multi-turn
+- **Standard JSON Schema**: Tools use canonical schema directly (no transformation needed)
+
+**Message Transformation**:
+| Canonical | Anthropic Messages API |
+|-----------|----------------------|
+| System message | Separate `system` param (not in messages array) |
+| User message | `{ role: "user", content: [...] }` |
+| Assistant text | `{ role: "assistant", content: [...] }` |
+| Tool use | `{ type: "tool_use", id, name, input }` content block |
+| Tool result | `{ type: "tool_result", tool_use_id, content }` content block in user message |
+| Reasoning | `{ type: "thinking", thinking, signature }` content block |
+
+**Thinking Budget Calculation**:
+| Reasoning Effort | Budget Tokens |
+|------------------|---------------|
+| `low` | 1,024 |
+| `medium` | 4,096 |
+| `high` | 16,384 |
+
+**Streaming Events Mapped**:
+| Anthropic Event | Canonical Event |
+|-----------------|-----------------|
+| `message_start` | `message_start` |
+| `message_stop` | `message_done` |
+| `content_block_start` (text) | `content_start` |
+| `content_block_start` (thinking) | `reasoning_start` |
+| `content_block_start` (tool_use) | `tool_use_start` |
+| `thinking_delta` | `reasoning_delta` |
+| `text_delta` | `text_delta` |
+| `input_json_delta` | `tool_use_delta` |
+| `content_block_stop` | `reasoning_done` / `tool_use_done` / `content_done` |
+
+**Public Methods**:
+| Method | Description |
+|--------|-------------|
+| `invoke()` | Streaming invocation |
+| `invokeSync()` | Non-streaming invocation |
+| `supportsModel()` | Check if model ID is supported |
+| `getModelCapabilities()` | Return model feature flags |
+| `extractToolCalls()` | Utility to get tool calls from response |
+| `extractText()` | Utility to get text content from response |
+
+**Private Transformation Methods**:
+| Method | Purpose |
+|--------|---------|
+| `transformMessages()` | Canonical → Anthropic messages + system prompt |
+| `transformTools()` | Canonical tools → Anthropic tools (minimal transform) |
+| `transformToolChoice()` | Canonical choice → Anthropic tool_choice |
+| `transformStream()` | Anthropic events → Canonical events |
+| `parseResponse()` | Anthropic response → CanonicalResponse |
+| `isClaude4()` | Check if model supports interleaved thinking |
+| `calculateThinkingBudget()` | Convert effort level to token budget |
 
 ## Provider Comparison
 
@@ -133,7 +188,7 @@ export class NewProvider implements LLMProvider {
 | Package | Provider | Purpose |
 |---------|----------|---------|
 | `openai` | OpenAI | Responses API SDK |
-| `@anthropic-ai/sdk` | Anthropic | Messages API SDK (Phase 4) |
+| `@anthropic-ai/sdk` | Anthropic | Messages API SDK |
 
 ---
 

@@ -28,6 +28,7 @@ const CreateThreadSchema = z.object({
 const CreateMessageSchema = z.object({
   text: z.string().min(1),
   cwd: z.string().optional(),
+  model: z.string().optional(),
   reasoning_effort: z.enum(["none", "low", "medium", "high"]).optional()
 });
 
@@ -343,6 +344,7 @@ export async function registerThreadRoutes(
 
     try {
       await agentService.startUserMessage(thread.threadId, {
+        model: body.model ?? null,
         reasoningEffort: body.reasoning_effort ?? null
       });
       reply.code(201).send({ messageId: message.messageId });
