@@ -16,12 +16,14 @@ Each provider implements the `LLMProvider` interface, handling:
 
 OpenAI provider using the Responses API (~580 lines).
 
-**Supported Models**:
+**Supported Models** (dated versions in `supportedModels`):
 | Model | Type | Notes |
 |-------|------|-------|
-| `gpt-4o`, `gpt-4o-mini` | Standard | Vision, tools, JSON mode |
-| `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` | Standard | Latest GPT-4 variants |
-| `gpt-5`, `gpt-5.1`, `gpt-5.2` | Reasoning | Supports `reasoning.effort` |
+| `gpt-5.2-2025-12-11` | Reasoning | Latest GPT-5, supports `reasoning.effort` |
+| `gpt-5-mini-2025-08-07` | Reasoning | Smaller GPT-5 variant |
+| `gpt-5-nano-2025-08-07` | Reasoning | Smallest GPT-5 variant |
+
+Aliases (`gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`) map to these dated versions.
 
 **Key Features**:
 - **Reasoning support**: GPT-5 series with `reasoning.effort` and `reasoning.summary`

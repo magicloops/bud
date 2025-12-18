@@ -28,16 +28,10 @@ type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai";
   readonly supportedModels = [
-    // Standard models
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "gpt-4.1-nano",
-    // GPT-5 series (with reasoning)
-    "gpt-5",
-    "gpt-5.1",
-    "gpt-5.2",
+    // GPT-5 series (with reasoning) - dated versions
+    "gpt-5.2-2025-12-11",
+    "gpt-5-mini-2025-08-07",
+    "gpt-5-nano-2025-08-07",
   ] as const;
 
   private client: OpenAI;
@@ -63,13 +57,14 @@ export class OpenAIProvider implements LLMProvider {
 
   getModelCapabilities(model: string): ModelCapabilities {
     const isReasoning = this.isReasoningModel(model);
+    // All GPT-5 series models support vision
     return {
-      supportsVision: model.includes("4o") || model.includes("4.1") || model.startsWith("gpt-5"),
+      supportsVision: true,
       supportsTools: true,
       supportsStreaming: true,
       supportsJsonMode: true,
-      maxContextTokens: model.startsWith("gpt-5") ? 256000 : 128000,
-      maxOutputTokens: model.startsWith("gpt-5") ? 32768 : 16384,
+      maxContextTokens: 256000,
+      maxOutputTokens: 32768,
       supportsReasoning: isReasoning,
       supportsThinking: false,
       supportsInterleavedThinking: false,

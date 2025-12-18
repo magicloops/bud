@@ -92,29 +92,33 @@ interface LLMProvider {
 
 ### `registry.ts`
 
-`ProviderRegistry` singleton for model-to-provider resolution (~150 lines).
+`ProviderRegistry` singleton for model-to-provider resolution (~130 lines).
 
-**Model Mapping**:
-- Exact match: `"gpt-4o"` → `"openai"`
-- Prefix match: `"gpt-4o-2024-08-06"` → `"openai"`
-- Fallback: Query each provider's `supportsModel()`
+**Model→Provider Mapping**:
+- Automatically derived from each provider's `supportedModels` during `register()`
+- No hardcoded model→provider mapping required
+- Fallback: Query each provider's `supportsModel()` method
 
-**Aliases**:
+**Aliases** (map friendly names to dated model versions):
 | Alias | Resolves To |
 |-------|-------------|
-| `gpt-4o-latest` | `gpt-4o` |
-| `gpt-5-latest` | `gpt-5.2` |
-| `claude-sonnet` | `claude-sonnet-4-5-20250929` |
-| `claude-opus` | `claude-opus-4-5-20251101` |
-| `claude-haiku` | `claude-3-5-haiku-20241022` |
+| `gpt-5.2` | `gpt-5.2-2025-12-11` |
+| `gpt-5-mini` | `gpt-5-mini-2025-08-07` |
+| `gpt-5-nano` | `gpt-5-nano-2025-08-07` |
+| `claude-opus-4-5` | `claude-opus-4-5-20251101` |
+| `claude-sonnet-4-5` | `claude-sonnet-4-5-20250929` |
+| `claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
+
+Note: Provider `supportedModels` use dated versions, not aliases. The models API adds aliases pointing to those dated versions. Frontend filters to show only alias models for cleaner UI.
 
 **Key Methods**:
 | Method | Description |
 |--------|-------------|
-| `register(provider)` | Add a provider instance |
-| `getProviderForModel(model)` | Resolve model to provider |
+| `register(provider)` | Add provider and auto-map its `supportedModels` |
+| `unregister(name)` | Remove provider and its model mappings |
+| `getProviderForModel(model)` | Resolve model to provider (resolves aliases first) |
 | `resolveModelAlias(model)` | Expand alias to full model ID |
-| `listModels()` | Get all known model IDs |
+| `listModels()` | Get all models from registered providers |
 
 ### `index.ts`
 

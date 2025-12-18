@@ -22,15 +22,14 @@ type ModelInfo = {
 };
 
 const DISPLAY_NAMES: Record<string, string> = {
-  // OpenAI
-  "gpt-4o": "GPT-4o",
-  "gpt-4o-mini": "GPT-4o Mini",
-  "gpt-4.1": "GPT-4.1",
-  "gpt-4.1-mini": "GPT-4.1 Mini",
-  "gpt-4.1-nano": "GPT-4.1 Nano",
-  "gpt-5": "GPT-5",
-  "gpt-5.1": "GPT-5.1",
+  // OpenAI GPT-5 series (aliases - shown in UI)
   "gpt-5.2": "GPT-5.2",
+  "gpt-5-mini": "GPT-5 Mini",
+  "gpt-5-nano": "GPT-5 Nano",
+  // OpenAI GPT-5 series (dated versions - for model list)
+  "gpt-5.2-2025-12-11": "GPT-5.2 (Dec 2025)",
+  "gpt-5-mini-2025-08-07": "GPT-5 Mini (Aug 2025)",
+  "gpt-5-nano-2025-08-07": "GPT-5 Nano (Aug 2025)",
   // Anthropic official aliases (point to latest versions)
   "claude-opus-4-5": "Claude Opus 4.5",
   "claude-sonnet-4-5": "Claude Sonnet 4.5",
@@ -49,6 +48,12 @@ const DISPLAY_NAMES: Record<string, string> = {
 function getDisplayName(modelId: string): string {
   return DISPLAY_NAMES[modelId] ?? modelId;
 }
+
+// Provider display order (lower = first)
+const PROVIDER_ORDER: Record<string, number> = {
+  anthropic: 0,
+  openai: 1,
+};
 
 export async function registerModelsRoutes(server: FastifyInstance): Promise<void> {
   /**
@@ -94,6 +99,13 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
         });
       }
     }
+
+    // Sort by provider order (Anthropic first, then OpenAI)
+    models.sort((a, b) => {
+      const orderA = PROVIDER_ORDER[a.provider] ?? 99;
+      const orderB = PROVIDER_ORDER[b.provider] ?? 99;
+      return orderA - orderB;
+    });
 
     return reply.send({
       models,
