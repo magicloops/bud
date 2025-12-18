@@ -136,6 +136,9 @@ function ThreadView() {
     setMessages(initialMessages)
   }, [initialMessages])
 
+  // Track last sent dimensions to avoid redundant resize requests
+  const lastSentDimensionsRef = useRef<{ cols: number; rows: number } | null>(null)
+
   const fitTerminal = useCallback(() => {
     if (!terminalReadyRef.current) return
     const addon = fitAddonRef.current
@@ -146,7 +149,10 @@ function ThreadView() {
       addon.fit()
       const cols = term.cols
       const rows = term.rows
-      if (cols > 0 && rows > 0) {
+      // Only send resize to backend if dimensions actually changed
+      const last = lastSentDimensionsRef.current
+      if (cols > 0 && rows > 0 && (!last || last.cols !== cols || last.rows !== rows)) {
+        lastSentDimensionsRef.current = { cols, rows }
         sendTerminalResizeRef.current(cols, rows)
       }
     } catch (err) {
@@ -637,7 +643,8 @@ function ThreadView() {
             if (decoded && terminalRef.current) {
               terminalRef.current.write(decoded)
               setTerminalHasOutput(true)
-              fitTerminal()
+              // Note: fitTerminal() removed - xterm handles content rendering internally
+              // and calling fit() on every output chunk caused resize spam (20+ req/sec)
             }
           }
         } catch (err) {
@@ -1064,7 +1071,7 @@ function ThreadView() {
           {viewMode === 'web' && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-muted/30 p-8 text-center">
               <div className="rounded-2xl border-4 border-black bg-card px-10 py-8 shadow-[6px_6px_0px_rgba(0,0,0,1)]">
-                <p className="text-lg font-mono font-semibold text-card-foreground">Web preview placeholder</p>
+                <p className="text-lg font-mono font-semibold text-card-foreground">hello Vassili</p>
                 <p className="text-sm text-muted-foreground">Screencasts or browser mirroring will live here.</p>
               </div>
               <p className="text-xs uppercase tracking-wide text-muted-foreground">

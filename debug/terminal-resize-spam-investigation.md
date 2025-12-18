@@ -1,8 +1,33 @@
 # Debug: Terminal Resize Event Spam Investigation
 
 **Date:** 2025-12-17
-**Status:** 🔍 Investigated - Ready for Fix
+**Status:** ✅ Fixed
 **Symptom:** Tons of resize events firing in Network tab for every terminal stream event, even when browser window isn't resizing
+
+## Fix Applied
+
+Two changes in `web/src/routes/$budId/$threadId.tsx`:
+
+1. **Added dimension tracking** (lines 139-140, 152-156):
+   ```typescript
+   const lastSentDimensionsRef = useRef<{ cols: number; rows: number } | null>(null)
+
+   // In fitTerminal():
+   const last = lastSentDimensionsRef.current
+   if (cols > 0 && rows > 0 && (!last || last.cols !== cols || last.rows !== rows)) {
+     lastSentDimensionsRef.current = { cols, rows }
+     sendTerminalResizeRef.current(cols, rows)
+   }
+   ```
+
+2. **Removed fitTerminal() from handleOutput()** (lines 646-647):
+   ```typescript
+   // Note: fitTerminal() removed - xterm handles content rendering internally
+   // and calling fit() on every output chunk caused resize spam (20+ req/sec)
+   ```
+
+**Docs Updated:**
+- `web/src/routes/$budId/budId.spec.md` - Added resize optimization notes
 
 ---
 

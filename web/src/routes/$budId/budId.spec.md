@@ -89,7 +89,7 @@ loader: async ({ params }) => {
    - xterm.js instance with FitAddon
    - SSE connection to `/api/threads/:id/terminal/stream`
    - Input forwarding to `/api/threads/:id/terminal/input`
-   - Resize handling via `/api/threads/:id/terminal/resize`
+   - Resize handling via `/api/threads/:id/terminal/resize` (only when dimensions change)
    - Reconnection logic with exponential backoff
 
 3. **Agent Stream**
@@ -129,11 +129,13 @@ terminalOutputTruncated: boolean
 
 | Event | Action |
 |-------|--------|
-| `output` | Decode base64, write to xterm |
+| `output` | Decode base64, write to xterm (no resize - xterm handles rendering) |
 | `status` | Update terminal state |
 | `ready` | Update readiness indicators |
 | `heartbeat` | Track last event time |
 | `history` | Backfill initial output |
+
+**Resize Optimization**: Terminal resize requests are only sent when dimensions actually change (window resize, panel toggle). Output events don't trigger resize - xterm handles content rendering internally. Dimension tracking via `lastSentDimensionsRef` prevents redundant requests.
 
 **Connection Recovery**:
 - SSE close → Start reconnect timer
