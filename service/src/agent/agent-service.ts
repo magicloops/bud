@@ -18,6 +18,7 @@ import {
   type CanonicalContentBlock,
   type ModelConfig,
 } from "../llm/index.js";
+import type { ContextSyncService } from "../terminal/context-sync-service.js";
 
 type AgentDirective =
   | {
@@ -192,6 +193,7 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
 
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
+  private readonly contextSyncService: ContextSyncService | null;
   private readonly events: AgentEventBus;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
@@ -205,9 +207,11 @@ export class AgentService {
     events: AgentEventBus,
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
-    openaiDebugEnabled: boolean
+    openaiDebugEnabled: boolean,
+    contextSyncService?: ContextSyncService
   ) {
     this.terminalSessionManager = terminalSessionManager;
+    this.contextSyncService = contextSyncService ?? null;
     this.events = events;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
@@ -225,6 +229,11 @@ export class AgentService {
   ): Promise<{ sessionId: string }> {
     const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
     const model = options?.model ?? config.defaultModel;
+
+    // Clear old agent events (especially `final`) so new SSE connections
+    // don't receive stale events from previous runs
+    this.events.clearBuffer(threadId);
+
     // Get or create terminal session for this thread
     const session = await this.getOrCreateSession(threadId);
     const controller = new AbortController();
@@ -296,6 +305,11 @@ export class AgentService {
 
           const result = await this.executeTerminalCall(threadId, toolCall);
           const toolPayload = await this.recordTerminalToolMessage(threadId, toolCall, result);
+
+          // Refresh snapshot after terminal.run so context sync has accurate state
+          if (toolCall.tool === "terminal.run" && this.contextSyncService) {
+            await this.contextSyncService.refreshSnapshot(sessionId);
+          }
 
           // Add user message with tool_result
           conversation.push({

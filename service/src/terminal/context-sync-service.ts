@@ -29,6 +29,27 @@ export class ContextSyncService {
   ) {}
 
   /**
+   * Capture current terminal state and update the snapshot.
+   * Called after agent tool calls to keep snapshot current.
+   * Does NOT inject any messages - just updates the stored state.
+   */
+  async refreshSnapshot(sessionId: string): Promise<void> {
+    try {
+      const { hash, lastLine, capture } = await this.captureCurrentState(sessionId);
+      const currentMode = this.detectModeHeuristic(capture, lastLine);
+
+      await this.updateSnapshot(sessionId, hash, lastLine, currentMode, null);
+
+      this.logger.debug(
+        { sessionId, mode: currentMode, lastLine: lastLine.slice(0, 50) },
+        "Context sync: snapshot refreshed"
+      );
+    } catch (err) {
+      this.logger.warn({ sessionId, err }, "Context sync: failed to refresh snapshot");
+    }
+  }
+
+  /**
    * Check if terminal state changed since last snapshot.
    * If changed, generate summary and insert context message.
    *

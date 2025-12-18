@@ -43,20 +43,21 @@ export async function buildServer(): Promise<FastifyInstance> {
   // Initialize LLM providers
   initializeProviders();
 
+  // Context sync service for pre-flight terminal state checks
+  const contextSyncLogger = server.log.child({ component: "context_sync" });
+  const contextSyncService = new ContextSyncService(
+    terminalSessionManager,
+    contextSyncLogger
+  );
+
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
     terminalSessionManager,
     agentEvents,
     agentLogger,
     config.agentDebug,
-    config.agentOpenaiDebug
-  );
-
-  // Context sync service for pre-flight terminal state checks
-  const contextSyncLogger = server.log.child({ component: "context_sync" });
-  const contextSyncService = new ContextSyncService(
-    terminalSessionManager,
-    contextSyncLogger
+    config.agentOpenaiDebug,
+    contextSyncService
   );
 
   await server.register(websocketPlugin, {

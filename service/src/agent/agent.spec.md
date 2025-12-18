@@ -115,6 +115,8 @@ Via `AgentEventBus`, using `threadId` as the channel:
 
 Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 
+**Buffer Management**: The event buffer is cleared at the start of each new agent run (`startUserMessage`). This prevents stale events (especially `final` from previous runs) from being replayed to new SSE connections, which would cause the stream to close prematurely.
+
 ## Dependencies
 
 | Import | Purpose |
