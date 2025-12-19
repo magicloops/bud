@@ -222,12 +222,6 @@ struct TerminalManager {
 struct TerminalState {
     sender: Option<OutboundSender>,
     sessions: HashMap<String, Arc<TerminalHandle>>,
-    capture_states: HashMap<String, CaptureState>,
-}
-
-/// State for capture-pane deduplication (hash-only approach)
-struct CaptureState {
-    content_hash: u64,
 }
 
 struct TerminalHandle {
@@ -567,18 +561,7 @@ impl RunExecutor {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Capture-pane deduplication helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct DedupResult {
-    output: String,
-    deduplicated: bool,
-    lines_removed: usize,
-    reason: &'static str,
-}
-
-/// Simple hash for change detection
+/// Simple hash for change detection (used by ActivityDetector)
 fn simple_hash(data: &[u8]) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -587,50 +570,12 @@ fn simple_hash(data: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// Deduplicate capture-pane output using hash-only approach.
-///
-/// Simple algorithm:
-/// - If hash matches previous capture → return empty ("no_change")
-/// - Otherwise → return full capture
-///
-/// This is simpler and more reliable than overlap detection, which can fail
-/// when TUI content contains volatile data like timestamps ("2m ago" → "3m ago").
-fn deduplicate_capture(
-    state: Option<&CaptureState>,
-    output: &str,
-    current_hash: u64,
-) -> DedupResult {
-    let line_count = output.lines().count();
-
-    // Check for no change (hash match)
-    if let Some(prev) = state {
-        if prev.content_hash == current_hash {
-            return DedupResult {
-                output: String::new(),
-                deduplicated: true,
-                lines_removed: line_count,
-                reason: "no_change",
-            };
-        }
-    }
-
-    // First capture or content changed - return full output
-    let reason = if state.is_none() { "first_capture" } else { "changed" };
-    DedupResult {
-        output: output.to_string(),
-        deduplicated: false,
-        lines_removed: 0,
-        reason,
-    }
-}
-
 impl TerminalManager {
     fn new(config: TerminalConfig) -> Self {
         Self {
             inner: Arc::new(Mutex::new(TerminalState {
                 sender: None,
                 sessions: HashMap::new(),
-                capture_states: HashMap::new(),
             })),
             config,
         }
@@ -647,7 +592,6 @@ impl TerminalManager {
         for (_, handle) in inner.sessions.drain() {
             handle.watcher.abort();
         }
-        inner.capture_states.clear();
         inner.sender = None;
     }
 
@@ -847,11 +791,6 @@ impl TerminalManager {
             warn!(message_id = %frame.envelope.id, "tmux resize-window failed");
         }
 
-        // Reset dedup state for this session - screen layout changed
-        {
-            let mut inner = self.inner.lock().await;
-            inner.capture_states.remove(session_id);
-        }
         Ok(())
     }
 
@@ -944,7 +883,6 @@ impl TerminalManager {
                 "terminal session closed"
             );
         }
-        inner.capture_states.remove(session_id); // Reset dedup state on close
         drop(inner);
 
         if let Some(sender) = sender {
@@ -1056,35 +994,17 @@ impl TerminalManager {
         }
 
         let output_str = String::from_utf8_lossy(&output.stdout);
-        let current_hash = simple_hash(&output.stdout);
+        let line_count = output_str.lines().count();
 
-        // Apply deduplication (per-session)
-        let dedup = {
-            let inner = self.inner.lock().await;
-            deduplicate_capture(inner.capture_states.get(session_id), &output_str, current_hash)
-        };
-
-        // Update state with hash (for next comparison)
-        {
-            let mut inner = self.inner.lock().await;
-            inner.capture_states.insert(session_id.clone(), CaptureState {
-                content_hash: current_hash,
-            });
-        }
-
-        // Log dedup metrics (Bud-side only, for debugging)
         info!(
             request_id = %frame.request_id,
             session_id = session_id,
-            deduplicated = dedup.deduplicated,
-            lines_removed = dedup.lines_removed,
-            reason = dedup.reason,
-            output_lines = dedup.output.lines().count(),
-            original_lines = output_str.lines().count(),
-            "capture-pane deduplication"
+            output_bytes = output.stdout.len(),
+            lines_captured = line_count,
+            "capture-pane completed"
         );
 
-        // Send response with deduplicated output (no dedup metadata - would confuse agent)
+        // Send response with raw output (no deduplication - let service layer handle if needed)
         let response = json!({
             "proto": TERMINAL_PROTO_VERSION,
             "type": "terminal_capture_response",
@@ -1093,9 +1013,9 @@ impl TerminalManager {
             "ext": {},
             "session_id": session_id,
             "request_id": frame.request_id,
-            "output": BASE64_STANDARD.encode(dedup.output.as_bytes()),
-            "output_bytes": dedup.output.len(),
-            "lines_captured": dedup.output.lines().count(),
+            "output": BASE64_STANDARD.encode(output_str.as_bytes()),
+            "output_bytes": output_str.len(),
+            "lines_captured": line_count,
             "error": Value::Null
         });
 

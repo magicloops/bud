@@ -40,8 +40,8 @@ Shared markdown renderer using `react-markdown` with:
 - External links open in new tabs
 
 **Code Block Handling**:
-- Fenced code blocks (````lang`) get syntax highlighting
-- Inline code gets styled `<code>` element
+- Fenced code blocks (````lang`) use `CodeBlock` component with syntax highlighting and copy button on hover
+- Inline code uses `InlineCode` component with click-to-copy; long code wraps instead of truncating for proper baseline alignment
 
 **Styling**:
 - Uses Tailwind Typography (`prose`) classes
@@ -59,7 +59,8 @@ Shared markdown renderer using `react-markdown` with:
 | `react-markdown` | Markdown parsing and rendering |
 | `remark-gfm` | GitHub Flavored Markdown |
 | `remark-breaks` | Soft line breaks |
-| `react-syntax-highlighter` | Code highlighting |
+| `@/components/ui/inline-code` | Click-to-copy inline code |
+| `@/components/ui/code-block` | Syntax-highlighted code blocks with copy |
 | `../types` | Component type definitions |
 
 ---

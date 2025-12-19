@@ -64,6 +64,7 @@ Message list with auto-scroll and collapsible messages.
 - Auto-scroll to bottom when new messages arrive
 - "Stick to bottom" behavior with manual scroll override
 - Collapsible long messages (>500px) with "Show more/less"
+- Copy message button (appears on hover, bottom-right)
 - JSON payload viewer for tool messages
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
