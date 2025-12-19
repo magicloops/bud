@@ -9,9 +9,11 @@ import { RunEventBus, TerminalEventBus, AgentEventBus } from "./runtime/event-bu
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
+import { registerModelsRoutes } from "./routes/models.js";
 import { AgentService } from "./agent/index.js";
-import OpenAI from "openai";
+import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
+import { ContextSyncService } from "./terminal/context-sync-service.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -37,18 +39,25 @@ export async function buildServer(): Promise<FastifyInstance> {
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
   const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
   terminalSessionManager.startIdleChecks();
-  const openai = new OpenAI({
-    apiKey: config.openaiApiKey,
-    timeout: config.openaiTimeout
-  });
+
+  // Initialize LLM providers
+  initializeProviders();
+
+  // Context sync service for pre-flight terminal state checks
+  const contextSyncLogger = server.log.child({ component: "context_sync" });
+  const contextSyncService = new ContextSyncService(
+    terminalSessionManager,
+    contextSyncLogger
+  );
+
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
-    openai,
     terminalSessionManager,
     agentEvents,
     agentLogger,
     config.agentDebug,
-    config.agentOpenaiDebug
+    config.agentOpenaiDebug,
+    contextSyncService
   );
 
   await server.register(websocketPlugin, {
@@ -62,9 +71,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   await server.register(fastifySseV2);
   await registerBudRoutes(server, terminalSessionManager);
-  await registerThreadRoutes(server, runManager, agentService, agentEvents);
+  await registerThreadRoutes(server, runManager, agentService, agentEvents, contextSyncService);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);
+  await registerModelsRoutes(server);
   await registerWsGateway(server, runManager, terminalSessionManager);
 
   server.addHook("onClose", async () => {

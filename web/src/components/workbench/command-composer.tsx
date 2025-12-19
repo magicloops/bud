@@ -2,18 +2,32 @@ import type { FormEvent, KeyboardEvent } from 'react'
 import { LoaderCircle, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
+export type ModelInfo = {
+  id: string
+  provider: string
+  displayName: string
+  capabilities: {
+    vision: boolean
+    tools: boolean
+    streaming: boolean
+    reasoning: boolean
+    thinking: boolean
+  }
+  isAlias?: boolean
+  aliasTarget?: string
+}
+
 type CommandComposerProps = {
   messageText: string
   onMessageChange: (value: string) => void
   status: 'idle' | 'dispatching' | 'streaming'
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   error: string | null
+  models: ModelInfo[]
+  selectedModel: string
+  onModelChange: (value: string) => void
   reasoningEffort: 'none' | 'low' | 'medium' | 'high'
   onReasoningChange: (value: 'none' | 'low' | 'medium' | 'high') => void
-  durablePreferred: boolean
-  onDurablePreferredChange: (value: boolean) => void
-  durableSupported: boolean
-  sessionsSupported: boolean
 }
 
 const REASONING_OPTIONS = [
@@ -29,12 +43,11 @@ export function CommandComposer({
   status,
   onSubmit,
   error,
+  models,
+  selectedModel,
+  onModelChange,
   reasoningEffort,
-  onReasoningChange,
-  durablePreferred,
-  onDurablePreferredChange,
-  durableSupported,
-  sessionsSupported
+  onReasoningChange
 }: CommandComposerProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -44,13 +57,6 @@ export function CommandComposer({
       }
     }
   }
-
-  const durableToggleDisabled = !sessionsSupported || !durableSupported
-  const durableHelperText = durableToggleDisabled
-    ? !sessionsSupported
-      ? 'Interactive sessions disabled on this Bud'
-      : 'tmux not available on this Bud'
-    : 'Keeps an interactive session alive via tmux'
 
   return (
     <form onSubmit={onSubmit} className="relative border-t-4 border-black bg-background">
@@ -63,20 +69,35 @@ export function CommandComposer({
         className="h-32 w-full resize-none bg-background p-4 pr-16 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
         disabled={status === 'dispatching'}
       />
-      <div className="absolute bottom-4 left-4 flex max-w-[70%] flex-col text-[11px] font-mono text-muted-foreground">
-        <label className="flex items-center gap-2" title={durableHelperText}>
-          <input
-            type="checkbox"
-            className="h-3 w-3 accent-black"
-            checked={durablePreferred}
-            onChange={(event) => onDurablePreferredChange(event.target.checked)}
-            disabled={durableToggleDisabled}
-          />
-          <span>Keep running if I leave (tmux)</span>
-        </label>
-        <span>{durableHelperText}</span>
-      </div>
       <div className="absolute bottom-4 right-4 flex items-center gap-3">
+        {/* Model selector */}
+        <select
+          value={selectedModel}
+          onChange={(event) => onModelChange(event.target.value)}
+          className="rounded-lg border-3 border-black bg-card max-w-[140px] px-2 py-2 font-mono text-[11px] text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none"
+          disabled={status === 'dispatching' || models.length === 0}
+        >
+          {models.length === 0 ? (
+            <option value="">Loading...</option>
+          ) : (
+            Object.entries(
+              models.reduce<Record<string, ModelInfo[]>>((acc, model) => {
+                if (!acc[model.provider]) acc[model.provider] = []
+                acc[model.provider].push(model)
+                return acc
+              }, {})
+            ).map(([provider, providerModels]) => (
+              <optgroup key={provider} label={provider.toUpperCase()}>
+                {providerModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.displayName}
+                  </option>
+                ))}
+              </optgroup>
+            ))
+          )}
+        </select>
+        {/* Reasoning effort selector */}
         <select
           value={reasoningEffort}
           onChange={(event) => onReasoningChange(event.target.value as 'none' | 'low' | 'medium' | 'high')}

@@ -11,7 +11,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useRef, useEffect } from 'react'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
-import { CommandComposer } from '@/components/workbench/command-composer'
+import { CommandComposer, type ModelInfo } from '@/components/workbench/command-composer'
 import { apiFetch } from '@/lib/api'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
@@ -33,6 +33,8 @@ function NewThreadView() {
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [selectedModel, setSelectedModel] = useState<string>('')
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
 
@@ -91,6 +93,28 @@ function NewThreadView() {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  // Fetch available models on mount
+  useEffect(() => {
+    apiFetch('/api/models')
+      .then(async (resp) => {
+        if (resp.ok) {
+          const data = (await resp.json()) as { models: ModelInfo[]; defaultModel?: string }
+          // Filter to only show aliases for cleaner UI
+          const aliasModels = data.models.filter((m) => m.isAlias)
+          // If no aliases, show all models
+          const displayModels = aliasModels.length > 0 ? aliasModels : data.models
+          setModels(displayModels)
+          // Set default model from server config, or first available
+          if (!selectedModel) {
+            const serverDefault = data.defaultModel
+            const hasDefault = serverDefault && displayModels.some((m) => m.id === serverDefault)
+            setSelectedModel(hasDefault ? serverDefault : displayModels[0]?.id ?? '')
+          }
+        }
+      })
+      .catch((err) => console.error('Failed to fetch models', err))
+  }, [])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!budId) {
@@ -124,7 +148,11 @@ function NewThreadView() {
       const messageResp = await apiFetch(`/api/threads/${threadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmedMessage, reasoning_effort: reasoningEffort })
+        body: JSON.stringify({
+          text: trimmedMessage,
+          model: selectedModel || undefined,
+          reasoning_effort: reasoningEffort
+        })
       })
       if (!messageResp.ok) {
         const body = await messageResp.json().catch(() => ({}))
@@ -197,12 +225,11 @@ function NewThreadView() {
         status={status}
         onSubmit={handleSubmit}
         error={error}
+        models={models}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
         reasoningEffort={reasoningEffort}
         onReasoningChange={setReasoningEffort}
-        durablePreferred={false}
-        onDurablePreferredChange={() => {}}
-        durableSupported={false}
-        sessionsSupported={false}
       />
 
       {/* Debug panel (dev only) */}

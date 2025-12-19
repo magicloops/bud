@@ -42,7 +42,7 @@ Thread and message management, plus terminal operations (~650 lines).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/threads/:threadId/messages` | Get messages (limit configurable) |
-| `POST` | `/api/threads/:threadId/messages` | Send user message, triggers agent |
+| `POST` | `/api/threads/:threadId/messages` | Send user message (with context sync), triggers agent |
 | `GET` | `/api/threads/:threadId/agent/stream` | SSE for agent events |
 | `POST` | `/api/threads/:threadId/cancel` | Cancel running agent |
 
@@ -72,6 +72,13 @@ Thread and message management, plus terminal operations (~650 lines).
 - `TerminalEnsureBodySchema` - Optional `shell`, `cwd`, `cols`, `rows`
 - `TerminalResizeBodySchema` - Required `cols`, `rows`
 - `TerminalInputBodySchema` - Required `input`
+
+**Context Sync Flow** (POST /messages):
+Before creating user message, checks for terminal state changes:
+1. If thread has active terminal session and no active agent run
+2. Call `contextSyncService.checkAndSync(sessionId, threadId)`
+3. If state changed, a system message is injected before the user message
+4. This keeps the agent informed about terminal state transitions (e.g., REPL exit)
 
 ### `runs.ts`
 

@@ -1198,6 +1198,21 @@ export class TerminalSessionManager {
     }
   }
 
+  /**
+   * Clear pending command tracking for a session.
+   * Called by ContextSyncService when detecting shell mode after REPL exit.
+   */
+  clearPendingCommand(sessionId: string): void {
+    const pending = this.pendingCommands.get(sessionId);
+    if (pending) {
+      this.debug("clearing pending command via context sync", {
+        sessionId,
+        command: pending.command
+      });
+      this.pendingCommands.set(sessionId, null);
+    }
+  }
+
   private parseCommandFromInput(input: string): string | null {
     const trimmed = input.replace(/[\r\n]+$/, "").trim();
     if (!trimmed) return null;

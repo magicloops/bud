@@ -1,6 +1,8 @@
 import ReactJsonView from '@microlink/react-json-view'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 
@@ -27,17 +29,31 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
   const [expandedPayloads, setExpandedPayloads] = useState<Record<string, boolean>>({})
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({})
   const [overflowingMessages, setOverflowingMessages] = useState<Record<string, boolean>>({})
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const contentRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
+  const handleCopyMessage = useCallback(async (messageId: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopiedMessageId(messageId)
+      setTimeout(() => setCopiedMessageId(null), 1500)
+    } catch (err) {
+      console.error('Failed to copy message:', err)
+    }
+  }, [])
 
   useEffect(() => {
     const resolved = resolveCssVar(accentColor || 'var(--avatar-3)')
     setSystemColor(getMutedColor(resolved, 0.4))
   }, [accentColor])
 
-  const orderedMessages = useMemo(
-    () => [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-    [messages]
-  )
+  const orderedMessages = useMemo(() => {
+    const sorted = [...messages].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    )
+    // Filter out system messages unless config.showSystemMessages is enabled
+    return config.showSystemMessages ? sorted : sorted.filter((m) => m.role !== 'system')
+  }, [messages])
 
   useEffect(() => {
     const node = scrollRef.current
@@ -91,8 +107,25 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
         {orderedMessages.map((message) => {
           const isUser = message.role === 'user'
           const isTool = message.role === 'tool'
+          const isSystem = message.role === 'system'
           const isAssistant = message.role === 'assistant' && !isTool
           const payload = isTool ? resolveToolPayload(message) : null
+
+          // System messages have distinct minimal styling
+          if (isSystem) {
+            return (
+              <article
+                key={message.id}
+                className="rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 px-3 py-2 text-xs italic text-muted-foreground"
+              >
+                <div className="mb-1 flex items-center justify-between font-mono text-[10px] uppercase">
+                  <span>{message.displayRole || 'System'}</span>
+                  <time>{new Date(message.createdAt).toLocaleTimeString()}</time>
+                </div>
+                <p>{message.content}</p>
+              </article>
+            )
+          }
           const toolName =
             (payload?.tool as string | undefined) ?? (message.displayRole || 'Tool')
           const ToolContentRenderer = payload?.tool
@@ -169,11 +202,13 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
             <p>{message.content}</p>
           )
 
+          const isCopied = copiedMessageId === message.id
+
           return (
             <article
               key={message.id}
               className={cn(
-                'rounded-xl border-3 border-black p-3 text-sm leading-relaxed shadow-[3px_3px_0px_rgba(0,0,0,1)]',
+                'group/message relative rounded-xl border-3 border-black p-3 text-sm leading-relaxed shadow-[3px_3px_0px_rgba(0,0,0,1)]',
                 isUser ? 'text-card-foreground' : 'text-foreground',
                 (isAssistant || isTool) && 'bg-background'
               )}
@@ -182,6 +217,25 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
                 ...(accentStyles ?? {})
               }}
             >
+              {/* Copy message button - appears on hover */}
+              <button
+                type="button"
+                onClick={() => handleCopyMessage(message.id, message.content)}
+                className={cn(
+                  'absolute bottom-2 right-2 z-10 p-1.5 rounded-md transition-all',
+                  'opacity-0 group-hover/message:opacity-100',
+                  'bg-black/10 hover:bg-black/20 text-muted-foreground hover:text-foreground',
+                  isCopied && 'opacity-100 bg-green-500/20 text-green-600'
+                )}
+                title="Copy message"
+              >
+                {isCopied ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </button>
+
               <div className="mb-1 flex items-center justify-between text-[11px] font-mono uppercase text-muted-foreground">
                 <span>{isTool ? `Tool • ${toolName}` : message.displayRole || (isUser ? 'User' : message.role)}</span>
                 <time>{new Date(message.createdAt).toLocaleTimeString()}</time>

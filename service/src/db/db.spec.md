@@ -57,17 +57,30 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `terminalSessionTable` | Thread-scoped tmux sessions | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName` |
+| `terminalSessionTable` | Thread-scoped tmux sessions | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot` |
 | `terminalSessionOutputTable` | Terminal output chunks | `sessionId`, `byteOffset`, `seq`, `data` (bytea) |
 | `terminalSessionInputLogTable` | Input audit log | `sessionId`, `inputBytes`, `source`, `sentAt` |
+
+**stateSnapshot Column** (JSONB): Stores last known terminal state for context sync:
+```typescript
+{
+  screenHash: string;      // SHA256 hash of capture (first 16 chars)
+  lastLine: string;        // Last non-empty line
+  detectedMode: "shell" | "repl" | "tui" | "unknown";
+  detectedProgram: string | null;
+  capturedAt: string;      // ISO timestamp
+}
+```
 
 #### Enums
 
 | Enum | Values |
 |------|--------|
 | `runStatusValues` | `queued`, `planning`, `running`, `canceling`, `succeeded`, `failed`, `canceled` |
-| `messageRoleValues` | `user`, `assistant`, `tool` |
+| `messageRoleValues` | `user`, `assistant`, `tool`, `system` |
 | `streamValues` | `stdout`, `stderr` |
+
+**Note**: The `system` role is used for context sync messages injected before user messages to inform the agent about terminal state changes.
 
 #### Custom Types
 

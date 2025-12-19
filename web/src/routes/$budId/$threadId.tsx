@@ -12,7 +12,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { MoreVertical, Square } from 'lucide-react'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
-import { CommandComposer } from '@/components/workbench/command-composer'
+import { CommandComposer, type ModelInfo } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
 import { DebugPanel } from '@/components/debug-panel'
 import { apiFetch, buildApiUrl, decodeTerminalData, type ApiMessage } from '@/lib/api'
@@ -45,6 +45,8 @@ function ThreadView() {
   const [messages, setMessages] = useState<ApiMessage[]>(initialMessages)
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [selectedModel, setSelectedModel] = useState<string>('')
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
 
@@ -107,10 +109,35 @@ function ThreadView() {
     }
   }, [])
 
+  // Fetch available models on mount
+  useEffect(() => {
+    apiFetch('/api/models')
+      .then(async (resp) => {
+        if (resp.ok) {
+          const data = (await resp.json()) as { models: ModelInfo[]; defaultModel?: string }
+          // Filter to only show aliases for cleaner UI
+          const aliasModels = data.models.filter((m) => m.isAlias)
+          // If no aliases, show all models
+          const displayModels = aliasModels.length > 0 ? aliasModels : data.models
+          setModels(displayModels)
+          // Set default model from server config, or first available
+          if (!selectedModel) {
+            const serverDefault = data.defaultModel
+            const hasDefault = serverDefault && displayModels.some((m) => m.id === serverDefault)
+            setSelectedModel(hasDefault ? serverDefault : displayModels[0]?.id ?? '')
+          }
+        }
+      })
+      .catch((err) => console.error('Failed to fetch models', err))
+  }, [])
+
   // Update messages when loader data changes
   useEffect(() => {
     setMessages(initialMessages)
   }, [initialMessages])
+
+  // Track last sent dimensions to avoid redundant resize requests
+  const lastSentDimensionsRef = useRef<{ cols: number; rows: number } | null>(null)
 
   const fitTerminal = useCallback(() => {
     if (!terminalReadyRef.current) return
@@ -122,7 +149,10 @@ function ThreadView() {
       addon.fit()
       const cols = term.cols
       const rows = term.rows
-      if (cols > 0 && rows > 0) {
+      // Only send resize to backend if dimensions actually changed
+      const last = lastSentDimensionsRef.current
+      if (cols > 0 && rows > 0 && (!last || last.cols !== cols || last.rows !== rows)) {
+        lastSentDimensionsRef.current = { cols, rows }
         sendTerminalResizeRef.current(cols, rows)
       }
     } catch (err) {
@@ -613,7 +643,8 @@ function ThreadView() {
             if (decoded && terminalRef.current) {
               terminalRef.current.write(decoded)
               setTerminalHasOutput(true)
-              fitTerminal()
+              // Note: fitTerminal() removed - xterm handles content rendering internally
+              // and calling fit() on every output chunk caused resize spam (20+ req/sec)
             }
           }
         } catch (err) {
@@ -965,7 +996,11 @@ function ThreadView() {
       const messageResp = await apiFetch(`/api/threads/${threadId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: trimmedMessage, reasoning_effort: reasoningEffort })
+        body: JSON.stringify({
+          text: trimmedMessage,
+          model: selectedModel || undefined,
+          reasoning_effort: reasoningEffort
+        })
       })
       if (!messageResp.ok) {
         const body = await messageResp.json().catch(() => ({}))
@@ -1208,12 +1243,11 @@ function ThreadView() {
         status={status}
         onSubmit={handleSubmit}
         error={error}
+        models={models}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
         reasoningEffort={reasoningEffort}
         onReasoningChange={setReasoningEffort}
-        durablePreferred={false}
-        onDurablePreferredChange={() => {}}
-        durableSupported={false}
-        sessionsSupported={true}
       />
 
       {/* Debug panel (dev only) */}

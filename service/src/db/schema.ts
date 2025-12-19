@@ -14,7 +14,7 @@ import {
 import { sql } from "drizzle-orm";
 
 const runStatusValues = ["queued", "planning", "running", "canceling", "succeeded", "failed", "canceled"] as const;
-const messageRoleValues = ["user", "assistant", "tool"] as const;
+const messageRoleValues = ["user", "assistant", "tool", "system"] as const;
 const streamValues = ["stdout", "stderr"] as const;
 
 const byteaColumn = customType<{ data: Buffer }>({
@@ -223,6 +223,14 @@ export const terminalSessionTable = pgTable(
     totalInputBytes: bigint("total_input_bytes", { mode: "number" }).notNull().default(0),
     totalOutputBytes: bigint("total_output_bytes", { mode: "number" }).notNull().default(0),
     outputLogBytes: bigint("output_log_bytes", { mode: "number" }).notNull().default(0),
+    // State snapshot for context sync - tracks terminal state changes
+    stateSnapshot: jsonb("state_snapshot").$type<{
+      screenHash: string;
+      lastLine: string;
+      detectedMode: "shell" | "repl" | "tui" | "unknown";
+      detectedProgram: string | null;
+      capturedAt: string;  // ISO timestamp
+    } | null>(),
     tenantId: text("tenant_id"),
     createdByUserId: text("created_by_user_id")
   },

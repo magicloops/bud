@@ -32,7 +32,11 @@ export const config = {
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
-  openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+  // Default model for agent (can be OpenAI or Anthropic)
+  defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "claude-opus-4-5",
+  // Anthropic
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  anthropicTimeout: toNumber(process.env.ANTHROPIC_TIMEOUT_MS, 120000),
   agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 30),
   agentMaxOutputTokens: toNumber(process.env.AGENT_MAX_OUTPUT_TOKENS, 128000),
   agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "none"),

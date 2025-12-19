@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import { ulid } from "ulid";
 import { asc, desc, eq } from "drizzle-orm";
 import { Buffer } from "node:buffer";
@@ -10,9 +9,16 @@ import { AgentEventBus } from "../runtime/event-bus.js";
 import type { ReadinessHints } from "../terminal/types.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
-
-type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
-type InputItem = OpenAI.Responses.CreateParams["input"][number];
+import {
+  providerRegistry,
+  OpenAIProvider,
+  type CanonicalMessage,
+  type CanonicalTool,
+  type CanonicalResponse,
+  type CanonicalContentBlock,
+  type ModelConfig,
+} from "../llm/index.js";
+import type { ContextSyncService } from "../terminal/context-sync-service.js";
 
 type AgentDirective =
   | {
@@ -122,80 +128,72 @@ const DEFAULT_READINESS_HINTS: ReadinessHints = {
   may_still_be_processing: false
 };
 
-const TERMINAL_RUN_TOOL = {
-  type: "function" as const,
-  name: "terminal_run",
-  description: "Send input to the persistent terminal (include \\n to press Enter).",
-  parameters: {
-    type: "object",
-    properties: {
-      input: {
-        type: "string",
-        description: "Exact input to send (include \\n for Enter)."
+// Canonical tool definitions using standard JSON Schema
+// Optional fields are simply omitted from `required` - providers handle transformation
+const CANONICAL_TOOLS: CanonicalTool[] = [
+  {
+    name: "terminal_run",
+    description: "Send input to the persistent terminal (include \\n to press Enter).",
+    parameters: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "Exact input to send (include \\n for Enter)."
+        },
+        timeout_ms: {
+          type: "integer",
+          description: "Optional max wait for readiness (ms)."
+        }
       },
-      timeout_ms: {
-        type: "integer",
-        description: "Optional max wait for readiness (ms).",
-        nullable: true
-      }
-    },
-    required: ["input", "timeout_ms"],
-    additionalProperties: false
+      required: ["input"],
+      additionalProperties: false
+    }
   },
-  strict: true
-};
-
-const TERMINAL_INTERRUPT_TOOL = {
-  type: "function" as const,
-  name: "terminal_interrupt",
-  description: "Send Ctrl+C to the terminal to interrupt the current process.",
-  parameters: {
-    type: "object",
-    properties: {},
-    required: [],
-    additionalProperties: false
+  {
+    name: "terminal_interrupt",
+    description: "Send Ctrl+C to the terminal to interrupt the current process.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false
+    }
   },
-  strict: true
-};
-
-const TERMINAL_CAPTURE_TOOL = {
-  type: "function" as const,
-  name: "terminal_capture",
-  description:
-    "Get terminal screen output. Use to see TUI app content, scroll through history, " +
-    "or wait for a command to finish. Returns the rendered screen (what you would see visually).",
-  parameters: {
-    type: "object",
-    properties: {
-      wait: {
-        type: "boolean",
-        description:
-          "Wait for terminal to become ready before capturing. " +
-          "Use after terminal.run returns low confidence. Default: false.",
-        nullable: true
+  {
+    name: "terminal_capture",
+    description:
+      "Get terminal screen output. Use to see TUI app content, scroll through history, " +
+      "or wait for a command to finish. Returns the rendered screen (what you would see visually).",
+    parameters: {
+      type: "object",
+      properties: {
+        wait: {
+          type: "boolean",
+          description:
+            "Wait for terminal to become ready before capturing. " +
+            "Use after terminal.run returns low confidence. Default: false."
+        },
+        lines: {
+          type: "integer",
+          description:
+            "Lines of scrollback history. Negative = from current position. " +
+            "Default: -50. Use -200 or -500 for more history."
+        },
+        timeout_ms: {
+          type: "integer",
+          description: "Max wait time in ms (only applies if wait=true). Default: 5000."
+        }
       },
-      lines: {
-        type: "integer",
-        description:
-          "Lines of scrollback history. Negative = from current position. " +
-          "Default: -50. Use -200 or -500 for more history.",
-        nullable: true
-      },
-      timeout_ms: {
-        type: "integer",
-        description: "Max wait time in ms (only applies if wait=true). Default: 5000.",
-        nullable: true
-      }
-    },
-    required: ["wait", "lines", "timeout_ms"],
-    additionalProperties: false
-  },
-  strict: true
-};
+      required: [],
+      additionalProperties: false
+    }
+  }
+];
 
 export class AgentService {
-  private readonly client: OpenAI;
   private readonly terminalSessionManager: TerminalSessionManager;
+  private readonly contextSyncService: ContextSyncService | null;
   private readonly events: AgentEventBus;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
@@ -205,31 +203,37 @@ export class AgentService {
   private readonly cancellations = new Map<string, AbortController>();
 
   constructor(
-    client: OpenAI,
     terminalSessionManager: TerminalSessionManager,
     events: AgentEventBus,
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
-    openaiDebugEnabled: boolean
+    openaiDebugEnabled: boolean,
+    contextSyncService?: ContextSyncService
   ) {
-    this.client = client;
     this.terminalSessionManager = terminalSessionManager;
+    this.contextSyncService = contextSyncService ?? null;
     this.events = events;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
     this.openaiDebugEnabled = openaiDebugEnabled;
     this.defaultReasoningEffort = config.agentReasoningEffortDefault;
-    this.supportsReasoningNone = this.detectReasoningNoneSupport(config.openaiModel);
-    if (!config.openaiApiKey) {
-      throw new Error("OPENAI_API_KEY is required to run the agent");
-    }
+    this.supportsReasoningNone = this.detectReasoningNoneSupport(config.defaultModel);
   }
 
   async startUserMessage(
     threadId: string,
-    options?: { reasoningEffort?: ReasoningEffortSetting | null }
+    options?: {
+      model?: string | null;
+      reasoningEffort?: ReasoningEffortSetting | null;
+    }
   ): Promise<{ sessionId: string }> {
     const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
+    const model = options?.model ?? config.defaultModel;
+
+    // Clear old agent events (especially `final`) so new SSE connections
+    // don't receive stale events from previous runs
+    this.events.clearBuffer(threadId);
+
     // Get or create terminal session for this thread
     const session = await this.getOrCreateSession(threadId);
     const controller = new AbortController();
@@ -237,6 +241,7 @@ export class AgentService {
     void this.runAgentFlow({
       threadId,
       sessionId: session.sessionId,
+      model,
       reasoningEffort: requestedEffort,
       controller
     }).catch((err) => {
@@ -248,23 +253,25 @@ export class AgentService {
   private async runAgentFlow({
     threadId,
     sessionId,
+    model,
     reasoningEffort,
     controller
   }: {
     threadId: string;
     sessionId: string;
+    model: string;
     reasoningEffort: ReasoningEffortSetting;
     controller: AbortController;
   }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
-    this.debug("Starting agent run", { threadId, sessionId, entries: conversation.length, reasoningEffort });
+    this.debug("Starting agent run", { threadId, sessionId, model, entries: conversation.length, reasoningEffort });
     try {
       let steps = 0;
       while (steps < config.agentMaxSteps) {
         if (controller.signal.aborted) {
           throw new Error("agent_canceled");
         }
-        const response = await this.invokeModel(conversation, reasoningEffort, controller.signal);
+        const response = await this.invokeModel(conversation, model, reasoningEffort, controller.signal);
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           const callMeta = { input: toolCall.input ?? "" };
@@ -285,19 +292,33 @@ export class AgentService {
             callId: toolCall.callId
           });
 
+          // Add assistant message with tool_use
           conversation.push({
-            type: "function_call",
-            call_id: toolCall.callId,
-            name: this.toolNameForConversation(toolCall.tool),
-            arguments: JSON.stringify(callMeta)
+            role: "assistant",
+            content: [{
+              type: "tool_use",
+              id: toolCall.callId,
+              name: this.toolNameForConversation(toolCall.tool),
+              input: callMeta
+            }]
           });
 
           const result = await this.executeTerminalCall(threadId, toolCall);
           const toolPayload = await this.recordTerminalToolMessage(threadId, toolCall, result);
+
+          // Refresh snapshot after terminal.run so context sync has accurate state
+          if (toolCall.tool === "terminal.run" && this.contextSyncService) {
+            await this.contextSyncService.refreshSnapshot(sessionId);
+          }
+
+          // Add user message with tool_result
           conversation.push({
-            type: "function_call_output",
-            call_id: toolCall.callId,
-            output: JSON.stringify(toolPayload)
+            role: "user",
+            content: [{
+              type: "tool_result",
+              tool_use_id: toolCall.callId,
+              content: JSON.stringify(toolPayload)
+            }]
           });
           this.events.emit(threadId, {
             event: "agent.tool_result",
@@ -385,22 +406,17 @@ export class AgentService {
   }
 
   private createMessageInput(
-    role: "system" | "user" | "assistant" | "developer",
+    role: "system" | "user" | "assistant",
     text: string
-  ): InputItem {
-    const content =
-      role === "assistant"
-        ? [{ type: "output_text", text }]
-        : [{ type: "input_text", text }];
+  ): CanonicalMessage {
     return {
-      type: "message",
       role,
-      content
+      content: [{ type: "text", text }]
     };
   }
 
-  private async buildConversation(threadId: string): Promise<InputItem[]> {
-    const items: InputItem[] = [this.createMessageInput("system", SYSTEM_PROMPT)];
+  private async buildConversation(threadId: string): Promise<CanonicalMessage[]> {
+    const messages: CanonicalMessage[] = [this.createMessageInput("system", SYSTEM_PROMPT)];
     const rows = await db
       .select({
         role: messageTable.role,
@@ -425,39 +441,40 @@ export class AgentService {
               ? payload.call_id
               : `tool_${ulid()}`;
           const toolName = typeof payload.tool === "string" ? payload.tool : null;
+
+          let toolInput: Record<string, unknown> = {};
           if (toolName === "terminal.run") {
             const input = typeof payload.input === "string" ? payload.input : null;
             if (!input) {
               throw new Error("tool payload missing input");
             }
-            items.push({
-              type: "function_call",
-              call_id: callId,
-              name: this.toolNameForConversation("terminal.run"),
-              arguments: JSON.stringify({ input })
-            });
-          } else if (toolName === "terminal.capture") {
-            items.push({
-              type: "function_call",
-              call_id: callId,
-              name: this.toolNameForConversation("terminal.capture"),
-              arguments: JSON.stringify({})
-            });
-          } else if (toolName === "terminal.interrupt") {
-            items.push({
-              type: "function_call",
-              call_id: callId,
-              name: this.toolNameForConversation("terminal.interrupt"),
-              arguments: JSON.stringify({})
-            });
+            toolInput = { input };
+          } else if (toolName === "terminal.capture" || toolName === "terminal.interrupt") {
+            toolInput = {};
           } else {
             // Skip unknown tools (legacy shell.run messages)
             continue;
           }
-          items.push({
-            type: "function_call_output",
-            call_id: callId,
-            output: raw
+
+          // Add assistant message with tool_use
+          messages.push({
+            role: "assistant",
+            content: [{
+              type: "tool_use",
+              id: callId,
+              name: this.toolNameForConversation(toolName as "terminal.run" | "terminal.capture" | "terminal.interrupt"),
+              input: toolInput
+            }]
+          });
+
+          // Add user message with tool_result
+          messages.push({
+            role: "user",
+            content: [{
+              type: "tool_result",
+              tool_use_id: callId,
+              content: raw
+            }]
           });
           continue;
         } catch {
@@ -466,7 +483,7 @@ export class AgentService {
         }
       }
       if (row.role === "assistant") {
-        items.push(this.createMessageInput(row.role, row.content));
+        messages.push(this.createMessageInput(row.role, row.content));
         continue;
       }
       if (row.role === "user") {
@@ -478,61 +495,78 @@ export class AgentService {
         const content = preferredCwd
           ? `${row.content}\n\n[Preferred CWD: ${preferredCwd}]`
           : row.content;
-        items.push(this.createMessageInput("user", content));
+        messages.push(this.createMessageInput("user", content));
+      }
+      // Handle context sync messages (stored as "system" role)
+      if (row.role === "system") {
+        // These are mid-conversation system messages from context sync
+        // Provider transformation will handle conversion for Anthropic
+        messages.push(this.createMessageInput("system", row.content));
       }
     }
-    return items;
+    return messages;
   }
 
   private async invokeModel(
-    input: InputItem[],
+    messages: CanonicalMessage[],
+    model: string,
     reasoningEffort: ReasoningEffortSetting,
     signal?: AbortSignal
-  ): Promise<OpenAIResponse> {
-    const last = input.at(-1);
-    const lastRole = last && "type" in last && last?.type === "message" ? last.role : "n/a";
-    this.debug("Calling OpenAI Responses", {
-      entries: input.length,
+  ): Promise<CanonicalResponse> {
+    const last = messages.at(-1);
+    const lastRole = last?.role ?? "n/a";
+    this.debug("Calling LLM via provider", {
+      entries: messages.length,
       lastRole,
-      reasoningEffort
+      reasoningEffort,
+      model
     });
-    const response = await this.client.responses.create(
-      {
-        model: config.openaiModel,
-        input,
-        tools: [TERMINAL_RUN_TOOL, TERMINAL_INTERRUPT_TOOL, TERMINAL_CAPTURE_TOOL],
-        tool_choice: "auto",
-        max_output_tokens: config.agentMaxOutputTokens,
-        reasoning: { effort: reasoningEffort },
-        text: { format: { type: "json_object" } }
-      },
-      signal ? { signal } : undefined
+
+    const provider = providerRegistry.getProviderForModel(model);
+    // Resolve alias to actual model ID (e.g., "claude-opus" -> "claude-opus-4-5-20251101")
+    const resolvedModel = providerRegistry.resolveModelAlias(model);
+
+    // Build reasoning config - "none" means disabled
+    const reasoning = reasoningEffort === "none"
+      ? { enabled: false }
+      : { enabled: true, effort: reasoningEffort as "low" | "medium" | "high" };
+
+    const modelConfig: ModelConfig = {
+      model: resolvedModel,
+      maxOutputTokens: config.agentMaxOutputTokens,
+      reasoning,
+      responseFormat: "json"
+    };
+
+    const response = await provider.invokeSync!(
+      messages,
+      CANONICAL_TOOLS,
+      modelConfig,
+      signal
     );
-    const outputItems =
-      (response as { output?: Array<{ type?: string }> }).output ?? [];
-    this.debug("OpenAI response received", {
+
+    this.debug("LLM response received", {
       responseId: response.id,
-      outputTypes: outputItems.map((item) => item.type ?? "unknown")
+      stopReason: response.stopReason,
+      toolCallCount: response.toolCalls?.length ?? 0
     });
-    this.debugOpenAIResponse(response);
+    this.debugCanonicalResponse(response);
     return response;
   }
 
-  private parseResponse(response: OpenAIResponse): Extract<AgentDirective, { type: "final" }> {
-    const status = (response as { status?: string }).status;
-    const incompleteReason = (response as { incomplete_details?: { reason?: string } }).incomplete_details
-      ?.reason;
-    if (status === "incomplete") {
-      throw new Error(
-        `model response incomplete: ${incompleteReason ?? "unknown reason"}`
-      );
+  private parseResponse(response: CanonicalResponse): Extract<AgentDirective, { type: "final" }> {
+    // Check for incomplete responses
+    if (response.stopReason === "max_tokens") {
+      throw new Error("model response incomplete: max_tokens reached");
     }
 
-    const aggregated = Array.isArray(response.output_text)
-      ? response.output_text.join("\n")
-      : typeof response.output_text === "string"
-        ? response.output_text
-        : "";
+    // Extract text content from the response
+    const textBlocks = response.content.filter(
+      (block): block is Extract<CanonicalContentBlock, { type: "text" }> =>
+        block.type === "text"
+    );
+    const aggregated = textBlocks.map((b) => b.text).join("\n");
+
     if (!aggregated) {
       throw new Error("model returned no text or tool call");
     }
@@ -610,65 +644,46 @@ export class AgentService {
     return !requiresReasoning;
   }
 
-  private extractFunctionCall(response: OpenAIResponse): Extract<AgentDirective, { type: "tool_call" }> | null {
-    const items = (response as { output?: Array<Record<string, unknown>> }).output;
-    if (!Array.isArray(items)) {
+  private extractFunctionCall(response: CanonicalResponse): Extract<AgentDirective, { type: "tool_call" }> | null {
+    const toolCalls = response.toolCalls;
+    if (!toolCalls || toolCalls.length === 0) {
       return null;
     }
-    for (const item of items) {
-      const toolItem = item as {
-        type?: string;
-        name?: string;
-        arguments?: string;
-        call_id?: string;
-        id?: string;
-      };
-      if (toolItem?.type === "function_call") {
-        const args = this.safeParseArgs(toolItem.arguments);
-        const callId = typeof toolItem.call_id === "string" ? toolItem.call_id : toolItem.id ?? ulid();
-        switch (toolItem.name) {
-          case "terminal_run":
-            if (!args.input || typeof args.input !== "string") {
-              throw new Error("function_call missing input argument");
-            }
-            return {
-              type: "tool_call",
-              tool: "terminal.run",
-              input: args.input,
-              timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
-              callId
-            };
-          case "terminal_interrupt":
-            return {
-              type: "tool_call",
-              tool: "terminal.interrupt",
-              callId
-            };
-          case "terminal_capture":
-            return {
-              type: "tool_call",
-              tool: "terminal.capture",
-              wait: args.wait === true,
-              lines: typeof args.lines === "number" ? args.lines : undefined,
-              timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
-              callId
-            };
-          default:
-            break;
-        }
-      }
-    }
-    return null;
-  }
 
-  private safeParseArgs(raw?: string) {
-    if (!raw) {
-      return {};
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      throw new Error("failed to parse tool call arguments");
+    // Process the first tool call
+    const toolCall = toolCalls[0];
+    const args = toolCall.input;
+    const callId = toolCall.id;
+
+    switch (toolCall.name) {
+      case "terminal_run":
+        if (!args.input || typeof args.input !== "string") {
+          throw new Error("function_call missing input argument");
+        }
+        return {
+          type: "tool_call",
+          tool: "terminal.run",
+          input: args.input,
+          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
+          callId
+        };
+      case "terminal_interrupt":
+        return {
+          type: "tool_call",
+          tool: "terminal.interrupt",
+          callId
+        };
+      case "terminal_capture":
+        return {
+          type: "tool_call",
+          tool: "terminal.capture",
+          wait: args.wait === true,
+          lines: typeof args.lines === "number" ? args.lines : undefined,
+          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
+          callId
+        };
+      default:
+        return null;
     }
   }
 
@@ -1089,17 +1104,17 @@ export class AgentService {
     this.logger.info({ ...meta, component: "agent" }, message);
   }
 
-  private debugOpenAIResponse(response: OpenAIResponse) {
+  private debugCanonicalResponse(response: CanonicalResponse) {
     if (!this.openaiDebugEnabled) {
       return;
     }
     try {
       const serialized = JSON.stringify(response, null, 2);
-      this.logger.info({ component: "agent", openai_response: serialized }, "OpenAI response payload");
+      this.logger.info({ component: "agent", llm_response: serialized }, "LLM response payload");
     } catch (err) {
       this.logger.warn(
         { err, component: "agent" },
-        "Failed to serialize OpenAI response for debug logging"
+        "Failed to serialize LLM response for debug logging"
       );
     }
   }
@@ -1110,5 +1125,13 @@ export class AgentService {
       controller.abort();
       this.cancellations.delete(threadId);
     }
+  }
+
+  /**
+   * Check if a thread has an active agent run.
+   * Used by ContextSyncService to skip sync if agent is streaming.
+   */
+  isThreadActive(threadId: string): boolean {
+    return this.cancellations.has(threadId);
   }
 }
