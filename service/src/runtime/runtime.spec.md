@@ -74,6 +74,7 @@ Thread-scoped terminal session management using tmux (~800 lines).
 - `lastOffsets` - Map of sessionId → last known byte offset
 - `pendingCommands` - Map of sessionId → PendingCommand (for REPL context)
 - `pendingCaptures` - Map of requestId → { resolve, reject, timeout }
+- `pendingRuns` - Map of requestId → { resolve, reject, timeout } (for terminal_run)
 
 **Key Methods**:
 
@@ -87,12 +88,15 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `sendInterrupt(sessionId)` | Send Ctrl+C |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
 | `closeSession(sessionId, reason)` | Close session |
-| `capture(sessionId, options)` | Execute capture-pane |
+| `capturePane(sessionId, options)` | Execute capture-pane |
+| `runCommand(sessionId, input, options)` | Request-response command execution |
 | `tailOutput(sessionId, bytes, options)` | Get recent output from DB |
-| `handleStatus(sessionId, state, info)` | Bud reports session state |
-| `handleOutput(sessionId, seq, dataB64, byteOffset)` | Store and broadcast output |
-| `handleReady(sessionId, assessment)` | Readiness assessment received |
+| `setPendingCommand(sessionId, command)` | Track REPL program execution |
+| `handleTerminalStatus(sessionId, payload)` | Bud reports session state |
+| `handleTerminalOutput(sessionId, payload)` | Store and broadcast output |
+| `handleTerminalReady(sessionId, assessment)` | Readiness assessment received |
 | `handleCaptureResponse(sessionId, payload)` | Capture result received |
+| `handleRunResult(sessionId, payload)` | Run command result received |
 | `startIdleChecks()` / `stopIdleChecks()` | Periodic idle session cleanup |
 
 **Session States**:
@@ -113,6 +117,18 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 2. Bud executes `tmux capture-pane`
 3. Bud sends `terminal_capture_response` with matching `request_id`
 4. Promise resolves with capture result
+
+**Run Protocol** (request-response for terminal.run):
+
+1. Service sends `terminal_run` with `request_id`, `input`, `mode`
+2. Bud sends input to tmux
+3. Bud waits for readiness:
+   - Shell mode: quiescence-based (watches log file for quiet period)
+   - REPL mode: activity-based (compares capture-pane hashes)
+4. Bud sends `terminal_run_result` with output, readiness assessment
+5. Promise resolves with `RunResult`
+
+This pattern replaces the previous approach of `sendInput` + `waitForReadiness` + `tailOutput`, providing cleaner ownership boundaries where Bud handles all terminal state.
 
 ## Dependencies
 

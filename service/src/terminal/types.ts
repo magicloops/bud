@@ -125,6 +125,21 @@ export interface TerminalReadyMessage extends TerminalEnvelope {
   last_line: string;
 }
 
+/**
+ * Request-response pattern for terminal.run tool.
+ * Bud waits for readiness and returns output directly.
+ */
+export interface TerminalRunResultMessage extends TerminalEnvelope {
+  type: "terminal_run_result";
+  session_id: string;
+  request_id: string;
+  output: string; // base64
+  output_bytes: number;
+  truncated: boolean;
+  readiness: ReadinessAssessment;
+  error: string | null;
+}
+
 // Command stack tracking types
 
 export interface PendingCommand {

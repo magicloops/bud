@@ -6,7 +6,8 @@ import { db } from "../db/client.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
 import { AgentEventBus } from "../runtime/event-bus.js";
-import type { ReadinessHints } from "../terminal/types.js";
+import type { ReadinessHints, PendingCommand } from "../terminal/types.js";
+import { isKnownReplProgram } from "../terminal/known-programs.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import {
@@ -808,105 +809,71 @@ export class AgentService {
       }
     }
 
-    // terminal.run
-    const offsetBeforeInput = this.terminalSessionManager.getLastOffset(sessionId);
-    this.debug("terminal.run capturing offset before input", { sessionId, offsetBeforeInput });
-
+    // terminal.run - use new request-response pattern
     const input = directive.input ?? "";
-    const sent = await this.terminalSessionManager.sendInput(
-      sessionId,
-      Buffer.from(input, "utf-8"),
-      { source: "agent" }
-    );
-    if (!sent.ok) {
-      throw new Error(sent.error ?? "terminal_input_failed");
-    }
 
-    const readiness = await this.terminalSessionManager.waitForReadiness(
-      sessionId,
-      directive.timeoutMs ?? 5000
-    );
-    const offsetAfterReadiness = this.terminalSessionManager.getLastOffset(sessionId);
-
-    this.debug("terminal.run after readiness", {
-      sessionId,
-      offsetBeforeInput,
-      offsetAfterReadiness,
-      offsetDelta: offsetAfterReadiness - offsetBeforeInput
-    });
-
-    // Get output based on context mode
-    const context = getContext();
-    let decoded: string;
-    let outputBytes: number;
-    let truncated: boolean;
-
-    if (context.mode === "repl") {
-      this.debug("terminal.run using capture-pane for REPL context", {
-        sessionId,
-        program: context.program
-      });
-
-      try {
-        const capture = await this.terminalSessionManager.capturePane(sessionId, {
-          startLine: -50,
-          joinLines: true
+    // Track command if launching a known REPL
+    if (input.includes("\n")) {
+      const command = this.parseCommandFromInput(input);
+      if (command && isKnownReplProgram(command)) {
+        this.terminalSessionManager.setPendingCommand(sessionId, {
+          input,
+          command,
+          sentAt: Date.now(),
+          source: "agent"
         });
-        this.logTerminalOutput("terminal.run (REPL)", capture.output);
-        decoded = capture.output;
-        outputBytes = capture.outputBytes;
-        truncated = false;
-      } catch (err) {
-        this.logger.warn(
-          { sessionId, err, component: "agent_terminal" },
-          "capture-pane failed, falling back to pipe-pane"
-        );
-        const tail = await this.terminalSessionManager.tailOutput(
-          sessionId,
-          config.terminalOutputBackfillBytes,
-          { sinceOffset: offsetBeforeInput }
-        );
-        decoded = this.decodeTail(tail.data);
-        outputBytes = tail.totalBytes;
-        truncated = tail.data.length < tail.totalBytes;
       }
-    } else {
-      const tail = await this.terminalSessionManager.tailOutput(
-        sessionId,
-        config.terminalOutputBackfillBytes,
-        { sinceOffset: offsetBeforeInput }
-      );
-      decoded = this.decodeTail(tail.data);
-      outputBytes = tail.totalBytes;
-      truncated = tail.data.length < tail.totalBytes;
     }
 
-    this.debug("terminal.run received output", {
+    // Determine mode based on current context
+    const context = getContext();
+    const mode = context.mode === "repl" ? "repl" : "shell";
+
+    this.debug("terminal.run using request-response", {
       sessionId,
-      offsetBeforeInput,
-      mode: context.mode,
-      program: context.program,
-      outputBytes,
-      decodedLength: decoded.length,
-      decodedPreview: decoded.slice(0, 300).replace(/\n/g, "\\n")
+      mode,
+      inputLength: input.length,
+      program: context.program
     });
 
-    const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
-      ready: true,
-      confidence: 0.5,
-      trigger: "quiescence",
-      hints: DEFAULT_READINESS_HINTS
-    });
-    this.logReadinessDecision(directive.tool, finalReadiness);
+    try {
+      // Single request-response call - output comes directly from Bud
+      const result = await this.terminalSessionManager.runCommand(
+        sessionId,
+        Buffer.from(input, "utf-8"),
+        { mode, timeoutMs: directive.timeoutMs ?? 30000 }
+      );
 
-    return {
-      output: decoded,
-      outputBytes,
-      readiness: finalReadiness,
-      truncated,
-      omittedLines: 0,
-      context
-    };
+      // Strip ANSI and normalize
+      const cleanOutput = this.stripAnsi(result.output);
+      const normalizedOutput = this.normalizeCRLF(cleanOutput);
+
+      this.logTerminalOutput("terminal.run", normalizedOutput);
+
+      const finalReadiness: Record<string, unknown> = this.normalizeReadiness(result.readiness, {
+        ready: true,
+        confidence: 0.5,
+        trigger: "quiescence",
+        hints: DEFAULT_READINESS_HINTS
+      });
+      this.logReadinessDecision(directive.tool, finalReadiness);
+
+      return {
+        output: normalizedOutput,
+        outputBytes: result.outputBytes,
+        readiness: finalReadiness,
+        truncated: result.truncated,
+        omittedLines: 0,
+        context: getContext() // Refresh context after command
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        { sessionId, error: message, component: "agent_terminal" },
+        "terminal.run failed"
+      );
+      throw err;
+    }
   }
 
   private logReadinessDecision(tool: string, readiness: Record<string, unknown>): void {
@@ -1147,5 +1114,17 @@ export class AgentService {
    */
   isThreadActive(threadId: string): boolean {
     return this.cancellations.has(threadId);
+  }
+
+  /**
+   * Parse the command name from terminal input.
+   */
+  private parseCommandFromInput(input: string): string | null {
+    const trimmed = input.replace(/[\r\n]+$/, "").trim();
+    if (!trimmed) return null;
+    const firstWord = trimmed.split(/\s+/)[0];
+    if (!firstWord) return null;
+    const basename = firstWord.split("/").pop() || firstWord;
+    return basename.replace(/^\.\//, "");
   }
 }

@@ -353,6 +353,33 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "reason": "requested", "ext": {} }
   ```
 
+* `terminal_capture` — capture terminal screen via tmux capture-pane
+  ```json
+  { "proto": "0.2", "type": "terminal_capture", "id": "...", "ts": 1731,
+    "session_id": "sess_01...",
+    "request_id": "cap_01...",
+    "options": { "start_line": -200, "end_line": null, "escape_sequences": false, "join_lines": true },
+    "ext": {} }
+  ```
+
+* `terminal_run` — run command and get output (request-response pattern for agent)
+  ```json
+  { "proto": "0.2", "type": "terminal_run", "id": "...", "ts": 1731,
+    "session_id": "sess_01...",
+    "request_id": "run_01...",
+    "input": "base64-encoded-input",
+    "mode": "shell",
+    "timeout_ms": 30000,
+    "ext": {} }
+  ```
+
+  **Fields:**
+  * `session_id`: target terminal session ID
+  * `request_id`: unique ID for response correlation
+  * `input`: base64-encoded input to send to terminal
+  * `mode`: `"shell"` (quiescence-based) or `"repl"` (activity-based)
+  * `timeout_ms`: max wait time for readiness (default: 30000)
+
 #### 4.4.2 Bud → Backend Messages
 
 * `terminal_status` — current terminal state
@@ -394,9 +421,61 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   **Readiness Assessment Fields:**
   * `ready`: boolean — terminal is ready for next input
   * `confidence`: 0.0–1.0 — confidence level (≥0.8 high, 0.5–0.8 medium, <0.5 low)
-  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt`
+  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt` | `activity_stable`
   * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
   * `hints`: object of boolean flags for agent decision-making
+
+* `terminal_capture_response` — response to terminal_capture request
+  ```json
+  { "proto": "0.2", "type": "terminal_capture_response", "id": "...", "ts": 1731,
+    "session_id": "sess_01...",
+    "request_id": "cap_01...",
+    "output": "base64-encoded-screen-content",
+    "output_bytes": 4096,
+    "lines_captured": 50,
+    "error": null,
+    "ext": {} }
+  ```
+
+* `terminal_run_result` — response to terminal_run request (request-response pattern)
+  ```json
+  { "proto": "0.2", "type": "terminal_run_result", "id": "...", "ts": 1731,
+    "session_id": "sess_01...",
+    "request_id": "run_01...",
+    "output": "base64-encoded-command-output",
+    "output_bytes": 1234,
+    "truncated": false,
+    "readiness": {
+      "ready": true,
+      "confidence": 0.95,
+      "trigger": "prompt_detected",
+      "prompt_type": "shell",
+      "hints": {
+        "looks_like_prompt": true,
+        "looks_like_confirmation": false,
+        "looks_like_password": false,
+        "looks_like_pager": false,
+        "looks_like_error": false,
+        "may_still_be_processing": false
+      },
+      "quiet_for_ms": 1500
+    },
+    "error": null,
+    "ext": {} }
+  ```
+
+  **Fields:**
+  * `session_id`: terminal session ID
+  * `request_id`: matches the request for correlation
+  * `output`: base64-encoded command output
+  * `output_bytes`: size of output in bytes
+  * `truncated`: true if output exceeded max size (64KB)
+  * `readiness`: readiness assessment (same as terminal_ready)
+  * `error`: error message if failed, null otherwise
+
+  **Mode-specific behavior:**
+  * `"shell"` mode: reads output from pipe-pane log file, uses quiescence-based detection
+  * `"repl"` mode: captures screen via tmux capture-pane, uses activity-based detection
 
 #### 4.4.3 Terminal SSE Events (Backend → Browser)
 

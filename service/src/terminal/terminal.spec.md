@@ -44,6 +44,7 @@ export type TerminalReadyTrigger =
 | `TerminalStatusMessage` | ← Bud | Session state report |
 | `TerminalOutputMessage` | ← Bud | Output chunk with byte offset |
 | `TerminalReadyMessage` | ← Bud | Readiness assessment |
+| `TerminalRunResultMessage` | ← Bud | Run command result (request-response) |
 
 **Readiness Types**:
 
@@ -66,6 +67,21 @@ export interface ReadinessAssessment {
   quiet_for_ms?: number;
   activity_checks?: number;  // For activity-based detection
   stable_checks?: number;
+}
+```
+
+**Run Result Type** (request-response for terminal.run):
+
+```typescript
+export interface TerminalRunResultMessage extends TerminalEnvelope {
+  type: "terminal_run_result";
+  session_id: string;
+  request_id: string;
+  output: string;           // base64-encoded command output
+  output_bytes: number;
+  truncated: boolean;       // true if output exceeded 64KB
+  readiness: ReadinessAssessment;
+  error: string | null;
 }
 ```
 

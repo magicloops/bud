@@ -96,6 +96,25 @@ type CaptureResponsePayload = {
   error: string | null;
 };
 
+// Result of a terminal_run operation (request-response pattern)
+export type RunResult = {
+  output: string; // Decoded UTF-8 string
+  outputBytes: number;
+  truncated: boolean;
+  readiness: ReadinessAssessment;
+  error?: string;
+};
+
+// Payload for run result from Bud
+type RunResultPayload = {
+  requestId: string;
+  output: string; // Base64
+  outputBytes: number;
+  truncated: boolean;
+  readiness: ReadinessAssessment;
+  error: string | null;
+};
+
 // Timeout for clearing stale pending commands (30 minutes)
 const STALE_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -111,6 +130,14 @@ export class TerminalSessionManager {
     string,
     {
       resolve: (result: CaptureResult) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
+  private readonly pendingRuns = new Map<
+    string,
+    {
+      resolve: (result: RunResult) => void;
       reject: (error: Error) => void;
       timeout: ReturnType<typeof setTimeout>;
     }
@@ -617,6 +644,51 @@ export class TerminalSessionManager {
     });
   }
 
+  /**
+   * Handle terminal_run_result from Bud (request-response pattern).
+   */
+  handleRunResult(sessionId: string, payload: RunResultPayload): void {
+    const pending = this.pendingRuns.get(payload.requestId);
+    if (!pending) {
+      this.logger.warn(
+        { sessionId, requestId: payload.requestId, component: "terminal_session_manager" },
+        "Orphaned run result"
+      );
+      return;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingRuns.delete(payload.requestId);
+
+    if (payload.error) {
+      pending.reject(new Error(payload.error));
+      return;
+    }
+
+    // Decode base64 output
+    const buffer = Buffer.from(payload.output, "base64");
+    const output = buffer.toString("utf-8");
+
+    this.logger.info(
+      {
+        sessionId,
+        requestId: payload.requestId,
+        outputBytes: payload.outputBytes,
+        truncated: payload.truncated,
+        readiness: payload.readiness,
+        component: "terminal_session_manager"
+      },
+      "Run result received"
+    );
+
+    pending.resolve({
+      output,
+      outputBytes: payload.outputBytes,
+      truncated: payload.truncated,
+      readiness: payload.readiness
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Context & Readiness
   // ─────────────────────────────────────────────────────────────────────────
@@ -835,6 +907,74 @@ export class TerminalSessionManager {
       }, timeoutMs);
 
       this.pendingCaptures.set(requestId, { resolve, reject, timeout });
+    });
+  }
+
+  /**
+   * Run a command and get output directly from Bud (request-response pattern).
+   * This is the new clean approach that replaces sendInput + waitForReadiness + tailOutput.
+   */
+  async runCommand(
+    sessionId: string,
+    input: Buffer,
+    options: {
+      mode?: "shell" | "repl";
+      timeoutMs?: number;
+    } = {}
+  ): Promise<RunResult> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      throw new Error("session_not_found");
+    }
+
+    const requestId = `run_${ulid()}`;
+    const timeoutMs = options.timeoutMs ?? 30000;
+    const mode = options.mode ?? "shell";
+
+    const payload = {
+      proto: TERMINAL_PROTO_VERSION,
+      type: "terminal_run",
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
+      session_id: sessionId,
+      request_id: requestId,
+      input: input.toString("base64"),
+      mode,
+      timeout_ms: timeoutMs
+    };
+
+    const sent = sendFrameToBud(session.budId, payload);
+    if (!sent) {
+      throw new Error("bud_offline");
+    }
+
+    this.logger.info(
+      { sessionId, requestId, mode, inputBytes: input.length, component: "terminal_session_manager" },
+      "Sending terminal_run request"
+    );
+
+    return new Promise((resolve, reject) => {
+      // Add buffer to timeout (network + processing overhead)
+      const timeout = setTimeout(() => {
+        this.pendingRuns.delete(requestId);
+        reject(new Error("run_timeout"));
+      }, timeoutMs + 10000);
+
+      this.pendingRuns.set(requestId, { resolve, reject, timeout });
+    });
+  }
+
+  /**
+   * Set pending command tracking for a session.
+   * Called by AgentService when launching known REPL programs.
+   */
+  setPendingCommand(sessionId: string, command: PendingCommand): void {
+    this.pendingCommands.set(sessionId, command);
+    this.debug("tracking pending command", {
+      sessionId,
+      command: command.command,
+      source: command.source
     });
   }
 

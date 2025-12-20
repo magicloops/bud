@@ -128,6 +128,26 @@ const TerminalCaptureResponseSchema = TerminalEnvelopeSchema.extend({
   error: z.string().nullable()
 });
 
+const TerminalRunResultSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_run_result"),
+  session_id: z.string(),
+  request_id: z.string(),
+  output: z.string(), // base64
+  output_bytes: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  readiness: z.object({
+    ready: z.boolean(),
+    confidence: z.number(),
+    trigger: z.string(),
+    prompt_type: z.string().optional(),
+    hints: z.record(z.boolean()).optional(),
+    quiet_for_ms: z.number().optional(),
+    activity_checks: z.number().optional(),
+    stable_checks: z.number().optional()
+  }),
+  error: z.string().nullable()
+});
+
 const ErrorFrameSchema = EnvelopeSchema.extend({
   type: z.literal("error"),
   code: z.string(),
@@ -307,6 +327,9 @@ class BudConnection {
       case "terminal_capture_response":
         await this.handleTerminalCaptureResponse(parsed);
         break;
+      case "terminal_run_result":
+        await this.handleTerminalRunResult(parsed);
+        break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
         break;
@@ -445,6 +468,30 @@ class BudConnection {
       output: result.data.output,
       outputBytes: result.data.output_bytes,
       linesCaptured: result.data.lines_captured,
+      error: result.data.error
+    });
+  }
+
+  private async handleTerminalRunResult(raw: unknown): Promise<void> {
+    if (!config.terminalEnabled) {
+      return;
+    }
+    if (this.state.kind !== "connected") {
+      return;
+    }
+    const result = TerminalRunResultSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid terminal_run_result frame");
+      return;
+    }
+
+    const sessionId = result.data.session_id;
+    this.terminalSessionManager.handleRunResult(sessionId, {
+      requestId: result.data.request_id,
+      output: result.data.output,
+      outputBytes: result.data.output_bytes,
+      truncated: result.data.truncated,
+      readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });
   }
