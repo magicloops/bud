@@ -40,7 +40,6 @@ type TerminalCallResult = {
   output: string;
   outputBytes: number;
   readiness: Record<string, unknown>;
-  lastLine: string;
   truncated: boolean;
   omittedLines: number;
   context?: {
@@ -62,6 +61,15 @@ Tools:
 - {"type":"tool_call","tool":"terminal.capture","wait":true}
 - {"type":"tool_call","tool":"terminal.interrupt"}
 
+Tool Responses:
+All terminal tools return a JSON result containing:
+- output: Terminal output text (already included - no need to capture separately)
+- readiness: { ready, confidence, trigger, hints }
+- context: { mode: "shell"|"repl", program?, hints? }
+
+IMPORTANT: You do NOT need to call terminal.capture after terminal.run. The output is already in the response.
+Only use terminal.capture for: TUI apps (rendered screen), scrollback history (lines: -200), or low confidence waits (wait: true).
+
 Guidelines:
 - Include \\n to press Enter. For confirmations, send "y\\n". For single-key prompts (like q to exit pager), send just the key.
 - Check readiness from tool results to decide your next action:
@@ -75,10 +83,10 @@ Guidelines:
   - looks_like_pager: In a pager like less/more (send 'q' to exit, space to continue)
   - may_still_be_processing: Output suggests command is still running
 - Use interrupt if a command hangs or you need to stop it.
-- Use terminal.capture to get terminal screen output:
-  - Add wait:true if a command might still be running (waits for readiness first)
-  - Add lines:-200 or lines:-500 for more scrollback history
-  - Works well for TUI apps (rendered screen instead of raw byte stream)
+- terminal.capture is NOT needed after terminal.run (output is already included). Use it only for:
+  - TUI apps: Get the rendered screen layout (visual representation)
+  - Scrollback: Retrieve more history with lines:-200 or lines:-500
+  - Low confidence: If terminal.run returns confidence < 0.5, use terminal.capture with wait:true
 
 CONTEXT AWARENESS (CRITICAL):
 Tool results include a "context" field indicating what program is currently running in the terminal.
@@ -133,7 +141,7 @@ const DEFAULT_READINESS_HINTS: ReadinessHints = {
 const CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_run",
-    description: "Send input to the persistent terminal (include \\n to press Enter).",
+    description: "Send input to the terminal and receive output. Returns: terminal output, readiness assessment, and context. Include \\n to press Enter.",
     parameters: {
       type: "object",
       properties: {
@@ -163,8 +171,9 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_capture",
     description:
-      "Get terminal screen output. Use to see TUI app content, scroll through history, " +
-      "or wait for a command to finish. Returns the rendered screen (what you would see visually).",
+      "Capture terminal screen (for TUI apps, scrollback history, or waiting). " +
+      "NOT needed after terminal.run - output is already included. Use for: " +
+      "TUI apps (rendered screen), scrollback (lines: -200), or low confidence waits (wait: true).",
     parameters: {
       type: "object",
       properties: {
@@ -327,7 +336,6 @@ export class AgentService {
               output: result.output,
               output_bytes: result.outputBytes,
               readiness: result.readiness,
-              last_line: result.lastLine,
               truncated: result.truncated,
               omitted_lines: result.omittedLines
             },
@@ -739,7 +747,6 @@ export class AgentService {
         output: decoded,
         outputBytes: tail.totalBytes,
         readiness: finalReadiness,
-        lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
         truncated: tail.data.length < tail.totalBytes,
         omittedLines: 0,
         context: getContext()
@@ -787,7 +794,6 @@ export class AgentService {
           output: capture.output,
           outputBytes: capture.outputBytes,
           readiness,
-          lastLine: capture.output.trim().split(/\r?\n/).pop() ?? "",
           truncated: false,
           omittedLines: 0,
           context: getContext()
@@ -897,7 +903,6 @@ export class AgentService {
       output: decoded,
       outputBytes,
       readiness: finalReadiness,
-      lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
       truncated,
       omittedLines: 0,
       context
@@ -986,7 +991,6 @@ export class AgentService {
       output: result.output,
       output_bytes: result.outputBytes,
       readiness: result.readiness,
-      last_line: result.lastLine,
       truncated: result.truncated,
       omitted_lines: result.omittedLines,
       context: result.context
@@ -1004,18 +1008,28 @@ export class AgentService {
     return payload;
   }
 
+  // TODO: capturePane (used for REPL mode) follows a different code path - it asks
+  // the bud daemon to strip escape sequences before returning. Consider unifying
+  // the output cleaning logic between tailOutput and capturePane paths.
   private decodeTail(data: Buffer): string {
-    // If looks binary, return notice instead of raw binary.
     const text = data.toString("utf-8");
-    const nonPrintable = [...text].filter((ch) => {
+
+    // Strip ANSI escape codes FIRST, before binary detection.
+    // Raw terminal output contains ESC (0x1b) characters which would otherwise
+    // trigger false positives in the binary check.
+    const stripped = this.stripAnsi(text);
+
+    // Check for binary content on the cleaned text.
+    // If more than 8 non-printable characters remain after ANSI stripping,
+    // this is likely actual binary data (e.g., cat /bin/ls).
+    const nonPrintable = [...stripped].filter((ch) => {
       const code = ch.codePointAt(0) ?? 0;
       return code < 0x09 || (code > 0x0d && code < 0x20);
     }).length;
     if (nonPrintable > 8) {
       return "[binary output omitted]";
     }
-    // Strip ANSI escape codes for agent consumption (UI gets raw via SSE)
-    const stripped = this.stripAnsi(text);
+
     // Normalize CRLF to LF for consistent parsing
     return this.normalizeCRLF(stripped);
   }
