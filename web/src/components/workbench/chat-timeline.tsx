@@ -99,11 +99,10 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
   }, [orderedMessages])
 
   return (
-    <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
-        {orderedMessages.length === 0 && (
-          <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
-        )}
+    <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+      {orderedMessages.length === 0 && (
+        <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
+      )}
         {orderedMessages.map((message) => {
           const isUser = message.role === 'user'
           const isTool = message.role === 'tool'
@@ -275,7 +274,6 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
             </article>
           )
         })}
-      </div>
     </div>
   )
 }

@@ -60,6 +60,10 @@ Message list with auto-scroll and collapsible messages.
 
 **Type**: `ChatMessage` - Message data (id, role, displayRole, content, metadata)
 
+**Props**:
+- `messages` - Array of ChatMessage
+- `accentColor` - CSS color for user message accents
+
 **Features**:
 - Auto-scroll to bottom when new messages arrive
 - "Stick to bottom" behavior with manual scroll override
@@ -68,6 +72,25 @@ Message list with auto-scroll and collapsible messages.
 - JSON payload viewer for tool messages
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
+
+**Note**: Renders only the scrollable message area. Parent component provides the container wrapper.
+
+### `thinking-indicator.tsx`
+
+Animated "thinking" indicator shown when agent is working.
+
+**Props**:
+- `isVisible` - Controls visibility with animated enter/exit
+
+**Features**:
+- Smooth CSS transitions for enter (slide up, fade in) and exit (slide down, fade out)
+- Cycles through 12 playful words every 2 seconds: "Thinking", "Pondering", "Combobulating", etc.
+- Random starting word on each appearance
+- Delayed unmount allows exit animation to complete
+- Spinner icon with `animate-spin`
+- Text with `animate-pulse`
+
+**Usage**: Rendered as sibling to ChatTimeline, outside the scroll container, to avoid re-render coupling and scroll interference.
 
 **Message Styling by Role**:
 | Role | Avatar | Background |
