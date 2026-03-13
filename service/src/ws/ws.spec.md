@@ -47,6 +47,7 @@ Browser/Client                 Service                      Bud Daemon
 | `TerminalOutputSchema` | Terminal output chunks |
 | `TerminalReadySchema` | Readiness assessments |
 | `TerminalCaptureResponseSchema` | Capture-pane results |
+| `TerminalRunResultSchema` | Run command results (request-response pattern) |
 
 **Connection States**:
 
@@ -107,8 +108,9 @@ interface SessionTracker {
 | `run_finished` | `runManager.handleRunFinished()` |
 | `terminal_status` | `terminalSessionManager.handleStatus()` |
 | `terminal_output` | `terminalSessionManager.handleOutput()` |
-| `terminal_ready` | `terminalSessionManager.handleReady()` |
+| `terminal_ready` | `terminalSessionManager.handleTerminalReady()` |
 | `terminal_capture_response` | `terminalSessionManager.handleCaptureResponse()` |
+| `terminal_run_result` | `terminalSessionManager.handleRunResult()` |
 
 **Capabilities Tracking**:
 

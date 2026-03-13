@@ -6,7 +6,8 @@ import { db } from "../db/client.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
 import { AgentEventBus } from "../runtime/event-bus.js";
-import type { ReadinessHints } from "../terminal/types.js";
+import type { ReadinessHints, PendingCommand } from "../terminal/types.js";
+import { isKnownReplProgram } from "../terminal/known-programs.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import {
@@ -40,7 +41,6 @@ type TerminalCallResult = {
   output: string;
   outputBytes: number;
   readiness: Record<string, unknown>;
-  lastLine: string;
   truncated: boolean;
   omittedLines: number;
   context?: {
@@ -62,6 +62,15 @@ Tools:
 - {"type":"tool_call","tool":"terminal.capture","wait":true}
 - {"type":"tool_call","tool":"terminal.interrupt"}
 
+Tool Responses:
+All terminal tools return a JSON result containing:
+- output: Terminal output text (already included - no need to capture separately)
+- readiness: { ready, confidence, trigger, hints }
+- context: { mode: "shell"|"repl", program?, hints? }
+
+IMPORTANT: You do NOT need to call terminal.capture after terminal.run. The output is already in the response.
+Only use terminal.capture for: TUI apps (rendered screen), scrollback history (lines: -200), or low confidence waits (wait: true).
+
 Guidelines:
 - Include \\n to press Enter. For confirmations, send "y\\n". For single-key prompts (like q to exit pager), send just the key.
 - Check readiness from tool results to decide your next action:
@@ -75,10 +84,10 @@ Guidelines:
   - looks_like_pager: In a pager like less/more (send 'q' to exit, space to continue)
   - may_still_be_processing: Output suggests command is still running
 - Use interrupt if a command hangs or you need to stop it.
-- Use terminal.capture to get terminal screen output:
-  - Add wait:true if a command might still be running (waits for readiness first)
-  - Add lines:-200 or lines:-500 for more scrollback history
-  - Works well for TUI apps (rendered screen instead of raw byte stream)
+- terminal.capture is NOT needed after terminal.run (output is already included). Use it only for:
+  - TUI apps: Get the rendered screen layout (visual representation)
+  - Scrollback: Retrieve more history with lines:-200 or lines:-500
+  - Low confidence: If terminal.run returns confidence < 0.5, use terminal.capture with wait:true
 
 CONTEXT AWARENESS (CRITICAL):
 Tool results include a "context" field indicating what program is currently running in the terminal.
@@ -133,7 +142,7 @@ const DEFAULT_READINESS_HINTS: ReadinessHints = {
 const CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_run",
-    description: "Send input to the persistent terminal (include \\n to press Enter).",
+    description: "Send input to the terminal and receive output. Returns: terminal output, readiness assessment, and context. Include \\n to press Enter.",
     parameters: {
       type: "object",
       properties: {
@@ -163,8 +172,9 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_capture",
     description:
-      "Get terminal screen output. Use to see TUI app content, scroll through history, " +
-      "or wait for a command to finish. Returns the rendered screen (what you would see visually).",
+      "Capture terminal screen (for TUI apps, scrollback history, or waiting). " +
+      "NOT needed after terminal.run - output is already included. Use for: " +
+      "TUI apps (rendered screen), scrollback (lines: -200), or low confidence waits (wait: true).",
     parameters: {
       type: "object",
       properties: {
@@ -327,7 +337,6 @@ export class AgentService {
               output: result.output,
               output_bytes: result.outputBytes,
               readiness: result.readiness,
-              last_line: result.lastLine,
               truncated: result.truncated,
               omitted_lines: result.omittedLines
             },
@@ -739,7 +748,6 @@ export class AgentService {
         output: decoded,
         outputBytes: tail.totalBytes,
         readiness: finalReadiness,
-        lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
         truncated: tail.data.length < tail.totalBytes,
         omittedLines: 0,
         context: getContext()
@@ -787,7 +795,6 @@ export class AgentService {
           output: capture.output,
           outputBytes: capture.outputBytes,
           readiness,
-          lastLine: capture.output.trim().split(/\r?\n/).pop() ?? "",
           truncated: false,
           omittedLines: 0,
           context: getContext()
@@ -802,106 +809,71 @@ export class AgentService {
       }
     }
 
-    // terminal.run
-    const offsetBeforeInput = this.terminalSessionManager.getLastOffset(sessionId);
-    this.debug("terminal.run capturing offset before input", { sessionId, offsetBeforeInput });
-
+    // terminal.run - use new request-response pattern
     const input = directive.input ?? "";
-    const sent = await this.terminalSessionManager.sendInput(
-      sessionId,
-      Buffer.from(input, "utf-8"),
-      { source: "agent" }
-    );
-    if (!sent.ok) {
-      throw new Error(sent.error ?? "terminal_input_failed");
-    }
 
-    const readiness = await this.terminalSessionManager.waitForReadiness(
-      sessionId,
-      directive.timeoutMs ?? 5000
-    );
-    const offsetAfterReadiness = this.terminalSessionManager.getLastOffset(sessionId);
-
-    this.debug("terminal.run after readiness", {
-      sessionId,
-      offsetBeforeInput,
-      offsetAfterReadiness,
-      offsetDelta: offsetAfterReadiness - offsetBeforeInput
-    });
-
-    // Get output based on context mode
-    const context = getContext();
-    let decoded: string;
-    let outputBytes: number;
-    let truncated: boolean;
-
-    if (context.mode === "repl") {
-      this.debug("terminal.run using capture-pane for REPL context", {
-        sessionId,
-        program: context.program
-      });
-
-      try {
-        const capture = await this.terminalSessionManager.capturePane(sessionId, {
-          startLine: -50,
-          joinLines: true
+    // Track command if launching a known REPL
+    if (input.includes("\n")) {
+      const command = this.parseCommandFromInput(input);
+      if (command && isKnownReplProgram(command)) {
+        this.terminalSessionManager.setPendingCommand(sessionId, {
+          input,
+          command,
+          sentAt: Date.now(),
+          source: "agent"
         });
-        this.logTerminalOutput("terminal.run (REPL)", capture.output);
-        decoded = capture.output;
-        outputBytes = capture.outputBytes;
-        truncated = false;
-      } catch (err) {
-        this.logger.warn(
-          { sessionId, err, component: "agent_terminal" },
-          "capture-pane failed, falling back to pipe-pane"
-        );
-        const tail = await this.terminalSessionManager.tailOutput(
-          sessionId,
-          config.terminalOutputBackfillBytes,
-          { sinceOffset: offsetBeforeInput }
-        );
-        decoded = this.decodeTail(tail.data);
-        outputBytes = tail.totalBytes;
-        truncated = tail.data.length < tail.totalBytes;
       }
-    } else {
-      const tail = await this.terminalSessionManager.tailOutput(
-        sessionId,
-        config.terminalOutputBackfillBytes,
-        { sinceOffset: offsetBeforeInput }
-      );
-      decoded = this.decodeTail(tail.data);
-      outputBytes = tail.totalBytes;
-      truncated = tail.data.length < tail.totalBytes;
     }
 
-    this.debug("terminal.run received output", {
+    // Determine mode based on current context
+    const context = getContext();
+    const mode = context.mode === "repl" ? "repl" : "shell";
+
+    this.debug("terminal.run using request-response", {
       sessionId,
-      offsetBeforeInput,
-      mode: context.mode,
-      program: context.program,
-      outputBytes,
-      decodedLength: decoded.length,
-      decodedPreview: decoded.slice(0, 300).replace(/\n/g, "\\n")
+      mode,
+      inputLength: input.length,
+      program: context.program
     });
 
-    const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
-      ready: true,
-      confidence: 0.5,
-      trigger: "quiescence",
-      hints: DEFAULT_READINESS_HINTS
-    });
-    this.logReadinessDecision(directive.tool, finalReadiness);
+    try {
+      // Single request-response call - output comes directly from Bud
+      const result = await this.terminalSessionManager.runCommand(
+        sessionId,
+        Buffer.from(input, "utf-8"),
+        { mode, timeoutMs: directive.timeoutMs ?? 30000 }
+      );
 
-    return {
-      output: decoded,
-      outputBytes,
-      readiness: finalReadiness,
-      lastLine: decoded.trim().split(/\r?\n/).pop() ?? "",
-      truncated,
-      omittedLines: 0,
-      context
-    };
+      // Strip ANSI and normalize
+      const cleanOutput = this.stripAnsi(result.output);
+      const normalizedOutput = this.normalizeCRLF(cleanOutput);
+
+      this.logTerminalOutput("terminal.run", normalizedOutput);
+
+      const finalReadiness: Record<string, unknown> = this.normalizeReadiness(result.readiness, {
+        ready: true,
+        confidence: 0.5,
+        trigger: "quiescence",
+        hints: DEFAULT_READINESS_HINTS
+      });
+      this.logReadinessDecision(directive.tool, finalReadiness);
+
+      return {
+        output: normalizedOutput,
+        outputBytes: result.outputBytes,
+        readiness: finalReadiness,
+        truncated: result.truncated,
+        omittedLines: 0,
+        context: getContext() // Refresh context after command
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        { sessionId, error: message, component: "agent_terminal" },
+        "terminal.run failed"
+      );
+      throw err;
+    }
   }
 
   private logReadinessDecision(tool: string, readiness: Record<string, unknown>): void {
@@ -986,7 +958,6 @@ export class AgentService {
       output: result.output,
       output_bytes: result.outputBytes,
       readiness: result.readiness,
-      last_line: result.lastLine,
       truncated: result.truncated,
       omitted_lines: result.omittedLines,
       context: result.context
@@ -1004,18 +975,28 @@ export class AgentService {
     return payload;
   }
 
+  // TODO: capturePane (used for REPL mode) follows a different code path - it asks
+  // the bud daemon to strip escape sequences before returning. Consider unifying
+  // the output cleaning logic between tailOutput and capturePane paths.
   private decodeTail(data: Buffer): string {
-    // If looks binary, return notice instead of raw binary.
     const text = data.toString("utf-8");
-    const nonPrintable = [...text].filter((ch) => {
+
+    // Strip ANSI escape codes FIRST, before binary detection.
+    // Raw terminal output contains ESC (0x1b) characters which would otherwise
+    // trigger false positives in the binary check.
+    const stripped = this.stripAnsi(text);
+
+    // Check for binary content on the cleaned text.
+    // If more than 8 non-printable characters remain after ANSI stripping,
+    // this is likely actual binary data (e.g., cat /bin/ls).
+    const nonPrintable = [...stripped].filter((ch) => {
       const code = ch.codePointAt(0) ?? 0;
       return code < 0x09 || (code > 0x0d && code < 0x20);
     }).length;
     if (nonPrintable > 8) {
       return "[binary output omitted]";
     }
-    // Strip ANSI escape codes for agent consumption (UI gets raw via SSE)
-    const stripped = this.stripAnsi(text);
+
     // Normalize CRLF to LF for consistent parsing
     return this.normalizeCRLF(stripped);
   }
@@ -1133,5 +1114,17 @@ export class AgentService {
    */
   isThreadActive(threadId: string): boolean {
     return this.cancellations.has(threadId);
+  }
+
+  /**
+   * Parse the command name from terminal input.
+   */
+  private parseCommandFromInput(input: string): string | null {
+    const trimmed = input.replace(/[\r\n]+$/, "").trim();
+    if (!trimmed) return null;
+    const firstWord = trimmed.split(/\s+/)[0];
+    if (!firstWord) return null;
+    const basename = firstWord.split("/").pop() || firstWord;
+    return basename.replace(/^\.\//, "");
   }
 }

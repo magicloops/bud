@@ -36,6 +36,7 @@ WebSocket message frame types matching the service protocol:
 | `TerminalEnsureFrame` | ← Service | Create/verify tmux session |
 | `TerminalInputFrame` | ← Service | Send input to terminal |
 | `TerminalCaptureFrame` | ← Service | Request capture-pane output |
+| `TerminalRunFrame` | ← Service | Request-response command execution |
 | `AwaitReady` | Config | Readiness detection options |
 
 #### Run Executor (Lines 435-660)
@@ -68,6 +69,12 @@ Hash-based deduplication for `capture-pane` output:
 - **`handle_interrupt`** - Send Ctrl+C via `tmux send-keys C-c`
 - **`handle_close`** - Kill session via `tmux kill-session`
 - **`handle_capture`** - Execute `tmux capture-pane` with options
+- **`handle_run`** - Request-response pattern for agent's `terminal.run`:
+  - Sends input to tmux
+  - Waits for readiness using mode-specific detection
+  - Returns output directly in `terminal_run_result` message
+  - Shell mode: quiescence-based (reads from log file)
+  - REPL mode: activity-based (compares capture-pane hashes)
 
 **Output Streaming**:
 - Uses `tmux pipe-pane` to capture output to log file

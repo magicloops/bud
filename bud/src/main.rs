@@ -336,6 +336,20 @@ struct CaptureOptions {
     join_lines: bool,           // -J flag (join wrapped lines)
 }
 
+/// Request-response pattern for terminal.run tool
+/// Service sends input, Bud waits for readiness and returns output directly
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalRunFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    session_id: String,
+    request_id: String,
+    #[serde(rename = "input")]
+    data: String, // base64
+    mode: Option<String>, // "shell" | "repl"
+    timeout_ms: Option<u64>,
+}
+
 impl RunExecutor {
     fn new(initial_cwd: PathBuf) -> Self {
         Self {
@@ -1021,6 +1035,349 @@ impl TerminalManager {
 
         send_ws_frame(&sender, response)?;
         Ok(())
+    }
+
+    /// Handle terminal_run request (request-response pattern for terminal.run tool)
+    /// Sends input to terminal, waits for readiness, and returns output directly
+    async fn handle_run(&self, frame: TerminalRunFrame) -> Result<()> {
+        if !self.config.enabled {
+            return self.send_run_error(&frame, "terminal_disabled").await;
+        }
+
+        let session_id = &frame.session_id;
+        let request_id = &frame.request_id;
+        let mode = frame.mode.as_deref().unwrap_or("shell");
+        let timeout_ms = frame.timeout_ms.unwrap_or(30_000);
+
+        // Decode input
+        let data = BASE64_STANDARD
+            .decode(frame.data.as_bytes())
+            .map_err(|err| anyhow!("invalid terminal run input: {}", err))?;
+
+        // Get session handle
+        let handle = self.ensure_handle_for_session(session_id, None).await?;
+        let Some(handle) = handle else {
+            return self.send_run_error(&frame, "session_not_found").await;
+        };
+
+        // Get sender
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let Some(sender) = sender else {
+            warn!(
+                request_id = request_id,
+                session_id = session_id,
+                "terminal_run dropped; no sender"
+            );
+            return Ok(());
+        };
+
+        // Record starting offset (for shell mode output retrieval)
+        let start_offset = handle.offset.load(Ordering::SeqCst);
+
+        info!(
+            request_id = request_id,
+            session_id = session_id,
+            mode = mode,
+            input_bytes = data.len(),
+            start_offset = start_offset,
+            "terminal_run received"
+        );
+
+        // Send input to tmux (same logic as handle_input)
+        let input = String::from_utf8_lossy(&data).to_string();
+        let trimmed_end = input.trim_end_matches(|c| c == '\n' || c == '\r');
+        let newline_count = input.len() - trimmed_end.len();
+
+        if !trimmed_end.is_empty() {
+            let status = Command::new("tmux")
+                .args(["send-keys", "-t", &handle.session_name, "-l", trimmed_end])
+                .status()
+                .await
+                .with_context(|| "failed to dispatch tmux send-keys")?;
+            if !status.success() {
+                return self.send_run_error(&frame, "send_keys_failed").await;
+            }
+        }
+
+        for _ in 0..newline_count {
+            let status = Command::new("tmux")
+                .args(["send-keys", "-t", &handle.session_name, "Enter"])
+                .status()
+                .await?;
+            if !status.success() {
+                warn!(request_id = request_id, "tmux send-keys Enter failed");
+            }
+        }
+
+        // Wait for readiness and collect output
+        let (assessment, output, output_bytes, truncated) = if mode == "repl" {
+            // Activity-based: compare capture-pane hashes
+            self.wait_activity_and_capture(&handle, timeout_ms).await?
+        } else {
+            // Quiescence-based: watch log file
+            self.wait_quiescence_and_read(&handle, start_offset, timeout_ms).await?
+        };
+
+        // Send response
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_run_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": session_id,
+            "request_id": request_id,
+            "output": BASE64_STANDARD.encode(&output),
+            "output_bytes": output_bytes,
+            "truncated": truncated,
+            "readiness": assessment,
+            "error": Value::Null,
+        });
+        send_ws_frame(&sender, payload)?;
+
+        info!(
+            request_id = request_id,
+            session_id = session_id,
+            output_bytes = output_bytes,
+            truncated = truncated,
+            "terminal_run_result sent"
+        );
+
+        Ok(())
+    }
+
+    /// Send error response for terminal_run
+    async fn send_run_error(&self, frame: &TerminalRunFrame, error: &str) -> Result<()> {
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let Some(sender) = sender else {
+            warn!(
+                request_id = %frame.request_id,
+                error = error,
+                "terminal_run error but no sender"
+            );
+            return Ok(());
+        };
+
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_run_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": frame.session_id,
+            "request_id": frame.request_id,
+            "output": "",
+            "output_bytes": 0,
+            "truncated": false,
+            "readiness": {
+                "ready": false,
+                "confidence": 0.0,
+                "trigger": "error",
+                "hints": {}
+            },
+            "error": error,
+        });
+        send_ws_frame(&sender, payload)?;
+        Ok(())
+    }
+
+    /// Wait for quiescence (shell mode) and read output from log file
+    async fn wait_quiescence_and_read(
+        &self,
+        handle: &Arc<TerminalHandle>,
+        start_offset: u64,
+        timeout_ms: u64,
+    ) -> Result<(serde_json::Value, Vec<u8>, usize, bool)> {
+        const MAX_OUTPUT: usize = 64 * 1024; // 64KB max output
+        let quiescence_ms = 1500;
+        let start = Instant::now();
+        let mut last_change = Instant::now();
+        let mut last_size = handle.offset.load(Ordering::SeqCst);
+        let log_path = handle.log_path.clone();
+
+        // Wait for quiescence or timeout
+        loop {
+            let size = match fs::metadata(&log_path).await {
+                Ok(meta) => meta.len(),
+                Err(_) => {
+                    time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
+            if size != last_size {
+                last_change = Instant::now();
+                last_size = size;
+            }
+            if last_change.elapsed() >= Duration::from_millis(quiescence_ms)
+                || start.elapsed() >= Duration::from_millis(timeout_ms)
+            {
+                break;
+            }
+            time::sleep(Duration::from_millis(50)).await;
+        }
+
+        // Read output from start_offset to current end
+        let end_size = fs::metadata(&log_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(last_size);
+
+        let (output, truncated) =
+            self.read_log_range(&log_path, start_offset, end_size, MAX_OUTPUT)
+                .await;
+
+        let output_bytes = output.len();
+        let text = String::from_utf8_lossy(&output).to_string();
+        let last_line = text.lines().last().unwrap_or("").to_string();
+        let quiet_for_ms = last_change.elapsed().as_millis() as u64;
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+        let assessment = ReadinessDetector::assess(&text, &last_line, quiet_for_ms, elapsed_ms);
+
+        Ok((assessment, output, output_bytes, truncated))
+    }
+
+    /// Read log file from start to end, limiting to max_bytes
+    async fn read_log_range(
+        &self,
+        log_path: &Path,
+        start: u64,
+        end: u64,
+        max_bytes: usize,
+    ) -> (Vec<u8>, bool) {
+        if end <= start {
+            return (Vec::new(), false);
+        }
+
+        let total_bytes = (end - start) as usize;
+        let truncated = total_bytes > max_bytes;
+        let to_read = total_bytes.min(max_bytes);
+
+        // If truncating, read the last N bytes; otherwise read from start
+        let seek_pos = if truncated {
+            end - to_read as u64
+        } else {
+            start
+        };
+
+        let mut buf = vec![0u8; to_read];
+        if let Ok(mut file) = fs::File::open(log_path).await {
+            let _ = file.seek(SeekFrom::Start(seek_pos)).await;
+            let _ = file.read_exact(&mut buf).await;
+        }
+
+        (buf, truncated)
+    }
+
+    /// Wait for activity stability (REPL mode) and capture screen
+    async fn wait_activity_and_capture(
+        &self,
+        handle: &Arc<TerminalHandle>,
+        timeout_ms: u64,
+    ) -> Result<(serde_json::Value, Vec<u8>, usize, bool)> {
+        let interval_ms = 5000;
+        let stable_count_target = 2;
+        let initial_delay_ms = 2000;
+
+        // Initial delay
+        time::sleep(Duration::from_millis(initial_delay_ms)).await;
+
+        let start = Instant::now();
+        let mut last_hash: Option<u64> = None;
+        let mut stable_count = 0;
+        let mut check_count = 0;
+
+        loop {
+            // Check timeout
+            if start.elapsed() >= Duration::from_millis(timeout_ms) {
+                break;
+            }
+
+            // Capture pane and hash
+            let capture = self.run_capture_pane(&handle.session_name).await?;
+            let hash = self.hash_content(&capture);
+            check_count += 1;
+
+            if Some(hash) == last_hash {
+                stable_count += 1;
+                if stable_count >= stable_count_target {
+                    // Screen is stable
+                    break;
+                }
+            } else {
+                stable_count = 0;
+            }
+            last_hash = Some(hash);
+
+            time::sleep(Duration::from_millis(interval_ms)).await;
+        }
+
+        // Final capture for output
+        let capture = self.run_capture_pane(&handle.session_name).await?;
+        let output = capture.into_bytes();
+        let output_bytes = output.len();
+
+        let confidence = if stable_count >= stable_count_target {
+            0.85
+        } else {
+            0.5
+        };
+        let trigger = if stable_count >= stable_count_target {
+            "activity_stable"
+        } else {
+            "timeout"
+        };
+
+        let assessment = json!({
+            "ready": confidence >= 0.5,
+            "confidence": confidence,
+            "trigger": trigger,
+            "hints": {
+                "looks_like_prompt": false,
+                "looks_like_confirmation": false,
+                "looks_like_password": false,
+                "looks_like_pager": false,
+                "looks_like_error": false,
+                "may_still_be_processing": confidence < 0.7
+            },
+            "activity_checks": check_count,
+            "stable_checks": stable_count
+        });
+
+        Ok((assessment, output, output_bytes, false)) // capture-pane doesn't truncate
+    }
+
+    /// Run tmux capture-pane and return the output
+    async fn run_capture_pane(&self, session_name: &str) -> Result<String> {
+        let output = Command::new("tmux")
+            .args(["capture-pane", "-p", "-t", session_name])
+            .output()
+            .await
+            .with_context(|| "failed to execute tmux capture-pane")?;
+
+        if !output.status.success() {
+            bail!(
+                "tmux capture-pane failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Hash content for activity-based detection
+    fn hash_content(&self, content: &str) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        hasher.finish()
     }
 
     async fn send_status(
@@ -2120,6 +2477,10 @@ impl BudApp {
             "terminal_capture" => {
                 let frame: TerminalCaptureFrame = serde_json::from_str(text)?;
                 self.terminal_manager.handle_capture(frame).await?;
+            }
+            "terminal_run" => {
+                let frame: TerminalRunFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_run(frame).await?;
             }
             "error" => {
                 let err: ErrorFrame = serde_json::from_str(text)?;

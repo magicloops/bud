@@ -63,9 +63,10 @@ Three canonical tool definitions using standard JSON Schema format:
 | `invokeModel(messages, reasoningEffort, signal)` | Call LLM via provider's `invokeSync()` |
 | `parseResponse(response)` | Extract final directive from `CanonicalResponse` |
 | `extractFunctionCall(response)` | Extract tool calls from `response.toolCalls` |
-| `executeTerminalCall(threadId, toolCall)` | Run terminal.* tools via TerminalSessionManager |
+| `executeTerminalCall(threadId, toolCall)` | Run terminal.* tools via TerminalSessionManager (uses `runCommand()` for terminal.run) |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 | `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
+| `parseCommandFromInput(input)` | Extract command name from terminal input |
 
 **Agent Loop Flow**:
 ```

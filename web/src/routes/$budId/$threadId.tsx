@@ -14,6 +14,7 @@ import { MoreVertical, Square } from 'lucide-react'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
 import { CommandComposer, type ModelInfo } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatMessage } from '@/components/workbench/chat-timeline'
+import { ThinkingIndicator } from '@/components/workbench/thinking-indicator'
 import { DebugPanel } from '@/components/debug-panel'
 import { apiFetch, buildApiUrl, decodeTerminalData, type ApiMessage } from '@/lib/api'
 import { useLayout } from '@/contexts/layout-context'
@@ -1062,8 +1063,11 @@ function ThreadView() {
         status={status}
       />
       <div className="flex flex-1 overflow-hidden">
-        {/* Chat timeline - fixed width */}
-        <ChatTimeline messages={chatMessages} accentColor="var(--bud-accent-vibrant)" />
+        {/* Chat column - fixed width, contains timeline + thinking indicator */}
+        <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
+          <ChatTimeline messages={chatMessages} accentColor="var(--bud-accent-vibrant)" />
+          <ThinkingIndicator isVisible={status !== 'idle'} />
+        </div>
 
         {/* Terminal pane - takes remaining space with flex-1 */}
         <div className="relative flex flex-1 flex-col overflow-hidden border-l-4 border-black bg-black">
