@@ -441,10 +441,12 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
 | [docs/proto.md](./docs/proto.md) | Wire protocol specification |
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
+| [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
+| [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
 | [design/](./design/) | Design documents |
 
 ---
 
-*Last updated: 2025-12-12*
+*Last updated: 2026-03-13*
