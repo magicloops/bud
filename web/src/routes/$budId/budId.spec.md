@@ -20,7 +20,7 @@ Redirect-only route that auto-selects content based on thread availability.
 **Behavior**:
 ```typescript
 loader: async ({ params }) => {
-  const threads = await fetch(`/api/threads?bud_id=${params.budId}`)
+  const threads = await apiFetchJson(`/api/threads?bud_id=${params.budId}`)
 
   if (threads.length === 0) {
     throw redirect({ to: '/$budId/new' })
@@ -33,6 +33,7 @@ loader: async ({ params }) => {
 
 **Features**:
 - Fetches threads for the current bud
+- Inherits auth gating from parent `/$budId`
 - Redirects to most recent thread (by `last_activity_at`, fallback to `created_at`)
 - Redirects to `/new` if no threads exist
 - Error handling: throws on fetch failure (doesn't mask errors)
@@ -73,7 +74,7 @@ Main thread view with full chat and terminal functionality (~1000 lines).
 **Loader**:
 ```typescript
 loader: async ({ params }) => {
-  const messagesResp = await fetch(`/api/threads/${params.threadId}/messages?limit=200`)
+  const messages = await apiFetchJson(`/api/threads/${params.threadId}/messages?limit=200`)
   return { messages }
 }
 ```
@@ -91,17 +92,21 @@ loader: async ({ params }) => {
    - Input forwarding to `/api/threads/:id/terminal/input`
    - Resize handling via `/api/threads/:id/terminal/resize` (only when dimensions change)
    - Reconnection logic with exponential backoff
+   - Idempotent recovery helper that re-runs `terminal/ensure`, reloads terminal state, and replays stored history after reconnects
+   - Shared auth-aware EventSource creation before reconnect logic takes over
 
 3. **Agent Stream**
    - SSE connection to `/api/threads/:id/agent/stream`
    - Event handling: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`
    - Message list updates from events
+   - Shared auth-expiry detection before reconnecting
 
 4. **Connection Management**
    - Terminal connection states: connected, reconnecting, offline, disconnected
    - Automatic reconnection on SSE close
    - Heartbeat monitoring
-   - Disconnect overlay with manual reconnect
+   - Active recovery polling while the browser is stranded in reconnecting/offline
+   - Disconnect overlay during prolonged outages
 
 5. **Terminal Features**
    - Input buffering and batching
@@ -140,7 +145,7 @@ terminalOutputTruncated: boolean
 **Connection Recovery**:
 - SSE close → Start reconnect timer
 - Exponential backoff: 1s, 2s, 4s, ... up to 30s
-- On reconnect: ensure session, backfill history, resubscribe
+- On reconnect: rerun `terminal/ensure`, fetch authoritative session state, backfill history, and only then return to `connected`
 
 ## Types
 

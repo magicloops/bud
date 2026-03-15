@@ -51,13 +51,14 @@ This implementation spec turns that design into a phased build plan.
 
 ## Objective
 
-Implement production-ready authentication in five phases:
+Implement production-ready authentication in six phases:
 
 1. Better Auth foundation in the service, including persistent browser sessions.
 2. Standard web-client login flow and an auth-aware app shell.
 3. Browser-mediated Bud device claim flow with link/QR onboarding and identity continuity.
-4. Ownership stamping and authorization enforcement across Bud-owned resources.
-5. Settings, account linking, expiry handling, testing, and rollout hardening.
+4. Local-development ownership backfill for existing prototype data.
+5. Ownership stamping and authorization enforcement across Bud-owned resources.
+6. Settings, account linking, expiry handling, testing, and rollout hardening.
 
 ### Success Criteria
 
@@ -95,7 +96,8 @@ These design decisions are assumed throughout the phases:
 - Bud receives new device credentials via polling-based claim completion.
 - Device onboarding uses a short claim URL plus QR only; no separate fallback short code in v1.
 - Unauthorized resource-scoped access returns `404`; `401` is reserved for unauthenticated requests.
-- Prototype data is wiped before launch instead of being backfilled to a bootstrap user.
+- Prototype data is wiped before launch in production instead of being backfilled to a bootstrap user.
+- Local development may use a one-off ownership backfill phase to preserve prototype fixtures for Phase 5 authorization testing.
 - Production deployment standardizes on same-origin web + service, with proxied development if needed.
 
 ---
@@ -107,6 +109,7 @@ These design decisions are assumed throughout the phases:
 | 1 | [phase-1-auth-foundation.md](./phase-1-auth-foundation.md) | Better Auth mounted in service, auth DB/schema ready, request session helpers in place |
 | 2 | [phase-2-web-login-shell.md](./phase-2-web-login-shell.md) | Browser users can sign in and enter an auth-aware app shell |
 | 3 | [phase-3-device-claim-flow.md](./phase-3-device-claim-flow.md) | Bud device claim via link/QR works and preserves Bud identity on reauth |
+| 3.5 | [phase-3.5-local-dev-data-backfill.md](./phase-3.5-local-dev-data-backfill.md) | Existing local prototype data is assigned to the current dev user for Phase 4/5 testing |
 | 4 | [phase-4-ownership-enforcement.md](./phase-4-ownership-enforcement.md) | Per-user ownership is stamped and enforced across all key resources |
 | 5 | [phase-5-settings-linking-hardening.md](./phase-5-settings-linking-hardening.md) | Settings, account linking, session-expiry handling, tests, rollout readiness |
 
@@ -114,6 +117,7 @@ These design decisions are assumed throughout the phases:
 
 - Phase 1 is a hard prerequisite for every later phase.
 - Phase 2 and Phase 3 both depend on Phase 1 but can overlap partially once the auth foundation is stable.
+- Phase 3.5 is optional and local-development-only; it exists to preserve useful prototype fixtures before Phase 4 testing.
 - Phase 4 should not ship half-done; route enforcement needs to land as a coherent pass.
 - Phase 5 closes the product surface and operational gaps before launch.
 
@@ -201,7 +205,7 @@ Notes:
 | Split-origin cookie/SSE behavior causes auth bugs | High | High | Normalize fetch/EventSource helpers and prefer same-origin prod |
 | Device reauth accidentally creates duplicate Buds | Medium | High | Require stable `installation_id` and clear reuse rules |
 | Partial ownership rollout leaves data globally accessible | Medium | High | Land Phase 4 as a coherent pass, not piecemeal |
-| Historical prototype data blocks enforcement | High | Medium | Wipe prototype data before enabling ownership enforcement |
+| Historical prototype data blocks enforcement | High | Medium | Wipe prototype data before production enforcement; use the local-dev-only Phase 3.5 backfill when preserving fixtures is useful |
 | Linked-account edge cases complicate launch | Medium | Medium | Auto-link same verified-email providers, keep explicit linking as fallback, and defer unlink |
 
 ---
@@ -211,16 +215,18 @@ Notes:
 1. Land Better Auth foundation behind no-op route enforcement first.
 2. Land web login and session-aware shell.
 3. Land device claim flow and Bud identity continuity.
-4. Migrate ownership stamping and enforce authorized reads/writes.
-5. Land settings/linking UX and expiry handling.
-6. Wipe prototype data before enabling ownership enforcement.
-7. Validate end-to-end before enabling production auth as the default path.
+4. Optionally backfill existing local-development data to a known user via Phase 3.5.
+5. Migrate ownership stamping and enforce authorized reads/writes.
+6. Land settings/linking UX and expiry handling.
+7. Wipe prototype data before enabling ownership enforcement in production.
+8. Validate end-to-end before enabling production auth as the default path.
 
 ### Rollback Guidance
 
 - Phase 1 rollback: disable Better Auth route wiring and revert auth schema changes before depending phases land.
 - Phase 2 rollback: revert web auth gating and login UI; service foundation can remain dormant.
 - Phase 3 rollback: keep legacy/manual device enrollment path available until claim flow is validated.
+- Phase 3.5 rollback: restore the local dev database from backup or re-run a clean seed if the one-off backfill is no longer wanted.
 - Phase 4 rollback: do not partially revert route authz; if needed, revert the full ownership-enforcement pass together.
 - Phase 5 rollback: profile/settings UX can be reverted independently if auth core remains stable.
 
@@ -247,6 +253,7 @@ Notes:
 | 1 | Draft | Not started |
 | 2 | Draft | Not started |
 | 3 | Draft | Not started |
+| 3.5 | Draft | Not started |
 | 4 | Draft | Not started |
 | 5 | Draft | Not started |
 

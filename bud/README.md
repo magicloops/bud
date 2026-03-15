@@ -1,60 +1,76 @@
-# Bud Device Agent
+# Bud Daemon
 
-Rust daemon that connects to the backend via WSS, completes the `hello`/`hello_ack` handshake (with enrollment + challenge/response), persists identity material locally, and keeps the connection alive with periodic heartbeats. Execution and log streaming will land in the next phases of the PoC.
+Rust device daemon that connects to the service over `/ws`, maintains terminal capability state, and now bootstraps auth through the browser-mediated device-claim flow.
 
-## Development
+## Setup
 
 ```bash
+cd bud
 cargo fmt
-cargo clippy --all-targets
-cargo run -- --help
+cargo build
 ```
 
-Flags/env vars (see `src/main.rs`):
-
-- `--server` / `BUD_SERVER_URL`: backend WSS endpoint (`wss://localhost:8443/ws` default).
-- `--token` / `BUD_ENROLLMENT_TOKEN`: enrollment token for first run.
-- `--name` / `BUD_DEVICE_NAME`: friendly name shown in the UI.
-- `--default-cwd` / `BUD_DEFAULT_CWD`: default working directory for shell runs.
-- `--identity-file` / `BUD_IDENTITY_FILE`: path to `{ bud_id, device_secret }`.
-
-## Enrolling a Bud
-
-1. Seed or mint an enrollment token on the backend (e.g., `pnpm db:seed` inside `service/`).
-2. Start the backend (`pnpm dev` in `service/`).
-3. Launch Bud:
-
-   ```bash
-   cargo run -- \
-     --server ws://localhost:3000/ws \
-     --token DEV-ENROLL-0001 \
-     --name dev-box \
-     --identity-file ~/.bud/identity.json
-   ```
-
-4. On success, `~/.bud/identity.json` is written with `0600` perms and reused for future reconnects (challenge/response with `hello_challenge`/`hello_proof`). Bud sends heartbeats every 30s and transitions to `online` in the backend registry.
-
-## Running a command (Phase 3)
-
-After the Bud is online:
+Use [bud/.env.example](./.env.example) as a shell-export template:
 
 ```bash
-curl -X POST http://localhost:3000/api/runs \
-  -H "Content-Type: application/json" \
-  -d '{"bud_id":"b_dev_seed","cmd":"uname -a"}'
+cp .env.example .env
+set -a; source .env; set +a
 ```
 
-Then stream logs:
+Bud does not auto-load `.env` itself; you need to export the variables in your shell before running `cargo run`.
+
+## Important Env / Flags
+
+| Env | Flag | Purpose |
+|-----|------|---------|
+| `BUD_SERVER_URL` | `--server` | Service WebSocket URL. For local service dev: `ws://localhost:3000/ws` |
+| `BUD_DEVICE_NAME` | `--name` | Device name shown during claim and in the UI |
+| `BUD_DEFAULT_CWD` | `--cwd` | Default working directory |
+| `BUD_IDENTITY_FILE` | `--identity-file` | Path to persisted `{ bud_id, device_secret }` |
+| `BUD_TERMINAL_ENABLED` | `--terminal-enabled` | Enable terminal features |
+| `BUD_DEBUG` | `--debug` | Extra Bud logging |
+| `BUD_ENROLLMENT_TOKEN` | `--token` | Legacy/manual enrollment fallback |
+
+Bud also persists a stable non-secret installation identity at `~/.bud/installation-id` by default.
+
+## Local Run
+
+Start the service and web app first, then:
 
 ```bash
-curl -N http://localhost:3000/api/runs/<run_id>/stream
+cd bud
+set -a; source .env; set +a
+cargo run -- --terminal-enabled
 ```
 
-Bud executes the command locally, streams stdout/stderr chunks (base64) over WSS, and emits `run_finished` with the exit code. The backend persists logs to Postgres and relays human-readable chunks via SSE.
+On first run without a stored identity:
 
-## Next milestones
+1. Bud calls `/api/device-auth/start`
+2. Bud prints a claim URL and terminal QR code
+3. You open the link or scan the QR
+4. You sign in through the web flow if needed
+5. Bud polls `/api/device-auth/poll`, stores the issued `device_secret`, and reconnects over `/ws`
 
-1. Add robust cancel handling (TERM→5s→KILL of the process group) and workspace isolation per run.
-2. Enforce per-run timeouts and capture tail summaries for agent responses.
-3. Support additional tools (e.g., file upload/download) through the same registry.
-4. Harden reconnection/resume logic so in-flight runs can continue across backend restarts.
+On later runs, Bud reuses:
+
+- `~/.bud/identity.json`
+- `~/.bud/installation-id`
+
+If you delete only the identity file and keep `installation-id`, reclaiming should reuse the same Bud record.
+
+## Legacy Manual Enrollment
+
+The old token path still exists for development fallback:
+
+```bash
+cargo run -- \
+  --server ws://localhost:3000/ws \
+  --token DEV-ENROLL-0001 \
+  --name local-bud \
+  --terminal-enabled
+```
+
+## Notes
+
+- For phone/LAN testing, replace `localhost` in `BUD_SERVER_URL` with a reachable host.
+- `tmux` must be installed if terminal features are enabled.

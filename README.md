@@ -1,37 +1,104 @@
-# Bud Proof of Concept
+# Bud
 
-Bud is a deployable agent that lets users (and LLM copilots) run shell commands on remote machines through a secure backend. The proof-of-concept covers:
+Bud is a device-agent platform for AI-assisted terminal access across remote machines. The repo has three runnable packages:
 
-- **Bud** (`bud/`): Rust daemon that connects to the backend over WSS and executes commands.
-- **Service** (`service/`): Node.js/TypeScript backend providing REST, SSE, WS gateway, and the LLM agent loop.
-- **Web** (`web/`): Vite + React UI for chat threads, live logs, and cancel controls.
+- [bud/](./bud): Rust daemon that runs on the target machine
+- [service/](./service): Fastify backend with Better Auth, REST/SSE, and Bud WebSocket gateway
+- [web/](./web): React + Vite UI
 
-## Getting Started
+Start with [AGENTS.md](./AGENTS.md) for repo rules and [bud.spec.md](./bud.spec.md) for architecture.
 
-1. Read [`AGENTS.md`](AGENTS.md) for repository rules and process (plans/debug notes, invariants, testing).
-2. Review the high-level plan in [`plan/proof-of-concept.md`](plan/proof-of-concept.md) and per-phase plans in `plan/`.
-3. Follow the scaffolding plan in [`plan/phase-0-scaffolding.md`](plan/phase-0-scaffolding.md) while building out each component.
+## Prereqs
 
-Each subproject will document its own build/run steps once initialized:
+- Node `20.19+` or `22.12+` for the Vite 7 web toolchain
+- `pnpm`
+- Rust stable toolchain
+- PostgreSQL
+- `tmux` on any machine running the Bud daemon
 
-| Path | Notes |
-|------|-------|
-| `bud/` | Rust crate (`cargo`). |
-| `service/` | Node.js/TypeScript (`pnpm`, Fastify, SSE, WS gateway). |
-| `web/` | Vite + React (TypeScript, `pnpm`). |
+## Local Auth/Test Setup
 
-> Use `pnpm` for all JavaScript/TypeScript workspaces. Install dependencies with `pnpm install` inside each subproject and prefer `pnpm run <script>` for lifecycle commands.
+1. Install dependencies:
+
+```bash
+cd service && pnpm install
+cd ../web && pnpm install
+```
+
+2. Copy env templates:
+
+```bash
+cp service/.env.example service/.env
+cp web/.env.example web/.env
+cp bud/.env.example bud/.env
+```
+
+3. Fill the service auth vars in [service/.env.example](./service/.env.example):
+
+- `APP_BASE_URL`
+  For local Vite dev this is usually `http://localhost:5173`
+- `BETTER_AUTH_URL`
+  For local service dev this is usually `http://localhost:3000`
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_TRUSTED_ORIGINS`
+  Usually `http://localhost:3000,http://localhost:5173`
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+
+4. Configure OAuth callbacks:
+
+- GitHub callback: `http://localhost:3000/api/auth/callback/github`
+- Google callback: `http://localhost:3000/api/auth/callback/google`
+
+If you are testing from another machine or a phone, replace `localhost` with your LAN host everywhere: `APP_BASE_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`, the OAuth callback URLs, `VITE_API_PROXY_TARGET`, and `BUD_SERVER_URL`.
+
+5. Create the database and push schema:
+
+```bash
+createdb bud
+cd service
+pnpm db:push
+```
+
+6. Start the backend:
+
+```bash
+cd service
+pnpm dev
+```
+
+7. Start the web app:
+
+```bash
+cd web
+pnpm dev
+```
+
+8. Start the Bud daemon:
+
+```bash
+cd bud
+set -a; source .env; set +a
+cargo run -- --terminal-enabled
+```
+
+Bud should print a claim URL and QR code. Open the web app or scan the QR, sign in with GitHub or Google, approve the device, and wait for the daemon to reconnect.
+
+## Local Run Order
+
+- Terminal 1: `cd service && pnpm dev`
+- Terminal 2: `cd web && pnpm dev`
+- Terminal 3: `cd bud && set -a; source .env; set +a && cargo run -- --terminal-enabled`
+
+## Package Docs
+
+- [service/README.md](./service/README.md): backend setup, auth env, DB push, local testing
+- [web/README.md](./web/README.md): frontend env and dev server setup
+- [bud/README.md](./bud/README.md): daemon env, claim flow, and local launch
 
 ## Docs
 
-- [`docs/poc-plan.md`](docs/poc-plan.md): Pointers to scoped plans/tasks derived from the PoC roadmap.
-- [`docs/proto.md`](docs/proto.md): Source of truth for protocol/schema versions (Bud ⇄ backend, SSE events, DB).
-
-## Plans & Debug Notes
-
-- Plans live in [`plan/`](plan/) using the template in `AGENTS.md`.
-- Issues/bugs MUST have a [`debug/`](debug/) note before fixes.
-
-## License
-
-License decision is still pending (see `/plan/proof-of-concept.md §10`). Until chosen, contributions remain under the company’s copyright.
+- [docs/proto.md](./docs/proto.md): protocol shapes and versions
+- [design/](./design): design docs
+- [plan/](./plan): phased implementation plans
+- [debug/](./debug): debugging notes

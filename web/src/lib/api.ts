@@ -2,6 +2,22 @@
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined
 
+type ApiRequestInit = RequestInit & {
+  redirectOnUnauthorized?: boolean
+}
+
+export class ApiError extends Error {
+  readonly status: number
+  readonly body: unknown
+
+  constructor(message: string, status: number, body: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body
+  }
+}
+
 export const buildApiUrl = (path: string) => {
   if (apiBaseUrl) {
     return new URL(path, apiBaseUrl).toString()
@@ -9,7 +25,187 @@ export const buildApiUrl = (path: string) => {
   return path
 }
 
-export const apiFetch = (path: string, init?: RequestInit) => fetch(buildApiUrl(path), init)
+export const buildAbsoluteApiUrl = (path: string) => {
+  if (apiBaseUrl) {
+    return new URL(path, apiBaseUrl).toString()
+  }
+  if (typeof window !== 'undefined') {
+    return new URL(path, window.location.origin).toString()
+  }
+  return new URL(path, 'http://localhost').toString()
+}
+
+export const normalizeAppRedirectPath = (value: string | null | undefined) => {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) {
+    return '/'
+  }
+  return value
+}
+
+export const getCurrentAppPath = () => {
+  if (typeof window === 'undefined') {
+    return '/'
+  }
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`
+}
+
+export const getLoginRedirectValue = (pathname: string, search = '', hash = '') =>
+  normalizeAppRedirectPath(`${pathname}${search}${hash}`)
+
+export const buildLoginUrl = (returnTo = getCurrentAppPath()) => {
+  const loginUrl = new URL('/login', window.location.origin)
+  loginUrl.searchParams.set('redirect', normalizeAppRedirectPath(returnTo))
+  return loginUrl.toString()
+}
+
+export const redirectToLogin = (returnTo = getCurrentAppPath()) => {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.location.assign(buildLoginUrl(returnTo))
+}
+
+const readErrorBody = async (response: Response) => {
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) {
+    return response.json().catch(() => null)
+  }
+
+  const text = await response.text().catch(() => '')
+  return text || null
+}
+
+const shouldUseEventSourceCredentials = () => {
+  if (!apiBaseUrl || typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    const target = new URL(apiBaseUrl, window.location.origin)
+    return target.origin !== window.location.origin
+  } catch {
+    return false
+  }
+}
+
+export const apiFetch = async (path: string, init: ApiRequestInit = {}) => {
+  const { redirectOnUnauthorized = true, ...requestInit } = init
+  const response = await fetch(buildApiUrl(path), {
+    ...requestInit,
+    credentials: requestInit.credentials ?? 'include',
+  })
+
+  if (response.status === 401 && redirectOnUnauthorized) {
+    redirectToLogin()
+  }
+
+  return response
+}
+
+export const apiFetchJson = async <T>(path: string, init: ApiRequestInit = {}) => {
+  const response = await apiFetch(path, init)
+  if (!response.ok) {
+    const body = await readErrorBody(response.clone())
+    const message =
+      typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+        ? body.error
+        : `HTTP ${response.status}`
+    throw new ApiError(message, response.status, body)
+  }
+
+  return (await response.json()) as T
+}
+
+export const isApiError = (error: unknown, status?: number): error is ApiError => {
+  if (!(error instanceof ApiError)) {
+    return false
+  }
+  return status === undefined ? true : error.status === status
+}
+
+export type ApiCurrentUser = {
+  user: {
+    id: string
+    email: string
+    email_verified: boolean
+    name: string
+    image: string | null
+  }
+  session: {
+    id: string
+    expires_at: string | null
+  }
+  profile: {
+    username: string
+    created_at: string
+    updated_at: string
+  }
+  linked_accounts: {
+    github: boolean
+    google: boolean
+  }
+  linked_providers: string[]
+}
+
+export type ApiDeviceAuthFlow = {
+  flow_id: string
+  status: 'pending' | 'approved' | 'completed' | 'rejected' | 'expired'
+  expires_at: string
+  approved_at: string | null
+  completed_at: string | null
+  approved_bud_id: string | null
+  error_code: string | null
+  device: {
+    name: string
+    os: string
+    arch: string
+    version: string | null
+  }
+}
+
+export type ApiDeviceAuthApproval = {
+  status: 'approved'
+  bud_id: string
+}
+
+export const fetchCurrentUser = async () => {
+  const response = await apiFetch('/api/me', { redirectOnUnauthorized: false })
+  if (response.status === 401) {
+    return null
+  }
+  if (!response.ok) {
+    const body = await readErrorBody(response.clone())
+    throw new ApiError(`HTTP ${response.status}`, response.status, body)
+  }
+  return (await response.json()) as ApiCurrentUser
+}
+
+export const createAuthEventSource = (path: string) => {
+  const source = new EventSource(
+    buildApiUrl(path),
+    shouldUseEventSourceCredentials() ? { withCredentials: true } : undefined,
+  )
+
+  const checkUnauthorized = async () => {
+    if (source.readyState !== EventSource.CLOSED) {
+      return false
+    }
+
+    try {
+      const response = await apiFetch('/api/me', { redirectOnUnauthorized: false })
+      if (response.status === 401) {
+        redirectToLogin()
+        return true
+      }
+    } catch {
+      return false
+    }
+
+    return false
+  }
+
+  return { source, checkUnauthorized }
+}
 
 export const decodeTerminalData = (data: string) => {
   if (typeof window === 'undefined' || typeof window.atob !== 'function') {

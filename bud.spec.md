@@ -38,7 +38,8 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 | Path | Protocol | Purpose |
 |------|----------|---------|
-| Daemon ↔ Service | WebSocket | Device registration, heartbeat, terminal I/O, command execution |
+| Daemon ↔ Service | WebSocket | Device reauth, heartbeat, terminal I/O, command execution |
+| Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |
 | Service → OpenAI | HTTP | LLM inference via Responses API |
@@ -65,7 +66,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 | Entity | Description |
 |--------|-------------|
-| **Bud** | A registered device running the bud daemon. Has identity, capabilities, status (online/offline), and accent color for UI theming. |
+| **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
 | **Thread** | A conversation belonging to a bud. Contains messages and owns at most one terminal session. |
 | **Message** | A chat message with role (user/assistant/tool) and content. Tool messages contain structured execution results. |
 | **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps. |
@@ -103,6 +104,7 @@ bud/
 │
 ├── service/                # Node.js backend service
 │   ├── src/
+│   │   ├── auth/           # Better Auth bridge + session helpers
 │   │   ├── agent/          # LLM integration (OpenAI Responses API)
 │   │   ├── db/             # Database layer (Drizzle ORM)
 │   │   ├── routes/         # HTTP API endpoints
@@ -149,6 +151,7 @@ bud/
 | **Fastify** | HTTP server framework |
 | **@fastify/websocket** | WebSocket support |
 | **fastify-sse-v2** | Server-Sent Events |
+| **Better Auth** | Browser authentication + OAuth |
 | **Drizzle ORM** | Type-safe database access |
 | **PostgreSQL** | Primary database |
 | **OpenAI SDK** | LLM integration |
@@ -161,6 +164,7 @@ bud/
 |------------|---------|
 | **React 19** | UI framework |
 | **TanStack Router** | File-based routing with loaders |
+| **Better Auth Client** | Browser OAuth/session helpers |
 | **Tailwind CSS 4** | Utility-first styling |
 | **Vite** | Build tool and dev server |
 | **xterm.js** | Terminal emulator |
@@ -178,6 +182,25 @@ Buds authenticate via enrollment tokens or device secrets:
 1. **First connection**: Daemon presents enrollment token, receives `bud_id` and `device_secret`
 2. **Subsequent connections**: Daemon responds to HMAC challenge using stored secret
 3. **Session establishment**: Successful auth yields `session_id` for message correlation
+
+The service also now exposes browser authentication foundations through Better Auth:
+- OAuth providers: GitHub and Google
+- Session/OAuth handlers mounted at `/api/auth/*`
+- Normalized current-user surface at `/api/me`
+- Provider/session state stored in PostgreSQL `auth` schema, with Bud-owned usernames in `public.user_profile`
+
+The web app now consumes that foundation through:
+- `/login` for direct browser sign-in
+- `/devices/claim/$flowId` for QR/link-based Bud approval
+- an auth-aware app shell that resolves the current user before protected routes load
+- credential-aware API and SSE helpers so cookie auth works consistently across loaders and live streams
+
+Bud device onboarding is now browser-mediated:
+1. The daemon starts a claim with `/api/device-auth/start`
+2. The service returns a short claim URL and QR payload
+3. The browser authenticates the human and approves the claim
+4. The daemon polls `/api/device-auth/poll` for the issued `device_secret`
+5. `/ws` challenge-response resumes as the steady-state auth path
 
 ### 2. Agent Loop (LLM Integration)
 

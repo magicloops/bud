@@ -1,4 +1,5 @@
 import {
+  pgSchema,
   pgTable,
   text,
   timestamp,
@@ -9,9 +10,12 @@ import {
   jsonb,
   primaryKey,
   index,
+  uniqueIndex,
   customType
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+const authSchema = pgSchema("auth");
 
 const runStatusValues = ["queued", "planning", "running", "canceling", "succeeded", "failed", "canceled"] as const;
 const messageRoleValues = ["user", "assistant", "tool", "system"] as const;
@@ -23,30 +27,37 @@ const byteaColumn = customType<{ data: Buffer }>({
   }
 });
 
-export const budTable = pgTable("bud", {
-  budId: text("bud_id").primaryKey(),
-  name: text("name").notNull(),
-  displayName: text("display_name"),
-  os: text("os").notNull(),
-  arch: text("arch").notNull(),
-  version: text("version"),
-  accentColor: text("accent_color"),
-  tags: jsonb("tags")
-    .$type<string[]>()
-    .notNull()
-    .default(sql`'[]'::jsonb`),
-  capabilities: jsonb("capabilities")
-    .$type<Record<string, unknown>>()
-    .notNull()
-    .default(sql`'{}'::jsonb`),
-  status: text("status").notNull().default("offline"),
-  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
-  deviceSecret: text("device_secret"),
-  devicePubkey: text("device_pubkey"),
-  tenantId: text("tenant_id"),
-  createdByUserId: text("created_by_user_id"),
-  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
-});
+export const budTable = pgTable(
+  "bud",
+  {
+    budId: text("bud_id").primaryKey(),
+    installationId: text("installation_id"),
+    name: text("name").notNull(),
+    displayName: text("display_name"),
+    os: text("os").notNull(),
+    arch: text("arch").notNull(),
+    version: text("version"),
+    accentColor: text("accent_color"),
+    tags: jsonb("tags")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    capabilities: jsonb("capabilities")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("offline"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    deviceSecret: text("device_secret"),
+    devicePubkey: text("device_pubkey"),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    installationIdx: uniqueIndex("bud_installation_id_idx").on(table.installationId),
+  }),
+);
 
 export const enrollmentTokenTable = pgTable("enrollment_token", {
   tokenHash: text("token_hash").primaryKey(),
@@ -54,6 +65,131 @@ export const enrollmentTokenTable = pgTable("enrollment_token", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true })
 });
+
+export const authUserTable = authSchema.table(
+  "user",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    emailVerified: boolean("emailVerified").notNull().default(false),
+    image: text("image"),
+    createdAt: timestamp("createdAt", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    emailIdx: uniqueIndex("auth_user_email_idx").on(table.email),
+  }),
+);
+
+export const authSessionTable = authSchema.table(
+  "session",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+    token: text("token").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).default(sql`now()`).notNull(),
+    ipAddress: text("ipAddress"),
+    userAgent: text("userAgent"),
+    userId: text("userId")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("auth_session_token_idx").on(table.token),
+    userIdx: index("auth_session_user_idx").on(table.userId),
+  }),
+);
+
+export const authAccountTable = authSchema.table(
+  "account",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("accountId").notNull(),
+    providerId: text("providerId").notNull(),
+    userId: text("userId")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    accessToken: text("accessToken"),
+    refreshToken: text("refreshToken"),
+    idToken: text("idToken"),
+    accessTokenExpiresAt: timestamp("accessTokenExpiresAt", { withTimezone: true }),
+    refreshTokenExpiresAt: timestamp("refreshTokenExpiresAt", { withTimezone: true }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("createdAt", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    userIdx: index("auth_account_user_idx").on(table.userId),
+    providerAccountIdx: index("auth_account_provider_account_idx").on(table.providerId, table.accountId),
+  }),
+);
+
+export const authVerificationTable = authSchema.table(
+  "verification",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    identifierIdx: index("auth_verification_identifier_idx").on(table.identifier),
+  }),
+);
+
+export const userProfileTable = pgTable(
+  "user_profile",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    username: text("username").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    usernameIdx: uniqueIndex("user_profile_username_idx").on(table.username),
+  }),
+);
+
+export const deviceAuthFlowTable = pgTable(
+  "device_auth_flow",
+  {
+    flowId: text("flow_id").primaryKey(),
+    installationId: text("installation_id").notNull(),
+    pollSecretHash: text("poll_secret_hash").notNull(),
+    requestedName: text("requested_name").notNull(),
+    requestedOs: text("requested_os").notNull(),
+    requestedArch: text("requested_arch").notNull(),
+    requestedVersion: text("requested_version"),
+    requestedCapabilities: jsonb("requested_capabilities")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("pending"),
+    approvedByUserId: text("approved_by_user_id").references(() => authUserTable.id, {
+      onDelete: "set null",
+    }),
+    budId: text("bud_id").references(() => budTable.budId, { onDelete: "set null" }),
+    issuedDeviceSecret: text("issued_device_secret"),
+    errorCode: text("error_code"),
+    lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    installationIdx: index("device_auth_flow_installation_idx").on(table.installationId, table.createdAt),
+    statusIdx: index("device_auth_flow_status_idx").on(table.status, table.expiresAt),
+    pollSecretIdx: index("device_auth_flow_poll_secret_idx").on(table.pollSecretHash),
+  }),
+);
 
 export const threadTable = pgTable(
   "thread",

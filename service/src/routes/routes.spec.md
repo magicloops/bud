@@ -4,9 +4,28 @@ HTTP API route handlers using Fastify.
 
 ## Purpose
 
-Defines REST API endpoints for managing buds, threads, messages, runs, and terminal sessions. All routes are prefixed with `/api/`.
+Defines REST API endpoints for managing buds, threads, messages, runs, terminal sessions, the authenticated current-user surface, and browser-mediated Bud device claims. All routes are prefixed with `/api/`.
 
 ## Files
+
+### `device-auth.ts`
+
+Bud bootstrap endpoints for QR/link device claims.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/device-auth/start` | Start a pending device claim and return claim URL + poll secret |
+| `POST` | `/api/device-auth/poll` | Bud-only polling endpoint for claim approval + secret delivery |
+| `GET` | `/api/device-auth/flows/:flowId` | Public claim-page read surface with safe device metadata |
+| `POST` | `/api/device-auth/flows/:flowId/approve` | Authenticated browser approval endpoint |
+
+**Behavior**:
+- `start` persists requested device metadata plus `installation_id`
+- `poll` never exposes Bud secrets to the browser; only the daemon can retrieve `device_secret`
+- `approve` reuses an existing `bud_id` when `installation_id` already belongs to the same user
+- conflicting claims (`installation_id` already owned by another user) are rejected with `installation_claim_conflict`
 
 ### `buds.ts`
 
@@ -100,6 +119,26 @@ Standalone command execution (separate from agent flow).
   title?: string       // Title for auto-created thread
 }
 ```
+
+### `me.ts`
+
+Authenticated current-user endpoint backed by Better Auth session helpers.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/me` | Return normalized user/session/profile/account-linking state |
+
+**Response Shape**:
+- `user` - Better Auth user identity (`id`, `email`, `email_verified`, `name`, `image`)
+- `session` - Current session metadata (`id`, `expires_at`)
+- `profile` - Bud-owned profile metadata (`username`, timestamps)
+- `linked_accounts` / `linked_providers` - Provider-linking summary for settings/account UI
+
+**Dependencies**:
+- `../auth/session.js` - Session lookup and `user_profile` bootstrap
+- `./device-auth.ts` - Uses the same browser session model for claim approval
 
 ## Response Formats
 

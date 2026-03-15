@@ -5,7 +5,7 @@ import { ulid } from "ulid";
 import { randomBytes, createHmac } from "node:crypto";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { budTable, enrollmentTokenTable } from "../db/schema.js";
+import { budTable, deviceAuthFlowTable, enrollmentTokenTable } from "../db/schema.js";
 import { PROTO_VERSION, TERMINAL_PROTO_VERSION, config } from "../config.js";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { RunManager } from "../runtime/run-manager.js";
@@ -57,6 +57,7 @@ const HelloSchema = EnvelopeSchema.extend({
   os: z.string(),
   arch: z.string(),
   version: z.string().optional(),
+  installation_id: z.string().optional(),
   token: z.string().optional(),
   bud_id: z.string().optional(),
   capabilities: CapabilitiesSchema
@@ -551,6 +552,7 @@ class BudConnection {
         .insert(budTable)
         .values({
           budId,
+          installationId: frame.installation_id,
           name: frame.name,
           os: frame.os,
           arch: frame.arch,
@@ -563,6 +565,7 @@ class BudConnection {
         .onConflictDoUpdate({
           target: budTable.budId,
           set: {
+            installationId: frame.installation_id,
             name: frame.name,
             os: frame.os,
             arch: frame.arch,
@@ -586,9 +589,6 @@ class BudConnection {
     }
     this.server.log.info({ budId }, "Bud enrolled");
 
-    // Notify all SSE clients that this bud is online (in case of re-enrollment)
-    await this.terminalSessionManager.emitBudOnlineForSessions(budId);
-
     await this.sendFrame("hello_ack", {
       session_id: sessionId,
       bud_id: budId,
@@ -603,6 +603,9 @@ class BudConnection {
       hello: frame
     };
     this.registerSession(budId, sessionId);
+
+    // Notify SSE listeners only after the bud is routable through sendFrameToBud().
+    await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 
   private async issueChallenge(frame: HelloWithBudId) {
@@ -611,6 +614,11 @@ class BudConnection {
     });
     if (!bud || !bud.deviceSecret) {
       await this.sendError("AUTH_FAILED", "Unknown bud_id");
+      this.socket.close();
+      return;
+    }
+    if (bud.installationId && frame.installation_id && bud.installationId !== frame.installation_id) {
+      await this.sendError("AUTH_FAILED", "installation_id mismatch");
       this.socket.close();
       return;
     }
@@ -650,6 +658,7 @@ class BudConnection {
     await db
       .update(budTable)
       .set({
+        installationId: hello.installation_id ?? undefined,
         status: "online",
         lastSeenAt: new Date(),
         name: hello.name,
@@ -660,8 +669,22 @@ class BudConnection {
       })
       .where(eq(budTable.budId, budId));
 
-    // Notify all SSE clients that this bud is back online
-    await this.terminalSessionManager.emitBudOnlineForSessions(budId);
+    if (hello.installation_id) {
+      await db
+        .update(deviceAuthFlowTable)
+        .set({
+          status: "completed",
+          completedAt: new Date(),
+          issuedDeviceSecret: null
+        })
+        .where(
+          and(
+            eq(deviceAuthFlowTable.installationId, hello.installation_id),
+            eq(deviceAuthFlowTable.budId, budId),
+            eq(deviceAuthFlowTable.status, "approved")
+          )
+        );
+    }
 
     await this.sendFrame("hello_ack", {
       session_id: sessionId,
@@ -676,6 +699,9 @@ class BudConnection {
       hello
     };
     this.registerSession(budId, sessionId);
+
+    // Notify SSE listeners only after the reconnect path can accept routed frames.
+    await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 
   private async handleHeartbeat(ts: number) {

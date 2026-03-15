@@ -5,10 +5,33 @@ React context providers for global application state.
 ## Purpose
 
 Provides shared state across the component tree without prop drilling:
+- Authenticated browser user/session state
 - Bud online/offline status
 - Layout preferences (thread panel visibility)
 
 ## Files
+
+### `auth-session-context.tsx`
+
+Authenticated browser-session state seeded from the root route loader.
+
+**Context Value**:
+```typescript
+{
+  currentUser: ApiCurrentUser | null
+  isAuthenticated: boolean
+  setCurrentUser: (user: ApiCurrentUser | null) => void
+}
+```
+
+**Provider**: `AuthSessionProvider`
+
+**Hook**: `useAuthSession()`
+
+**Behavior**:
+- Receives `initialCurrentUser` from `__root.tsx`
+- Keeps the app shell aware of the current authenticated user
+- Powers the authenticated empty-state and login-route bounce behavior
 
 ### `bud-status-context.tsx`
 
@@ -76,11 +99,13 @@ const { threadPanelOpen } = useLayout()
 Contexts are wrapped at the app root:
 ```tsx
 <ThemeProvider>
-  <BudStatusProvider>
+  <AuthSessionProvider>
     <LayoutProvider>
-      <RouterProvider />
+      <BudStatusProvider>
+        <RouterProvider />
+      </BudStatusProvider>
     </LayoutProvider>
-  </BudStatusProvider>
+  </AuthSessionProvider>
 </ThemeProvider>
 ```
 

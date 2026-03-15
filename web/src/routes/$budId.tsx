@@ -1,28 +1,54 @@
-import { createFileRoute, Outlet, useNavigate, useMatches } from '@tanstack/react-router'
+import { createFileRoute, Outlet, redirect, useNavigate, useMatches } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { BudSessionsModal } from '@/components/bud-sessions-modal'
 import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
-import { normalizeCapabilities, type ApiBud, type ApiThread } from '@/lib/api'
+import {
+  apiFetchJson,
+  fetchCurrentUser,
+  getLoginRedirectValue,
+  isApiError,
+  normalizeCapabilities,
+  type ApiBud,
+  type ApiThread,
+} from '@/lib/api'
 import { useLayout } from '@/contexts/layout-context'
 
+const toLoginRedirect = (pathname: string, search = '', hash = '') =>
+  redirect({
+    to: '/login',
+    search: {
+      redirect: getLoginRedirectValue(pathname, search, hash),
+    },
+  })
+
 export const Route = createFileRoute('/$budId')({
-  loader: async ({ params }) => {
-    const [budsResp, threadsResp] = await Promise.all([
-      fetch('/api/buds'),
-      fetch(`/api/threads?bud_id=${params.budId}`),
-    ])
+  beforeLoad: async ({ location }) => {
+    const currentUser = await fetchCurrentUser()
+    if (!currentUser) {
+      throw toLoginRedirect(location.href)
+    }
+  },
+  loader: async ({ params, location }) => {
+    try {
+      const [buds, threads] = await Promise.all([
+        apiFetchJson<ApiBud[]>('/api/buds', { redirectOnUnauthorized: false }),
+        apiFetchJson<ApiThread[]>(`/api/threads?bud_id=${params.budId}`, { redirectOnUnauthorized: false }),
+      ])
 
-    if (!budsResp.ok) throw new Error('Failed to load buds')
+      const bud = buds.find(b => b.bud_id === params.budId)
+      if (!bud) {
+        throw new Error('Bud not found')
+      }
 
-    const buds = (await budsResp.json()) as ApiBud[]
-    const threads = threadsResp.ok ? ((await threadsResp.json()) as ApiThread[]) : []
-
-    const bud = buds.find(b => b.bud_id === params.budId)
-    if (!bud) throw new Error('Bud not found')
-
-    return { buds, bud, threads }
+      return { buds, bud, threads }
+    } catch (error) {
+      if (isApiError(error, 401)) {
+        throw toLoginRedirect(location.href)
+      }
+      throw error
+    }
   },
   component: BudLayout,
 })

@@ -66,12 +66,12 @@ This is the phase that actually makes "each user can only see their own data" tr
 
 ## Implementation Tasks
 
-### Task 1: Wipe prototype data before enforcement
+### Task 1: Resolve historical prototype data before enforcement
 
-Before enforcement lands:
+Choose one path before relying on ownership filters:
 
-- wipe prototype data
-- do not ship a bootstrap-user ownership claim for historical anonymous rows
+- production path: wipe prototype data before enforcement ships
+- local-development path: use [phase-3.5-local-dev-data-backfill.md](./phase-3.5-local-dev-data-backfill.md) to assign the preserved prototype data to a known user
 
 Do not leave historical rows ambiguously owned if route filtering is about to depend on ownership.
 

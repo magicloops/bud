@@ -18,10 +18,11 @@ Application entry point and Fastify server setup.
 
 **Key Responsibilities**:
 - Initialize Fastify with WebSocket and SSE plugins
+- Mount Better Auth routes, current-user session surface, and device-auth claim bootstrap endpoints
 - Create manager instances (Run, Session, TerminalSession)
 - Register all route handlers
 - Set up SSE streaming endpoints
-- Configure graceful shutdown
+- Configure graceful shutdown for both app and auth pools
 
 **Manager Instantiation**:
 ```typescript
@@ -54,8 +55,18 @@ Environment-based configuration with defaults.
 | `port` | `PORT` | 3000 | HTTP server port |
 | `host` | `HOST` | 0.0.0.0 | Bind address |
 | `logLevel` | `LOG_LEVEL` | info | Pino log level |
+| `databaseUrl` | `DATABASE_URL` | postgres://postgres:postgres@localhost:5432/bud | PostgreSQL connection string |
+| `pgPoolMax` | `PG_POOL_MAX` | 10 | Max Postgres pool size |
 | `heartbeatSec` | `WS_HEARTBEAT_SEC` | 30 | Expected heartbeat interval |
 | `offlineGraceSec` | `WS_OFFLINE_GRACE_SEC` | 90 | Offline detection grace period |
+| `betterAuthUrl` | `BETTER_AUTH_URL` | http://localhost:3000 | Public auth base URL |
+| `appBaseUrl` | `APP_BASE_URL` | `BETTER_AUTH_URL` or http://localhost:3000 | Browser origin used when generating Bud claim URLs |
+| `betterAuthSecret` | `BETTER_AUTH_SECRET` | dev-better-auth-secret-change-me | Better Auth signing/encryption secret |
+| `betterAuthTrustedOrigins` | `BETTER_AUTH_TRUSTED_ORIGINS` | http://localhost:5173 | Allowed browser origins for auth |
+| `githubClientId` | `GITHUB_CLIENT_ID` | - | GitHub OAuth client id |
+| `githubClientSecret` | `GITHUB_CLIENT_SECRET` | - | GitHub OAuth client secret |
+| `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |
+| `googleClientSecret` | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
 | `openaiApiKey` | `OPENAI_API_KEY` | - | OpenAI API key |
 | `openaiModel` | `OPENAI_MODEL` | gpt-4.1-mini | Model for agent |
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 30 | Max tool calls per request |
@@ -73,6 +84,10 @@ Environment-based configuration with defaults.
 - `ReasoningEffortSetting` - "none" | "low" | "medium" | "high"
 
 ## Subfolders
+
+### `auth/` → [auth.spec.md](./auth/auth.spec.md)
+
+Better Auth runtime integration plus session/profile helpers used by authenticated API routes.
 
 ### `agent/` → [agent.spec.md](./agent/agent.spec.md)
 
@@ -176,11 +191,32 @@ ws/gateway.ts
    │
    ├─► Parse hello frame
    │
-   ├─► Token enrollment OR challenge-response
+   ├─► Legacy token enrollment OR challenge-response
    │
    ├─► Create/update bud record
    │
    └─► Register in sessions map
+
+### Device Claim Bootstrap
+
+```
+POST /api/device-auth/start
+         │
+         ▼
+   routes/device-auth.ts
+         │
+         ├─► Persist pending claim + poll secret hash
+         ├─► Return claim URL for /devices/claim/$flowId
+         │
+Browser approves claim after OAuth login
+         │
+         ▼
+POST /api/device-auth/flows/:flowId/approve
+         │
+         ├─► Reuse or create bud by installation_id
+         ├─► Issue fresh device_secret
+         └─► Mark flow approved for Bud polling
+```
 ```
 
 ## Dependencies
@@ -190,6 +226,7 @@ ws/gateway.ts
 | `fastify` | HTTP framework |
 | `@fastify/websocket` | WebSocket support |
 | `fastify-sse-v2` | Server-Sent Events |
+| `better-auth` | Browser authentication and OAuth |
 | `openai` | OpenAI SDK |
 | `drizzle-orm` | Database ORM |
 | `pg` | PostgreSQL client |

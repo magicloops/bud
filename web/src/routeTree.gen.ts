@@ -9,12 +9,19 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as BudIdRouteImport } from './routes/$budId'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BudIdIndexRouteImport } from './routes/$budId/index'
 import { Route as BudIdNewRouteImport } from './routes/$budId/new'
 import { Route as BudIdThreadIdRouteImport } from './routes/$budId/$threadId'
+import { Route as DevicesClaimFlowIdRouteImport } from './routes/devices.claim.$flowId'
 
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BudIdRoute = BudIdRouteImport.update({
   id: '/$budId',
   path: '/$budId',
@@ -40,49 +47,84 @@ const BudIdThreadIdRoute = BudIdThreadIdRouteImport.update({
   path: '/$threadId',
   getParentRoute: () => BudIdRoute,
 } as any)
+const DevicesClaimFlowIdRoute = DevicesClaimFlowIdRouteImport.update({
+  id: '/devices/claim/$flowId',
+  path: '/devices/claim/$flowId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
+  '/login': typeof LoginRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
   '/$budId/': typeof BudIdIndexRoute
+  '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
   '/$budId': typeof BudIdIndexRoute
+  '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
+  '/login': typeof LoginRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
   '/$budId/': typeof BudIdIndexRoute
+  '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$budId' | '/$budId/$threadId' | '/$budId/new' | '/$budId/'
+  fullPaths:
+    | '/'
+    | '/$budId'
+    | '/login'
+    | '/$budId/$threadId'
+    | '/$budId/new'
+    | '/$budId/'
+    | '/devices/claim/$flowId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$budId/$threadId' | '/$budId/new' | '/$budId'
+  to:
+    | '/'
+    | '/login'
+    | '/$budId/$threadId'
+    | '/$budId/new'
+    | '/$budId'
+    | '/devices/claim/$flowId'
   id:
     | '__root__'
     | '/'
     | '/$budId'
+    | '/login'
     | '/$budId/$threadId'
     | '/$budId/new'
     | '/$budId/'
+    | '/devices/claim/$flowId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BudIdRoute: typeof BudIdRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  DevicesClaimFlowIdRoute: typeof DevicesClaimFlowIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/$budId': {
       id: '/$budId'
       path: '/$budId'
@@ -118,6 +160,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BudIdThreadIdRouteImport
       parentRoute: typeof BudIdRoute
     }
+    '/devices/claim/$flowId': {
+      id: '/devices/claim/$flowId'
+      path: '/devices/claim/$flowId'
+      fullPath: '/devices/claim/$flowId'
+      preLoaderRoute: typeof DevicesClaimFlowIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -138,6 +187,8 @@ const BudIdRouteWithChildren = BudIdRoute._addFileChildren(BudIdRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BudIdRoute: BudIdRouteWithChildren,
+  LoginRoute: LoginRoute,
+  DevicesClaimFlowIdRoute: DevicesClaimFlowIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

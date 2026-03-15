@@ -1,107 +1,96 @@
-# Bud Service (Backend)
+# Bud Service
 
-Node.js + TypeScript monolith that exposes REST, SSE, a WebSocket gateway for Buds, and the LLM agent loop. This scaffolding follows Phase 0 of the PoC plan and will gain full functionality in later phases.
+Fastify backend for browser auth, Bud device claims, REST/SSE APIs, and the Bud WebSocket gateway.
 
-## Scripts (pnpm)
+## Setup
+
+```bash
+cd service
+pnpm install
+cp .env.example .env
+```
+
+Create a Postgres database, then apply the schema:
+
+```bash
+createdb bud
+pnpm db:push
+```
+
+Start the service:
+
+```bash
+pnpm dev
+```
+
+## Required Env For Local Auth Testing
+
+Use [service/.env.example](./.env.example) as the source of truth.
+
+The critical auth/device-claim values are:
+
+- `DATABASE_URL`
+- `APP_BASE_URL`
+  The browser origin Bud should print in claim links. With local Vite dev, use `http://localhost:5173`.
+- `BETTER_AUTH_URL`
+  The service origin where `/api/auth/*` is mounted. With local service dev, use `http://localhost:3000`.
+- `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_TRUSTED_ORIGINS`
+  For the default local split-origin setup: `http://localhost:3000,http://localhost:5173`
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+
+OAuth callback URLs for local dev:
+
+- GitHub: `http://localhost:3000/api/auth/callback/github`
+- Google: `http://localhost:3000/api/auth/callback/google`
+
+If you are testing from another machine or phone, replace `localhost` with your LAN host in:
+
+- `APP_BASE_URL`
+- `BETTER_AUTH_URL`
+- `BETTER_AUTH_TRUSTED_ORIGINS`
+- provider callback URLs
+- the Bud daemon `BUD_SERVER_URL`
+- the web app `VITE_API_PROXY_TARGET` or `VITE_API_BASE_URL`
+
+## Optional Env
+
+Auth and Bud claim testing do not require an LLM provider key. Chat/agent execution does.
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `DEFAULT_MODEL`
+- `OPENAI_MODEL`
+- `AGENT_MAX_STEPS`
+- `AGENT_DEBUG`
+
+## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `pnpm dev` | Start Fastify with `tsx watch` for local development. |
-| `pnpm build` | Type-check and emit JS to `dist/`. |
-| `pnpm start` | Run the compiled server from `dist/`. |
-| `pnpm lint` | Run ESLint (TypeScript-aware). |
-| `pnpm db:generate` | Create a SQL migration from `src/db/schema.ts`. |
-| `pnpm db:migrate` | Apply migrations to the database. |
-| `pnpm db:seed` | Insert a seed bud + enrollment token (idempotent). |
-| `pnpm db:studio` | Explore the schema using Drizzle Studio. |
+| `pnpm dev` | Start Fastify with `tsx watch`. |
+| `pnpm build` | Compile TypeScript to `dist/`. |
+| `pnpm start` | Run the compiled server. |
+| `pnpm lint` | Run ESLint. |
+| `pnpm db:push` | Bootstrap Better Auth tables/schema and push Drizzle schema changes. |
+| `pnpm db:studio` | Open Drizzle Studio. |
+| `pnpm db:seed` | Seed legacy/manual enrollment-token data for dev. |
 
-## Environment
+`db:generate` and `db:migrate` still exist in `package.json`, but local development for this repo uses `db:push`.
 
-Create a `.env` file in this directory with values from `/plan/proof-of-concept.md` (e.g., `PORT`, `BASE_URL`, `DATABASE_URL`, `OPENAI_API_KEY`). `dotenv` is loaded automatically in `src/server.ts`.
+## Local Test Flow
 
-For local development:
+1. Start the service with `pnpm dev`.
+2. Start the web app from [web/](../web).
+3. Start the Bud daemon from [bud/](../bud).
+4. Verify:
+   - `/api/me` returns `401` before login and the normalized user after login
+   - Bud prints a claim link + QR
+   - approving the claim creates or reuses the Bud and the daemon reconnects over `/ws`
 
-```
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/bud
-ENROLLMENT_HASH_SECRET=dev-secret
-SEED_ENROLLMENT_TOKEN=DEV-ENROLL-0001
-DEV_BUD_TOKEN_BYPASS=DEV-LOCAL-ONLY  # optional, for local testing
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4.1-mini
-AGENT_MAX_STEPS=5
-RUN_LOG_MAX_BYTES=104857600
-AGENT_DEBUG=false                    # set true to log OpenAI/Bud debug info
-```
+## Notes
 
-You can run Postgres however you like (Docker, Supabase, etc.). A quick Docker example:
-
-```bash
-docker run --rm -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=bud postgres:16
-pnpm db:migrate
-pnpm db:seed
-```
-
-`pnpm dev` will then serve `/api/buds` from the seeded data and host the `/ws` gateway (enrollment + challenge/response + presence updates). If you set `DEV_BUD_TOKEN_BYPASS`, Bud can enroll with that token indefinitely (local/dev only!); otherwise you must generate a fresh enrollment token per device.
-
-### Trigger a run
-
-1. Enroll a Bud and ensure it shows `online` via `GET /api/buds`.
-2. Create (or reuse) a thread for that Bud:
-
-```bash
-curl -X POST http://localhost:3000/api/threads \
-  -H "Content-Type: application/json" \
-  -d '{"bud_id":"b_dev_seed","title":"Dev shell"}'
-```
-
-Response:
-
-```json
-{ "threadId": "6d5fd8cb-..." }
-```
-
-3. Post a user message to the thread. This persists the prompt and kicks off the agent loop (planning → tool calls → final answer):
-
-```bash
-curl -X POST http://localhost:3000/api/threads/6d5fd8cb-.../messages \
-  -H "Content-Type: application/json" \
-  -d '{"text":"echo hello from bud","cwd":"~"}'
-```
-
-Response:
-
-```json
-{ "messageId": "9f3ab3d6-...", "runId": "run_01HX..." }
-```
-
-4. Stream logs/events for that run via SSE:
-
-```bash
-curl -N http://localhost:3000/api/runs/run_01HX.../stream
-```
-
-Events now include `status`, `agent.message`, `agent.tool_call`, `exec.stdout`, `exec.stderr`, `agent.tool_result`, and `final`. The legacy `POST /api/runs` endpoint still exists for quick experiments, but new surfaces should go through threads/messages so prompts are recorded and the agent can hydrate prior context.
-
-### Inspect threads & messages
-
-List threads (optionally filter by Bud):
-
-```bash
-curl http://localhost:3000/api/threads?bud_id=b_dev_seed
-```
-
-Fetch a single thread and its message history:
-
-```bash
-curl http://localhost:3000/api/threads/6d5fd8cb-...
-curl http://localhost:3000/api/threads/6d5fd8cb-.../messages?limit=100
-```
-
-Responses include ULIDs/timestamps so the web UI (and agent) can replay context without bespoke queries.
-
-## Next milestones
-
-1. Route `/api/runs/:id/cancel` through active Bud sessions (TERM → KILL) and plumb cancel into the agent + OpenAI request.
-2. Persist richer run metadata (workspace paths, tool summaries) and add history listing APIs for the web UI.
-3. Add SSE replay/`Last-Event-ID` resume backed by a bounded in-memory buffer + DB rehydrate.
-4. Harden reliability: queue backpressure, timeout enforcement, and better log truncation UX.
+- Better Auth is mounted at `/api/auth/*`.
+- Current-user normalization is served from `/api/me`.
+- Device-claim bootstrap lives at `/api/device-auth/*`.

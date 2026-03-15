@@ -5,6 +5,7 @@ React frontend for the Bud application.
 ## Purpose
 
 Provides a web-based chat interface for interacting with Buds. Features include:
+- Better Auth-based browser sign-in
 - Multi-bud navigation with sidebar
 - Thread-based conversations
 - Real-time terminal streaming (xterm.js)
@@ -54,6 +55,15 @@ web/
 
 ## Configuration Files
 
+### `.env.example`
+
+Checked-in template for local frontend setup.
+
+Recommended local development:
+- leave `VITE_API_BASE_URL` unset
+- set `VITE_API_PROXY_TARGET=http://localhost:3000`
+- use the Vite proxy for the simplest local auth/cookie flow
+
 ### `vite.config.ts`
 
 Vite build configuration with:
@@ -91,6 +101,7 @@ Static assets served without processing.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `VITE_API_BASE_URL` | API server URL for cross-origin | (same origin) |
+| `VITE_API_PROXY_TARGET` | Dev proxy target for `/api/*` | `http://localhost:3000` |
 | `VITE_ROUTER_DEVTOOLS` | Enable TanStack Router devtools | `false` |
 
 ## Key Features
@@ -109,6 +120,13 @@ Static assets served without processing.
 - Tool call visualization (terminal.run, etc.)
 - Markdown with syntax highlighting
 - Agent streaming via SSE
+
+### Browser Auth
+
+- `/login` route for GitHub and Google OAuth
+- Root app shell resolves `/api/me` before rendering authenticated state
+- Shared credential-aware `fetch` helper for cookie auth
+- Shared auth-aware `EventSource` creation for SSE streams
 
 ### Theming
 
@@ -134,6 +152,7 @@ Neobrutalist patterns:
 |---------|---------|
 | `react`, `react-dom` | React 19 |
 | `@tanstack/react-router` | Routing |
+| `better-auth` | Browser auth client |
 | `xterm`, `xterm-addon-fit` | Terminal |
 | `react-markdown` | Markdown |
 | `react-syntax-highlighter` | Code highlighting |

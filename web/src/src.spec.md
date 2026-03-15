@@ -91,7 +91,7 @@ React components: UI primitives, workbench layouts, message renderers.
 
 ### `contexts/` → [contexts/contexts.spec.md](./contexts/contexts.spec.md)
 
-React context providers for global state (bud status, layout preferences).
+React context providers for global state (auth session, bud status, layout preferences).
 
 ### `lib/` → [lib/lib.spec.md](./lib/lib.spec.md)
 
@@ -115,11 +115,14 @@ main.tsx
             └── __root.tsx (providers)
                     │
                     ├── ThemeProvider
+                    ├── AuthSessionProvider
                     ├── LayoutProvider
                     └── BudStatusProvider
                             │
                             └── Routes
-                                ├── / (redirect)
+                                ├── /login
+                                ├── /devices/claim/$flowId
+                                ├── / (auth-aware entry)
                                 └── /$budId (layout)
                                     ├── index (new thread)
                                     └── $threadId (thread view)
@@ -131,6 +134,7 @@ main.tsx
 |---------|---------|
 | `react`, `react-dom` | React 19 |
 | `@tanstack/react-router` | File-based routing |
+| `better-auth` | Browser auth client |
 | `tailwindcss` | Utility CSS |
 | `@tailwindcss/typography` | Prose styling |
 | `tw-animate-css` | Animation utilities |

@@ -3,12 +3,26 @@ import "dotenv/config";
 export const PROTO_VERSION = "0.1";
 export const TERMINAL_PROTO_VERSION = "0.2";
 
+const defaultDatabaseUrl = "postgres://postgres:postgres@localhost:5432/bud";
+
 const toNumber = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+const toList = (value: string | undefined) =>
+  (value ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+const toOrigin = (value: string) => {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value;
+  }
+};
 
 const REASONING_EFFORTS = ["none", "low", "medium", "high"] as const;
 export type ReasoningEffortSetting = (typeof REASONING_EFFORTS)[number];
@@ -27,6 +41,25 @@ export const config = {
   port: toNumber(process.env.PORT, 3000),
   host: process.env.HOST ?? "0.0.0.0",
   logLevel: process.env.LOG_LEVEL ?? "info",
+  databaseUrl: process.env.DATABASE_URL ?? defaultDatabaseUrl,
+  pgPoolMax: toNumber(process.env.PG_POOL_MAX, 10),
+  betterAuthUrl: process.env.BETTER_AUTH_URL ?? `http://localhost:${toNumber(process.env.PORT, 3000)}`,
+  appBaseUrl:
+    process.env.APP_BASE_URL ??
+    process.env.BETTER_AUTH_URL ??
+    `http://localhost:${toNumber(process.env.PORT, 3000)}`,
+  betterAuthSecret:
+    process.env.BETTER_AUTH_SECRET ?? "bud-dev-better-auth-secret-change-me-please",
+  betterAuthTrustedOrigins: Array.from(
+    new Set([
+      toOrigin(process.env.BETTER_AUTH_URL ?? `http://localhost:${toNumber(process.env.PORT, 3000)}`),
+      ...toList(process.env.BETTER_AUTH_TRUSTED_ORIGINS).map(toOrigin),
+    ]),
+  ),
+  githubClientId: process.env.GITHUB_CLIENT_ID ?? "",
+  githubClientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   heartbeatSec: toNumber(process.env.WS_HEARTBEAT_SEC, 30),
   offlineGraceSec: toNumber(process.env.WS_OFFLINE_GRACE_SEC, 90),
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",

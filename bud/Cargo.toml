@@ -11,6 +11,8 @@ futures = "0.3"
 hmac = "0.12"
 libc = "0.2"
 nix = { version = "0.28", default-features = false, features = ["fs", "signal", "term"] }
+qrcodegen = "1.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustls = "0.23"
 rustls-native-certs = "0.7"
 serde = { version = "1.0", features = ["derive"] }
