@@ -123,7 +123,7 @@ loader: async ({ params }) => {
 - Converts API responses to UI types (`BudProfile`, `ThreadSummary`)
 - Applies bud accent color theming via CSS custom properties
 - Manages sessions modal state
-- Routes the settings button into `/settings`
+- Routes the Bud rail account-settings button into `/settings`
 - Keeps terminal sessions as a separate modal action
 - Renders `BudRail`, `ThreadPanel`, and child routes via `<Outlet />`
 

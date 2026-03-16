@@ -129,6 +129,10 @@ function BudLayout() {
     navigate({ to: '/$budId', params: { budId: id } })
   }, [navigate])
 
+  const handleOpenSettings = useCallback(() => {
+    navigate({ to: '/settings' })
+  }, [navigate])
+
   const handleSelectThread = useCallback((threadId: string | null) => {
     if (threadId) {
       navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
@@ -142,10 +146,6 @@ function BudLayout() {
     // Just navigate to "new thread" mode
     navigate({ to: '/$budId', params: { budId } })
   }, [navigate, budId])
-
-  const handleOpenSettings = useCallback(() => {
-    navigate({ to: '/settings' })
-  }, [navigate])
 
   const handleOpenSessions = useCallback(() => {
     setSessionsModalOpen(true)
@@ -161,6 +161,7 @@ function BudLayout() {
         buds={buds}
         activeBudId={budId}
         onSelectBud={handleSelectBud}
+        onOpenSettings={handleOpenSettings}
       />
       {threadPanelOpen && activeBudProfile && (
         <ThreadPanel
@@ -168,7 +169,6 @@ function BudLayout() {
           activeThreadId={activeThreadId}
           onSelectThread={handleSelectThread}
           onThreadDeleted={handleThreadDeleted}
-          onOpenSettings={handleOpenSettings}
           onOpenSessions={handleOpenSessions}
           accentColor={palette.vibrant}
           budLabel={activeBudProfile.label}

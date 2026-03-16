@@ -1,4 +1,4 @@
-import { Monitor, Moon, Plus, Server, Sun } from 'lucide-react'
+import { Monitor, Moon, Plus, Server, Settings, Sun } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/components/theme-provider'
 import { useBudStatus } from '@/contexts/bud-status-context'
@@ -31,9 +31,10 @@ type BudRailProps = {
   buds: BudProfile[]
   activeBudId: string
   onSelectBud: (id: string) => void
+  onOpenSettings: () => void
 }
 
-export function BudRail({ buds, activeBudId, onSelectBud }: BudRailProps) {
+export function BudRail({ buds, activeBudId, onSelectBud, onOpenSettings }: BudRailProps) {
   const { theme, setTheme } = useTheme()
   const { statuses: budStatuses } = useBudStatus()
 
@@ -86,7 +87,7 @@ export function BudRail({ buds, activeBudId, onSelectBud }: BudRailProps) {
           <Plus className="h-5 w-5" />
         </button>
       </div>
-      <div className="p-2">
+      <div className="flex flex-col gap-2 p-2">
         <button
           onClick={cycleTheme}
           className="flex h-14 w-14 items-center justify-center rounded-xl border-3 border-black text-black transition-all hover:-translate-y-0.5"
@@ -94,6 +95,14 @@ export function BudRail({ buds, activeBudId, onSelectBud }: BudRailProps) {
           title={`Theme: ${theme}`}
         >
           {theme === 'light' ? <Sun className="h-6 w-6" /> : theme === 'dark' ? <Moon className="h-6 w-6" /> : <Monitor className="h-6 w-6" />}
+        </button>
+        <button
+          onClick={onOpenSettings}
+          className="flex h-14 w-14 items-center justify-center rounded-xl border-3 border-black text-black transition-all hover:-translate-y-0.5"
+          style={{ boxShadow: '4px 4px 0px 0px rgba(0,0,0,1)', backgroundColor: 'var(--bud-accent-muted)' }}
+          title="Account settings"
+        >
+          <Settings className="h-6 w-6" />
         </button>
       </div>
     </aside>
