@@ -1,5 +1,6 @@
 import { createRootRoute, Outlet } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+import { RouteErrorScreen } from '@/components/route-error-screen'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AuthSessionProvider } from '@/contexts/auth-session-context'
 import { LayoutProvider } from '@/contexts/layout-context'
@@ -12,6 +13,7 @@ export const Route = createRootRoute({
     currentUser: await fetchCurrentUser(),
   }),
   component: RootComponent,
+  errorComponent: RootErrorComponent,
 })
 
 function RootComponent() {
@@ -29,6 +31,14 @@ function RootComponent() {
           </BudStatusProvider>
         </LayoutProvider>
       </AuthSessionProvider>
+    </ThemeProvider>
+  )
+}
+
+function RootErrorComponent({ error }: { error: unknown }) {
+  return (
+    <ThemeProvider>
+      <RouteErrorScreen error={error} />
     </ThemeProvider>
   )
 }

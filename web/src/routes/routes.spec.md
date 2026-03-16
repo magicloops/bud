@@ -33,6 +33,7 @@ Root layout component wrapping all routes.
 - Wraps app in context providers (theme, auth session, layout, bud status)
 - Conditional router devtools via `VITE_ROUTER_DEVTOOLS=true`
 - `<Outlet />` renders child routes
+- Installs a branded root `errorComponent` so uncaught loader errors render a Bud-styled recovery page with a home action instead of TanStack Router's generic fallback
 
 ### `index.tsx`
 
