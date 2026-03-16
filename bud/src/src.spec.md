@@ -16,12 +16,13 @@ Monolithic implementation (~2,900 lines) containing all daemon functionality. Th
   - `--name` / `BUD_DEVICE_NAME` - Device display name
   - `--cwd` / `BUD_DEFAULT_CWD` - Default working directory
   - `--identity-file` / `BUD_IDENTITY_FILE` - Path to identity JSON (default: `~/.bud/identity.json`)
+  - `--terminal-base-dir` / `BUD_TERMINAL_BASE_DIR` - Base directory for terminal logs and session artifacts (default: `~/.bud`)
   - `--terminal-enabled` / `BUD_TERMINAL_ENABLED` - Enable terminal features
   - `--terminal-cols/rows` - Terminal dimensions (default: 200x50)
   - `--debug` / `BUD_DEBUG` - Debug logging mode
 
 - **`DeviceIdentity`** - Persisted identity containing `bud_id`, `device_secret`, server URL; malformed or empty stored credentials are treated as missing at load time so reauth can proceed
-- **Installation identity** - Stable non-secret `installation_id` persisted separately at `~/.bud/installation-id`
+- **Installation identity** - Stable non-secret `installation_id` persisted in a sibling `installation-id` file next to the configured identity file
 - **Device auth bootstrap types** - HTTP start/poll payloads for `/api/device-auth/*`
 - **`HandshakeError`** - Distinguishes `AUTH_FAILED` reauth from other handshake failures
 
@@ -82,7 +83,7 @@ Hash-based deduplication for `capture-pane` output:
   - REPL mode: activity-based (compares capture-pane hashes)
 
 **Output Streaming**:
-- Uses `tmux pipe-pane` to capture output to log file
+- Uses `tmux pipe-pane` to capture output to a session log under `BUD_TERMINAL_BASE_DIR/sessions/{session_id}/terminal.log`
 - `spawn_output_watcher()` polls log file for new bytes
 - Sends `terminal_output` frames with base64-encoded chunks
 
@@ -117,6 +118,7 @@ Hash-based deduplication for `capture-pane` output:
 
 **`BudApp`** - Main daemon orchestrator:
 
+- **`new()`** - Expands CLI/env paths, derives `installation-id` from the identity file parent directory, and applies `BUD_TERMINAL_BASE_DIR` to terminal logging
 - **`connect_once()`** - Establish WebSocket connection
 - **`bootstrap_device_auth()`** - Start claim flow, print link + QR, poll for approval
 - **`perform_handshake()`** - Authentication flow:

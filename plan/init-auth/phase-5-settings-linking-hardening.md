@@ -161,14 +161,14 @@ Before launch:
 
 ## Validation Checklist
 
-- [ ] Settings route loads for authenticated users
+- [x] Settings route loads for authenticated users
 - [ ] Settings route is protected from unauthenticated access
-- [ ] Profile edits persist correctly
+- [x] Profile edits persist correctly
 - [ ] Linked provider state renders correctly
-- [ ] Explicit linking works for both Google and GitHub
-- [ ] Sign-out works
-- [ ] Expired sessions redirect cleanly
-- [ ] Terminal/agent reconnect loops stop when auth is gone
+- [x] Explicit linking works for both Google and GitHub
+- [x] Sign-out works
+- [x] Expired sessions redirect cleanly
+- [x] Terminal/agent reconnect loops stop when auth is gone
 - [ ] End-to-end auth and claim scenarios pass
 
 ---
@@ -195,4 +195,11 @@ This phase is complete when Bud’s auth surface is both functional and shippabl
 
 ---
 
-*Last Updated: 2026-03-13*
+## Manual Verification Notes
+
+- `2026-03-16`: `/settings` username save passed locally.
+- `2026-03-16`: explicit GitHub and Google linking from settings passed locally.
+- `2026-03-16`: sign-out from settings passed locally.
+- `2026-03-16`: active-thread session-expiry behavior passed locally; the app redirected to `/login` and live reconnect loops stopped once auth was gone.
+
+*Last Updated: 2026-03-16*

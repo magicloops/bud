@@ -256,7 +256,7 @@ Notes:
 | 3 | Complete | Device claim via link/QR and Bud identity continuity landed |
 | 3.5 | Complete (local dev) | Local prototype data backfill was run to preserve fixtures for multi-user testing |
 | 4 | Complete | Ownership stamping and per-user authorization enforcement landed |
-| 5 | Next | Settings, linked-account UX, expiry handling, hardening, and final validation remain |
+| 5 | In Progress | Settings/profile editing, explicit provider linking, sign-out, and session-expiry handling landed; manual validation is underway |
 
 ---
 

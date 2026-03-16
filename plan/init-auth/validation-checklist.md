@@ -21,7 +21,7 @@ Keep it current as we verify behavior locally and as Phase 4/5 work changes the 
 
 - [ ] Anonymous `/` redirects to `/login`.
 - [ ] Google OAuth sign-in succeeds.
-- [ ] Logout succeeds and returns the browser to an unauthenticated state.
+- [x] Logout succeeds and returns the browser to an unauthenticated state.
 - [ ] `GET /api/me` returns `401` while logged out.
 - [ ] `GET /api/me` returns the expected normalized current-user payload after login.
 
@@ -79,18 +79,25 @@ Keep it current as we verify behavior locally and as Phase 4/5 work changes the 
 
 ### Settings And Linked Accounts
 
-- [-] `/settings` renders successfully for an authenticated user.
+- [x] `/settings` renders successfully for an authenticated user.
 - [-] Settings shows linked-account state for GitHub and Google.
-- [-] Username editing works and persists.
+- [x] Username editing works and persists.
 - [-] Avatar rendering uses provider image when available.
 - [-] Avatar rendering falls back to generated initials when no provider image exists.
-- [-] Explicit provider linking from settings works when same-email auto-linking does not apply.
+- [x] Explicit provider linking from settings works when same-email auto-linking does not apply.
 
 ### Session And Expiry Behavior
 
-- [-] Expired browser sessions redirect cleanly back to `/login`.
-- [-] Terminal and agent reconnect loops stop after auth expiry instead of spinning forever.
+- [x] Expired browser sessions redirect cleanly back to `/login`.
+- [x] Terminal and agent reconnect loops stop after auth expiry instead of spinning forever.
 - [-] Login resumes back to the intended route after reauthentication.
+
+## Latest Manual Passes
+
+- [x] 2026-03-16: `/settings` username save verified locally.
+- [x] 2026-03-16: explicit GitHub/Google provider linking from `/settings` verified locally.
+- [x] 2026-03-16: browser sign-out flow verified locally.
+- [x] 2026-03-16: active-thread session-expiry redirect verified locally, including SSE reconnect-loop shutdown.
 
 ## Notes
 

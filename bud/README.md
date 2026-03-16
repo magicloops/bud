@@ -27,11 +27,14 @@ Bud does not auto-load `.env` itself; you need to export the variables in your s
 | `BUD_DEVICE_NAME` | `--name` | Device name shown during claim and in the UI |
 | `BUD_DEFAULT_CWD` | `--cwd` | Default working directory |
 | `BUD_IDENTITY_FILE` | `--identity-file` | Path to persisted `{ bud_id, device_secret }` |
+| `BUD_TERMINAL_BASE_DIR` | `--terminal-base-dir` | Base directory for terminal logs and session artifacts |
 | `BUD_TERMINAL_ENABLED` | `--terminal-enabled` | Enable terminal features |
 | `BUD_DEBUG` | `--debug` | Extra Bud logging |
 | `BUD_ENROLLMENT_TOKEN` | `--token` | Legacy/manual enrollment fallback |
 
-Bud also persists a stable non-secret installation identity at `~/.bud/installation-id` by default.
+Bud also persists a stable non-secret installation identity beside the configured identity file. With the default settings that path is `~/.bud/installation-id`.
+
+Bud does not use the current shell directory as a state root. Running the binary from a different directory only changes isolation if your launcher also points `BUD_IDENTITY_FILE` and `BUD_TERMINAL_BASE_DIR` at that directory.
 
 ## Local Run
 
@@ -57,6 +60,124 @@ On later runs, Bud reuses:
 - `~/.bud/installation-id`
 
 If you delete only the identity file and keep `installation-id`, reclaiming should reuse the same Bud record.
+
+## Local Multi-Account Testing
+
+For local multi-account work, the practical pattern is:
+
+1. Build Bud once.
+2. Copy the binary into one directory per local test account.
+3. Run each copy through a small wrapper script that pins Bud's state into that directory.
+
+Copying the binary is optional. The useful part is that the wrapper script can derive the instance root from `$(dirname "$0")` and keep `identity.json`, `installation-id`, and terminal logs together.
+
+### Build Once
+
+```bash
+cd bud
+cargo build
+```
+
+This produces `target/debug/bud`.
+
+### Example Instance Layout
+
+```text
+$HOME/.bud-dev/
+  account-a/
+    bud
+    run.sh
+  account-b/
+    bud
+    run.sh
+```
+
+### Copy the Binary Into Per-Account Directories
+
+```bash
+cd bud
+mkdir -p "$HOME/.bud-dev/account-a" "$HOME/.bud-dev/account-b"
+cp target/debug/bud "$HOME/.bud-dev/account-a/bud"
+cp target/debug/bud "$HOME/.bud-dev/account-b/bud"
+chmod +x "$HOME/.bud-dev/account-a/bud" "$HOME/.bud-dev/account-b/bud"
+```
+
+### Example `run.sh`
+
+Place this next to the copied binary in each account directory:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+exec "$SCRIPT_DIR/bud" \
+  --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
+  --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
+  --identity-file "$SCRIPT_DIR/identity.json" \
+  --terminal-base-dir "$SCRIPT_DIR" \
+  --terminal-enabled
+```
+
+With that layout:
+
+- device credentials are stored at `$SCRIPT_DIR/identity.json`
+- the stable installation identity is stored at `$SCRIPT_DIR/installation-id`
+- terminal logs are stored under `$SCRIPT_DIR/sessions/`
+
+### Example `make-bud-instance.sh`
+
+If you want a repeatable team helper, this script creates one prepared instance directory:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+INSTANCE_NAME="${1:?usage: $0 <instance-name> [dest-root]}"
+DEST_ROOT="${2:-$HOME/.bud-dev}"
+INSTANCE_DIR="$DEST_ROOT/$INSTANCE_NAME"
+
+cd bud
+cargo build
+
+mkdir -p "$INSTANCE_DIR"
+cp target/debug/bud "$INSTANCE_DIR/bud"
+chmod +x "$INSTANCE_DIR/bud"
+
+cat > "$INSTANCE_DIR/run.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+exec "$SCRIPT_DIR/bud" \
+  --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
+  --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
+  --identity-file "$SCRIPT_DIR/identity.json" \
+  --terminal-base-dir "$SCRIPT_DIR" \
+  --terminal-enabled
+EOF
+
+chmod +x "$INSTANCE_DIR/run.sh"
+echo "Created $INSTANCE_DIR"
+```
+
+Example usage:
+
+```bash
+./make-bud-instance.sh account-a
+./make-bud-instance.sh account-b
+```
+
+Then run:
+
+```bash
+$HOME/.bud-dev/account-a/run.sh
+$HOME/.bud-dev/account-b/run.sh
+```
+
+Approve each Bud from the browser session that should own it. If you are testing two different user accounts on one machine, use separate browser profiles or separate authenticated sessions during the approval flow.
 
 ## Legacy Manual Enrollment
 
