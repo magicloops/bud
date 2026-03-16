@@ -1,6 +1,7 @@
 import Fastify, { FastifyInstance } from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import fastifySseV2 from "fastify-sse-v2";
+import { authPool, registerAuthRoutes } from "./auth/auth.js";
 import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
@@ -14,6 +15,8 @@ import { AgentService } from "./agent/index.js";
 import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 import { ContextSyncService } from "./terminal/context-sync-service.js";
+import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
+import { registerMeRoutes } from "./routes/me.js";
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -70,6 +73,9 @@ export async function buildServer(): Promise<FastifyInstance> {
     }
   });
   await server.register(fastifySseV2);
+  await registerAuthRoutes(server);
+  await registerDeviceAuthRoutes(server);
+  await registerMeRoutes(server);
   await registerBudRoutes(server, terminalSessionManager);
   await registerThreadRoutes(server, runManager, agentService, agentEvents, contextSyncService);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
@@ -79,6 +85,7 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   server.addHook("onClose", async () => {
     terminalSessionManager.stopIdleChecks();
+    await authPool.end();
     await pool.end();
   });
 

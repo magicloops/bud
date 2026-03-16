@@ -6,6 +6,7 @@ WebSocket gateway for bud daemon connections.
 
 Handles real-time communication between the service and bud daemons via WebSocket:
 - Daemon connections and authentication
+- Device-secret reauth after browser-mediated claim bootstrap
 - Command dispatch and output streaming
 - Terminal session management (tmux-backed)
 
@@ -24,7 +25,7 @@ Browser/Client                 Service                      Bud Daemon
      │                           │                              │
      │                           │◄───── hello ─────────────────│
      │                           │                              │
-     │                           │  (token enrollment OR        │
+     │                           │  (legacy token enrollment OR │
      │                           │   challenge-response auth)   │
      │                           │                              │
      │                           │────── hello_ack ────────────►│
@@ -97,6 +98,27 @@ interface SessionTracker {
    - Bud sends `hello_proof` with `hmac`
    - Service verifies, sends `hello_ack`
 
+3. **Claim Completion Sync**:
+   - Bud `hello` frames now include `installation_id`
+   - successful challenge auth can mark matching `device_auth_flow` rows as `completed`
+   - approved claim secrets are cleared only after the daemon reconnects successfully
+   - `terminal.bud_online` notifications are emitted only after `hello_ack` has been sent and the Bud has been registered in the in-memory session map, so follow-up `terminal_ensure` calls can route immediately
+
+**Important**: Browser-mediated claim bootstrap now happens over HTTP (`/api/device-auth/*`) before `/ws`; `/ws` remains the long-lived daemon transport and challenge-response path.
+
+**Hello Payload**:
+
+Bud `hello` frames now include:
+```typescript
+{
+  installation_id?: string;
+  token?: string;
+  bud_id?: string;
+}
+```
+
+If a stored Bud already has an `installationId`, the gateway rejects a mismatched `installation_id` during challenge setup.
+
 **Frame Routing**:
 
 | Frame Type | Handler |
@@ -132,6 +154,7 @@ Bud's `hello` frame includes capabilities:
 - `config.offlineGraceSec` - Grace period before marking offline (default: 90)
 - `config.devTokenBypass` - Dev-mode token bypass
 - `config.enrollmentHashSecret` - Token hashing secret
+- `/api/device-auth/*` routes - Claim bootstrap surfaces that feed the post-approval `/ws` reconnect path
 
 ## Dependencies
 

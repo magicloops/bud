@@ -1,9 +1,8 @@
 import { Buffer } from "node:buffer";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
-  budTable,
   messageTable,
   runLogTable,
   runStepTable,
@@ -20,6 +19,7 @@ import type { TerminalSessionManager } from "../runtime/terminal-session-manager
 import type { TerminalEventBus, AgentEventBus } from "../runtime/event-bus.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import { getActiveBudIds } from "../ws/gateway.js";
+import { getAuthorizedBud, getAuthorizedThread, requireViewer } from "../auth/session.js";
 
 const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),
@@ -138,6 +138,25 @@ function serializeMessage(row: typeof messageTable.$inferSelect) {
   };
 }
 
+async function requireAuthorizedThreadAccess(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  threadId: string,
+) {
+  const viewer = await requireViewer(request, reply);
+  if (!viewer) {
+    return null;
+  }
+
+  const thread = await getAuthorizedThread(viewer, threadId);
+  if (!thread) {
+    reply.code(404).send({ error: "thread_not_found" });
+    return null;
+  }
+
+  return { viewer, thread };
+}
+
 export async function registerThreadRoutes(
   server: FastifyInstance,
   _runManager: RunManager,
@@ -145,8 +164,20 @@ export async function registerThreadRoutes(
   agentEvents: AgentEventBus,
   contextSyncService: ContextSyncService
 ): Promise<void> {
-  server.get("/api/threads", async (request) => {
+  server.get("/api/threads", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
     const query = ThreadListQuerySchema.parse(request.query ?? {});
+    if (query.bud_id) {
+      if (!(await getAuthorizedBud(viewer, query.bud_id))) {
+        reply.code(404).send({ error: "bud_not_found" });
+        return;
+      }
+    }
+
     const threads = await db
       .select({
         threadId: threadTable.threadId,
@@ -162,8 +193,21 @@ export async function registerThreadRoutes(
         sessionState: terminalSessionTable.state
       })
       .from(threadTable)
-      .leftJoin(terminalSessionTable, eq(threadTable.threadId, terminalSessionTable.threadId))
-      .where(query.bud_id ? eq(threadTable.budId, query.bud_id) : undefined)
+      .leftJoin(
+        terminalSessionTable,
+        and(
+          eq(threadTable.threadId, terminalSessionTable.threadId),
+          eq(terminalSessionTable.createdByUserId, viewer.userId),
+          isNull(terminalSessionTable.closedAt),
+        ),
+      )
+      .where(
+        and(
+          eq(threadTable.createdByUserId, viewer.userId),
+          isNull(threadTable.deletedAt),
+          query.bud_id ? eq(threadTable.budId, query.bud_id) : undefined,
+        ),
+      )
       .orderBy(desc(threadTable.lastActivityAt));
 
     return threads.map((row) => ({
@@ -183,12 +227,14 @@ export async function registerThreadRoutes(
   });
 
   server.post("/api/threads", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
     const body = CreateThreadSchema.parse(request.body ?? {});
-    const bud = await db.query.budTable.findFirst({
-      where: eq(budTable.budId, body.bud_id)
-    });
-    if (!bud) {
-      reply.code(404).send({ error: "bud not found" });
+    if (!(await getAuthorizedBud(viewer, body.bud_id))) {
+      reply.code(404).send({ error: "bud_not_found" });
       return;
     }
 
@@ -196,7 +242,8 @@ export async function registerThreadRoutes(
       .insert(threadTable)
       .values({
         budId: body.bud_id,
-        title: body.title ?? null
+        title: body.title ?? null,
+        createdByUserId: viewer.userId,
       })
       .returning({ threadId: threadTable.threadId });
 
@@ -205,30 +252,32 @@ export async function registerThreadRoutes(
 
   server.get("/api/threads/:threadId", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
-    const thread = await db.query.threadTable.findFirst({
-      where: eq(threadTable.threadId, params.threadId)
-    });
-    if (!thread) {
-      reply.code(404).send({ error: "thread not found" });
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
       return;
     }
+    const { thread } = access;
     reply.send(serializeThread(thread));
   });
 
   server.get("/api/threads/:threadId/messages", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const query = MessagesQuerySchema.parse(request.query ?? {});
-    const thread = await db.query.threadTable.findFirst({
-      where: eq(threadTable.threadId, params.threadId)
-    });
-    if (!thread) {
-      reply.code(404).send({ error: "thread not found" });
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
       return;
     }
+
+    const { thread, viewer } = access;
     const rows = await db
       .select()
       .from(messageTable)
-      .where(eq(messageTable.threadId, thread.threadId))
+      .where(
+        and(
+          eq(messageTable.threadId, thread.threadId),
+          eq(messageTable.createdByUserId, viewer.userId),
+        ),
+      )
       .orderBy(desc(messageTable.createdAt))
       .limit(query.limit);
     reply.send(rows.map(serializeMessage));
@@ -238,13 +287,12 @@ export async function registerThreadRoutes(
     const params = ThreadParamsSchema.parse(request.params);
     const query = RunsQuerySchema.parse(request.query ?? {});
 
-    const thread = await db.query.threadTable.findFirst({
-      where: eq(threadTable.threadId, params.threadId)
-    });
-    if (!thread) {
-      reply.code(404).send({ error: "thread not found" });
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
       return;
     }
+
+    const { thread, viewer } = access;
 
     let cursorDate: Date | null = null;
     if (query.cursor) {
@@ -269,6 +317,7 @@ export async function registerThreadRoutes(
       .where(
         and(
           eq(runTable.threadId, thread.threadId),
+          eq(runTable.createdByUserId, viewer.userId),
           cursorDate ? lt(runTable.startedAt, cursorDate) : undefined
         )
       )
@@ -323,13 +372,13 @@ export async function registerThreadRoutes(
     const params = ThreadParamsSchema.parse(request.params);
     const body = CreateMessageSchema.parse(request.body ?? {});
 
-    const thread = await db.query.threadTable.findFirst({
-      where: eq(threadTable.threadId, params.threadId)
-    });
-    if (!thread) {
-      reply.code(404).send({ error: "thread not found" });
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
       return;
     }
+
+    const { thread, viewer } = access;
+    const ownerUserId = thread.createdByUserId ?? viewer.userId;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Pre-flight context sync
@@ -350,7 +399,8 @@ export async function registerThreadRoutes(
         try {
           const contextUpdate = await contextSyncService.checkAndSync(
             session.sessionId,
-            params.threadId
+            params.threadId,
+            ownerUserId,
           );
 
           if (contextUpdate) {
@@ -379,6 +429,7 @@ export async function registerThreadRoutes(
         role: "user",
         displayRole: "User",
         content: body.text,
+        createdByUserId: viewer.userId,
         metadata
       })
       .returning({ messageId: messageTable.messageId });
@@ -387,7 +438,8 @@ export async function registerThreadRoutes(
     try {
       await agentService.startUserMessage(thread.threadId, {
         model: body.model ?? null,
-        reasoningEffort: body.reasoning_effort ?? null
+        reasoningEffort: body.reasoning_effort ?? null,
+        ownerUserId,
       });
       reply.code(201).send({ messageId: message.messageId });
     } catch (err) {
@@ -397,8 +449,12 @@ export async function registerThreadRoutes(
   });
 
   // GET /api/threads/:threadId/agent/stream - SSE for agent events
-  server.get("/api/threads/:threadId/agent/stream", (request, reply) => {
+  server.get("/api/threads/:threadId/agent/stream", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
 
     // Subscribe to agent events for this thread
     const detach = agentEvents.attach(params.threadId, reply);
@@ -422,13 +478,11 @@ export async function registerThreadRoutes(
 
   server.post("/api/threads/:threadId/cancel", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
-    const thread = await db.query.threadTable.findFirst({
-      where: eq(threadTable.threadId, params.threadId)
-    });
-    if (!thread) {
-      reply.code(404).send({ error: "thread not found" });
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
       return;
     }
+    const { thread } = access;
     agentService.cancelThread(thread.threadId);
     reply.send({ ok: true });
   });
@@ -447,26 +501,22 @@ export async function registerThreadTerminalRoutes(
   // This always succeeds if the thread exists, regardless of bud online status
   server.post("/api/threads/:threadId/terminal", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
-
-    // Get thread to find budId
-    const thread = await db.query.threadTable.findFirst({
-      where: and(
-        eq(threadTable.threadId, params.threadId),
-        isNull(threadTable.deletedAt)
-      )
-    });
-    if (!thread) {
-      return reply.code(404).send({ error: "thread_not_found" });
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
     }
+
+    const { thread, viewer } = access;
 
     // Get or create session record in DB
     let session = await terminalSessionManager.getSessionForThread(params.threadId);
     const created = !session;
 
     if (!session) {
-      const sessionId = await terminalSessionManager.createSessionForThread(
+      await terminalSessionManager.createSessionForThread(
         params.threadId,
-        thread.budId
+        thread.budId,
+        thread.createdByUserId ?? viewer.userId,
       );
       session = await terminalSessionManager.getSessionForThread(params.threadId);
     }
@@ -487,6 +537,10 @@ export async function registerThreadTerminalRoutes(
   // This may fail if bud is offline - caller should handle gracefully
   server.post("/api/threads/:threadId/terminal/ensure", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
 
     const session = await terminalSessionManager.getSessionForThread(params.threadId);
     if (!session) {
@@ -515,6 +569,10 @@ export async function registerThreadTerminalRoutes(
   // GET /api/threads/:threadId/terminal - Get session info
   server.get("/api/threads/:threadId/terminal", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
 
     const session = await terminalSessionManager.getSessionForThread(params.threadId);
     if (!session) {
@@ -535,42 +593,48 @@ export async function registerThreadTerminalRoutes(
   });
 
   // GET /api/threads/:threadId/terminal/stream - SSE output stream
-  server.get("/api/threads/:threadId/terminal/stream", (request, reply) => {
+  server.get("/api/threads/:threadId/terminal/stream", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
 
-    // Look up session synchronously isn't possible, so we need to handle this async
-    // but still use the reply.sse() pattern for proper flushing
-    void (async () => {
-      const session = await terminalSessionManager.getSessionForThread(params.threadId);
-      if (!session) {
-        reply.code(404).send({ error: "no_terminal_session" });
-        return;
-      }
+    const session = await terminalSessionManager.getSessionForThread(params.threadId);
+    if (!session) {
+      reply.code(404).send({ error: "no_terminal_session" });
+      return;
+    }
 
-      // Subscribe to session events using the event bus
-      const detach = terminalEvents.attach(session.sessionId, reply);
+    // Subscribe to session events using the event bus
+    const detach = terminalEvents.attach(session.sessionId, reply);
 
-      // Send periodic heartbeat to keep connection alive
-      const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
-      const heartbeatInterval = setInterval(() => {
-        try {
-          reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
-        } catch {
-          clearInterval(heartbeatInterval);
-        }
-      }, heartbeatMs);
-
-      // Cleanup on close
-      reply.raw.on("close", () => {
+    // Send periodic heartbeat to keep connection alive
+    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
+    const heartbeatInterval = setInterval(() => {
+      try {
+        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
+      } catch {
         clearInterval(heartbeatInterval);
-        detach();
-      });
-    })();
+      }
+    }, heartbeatMs);
+
+    // Cleanup on close
+    reply.raw.on("close", () => {
+      clearInterval(heartbeatInterval);
+      detach();
+    });
   });
 
   // POST /api/threads/:threadId/terminal/input - Send input
   server.post("/api/threads/:threadId/terminal/input", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
+    const { viewer } = access;
     const body = TerminalInputBodySchema.safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send({ error: "input_required" });
@@ -584,7 +648,7 @@ export async function registerThreadTerminalRoutes(
     const result = await terminalSessionManager.sendInput(
       session.sessionId,
       Buffer.from(body.data.input, "utf-8"),
-      { source: "user" }
+      { source: "user", userId: viewer.userId }
     );
 
     if (!result.ok) {
@@ -597,6 +661,10 @@ export async function registerThreadTerminalRoutes(
   // POST /api/threads/:threadId/terminal/interrupt - Send Ctrl+C
   server.post("/api/threads/:threadId/terminal/interrupt", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
 
     const session = await terminalSessionManager.getSessionForThread(params.threadId);
     if (!session) {
@@ -614,6 +682,11 @@ export async function registerThreadTerminalRoutes(
   // POST /api/threads/:threadId/terminal/resize - Resize terminal
   server.post("/api/threads/:threadId/terminal/resize", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
     const body = TerminalResizeBodySchema.safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send({ error: "invalid_body", details: body.error.message });
@@ -639,6 +712,11 @@ export async function registerThreadTerminalRoutes(
   // GET /api/threads/:threadId/terminal/history - Get output history
   server.get("/api/threads/:threadId/terminal/history", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
     const query = request.query as { bytes?: string; sinceOffset?: string };
     const maxBytes = Math.max(parseInt(query.bytes ?? "4096", 10) || 4096, 0);
     const sinceOffset = query.sinceOffset ? parseInt(query.sinceOffset, 10) : undefined;
@@ -665,16 +743,12 @@ export async function registerThreadTerminalRoutes(
   // DELETE /api/threads/:threadId - Soft delete thread
   server.delete("/api/threads/:threadId", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
-
-    const thread = await db.query.threadTable.findFirst({
-      where: and(
-        eq(threadTable.threadId, params.threadId),
-        isNull(threadTable.deletedAt)
-      )
-    });
-    if (!thread) {
-      return reply.code(404).send({ error: "thread_not_found" });
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
     }
+
+    const { thread } = access;
 
     // Check for active session
     const session = await terminalSessionManager.getSessionForThread(params.threadId);

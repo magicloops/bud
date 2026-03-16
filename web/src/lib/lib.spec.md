@@ -4,7 +4,7 @@ Utility functions and shared helpers.
 
 ## Purpose
 
-Provides common utilities for API communication, theming, and class name management.
+Provides common utilities for API communication, browser auth, theming, and class name management.
 
 ## Files
 
@@ -19,11 +19,33 @@ export const buildApiUrl = (path: string) => {
   return path
 }
 
-export const apiFetch = (path: string, init?: RequestInit) =>
-  fetch(buildApiUrl(path), init)
+export const buildAbsoluteApiUrl = (path: string) => {
+  if (apiBaseUrl) return new URL(path, apiBaseUrl).toString()
+  return new URL(path, window.location.origin).toString()
+}
+
+export const apiFetch = (path: string, init?: ApiRequestInit) =>
+  fetch(buildApiUrl(path), {
+    ...init,
+    credentials: init?.credentials ?? 'include',
+  })
 ```
 
+**Auth-Aware Transport**:
+- `apiFetch()` always includes credentials
+- runtime `401` responses redirect the browser back to `/login`
+- login redirects are deduplicated in-module so long-lived reconnect loops can detect an in-flight auth redirect
+- `fetchCurrentUser()` normalizes `/api/me`
+- `updateCurrentUserProfile()` writes Bud-owned profile updates back to `/api/me/profile`
+- `createAuthEventSource()` centralizes credentialed SSE setup plus auth-expiry checks
+- `buildAbsoluteApiUrl()` exists specifically for clients like Better Auth that require a fully-qualified base URL even in same-origin/proxy dev mode
+
 Uses `VITE_API_BASE_URL` env var if set.
+
+**Auth Utilities**:
+- `normalizeAppRedirectPath()` - sanitizes internal return targets
+- `buildLoginUrl()` / `redirectToLogin()` - browser login redirects
+- `ApiError` / `isApiError()` - typed error handling for loaders/runtime calls
 
 **Terminal Data Decoding**:
 ```typescript
@@ -39,6 +61,8 @@ export const decodeTerminalData = (data: string) => {
 | `ApiBud` | Bud response (id, name, status, capabilities) |
 | `ApiThread` | Thread response (id, title, session info) |
 | `ApiMessage` | Message response (id, role, content) |
+| `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
+| `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 
 **Capability Normalization**:
 ```typescript
@@ -52,6 +76,17 @@ export function normalizeCapabilities(caps: unknown): {
 ```
 
 Safely extracts capability fields from API response.
+
+### `auth-client.ts`
+
+Better Auth React client configuration.
+
+**Responsibilities**:
+- Creates the Better Auth client for the web app
+- Points auth actions at an absolute `/api/auth` URL
+- In proxy-mode local dev, derives that absolute URL from `window.location.origin`
+- In cross-origin mode, uses `VITE_API_BASE_URL`
+- Powers OAuth entrypoints for the `/login` route
 
 ### `theme-colors.ts`
 
@@ -117,6 +152,7 @@ cn('text-red-500', isActive && 'font-bold', className)
 
 | Import | Purpose |
 |--------|---------|
+| `better-auth/react` | Better Auth browser client |
 | `clsx` | Conditional class names |
 | `tailwind-merge` | Tailwind class deduplication |
 

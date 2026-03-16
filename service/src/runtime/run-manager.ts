@@ -19,6 +19,7 @@ type RunRequest = {
   threadId: string;
   command: string;
   cwd?: string;
+  createdByUserId?: string | null;
 };
 
 type DispatchMode = "standalone" | "agent";
@@ -89,7 +90,8 @@ export class RunManager {
 
   async createRun(request: RunRequest): Promise<{ runId: string }> {
     const { runId, budId } = await this.createRunRecord(request.threadId, {
-      status: "running"
+      status: "running",
+      createdByUserId: request.createdByUserId,
     });
 
     const dispatch = await this.dispatchShellCommand({
@@ -120,7 +122,7 @@ export class RunManager {
 
   async createRunRecord(
     threadId: string,
-    options: { status?: "planning" | "running" } = {}
+    options: { status?: "planning" | "running"; createdByUserId?: string | null } = {}
   ): Promise<{ runId: string; budId: string; threadId: string }> {
     const thread = await db.query.threadTable.findFirst({
       where: eq(threadTable.threadId, threadId)
@@ -146,6 +148,7 @@ export class RunManager {
       threadId: thread.threadId,
       status: options.status ?? "planning",
       startedAt: now,
+      createdByUserId: options.createdByUserId ?? thread.createdByUserId ?? undefined,
       createdAt: now
     });
 

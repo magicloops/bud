@@ -48,8 +48,8 @@ Manages standalone command execution on buds.
 
 | Method | Description |
 |--------|-------------|
-| `createRun(request)` | Create run record and dispatch to bud |
-| `createRunRecord(threadId, options)` | DB record creation only |
+| `createRun(request)` | Create an owned run record and dispatch to bud |
+| `createRunRecord(threadId, options)` | DB record creation only, inheriting thread ownership when needed |
 | `dispatchShellCommand(params)` | Send run frame to bud, return deferred promise |
 | `handleStreamChunk(runId, stream, dataB64, seq)` | Process stdout/stderr chunks |
 | `handleRunFinished(runId, payload)` | Complete run, resolve promise |
@@ -80,11 +80,11 @@ Thread-scoped terminal session management using tmux (~800 lines).
 
 | Method | Description |
 |--------|-------------|
-| `createSessionForThread(threadId, budId)` | Create session in DB |
+| `createSessionForThread(threadId, budId, createdByUserId?)` | Create session in DB with thread-owner stamping |
 | `getSessionForThread(threadId)` | Get active session |
 | `getSession(sessionId)` | Get by ID |
 | `ensureSession(sessionId)` | Send `terminal_ensure` to bud |
-| `sendInput(sessionId, data, options)` | Send input with optional readiness waiting |
+| `sendInput(sessionId, data, options)` | Send input with optional readiness waiting and user audit metadata |
 | `sendInterrupt(sessionId)` | Send Ctrl+C |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
 | `closeSession(sessionId, reason)` | Close session |
@@ -129,6 +129,11 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 5. Promise resolves with `RunResult`
 
 This pattern replaces the previous approach of `sendInput` + `waitForReadiness` + `tailOutput`, providing cleaner ownership boundaries where Bud handles all terminal state.
+
+**Ownership Notes**:
+- `createRunRecord()` stamps `run.created_by_user_id` from the caller or owning thread
+- `createSessionForThread()` stamps `terminal_session.created_by_user_id`
+- `sendInput(..., { userId })` writes the acting human id into `terminal_session_input_log.user_id`
 
 ## Dependencies
 

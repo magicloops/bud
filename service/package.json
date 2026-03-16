@@ -13,6 +13,7 @@
     "test": "tsx src/runtime/session-manager.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:push": "tsx src/scripts/db-push.ts",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/scripts/seed.ts"
   },
@@ -22,6 +23,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
     "@fastify/websocket": "^10.0.1",
+    "better-auth": "^1.5.5",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.44.7",
     "fastify": "^4.28.1",

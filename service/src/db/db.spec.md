@@ -4,7 +4,7 @@ Database layer using Drizzle ORM with PostgreSQL.
 
 ## Purpose
 
-Provides type-safe database access for all persistent data: buds, threads, messages, runs, sessions, and terminal output.
+Provides type-safe database access for all persistent data: buds, threads, messages, runs, sessions, terminal output, browser-auth user/profile records, and device-claim bootstrap state.
 
 ## Files
 
@@ -39,16 +39,32 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `budTable` | Registered devices | `budId`, `name`, `os`, `arch`, `capabilities`, `status`, `deviceSecret` |
+| `budTable` | Registered devices | `budId`, `installationId`, `name`, `os`, `arch`, `capabilities`, `status`, `deviceSecret`, `createdByUserId` |
 | `enrollmentTokenTable` | One-time registration tokens | `tokenHash`, `expiresAt`, `consumedAt` |
-| `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `deletedAt` |
-| `messageTable` | Chat messages | `messageId`, `threadId`, `role`, `content`, `metadata` |
+| `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
+| `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `deletedAt`, `createdByUserId` |
+| `messageTable` | Chat messages | `messageId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
+
+#### Auth Tables (`auth` schema)
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `authUserTable` | Better Auth user records | `id`, `name`, `email`, `emailVerified`, `image` |
+| `authSessionTable` | Better Auth browser sessions | `id`, `token`, `expiresAt`, `userId` |
+| `authAccountTable` | Linked OAuth accounts | `id`, `providerId`, `accountId`, `userId` |
+| `authVerificationTable` | Better Auth verification tokens | `id`, `identifier`, `value`, `expiresAt` |
+
+#### Profile Table
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `userProfileTable` | Bud-owned profile metadata layered on auth users | `userId`, `username`, `createdAt`, `updatedAt` |
 
 #### Run Tables (Legacy/Command Execution)
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `runTable` | Command execution records | `runId`, `threadId`, `status`, `stepCount`, `logsBytes` |
+| `runTable` | Command execution records | `runId`, `threadId`, `status`, `stepCount`, `logsBytes`, `createdByUserId`, `canceledByUserId` |
 | `runStepTable` | Individual tool calls | `stepId`, `runId`, `tool`, `argsJson`, `exitCode` |
 | `runLogTable` | Stdout/stderr chunks | `runId`, `seq`, `stream`, `data` (bytea) |
 | `runSummaryTable` | Denormalized run summaries | `runId`, `budId`, `status`, `exitCode`, `stdoutBytes` |
@@ -57,9 +73,9 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `terminalSessionTable` | Thread-scoped tmux sessions | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot` |
+| `terminalSessionTable` | Thread-scoped tmux sessions | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot`, `createdByUserId` |
 | `terminalSessionOutputTable` | Terminal output chunks | `sessionId`, `byteOffset`, `seq`, `data` (bytea) |
-| `terminalSessionInputLogTable` | Input audit log | `sessionId`, `inputBytes`, `source`, `sentAt` |
+| `terminalSessionInputLogTable` | Input audit log | `sessionId`, `source`, `userId`, `createdAt` |
 
 **stateSnapshot Column** (JSONB): Stores last known terminal state for context sync:
 ```typescript
@@ -90,12 +106,25 @@ const byteaColumn = customType<{ data: Buffer }>({
 });
 ```
 
+#### Device Claim Bootstrap
+
+`deviceAuthFlowTable` backs the Bud QR/link onboarding path:
+
+- Bud starts a pending claim with `installation_id` + requested device metadata
+- the browser approves that flow after OAuth login
+- the service stores a fresh long-lived `issuedDeviceSecret` until the daemon reconnects
+- successful `/ws` auth marks approved flows as `completed` and clears the pending issued secret
+
+`budTable.installationId` is unique when present so the same physical install can re-claim the same `bud_id` if only the device secret is lost.
+
 #### Indexes
 
 - `thread_bud_idx` - Threads by bud
 - `thread_deleted_idx` - Soft delete filtering
 - `message_thread_idx` - Messages by thread
 - `run_thread_idx` - Runs by thread + started_at
+- `bud_installation_id_idx` - Device continuity lookup by stable installation identity
+- `device_auth_flow_installation_idx` / `device_auth_flow_status_idx` - Claim lookup, expiry, and polling
 - Various terminal session indexes for efficient queries
 
 ### `run-summary.ts`
@@ -134,6 +163,12 @@ Updates:
 ## Schema Relationships
 
 ```
+authUserTable
+    │
+    ├── 1:N ──► authSessionTable
+    ├── 1:N ──► authAccountTable
+    └── 1:1 ──► userProfileTable
+
 budTable
     │
     ├── 1:N ──► threadTable
@@ -145,19 +180,24 @@ budTable
     │              └── 1:1 ──► terminalSessionTable ──► terminalSessionOutputTable
     │                                                   terminalSessionInputLogTable
     │
-    └── enrollmentTokenTable (no FK)
+    ├── enrollmentTokenTable (no FK)
+    └── deviceAuthFlowTable
+            ├── N:1 ──► authUserTable (approvedByUserId)
+            └── N:1 ──► budTable (budId)
 ```
 
-## Multi-Tenancy Support
+## Auth Bootstrap Note
 
-Several tables have `tenantId` and `createdByUserId` columns, though these are not currently enforced:
-- `budTable`
-- `threadTable`
-- `messageTable`
-- `runTable`
+`drizzle-kit push` remains scoped to the `public` schema in this project. [`db-push.ts`](/Users/adam/code/bud/service/src/scripts/db-push.ts) creates the `auth` schema plus Better Auth's core tables/indexes before delegating back to Drizzle for public-schema diffs such as `user_profile`.
+
+## Ownership And Multi-Tenancy Support
+
+Browser-facing ownership is now enforced through `createdByUserId` across the Bud/thread/message/run/terminal-session surfaces, with human terminal input additionally recorded in `terminalSessionInputLog.userId`.
+
+`tenantId` columns remain nullable and unused in this tranche.
 
 <!-- SPEC:TODO -->
-Multi-tenant isolation is not implemented but schema is prepared.
+Tenant-level isolation is not implemented yet even though the schema remains prepared for it.
 
 ## Dependencies
 

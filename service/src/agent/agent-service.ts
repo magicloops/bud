@@ -235,17 +235,19 @@ export class AgentService {
     options?: {
       model?: string | null;
       reasoningEffort?: ReasoningEffortSetting | null;
+      ownerUserId?: string | null;
     }
   ): Promise<{ sessionId: string }> {
     const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
     const model = options?.model ?? config.defaultModel;
+    const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
 
     // Clear old agent events (especially `final`) so new SSE connections
     // don't receive stale events from previous runs
     this.events.clearBuffer(threadId);
 
     // Get or create terminal session for this thread
-    const session = await this.getOrCreateSession(threadId);
+    const session = await this.getOrCreateSession(threadId, ownerUserId);
     const controller = new AbortController();
     this.cancellations.set(threadId, controller);
     void this.runAgentFlow({
@@ -253,6 +255,7 @@ export class AgentService {
       sessionId: session.sessionId,
       model,
       reasoningEffort: requestedEffort,
+      ownerUserId,
       controller
     }).catch((err) => {
       this.logger.error({ err, sessionId: session.sessionId, threadId, component: "agent" }, "Agent flow failed");
@@ -265,12 +268,14 @@ export class AgentService {
     sessionId,
     model,
     reasoningEffort,
+    ownerUserId,
     controller
   }: {
     threadId: string;
     sessionId: string;
     model: string;
     reasoningEffort: ReasoningEffortSetting;
+    ownerUserId?: string | null;
     controller: AbortController;
   }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
@@ -314,7 +319,12 @@ export class AgentService {
           });
 
           const result = await this.executeTerminalCall(threadId, toolCall);
-          const toolPayload = await this.recordTerminalToolMessage(threadId, toolCall, result);
+          const toolPayload = await this.recordTerminalToolMessage(
+            threadId,
+            toolCall,
+            result,
+            ownerUserId,
+          );
 
           // Refresh snapshot after terminal.run so context sync has accurate state
           if (toolCall.tool === "terminal.run" && this.contextSyncService) {
@@ -353,6 +363,7 @@ export class AgentService {
           role: "assistant",
           displayRole: "Bud Agent",
           content: directive.message,
+          createdByUserId: ownerUserId ?? undefined,
           metadata: { status: directive.status }
         });
         await recordThreadMessageMetadata(threadId, directive.message);
@@ -949,7 +960,8 @@ export class AgentService {
   private async recordTerminalToolMessage(
     threadId: string,
     directive: Extract<AgentDirective, { type: "tool_call" }>,
-    result: TerminalCallResult
+    result: TerminalCallResult,
+    ownerUserId?: string | null,
   ) {
     const payload = {
       tool: directive.tool,
@@ -967,6 +979,7 @@ export class AgentService {
       role: "tool",
       displayRole: "Tool",
       content: JSON.stringify(payload),
+      createdByUserId: ownerUserId ?? undefined,
       metadata: payload
     });
     const contextInfo = result.context?.mode === "repl" ? ` [${result.context.program}]` : "";
@@ -1038,18 +1051,30 @@ export class AgentService {
     return { budId: thread.budId };
   }
 
+  private async resolveThreadOwnerUserId(threadId: string): Promise<string | null> {
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, threadId),
+      columns: { createdByUserId: true },
+    });
+
+    return thread?.createdByUserId ?? null;
+  }
+
   /**
    * Get or create the terminal session for a thread.
    * Creates session on first terminal tool use.
    */
-  private async getOrCreateSession(threadId: string): Promise<TerminalSession> {
+  private async getOrCreateSession(
+    threadId: string,
+    ownerUserId?: string | null,
+  ): Promise<TerminalSession> {
     // Check for existing session
     let session = await this.terminalSessionManager.getSessionForThread(threadId);
 
     if (!session) {
       // Create new session
       const bud = await this.fetchBudForThread(threadId);
-      await this.terminalSessionManager.createSessionForThread(threadId, bud.budId);
+      await this.terminalSessionManager.createSessionForThread(threadId, bud.budId, ownerUserId);
       session = await this.terminalSessionManager.getSessionForThread(threadId);
 
       if (!session) {

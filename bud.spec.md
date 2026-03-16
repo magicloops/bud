@@ -38,7 +38,8 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 | Path | Protocol | Purpose |
 |------|----------|---------|
-| Daemon ↔ Service | WebSocket | Device registration, heartbeat, terminal I/O, command execution |
+| Daemon ↔ Service | WebSocket | Device reauth, heartbeat, terminal I/O, command execution |
+| Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |
 | Service → OpenAI | HTTP | LLM inference via Responses API |
@@ -65,9 +66,9 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 | Entity | Description |
 |--------|-------------|
-| **Bud** | A registered device running the bud daemon. Has identity, capabilities, status (online/offline), and accent color for UI theming. |
-| **Thread** | A conversation belonging to a bud. Contains messages and owns at most one terminal session. |
-| **Message** | A chat message with role (user/assistant/tool) and content. Tool messages contain structured execution results. |
+| **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
+| **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one terminal session. |
+| **Message** | A chat message with role (user/assistant/tool/system), content, and an owning user id. Tool/system messages inherit thread ownership. |
 | **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
 
@@ -103,6 +104,7 @@ bud/
 │
 ├── service/                # Node.js backend service
 │   ├── src/
+│   │   ├── auth/           # Better Auth bridge + session helpers
 │   │   ├── agent/          # LLM integration (OpenAI Responses API)
 │   │   ├── db/             # Database layer (Drizzle ORM)
 │   │   ├── routes/         # HTTP API endpoints
@@ -123,6 +125,7 @@ bud/
 ├── design/                 # Design documents
 ├── docs/                   # Documentation
 ├── plan/                   # Planning documents
+├── review/                 # Review and audit notes
 └── debug/                  # Debug logs and notes
 ```
 
@@ -149,6 +152,7 @@ bud/
 | **Fastify** | HTTP server framework |
 | **@fastify/websocket** | WebSocket support |
 | **fastify-sse-v2** | Server-Sent Events |
+| **Better Auth** | Browser authentication + OAuth |
 | **Drizzle ORM** | Type-safe database access |
 | **PostgreSQL** | Primary database |
 | **OpenAI SDK** | LLM integration |
@@ -161,6 +165,7 @@ bud/
 |------------|---------|
 | **React 19** | UI framework |
 | **TanStack Router** | File-based routing with loaders |
+| **Better Auth Client** | Browser OAuth/session helpers |
 | **Tailwind CSS 4** | Utility-first styling |
 | **Vite** | Build tool and dev server |
 | **xterm.js** | Terminal emulator |
@@ -178,6 +183,28 @@ Buds authenticate via enrollment tokens or device secrets:
 1. **First connection**: Daemon presents enrollment token, receives `bud_id` and `device_secret`
 2. **Subsequent connections**: Daemon responds to HMAC challenge using stored secret
 3. **Session establishment**: Successful auth yields `session_id` for message correlation
+
+The service also now exposes browser authentication foundations through Better Auth:
+- OAuth providers: GitHub and Google
+- Session/OAuth handlers mounted at `/api/auth/*`
+- Normalized current-user surface at `/api/me`
+- Provider/session state stored in PostgreSQL `auth` schema, with Bud-owned usernames in `public.user_profile`
+
+The web app now consumes that foundation through:
+- `/login` for direct browser sign-in
+- `/settings` for profile edits, linked-account management, and sign-out
+- `/devices/claim/$flowId` for QR/link-based Bud approval
+- an auth-aware app shell that resolves the current user before protected routes load
+- credential-aware API and SSE helpers so cookie auth works consistently across loaders and live streams
+- auth-expiry-aware reconnect guards so live thread views stop polling once browser auth is gone
+- per-user route filtering so browser users only receive their own Buds, threads, runs, sessions, and messages
+
+Bud device onboarding is now browser-mediated:
+1. The daemon starts a claim with `/api/device-auth/start`
+2. The service returns a short claim URL and QR payload
+3. The browser authenticates the human and approves the claim
+4. The daemon polls `/api/device-auth/poll` for the issued `device_secret`
+5. `/ws` challenge-response resumes as the steady-state auth path
 
 ### 2. Agent Loop (LLM Integration)
 
@@ -403,7 +430,6 @@ Thread-scoped sessions provide isolation and predictability.
 
 <!-- SPEC:TODO -->
 - Multi-tenant support (tenant_id columns exist but unused)
-- User authentication (created_by_user_id columns exist but unused)
 - File transfer capabilities
 - Multiple terminal windows per thread
 - Session sharing/collaboration
@@ -441,10 +467,17 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
 | [docs/proto.md](./docs/proto.md) | Wire protocol specification |
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
+| [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
+| [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
+| [debug/terminal-session-default-cwd.md](./debug/terminal-session-default-cwd.md) | Debug note tracing why tmux sessions currently start in `~` when `terminal_ensure` omits cwd for relocated Bud instances |
+| [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
+| [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
+| [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |
+| [PR_SUMMARY.md](./PR_SUMMARY.md) | High-level branch summary for the production-auth PR relative to `origin/main`, including major changes, validation status, and follow-on scope |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
 | [design/](./design/) | Design documents |
 
 ---
 
-*Last updated: 2025-12-12*
+*Last updated: 2026-03-16*

@@ -6,6 +6,7 @@ Node.js backend service providing REST API, WebSocket gateway, and AI agent orch
 
 The service is the central hub of the Bud system:
 - **REST API** - CRUD for buds, threads, messages, runs, and terminal sessions
+- **Browser Auth** - Better Auth-backed OAuth/session flows for web users
 - **WebSocket Gateway** - Persistent connections with bud daemons
 - **SSE Streaming** - Real-time events to web clients
 - **Agent Service** - LLM-powered tool calling via OpenAI
@@ -26,6 +27,7 @@ Package manifest:
 | `fastify` | ^4.28.1 | HTTP framework |
 | `@fastify/websocket` | ^10.0.1 | WebSocket support |
 | `fastify-sse-v2` | ^2.2.1 | Server-Sent Events |
+| `better-auth` | ^1.5.5 | Browser auth + OAuth |
 | `openai` | ^6.8.1 | OpenAI SDK |
 | `drizzle-orm` | ^0.44.7 | Database ORM |
 | `pg` | ^8.13.1 | PostgreSQL client |
@@ -38,11 +40,19 @@ TypeScript configuration targeting ES2022 with ESM output.
 
 ### `drizzle.config.ts`
 
-Drizzle Kit configuration for migrations.
+Drizzle Kit configuration for schema push/introspection.
+
+### `.env.example`
+
+Checked-in template for local service setup. Includes:
+- Better Auth config (`APP_BASE_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_SECRET`)
+- GitHub/Google OAuth credentials
+- DB/runtime defaults
+- optional LLM provider settings
 
 ### `.env` (not committed)
 
-Environment variables (see `src/config.ts` for full list).
+Local copy derived from `.env.example`.
 
 ## Subfolders
 
@@ -51,6 +61,7 @@ Environment variables (see `src/config.ts` for full list).
 Main source code:
 - `server.ts` - Entry point
 - `config.ts` - Environment configuration
+- `auth/` - Better Auth integration and session helpers
 - `agent/` - LLM integration
 - `db/` - Database layer
 - `routes/` - HTTP endpoints
@@ -75,8 +86,9 @@ Standalone utility scripts for debugging and queries.
 | `start` | `node dist/server.js` | Run compiled build |
 | `lint` | `eslint "src/**/*.ts"` | Lint source files |
 | `test` | `tsx src/runtime/session-manager.test.ts` | Run tests |
-| `db:generate` | `drizzle-kit generate` | Generate migration |
-| `db:migrate` | `drizzle-kit migrate` | Apply migrations |
+| `db:generate` | `drizzle-kit generate` | Legacy migration generation helper |
+| `db:migrate` | `drizzle-kit migrate` | Legacy migration apply helper |
+| `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
 
@@ -86,6 +98,7 @@ Standalone utility scripts for debugging and queries.
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/api/me` | Current authenticated user/profile |
 | `GET` | `/api/buds` | List registered buds |
 | `GET` | `/api/buds/:id/sessions` | List bud's terminal sessions |
 | `GET` | `/api/threads` | List threads |
@@ -97,6 +110,7 @@ Standalone utility scripts for debugging and queries.
 | `POST` | `/api/threads/:id/terminal/ensure` | Ensure terminal on bud |
 | `GET` | `/api/threads/:id/terminal/stream` | SSE output stream |
 | `POST` | `/api/threads/:id/terminal/input` | Send terminal input |
+| `GET/POST` | `/api/auth/*` | Better Auth session and OAuth handlers |
 | `GET` | `/healthz` | Health check |
 
 ### WebSocket Endpoints
@@ -152,22 +166,26 @@ pnpm install
 
 # Set up database (PostgreSQL must be running)
 createdb bud
-pnpm db:migrate
-
-# Seed with enrollment token
-pnpm db:seed
+pnpm db:push
 
 # Start development server
 pnpm dev
 ```
 
+`pnpm db:seed` is optional and only needed for legacy/manual enrollment-token testing.
+
 ## Environment Variables
 
 **Required**:
 - `DATABASE_URL` - PostgreSQL connection string
+- `BETTER_AUTH_SECRET` - Better Auth signing/encryption secret
+- `BETTER_AUTH_URL` - Public auth base URL
 - `OPENAI_API_KEY` - OpenAI API key
 
 **Optional**:
+- `BETTER_AUTH_TRUSTED_ORIGINS` - Allowed browser origins for auth cookies/callbacks
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth
 - `PORT` - Server port (default: 3000)
 - `OPENAI_MODEL` - Model (default: gpt-4.1-mini)
 - `AGENT_MAX_STEPS` - Max tool calls (default: 30)

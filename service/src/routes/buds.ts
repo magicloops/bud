@@ -4,6 +4,7 @@ import { db } from "../db/client.js";
 import { budTable, runSummaryTable, terminalSessionTable, threadTable } from "../db/schema.js";
 import { isBudOnline } from "../ws/gateway.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
+import { getAuthorizedBud, requireViewer } from "../auth/session.js";
 
 type BudRow = typeof budTable.$inferSelect;
 
@@ -38,10 +39,16 @@ export async function registerBudRoutes(
   server: FastifyInstance,
   terminalSessionManager: TerminalSessionManager
 ): Promise<void> {
-  server.get("/api/buds", async () => {
+  server.get("/api/buds", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
     const buds = await db
       .select()
       .from(budTable)
+      .where(eq(budTable.createdByUserId, viewer.userId))
       .orderBy(desc(budTable.lastSeenAt));
     const budIds = buds.map((bud) => bud.budId);
     const lastRuns = new Map<
@@ -89,13 +96,14 @@ export async function registerBudRoutes(
 
   // GET /api/buds/:budId/sessions - List active terminal sessions on Bud with thread info
   server.get("/api/buds/:budId/sessions", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
     const { budId } = request.params as { budId: string };
 
-    // Verify bud exists
-    const bud = await db.query.budTable.findFirst({
-      where: eq(budTable.budId, budId)
-    });
-    if (!bud) {
+    if (!(await getAuthorizedBud(viewer, budId))) {
       return reply.status(404).send({ error: "bud_not_found" });
     }
 
@@ -118,6 +126,7 @@ export async function registerBudRoutes(
       .where(
         and(
           eq(terminalSessionTable.budId, budId),
+          eq(terminalSessionTable.createdByUserId, viewer.userId),
           isNull(terminalSessionTable.closedAt)
         )
       )
@@ -144,15 +153,20 @@ export async function registerBudRoutes(
 
   // DELETE /api/buds/:budId/sessions/:sessionId - Close a session
   server.delete("/api/buds/:budId/sessions/:sessionId", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
     const { budId, sessionId } = request.params as { budId: string; sessionId: string };
+    if (!(await getAuthorizedBud(viewer, budId))) {
+      return reply.status(404).send({ error: "bud_not_found" });
+    }
 
     // Verify session exists and belongs to this bud
     const session = await terminalSessionManager.getSession(sessionId);
-    if (!session) {
+    if (!session || session.budId !== budId) {
       return reply.status(404).send({ error: "session_not_found" });
-    }
-    if (session.budId !== budId) {
-      return reply.status(403).send({ error: "session_bud_mismatch" });
     }
     if (session.state === "closed") {
       return reply.status(409).send({ error: "session_already_closed" });

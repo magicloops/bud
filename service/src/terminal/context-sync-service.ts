@@ -55,7 +55,11 @@ export class ContextSyncService {
    *
    * @returns The summary message if state changed, null otherwise
    */
-  async checkAndSync(sessionId: string, threadId: string): Promise<string | null> {
+  async checkAndSync(
+    sessionId: string,
+    threadId: string,
+    ownerUserId?: string | null,
+  ): Promise<string | null> {
     try {
       // 1. Capture current state
       const { capture, hash, lastLine } = await this.captureCurrentState(sessionId);
@@ -88,7 +92,7 @@ export class ContextSyncService {
       const summary = await this.generateSummary(details!);
 
       // 6. Insert context message
-      await this.insertContextMessage(threadId, summary, details!);
+      await this.insertContextMessage(threadId, summary, details!, ownerUserId);
 
       // 7. Update snapshot
       await this.updateSnapshot(sessionId, hash, lastLine, currentMode, null);
@@ -307,13 +311,15 @@ Examples:
   private async insertContextMessage(
     threadId: string,
     summary: string,
-    details: StateChangeDetails
+    details: StateChangeDetails,
+    ownerUserId?: string | null,
   ): Promise<void> {
     await db.insert(messageTable).values({
       threadId,
       role: "system",
       displayRole: "Terminal Status",
       content: summary,
+      createdByUserId: ownerUserId ?? undefined,
       metadata: {
         type: "context_sync",
         previousMode: details.previousMode,

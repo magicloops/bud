@@ -1,60 +1,197 @@
-# Bud Device Agent
+# Bud Daemon
 
-Rust daemon that connects to the backend via WSS, completes the `hello`/`hello_ack` handshake (with enrollment + challenge/response), persists identity material locally, and keeps the connection alive with periodic heartbeats. Execution and log streaming will land in the next phases of the PoC.
+Rust device daemon that connects to the service over `/ws`, maintains terminal capability state, and now bootstraps auth through the browser-mediated device-claim flow.
 
-## Development
+## Setup
 
 ```bash
+cd bud
 cargo fmt
-cargo clippy --all-targets
-cargo run -- --help
+cargo build
 ```
 
-Flags/env vars (see `src/main.rs`):
-
-- `--server` / `BUD_SERVER_URL`: backend WSS endpoint (`wss://localhost:8443/ws` default).
-- `--token` / `BUD_ENROLLMENT_TOKEN`: enrollment token for first run.
-- `--name` / `BUD_DEVICE_NAME`: friendly name shown in the UI.
-- `--default-cwd` / `BUD_DEFAULT_CWD`: default working directory for shell runs.
-- `--identity-file` / `BUD_IDENTITY_FILE`: path to `{ bud_id, device_secret }`.
-
-## Enrolling a Bud
-
-1. Seed or mint an enrollment token on the backend (e.g., `pnpm db:seed` inside `service/`).
-2. Start the backend (`pnpm dev` in `service/`).
-3. Launch Bud:
-
-   ```bash
-   cargo run -- \
-     --server ws://localhost:3000/ws \
-     --token DEV-ENROLL-0001 \
-     --name dev-box \
-     --identity-file ~/.bud/identity.json
-   ```
-
-4. On success, `~/.bud/identity.json` is written with `0600` perms and reused for future reconnects (challenge/response with `hello_challenge`/`hello_proof`). Bud sends heartbeats every 30s and transitions to `online` in the backend registry.
-
-## Running a command (Phase 3)
-
-After the Bud is online:
+Use [bud/.env.example](./.env.example) as a shell-export template:
 
 ```bash
-curl -X POST http://localhost:3000/api/runs \
-  -H "Content-Type: application/json" \
-  -d '{"bud_id":"b_dev_seed","cmd":"uname -a"}'
+cp .env.example .env
+set -a; source .env; set +a
 ```
 
-Then stream logs:
+Bud does not auto-load `.env` itself; you need to export the variables in your shell before running `cargo run`.
+
+## Important Env / Flags
+
+| Env | Flag | Purpose |
+|-----|------|---------|
+| `BUD_SERVER_URL` | `--server` | Service WebSocket URL. For local service dev: `ws://localhost:3000/ws` |
+| `BUD_DEVICE_NAME` | `--name` | Device name shown during claim and in the UI |
+| `BUD_DEFAULT_CWD` | `--cwd` | Default working directory |
+| `BUD_IDENTITY_FILE` | `--identity-file` | Path to persisted `{ bud_id, device_secret }` |
+| `BUD_TERMINAL_BASE_DIR` | `--terminal-base-dir` | Base directory for terminal logs and session artifacts |
+| `BUD_TERMINAL_ENABLED` | `--terminal-enabled` | Enable terminal features |
+| `BUD_DEBUG` | `--debug` | Extra Bud logging |
+| `BUD_ENROLLMENT_TOKEN` | `--token` | Legacy/manual enrollment fallback |
+
+Bud also persists a stable non-secret installation identity beside the configured identity file. With the default settings that path is `~/.bud/installation-id`.
+
+Bud does not use the current shell directory as a state root. Running the binary from a different directory only changes isolation if your launcher also points `BUD_IDENTITY_FILE` and `BUD_TERMINAL_BASE_DIR` at that directory.
+
+## Local Run
+
+Start the service and web app first, then:
 
 ```bash
-curl -N http://localhost:3000/api/runs/<run_id>/stream
+cd bud
+set -a; source .env; set +a
+cargo run -- --terminal-enabled
 ```
 
-Bud executes the command locally, streams stdout/stderr chunks (base64) over WSS, and emits `run_finished` with the exit code. The backend persists logs to Postgres and relays human-readable chunks via SSE.
+On first run without a stored identity:
 
-## Next milestones
+1. Bud calls `/api/device-auth/start`
+2. Bud prints a claim URL and terminal QR code
+3. You open the link or scan the QR
+4. You sign in through the web flow if needed
+5. Bud polls `/api/device-auth/poll`, stores the issued `device_secret`, and reconnects over `/ws`
 
-1. Add robust cancel handling (TERM→5s→KILL of the process group) and workspace isolation per run.
-2. Enforce per-run timeouts and capture tail summaries for agent responses.
-3. Support additional tools (e.g., file upload/download) through the same registry.
-4. Harden reconnection/resume logic so in-flight runs can continue across backend restarts.
+On later runs, Bud reuses:
+
+- `~/.bud/identity.json`
+- `~/.bud/installation-id`
+
+If you delete only the identity file and keep `installation-id`, reclaiming should reuse the same Bud record.
+
+## Local Multi-Account Testing
+
+For local multi-account work, the practical pattern is:
+
+1. Build Bud once.
+2. Copy the binary into one directory per local test account.
+3. Run each copy through a small wrapper script that pins Bud's state into that directory.
+
+Copying the binary is optional. The useful part is that the wrapper script can derive the instance root from `$(dirname "$0")` and keep `identity.json`, `installation-id`, and terminal logs together.
+
+### Build Once
+
+```bash
+cd bud
+cargo build
+```
+
+This produces `target/debug/bud`.
+
+### Example Instance Layout
+
+```text
+$HOME/.bud-dev/
+  account-a/
+    bud
+    run.sh
+  account-b/
+    bud
+    run.sh
+```
+
+### Copy the Binary Into Per-Account Directories
+
+```bash
+cd bud
+mkdir -p "$HOME/.bud-dev/account-a" "$HOME/.bud-dev/account-b"
+cp target/debug/bud "$HOME/.bud-dev/account-a/bud"
+cp target/debug/bud "$HOME/.bud-dev/account-b/bud"
+chmod +x "$HOME/.bud-dev/account-a/bud" "$HOME/.bud-dev/account-b/bud"
+```
+
+### Example `run.sh`
+
+Place this next to the copied binary in each account directory:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+exec "$SCRIPT_DIR/bud" \
+  --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
+  --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
+  --identity-file "$SCRIPT_DIR/identity.json" \
+  --terminal-base-dir "$SCRIPT_DIR" \
+  --terminal-enabled
+```
+
+With that layout:
+
+- device credentials are stored at `$SCRIPT_DIR/identity.json`
+- the stable installation identity is stored at `$SCRIPT_DIR/installation-id`
+- terminal logs are stored under `$SCRIPT_DIR/sessions/`
+
+### Example `make-bud-instance.sh`
+
+If you want a repeatable team helper, this script creates one prepared instance directory:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+INSTANCE_NAME="${1:?usage: $0 <instance-name> [dest-root]}"
+DEST_ROOT="${2:-$HOME/.bud-dev}"
+INSTANCE_DIR="$DEST_ROOT/$INSTANCE_NAME"
+
+cd bud
+cargo build
+
+mkdir -p "$INSTANCE_DIR"
+cp target/debug/bud "$INSTANCE_DIR/bud"
+chmod +x "$INSTANCE_DIR/bud"
+
+cat > "$INSTANCE_DIR/run.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+exec "$SCRIPT_DIR/bud" \
+  --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
+  --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
+  --identity-file "$SCRIPT_DIR/identity.json" \
+  --terminal-base-dir "$SCRIPT_DIR" \
+  --terminal-enabled
+EOF
+
+chmod +x "$INSTANCE_DIR/run.sh"
+echo "Created $INSTANCE_DIR"
+```
+
+Example usage:
+
+```bash
+./make-bud-instance.sh account-a
+./make-bud-instance.sh account-b
+```
+
+Then run:
+
+```bash
+$HOME/.bud-dev/account-a/run.sh
+$HOME/.bud-dev/account-b/run.sh
+```
+
+Approve each Bud from the browser session that should own it. If you are testing two different user accounts on one machine, use separate browser profiles or separate authenticated sessions during the approval flow.
+
+## Legacy Manual Enrollment
+
+The old token path still exists for development fallback:
+
+```bash
+cargo run -- \
+  --server ws://localhost:3000/ws \
+  --token DEV-ENROLL-0001 \
+  --name local-bud \
+  --terminal-enabled
+```
+
+## Notes
+
+- For phone/LAN testing, replace `localhost` in `BUD_SERVER_URL` with a reachable host.
+- `tmux` must be installed if terminal features are enabled.

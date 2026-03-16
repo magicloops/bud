@@ -178,7 +178,7 @@ Pre-flight terminal context synchronization service.
 
 **Key Method**:
 ```typescript
-async checkAndSync(sessionId: string, threadId: string): Promise<string | null>
+async checkAndSync(sessionId: string, threadId: string, ownerUserId?: string | null): Promise<string | null>
 ```
 
 **Workflow**:
@@ -203,6 +203,7 @@ async checkAndSync(sessionId: string, threadId: string): Promise<string | null>
 - Clears `pendingCommands` when shell detected (fixes `terminal.run` output method selection)
 - Uses `claude-haiku-4-5` for fast, cheap LLM summaries
 - Injects messages with `role: "system"` (transformed in provider layer for Anthropic)
+- Stamps injected system messages with the owning user's `created_by_user_id`
 
 ## Usage
 

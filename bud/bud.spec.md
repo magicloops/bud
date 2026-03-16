@@ -6,13 +6,33 @@ Rust device daemon that runs on user machines and connects to the Bud service vi
 
 The bud daemon is the "agent" that runs on devices users want to control remotely. It:
 
-1. **Registers** with the service using enrollment tokens or stored identity
+1. **Bootstraps auth** through a browser claim flow (or a legacy enrollment token fallback) and stores long-lived device credentials locally
 2. **Maintains** a persistent WebSocket connection with automatic reconnection
 3. **Executes** shell commands and streams output back to the service
 4. **Manages** tmux-based terminal sessions for interactive use
 5. **Detects** terminal readiness to coordinate with the AI agent
 
 ## Files
+
+### `README.md`
+
+Contributor-facing usage guide for the daemon.
+
+**Documents**:
+- local build and run flow
+- browser-mediated claim bootstrap
+- per-instance local multi-account testing via `--identity-file` and `--terminal-base-dir`
+- example helper scripts for copying the built binary into account-specific directories
+
+### `.env.example`
+
+Shell-export template for local daemon development.
+
+**Important**:
+- Bud does not auto-load `.env`
+- developers should `source` the copied file before running `cargo run`
+- defaults point at local service development (`ws://localhost:3000/ws`)
+- includes both `BUD_IDENTITY_FILE` and `BUD_TERMINAL_BASE_DIR` so daemon state can be relocated away from `~/.bud`
 
 ### `Cargo.toml`
 
@@ -24,6 +44,7 @@ Rust package manifest defining:
 Key dependency categories:
 - Async runtime: `tokio`, `futures`
 - WebSocket: `tokio-tungstenite`, `rustls`
+- Device-auth bootstrap: `reqwest`, `qrcodegen`
 - CLI: `clap`
 - Serialization: `serde`, `serde_json`
 - PTY: `nix`, `libc`
@@ -41,20 +62,24 @@ Cargo build artifacts. Not tracked in version control.
 
 ## Usage
 
-### First-Time Enrollment
+### First-Time Device Claim
 
 ```bash
-# With enrollment token
-cargo run -- --token <enrollment-token> --terminal-enabled
-
-# Or via environment
-BUD_ENROLLMENT_TOKEN=<token> BUD_TERMINAL_ENABLED=true cargo run
+cargo run -- --terminal-enabled
 ```
 
-On successful enrollment, the daemon:
-1. Sends `hello` frame with token
-2. Receives `hello_ack` with `bud_id` and `device_secret`
-3. Persists identity to `~/.bud/identity.json`
+On first run without a stored device secret, the daemon:
+1. Generates or loads a stable `installation_id`
+2. Calls `/api/device-auth/start`
+3. Prints a claim URL plus terminal QR code
+4. Polls `/api/device-auth/poll` until the browser approves the claim
+5. Persists the issued `bud_id` and `device_secret` to the configured identity path (default: `~/.bud/identity.json`)
+
+### Legacy Manual Enrollment
+
+```bash
+cargo run -- --token <enrollment-token> --terminal-enabled
+```
 
 ### Subsequent Connections
 
@@ -63,10 +88,15 @@ cargo run -- --terminal-enabled
 ```
 
 The daemon:
-1. Loads identity from `~/.bud/identity.json`
-2. Sends `hello` frame with `bud_id`
-3. Responds to HMAC challenge with proof
-4. Receives `hello_ack` confirming session
+1. Loads identity from the configured identity path (default: `~/.bud/identity.json`)
+2. Loads `installation_id` from a sibling `installation-id` file next to the identity file
+3. Sends `hello` frame with `bud_id`
+4. Responds to HMAC challenge with proof
+5. Receives `hello_ack` confirming session
+
+If the stored identity file is missing, malformed, or has an empty device secret, the daemon treats it as unusable and immediately re-enters the device-claim flow instead of crashing.
+
+Running Bud from another shell directory does not relocate daemon state on its own. For local multi-account testing, developers should point `--identity-file` and `--terminal-base-dir` at a per-instance directory, which also keeps the derived `installation-id` separate for each local Bud.
 
 ### CLI Options
 
@@ -77,6 +107,7 @@ The daemon:
 | `--name` | `BUD_DEVICE_NAME` | `bud-dev` | Device name |
 | `--cwd` | `BUD_DEFAULT_CWD` | `~` | Working directory |
 | `--identity-file` | `BUD_IDENTITY_FILE` | `~/.bud/identity.json` | Identity storage |
+| `--terminal-base-dir` | `BUD_TERMINAL_BASE_DIR` | `~/.bud` | Base directory for terminal logs and session artifacts |
 | `--terminal-enabled` | `BUD_TERMINAL_ENABLED` | `false` | Enable terminals |
 | `--terminal-cols` | `BUD_TERMINAL_COLS` | `200` | Terminal width |
 | `--terminal-rows` | `BUD_TERMINAL_ROWS` | `50` | Terminal height |
@@ -145,7 +176,7 @@ terminal_close     →    tmux kill-session
 
 Terminal output flows through two mechanisms:
 
-1. **pipe-pane logging**: `tmux pipe-pane` writes to `~/.bud/sessions/{id}/terminal.log`
+1. **pipe-pane logging**: `tmux pipe-pane` writes to `<terminal-base-dir>/sessions/{id}/terminal.log` (default base dir: `~/.bud`)
 2. **File watcher**: Polls log file every 50ms for new bytes
 3. **WebSocket frames**: Sends `terminal_output` with base64-encoded chunks
 
@@ -185,6 +216,7 @@ For interactive programs like Claude Code:
 - Reconnection can leave orphaned tmux sessions if daemon crashes
 - No graceful shutdown handling for terminal sessions
 - Identity file permissions not verified on load (only set on create)
+- The device claim flow assumes the service HTTP origin is derivable from the configured WebSocket URL
 
 ---
 

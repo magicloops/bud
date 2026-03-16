@@ -161,6 +161,16 @@ If you change:
 - SSE event shapes: Update `/docs/proto.md`
 - Database schema: Update `schema.ts`, run `drizzle-kit push`, update `db.spec.md`
 
+### 3.7) Define ownership before adding browser-facing features
+
+Before adding or changing any browser-facing route, SSE stream, loader, or DB-backed UI feature, explicitly identify:
+- who owns the resource (`bud`, `thread`, `message`, `run`, `terminal_session`, etc.)
+- how the acting viewer is resolved
+- where authorization happens before data is read, written, or streamed
+- which rows must be stamped with `created_by_user_id` or acting `user_id`
+
+Do not add "temporary" global reads for convenience. The prototype-era assumption that authenticated data can be globally visible is no longer valid.
+
 ---
 
 ## 4) Core Contracts (Do Not Break)
@@ -210,6 +220,39 @@ Hints: `looks_like_prompt`, `looks_like_confirmation`, `looks_like_password`, `l
 - Include `tenant_id` and `created_by_user_id` in new tables (nullable for now)
 - Use ULIDs for IDs where possible
 - Terminal output stored with `(session_id, byte_offset)` for efficient streaming
+
+### 4.6) Ownership And Permission Boundaries
+
+Bud is now an authenticated, user-scoped system. Treat these as hard contracts:
+
+- Every browser-facing Bud/thread/run/message/terminal read must be scoped to the authenticated viewer.
+- List endpoints must filter by owner in SQL. Do not fetch globally and filter in memory.
+- Resource lookups must resolve through ownership-aware helpers such as `getAuthorizedBud(...)` and `getAuthorizedThread(...)`.
+- `401` is for unauthenticated browser requests only. If a signed-in user asks for another user's resource, return `404`.
+- SSE and stream endpoints must authorize before attaching listeners or replaying buffered events.
+- Terminal history/output reads must follow the same ownership rules as normal REST reads.
+
+Row stamping rules:
+- `bud.created_by_user_id` is set from the approving human during device claim.
+- `thread.created_by_user_id` is set when the thread is created.
+- `message.created_by_user_id` is set for user, assistant, tool, and system messages.
+- `run.created_by_user_id` is set from the owning thread or acting user.
+- `run.canceled_by_user_id` is set when a human-triggered cancel path is added or updated.
+- `terminal_session.created_by_user_id` is set from the owning thread/user.
+- `terminal_session_input_log.user_id` is set for human-originated terminal input.
+
+Ownership inheritance rules:
+- Bud ownership is the root for browser-visible Bud inventory.
+- Thread ownership must match the owning Bud user in the current single-user-per-Bud model.
+- Assistant/tool/system messages inherit the thread owner unless a future collaboration model changes this explicitly.
+- Terminal sessions inherit thread ownership.
+- Shared-Bud ACLs and multi-user collaboration are out of scope unless a design doc explicitly introduces them.
+
+Implementation guardrails:
+- Never trust raw `bud_id`, `thread_id`, or `session_id` from the client without re-resolving ownership on the server.
+- When adding a new browser-facing table, decide whether it needs `created_by_user_id`, `tenant_id`, or both before shipping.
+- When adding a new write path, verify both authorization and owner stamping in the same change.
+- When adding a new read/stream path, add the corresponding multi-user validation item to the auth checklist in `plan/init-auth/validation-checklist.md`.
 
 ---
 
@@ -377,4 +420,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2025-12-13*
+*Last updated: 2026-03-15*

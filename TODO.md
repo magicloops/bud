@@ -1,6 +1,10 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **Bud base dir + local identity mode**
+  - Implement the launch-cwd-based Bud base dir model from [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md), including `--base-dir`, `--local`, local identity under `<base-dir>/.bud/`, and the same-change service-side terminal session cwd wiring.
+- **Self-serve Bud install flow**
+  - Implement the authenticated `+`-button install modal from [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md), including machine-wide vs local install commands, one-time install tokens, generic `install.sh`, and daemon fallback to the QR/browser claim flow.
 - **Session observability**
   - Expose per-session metrics (bytes in/out, writer rotations, truncate counts) via logs + `/metrics` to feed future dashboards.
   - Surface `last_activity_at` + idle TTLs in `/api/sessions` so the UI can flag stale sessions.

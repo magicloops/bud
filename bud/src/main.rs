@@ -15,6 +15,8 @@ use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
 use nix::unistd::{self, Pid};
+use qrcodegen::{QrCode, QrCodeEcc};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Number, Value};
 use sha2::Sha256;
@@ -74,11 +76,7 @@ struct BudArgs {
     #[arg(long, env = "BUD_TERMINAL_ENABLED", default_value_t = false)]
     terminal_enabled: bool,
 
-    #[arg(
-        long,
-        env = "BUD_TERMINAL_BASE_DIR",
-        default_value = "~/.bud"
-    )]
+    #[arg(long, env = "BUD_TERMINAL_BASE_DIR", default_value = "~/.bud")]
     terminal_base_dir: String,
 
     #[arg(long, env = "BUD_TERMINAL_COLS", default_value_t = 200)]
@@ -103,9 +101,12 @@ struct DeviceIdentity {
 struct BudApp {
     args: BudArgs,
     identity_path: PathBuf,
+    installation_id_path: PathBuf,
+    installation_id: String,
     identity: Option<DeviceIdentity>,
     run_executor: RunExecutor,
     terminal_manager: TerminalManager,
+    http_client: Client,
     debug_enabled: bool,
 }
 
@@ -153,6 +154,32 @@ struct ErrorFrame {
     envelope: Envelope,
     code: String,
     message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceAuthStartResponse {
+    flow_id: String,
+    claim_url: String,
+    qr_payload: String,
+    poll_secret: String,
+    expires_at: String,
+    poll_interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceAuthPollResponse {
+    status: String,
+    bud_id: Option<String>,
+    device_secret: Option<String>,
+    expires_at: Option<String>,
+    error_code: Option<String>,
+    poll_interval_ms: Option<u64>,
+}
+
+#[derive(Debug)]
+enum HandshakeError {
+    AuthFailed { code: String, message: String },
+    Other(anyhow::Error),
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -313,8 +340,8 @@ struct AwaitReady {
     // hashes at intervals to detect when the screen stops changing.
     #[serde(default)]
     activity_based: bool,
-    activity_interval_ms: Option<u64>,      // Default: 5000ms between checks
-    activity_stable_count: Option<u32>,     // Default: 2 consecutive stable checks
+    activity_interval_ms: Option<u64>, // Default: 5000ms between checks
+    activity_stable_count: Option<u32>, // Default: 2 consecutive stable checks
     activity_initial_delay_ms: Option<u64>, // Default: 2000ms before first check
 }
 
@@ -330,10 +357,10 @@ struct TerminalCaptureFrame {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 struct CaptureOptions {
-    start_line: Option<i32>,    // -N for scrollback, 0 for top, None for all
-    end_line: Option<i32>,      // None for bottom
-    escape_sequences: bool,     // -e flag (include ANSI colors)
-    join_lines: bool,           // -J flag (join wrapped lines)
+    start_line: Option<i32>, // -N for scrollback, 0 for top, None for all
+    end_line: Option<i32>,   // None for bottom
+    escape_sequences: bool,  // -e flag (include ANSI colors)
+    join_lines: bool,        // -J flag (join wrapped lines)
 }
 
 /// Request-response pattern for terminal.run tool
@@ -652,8 +679,13 @@ impl TerminalManager {
             drop(inner);
             self.send_status(&sender, session_id, "ready", None).await?;
         } else {
-            self.send_status(&sender, session_id, "none", Some(json!({ "error": "terminal_create_failed" })))
-                .await?;
+            self.send_status(
+                &sender,
+                session_id,
+                "none",
+                Some(json!({ "error": "terminal_create_failed" })),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -731,7 +763,12 @@ impl TerminalManager {
             "tmux send-keys succeeded"
         );
 
-        if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
+        if frame
+            .await_ready
+            .as_ref()
+            .map(|a| a.enabled)
+            .unwrap_or(false)
+        {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
                 let await_ready = frame.await_ready.clone().unwrap_or_default();
                 let session_id_owned = session_id.clone();
@@ -745,7 +782,12 @@ impl TerminalManager {
                         session = %handle.session_name,
                         "using activity-based readiness detection"
                     );
-                    let detector = ActivityDetector::new(session_id_owned, handle.clone(), sender, &await_ready);
+                    let detector = ActivityDetector::new(
+                        session_id_owned,
+                        handle.clone(),
+                        sender,
+                        &await_ready,
+                    );
                     tokio::spawn(async move {
                         if let Err(err) = detector.run().await {
                             warn!(error = %err, "activity detection failed");
@@ -834,7 +876,12 @@ impl TerminalManager {
             warn!(message_id = %frame.envelope.id, "tmux interrupt failed");
         }
 
-        if frame.await_ready.as_ref().map(|a| a.enabled).unwrap_or(false) {
+        if frame
+            .await_ready
+            .as_ref()
+            .map(|a| a.enabled)
+            .unwrap_or(false)
+        {
             if let Some(sender) = self.inner.lock().await.sender.clone() {
                 let await_ready = frame.await_ready.clone().unwrap_or_default();
                 let session_id_owned = session_id.clone();
@@ -847,7 +894,12 @@ impl TerminalManager {
                         session = %handle.session_name,
                         "using activity-based readiness detection after interrupt"
                     );
-                    let detector = ActivityDetector::new(session_id_owned, handle.clone(), sender, &await_ready);
+                    let detector = ActivityDetector::new(
+                        session_id_owned,
+                        handle.clone(),
+                        sender,
+                        &await_ready,
+                    );
                     tokio::spawn(async move {
                         if let Err(err) = detector.run().await {
                             warn!(error = %err, "activity detection failed");
@@ -900,7 +952,8 @@ impl TerminalManager {
         drop(inner);
 
         if let Some(sender) = sender {
-            self.send_status(&sender, session_id, "closed", None).await?;
+            self.send_status(&sender, session_id, "closed", None)
+                .await?;
         }
 
         info!(
@@ -920,7 +973,10 @@ impl TerminalManager {
         let session_id = &frame.session_id;
         let (handle, sender) = {
             let inner = self.inner.lock().await;
-            (inner.sessions.get(session_id).cloned(), inner.sender.clone())
+            (
+                inner.sessions.get(session_id).cloned(),
+                inner.sender.clone(),
+            )
         };
 
         let Some(sender) = sender else {
@@ -1118,7 +1174,8 @@ impl TerminalManager {
             self.wait_activity_and_capture(&handle, timeout_ms).await?
         } else {
             // Quiescence-based: watch log file
-            self.wait_quiescence_and_read(&handle, start_offset, timeout_ms).await?
+            self.wait_quiescence_and_read(&handle, start_offset, timeout_ms)
+                .await?
         };
 
         // Send response
@@ -1228,9 +1285,9 @@ impl TerminalManager {
             .map(|m| m.len())
             .unwrap_or(last_size);
 
-        let (output, truncated) =
-            self.read_log_range(&log_path, start_offset, end_size, MAX_OUTPUT)
-                .await;
+        let (output, truncated) = self
+            .read_log_range(&log_path, start_offset, end_size, MAX_OUTPUT)
+            .await;
 
         let output_bytes = output.len();
         let text = String::from_utf8_lossy(&output).to_string();
@@ -1407,11 +1464,14 @@ impl TerminalManager {
             let inner = self.inner.lock().await;
             if let Some(handle) = inner.sessions.get(session_id) {
                 if let Some(map) = payload.as_object_mut() {
-                    map.insert("info".into(), json!({
-                        "tmux_session": handle.session_name,
-                        "cols": handle.cols,
-                        "rows": handle.rows,
-                    }));
+                    map.insert(
+                        "info".into(),
+                        json!({
+                            "tmux_session": handle.session_name,
+                            "cols": handle.cols,
+                            "rows": handle.rows,
+                        }),
+                    );
                 }
             }
         }
@@ -1435,7 +1495,9 @@ impl TerminalManager {
         let ensured = self.ensure_tmux_session(session_id, cfg).await?;
         if let Some(handle) = ensured {
             let mut inner = self.inner.lock().await;
-            inner.sessions.insert(session_id.to_string(), handle.clone());
+            inner
+                .sessions
+                .insert(session_id.to_string(), handle.clone());
             return Ok(Some(handle));
         }
         Ok(None)
@@ -1518,12 +1580,12 @@ impl TerminalManager {
         // The -o flag would skip if already piping, but after disconnect the old pipe
         // process may have died while tmux still thinks it's piping
         let _ = Command::new("tmux")
-            .args(["pipe-pane", "-t", &tmux_name])  // Stop existing pipe
+            .args(["pipe-pane", "-t", &tmux_name]) // Stop existing pipe
             .status()
             .await;
         let pipe_cmd = format!("cat >> {}", log_path.display());
         let pipe_status = Command::new("tmux")
-            .args(["pipe-pane", "-t", &tmux_name, &pipe_cmd])  // Start new pipe (no -o)
+            .args(["pipe-pane", "-t", &tmux_name, &pipe_cmd]) // Start new pipe (no -o)
             .status()
             .await;
         match &pipe_status {
@@ -1580,7 +1642,9 @@ impl TerminalManager {
             "rows": handle.rows,
             "output_log_bytes": start_offset,
         });
-        let _ = self.send_status(&sender, session_id, "ready", Some(info)).await;
+        let _ = self
+            .send_status(&sender, session_id, "ready", Some(info))
+            .await;
         Ok(Some(handle))
     }
 
@@ -1712,7 +1776,12 @@ impl ReadinessDetector {
         };
         let (output_bytes, output, last_line) = self.read_tail(end_size).await;
         let quiet_for_ms = last_change.elapsed().as_millis() as u64;
-        let assessment = Self::assess(&output, &last_line, quiet_for_ms, start.elapsed().as_millis() as u64);
+        let assessment = Self::assess(
+            &output,
+            &last_line,
+            quiet_for_ms,
+            start.elapsed().as_millis() as u64,
+        );
         let payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
             "type": "terminal_ready",
@@ -1750,7 +1819,12 @@ impl ReadinessDetector {
         (buf.len(), text, last_line_owned)
     }
 
-    fn assess(output: &str, last_line: &str, quiet_for_ms: u64, elapsed_ms: u64) -> serde_json::Value {
+    fn assess(
+        output: &str,
+        last_line: &str,
+        quiet_for_ms: u64,
+        elapsed_ms: u64,
+    ) -> serde_json::Value {
         let (prompt_type, prompt_conf, prompt_hints) = Self::detect_prompt(last_line);
         if let Some((ptype, conf)) = prompt_type.zip(prompt_conf) {
             return json!({
@@ -1764,7 +1838,11 @@ impl ReadinessDetector {
         }
         let mut confidence: f32 = 0.5;
         let trimmed = last_line.trim_end_matches(&['\r', '\n'][..]);
-        if trimmed.ends_with('$') || trimmed.ends_with('#') || trimmed.ends_with('>') || trimmed.ends_with('%') {
+        if trimmed.ends_with('$')
+            || trimmed.ends_with('#')
+            || trimmed.ends_with('>')
+            || trimmed.ends_with('%')
+        {
             confidence += 0.25;
         }
         if trimmed.len() < 60 {
@@ -1789,7 +1867,11 @@ impl ReadinessDetector {
             confidence -= 0.1;
         }
         let ready = confidence >= 0.55;
-        let trigger = if elapsed_ms >= 30_000 { "timeout" } else { "quiescence" };
+        let trigger = if elapsed_ms >= 30_000 {
+            "timeout"
+        } else {
+            "quiescence"
+        };
         json!({
             "ready": ready,
             "confidence": confidence.clamp(0.0, 1.0),
@@ -1812,7 +1894,8 @@ impl ReadinessDetector {
             return (None, None, Self::hints_none());
         }
         let lower = line.to_lowercase();
-        if line.ends_with('$') || line.ends_with('#') || line.ends_with('%') || line.contains(":~$") {
+        if line.ends_with('$') || line.ends_with('#') || line.ends_with('%') || line.contains(":~$")
+        {
             return (Some("shell"), Some(0.95), Self::hints_prompt());
         }
         if line.starts_with(">>>") || line.starts_with("...") || line.starts_with("In [") {
@@ -1821,7 +1904,12 @@ impl ReadinessDetector {
         if line == ">" {
             return (Some("node"), Some(0.85), Self::hints_prompt());
         }
-        if line.contains("[y/n]") || line.contains("[Y/n]") || lower.contains("yes/no") || lower.contains("continue?") || lower.contains("(yes/no)") {
+        if line.contains("[y/n]")
+            || line.contains("[Y/n]")
+            || lower.contains("yes/no")
+            || lower.contains("continue?")
+            || lower.contains("(yes/no)")
+        {
             return (
                 Some("confirmation"),
                 Some(0.95),
@@ -1863,7 +1951,11 @@ impl ReadinessDetector {
                 }),
             );
         }
-        if lower.ends_with("mysql>") || lower.ends_with("postgres=#") || lower.ends_with("postgres=>") || lower.ends_with("sqlite>") {
+        if lower.ends_with("mysql>")
+            || lower.ends_with("postgres=#")
+            || lower.ends_with("postgres=>")
+            || lower.ends_with("sqlite>")
+        {
             return (Some("database"), Some(0.95), Self::hints_prompt());
         }
         (None, None, Self::hints_none())
@@ -2127,7 +2219,10 @@ fn tmux_session_name(session_id: &str) -> String {
 /// Get log path for a session
 /// base_dir/sessions/{session_id}/terminal.log
 fn session_log_path(base_dir: &Path, session_id: &str) -> PathBuf {
-    base_dir.join("sessions").join(session_id).join("terminal.log")
+    base_dir
+        .join("sessions")
+        .join(session_id)
+        .join("terminal.log")
 }
 
 async fn tmux_pane_pid(session_name: &str) -> Result<i32> {
@@ -2202,6 +2297,7 @@ fn send_ws_message(sender: &OutboundSender, message: Message) -> Result<()> {
 impl BudApp {
     async fn new(args: BudArgs) -> Self {
         let identity_path = PathBuf::from(shellexpand::tilde(&args.identity_file).into_owned());
+        let installation_id_path = installation_id_path(&identity_path);
         let default_cwd = expand_path(&args.cwd)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
@@ -2221,19 +2317,26 @@ impl BudApp {
         Self {
             args,
             identity_path,
+            installation_id_path,
+            installation_id: String::new(),
             identity: None,
             run_executor: RunExecutor::new(default_cwd),
             terminal_manager: TerminalManager::new(terminal_config),
+            http_client: Client::new(),
             debug_enabled,
         }
     }
 
     async fn run(mut self) -> Result<()> {
+        self.installation_id = self.load_or_create_installation_id().await?;
         self.identity = self.load_identity().await?;
         if let Some(identity) = &self.identity {
             info!(bud_id = %identity.bud_id, "Loaded existing identity");
         } else {
-            info!("No identity found; expecting enrollment token");
+            info!(
+                installation_id = %self.installation_id,
+                "No device credential found; device claim will be required"
+            );
         }
 
         loop {
@@ -2246,41 +2349,79 @@ impl BudApp {
     }
 
     async fn connect_once(&mut self) -> Result<()> {
-        let url = Url::parse(&self.args.server)?;
-        info!(server = %url, "Connecting to backend");
-        let (stream, _) = connect_async(url.clone())
-            .await
-            .with_context(|| format!("failed to connect to {}", url))?;
+        loop {
+            if self.identity.is_none() && self.args.token.is_none() {
+                self.bootstrap_device_auth().await?;
+            }
 
-        let (stream, meta) = self.perform_handshake(stream).await?;
-        info!(
-            bud_id = %meta.bud_id,
-            session_id = %meta.session_id,
-            heartbeat_sec = meta.heartbeat_sec,
-            "Handshake established"
-        );
-        self.run_session(stream, meta).await
+            let url = Url::parse(&self.args.server)?;
+            info!(server = %url, "Connecting to backend");
+            let (stream, _) = connect_async(url.clone())
+                .await
+                .with_context(|| format!("failed to connect to {}", url))?;
+
+            match self.perform_handshake(stream).await {
+                Ok((stream, meta)) => {
+                    info!(
+                        bud_id = %meta.bud_id,
+                        session_id = %meta.session_id,
+                        heartbeat_sec = meta.heartbeat_sec,
+                        "Handshake established"
+                    );
+                    return self.run_session(stream, meta).await;
+                }
+                Err(HandshakeError::AuthFailed { code, message }) => {
+                    if self.args.token.is_some() {
+                        bail!(
+                            "backend error during handshake (code={}): {}",
+                            code,
+                            message
+                        );
+                    }
+
+                    warn!(
+                        code = %code,
+                        message = %message,
+                        "Stored device credential rejected; starting device claim flow"
+                    );
+                    self.clear_identity().await?;
+                    self.bootstrap_device_auth().await?;
+                }
+                Err(HandshakeError::Other(err)) => return Err(err),
+            }
+        }
     }
 
     async fn perform_handshake(
         &mut self,
         mut stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    ) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, SessionMeta)> {
-        let hello_frame = self.build_hello_frame()?;
+    ) -> std::result::Result<
+        (WebSocketStream<MaybeTlsStream<TcpStream>>, SessionMeta),
+        HandshakeError,
+    > {
+        let hello_frame = self.build_hello_frame().map_err(HandshakeError::Other)?;
         stream
-            .send(Message::Text(serde_json::to_string(&hello_frame)?))
-            .await?;
+            .send(Message::Text(
+                serde_json::to_string(&hello_frame)
+                    .map_err(|err| HandshakeError::Other(err.into()))?,
+            ))
+            .await
+            .map_err(|err| HandshakeError::Other(err.into()))?;
 
         loop {
             let Some(msg) = stream.next().await else {
-                bail!("connection closed before handshake completed");
+                return Err(HandshakeError::Other(anyhow!(
+                    "connection closed before handshake completed"
+                )));
             };
             match msg {
                 Ok(Message::Text(text)) => {
-                    let envelope: Envelope = serde_json::from_str(&text)?;
+                    let envelope: Envelope = serde_json::from_str(&text)
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
                     match envelope.kind.as_str() {
                         "hello_ack" => {
-                            let ack: HelloAckFrame = serde_json::from_str(&text)?;
+                            let ack: HelloAckFrame = serde_json::from_str(&text)
+                                .map_err(|err| HandshakeError::Other(err.into()))?;
                             if let Some(secret) = ack.device_secret.clone() {
                                 let new_identity = DeviceIdentity {
                                     bud_id: ack.bud_id.clone(),
@@ -2289,11 +2430,15 @@ impl BudApp {
                                     name: self.args.name.clone(),
                                     default_cwd: self.args.cwd.clone(),
                                 };
-                                self.persist_identity(&new_identity).await?;
+                                self.persist_identity(&new_identity)
+                                    .await
+                                    .map_err(HandshakeError::Other)?;
                                 self.identity = Some(new_identity);
                                 self.args.token = None;
                             } else if self.identity.is_none() {
-                                bail!("hello_ack missing device_secret during enrollment");
+                                return Err(HandshakeError::Other(anyhow!(
+                                    "hello_ack missing device_secret during enrollment"
+                                )));
                             }
                             let meta = SessionMeta {
                                 bud_id: ack.bud_id,
@@ -2303,12 +2448,15 @@ impl BudApp {
                             return Ok((stream, meta));
                         }
                         "hello_challenge" => {
-                            let challenge: HelloChallengeFrame = serde_json::from_str(&text)?;
-                            let identity = self
-                                .identity
-                                .as_ref()
-                                .ok_or_else(|| anyhow!("no identity available for challenge"))?;
-                            let proof = compute_hmac(&identity.device_secret, &challenge.nonce)?;
+                            let challenge: HelloChallengeFrame = serde_json::from_str(&text)
+                                .map_err(|err| HandshakeError::Other(err.into()))?;
+                            let identity = self.identity.as_ref().ok_or_else(|| {
+                                HandshakeError::Other(anyhow!(
+                                    "no identity available for challenge"
+                                ))
+                            })?;
+                            let proof = compute_hmac(&identity.device_secret, &challenge.nonce)
+                                .map_err(HandshakeError::Other)?;
                             let proof_frame = json!({
                                 "proto": PROTO_VERSION,
                                 "type": "hello_proof",
@@ -2319,28 +2467,45 @@ impl BudApp {
                                 "hmac": proof
                             });
                             stream
-                                .send(Message::Text(serde_json::to_string(&proof_frame)?))
-                                .await?;
+                                .send(Message::Text(
+                                    serde_json::to_string(&proof_frame)
+                                        .map_err(|err| HandshakeError::Other(err.into()))?,
+                                ))
+                                .await
+                                .map_err(|err| HandshakeError::Other(err.into()))?;
                         }
                         "error" => {
-                            let err_frame: ErrorFrame = serde_json::from_str(&text)?;
-                            bail!(
+                            let err_frame: ErrorFrame = serde_json::from_str(&text)
+                                .map_err(|err| HandshakeError::Other(err.into()))?;
+                            if err_frame.code == "AUTH_FAILED" {
+                                return Err(HandshakeError::AuthFailed {
+                                    code: err_frame.code,
+                                    message: err_frame.message,
+                                });
+                            }
+                            return Err(HandshakeError::Other(anyhow!(
                                 "backend error during handshake (code={}): {}",
                                 err_frame.code,
                                 err_frame.message
-                            );
+                            )));
                         }
                         other => warn!(frame_type = other, "Unexpected frame during handshake"),
                     }
                 }
                 Ok(Message::Ping(payload)) => {
-                    stream.send(Message::Pong(payload)).await?;
+                    stream
+                        .send(Message::Pong(payload))
+                        .await
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
                 }
                 Ok(Message::Close(frame)) => {
-                    bail!("connection closed during handshake: {:?}", frame);
+                    return Err(HandshakeError::Other(anyhow!(
+                        "connection closed during handshake: {:?}",
+                        frame
+                    )));
                 }
                 Ok(Message::Binary(_)) => {}
-                Err(err) => return Err(err.into()),
+                Err(err) => return Err(HandshakeError::Other(err.into())),
                 _ => {}
             }
         }
@@ -2524,7 +2689,26 @@ impl BudApp {
     async fn load_identity(&self) -> Result<Option<DeviceIdentity>> {
         match fs::read(&self.identity_path).await {
             Ok(bytes) => {
-                let identity: DeviceIdentity = serde_json::from_slice(&bytes)?;
+                let identity = match serde_json::from_slice::<DeviceIdentity>(&bytes) {
+                    Ok(identity) => identity,
+                    Err(err) => {
+                        warn!(
+                            path = %self.identity_path.display(),
+                            error = %err,
+                            "Stored bud identity is invalid; reauth will be required"
+                        );
+                        return Ok(None);
+                    }
+                };
+
+                if identity.bud_id.trim().is_empty() || identity.device_secret.trim().is_empty() {
+                    warn!(
+                        path = %self.identity_path.display(),
+                        "Stored bud identity is incomplete; reauth will be required"
+                    );
+                    return Ok(None);
+                }
+
                 Ok(Some(identity))
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -2533,31 +2717,8 @@ impl BudApp {
     }
 
     async fn persist_identity(&self, identity: &DeviceIdentity) -> Result<()> {
-        if let Some(parent) = self.identity_path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.identity_path)
-            .await?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            tokio::task::spawn_blocking({
-                let path = self.identity_path.clone();
-                move || std::fs::set_permissions(path, perms)
-            })
-            .await??;
-        }
-
         let serialized = serde_json::to_vec_pretty(identity)?;
-        file.write_all(&serialized).await?;
-        file.sync_all().await?;
+        write_private_file(&self.identity_path, &serialized).await?;
         info!(
             bud_id = %identity.bud_id,
             path = %self.identity_path.display(),
@@ -2581,31 +2742,193 @@ impl BudApp {
             Value::String(env!("CARGO_PKG_VERSION").into()),
         );
         frame.insert(
-            "capabilities".into(),
-            json!({
-                "max_concurrency": 1,
-                "supports_pty": true,
-                "shell_default": "/bin/bash",
-                "sessions": true,
-                "sessions_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available {
-                    json!(["pty","tmux"])
-                } else { json!(["pty"]) },
-                "terminal": self.args.terminal_enabled && self.terminal_manager.config.tmux_available,
-                "terminal_proto": TERMINAL_PROTO_VERSION,
-                "terminal_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available { json!(["tmux"]) } else { json!([]) },
-                "tmux_version": self.terminal_manager.config.tmux_version,
-            }),
+            "installation_id".into(),
+            Value::String(self.installation_id.clone()),
         );
+        frame.insert("capabilities".into(), self.device_capabilities());
 
         if let Some(identity) = &self.identity {
             frame.insert("bud_id".into(), Value::String(identity.bud_id.clone()));
         } else if let Some(token) = &self.args.token {
             frame.insert("token".into(), Value::String(token.clone()));
         } else {
-            bail!("No identity file found and no enrollment token provided");
+            bail!("No device credential found and no enrollment token provided");
         }
 
         Ok(Value::Object(frame))
+    }
+
+    fn device_capabilities(&self) -> Value {
+        json!({
+            "max_concurrency": 1,
+            "supports_pty": true,
+            "shell_default": "/bin/bash",
+            "sessions": true,
+            "sessions_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available {
+                json!(["pty","tmux"])
+            } else { json!(["pty"]) },
+            "terminal": self.args.terminal_enabled && self.terminal_manager.config.tmux_available,
+            "terminal_proto": TERMINAL_PROTO_VERSION,
+            "terminal_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available { json!(["tmux"]) } else { json!([]) },
+            "tmux_version": self.terminal_manager.config.tmux_version,
+        })
+    }
+
+    async fn load_or_create_installation_id(&self) -> Result<String> {
+        match fs::read_to_string(&self.installation_id_path).await {
+            Ok(value) => {
+                let installation_id = value.trim().to_string();
+                if installation_id.is_empty() {
+                    bail!("installation id file is empty");
+                }
+                Ok(installation_id)
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                let installation_id = format!("inst_{}", Ulid::new());
+                write_private_file(&self.installation_id_path, installation_id.as_bytes()).await?;
+                info!(
+                    installation_id = %installation_id,
+                    path = %self.installation_id_path.display(),
+                    "Generated installation identity"
+                );
+                Ok(installation_id)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn clear_identity(&mut self) -> Result<()> {
+        self.identity = None;
+        match fs::remove_file(&self.identity_path).await {
+            Ok(()) => {
+                info!(path = %self.identity_path.display(), "Removed invalid bud identity");
+                Ok(())
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    async fn bootstrap_device_auth(&mut self) -> Result<()> {
+        let start = self.start_device_auth_flow().await?;
+        print_device_claim_instructions(&start);
+
+        loop {
+            let poll = self.poll_device_auth_flow(&start).await?;
+            match poll.status.as_str() {
+                "pending" => {
+                    let wait_ms = poll
+                        .poll_interval_ms
+                        .or(start.poll_interval_ms)
+                        .unwrap_or(2_000)
+                        .max(500);
+                    time::sleep(Duration::from_millis(wait_ms)).await;
+                }
+                "approved" => {
+                    let bud_id = poll
+                        .bud_id
+                        .clone()
+                        .ok_or_else(|| anyhow!("device auth response missing bud_id"))?;
+                    let device_secret = poll
+                        .device_secret
+                        .clone()
+                        .ok_or_else(|| anyhow!("device auth response missing device_secret"))?;
+                    let identity = DeviceIdentity {
+                        bud_id: bud_id.clone(),
+                        device_secret,
+                        server_url: self.args.server.clone(),
+                        name: self.args.name.clone(),
+                        default_cwd: self.args.cwd.clone(),
+                    };
+                    self.persist_identity(&identity).await?;
+                    self.identity = Some(identity);
+                    self.args.token = None;
+                    println!();
+                    println!("Device claim approved for Bud `{}`. Connecting...", bud_id);
+                    println!();
+                    return Ok(());
+                }
+                "rejected" => {
+                    bail!(
+                        "device claim rejected{}",
+                        poll.error_code
+                            .as_ref()
+                            .map(|code| format!(" ({})", code))
+                            .unwrap_or_default()
+                    );
+                }
+                "expired" => {
+                    bail!(
+                        "device claim expired before approval{}",
+                        poll.expires_at
+                            .as_ref()
+                            .map(|value| format!(" at {}", value))
+                            .unwrap_or_default()
+                    );
+                }
+                "completed" => {
+                    bail!("device claim already completed on another connection");
+                }
+                other => bail!("unknown device auth status: {}", other),
+            }
+        }
+    }
+
+    async fn start_device_auth_flow(&self) -> Result<DeviceAuthStartResponse> {
+        let api_base = api_base_url_from_ws_url(&self.args.server)?;
+        let response = self
+            .http_client
+            .post(api_base.join("api/device-auth/start")?)
+            .json(&json!({
+                "installation_id": self.installation_id.clone(),
+                "name": self.args.name.clone(),
+                "os": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+                "version": env!("CARGO_PKG_VERSION"),
+                "capabilities": self.device_capabilities(),
+            }))
+            .send()
+            .await
+            .with_context(|| "failed to start device auth flow")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            bail!("device auth start failed (status={}): {}", status, body);
+        }
+
+        response
+            .json::<DeviceAuthStartResponse>()
+            .await
+            .with_context(|| "failed to parse device auth start response")
+    }
+
+    async fn poll_device_auth_flow(
+        &self,
+        start: &DeviceAuthStartResponse,
+    ) -> Result<DeviceAuthPollResponse> {
+        let api_base = api_base_url_from_ws_url(&self.args.server)?;
+        let response = self
+            .http_client
+            .post(api_base.join("api/device-auth/poll")?)
+            .json(&json!({
+                "flow_id": start.flow_id.clone(),
+                "poll_secret": start.poll_secret.clone(),
+            }))
+            .send()
+            .await
+            .with_context(|| "failed to poll device auth flow")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            bail!("device auth poll failed (status={}): {}", status, body);
+        }
+
+        response
+            .json::<DeviceAuthPollResponse>()
+            .await
+            .with_context(|| "failed to parse device auth poll response")
     }
 }
 
@@ -2615,6 +2938,54 @@ fn compute_hmac(secret: &str, nonce: &str) -> Result<String> {
     mac.update(nonce.as_bytes());
     let bytes = mac.finalize().into_bytes();
     Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn print_device_claim_instructions(start: &DeviceAuthStartResponse) {
+    println!();
+    println!("Bud needs browser approval before it can connect.");
+    println!("Open this link on a signed-in browser:");
+    println!("{}", start.claim_url);
+    println!();
+    println!(
+        "Claim expires at {}. Waiting for browser approval...",
+        start.expires_at
+    );
+    println!();
+    if let Err(err) = print_terminal_qr(&start.qr_payload) {
+        warn!(error = %err, "Failed to render terminal QR code");
+        println!("QR rendering failed. Open the claim URL above instead.");
+    }
+    println!();
+}
+
+fn print_terminal_qr(payload: &str) -> Result<()> {
+    let qr = QrCode::encode_text(payload, QrCodeEcc::Medium)
+        .map_err(|_| anyhow!("failed to encode QR payload"))?;
+    let size = qr.size();
+    let border = 2;
+    let mut y = -border;
+    while y < size + border {
+        let mut line = String::new();
+        for x in -border..(size + border) {
+            let top = qr_module(&qr, x, y);
+            let bottom = qr_module(&qr, x, y + 1);
+            let ch = match (top, bottom) {
+                (true, true) => '█',
+                (true, false) => '▀',
+                (false, true) => '▄',
+                (false, false) => ' ',
+            };
+            line.push(ch);
+            line.push(ch);
+        }
+        println!("{}", line);
+        y += 2;
+    }
+    Ok(())
+}
+
+fn qr_module(qr: &QrCode, x: i32, y: i32) -> bool {
+    x >= 0 && y >= 0 && x < qr.size() && y < qr.size() && qr.get_module(x, y)
 }
 
 fn new_message_id() -> String {
@@ -2650,6 +3021,56 @@ fn default_shell() -> &'static str {
 
 fn expand_path(path: &str) -> Option<PathBuf> {
     Some(PathBuf::from(shellexpand::tilde(path).into_owned()))
+}
+
+fn installation_id_path(identity_path: &Path) -> PathBuf {
+    match identity_path.parent() {
+        Some(parent) => parent.join("installation-id"),
+        None => PathBuf::from("installation-id"),
+    }
+}
+
+fn api_base_url_from_ws_url(ws_url: &str) -> Result<Url> {
+    let mut url = Url::parse(ws_url)?;
+    match url.scheme() {
+        "wss" => url
+            .set_scheme("https")
+            .map_err(|_| anyhow!("failed to convert wss URL to https"))?,
+        "ws" => url
+            .set_scheme("http")
+            .map_err(|_| anyhow!("failed to convert ws URL to http"))?,
+        "https" | "http" => {}
+        other => bail!("unsupported server URL scheme: {}", other),
+    }
+    url.set_path("/");
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
+}
+
+async fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .await?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || std::fs::set_permissions(path, perms)).await??;
+    }
+
+    file.write_all(bytes).await?;
+    file.sync_all().await?;
+    Ok(())
 }
 
 fn probe_tmux() -> (bool, Option<String>) {

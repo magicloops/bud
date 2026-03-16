@@ -17,37 +17,89 @@ Root layout component wrapping all routes.
 **Provider Hierarchy**:
 ```tsx
 <ThemeProvider>
-  <LayoutProvider>
-    <BudStatusProvider>
-      <Outlet />
-      {/* Optional DevTools */}
-    </BudStatusProvider>
-  </LayoutProvider>
+  <AuthSessionProvider>
+    <LayoutProvider>
+      <BudStatusProvider>
+        <Outlet />
+        {/* Optional DevTools */}
+      </BudStatusProvider>
+    </LayoutProvider>
+  </AuthSessionProvider>
 </ThemeProvider>
 ```
 
 **Features**:
-- Wraps app in context providers (theme, layout, bud status)
+- Loads `/api/me` before rendering the app shell
+- Wraps app in context providers (theme, auth session, layout, bud status)
 - Conditional router devtools via `VITE_ROUTER_DEVTOOLS=true`
 - `<Outlet />` renders child routes
+- Installs a branded root `errorComponent` so uncaught loader errors render a Bud-styled recovery page with a home action instead of TanStack Router's generic fallback
 
 ### `index.tsx`
 
 **Route**: `/`
 
-Root index with auto-redirect to first bud.
+Authenticated root index with auto-redirect to first bud.
 
 **Behavior**:
 ```typescript
 beforeLoad: async () => {
-  const buds = await fetch('/api/buds').then(r => r.json())
+  await fetchCurrentUser()
+}
+
+loader: async () => {
+  const buds = await apiFetchJson('/api/buds')
   if (buds.length > 0) {
     throw redirect({ to: '/$budId', params: { budId: buds[0].bud_id } })
   }
 }
 ```
 
-**Fallback**: Shows "No Buds Available" message with enrollment prompt if no buds exist.
+**Fallback**: Shows an authenticated empty state if the signed-in user has no Buds.
+
+### `login.tsx`
+
+**Route**: `/login`
+
+Public browser login route for OAuth entry.
+
+**Features**:
+- Supports GitHub and Google sign-in through Better Auth
+- Accepts `?redirect=` return targets
+- Bounces already-authenticated users back into the app shell
+- Reuses the same route shape for device-claim resume after OAuth login
+
+### `settings.tsx`
+
+**Route**: `/settings`
+
+Authenticated account settings route.
+
+**Features**:
+- Loads through the same `/api/me` auth gating as the rest of the app shell
+- Edits the Bud-owned `profile.username` via `PATCH /api/me/profile`
+- Shows provider-backed avatar with initials fallback
+- Shows linked-account state for GitHub and Google
+- Starts explicit provider linking through Better Auth client actions
+- Signs the browser session out through Better Auth and returns to `/login`
+
+### `devices.claim.$flowId.tsx`
+
+**Route**: `/devices/claim/$flowId`
+
+Public device-claim landing page for QR/link onboarding.
+
+**Behavior**:
+- Loads safe claim metadata from `/api/device-auth/flows/:flowId`
+- If the browser is anonymous and the claim is pending, redirects into `/login?redirect=/devices/claim/$flowId`
+- If the browser is authenticated and the claim is pending, auto-posts approval to `/api/device-auth/flows/:flowId/approve`
+- After approval starts, revalidates the flow until the service reports the canonical `approved` or `completed` state so the page stays in sync with Bud reconnects
+- Auto-navigates to `/$budId` after successful approval/completion, but keeps the success UI and manual Bud link as a fallback if the user returns to the page or the redirect is interrupted
+- Never displays `device_secret`; it only shows claim status and a Bud deep-link after approval
+
+**Mobile UX**:
+- Optimized for phone QR scans
+- Renders immediate device summary/status without requiring the authenticated app shell
 
 ### `$budId.tsx`
 
@@ -58,19 +110,22 @@ Main bud layout with sidebar navigation.
 **Loader**:
 ```typescript
 loader: async ({ params }) => {
-  const [budsResp, threadsResp] = await Promise.all([
-    fetch('/api/buds'),
-    fetch(`/api/threads?bud_id=${params.budId}`),
+  const [buds, threads] = await Promise.all([
+    apiFetchJson('/api/buds'),
+    apiFetchJson(`/api/threads?bud_id=${params.budId}`),
   ])
   return { buds, bud, threads }
 }
 ```
 
 **Features**:
+- Auth guard runs before child thread loaders
 - Fetches all buds and threads for current bud in parallel
 - Converts API responses to UI types (`BudProfile`, `ThreadSummary`)
 - Applies bud accent color theming via CSS custom properties
 - Manages sessions modal state
+- Routes the Bud rail account-settings button into `/settings`
+- Keeps terminal sessions as a separate modal action
 - Renders `BudRail`, `ThreadPanel`, and child routes via `<Outlet />`
 
 **State**:
@@ -106,7 +161,10 @@ Nested routes for thread views:
 ## Route Tree
 
 ```
-/                    → index.tsx (redirect to first bud)
+/                    → index.tsx (auth-aware redirect to first bud)
+/login               → login.tsx (OAuth entry)
+/settings            → settings.tsx (profile, linked accounts, sign-out)
+/devices/claim/$flowId → devices.claim.$flowId.tsx (public claim route with login resume)
 /$budId              → $budId.tsx (bud layout)
   ├── /             → $budId/index.tsx (redirect to most recent thread or /new)
   ├── /new          → $budId/new.tsx (new thread creation)
@@ -128,7 +186,7 @@ Auto-generated by TanStack Router plugin. Contains:
 - Route path inference
 - Parameter type definitions
 
-**Note**: Do not edit manually - regenerated on build.
+**Note**: Do not edit manually in normal operation - regenerated on build. During Node-version mismatches in this repo, it may be temporarily updated in-place to match newly added routes until the router plugin can run again.
 
 ## Dependencies
 

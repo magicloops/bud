@@ -55,6 +55,16 @@ Development-only debug overlay.
 
 **Visibility**: Only in `import.meta.env.DEV`
 
+### `route-error-screen.tsx`
+
+Branded full-page recovery screen for uncaught route errors.
+
+**Features**:
+- Replaces TanStack Router's default generic crash UI for root-level route errors
+- Translates owned-route `404` failures such as `bud_not_found` into user-facing copy
+- Offers a primary "Return Home" action back to `/`
+- Preserves Bud's existing neobrutalist card treatment so permission failures feel intentional rather than accidental
+
 ## Subfolders
 
 ### `ui/` → [ui/ui.spec.md](./ui/ui.spec.md)
