@@ -57,7 +57,7 @@ Three canonical tool definitions using standard JSON Schema format:
 
 | Method | Purpose |
 |--------|---------|
-| `startUserMessage(threadId, options)` | Entry point - spawns async agent flow |
+| `startUserMessage(threadId, options)` | Entry point - spawns async agent flow and carries thread-owner stamping |
 | `runAgentFlow(...)` | Main loop - invoke model, handle tools, emit events |
 | `buildConversation(threadId)` | Load message history into canonical `CanonicalMessage[]` format |
 | `invokeModel(messages, reasoningEffort, signal)` | Call LLM via provider's `invokeSync()` |
@@ -102,6 +102,11 @@ Uses `AbortController` per thread to support mid-flow cancellation:
 ```typescript
 private readonly cancellations = new Map<string, AbortController>();
 ```
+
+**Ownership Notes**:
+- `startUserMessage(..., { ownerUserId })` threads the resolved thread owner through the agent loop
+- assistant final messages and tool-result messages are written with `message.created_by_user_id`
+- lazily created terminal sessions inherit the same owner via `createSessionForThread(..., ownerUserId)`
 
 ## Events Emitted
 

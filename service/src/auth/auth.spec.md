@@ -36,7 +36,9 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 **Responsibilities**:
 - Reads the current session via `auth.api.getSession`
 - Exposes optional/required viewer helpers for authenticated routes
+- Centralizes ownership lookups for Buds, threads, and thread terminal sessions
 - Creates a `user_profile` row if one does not yet exist
+- Validates and updates editable usernames for the settings page
 - Generates unique usernames:
   - Prefer GitHub login when linked
   - Fall back to email local-part or provider name
@@ -48,7 +50,12 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 - `getAuthSession(request)`
 - `getOptionalViewer(request)`
 - `requireViewer(request, reply)`
+- `getAuthorizedBud(viewer, budId)`
+- `getAuthorizedThread(viewer, threadId, options?)`
+- `getAuthorizedSessionForThread(viewer, threadId)`
 - `ensureUserProfile(user)`
+- `normalizeEditableUsername(input)`
+- `updateUserProfileUsername(user, input)`
 - `getNormalizedCurrentUser(request)`
 
 ## Dependencies
@@ -60,7 +67,7 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 | `pg` | Dedicated auth pool |
 | `../config.js` | Better Auth env config |
 | `../db/client.js` | Main Drizzle database instance |
-| `../db/schema.js` | `auth.account` and `user_profile` tables |
+| `../db/schema.js` | Auth/profile tables plus Bud/thread/session ownership lookups |
 
 ---
 

@@ -34,7 +34,9 @@ export const apiFetch = (path: string, init?: ApiRequestInit) =>
 **Auth-Aware Transport**:
 - `apiFetch()` always includes credentials
 - runtime `401` responses redirect the browser back to `/login`
+- login redirects are deduplicated in-module so long-lived reconnect loops can detect an in-flight auth redirect
 - `fetchCurrentUser()` normalizes `/api/me`
+- `updateCurrentUserProfile()` writes Bud-owned profile updates back to `/api/me/profile`
 - `createAuthEventSource()` centralizes credentialed SSE setup plus auth-expiry checks
 - `buildAbsoluteApiUrl()` exists specifically for clients like Better Auth that require a fully-qualified base URL even in same-origin/proxy dev mode
 
@@ -60,6 +62,7 @@ export const decodeTerminalData = (data: string) => {
 | `ApiThread` | Thread response (id, title, session info) |
 | `ApiMessage` | Message response (id, role, content) |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
+| `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 
 **Capability Normalization**:
 ```typescript

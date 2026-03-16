@@ -6,6 +6,8 @@ HTTP API route handlers using Fastify.
 
 Defines REST API endpoints for managing buds, threads, messages, runs, terminal sessions, the authenticated current-user surface, and browser-mediated Bud device claims. All routes are prefixed with `/api/`.
 
+All browser-facing Bud/thread/run/terminal routes now require an authenticated viewer and resolve resources through ownership checks. Cross-user resource access returns `404`, while `401` is reserved for missing browser auth.
+
 ## Files
 
 ### `device-auth.ts`
@@ -35,13 +37,18 @@ Bud management and session listing.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/buds` | List all buds with last run info |
-| `GET` | `/api/buds/:budId/sessions` | List active terminal sessions for a bud |
-| `DELETE` | `/api/buds/:budId/sessions/:sessionId` | Close a specific session |
+| `GET` | `/api/buds` | List the signed-in user's buds with last run info |
+| `GET` | `/api/buds/:budId/sessions` | List active terminal sessions for an owned bud |
+| `DELETE` | `/api/buds/:budId/sessions/:sessionId` | Close a specific session on an owned bud |
 
 **Key Functions**:
 - `normalizeCapabilities(raw)` - Ensure capabilities is an object
 - `serializeBud(bud)` - Convert DB row to API response format
+
+**Authorization**:
+- All Bud routes call `requireViewer(...)`
+- Bud-scoped routes resolve ownership through `getAuthorizedBud(...)`
+- Session inventory is filtered to `terminal_session.created_by_user_id = viewer.userId`
 
 ### `threads.ts`
 
@@ -51,38 +58,38 @@ Thread and message management, plus terminal operations (~650 lines).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads` | List threads (optionally filtered by `bud_id`) |
-| `POST` | `/api/threads` | Create new thread |
-| `GET` | `/api/threads/:threadId` | Get thread details |
-| `DELETE` | `/api/threads/:threadId` | Soft delete thread |
+| `GET` | `/api/threads` | List the signed-in user's threads (optionally filtered by owned `bud_id`) |
+| `POST` | `/api/threads` | Create a new owned thread on an owned bud |
+| `GET` | `/api/threads/:threadId` | Get owned thread details |
+| `DELETE` | `/api/threads/:threadId` | Soft delete an owned thread |
 
 **Message Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads/:threadId/messages` | Get messages (limit configurable) |
-| `POST` | `/api/threads/:threadId/messages` | Send user message (with context sync), triggers agent |
-| `GET` | `/api/threads/:threadId/agent/stream` | SSE for agent events |
-| `POST` | `/api/threads/:threadId/cancel` | Cancel running agent |
+| `GET` | `/api/threads/:threadId/messages` | Get owned messages (limit configurable) |
+| `POST` | `/api/threads/:threadId/messages` | Send a user-owned message (with context sync), triggers agent |
+| `GET` | `/api/threads/:threadId/agent/stream` | SSE for owned agent events |
+| `POST` | `/api/threads/:threadId/cancel` | Cancel an owned running agent |
 
 **Run Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads/:threadId/runs` | Get run history with cursor pagination |
+| `GET` | `/api/threads/:threadId/runs` | Get owned run history with cursor pagination |
 
 **Terminal Endpoints** (Thread-Scoped):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads/:threadId/terminal` | Create/get terminal session (DB only) |
-| `POST` | `/api/threads/:threadId/terminal/ensure` | Ensure terminal running on bud |
-| `GET` | `/api/threads/:threadId/terminal` | Get session info |
-| `GET` | `/api/threads/:threadId/terminal/stream` | SSE output stream |
-| `POST` | `/api/threads/:threadId/terminal/input` | Send input |
-| `POST` | `/api/threads/:threadId/terminal/interrupt` | Send Ctrl+C |
-| `POST` | `/api/threads/:threadId/terminal/resize` | Resize terminal |
-| `GET` | `/api/threads/:threadId/terminal/history` | Get output history |
+| `POST` | `/api/threads/:threadId/terminal` | Create/get an owned terminal session (DB only) |
+| `POST` | `/api/threads/:threadId/terminal/ensure` | Ensure the owned terminal is running on bud |
+| `GET` | `/api/threads/:threadId/terminal` | Get owned session info |
+| `GET` | `/api/threads/:threadId/terminal/stream` | SSE output stream for an owned session |
+| `POST` | `/api/threads/:threadId/terminal/input` | Send input as the signed-in human user |
+| `POST` | `/api/threads/:threadId/terminal/interrupt` | Send Ctrl+C to an owned session |
+| `POST` | `/api/threads/:threadId/terminal/resize` | Resize an owned terminal |
+| `GET` | `/api/threads/:threadId/terminal/history` | Get owned output history |
 
 **Validation Schemas** (Zod):
 - `CreateThreadSchema` - `bud_id` required, `title` optional
@@ -95,9 +102,17 @@ Thread and message management, plus terminal operations (~650 lines).
 **Context Sync Flow** (POST /messages):
 Before creating user message, checks for terminal state changes:
 1. If thread has active terminal session and no active agent run
-2. Call `contextSyncService.checkAndSync(sessionId, threadId)`
+2. Call `contextSyncService.checkAndSync(sessionId, threadId, ownerUserId)`
 3. If state changed, a system message is injected before the user message
 4. This keeps the agent informed about terminal state transitions (e.g., REPL exit)
+
+**Ownership Enforcement**:
+- `requireAuthorizedThreadAccess(...)` gates thread/message/run/terminal routes
+- thread lists filter to `thread.created_by_user_id = viewer.userId`
+- message and run reads also filter by their row-level owner columns
+- new thread/message/session rows are stamped with the acting or owning user id
+- terminal input writes `terminal_session_input_log.user_id` for human-originated input
+- SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
 
 ### `runs.ts`
 
@@ -107,7 +122,7 @@ Standalone command execution (separate from agent flow).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/runs` | Execute command on bud |
+| `POST` | `/api/runs` | Execute a command on an owned bud or owned thread |
 
 **Request Body** (`RunRequestSchema`):
 ```typescript
@@ -129,12 +144,19 @@ Authenticated current-user endpoint backed by Better Auth session helpers.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/me` | Return normalized user/session/profile/account-linking state |
+| `PATCH` | `/api/me/profile` | Update the signed-in user's Bud-owned profile fields |
 
 **Response Shape**:
 - `user` - Better Auth user identity (`id`, `email`, `email_verified`, `name`, `image`)
 - `session` - Current session metadata (`id`, `expires_at`)
 - `profile` - Bud-owned profile metadata (`username`, timestamps)
 - `linked_accounts` / `linked_providers` - Provider-linking summary for settings/account UI
+
+**Profile Updates**:
+- `PATCH /api/me/profile` currently supports `username`
+- input is validated and normalized through `auth/session.ts`
+- invalid usernames return `400 invalid_username`
+- uniqueness conflicts return `409 username_taken`
 
 **Dependencies**:
 - `../auth/session.js` - Session lookup and `user_profile` bootstrap

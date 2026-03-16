@@ -27,6 +27,7 @@ type ThreadPanelProps = {
   onSelectThread: (threadId: string | null) => void
   onThreadDeleted?: (threadId: string) => void
   onOpenSettings?: () => void
+  onOpenSessions?: () => void
   accentColor: string
   budLabel: string
   budId?: string
@@ -76,7 +77,17 @@ function getSessionStateLabel(state: string | null | undefined): string {
   }
 }
 
-export function ThreadPanel({ threads, activeThreadId, onSelectThread, onThreadDeleted, onOpenSettings, accentColor, budLabel, budId }: ThreadPanelProps) {
+export function ThreadPanel({
+  threads,
+  activeThreadId,
+  onSelectThread,
+  onThreadDeleted,
+  onOpenSettings,
+  onOpenSessions,
+  accentColor,
+  budLabel,
+  budId,
+}: ThreadPanelProps) {
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ThreadSummary | null>(null)
 
@@ -150,9 +161,20 @@ export function ThreadPanel({ threads, activeThreadId, onSelectThread, onThreadD
             onClick={onOpenSettings}
             className="h-10 w-10 rounded-lg border-3 border-black text-foreground transition-all hover:-translate-y-0.5"
             style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
-            title="Terminal Sessions"
+            title="Settings"
           >
             <Settings className="h-5 w-5" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onOpenSessions}
+            className="h-10 w-10 rounded-lg border-3 border-black text-foreground transition-all hover:-translate-y-0.5"
+            style={{ boxShadow: '3px 3px 0px rgba(0,0,0,1)' }}
+            title="Terminal Sessions"
+          >
+            <Terminal className="h-5 w-5" />
           </Button>
         </div>
       </div>

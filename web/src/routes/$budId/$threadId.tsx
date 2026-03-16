@@ -22,6 +22,7 @@ import {
   createAuthEventSource,
   decodeTerminalData,
   getLoginRedirectValue,
+  isAuthRedirectPending,
   isApiError,
   type ApiMessage,
 } from '@/lib/api'
@@ -124,6 +125,10 @@ function ThreadView() {
   const agentReconnectAttemptRef = useRef(0)
   const lastAgentEventTimeRef = useRef<number>(Date.now())
   const agentThreadIdRef = useRef<string | null>(null)
+
+  const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
+    return isAuthRedirectPending() || response?.status === 401
+  }, [])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -337,6 +342,9 @@ function ThreadView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input })
       })
+      if (shouldAbortForUnauthorized(resp)) {
+        return
+      }
       if (!resp.ok) {
         console.warn('[terminal] input request failed', { status: resp.status })
         if (resp.status >= 500 || resp.status === 0) {
@@ -346,13 +354,16 @@ function ThreadView() {
         }
       }
     } catch (err) {
+      if (isAuthRedirectPending()) {
+        return
+      }
       console.error('Failed to send terminal input', err)
       setTerminalConnection('reconnecting')
       terminalConnectionRef.current = 'reconnecting'
       setTerminalDisconnectTime((prev) => prev ?? Date.now())
       setError(err instanceof Error ? err.message : 'Failed to send input')
     }
-  }, [threadId])
+  }, [shouldAbortForUnauthorized, threadId])
 
   const sendTerminalInput = useCallback((text: string) => {
     if (!threadId) return
@@ -378,13 +389,19 @@ function ThreadView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cols, rows })
       })
+      if (shouldAbortForUnauthorized(resp)) {
+        return
+      }
       if (!resp.ok) {
         console.warn('[terminal] resize request failed', { status: resp.status })
       }
     } catch (err) {
+      if (isAuthRedirectPending()) {
+        return
+      }
       console.error('Failed to send terminal resize', err)
     }
-  }, [threadId])
+  }, [shouldAbortForUnauthorized, threadId])
 
   useEffect(() => {
     sendTerminalResizeRef.current = sendTerminalResize
@@ -392,6 +409,9 @@ function ThreadView() {
 
   const refreshTerminalSnapshot = useCallback(async (targetThreadId: string) => {
     const statusResp = await apiFetch(`/api/threads/${targetThreadId}/terminal`)
+    if (shouldAbortForUnauthorized(statusResp)) {
+      return
+    }
     if (statusResp.ok) {
       const body = (await statusResp.json()) as {
         state?: string
@@ -402,6 +422,9 @@ function ThreadView() {
     }
 
     const historyResp = await apiFetch(`/api/threads/${targetThreadId}/terminal/history?bytes=131072`)
+    if (shouldAbortForUnauthorized(historyResp)) {
+      return
+    }
     if (!historyResp.ok) {
       return
     }
@@ -434,7 +457,7 @@ function ThreadView() {
 
     setTerminalHasOutput(false)
     setTerminalScrolledToTop(false)
-  }, [fitTerminal])
+  }, [fitTerminal, shouldAbortForUnauthorized])
 
   const recoverTerminalSession = useCallback(async (reason: string): Promise<boolean> => {
     if (!threadId) {
@@ -449,6 +472,9 @@ function ThreadView() {
 
     try {
       const resp = await apiFetch(`/api/threads/${threadId}/terminal/ensure`, { method: 'POST' })
+      if (shouldAbortForUnauthorized(resp)) {
+        return false
+      }
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({})) as { error?: string }
         console.warn('[terminal] Terminal recovery failed', {
@@ -494,6 +520,9 @@ function ThreadView() {
 
       return true
     } catch (err) {
+      if (isAuthRedirectPending()) {
+        return false
+      }
       console.error('[terminal] Terminal recovery request failed', {
         threadId,
         sessionId: currentSessionIdRef.current,
@@ -504,7 +533,7 @@ function ThreadView() {
     } finally {
       terminalRecoveryInFlightRef.current = false
     }
-  }, [budId, refreshTerminalSnapshot, threadId, updateBudStatus])
+  }, [budId, refreshTerminalSnapshot, shouldAbortForUnauthorized, threadId, updateBudStatus])
 
   // Fetch messages helper
   const fetchMessages = useCallback(async (thread: string | null) => {
@@ -513,13 +542,16 @@ function ThreadView() {
       return
     }
     const resp = await apiFetch(`/api/threads/${thread}/messages?limit=200`)
+    if (shouldAbortForUnauthorized(resp)) {
+      return
+    }
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}))
       throw new Error(body.error ?? `HTTP ${resp.status}`)
     }
     const data = (await resp.json()) as ApiMessage[]
     setMessages(data)
-  }, [])
+  }, [shouldAbortForUnauthorized])
 
   // Agent SSE stream with reconnection support
   const connectAgentStream = useCallback((agentThreadId: string) => {
@@ -543,6 +575,10 @@ function ThreadView() {
     }
 
     const scheduleReconnect = (reason: string) => {
+      if (isAuthRedirectPending()) {
+        cleanupAgent()
+        return
+      }
       cleanupAgent()
       const nextAttempt = agentReconnectAttemptRef.current + 1
       agentReconnectAttemptRef.current = nextAttempt
@@ -552,7 +588,7 @@ function ThreadView() {
         clearTimeout(agentReconnectTimerRef.current)
       }
       agentReconnectTimerRef.current = setTimeout(() => {
-        if (agentThreadIdRef.current) {
+        if (agentThreadIdRef.current && !isAuthRedirectPending()) {
           connectAgentStream(agentThreadIdRef.current)
         }
       }, delay)
@@ -738,7 +774,7 @@ function ThreadView() {
     let cancelled = false
 
     const connect = async () => {
-      if (cancelled) return
+      if (cancelled || isAuthRedirectPending()) return
 
       // Step 1: Create/get session record in DB (doesn't require bud to be online)
       try {
@@ -746,7 +782,11 @@ function ThreadView() {
           method: 'POST'
         })
 
-        if (!sessionResp.ok || cancelled) {
+        if (shouldAbortForUnauthorized(sessionResp) || cancelled) {
+          return
+        }
+
+        if (!sessionResp.ok) {
           if (!cancelled) {
             console.error('[terminal] Failed to create session record', { status: sessionResp.status })
             setTerminalConnection('disconnected')
@@ -767,6 +807,9 @@ function ThreadView() {
           console.log('[terminal] Using existing session record', { sessionId: session_id, threadId })
         }
       } catch (err) {
+        if (isAuthRedirectPending()) {
+          return
+        }
         if (!cancelled) {
           console.error('[terminal] Failed to create session record', err)
           setTerminalConnection('disconnected')
@@ -889,6 +932,7 @@ function ThreadView() {
 
       const scheduleReconnect = (reason: string) => {
         if (cancelled) return
+        if (isAuthRedirectPending()) return
         if (terminalEventSourceRef.current === source) {
           terminalEventSourceRef.current = null
         }
@@ -912,7 +956,7 @@ function ThreadView() {
         console.warn('[terminal] SSE closed; reconnecting', { threadId, reason, attempt: nextAttempt, delay })
         cleanupTimers()
         terminalReconnectTimerRef.current = setTimeout(() => {
-          if (!cancelled) connect()
+          if (!cancelled && !isAuthRedirectPending()) connect()
         }, delay)
       }
 
@@ -961,7 +1005,15 @@ function ThreadView() {
       cleanupTimers()
       closeSource()
     }
-  }, [threadId, budId, recoverTerminalSession, resetTerminal, sseReconnectTrigger, updateBudStatus])
+  }, [
+    threadId,
+    budId,
+    recoverTerminalSession,
+    resetTerminal,
+    shouldAbortForUnauthorized,
+    sseReconnectTrigger,
+    updateBudStatus,
+  ])
 
   // Recover terminal state while disconnected. If SSE is still up, keep retrying
   // terminal ensure/state recovery. If SSE is down, poll for service recovery and
@@ -975,7 +1027,7 @@ function ThreadView() {
 
       let cancelled = false
       const pollRecovery = async () => {
-        while (!cancelled && terminalConnectionRef.current !== 'connected') {
+        while (!cancelled && !isAuthRedirectPending() && terminalConnectionRef.current !== 'connected') {
           const recovered = await recoverTerminalSession('connected_sse_poll')
           if (recovered) {
             break
@@ -995,16 +1047,22 @@ function ThreadView() {
 
     let cancelled = false
     const pollAndReconnect = async () => {
-      while (!cancelled) {
+      while (!cancelled && !isAuthRedirectPending()) {
         try {
           const resp = await apiFetch(`/api/threads/${threadId}/terminal`, {
             method: 'POST'
           })
+          if (shouldAbortForUnauthorized(resp)) {
+            break
+          }
           if (resp.ok) {
             setSseReconnectTrigger((n) => n + 1)
             break
           }
         } catch {
+          if (isAuthRedirectPending()) {
+            break
+          }
           // Still down, keep polling
         }
         await new Promise((resolve) => setTimeout(resolve, 2000))
@@ -1016,7 +1074,7 @@ function ThreadView() {
     return () => {
       cancelled = true
     }
-  }, [recoverTerminalSession, terminalConnection, threadId])
+  }, [recoverTerminalSession, shouldAbortForUnauthorized, terminalConnection, threadId])
 
   // Show dimming after 2 seconds of disconnect
   useEffect(() => {
@@ -1057,26 +1115,38 @@ function ThreadView() {
     agentEventSourceRef.current = null
 
     try {
-      await apiFetch(`/api/threads/${threadId}/cancel`, { method: 'POST' })
+      const resp = await apiFetch(`/api/threads/${threadId}/cancel`, { method: 'POST' })
+      if (shouldAbortForUnauthorized(resp)) {
+        return
+      }
       setStatus('idle')
     } catch (err) {
+      if (isAuthRedirectPending()) {
+        return
+      }
       console.error('Failed to cancel agent turn', err)
       setError(err instanceof Error ? err.message : 'Failed to cancel agent')
     }
-  }, [threadId])
+  }, [shouldAbortForUnauthorized, threadId])
 
   const sendTerminalInterrupt = useCallback(async () => {
     if (!threadId) return
     try {
       const resp = await apiFetch(`/api/threads/${threadId}/terminal/interrupt`, { method: 'POST' })
+      if (shouldAbortForUnauthorized(resp)) {
+        return
+      }
       if (!resp.ok) {
         console.warn('[terminal] interrupt request failed', { status: resp.status })
       }
     } catch (err) {
+      if (isAuthRedirectPending()) {
+        return
+      }
       console.error('Failed to send terminal interrupt', err)
       setError(err instanceof Error ? err.message : 'Failed to interrupt')
     }
-  }, [threadId])
+  }, [shouldAbortForUnauthorized, threadId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1114,6 +1184,11 @@ function ThreadView() {
           reasoning_effort: reasoningEffort
         })
       })
+      if (shouldAbortForUnauthorized(messageResp)) {
+        setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
+        setStatus('idle')
+        return
+      }
       if (!messageResp.ok) {
         const body = await messageResp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
@@ -1134,6 +1209,9 @@ function ThreadView() {
       setStatus('streaming')
       connectAgentStream(threadId)
     } catch (err) {
+      if (isAuthRedirectPending()) {
+        return
+      }
       setMessages((prev) => prev.filter((msg) => msg.message_id !== optimisticId))
       setStatus('idle')
       setError(err instanceof Error ? err.message : 'Failed to send message')

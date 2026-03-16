@@ -40,7 +40,9 @@ Thread list sidebar for conversation navigation.
 **Features**:
 - Sorted by last activity (most recent first)
 - "New" button for creating threads
-- Settings button (opens sessions modal)
+- Separate settings and terminal-sessions actions
+- Settings button routes into `/settings`
+- Terminal button opens the sessions modal
 - Delete button with confirmation dialog
 - Terminal session indicators (state dot + icon)
 - Message count badges

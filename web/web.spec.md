@@ -6,6 +6,7 @@ React frontend for the Bud application.
 
 Provides a web-based chat interface for interacting with Buds. Features include:
 - Better Auth-based browser sign-in
+- Settings page for username management, linked providers, and sign-out
 - Multi-bud navigation with sidebar
 - Thread-based conversations
 - Real-time terminal streaming (xterm.js)
@@ -124,9 +125,11 @@ Static assets served without processing.
 ### Browser Auth
 
 - `/login` route for GitHub and Google OAuth
+- `/settings` route for profile management and provider linking
 - Root app shell resolves `/api/me` before rendering authenticated state
 - Shared credential-aware `fetch` helper for cookie auth
 - Shared auth-aware `EventSource` creation for SSE streams
+- Session-expiry redirects now stop background reconnect/poll loops once auth has expired
 
 ### Theming
 

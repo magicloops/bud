@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { Link, createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import {
   apiFetchJson,
@@ -73,6 +73,15 @@ function NoBudsView() {
               Enroll a Bud device or continue into the upcoming claim flow. Once a Bud exists for your account, the app will route you into its workspace.
             </p>
           </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            to="/settings"
+            className="inline-flex rounded-xl border-4 border-black bg-card px-4 py-3 font-mono text-sm font-semibold uppercase tracking-wide shadow-[4px_4px_0px_rgba(0,0,0,1)] transition hover:-translate-y-0.5"
+          >
+            Open settings
+          </Link>
         </div>
       </div>
     </div>

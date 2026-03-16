@@ -68,6 +68,20 @@ Public browser login route for OAuth entry.
 - Bounces already-authenticated users back into the app shell
 - Reuses the same route shape for device-claim resume after OAuth login
 
+### `settings.tsx`
+
+**Route**: `/settings`
+
+Authenticated account settings route.
+
+**Features**:
+- Loads through the same `/api/me` auth gating as the rest of the app shell
+- Edits the Bud-owned `profile.username` via `PATCH /api/me/profile`
+- Shows provider-backed avatar with initials fallback
+- Shows linked-account state for GitHub and Google
+- Starts explicit provider linking through Better Auth client actions
+- Signs the browser session out through Better Auth and returns to `/login`
+
 ### `devices.claim.$flowId.tsx`
 
 **Route**: `/devices/claim/$flowId`
@@ -109,6 +123,8 @@ loader: async ({ params }) => {
 - Converts API responses to UI types (`BudProfile`, `ThreadSummary`)
 - Applies bud accent color theming via CSS custom properties
 - Manages sessions modal state
+- Routes the settings button into `/settings`
+- Keeps terminal sessions as a separate modal action
 - Renders `BudRail`, `ThreadPanel`, and child routes via `<Outlet />`
 
 **State**:
@@ -146,6 +162,7 @@ Nested routes for thread views:
 ```
 /                    → index.tsx (auth-aware redirect to first bud)
 /login               → login.tsx (OAuth entry)
+/settings            → settings.tsx (profile, linked accounts, sign-out)
 /devices/claim/$flowId → devices.claim.$flowId.tsx (public claim route with login resume)
 /$budId              → $budId.tsx (bud layout)
   ├── /             → $budId/index.tsx (redirect to most recent thread or /new)

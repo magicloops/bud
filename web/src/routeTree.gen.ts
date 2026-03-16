@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as BudIdRouteImport } from './routes/$budId'
 import { Route as IndexRouteImport } from './routes/index'
@@ -17,6 +18,11 @@ import { Route as BudIdNewRouteImport } from './routes/$budId/new'
 import { Route as BudIdThreadIdRouteImport } from './routes/$budId/$threadId'
 import { Route as DevicesClaimFlowIdRouteImport } from './routes/devices.claim.$flowId'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
   '/login': typeof LoginRoute
+  '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
   '/$budId/': typeof BudIdIndexRoute
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
   '/$budId': typeof BudIdIndexRoute
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$budId': typeof BudIdRouteWithChildren
   '/login': typeof LoginRoute
+  '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
   '/$budId/': typeof BudIdIndexRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$budId'
     | '/login'
+    | '/settings'
     | '/$budId/$threadId'
     | '/$budId/new'
     | '/$budId/'
@@ -94,6 +104,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/login'
+    | '/settings'
     | '/$budId/$threadId'
     | '/$budId/new'
     | '/$budId'
@@ -103,6 +114,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$budId'
     | '/login'
+    | '/settings'
     | '/$budId/$threadId'
     | '/$budId/new'
     | '/$budId/'
@@ -113,11 +125,19 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BudIdRoute: typeof BudIdRouteWithChildren
   LoginRoute: typeof LoginRoute
+  SettingsRoute: typeof SettingsRoute
   DevicesClaimFlowIdRoute: typeof DevicesClaimFlowIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -188,6 +208,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BudIdRoute: BudIdRouteWithChildren,
   LoginRoute: LoginRoute,
+  SettingsRoute: SettingsRoute,
   DevicesClaimFlowIdRoute: DevicesClaimFlowIdRoute,
 }
 export const routeTree = rootRouteImport

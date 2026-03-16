@@ -94,12 +94,13 @@ loader: async ({ params }) => {
    - Reconnection logic with exponential backoff
    - Idempotent recovery helper that re-runs `terminal/ensure`, reloads terminal state, and replays stored history after reconnects
    - Shared auth-aware EventSource creation before reconnect logic takes over
+   - Stops reconnect and polling loops once the browser has already redirected for expired auth
 
 3. **Agent Stream**
    - SSE connection to `/api/threads/:id/agent/stream`
    - Event handling: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`
    - Message list updates from events
-   - Shared auth-expiry detection before reconnecting
+   - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
 
 4. **Connection Management**
    - Terminal connection states: connected, reconnecting, offline, disconnected

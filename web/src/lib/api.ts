@@ -1,6 +1,7 @@
 // API utilities
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined
+let authRedirectPending = false
 
 type ApiRequestInit = RequestInit & {
   redirectOnUnauthorized?: boolean
@@ -58,11 +59,20 @@ export const buildLoginUrl = (returnTo = getCurrentAppPath()) => {
   return loginUrl.toString()
 }
 
+export const isAuthRedirectPending = () => authRedirectPending
+
 export const redirectToLogin = (returnTo = getCurrentAppPath()) => {
   if (typeof window === 'undefined') {
     return
   }
-  window.location.assign(buildLoginUrl(returnTo))
+
+  const loginUrl = buildLoginUrl(returnTo)
+  if (authRedirectPending && window.location.href === loginUrl) {
+    return
+  }
+
+  authRedirectPending = true
+  window.location.assign(loginUrl)
 }
 
 const readErrorBody = async (response: Response) => {
@@ -147,6 +157,10 @@ export type ApiCurrentUser = {
   linked_providers: string[]
 }
 
+export type ApiUpdateProfileInput = {
+  username: string
+}
+
 export type ApiDeviceAuthFlow = {
   flow_id: string
   status: 'pending' | 'approved' | 'completed' | 'rejected' | 'expired'
@@ -179,6 +193,15 @@ export const fetchCurrentUser = async () => {
   }
   return (await response.json()) as ApiCurrentUser
 }
+
+export const updateCurrentUserProfile = async (input: ApiUpdateProfileInput) =>
+  apiFetchJson<ApiCurrentUser>('/api/me/profile', {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  })
 
 export const createAuthEventSource = (path: string) => {
   const source = new EventSource(

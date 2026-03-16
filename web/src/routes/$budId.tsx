@@ -144,6 +144,10 @@ function BudLayout() {
   }, [navigate, budId])
 
   const handleOpenSettings = useCallback(() => {
+    navigate({ to: '/settings' })
+  }, [navigate])
+
+  const handleOpenSessions = useCallback(() => {
     setSessionsModalOpen(true)
   }, [])
 
@@ -165,6 +169,7 @@ function BudLayout() {
           onSelectThread={handleSelectThread}
           onThreadDeleted={handleThreadDeleted}
           onOpenSettings={handleOpenSettings}
+          onOpenSessions={handleOpenSessions}
           accentColor={palette.vibrant}
           budLabel={activeBudProfile.label}
           budId={budId}

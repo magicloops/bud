@@ -87,7 +87,7 @@ Environment-based configuration with defaults.
 
 ### `auth/` → [auth.spec.md](./auth/auth.spec.md)
 
-Better Auth runtime integration plus session/profile helpers used by authenticated API routes.
+Better Auth runtime integration plus session/profile/ownership helpers used by authenticated API routes.
 
 ### `agent/` → [agent.spec.md](./agent/agent.spec.md)
 
@@ -103,7 +103,7 @@ Database layer with Drizzle ORM - connection, schema definitions, and helper fun
 
 ### `routes/` → [routes.spec.md](./routes/routes.spec.md)
 
-REST API route handlers for buds, threads, messages, runs, and terminal operations.
+REST API route handlers for buds, threads, messages, runs, and terminal operations, now enforcing per-user ownership across browser-facing resources.
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 

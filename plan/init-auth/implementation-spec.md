@@ -1,8 +1,9 @@
 # Implementation Spec: Production Authentication And Bud Claim Flow
 
-**Status**: Draft
+**Status**: In Progress
 **Created**: 2026-03-13
 **Design Doc**: [../../design/authentication-and-user-ownership.md](../../design/authentication-and-user-ownership.md)
+**Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
 
 ---
 
@@ -250,13 +251,13 @@ Notes:
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 1 | Draft | Not started |
-| 2 | Draft | Not started |
-| 3 | Draft | Not started |
-| 3.5 | Draft | Not started |
-| 4 | Draft | Not started |
-| 5 | Draft | Not started |
+| 1 | Complete | Better Auth foundation landed in the service |
+| 2 | Complete | Web login shell, auth-aware loaders, and Better Auth client wiring landed |
+| 3 | Complete | Device claim via link/QR and Bud identity continuity landed |
+| 3.5 | Complete (local dev) | Local prototype data backfill was run to preserve fixtures for multi-user testing |
+| 4 | Complete | Ownership stamping and per-user authorization enforcement landed |
+| 5 | Next | Settings, linked-account UX, expiry handling, hardening, and final validation remain |
 
 ---
 
-*Last Updated: 2026-03-13*
+*Last Updated: 2026-03-15*

@@ -155,7 +155,11 @@ export class TerminalSessionManager {
   /**
    * Create a new session for a thread. Returns existing session if one exists.
    */
-  async createSessionForThread(threadId: string, budId: string): Promise<string> {
+  async createSessionForThread(
+    threadId: string,
+    budId: string,
+    createdByUserId?: string | null,
+  ): Promise<string> {
     // Check if thread already has an active session
     const existing = await db.query.terminalSessionTable.findFirst({
       where: and(
@@ -179,7 +183,8 @@ export class TerminalSessionManager {
       budId,
       instanceId: null,
       tmuxSessionName,
-      state: "pending"
+      state: "pending",
+      createdByUserId: createdByUserId ?? undefined,
     });
 
     this.logger.info({ threadId, sessionId, budId }, "Created new session for thread");

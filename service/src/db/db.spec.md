@@ -39,11 +39,11 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `budTable` | Registered devices | `budId`, `installationId`, `name`, `os`, `arch`, `capabilities`, `status`, `deviceSecret` |
+| `budTable` | Registered devices | `budId`, `installationId`, `name`, `os`, `arch`, `capabilities`, `status`, `deviceSecret`, `createdByUserId` |
 | `enrollmentTokenTable` | One-time registration tokens | `tokenHash`, `expiresAt`, `consumedAt` |
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
-| `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `deletedAt` |
-| `messageTable` | Chat messages | `messageId`, `threadId`, `role`, `content`, `metadata` |
+| `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `deletedAt`, `createdByUserId` |
+| `messageTable` | Chat messages | `messageId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
 
 #### Auth Tables (`auth` schema)
 
@@ -64,7 +64,7 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `runTable` | Command execution records | `runId`, `threadId`, `status`, `stepCount`, `logsBytes` |
+| `runTable` | Command execution records | `runId`, `threadId`, `status`, `stepCount`, `logsBytes`, `createdByUserId`, `canceledByUserId` |
 | `runStepTable` | Individual tool calls | `stepId`, `runId`, `tool`, `argsJson`, `exitCode` |
 | `runLogTable` | Stdout/stderr chunks | `runId`, `seq`, `stream`, `data` (bytea) |
 | `runSummaryTable` | Denormalized run summaries | `runId`, `budId`, `status`, `exitCode`, `stdoutBytes` |
@@ -73,9 +73,9 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `terminalSessionTable` | Thread-scoped tmux sessions | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot` |
+| `terminalSessionTable` | Thread-scoped tmux sessions | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot`, `createdByUserId` |
 | `terminalSessionOutputTable` | Terminal output chunks | `sessionId`, `byteOffset`, `seq`, `data` (bytea) |
-| `terminalSessionInputLogTable` | Input audit log | `sessionId`, `inputBytes`, `source`, `sentAt` |
+| `terminalSessionInputLogTable` | Input audit log | `sessionId`, `source`, `userId`, `createdAt` |
 
 **stateSnapshot Column** (JSONB): Stores last known terminal state for context sync:
 ```typescript
@@ -190,16 +190,14 @@ budTable
 
 `drizzle-kit push` remains scoped to the `public` schema in this project. [`db-push.ts`](/Users/adam/code/bud/service/src/scripts/db-push.ts) creates the `auth` schema plus Better Auth's core tables/indexes before delegating back to Drizzle for public-schema diffs such as `user_profile`.
 
-## Multi-Tenancy Support
+## Ownership And Multi-Tenancy Support
 
-Several tables have `tenantId` and `createdByUserId` columns, though these are not currently enforced:
-- `budTable`
-- `threadTable`
-- `messageTable`
-- `runTable`
+Browser-facing ownership is now enforced through `createdByUserId` across the Bud/thread/message/run/terminal-session surfaces, with human terminal input additionally recorded in `terminalSessionInputLog.userId`.
+
+`tenantId` columns remain nullable and unused in this tranche.
 
 <!-- SPEC:TODO -->
-Multi-tenant isolation is not implemented but schema is prepared.
+Tenant-level isolation is not implemented yet even though the schema remains prepared for it.
 
 ## Dependencies
 

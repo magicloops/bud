@@ -121,6 +121,7 @@ main.tsx
                             │
                             └── Routes
                                 ├── /login
+                                ├── /settings
                                 ├── /devices/claim/$flowId
                                 ├── / (auth-aware entry)
                                 └── /$budId (layout)

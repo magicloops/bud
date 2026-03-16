@@ -67,8 +67,8 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | Entity | Description |
 |--------|-------------|
 | **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
-| **Thread** | A conversation belonging to a bud. Contains messages and owns at most one terminal session. |
-| **Message** | A chat message with role (user/assistant/tool) and content. Tool messages contain structured execution results. |
+| **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one terminal session. |
+| **Message** | A chat message with role (user/assistant/tool/system), content, and an owning user id. Tool/system messages inherit thread ownership. |
 | **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
 
@@ -191,9 +191,12 @@ The service also now exposes browser authentication foundations through Better A
 
 The web app now consumes that foundation through:
 - `/login` for direct browser sign-in
+- `/settings` for profile edits, linked-account management, and sign-out
 - `/devices/claim/$flowId` for QR/link-based Bud approval
 - an auth-aware app shell that resolves the current user before protected routes load
 - credential-aware API and SSE helpers so cookie auth works consistently across loaders and live streams
+- auth-expiry-aware reconnect guards so live thread views stop polling once browser auth is gone
+- per-user route filtering so browser users only receive their own Buds, threads, runs, sessions, and messages
 
 Bud device onboarding is now browser-mediated:
 1. The daemon starts a claim with `/api/device-auth/start`
@@ -426,7 +429,6 @@ Thread-scoped sessions provide isolation and predictability.
 
 <!-- SPEC:TODO -->
 - Multi-tenant support (tenant_id columns exist but unused)
-- User authentication (created_by_user_id columns exist but unused)
 - File transfer capabilities
 - Multiple terminal windows per thread
 - Session sharing/collaboration
