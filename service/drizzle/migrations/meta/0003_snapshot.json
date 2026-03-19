@@ -1,6 +1,6 @@
 {
-  "id": "28f2f8d8-4858-41b0-87b2-fb615f40493d",
-  "prevId": "da97b06e-86c6-4df3-b3c5-0772f8247e1c",
+  "id": "da97b06e-86c6-4df3-b3c5-0772f8247e1c",
+  "prevId": "bffbce70-b4b9-4e33-a8fa-1e40a42eb422",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -111,179 +111,6 @@
       },
       "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.bud_terminal": {
-      "name": "bud_terminal",
-      "schema": "",
-      "columns": {
-        "bud_id": {
-          "name": "bud_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'none'"
-        },
-        "tmux_session_name": {
-          "name": "tmux_session_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "pid": {
-          "name": "pid",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "shell": {
-          "name": "shell",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "cols": {
-          "name": "cols",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 200
-        },
-        "rows": {
-          "name": "rows",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 50
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_input_at": {
-          "name": "last_input_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_output_at": {
-          "name": "last_output_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_activity_at": {
-          "name": "last_activity_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "output_log_bytes": {
-          "name": "output_log_bytes",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "total_input_bytes": {
-          "name": "total_input_bytes",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "total_output_bytes": {
-          "name": "total_output_bytes",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "bud_terminal_state_idx": {
-          "name": "bud_terminal_state_idx",
-          "columns": [
-            {
-              "expression": "state",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "bud_terminal_last_activity_idx": {
-          "name": "bud_terminal_last_activity_idx",
-          "columns": [
-            {
-              "expression": "last_activity_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "bud_terminal_bud_id_bud_bud_id_fk": {
-          "name": "bud_terminal_bud_id_bud_bud_id_fk",
-          "tableFrom": "bud_terminal",
-          "tableTo": "bud",
-          "columnsFrom": [
-            "bud_id"
-          ],
-          "columnsTo": [
-            "bud_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -1112,14 +939,14 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": 31536000
+          "default": 43200
         },
         "idle_kill_sec": {
           "name": "idle_kill_sec",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": 31536000
+          "default": 1200
         },
         "logs_bytes": {
           "name": "logs_bytes",
@@ -1245,199 +1072,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.terminal_input_log": {
-      "name": "terminal_input_log",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "bud_id": {
-          "name": "bud_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "data": {
-          "name": "data",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source": {
-          "name": "source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "terminal_input_log_bud_idx": {
-          "name": "terminal_input_log_bud_idx",
-          "columns": [
-            {
-              "expression": "bud_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "terminal_input_log_bud_id_bud_terminal_bud_id_fk": {
-          "name": "terminal_input_log_bud_id_bud_terminal_bud_id_fk",
-          "tableFrom": "terminal_input_log",
-          "tableTo": "bud_terminal",
-          "columnsFrom": [
-            "bud_id"
-          ],
-          "columnsTo": [
-            "bud_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.terminal_output": {
-      "name": "terminal_output",
-      "schema": "",
-      "columns": {
-        "bud_id": {
-          "name": "bud_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "seq": {
-          "name": "seq",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "data": {
-          "name": "data",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "byte_offset": {
-          "name": "byte_offset",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "terminal_output_offset_idx": {
-          "name": "terminal_output_offset_idx",
-          "columns": [
-            {
-              "expression": "bud_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "byte_offset",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "terminal_output_bud_id_bud_terminal_bud_id_fk": {
-          "name": "terminal_output_bud_id_bud_terminal_bud_id_fk",
-          "tableFrom": "terminal_output",
-          "tableTo": "bud_terminal",
-          "columnsFrom": [
-            "bud_id"
-          ],
-          "columnsTo": [
-            "bud_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "terminal_output_pkey": {
-          "name": "terminal_output_pkey",
-          "columns": [
-            "bud_id",
-            "seq"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.thread": {
       "name": "thread",
       "schema": "",
@@ -1454,12 +1088,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
-        },
-        "current_session_id": {
-          "name": "current_session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "title": {
           "name": "title",
@@ -1519,6 +1147,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "current_session_id": {
+          "name": "current_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

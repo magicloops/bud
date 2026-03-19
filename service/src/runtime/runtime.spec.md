@@ -80,8 +80,8 @@ Thread-scoped terminal session management using tmux (~800 lines).
 
 | Method | Description |
 |--------|-------------|
-| `createSessionForThread(threadId, budId, createdByUserId?)` | Create session in DB with thread-owner stamping |
-| `getSessionForThread(threadId)` | Get active session |
+| `createSessionForThread(threadId, budId, createdByUserId?)` | Create a fresh session row when the thread has no active session, with thread-owner stamping |
+| `getSessionForThread(threadId)` | Get the active (non-closed) session |
 | `getSession(sessionId)` | Get by ID |
 | `ensureSession(sessionId)` | Send `terminal_ensure` to bud |
 | `sendInput(sessionId, data, options)` | Send input with optional readiness waiting and user audit metadata |
@@ -97,12 +97,18 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `handleTerminalReady(sessionId, assessment)` | Readiness assessment received |
 | `handleCaptureResponse(sessionId, payload)` | Capture result received |
 | `handleRunResult(sessionId, payload)` | Run command result received |
-| `startIdleChecks()` / `stopIdleChecks()` | Periodic idle session cleanup |
+| `startIdleChecks()` / `stopIdleChecks()` | Periodic idle-state management; destructive cleanup runs only when explicitly configured |
 
 **Session States**:
 ```
 pending → creating → ready ↔ active ↔ idle → closed
 ```
+
+**Lifecycle Notes**:
+- A thread may accumulate multiple historical `terminal_session` rows over time.
+- Only one non-closed session may exist for a thread at once.
+- Explicit close produces a closed historical row; revisiting the thread creates a fresh session row.
+- Non-closed sessions persist across Bud/service reconnects.
 
 **REPL Context Tracking**:
 
@@ -153,13 +159,8 @@ This pattern replaces the previous approach of `sendInput` + `waitForReadiness` 
 
 - `config.runLogMaxBytes` - Max bytes to store per run
 - `config.terminalIdleTimeoutMinutes` - Mark idle after (default: 30)
-- `config.terminalIdleCleanupHours` - Close after idle (default: 24)
+- `config.terminalIdleCleanupHours` - Close after idle only when explicitly enabled (default: 0 / disabled)
 - `config.terminalIdleCheckIntervalMinutes` - Check frequency (default: 5)
-
-## TODOs / Technical Debt
-
-<!-- SPEC:TODO -->
-- Terminal session cleanup could be more aggressive for long-idle sessions
 
 ---
 

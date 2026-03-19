@@ -10,13 +10,15 @@ import {
   userProfileTable,
 } from "../db/schema.js";
 import { auth } from "./auth.js";
+import { verifyOAuthAccessToken } from "./auth.js";
 
 export type AuthSession = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
 
 export type Viewer = {
   userId: string;
-  sessionId: string;
-  email: string;
+  sessionId: string | null;
+  email: string | null;
+  authType: "cookie" | "bearer";
 };
 
 export type AuthorizedBud = typeof budTable.$inferSelect;
@@ -116,6 +118,43 @@ export async function getOptionalViewer(request: FastifyRequest): Promise<Viewer
     userId: session.user.id,
     sessionId: session.session.id,
     email: session.user.email,
+    authType: "cookie",
+  };
+}
+
+function getBearerAccessToken(request: FastifyRequest): string | undefined {
+  const authorization = request.headers.authorization;
+  if (!authorization) {
+    return undefined;
+  }
+
+  return authorization.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length).trim()
+    : authorization.trim();
+}
+
+export async function getVerifiedOAuthAccessToken(
+  request: FastifyRequest,
+): Promise<Awaited<ReturnType<typeof verifyOAuthAccessToken>> | null> {
+  const accessToken = getBearerAccessToken(request);
+  if (!accessToken) {
+    return null;
+  }
+
+  return verifyOAuthAccessToken(accessToken);
+}
+
+export async function getOptionalBearerViewer(request: FastifyRequest): Promise<Viewer | null> {
+  const payload = await getVerifiedOAuthAccessToken(request);
+  if (!payload?.sub || typeof payload.sub !== "string") {
+    return null;
+  }
+
+  return {
+    userId: payload.sub,
+    sessionId: null,
+    email: typeof payload.email === "string" ? payload.email : null,
+    authType: "bearer",
   };
 }
 

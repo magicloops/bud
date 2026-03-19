@@ -18,6 +18,30 @@ By the end of this phase:
 
 ---
 
+## Current Status
+
+Phase 1 implementation is largely in place.
+
+Landed:
+
+- `oauthProvider + jwt` auth-server wiring
+- auth-module token verification primitives
+- checked-in production migrations for the auth foundation
+- repaired Drizzle snapshot chain through `0008`
+- `pnpm db:generate` returning a clean state again
+- local `pnpm db:migrate` succeeding on the existing upgraded dev database
+
+Still to verify before Phase 1 is considered fully closed:
+
+- HTTP-level metadata and JWKS smoke checks against a running service
+- clean-database migration smoke test
+- browser-cookie regression check
+- explicit negative-path token-verification coverage
+
+These are now validation follow-ups, not design blockers.
+
+---
+
 ## Scope
 
 ### In Scope
@@ -149,6 +173,13 @@ Update service-facing docs/specs so the repo clearly states:
 
 ## Validation Checklist
 
+### Current Migration State
+
+- [x] Drizzle migration history is repaired through `0008`.
+- [x] `pnpm db:generate` exits with no pending schema changes.
+- [x] `pnpm db:migrate` applies successfully on the existing local dev database after the migration-history repair.
+- [ ] checked-in migrations provision the same auth/plugin tables in a clean database.
+
 - [ ] Better Auth starts successfully with `oauthProvider + jwt` enabled.
 - [ ] `/api/auth/.well-known/openid-configuration` resolves from the intended issuer/public origin.
 - [ ] authorization-server metadata resolves at the expected path.
@@ -156,8 +187,7 @@ Update service-facing docs/specs so the repo clearly states:
 - [ ] any required protected-resource metadata is reachable.
 - [ ] the legacy Better Auth `/token` path is disabled in OAuth Provider mode.
 - [ ] auth-module token verification rejects wrong issuer, audience, or missing scope.
-- [ ] local `pnpm db:push` can provision the required auth/plugin tables.
-- [ ] checked-in migrations can provision the same auth/plugin tables in a clean database.
+- [ ] local `pnpm db:push` can provision the required auth/plugin tables on a clean-enough dev database.
 - [ ] existing browser cookie auth still works after the server changes.
 
 ---
@@ -181,6 +211,8 @@ This phase is complete when the repo can answer these questions clearly:
 3. How do local `db:push` and production `db:migrate` produce the same auth schema?
 
 Do not start the hosted mobile auth pages until those answers are implemented and documented.
+
+At this point the implementation answers are mostly in place, so the next execution target can move to Phase 2 while the remaining validation items are closed in parallel.
 
 ---
 

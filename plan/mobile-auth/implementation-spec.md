@@ -1,6 +1,6 @@
 # Implementation Spec: Native Mobile Auth And API Readiness
 
-**Status**: Draft
+**Status**: In Progress
 **Created**: 2026-03-17
 **Design Doc**: [../../design/backend-web-better-auth-oauth-provider-spec.md](../../design/backend-web-better-auth-oauth-provider-spec.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -20,6 +20,40 @@ What is still missing is the native mobile contract:
 - cleanup of a few API/runtime blockers before handoff
 
 This plan turns the settled mobile-auth design into an implementation sequence for backend and web.
+
+## Current State
+
+Phase 1 is mostly landed:
+
+- Better Auth server wiring now uses `oauthProvider + jwt`
+- OAuth metadata and access-token verification primitives are in the service
+- Drizzle migration history has been repaired through `0008`
+- checked-in auth migrations now exist and `pnpm db:generate` is clean again
+- the existing local dev database can be aligned through `pnpm db:migrate`
+
+What still remains before Phase 1 is fully closed is validation rather than design:
+
+- HTTP-level metadata/JWKS smoke checks against a running service
+- clean-database migration smoke test
+- browser-cookie regression validation
+- negative-path token verification checks
+
+Those should stay visible, but they no longer block the next implementation slice.
+
+Phase 2 implementation is now partially landed:
+
+- shared hosted-auth UI has been extracted from `/login`
+- `/auth/mobile` and `/auth/mobile/consent` now exist in the web app
+- the Better Auth web client now preserves signed `oauth_query` state through hosted auth entry
+- local Vite proxy config now also covers `/.well-known/*` metadata routes
+
+What remains in Phase 2 is runtime validation rather than route construction:
+
+- live GitHub and Google sign-in validation from `/auth/mobile`
+- forced `prompt=consent` validation through `/auth/mobile/consent`
+- local same-origin discovery/metadata smoke checks from the frontend origin
+
+These Phase 2 runtime checks are the immediate next step, but they are still pending because the current hosted/service startup experience regressed before validation could be run.
 
 ### Related Spec Files
 
@@ -70,7 +104,7 @@ These decisions are fixed for this plan:
 - Better Auth's bearer plugin is out of scope.
 - The web app keeps using Better Auth cookie sessions.
 - Hosted mobile login and consent pages live at `/auth/mobile` and `/auth/mobile/consent` on `APP_BASE_URL`.
-- Local development uses a frontend-origin proxy for `/api/auth/*`.
+- Local development uses a frontend-origin proxy for `/api/auth/*` and `/.well-known/*`.
 - Production uses a single public origin for app routes plus `/api/auth/*`, even if traffic is split behind the edge.
 - Local schema changes continue to use `pnpm db:push`; production must get checked-in migration artifacts via `pnpm db:migrate`.
 - Mobile v1 includes the current app's account/settings capabilities through native API contracts.
@@ -97,6 +131,24 @@ These decisions are fixed for this plan:
 - Phase 3 should land as one coherent API pass; do not half-ship cookie-or-token auth.
 - Phase 4 depends on the Phase 1-3 contract being stable enough that client IDs, issuer URLs, and redirect URIs will not churn.
 - Phase 5 is the release gate. Do not hand the API contract to mobile before the validation checklist reflects the real shipped behavior.
+
+## Recommended Next Slice
+
+The next implementation target should stay inside Phase 2 long enough to validate the hosted flow with real provider redirects.
+
+Recommended next increment:
+
+1. Validate GitHub sign-in from `/auth/mobile` against a running local stack.
+2. Validate Google sign-in from `/auth/mobile`.
+3. Force `prompt=consent` and confirm `/auth/mobile/consent` completes the Better Auth redirect.
+4. Smoke-test local frontend-origin metadata/discovery under `/.well-known/*`.
+5. Once those checks pass, move to Phase 3 dual-auth API work.
+
+Reasoning:
+
+- The hosted pages and proxy topology now exist in code.
+- The highest-risk remaining gap in Phase 2 is live resume behavior through real provider redirects.
+- Phase 3 should start only after the hosted entry path is proven stable.
 
 ---
 
@@ -193,12 +245,12 @@ Notes:
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 1 | Planned | Waiting on implementation start |
-| 2 | Planned | Depends on stable OAuth Provider config from Phase 1 |
+| 1 | In Progress | Server wiring and migration parity landed; remaining work is validation and regression coverage |
+| 2 | In Progress | Hosted mobile auth pages, shared login UI, and local proxy wiring landed; live OAuth validation is still outstanding |
 | 3 | Planned | Includes the terminal-session and API contract cleanup work |
 | 4 | Planned | Depends on final issuer/redirect/public-origin decisions remaining stable |
 | 5 | Planned | Final release gate before mobile handoff |
 
 ---
 
-*Last Updated: 2026-03-17*
+*Last Updated: 2026-03-18*

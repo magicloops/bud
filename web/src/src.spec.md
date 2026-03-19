@@ -120,6 +120,8 @@ main.tsx
                     └── BudStatusProvider
                             │
                             └── Routes
+                                ├── /auth/mobile
+                                ├── /auth/mobile/consent
                                 ├── /login
                                 ├── /settings
                                 ├── /devices/claim/$flowId

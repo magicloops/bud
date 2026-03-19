@@ -1,8 +1,6 @@
 # Interactive Sessions TODOs
 
 ## Immediate
-- **Thread terminal lifecycle**
-  - Fix terminal-session recreation for closed thread sessions so a thread can create a new terminal after the previous one was closed without colliding on `terminal_session.thread_id`.
 - **Cancel vs interrupt contract**
   - Decide and implement the product/API contract for agent cancel vs terminal interrupt so web and mobile do not need to guess whether "stop" means aborting the LLM loop, sending Ctrl+C to the terminal, or both.
 - **Bud base dir + local identity mode**

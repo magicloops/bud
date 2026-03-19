@@ -67,7 +67,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | Entity | Description |
 |--------|-------------|
 | **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
-| **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one terminal session. |
+| **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one active terminal session at a time. |
 | **Message** | A chat message with role (user/assistant/tool/system), content, and an owning user id. Tool/system messages inherit thread ownership. |
 | **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
@@ -187,15 +187,18 @@ Buds authenticate via enrollment tokens or device secrets:
 The service also now exposes browser authentication foundations through Better Auth:
 - OAuth providers: GitHub and Google
 - Session/OAuth handlers mounted at `/api/auth/*`
+- Root OAuth metadata exposed for discovery and resource-server setup
 - Normalized current-user surface at `/api/me`
 - Provider/session state stored in PostgreSQL `auth` schema, with Bud-owned usernames in `public.user_profile`
 
 The web app now consumes that foundation through:
 - `/login` for direct browser sign-in
+- `/auth/mobile` and `/auth/mobile/consent` for hosted native OAuth login/consent flows
 - `/settings` for profile edits, linked-account management, and sign-out
 - `/devices/claim/$flowId` for QR/link-based Bud approval
 - an auth-aware app shell that resolves the current user before protected routes load
 - credential-aware API and SSE helpers so cookie auth works consistently across loaders and live streams
+- an OAuth Provider client plugin that preserves Better Auth's signed mobile resume state through hosted auth pages
 - auth-expiry-aware reconnect guards so live thread views stop polling once browser auth is gone
 - per-user route filtering so browser users only receive their own Buds, threads, runs, sessions, and messages
 
@@ -320,7 +323,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 | `AGENT_MAX_STEPS` | 30 | Max tool calls per request |
 | `AGENT_DEBUG` | false | Enable agent debug logging |
 | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle after |
-| `TERMINAL_IDLE_CLEANUP_HOURS` | 24 | Close idle sessions after |
+| `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions after (`0` disables destructive cleanup) |
 
 ### Daemon CLI Arguments
 
@@ -469,12 +472,14 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
 | [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
 | [plan/mobile-auth/implementation-spec.md](./plan/mobile-auth/implementation-spec.md) | Phased implementation plan for native mobile auth, OAuth Provider rollout, and API readiness cleanup |
+| [plan/fix-session-per-thread/implementation-spec.md](./plan/fix-session-per-thread/implementation-spec.md) | Focused implementation plan for fixing terminal session lifecycle semantics, active-session uniqueness, and idle-close defaults |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [debug/terminal-session-default-cwd.md](./debug/terminal-session-default-cwd.md) | Debug note tracing why tmux sessions currently start in `~` when `terminal_ensure` omits cwd for relocated Bud instances |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
 | [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
 | [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |
 | [design/backend-web-better-auth-oauth-provider-spec.md](./design/backend-web-better-auth-oauth-provider-spec.md) | Native mobile auth design review for turning Better Auth into an OAuth 2.1 / OIDC provider, including current blockers and open questions |
+| [design/terminal-session-lifecycle-and-thread-uniqueness.md](./design/terminal-session-lifecycle-and-thread-uniqueness.md) | Review of the current terminal session lifecycle, why the thread-id uniqueness bug predates the mobile-auth branch, and the recommended fix direction |
 | [PR_SUMMARY.md](./PR_SUMMARY.md) | High-level branch summary for the production-auth PR relative to `origin/main`, including major changes, validation status, and follow-on scope |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
@@ -482,4 +487,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-03-17*
+*Last updated: 2026-03-18*

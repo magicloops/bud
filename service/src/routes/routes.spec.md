@@ -49,6 +49,7 @@ Bud management and session listing.
 - All Bud routes call `requireViewer(...)`
 - Bud-scoped routes resolve ownership through `getAuthorizedBud(...)`
 - Session inventory is filtered to `terminal_session.created_by_user_id = viewer.userId`
+- Closing a session marks that specific row closed; revisiting the thread later creates a new active session row
 
 ### `threads.ts`
 
@@ -82,7 +83,7 @@ Thread and message management, plus terminal operations (~650 lines).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads/:threadId/terminal` | Create/get an owned terminal session (DB only) |
+| `POST` | `/api/threads/:threadId/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
 | `POST` | `/api/threads/:threadId/terminal/ensure` | Ensure the owned terminal is running on bud |
 | `GET` | `/api/threads/:threadId/terminal` | Get owned session info |
 | `GET` | `/api/threads/:threadId/terminal/stream` | SSE output stream for an owned session |

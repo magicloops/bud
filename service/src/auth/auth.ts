@@ -1,9 +1,16 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { betterAuth } from "better-auth";
+import { jwt } from "better-auth/plugins";
+import { oauthProvider, oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
+import { oauthProviderResourceClient } from "@better-auth/oauth-provider/resource-client";
 import { config } from "../config.js";
 import { Pool } from "pg";
 
-const authHandlerPoolOptions = {
+export const AUTH_BASE_PATH = config.betterAuthBasePath;
+export const OAUTH_PROVIDER_SCOPES = ["openid", "profile", "email", "offline_access", "api"] as const;
+export const MOBILE_API_SCOPE = "api";
+
+export const authHandlerPoolOptions = {
   connectionString: config.databaseUrl,
   max: config.pgPoolMax,
   options: "-c search_path=auth",
@@ -36,26 +43,81 @@ const enabledSocialProviders = Object.fromEntries(
   }).filter(([, provider]) => provider),
 );
 
-export const auth = betterAuth({
-  database: authPool,
-  secret: config.betterAuthSecret,
-  baseURL: config.betterAuthUrl,
-  trustedOrigins: config.betterAuthTrustedOrigins,
-  advanced: {
-    useSecureCookies: process.env.NODE_ENV === "production",
-  },
-  account: {
-    updateAccountOnSignIn: true,
-    encryptOAuthTokens: true,
-    accountLinking: {
-      enabled: true,
-      trustedProviders: ["github", "google"],
-      allowDifferentEmails: false,
-      disableImplicitLinking: false,
+function getOAuthAuthorizationServerMetadataPath(basePath: string): string {
+  return `/.well-known/oauth-authorization-server${basePath === "/" ? "" : basePath}`;
+}
+
+function getProtectedResourceMetadataPath(resource: string): string {
+  try {
+    const { pathname } = new URL(resource);
+    const normalizedPath = pathname !== "/" && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+    return `/.well-known/oauth-protected-resource${normalizedPath === "/" ? "" : normalizedPath}`;
+  } catch {
+    return "/.well-known/oauth-protected-resource";
+  }
+}
+
+export function createAuthOptions(database: Pool): Parameters<typeof betterAuth>[0] {
+  return {
+    database,
+    secret: config.betterAuthSecret,
+    baseURL: config.betterAuthUrl,
+    basePath: AUTH_BASE_PATH,
+    trustedOrigins: config.betterAuthTrustedOrigins,
+    disabledPaths: ["/token"],
+    advanced: {
+      useSecureCookies: process.env.NODE_ENV === "production",
     },
-  },
-  socialProviders: enabledSocialProviders,
+    account: {
+      updateAccountOnSignIn: true,
+      encryptOAuthTokens: true,
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["github", "google"],
+        allowDifferentEmails: false,
+        disableImplicitLinking: false,
+      },
+    },
+    socialProviders: enabledSocialProviders,
+    plugins: [
+      jwt({
+        disableSettingJwtHeader: true,
+      }),
+      oauthProvider({
+        loginPage: config.oauthLoginPagePath,
+        consentPage: config.oauthConsentPagePath,
+        scopes: [...OAUTH_PROVIDER_SCOPES],
+        grantTypes: ["authorization_code", "refresh_token"],
+        validAudiences: [config.apiAudience],
+        cachedTrustedClients: new Set(config.oauthTrustedClientIds),
+        advertisedMetadata: {
+          scopes_supported: [...OAUTH_PROVIDER_SCOPES],
+        },
+        silenceWarnings: {
+          oauthAuthServerConfig: true,
+          openidConfig: true,
+        },
+      }),
+    ],
+  };
+}
+
+export const auth = betterAuth(createAuthOptions(authPool));
+const oauthResourceActions = oauthProviderResourceClient(auth).getActions();
+const oauthServerMetadataHandler = oauthProviderAuthServerMetadata(auth as typeof auth & {
+  api: {
+    getOAuthServerConfig: (...args: any[]) => Promise<unknown>;
+  };
 });
+
+export async function verifyOAuthAccessToken(token: string | undefined) {
+  return oauthResourceActions.verifyAccessToken(token, {
+    verifyOptions: {
+      audience: config.apiAudience,
+    },
+    scopes: [MOBILE_API_SCOPE],
+  });
+}
 
 function buildAuthUrl(request: FastifyRequest): URL {
   const forwardedHost = request.headers["x-forwarded-host"];
@@ -151,9 +213,25 @@ async function sendAuthResponse(response: Response, reply: FastifyReply): Promis
 }
 
 export async function registerAuthRoutes(server: FastifyInstance): Promise<void> {
+  server.get(getOAuthAuthorizationServerMetadataPath(AUTH_BASE_PATH), async (request, reply) => {
+    const response = await oauthServerMetadataHandler(toWebRequest(request));
+    await sendAuthResponse(response, reply);
+  });
+
+  server.get(getProtectedResourceMetadataPath(config.apiAudience), async (_request, reply) => {
+    const metadata = await oauthResourceActions.getProtectedResourceMetadata({
+      resource: config.apiAudience,
+    });
+
+    reply
+      .header("Cache-Control", "public, max-age=15, stale-while-revalidate=15, stale-if-error=86400")
+      .header("Content-Type", "application/json")
+      .send(metadata);
+  });
+
   server.route({
     method: ["GET", "POST"],
-    url: "/api/auth/*",
+    url: `${AUTH_BASE_PATH}/*`,
     handler: async (request, reply) => {
       try {
         const response = await auth.handler(toWebRequest(request));

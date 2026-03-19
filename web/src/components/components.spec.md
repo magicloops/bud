@@ -8,6 +8,21 @@ Provides all UI components: base primitives, workbench layouts, message renderer
 
 ## Files
 
+### `auth-page-shell.tsx`
+
+Shared hosted-auth layout and provider actions used by `/login`, `/auth/mobile`, and `/auth/mobile/consent`.
+
+**Exports**:
+- `AuthPageShell` - common neobrutalist auth card chrome with badge/title/description/error treatment
+- `AuthDetailPanel` - dashed metadata panel used for return targets, client IDs, scopes, and redirect URIs
+- `SocialSignInActions` - shared GitHub/Google OAuth buttons with pending-state handling
+- `SocialAuthProvider` - provider union (`github | google`)
+
+**Purpose**:
+- keeps the browser login and mobile OAuth pages visually aligned
+- centralizes the provider button styling instead of duplicating it across routes
+- gives the consent screen the same auth-shell treatment without coupling it to sign-in behavior
+
 ### `theme-provider.tsx`
 
 Theme context provider for light/dark/system mode.

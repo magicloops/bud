@@ -4,13 +4,30 @@ export const PROTO_VERSION = "0.1";
 export const TERMINAL_PROTO_VERSION = "0.2";
 
 const defaultDatabaseUrl = "postgres://postgres:postgres@localhost:5432/bud";
-
 const toNumber = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+const defaultPort = toNumber(process.env.PORT, 3000);
+const defaultServiceUrl = `http://localhost:${defaultPort}`;
+
+const trimTrailingSlash = (value: string) => (value.endsWith("/") ? value.slice(0, -1) : value);
+const toUrlString = (value: string) => {
+  try {
+    return trimTrailingSlash(new URL(value).toString());
+  } catch {
+    return trimTrailingSlash(value);
+  }
+};
+const joinUrl = (base: string, path: string) => {
+  try {
+    return trimTrailingSlash(new URL(path, base).toString());
+  } catch {
+    return `${trimTrailingSlash(base)}${path}`;
+  }
+};
 const toList = (value: string | undefined) =>
   (value ?? "")
     .split(",")
@@ -38,21 +55,27 @@ const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortS
 };
 
 export const config = {
-  port: toNumber(process.env.PORT, 3000),
+  port: defaultPort,
   host: process.env.HOST ?? "0.0.0.0",
   logLevel: process.env.LOG_LEVEL ?? "info",
   databaseUrl: process.env.DATABASE_URL ?? defaultDatabaseUrl,
   pgPoolMax: toNumber(process.env.PG_POOL_MAX, 10),
-  betterAuthUrl: process.env.BETTER_AUTH_URL ?? `http://localhost:${toNumber(process.env.PORT, 3000)}`,
+  betterAuthUrl: toUrlString(process.env.BETTER_AUTH_URL ?? defaultServiceUrl),
   appBaseUrl:
-    process.env.APP_BASE_URL ??
-    process.env.BETTER_AUTH_URL ??
-    `http://localhost:${toNumber(process.env.PORT, 3000)}`,
+    toUrlString(process.env.APP_BASE_URL ?? process.env.BETTER_AUTH_URL ?? defaultServiceUrl),
   betterAuthSecret:
     process.env.BETTER_AUTH_SECRET ?? "bud-dev-better-auth-secret-change-me-please",
+  betterAuthBasePath: "/api/auth",
+  oauthLoginPagePath: "/auth/mobile",
+  oauthConsentPagePath: "/auth/mobile/consent",
+  apiAudience: toUrlString(
+    process.env.API_AUDIENCE ??
+      joinUrl(process.env.APP_BASE_URL ?? process.env.BETTER_AUTH_URL ?? defaultServiceUrl, "/api"),
+  ),
+  oauthTrustedClientIds: toList(process.env.OAUTH_TRUSTED_CLIENT_IDS),
   betterAuthTrustedOrigins: Array.from(
     new Set([
-      toOrigin(process.env.BETTER_AUTH_URL ?? `http://localhost:${toNumber(process.env.PORT, 3000)}`),
+      toOrigin(process.env.BETTER_AUTH_URL ?? defaultServiceUrl),
       ...toList(process.env.BETTER_AUTH_TRUSTED_ORIGINS).map(toOrigin),
     ]),
   ),
@@ -86,9 +109,9 @@ export const config = {
   terminalOutputBackfillBytes: toNumber(process.env.TERMINAL_OUTPUT_BACKFILL_BYTES, 4096),
   terminalOutputInflightMax: toNumber(process.env.TERMINAL_OUTPUT_INFLIGHT_MAX, 128),
   terminalOutputRetentionDays: toNumber(process.env.TERMINAL_OUTPUT_RETENTION_DAYS, 7),
-  // Idle management: mark idle after 30 min, cleanup after 24 hours idle
+  // Idle management: mark idle after 30 min; destructive cleanup is disabled by default.
   terminalIdleTimeoutMinutes: toNumber(process.env.TERMINAL_IDLE_TIMEOUT_MINUTES, 30),
-  terminalIdleCleanupHours: toNumber(process.env.TERMINAL_IDLE_CLEANUP_HOURS, 24),
+  terminalIdleCleanupHours: toNumber(process.env.TERMINAL_IDLE_CLEANUP_HOURS, 0),
   // How often to run idle checks (default: every 5 minutes)
   terminalIdleCheckIntervalMinutes: toNumber(process.env.TERMINAL_IDLE_CHECK_INTERVAL_MINUTES, 5)
 };

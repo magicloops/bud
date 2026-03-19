@@ -25,6 +25,10 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       proxy: {
+        '/.well-known': {
+          target: proxyTarget,
+          changeOrigin: true
+        },
         '/api': {
           target: proxyTarget,
           changeOrigin: true

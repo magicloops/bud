@@ -14,11 +14,10 @@ Wrapper around `drizzle-kit push` for local schema initialization.
 
 **Responsibilities**:
 - Create the Postgres `auth` schema if it does not exist
-- Bootstrap Better Auth core tables and indexes idempotently:
-  - `auth.user`
-  - `auth.session`
-  - `auth.account`
-  - `auth.verification`
+- Run Better Auth's migration generator idempotently for the runtime auth config:
+  - core auth tables (`auth.user`, `auth.session`, `auth.account`, `auth.verification`)
+  - JWT/JWKS tables
+  - OAuth Provider tables (`auth.oauthClient`, `auth.oauthRefreshToken`, `auth.oauthAccessToken`, `auth.oauthConsent`)
 - Delegate back to `drizzle-kit push` for public-schema diffs
 
 **Usage**:
@@ -27,7 +26,7 @@ pnpm db:push
 ```
 
 **Why It Exists**:
-In this project, Drizzle Kit does not reliably bootstrap Better Auth's non-`public` schema objects during `push`, so the wrapper creates the auth foundation first.
+In this project, Drizzle Kit does not reliably bootstrap Better Auth's non-`public` schema objects during `push`, so the wrapper creates the auth foundation first using Better Auth's own schema knowledge rather than maintaining hand-written bootstrap SQL.
 
 ### `seed.ts`
 

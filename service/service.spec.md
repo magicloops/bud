@@ -6,7 +6,7 @@ Node.js backend service providing REST API, WebSocket gateway, and AI agent orch
 
 The service is the central hub of the Bud system:
 - **REST API** - CRUD for buds, threads, messages, runs, and terminal sessions
-- **Browser Auth** - Better Auth-backed OAuth/session flows for web users
+- **Auth Server** - Better Auth-backed browser sessions plus OAuth/JWT provider endpoints for native clients
 - **WebSocket Gateway** - Persistent connections with bud daemons
 - **SSE Streaming** - Real-time events to web clients
 - **Agent Service** - LLM-powered tool calling via OpenAI
@@ -28,6 +28,7 @@ Package manifest:
 | `@fastify/websocket` | ^10.0.1 | WebSocket support |
 | `fastify-sse-v2` | ^2.2.1 | Server-Sent Events |
 | `better-auth` | ^1.5.5 | Browser auth + OAuth |
+| `@better-auth/oauth-provider` | ^1.5.5 | OAuth 2.1 / OIDC provider + protected-resource metadata |
 | `openai` | ^6.8.1 | OpenAI SDK |
 | `drizzle-orm` | ^0.44.7 | Database ORM |
 | `pg` | ^8.13.1 | PostgreSQL client |
@@ -111,6 +112,7 @@ Standalone utility scripts for debugging and queries.
 | `GET` | `/api/threads/:id/terminal/stream` | SSE output stream |
 | `POST` | `/api/threads/:id/terminal/input` | Send terminal input |
 | `GET/POST` | `/api/auth/*` | Better Auth session and OAuth handlers |
+| `GET` | `/.well-known/oauth-authorization-server/api/auth` | Root auth-server metadata for OAuth clients |
 | `GET` | `/healthz` | Health check |
 
 ### WebSocket Endpoints
@@ -180,10 +182,12 @@ pnpm dev
 - `DATABASE_URL` - PostgreSQL connection string
 - `BETTER_AUTH_SECRET` - Better Auth signing/encryption secret
 - `BETTER_AUTH_URL` - Public auth base URL
+- `API_AUDIENCE` - Public API audience/resource for JWT access tokens
 - `OPENAI_API_KEY` - OpenAI API key
 
 **Optional**:
 - `BETTER_AUTH_TRUSTED_ORIGINS` - Allowed browser origins for auth cookies/callbacks
+- `OAUTH_TRUSTED_CLIENT_IDS` - Trusted first-party OAuth client ids
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth
 - `PORT` - Server port (default: 3000)

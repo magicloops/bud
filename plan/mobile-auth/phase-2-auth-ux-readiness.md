@@ -19,6 +19,39 @@ By the end of this phase:
 
 ---
 
+## Current Status
+
+Phase 2 is now in progress.
+
+Prerequisites already in place:
+
+- OAuth Provider server wiring has landed
+- checked-in auth migrations exist and the migration chain is repaired
+- local `pnpm db:generate` is clean again
+- the local dev database can be aligned through `pnpm db:migrate`
+
+The first slice for this phase is now landed in code:
+
+1. shared login UI/logic has been extracted from `/login`
+2. `/auth/mobile` exists
+3. `/auth/mobile/consent` exists
+4. Better Auth `loginPage` and `consentPage` already point at those routes
+5. the frontend dev proxy now covers `/.well-known/*` in addition to `/api/*`
+
+The remaining work in this phase is validation:
+
+- confirm GitHub and Google flows resume correctly from `/auth/mobile`
+- force and validate the consent path through `/auth/mobile/consent`
+- confirm the local one-origin topology works with the metadata/discovery routes the mobile client will use
+
+Current note:
+
+- runtime validation is the immediate next step before Phase 3 work
+- these checks have not been run yet because the current hosted/service startup experience regressed before we could execute them
+- fix the broken local flow first, then run the validation items below against the repaired stack
+
+---
+
 ## Scope
 
 ### In Scope
@@ -28,7 +61,7 @@ By the end of this phase:
 - reuse/refactor of the existing `/login` implementation where practical
 - Better Auth `loginPage` and `consentPage` wiring
 - preservation of Better Auth's signed OAuth resume payload
-- local dev proxy setup for `/api/auth/*`
+- local dev proxy setup for `/api/auth/*` and `/.well-known/*`
 - production routing documentation for one public origin
 
 ### Out Of Scope
@@ -113,6 +146,7 @@ For local development:
 
 - keep the frontend on one dev origin
 - proxy `/api/auth/*` to the service
+- proxy `/.well-known/*` to the service so discovery can also run from the frontend origin
 - serve `/auth/mobile*` from the frontend origin
 
 The goal is to exercise the same browser/cookie/origin behavior that production will expose publicly.
@@ -154,20 +188,31 @@ The new hosted mobile auth pages should not regress:
 - [ ] the signed OAuth resume payload survives login redirects.
 - [ ] `/auth/mobile/consent` renders successfully when forced.
 - [ ] trusted-client flow skips consent where expected without breaking authorize completion.
-- [ ] local dev proxy allows the flow to run from one frontend origin.
+- [ ] local dev proxy allows the flow to run from one frontend origin, including metadata/discovery routes.
 - [ ] normal browser `/login` still works after the shared auth-page refactor.
+
+Runtime validation should be executed in this order once the current broken experience is repaired:
+
+1. verify `/auth/mobile` renders correctly on a phone-sized viewport
+2. verify GitHub sign-in from `/auth/mobile` resumes the OAuth transaction
+3. verify Google sign-in from `/auth/mobile` resumes the OAuth transaction
+4. verify the signed OAuth resume payload survives login redirects
+5. force `prompt=consent` and verify `/auth/mobile/consent` completes correctly
+6. verify trusted-client consent skipping still works
+7. verify the local one-origin proxy path works for `/api/auth/*` and `/.well-known/*`
+8. verify normal browser `/login` still works after the shared auth-page refactor
 
 ---
 
 ## Spec Updates Required
 
-- [ ] `web/web.spec.md`
-- [ ] `web/src/src.spec.md`
-- [ ] `web/src/routes/routes.spec.md`
-- [ ] `web/src/components/components.spec.md` if shared auth UI components are added
-- [ ] `web/src/lib/lib.spec.md` if helper behavior changes
-- [ ] `service/src/auth/auth.spec.md`
-- [ ] `bud.spec.md`
+- [x] `web/web.spec.md`
+- [x] `web/src/src.spec.md`
+- [x] `web/src/routes/routes.spec.md`
+- [x] `web/src/components/components.spec.md`
+- [x] `web/src/lib/lib.spec.md`
+- [x] `service/src/auth/auth.spec.md`
+- [x] `bud.spec.md`
 
 ---
 
@@ -179,4 +224,4 @@ Do not provision real mobile clients broadly until this path works in local deve
 
 ---
 
-*Last Updated: 2026-03-17*
+*Last Updated: 2026-03-18*

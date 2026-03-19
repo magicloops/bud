@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@better-auth/oauth-provider": "^1.5.5",
     "@microlink/react-json-view": "^1.27.0",
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tooltip": "^1.2.8",

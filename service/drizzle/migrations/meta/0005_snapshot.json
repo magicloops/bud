@@ -1,6 +1,6 @@
 {
-  "id": "28f2f8d8-4858-41b0-87b2-fb615f40493d",
-  "prevId": "da97b06e-86c6-4df3-b3c5-0772f8247e1c",
+  "id": "a1a0c0b5-1288-4e88-bf85-95edbc1fe1c2",
+  "prevId": "28f2f8d8-4858-41b0-87b2-fb615f40493d",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1387,8 +1387,8 @@
         }
       },
       "indexes": {
-        "terminal_output_offset_idx": {
-          "name": "terminal_output_offset_idx",
+        "terminal_output_seq_idx": {
+          "name": "terminal_output_seq_idx",
           "columns": [
             {
               "expression": "bud_id",
@@ -1397,7 +1397,7 @@
               "nulls": "last"
             },
             {
-              "expression": "byte_offset",
+              "expression": "seq",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1429,7 +1429,7 @@
           "name": "terminal_output_pkey",
           "columns": [
             "bud_id",
-            "seq"
+            "byte_offset"
           ]
         }
       },

@@ -53,6 +53,11 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 | `authSessionTable` | Better Auth browser sessions | `id`, `token`, `expiresAt`, `userId` |
 | `authAccountTable` | Linked OAuth accounts | `id`, `providerId`, `accountId`, `userId` |
 | `authVerificationTable` | Better Auth verification tokens | `id`, `identifier`, `value`, `expiresAt` |
+| `authJwksTable` | Better Auth JWT signing keys | `id`, `publicKey`, `privateKey`, `createdAt`, `expiresAt` |
+| `authOAuthClientTable` | OAuth client registrations | `clientId`, `clientSecret`, `redirectUris`, `grantTypes`, `metadata` |
+| `authOAuthRefreshTokenTable` | OAuth refresh-token storage | `token`, `clientId`, `sessionId`, `userId`, `expiresAt`, `scopes` |
+| `authOAuthAccessTokenTable` | OAuth access-token storage / JWT references | `token`, `clientId`, `sessionId`, `userId`, `refreshId`, `expiresAt`, `scopes` |
+| `authOAuthConsentTable` | Remembered OAuth consent state | `clientId`, `userId`, `referenceId`, `scopes`, `updatedAt` |
 
 #### Profile Table
 
@@ -73,7 +78,7 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `terminalSessionTable` | Thread-scoped tmux sessions | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot`, `createdByUserId` |
+| `terminalSessionTable` | Thread-scoped tmux sessions (historical rows allowed; one active row per thread) | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot`, `createdByUserId`, `closedAt` |
 | `terminalSessionOutputTable` | Terminal output chunks | `sessionId`, `byteOffset`, `seq`, `data` (bytea) |
 | `terminalSessionInputLogTable` | Input audit log | `sessionId`, `source`, `userId`, `createdAt` |
 
@@ -125,6 +130,7 @@ const byteaColumn = customType<{ data: Buffer }>({
 - `run_thread_idx` - Runs by thread + started_at
 - `bud_installation_id_idx` - Device continuity lookup by stable installation identity
 - `device_auth_flow_installation_idx` / `device_auth_flow_status_idx` - Claim lookup, expiry, and polling
+- `terminal_session_thread_active_unique_idx` - Enforces at most one non-closed session row per thread
 - Various terminal session indexes for efficient queries
 
 ### `run-summary.ts`
@@ -177,7 +183,7 @@ budTable
     │              │
     │              ├── 1:N ──► runTable ──► runStepTable, runLogTable
     │              │
-    │              └── 1:1 ──► terminalSessionTable ──► terminalSessionOutputTable
+    │              └── 1:N ──► terminalSessionTable ──► terminalSessionOutputTable
     │                                                   terminalSessionInputLogTable
     │
     ├── enrollmentTokenTable (no FK)
@@ -188,7 +194,9 @@ budTable
 
 ## Auth Bootstrap Note
 
-`drizzle-kit push` remains scoped to the `public` schema in this project. [`db-push.ts`](/Users/adam/code/bud/service/src/scripts/db-push.ts) creates the `auth` schema plus Better Auth's core tables/indexes before delegating back to Drizzle for public-schema diffs such as `user_profile`.
+`drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/code/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
+
+Checked-in migrations now run cleanly through `0009`, and `pnpm db:generate` is back to producing normal forward diffs instead of historical rename reconciliation.
 
 ## Ownership And Multi-Tenancy Support
 

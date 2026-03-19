@@ -12,6 +12,13 @@ Use this as the running verification list while the mobile-auth phases land. Kee
 
 ## Phase 1: Server Readiness
 
+### Migration And Baseline
+
+- [x] Drizzle migration history is repaired through `0008`.
+- [x] `pnpm db:generate` exits with no pending schema changes.
+- [x] `pnpm db:migrate` applies successfully on the existing local dev database after the migration-history repair.
+- [ ] checked-in migrations provision the same auth/plugin tables in a clean database.
+
 ### OAuth Provider And Metadata
 
 - [ ] Better Auth starts with `oauthProvider + jwt` enabled.
@@ -32,6 +39,11 @@ Use this as the running verification list while the mobile-auth phases land. Kee
 
 ## Phase 2: Hosted Auth Pages
 
+Current note:
+
+- Phase 2 runtime validation is the next step.
+- These checks are still pending because the current hosted/service startup flow regressed before the validation pass could be run.
+
 ### `/auth/mobile`
 
 - [ ] `/auth/mobile` renders correctly on a phone-sized viewport.
@@ -44,8 +56,16 @@ Use this as the running verification list while the mobile-auth phases land. Kee
 - [ ] `/auth/mobile/consent` renders successfully when forced.
 - [ ] trusted first-party clients skip consent where expected.
 - [ ] the signed OAuth resume payload survives login redirects.
-- [ ] local dev proxy supports the flow from one frontend origin.
+- [ ] local dev proxy supports the flow from one frontend origin, including metadata/discovery routes.
 - [ ] production routing documentation matches the tested topology.
+
+### Recommended Next Work
+
+- [x] extract shared login UI/logic from `/login`.
+- [x] implement `/auth/mobile`.
+- [x] implement `/auth/mobile/consent`.
+- [x] wire Better Auth hosted-page config.
+- [x] add the frontend-origin dev proxy for `/api/auth/*`.
 
 ## Phase 3: API Contract And Cleanup
 

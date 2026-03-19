@@ -14,9 +14,11 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as BudIdRouteImport } from './routes/$budId'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BudIdIndexRouteImport } from './routes/$budId/index'
+import { Route as AuthMobileRouteImport } from './routes/auth.mobile'
 import { Route as BudIdNewRouteImport } from './routes/$budId/new'
 import { Route as BudIdThreadIdRouteImport } from './routes/$budId/$threadId'
 import { Route as DevicesClaimFlowIdRouteImport } from './routes/devices.claim.$flowId'
+import { Route as AuthMobileConsentRouteImport } from './routes/auth.mobile.consent'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -43,6 +45,11 @@ const BudIdIndexRoute = BudIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => BudIdRoute,
 } as any)
+const AuthMobileRoute = AuthMobileRouteImport.update({
+  id: '/auth/mobile',
+  path: '/auth/mobile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BudIdNewRoute = BudIdNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -58,6 +65,11 @@ const DevicesClaimFlowIdRoute = DevicesClaimFlowIdRouteImport.update({
   path: '/devices/claim/$flowId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthMobileConsentRoute = AuthMobileConsentRouteImport.update({
+  id: '/consent',
+  path: '/consent',
+  getParentRoute: () => AuthMobileRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -66,7 +78,9 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
+  '/auth/mobile': typeof AuthMobileRouteWithChildren
   '/$budId/': typeof BudIdIndexRoute
+  '/auth/mobile/consent': typeof AuthMobileConsentRoute
   '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
 }
 export interface FileRoutesByTo {
@@ -75,7 +89,9 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
+  '/auth/mobile': typeof AuthMobileRouteWithChildren
   '/$budId': typeof BudIdIndexRoute
+  '/auth/mobile/consent': typeof AuthMobileConsentRoute
   '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
 }
 export interface FileRoutesById {
@@ -86,7 +102,9 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/$budId/$threadId': typeof BudIdThreadIdRoute
   '/$budId/new': typeof BudIdNewRoute
+  '/auth/mobile': typeof AuthMobileRouteWithChildren
   '/$budId/': typeof BudIdIndexRoute
+  '/auth/mobile/consent': typeof AuthMobileConsentRoute
   '/devices/claim/$flowId': typeof DevicesClaimFlowIdRoute
 }
 export interface FileRouteTypes {
@@ -98,7 +116,9 @@ export interface FileRouteTypes {
     | '/settings'
     | '/$budId/$threadId'
     | '/$budId/new'
+    | '/auth/mobile'
     | '/$budId/'
+    | '/auth/mobile/consent'
     | '/devices/claim/$flowId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -107,7 +127,9 @@ export interface FileRouteTypes {
     | '/settings'
     | '/$budId/$threadId'
     | '/$budId/new'
+    | '/auth/mobile'
     | '/$budId'
+    | '/auth/mobile/consent'
     | '/devices/claim/$flowId'
   id:
     | '__root__'
@@ -117,7 +139,9 @@ export interface FileRouteTypes {
     | '/settings'
     | '/$budId/$threadId'
     | '/$budId/new'
+    | '/auth/mobile'
     | '/$budId/'
+    | '/auth/mobile/consent'
     | '/devices/claim/$flowId'
   fileRoutesById: FileRoutesById
 }
@@ -126,6 +150,7 @@ export interface RootRouteChildren {
   BudIdRoute: typeof BudIdRouteWithChildren
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
+  AuthMobileRoute: typeof AuthMobileRouteWithChildren
   DevicesClaimFlowIdRoute: typeof DevicesClaimFlowIdRoute
 }
 
@@ -166,6 +191,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BudIdIndexRouteImport
       parentRoute: typeof BudIdRoute
     }
+    '/auth/mobile': {
+      id: '/auth/mobile'
+      path: '/auth/mobile'
+      fullPath: '/auth/mobile'
+      preLoaderRoute: typeof AuthMobileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/$budId/new': {
       id: '/$budId/new'
       path: '/new'
@@ -187,6 +219,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DevicesClaimFlowIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/mobile/consent': {
+      id: '/auth/mobile/consent'
+      path: '/consent'
+      fullPath: '/auth/mobile/consent'
+      preLoaderRoute: typeof AuthMobileConsentRouteImport
+      parentRoute: typeof AuthMobileRoute
+    }
   }
 }
 
@@ -204,11 +243,24 @@ const BudIdRouteChildren: BudIdRouteChildren = {
 
 const BudIdRouteWithChildren = BudIdRoute._addFileChildren(BudIdRouteChildren)
 
+interface AuthMobileRouteChildren {
+  AuthMobileConsentRoute: typeof AuthMobileConsentRoute
+}
+
+const AuthMobileRouteChildren: AuthMobileRouteChildren = {
+  AuthMobileConsentRoute: AuthMobileConsentRoute,
+}
+
+const AuthMobileRouteWithChildren = AuthMobileRoute._addFileChildren(
+  AuthMobileRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BudIdRoute: BudIdRouteWithChildren,
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
+  AuthMobileRoute: AuthMobileRouteWithChildren,
   DevicesClaimFlowIdRoute: DevicesClaimFlowIdRoute,
 }
 export const routeTree = rootRouteImport
