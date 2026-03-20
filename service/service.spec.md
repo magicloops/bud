@@ -99,7 +99,13 @@ Standalone utility scripts for debugging and queries.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/me` | Current authenticated user/profile |
+| `GET` | `/api/me` | Current authenticated user/profile via cookie or bearer auth |
+| `GET` | `/api/me/accounts` | Linked-provider account inventory for the current user |
+| `GET` | `/api/me/sessions` | Better Auth browser-session inventory for the current user |
+| `POST` | `/api/me/account-links/:provider/start` | Start a GitHub/Google link flow for cookie or bearer auth |
+| `POST` | `/api/me/logout` | Sign out the current Better Auth browser session |
+| `POST` | `/api/me/oauth/revoke` | Revoke an OAuth access or refresh token through a Bud-owned route |
+| `GET` | `/api/models` | Available LLM models for authenticated product clients |
 | `GET` | `/api/buds` | List registered buds |
 | `GET` | `/api/buds/:id/sessions` | List bud's terminal sessions |
 | `GET` | `/api/threads` | List threads |

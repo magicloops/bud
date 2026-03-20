@@ -27,6 +27,8 @@ Initializes the Better Auth runtime.
 - Enables implicit same-email linking for trusted providers
 - Prefers the GitHub `login` field when mapping provider profiles to Bud users
 - Adapts Fastify requests/responses to Better Auth's Fetch-style handler
+- Exposes a shared helper for dispatching internal Better Auth subrequests from Bud-owned routes
+- Exposes a shared helper for forwarding Better Auth headers/cookies back through Fastify replies
 - Registers `GET`/`POST /api/auth/*`
 - Registers root auth-server metadata and protected-resource metadata routes used by OAuth clients/resource servers
 - Exports local JWT access-token verification for later bearer-auth route adoption
@@ -39,6 +41,8 @@ Initializes the Better Auth runtime.
 - `MOBILE_API_SCOPE` - Coarse API scope (`api`)
 - `createAuthOptions(database)` - Shared Better Auth config for runtime and local schema bootstrap
 - `verifyOAuthAccessToken(token)` - JWT verification helper using the OAuth Provider resource client
+- `dispatchAuthSubrequest(request, options)` - Run an internal Better Auth request against the mounted auth handler
+- `applyAuthResponseHeaders(response, reply)` - Forward Better Auth headers/cookies without forcing the original response body
 - `registerAuthRoutes(server)` - Mount Better Auth routes on Fastify
 
 ### `session.ts`
@@ -48,7 +52,8 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 **Responsibilities**:
 - Reads the current session via `auth.api.getSession`
 - Exposes optional/required viewer helpers for authenticated routes
-- Exposes bearer-token verification helpers without yet switching all routes to dual-auth mode
+- Resolves adopted routes through one shared viewer contract that accepts either Better Auth cookies or verified OAuth access tokens
+- Exposes bearer-token verification helpers plus bearer-aware current-user normalization for `/api/me`
 - Centralizes ownership lookups for Buds, threads, and thread terminal sessions
 - Creates a `user_profile` row if one does not yet exist
 - Validates and updates editable usernames for the settings page
@@ -65,6 +70,7 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 - `getVerifiedOAuthAccessToken(request)`
 - `getOptionalBearerViewer(request)`
 - `requireViewer(request, reply)`
+- `NormalizedCurrentUser`
 - `getAuthorizedBud(viewer, budId)`
 - `getAuthorizedThread(viewer, threadId, options?)`
 - `getAuthorizedSessionForThread(viewer, threadId)`

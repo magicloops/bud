@@ -3,6 +3,7 @@
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Design Doc**: [../../design/backend-web-better-auth-oauth-provider-spec.md](../../design/backend-web-better-auth-oauth-provider-spec.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
+**Mobile Handoff Guide**: [mobile-team-handoff-guide.md](./mobile-team-handoff-guide.md)
 
 ---
 
@@ -114,6 +115,8 @@ The handoff package should include:
 - terminal lifecycle notes
 - cancel-vs-interrupt behavior
 - known compatibility exceptions, if any
+
+Use [mobile-team-handoff-guide.md](./mobile-team-handoff-guide.md) as the canonical handoff package and keep it aligned with the validation checklist.
 
 ---
 

@@ -24,6 +24,7 @@ Generic SSE event bus with buffering for replay.
 **Key Features**:
 - **Buffering**: Stores up to 1000 events per channel for replay
 - **Replay on attach**: New listeners receive buffered events
+- **Immediate stream priming**: Empty-buffer attaches emit an initial heartbeat frame so `fastify-sse-v2` opens the stream before the route returns
 - **Auto-cleanup**: Empty listener sets are removed
 
 **Methods**:

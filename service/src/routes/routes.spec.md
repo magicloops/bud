@@ -114,6 +114,7 @@ Before creating user message, checks for terminal state changes:
 - new thread/message/session rows are stamped with the acting or owning user id
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
+- thread SSE routes now also send an initial heartbeat frame on empty-buffer attaches so the HTTP response stays in SSE mode even before the first real event arrives
 
 ### `runs.ts`
 
@@ -138,18 +139,24 @@ Standalone command execution (separate from agent flow).
 
 ### `me.ts`
 
-Authenticated current-user endpoint backed by Better Auth session helpers.
+Authenticated current-user endpoint backed by shared cookie-or-token auth helpers.
 
 **Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/me` | Return normalized user/session/profile/account-linking state |
-| `PATCH` | `/api/me/profile` | Update the signed-in user's Bud-owned profile fields |
+| `GET` | `/api/me` | Return normalized user/session/profile/account-linking state for either cookie or bearer auth |
+| `PATCH` | `/api/me/profile` | Update the signed-in user's Bud-owned profile fields for either cookie or bearer auth |
+| `GET` | `/api/me/accounts` | Return linked-provider account inventory for either cookie or bearer auth |
+| `GET` | `/api/me/sessions` | Return Better Auth browser-session inventory for the current user |
+| `POST` | `/api/me/account-links/:provider/start` | Start a provider-link flow for GitHub/Google and return the authorization URL |
+| `POST` | `/api/me/logout` | Sign out the current Better Auth browser session |
+| `POST` | `/api/me/oauth/revoke` | Revoke an OAuth access or refresh token through Bud's auth surface |
 
 **Response Shape**:
 - `user` - Better Auth user identity (`id`, `email`, `email_verified`, `name`, `image`)
-- `session` - Current session metadata (`id`, `expires_at`)
+- `auth_type` - `cookie` or `bearer`
+- `session` - Current session/token metadata (`id`, `expires_at`); bearer mode reports `id: null`
 - `profile` - Bud-owned profile metadata (`username`, timestamps)
 - `linked_accounts` / `linked_providers` - Provider-linking summary for settings/account UI
 
@@ -159,9 +166,34 @@ Authenticated current-user endpoint backed by Better Auth session helpers.
 - invalid usernames return `400 invalid_username`
 - uniqueness conflicts return `409 username_taken`
 
+**Native Account Surface**:
+- `GET /api/me/accounts` returns linked account rows from `auth.account` with snake_case metadata, scopes, and token-presence flags
+- `GET /api/me/sessions` returns the user's Better Auth browser sessions with `is_current` and `is_active` markers
+- `POST /api/me/account-links/:provider/start` returns a snake_case Bud-owned payload:
+  - cookie auth uses Better Auth `linkSocialAccount` (`strategy: "session_link"`)
+  - bearer auth uses Better Auth `signInSocial` with `requestSignUp: false` to rely on implicit same-email linking (`strategy: "implicit_sign_in"`)
+- bearer-mode provider-link starts are therefore limited to existing-account / same-email linking semantics; they are not a replacement for explicit cookie-session account-linking
+- `POST /api/me/logout` currently signs out cookie-backed browser sessions only
+- `POST /api/me/oauth/revoke` wraps Better Auth's `/oauth2/revoke` endpoint behind a Bud route so mobile clients do not need to call Better Auth directly
+
 **Dependencies**:
-- `../auth/session.js` - Session lookup and `user_profile` bootstrap
+- `../auth/session.js` - Shared viewer resolution and `user_profile` bootstrap
 - `./device-auth.ts` - Uses the same browser session model for claim approval
+
+### `models.ts`
+
+Available LLM model listing for authenticated product clients.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/models` | Return model inventory for the authenticated viewer |
+
+**Auth Notes**:
+- now uses the shared `requireViewer(...)` contract instead of remaining public
+- keeps the existing camelCase response shape for compatibility with the current web client
+- mobile casing cleanup remains a separate follow-up task
 
 ## Response Formats
 

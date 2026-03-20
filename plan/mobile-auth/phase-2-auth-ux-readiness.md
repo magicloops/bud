@@ -43,12 +43,16 @@ The remaining work in this phase is validation:
 - confirm GitHub and Google flows resume correctly from `/auth/mobile`
 - force and validate the consent path through `/auth/mobile/consent`
 - confirm the local one-origin topology works with the metadata/discovery routes the mobile client will use
+- validate the flow from a real signed authorize request rather than direct `/auth/mobile` browser entry
 
 Current note:
 
 - runtime validation is the immediate next step before Phase 3 work
-- these checks have not been run yet because the current hosted/service startup experience regressed before we could execute them
-- fix the broken local flow first, then run the validation items below against the repaired stack
+- direct browser testing now confirms that `/auth/mobile` can complete ordinary Bud sign-in through GitHub/Google
+- that direct test does not validate the mobile OAuth transaction because it does not include Better Auth's signed OAuth query/resume state
+- the next step is to start from `/api/auth/oauth2/authorize` with a real dev client so the hosted pages run inside an actual OAuth transaction
+- for prototype speed, that remaining runtime validation is now explicitly deferred while Phase 3 proceeds
+- the deferred items live in [phase-2-deferred-validation-checklist.md](./phase-2-deferred-validation-checklist.md)
 
 ---
 
@@ -183,6 +187,7 @@ The new hosted mobile auth pages should not regress:
 ## Validation Checklist
 
 - [ ] `/auth/mobile` renders correctly on a phone-sized viewport.
+- [x] direct browser sign-in from `/auth/mobile` works for ordinary Bud login.
 - [ ] `/auth/mobile` can launch GitHub sign-in and resume the OAuth transaction afterward.
 - [ ] `/auth/mobile` can launch Google sign-in and resume the OAuth transaction afterward.
 - [ ] the signed OAuth resume payload survives login redirects.
@@ -193,14 +198,15 @@ The new hosted mobile auth pages should not regress:
 
 Runtime validation should be executed in this order once the current broken experience is repaired:
 
-1. verify `/auth/mobile` renders correctly on a phone-sized viewport
-2. verify GitHub sign-in from `/auth/mobile` resumes the OAuth transaction
-3. verify Google sign-in from `/auth/mobile` resumes the OAuth transaction
-4. verify the signed OAuth resume payload survives login redirects
-5. force `prompt=consent` and verify `/auth/mobile/consent` completes correctly
-6. verify trusted-client consent skipping still works
-7. verify the local one-origin proxy path works for `/api/auth/*` and `/.well-known/*`
-8. verify normal browser `/login` still works after the shared auth-page refactor
+1. provision or register a local/dev OAuth client and redirect URI for real authorize requests
+2. verify `/auth/mobile` renders correctly on a phone-sized viewport
+3. verify GitHub sign-in from a signed `/api/auth/oauth2/authorize` request resumes the OAuth transaction
+4. verify Google sign-in from a signed `/api/auth/oauth2/authorize` request resumes the OAuth transaction
+5. verify the signed OAuth resume payload survives login redirects
+6. force `prompt=consent` and verify `/auth/mobile/consent` completes correctly
+7. verify trusted-client consent skipping still works
+8. verify the local one-origin proxy path works for `/api/auth/*` and `/.well-known/*`
+9. verify normal browser `/login` still works after the shared auth-page refactor
 
 ---
 
@@ -224,4 +230,4 @@ Do not provision real mobile clients broadly until this path works in local deve
 
 ---
 
-*Last Updated: 2026-03-18*
+*Last Updated: 2026-03-19*

@@ -163,10 +163,13 @@ function buildAuthBody(body: unknown, contentType: string | null): BodyInit | un
   return JSON.stringify(body);
 }
 
-function toWebRequest(request: FastifyRequest): Request {
+function buildForwardedHeaders(
+  requestHeaders: FastifyRequest["headers"],
+  overrideHeaders?: HeadersInit,
+): Headers {
   const headers = new Headers();
 
-  for (const [key, value] of Object.entries(request.headers)) {
+  for (const [key, value] of Object.entries(requestHeaders)) {
     if (value === undefined) {
       continue;
     }
@@ -179,19 +182,56 @@ function toWebRequest(request: FastifyRequest): Request {
     headers.set(key, String(value));
   }
 
-  const body = buildAuthBody(request.body, headers.get("content-type"));
+  if (overrideHeaders) {
+    const extraHeaders = new Headers(overrideHeaders);
+    extraHeaders.forEach((value, key) => {
+      headers.set(key, value);
+    });
+  }
+
+  return headers;
+}
+
+function toWebRequest(
+  request: FastifyRequest,
+  options: {
+    path?: string;
+    method?: string;
+    body?: unknown;
+    headers?: HeadersInit;
+  } = {},
+): Request {
+  const headers = buildForwardedHeaders(request.headers, options.headers);
+  const url = buildAuthUrl(request);
+  const targetUrl =
+    options.path
+      ? new URL(options.path, url.origin)
+      : url;
+  const body = buildAuthBody(options.body ?? request.body, headers.get("content-type"));
   if (body !== undefined && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 
-  return new Request(buildAuthUrl(request), {
-    method: request.method,
+  return new Request(targetUrl, {
+    method: options.method ?? request.method,
     headers,
     body,
   });
 }
 
-async function sendAuthResponse(response: Response, reply: FastifyReply): Promise<void> {
+export async function dispatchAuthSubrequest(
+  request: FastifyRequest,
+  options: {
+    path: string;
+    method?: string;
+    body?: unknown;
+    headers?: HeadersInit;
+  },
+): Promise<Response> {
+  return auth.handler(toWebRequest(request, options));
+}
+
+export function applyAuthResponseHeaders(response: Response, reply: FastifyReply): void {
   const setCookies = "getSetCookie" in response.headers
     ? (response.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? []
     : [];
@@ -206,7 +246,10 @@ async function sendAuthResponse(response: Response, reply: FastifyReply): Promis
   for (const cookie of setCookies) {
     reply.header("set-cookie", cookie);
   }
+}
 
+export async function sendAuthResponse(response: Response, reply: FastifyReply): Promise<void> {
+  applyAuthResponseHeaders(response, reply);
   const body = response.body ? Buffer.from(await response.arrayBuffer()) : null;
   reply.status(response.status);
   reply.send(body);

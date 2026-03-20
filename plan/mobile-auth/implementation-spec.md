@@ -1,9 +1,11 @@
 # Implementation Spec: Native Mobile Auth And API Readiness
 
-**Status**: In Progress
+**Status**: Phase 3 In Progress
 **Created**: 2026-03-17
 **Design Doc**: [../../design/backend-web-better-auth-oauth-provider-spec.md](../../design/backend-web-better-auth-oauth-provider-spec.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
+**Local Dev Handoff Guide**: [mobile-team-local-dev-guide.md](./mobile-team-local-dev-guide.md)
+**Mobile Handoff Guide**: [mobile-team-handoff-guide.md](./mobile-team-handoff-guide.md)
 
 ---
 
@@ -52,8 +54,29 @@ What remains in Phase 2 is runtime validation rather than route construction:
 - live GitHub and Google sign-in validation from `/auth/mobile`
 - forced `prompt=consent` validation through `/auth/mobile/consent`
 - local same-origin discovery/metadata smoke checks from the frontend origin
+- validation through a real signed `/api/auth/oauth2/authorize` request rather than direct browser entry to `/auth/mobile`
 
-These Phase 2 runtime checks are the immediate next step, but they are still pending because the current hosted/service startup experience regressed before validation could be run.
+Current validation note:
+
+- direct browser testing of `/auth/mobile` now succeeds for normal GitHub/Google Bud sign-in
+- that does not yet validate the real mobile OAuth transaction, because entering `/auth/mobile` directly does not carry Better Auth's signed OAuth query/resume state
+- the next blocker is testing through an actual signed `/api/auth/oauth2/authorize` request with a provisioned dev client and redirect URI
+
+Prototype sequencing decision:
+
+- we are proceeding into Phase 3 before closing those remaining hosted-flow checks
+- the deferred hosted-flow items are tracked in [phase-2-deferred-validation-checklist.md](./phase-2-deferred-validation-checklist.md)
+- that deferred checklist remains a release and handoff gate
+
+Phase 3 implementation is now partially landed:
+
+- shared viewer resolution accepts Better Auth cookies or verified OAuth access tokens
+- `/api/me` and `PATCH /api/me/profile` work through the normalized current-user contract
+- `/api/models` is authenticated through the shared viewer contract
+- Bud-owned account/session inventory now exists at `/api/me/accounts` and `/api/me/sessions`
+- Bud-owned provider-link start now exists at `/api/me/account-links/:provider/start`
+- Bud-owned cookie logout and OAuth token revocation routes now exist at `/api/me/logout` and `/api/me/oauth/revoke`
+- the thread-view SSE/request-storm regression has been fixed, so Phase 3 runtime route validation is no longer blocked by repeated `/api/me`, `/terminal`, and stream reconnect loops
 
 ### Related Spec Files
 
@@ -110,7 +133,8 @@ These decisions are fixed for this plan:
 - Mobile v1 includes the current app's account/settings capabilities through native API contracts.
 - Snake_case is the preferred response/request direction for mobile-facing API work.
 - Production iOS redirects use an app-claimed HTTPS redirect / Universal Link; local dev may use a custom URI scheme if needed.
-- Terminal-session recreation and cancel-vs-interrupt remain tracked work items and must be resolved inside this implementation plan, not deferred again.
+- Cancel-vs-interrupt remains tracked work and must be resolved inside this implementation plan.
+- Terminal-session recreation has been resolved by the session-per-thread lifecycle work and should now remain only as a validation item where relevant.
 
 ---
 
@@ -124,6 +148,11 @@ These decisions are fixed for this plan:
 | 4 | [phase-4-client-provisioning.md](./phase-4-client-provisioning.md) | Environment-specific iOS clients, redirect plumbing, and config distribution are ready |
 | 5 | [phase-5-integration-hardening.md](./phase-5-integration-hardening.md) | End-to-end validation, rollout readiness, and mobile-team handoff package are complete |
 
+Supporting handoff artifact:
+
+- [mobile-team-local-dev-guide.md](./mobile-team-local-dev-guide.md) is the active handoff artifact for the first localhost iOS test pass.
+- [mobile-team-handoff-guide.md](./mobile-team-handoff-guide.md) is the concrete package to give the iOS team once the first real client is provisioned; it bridges the Phase 2 deferred hosted-flow checks, Phase 3 API-route validation, and Phase 4 environment bundle publication.
+
 ### Sequencing Notes
 
 - Phase 1 is a hard prerequisite for every later phase.
@@ -134,21 +163,20 @@ These decisions are fixed for this plan:
 
 ## Recommended Next Slice
 
-The next implementation target should stay inside Phase 2 long enough to validate the hosted flow with real provider redirects.
+The active implementation target is now Phase 3 dual-auth API work.
 
 Recommended next increment:
 
-1. Validate GitHub sign-in from `/auth/mobile` against a running local stack.
-2. Validate Google sign-in from `/auth/mobile`.
-3. Force `prompt=consent` and confirm `/auth/mobile/consent` completes the Better Auth redirect.
-4. Smoke-test local frontend-origin metadata/discovery under `/.well-known/*`.
-5. Once those checks pass, move to Phase 3 dual-auth API work.
+1. Runtime-verify the new `/api/me/accounts`, `/api/me/sessions`, `/api/me/account-links/:provider/start`, `/api/me/logout`, and `/api/me/oauth/revoke` surfaces now that the thread-view request-storm regression is fixed.
+2. Decide whether bearer-mode provider linking is sufficient for prototype needs or whether a temporary browser-session bridge is still needed.
+3. Finish the remaining Phase 3 cleanup around cancel-vs-interrupt and the legacy SSE-route auth stance.
+4. Keep the deferred hosted-flow checks in [phase-2-deferred-validation-checklist.md](./phase-2-deferred-validation-checklist.md) visible until a real iOS-facing client can close them.
 
 Reasoning:
 
-- The hosted pages and proxy topology now exist in code.
-- The highest-risk remaining gap in Phase 2 is live resume behavior through real provider redirects.
-- Phase 3 should start only after the hosted entry path is proven stable.
+- The highest-value remaining implementation work is now on the API contract mobile will consume.
+- We are intentionally accepting Phase 2 runtime validation risk for prototype speed.
+- The hosted-flow gap is documented and isolated rather than being forgotten.
 
 ---
 
@@ -246,11 +274,11 @@ Notes:
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 1 | In Progress | Server wiring and migration parity landed; remaining work is validation and regression coverage |
-| 2 | In Progress | Hosted mobile auth pages, shared login UI, and local proxy wiring landed; live OAuth validation is still outstanding |
-| 3 | Planned | Includes the terminal-session and API contract cleanup work |
+| 2 | Deferred Validation | Hosted mobile auth pages, shared login UI, and local proxy wiring landed; real signed-authorize validation is still outstanding |
+| 3 | In Progress | Shared auth contract, `/api/me`, `/api/models`, and the first native account/session/logout/revoke surfaces are landed; runtime verification and remaining cleanup are still open |
 | 4 | Planned | Depends on final issuer/redirect/public-origin decisions remaining stable |
 | 5 | Planned | Final release gate before mobile handoff |
 
 ---
 
-*Last Updated: 2026-03-18*
+*Last Updated: 2026-03-19*

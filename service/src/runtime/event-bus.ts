@@ -69,6 +69,14 @@ class SseEventBus {
       { channelId, buffered: buffer.length, component: "sse" },
       "SSE listener attached"
     );
+    // Prime the SSE response immediately when there is no buffered event to replay.
+    // fastify-sse-v2 only initializes the streaming response on the first reply.sse() call.
+    if (buffer.length === 0) {
+      reply.sse({
+        event: "heartbeat",
+        data: JSON.stringify({ ts: Date.now(), initial: true }),
+      });
+    }
     for (const event of buffer) {
       listener(event);
     }

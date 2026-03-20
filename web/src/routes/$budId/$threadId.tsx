@@ -102,7 +102,6 @@ function ThreadView() {
 
   // Terminal refs
   const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'offline' | 'disconnected'>('disconnected')
-  const [sseReconnectTrigger, setSseReconnectTrigger] = useState(0)
   const terminalEventSourceRef = useRef<EventSource | null>(null)
   const terminalPaneRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -773,6 +772,28 @@ function ThreadView() {
 
     let cancelled = false
 
+    const scheduleReconnect = (reason: string, cleanup?: () => void) => {
+      cleanup?.()
+      if (cancelled || isAuthRedirectPending()) return
+
+      setTerminalConnection('reconnecting')
+      terminalConnectionRef.current = 'reconnecting'
+      setTerminalDisconnectTime((prev) => prev ?? Date.now())
+
+      const nextAttempt = terminalReconnectAttemptRef.current + 1
+      terminalReconnectAttemptRef.current = nextAttempt
+      const delay = Math.min(5000, 500 * nextAttempt)
+
+      console.warn('[terminal] reconnect scheduled', { threadId, reason, attempt: nextAttempt, delay })
+
+      cleanupTimers()
+      terminalReconnectTimerRef.current = setTimeout(() => {
+        if (!cancelled && !isAuthRedirectPending()) {
+          void connect()
+        }
+      }, delay)
+    }
+
     const connect = async () => {
       if (cancelled || isAuthRedirectPending()) return
 
@@ -789,8 +810,12 @@ function ThreadView() {
         if (!sessionResp.ok) {
           if (!cancelled) {
             console.error('[terminal] Failed to create session record', { status: sessionResp.status })
-            setTerminalConnection('disconnected')
-            terminalConnectionRef.current = 'disconnected'
+            if (sessionResp.status >= 500) {
+              scheduleReconnect(`session_record_http_${sessionResp.status}`)
+            } else {
+              setTerminalConnection('disconnected')
+              terminalConnectionRef.current = 'disconnected'
+            }
           }
           return
         }
@@ -812,8 +837,7 @@ function ThreadView() {
         }
         if (!cancelled) {
           console.error('[terminal] Failed to create session record', err)
-          setTerminalConnection('disconnected')
-          terminalConnectionRef.current = 'disconnected'
+          scheduleReconnect('session_record_request_failed')
         }
         return
       }
@@ -826,6 +850,23 @@ function ThreadView() {
       terminalEventSourceRef.current = source
 
       let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
+
+      const cleanupSource = () => {
+        if (heartbeatCheckInterval) {
+          clearInterval(heartbeatCheckInterval)
+          heartbeatCheckInterval = null
+        }
+        source.removeEventListener('heartbeat', handleHeartbeat)
+        source.removeEventListener('terminal.output', handleOutput)
+        source.removeEventListener('terminal.status', handleStatus)
+        source.removeEventListener('terminal.ready', handleReady)
+        source.removeEventListener('terminal.bud_offline', handleBudOffline)
+        source.removeEventListener('terminal.bud_online', handleBudOnline)
+        source.close()
+        if (terminalEventSourceRef.current === source) {
+          terminalEventSourceRef.current = null
+        }
+      }
 
       const handleOutput = (event: MessageEvent) => {
         try {
@@ -855,7 +896,7 @@ function ThreadView() {
             lastSseEventTimeRef.current = now
 
             if (timeSinceLastEvent > 5000) {
-              scheduleReconnect('service_restart_detected')
+              scheduleReconnect('service_restart_detected', cleanupSource)
               return
             }
 
@@ -930,36 +971,6 @@ function ThreadView() {
         }
       }
 
-      const scheduleReconnect = (reason: string) => {
-        if (cancelled) return
-        if (isAuthRedirectPending()) return
-        if (terminalEventSourceRef.current === source) {
-          terminalEventSourceRef.current = null
-        }
-        if (heartbeatCheckInterval) {
-          clearInterval(heartbeatCheckInterval)
-          heartbeatCheckInterval = null
-        }
-        source.removeEventListener('heartbeat', handleHeartbeat)
-        source.removeEventListener('terminal.output', handleOutput)
-        source.removeEventListener('terminal.status', handleStatus)
-        source.removeEventListener('terminal.ready', handleReady)
-        source.removeEventListener('terminal.bud_offline', handleBudOffline)
-        source.removeEventListener('terminal.bud_online', handleBudOnline)
-        source.close()
-        setTerminalConnection('reconnecting')
-        terminalConnectionRef.current = 'reconnecting'
-        setTerminalDisconnectTime((prev) => prev ?? Date.now())
-        const nextAttempt = terminalReconnectAttemptRef.current + 1
-        terminalReconnectAttemptRef.current = nextAttempt
-        const delay = Math.min(5000, 500 * nextAttempt)
-        console.warn('[terminal] SSE closed; reconnecting', { threadId, reason, attempt: nextAttempt, delay })
-        cleanupTimers()
-        terminalReconnectTimerRef.current = setTimeout(() => {
-          if (!cancelled && !isAuthRedirectPending()) connect()
-        }, delay)
-      }
-
       source.addEventListener('open', () => {
         const wasReconnect = terminalReconnectAttemptRef.current > 0
         terminalReconnectAttemptRef.current = 0
@@ -975,7 +986,7 @@ function ThreadView() {
           const timeSinceLastEvent = Date.now() - lastSseEventTimeRef.current
           if (timeSinceLastEvent > heartbeatTimeout) {
             console.warn(`[terminal] no heartbeat received for ${heartbeatTimeout / 1000}s, connection is stale`)
-            scheduleReconnect('heartbeat_timeout')
+            scheduleReconnect('heartbeat_timeout', cleanupSource)
           }
         }, checkInterval)
       })
@@ -993,12 +1004,12 @@ function ThreadView() {
           }
 
           console.warn('[terminal] SSE error', { err, readyState: source.readyState })
-          scheduleReconnect(`error ${JSON.stringify(err)}`)
+          scheduleReconnect(`error ${JSON.stringify(err)}`, cleanupSource)
         })
       }
     }
 
-    connect()
+    void connect()
 
     return () => {
       cancelled = true
@@ -1011,70 +1022,38 @@ function ThreadView() {
     recoverTerminalSession,
     resetTerminal,
     shouldAbortForUnauthorized,
-    sseReconnectTrigger,
     updateBudStatus,
   ])
 
-  // Recover terminal state while disconnected. If SSE is still up, keep retrying
-  // terminal ensure/state recovery. If SSE is down, poll for service recovery and
-  // force a fresh SSE attach once the service responds again.
+  // Recover terminal state while disconnected if the SSE stream itself is still alive.
+  // Closed-stream reconnects are handled by the main terminal effect's reconnect timer.
   useEffect(() => {
     if ((terminalConnection !== 'reconnecting' && terminalConnection !== 'offline') || !threadId) return
 
     const existingSource = terminalEventSourceRef.current
-    if (existingSource && existingSource.readyState !== EventSource.CLOSED) {
-      console.log('[terminal] SSE still connected, polling for terminal recovery')
-
-      let cancelled = false
-      const pollRecovery = async () => {
-        while (!cancelled && !isAuthRedirectPending() && terminalConnectionRef.current !== 'connected') {
-          const recovered = await recoverTerminalSession('connected_sse_poll')
-          if (recovered) {
-            break
-          }
-          await new Promise((resolve) => setTimeout(resolve, 2000))
-        }
-      }
-
-      void pollRecovery()
-
-      return () => {
-        cancelled = true
-      }
+    if (!existingSource || existingSource.readyState === EventSource.CLOSED) {
+      return
     }
 
-    console.log('[terminal] SSE disconnected, polling for service recovery')
+    console.log('[terminal] SSE still connected, polling for terminal recovery')
 
     let cancelled = false
-    const pollAndReconnect = async () => {
-      while (!cancelled && !isAuthRedirectPending()) {
-        try {
-          const resp = await apiFetch(`/api/threads/${threadId}/terminal`, {
-            method: 'POST'
-          })
-          if (shouldAbortForUnauthorized(resp)) {
-            break
-          }
-          if (resp.ok) {
-            setSseReconnectTrigger((n) => n + 1)
-            break
-          }
-        } catch {
-          if (isAuthRedirectPending()) {
-            break
-          }
-          // Still down, keep polling
+    const pollRecovery = async () => {
+      while (!cancelled && !isAuthRedirectPending() && terminalConnectionRef.current !== 'connected') {
+        const recovered = await recoverTerminalSession('connected_sse_poll')
+        if (recovered) {
+          break
         }
         await new Promise((resolve) => setTimeout(resolve, 2000))
       }
     }
 
-    void pollAndReconnect()
+    void pollRecovery()
 
     return () => {
       cancelled = true
     }
-  }, [recoverTerminalSession, shouldAbortForUnauthorized, terminalConnection, threadId])
+  }, [recoverTerminalSession, terminalConnection, threadId])
 
   // Show dimming after 2 seconds of disconnect
   useEffect(() => {

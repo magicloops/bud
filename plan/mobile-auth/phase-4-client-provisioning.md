@@ -2,6 +2,8 @@
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Design Doc**: [../../design/backend-web-better-auth-oauth-provider-spec.md](../../design/backend-web-better-auth-oauth-provider-spec.md)
+**Local Dev Guide**: [mobile-team-local-dev-guide.md](./mobile-team-local-dev-guide.md)
+**Mobile Handoff Guide**: [mobile-team-handoff-guide.md](./mobile-team-handoff-guide.md)
 
 ---
 
@@ -16,6 +18,12 @@ By the end of this phase:
 - production redirect plumbing uses an app-claimed HTTPS redirect / Universal Link
 - local development has a documented redirect strategy
 - the mobile team has the config bundle needed to integrate against each environment
+
+Prototype sequencing note:
+
+- the current deliverable is the **local dev** client bundle only
+- staging and production bundles are intentionally deferred until after the first localhost iOS validation pass
+- [mobile-team-local-dev-guide.md](./mobile-team-local-dev-guide.md) is the concrete handoff doc to use right now
 
 ---
 
@@ -51,7 +59,8 @@ By the end of this phase:
 - `service/service.spec.md`
 - `service/src/auth/auth.spec.md`
 - `bud.spec.md`
-- mobile onboarding/handoff docs if they exist separately
+- `plan/mobile-auth/mobile-team-local-dev-guide.md`
+- `plan/mobile-auth/mobile-team-handoff-guide.md`
 
 ---
 
@@ -64,6 +73,12 @@ Provision one client for each environment we support:
 - iOS dev
 - iOS staging
 - iOS prod
+
+Current execution order:
+
+1. provision the local/dev iOS client first
+2. validate the localhost flow with the mobile team
+3. publish staging and prod clients only after the local flow is proven
 
 Each client should be:
 
@@ -102,6 +117,13 @@ For each environment, publish at least:
 
 This should be documented in a way the mobile team can consume without inspecting backend code.
 
+For the current prototype pass:
+
+- publish the localhost bundle first in [mobile-team-local-dev-guide.md](./mobile-team-local-dev-guide.md)
+- publish staging and prod bundles later in [mobile-team-handoff-guide.md](./mobile-team-handoff-guide.md)
+
+Use [mobile-team-handoff-guide.md](./mobile-team-handoff-guide.md) as the canonical published bundle format.
+
 ### Task 5: Smoke-test the client registrations
 
 Before moving to the final hardening phase, verify that each provisioned client can:
@@ -115,9 +137,10 @@ Before moving to the final hardening phase, verify that each provisioned client 
 ## Resolved Defaults For This Phase
 
 1. Dynamic client registration is out of scope for the first-party iOS app.
-2. Production redirects prefer Universal Links / app-claimed HTTPS.
-3. Local development may use a custom URI scheme if that is the most practical path.
-4. Client IDs are environment-specific and should not be shared across dev, staging, and prod.
+2. The first execution target is the localhost dev client, not staging/prod.
+3. Production redirects prefer Universal Links / app-claimed HTTPS.
+4. Local development may use a custom URI scheme if that is the most practical path.
+5. Client IDs are environment-specific and should not be shared across dev, staging, and prod.
 
 ---
 

@@ -5,6 +5,7 @@
 import type { FastifyInstance } from "fastify";
 import { providerRegistry } from "../llm/index.js";
 import { config } from "../config.js";
+import { requireViewer } from "../auth/session.js";
 
 type ModelInfo = {
   id: string;
@@ -60,7 +61,12 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
    * GET /api/models
    * Returns available LLM models with their capabilities.
    */
-  server.get("/api/models", async (_request, reply) => {
+  server.get("/api/models", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
     const models: ModelInfo[] = [];
 
     // Get models from each registered provider

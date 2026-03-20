@@ -189,6 +189,8 @@ The service also now exposes browser authentication foundations through Better A
 - Session/OAuth handlers mounted at `/api/auth/*`
 - Root OAuth metadata exposed for discovery and resource-server setup
 - Normalized current-user surface at `/api/me`
+- Native account/session inventory at `/api/me/accounts` and `/api/me/sessions`
+- Native provider-link, logout, and token-revoke routes at `/api/me/account-links/:provider/start`, `/api/me/logout`, and `/api/me/oauth/revoke`
 - Provider/session state stored in PostgreSQL `auth` schema, with Bud-owned usernames in `public.user_profile`
 
 The web app now consumes that foundation through:
@@ -472,6 +474,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
 | [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
 | [plan/mobile-auth/implementation-spec.md](./plan/mobile-auth/implementation-spec.md) | Phased implementation plan for native mobile auth, OAuth Provider rollout, and API readiness cleanup |
+| [plan/mobile-auth/phase-2-deferred-validation-checklist.md](./plan/mobile-auth/phase-2-deferred-validation-checklist.md) | Deferred runtime-validation checklist for the hosted mobile OAuth flow while prototype work proceeds into the API-contract phase |
 | [plan/fix-session-per-thread/implementation-spec.md](./plan/fix-session-per-thread/implementation-spec.md) | Focused implementation plan for fixing terminal session lifecycle semantics, active-session uniqueness, and idle-close defaults |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [debug/terminal-session-default-cwd.md](./debug/terminal-session-default-cwd.md) | Debug note tracing why tmux sessions currently start in `~` when `terminal_ensure` omits cwd for relocated Bud instances |
@@ -487,4 +490,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-03-18*
+*Last updated: 2026-03-19*

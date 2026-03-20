@@ -4,6 +4,7 @@ import { fromNodeHeaders } from "better-auth/node";
 import { db } from "../db/client.js";
 import {
   authAccountTable,
+  authUserTable,
   budTable,
   terminalSessionTable,
   threadTable,
@@ -23,6 +24,24 @@ export type Viewer = {
 
 export type AuthorizedBud = typeof budTable.$inferSelect;
 export type AuthorizedThread = typeof threadTable.$inferSelect;
+type AuthUserLike = {
+  id: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+  image: string | null;
+};
+export type NormalizedCurrentUser = {
+  viewer: Viewer;
+  user: AuthUserLike;
+  session: {
+    id: string | null;
+    expiresAt: Date | null;
+    authType: Viewer["authType"];
+  };
+  profile: typeof userProfileTable.$inferSelect;
+  linkedProviders: string[];
+};
 
 const USERNAME_MIN_LENGTH = 3;
 const USERNAME_MAX_LENGTH = 32;
@@ -77,7 +96,66 @@ async function listLinkedProvidersForUser(userId: string): Promise<string[]> {
   return [...new Set(accounts.map((account) => account.providerId))];
 }
 
-async function generateUsername(user: AuthSession["user"]): Promise<string> {
+function fromSessionUser(user: AuthSession["user"]): AuthUserLike {
+  return {
+    id: user.id,
+    email: user.email,
+    emailVerified: user.emailVerified,
+    name: user.name,
+    image: user.image ?? null,
+  };
+}
+
+function fromAuthUserRow(user: typeof authUserTable.$inferSelect): AuthUserLike {
+  return {
+    id: user.id,
+    email: user.email,
+    emailVerified: user.emailVerified,
+    name: user.name,
+    image: user.image ?? null,
+  };
+}
+
+function fromAccessTokenPayload(payload: Awaited<ReturnType<typeof verifyOAuthAccessToken>>): AuthUserLike | null {
+  if (!payload?.sub || typeof payload.sub !== "string") {
+    return null;
+  }
+
+  return {
+    id: payload.sub,
+    email: typeof payload.email === "string" ? payload.email : "",
+    emailVerified: payload.email_verified === true,
+    name:
+      typeof payload.name === "string"
+        ? payload.name
+        : typeof payload.preferred_username === "string"
+          ? payload.preferred_username
+          : typeof payload.email === "string"
+            ? payload.email
+            : payload.sub,
+    image: typeof payload.picture === "string" ? payload.picture : null,
+  };
+}
+
+function getAccessTokenExpiryDate(
+  payload: Awaited<ReturnType<typeof verifyOAuthAccessToken>> | null,
+): Date | null {
+  if (!payload || typeof payload.exp !== "number") {
+    return null;
+  }
+
+  return new Date(payload.exp * 1000);
+}
+
+async function findAuthUserById(userId: string): Promise<AuthUserLike | null> {
+  const user = await db.query.authUserTable.findFirst({
+    where: eq(authUserTable.id, userId),
+  });
+
+  return user ? fromAuthUserRow(user) : null;
+}
+
+async function generateUsername(user: AuthUserLike): Promise<string> {
   const linkedProviders = await listLinkedProvidersForUser(user.id);
   const githubCandidate = linkedProviders.includes("github")
     ? normalizeUsernameCandidate(user.name)
@@ -108,7 +186,7 @@ export async function getAuthSession(request: FastifyRequest): Promise<AuthSessi
   return session ?? null;
 }
 
-export async function getOptionalViewer(request: FastifyRequest): Promise<Viewer | null> {
+async function getOptionalCookieViewer(request: FastifyRequest): Promise<Viewer | null> {
   const session = await getAuthSession(request);
   if (!session) {
     return null;
@@ -120,6 +198,15 @@ export async function getOptionalViewer(request: FastifyRequest): Promise<Viewer
     email: session.user.email,
     authType: "cookie",
   };
+}
+
+export async function getOptionalViewer(request: FastifyRequest): Promise<Viewer | null> {
+  const cookieViewer = await getOptionalCookieViewer(request);
+  if (cookieViewer) {
+    return cookieViewer;
+  }
+
+  return getOptionalBearerViewer(request);
 }
 
 function getBearerAccessToken(request: FastifyRequest): string | undefined {
@@ -172,7 +259,7 @@ export async function requireViewer(
 }
 
 export async function ensureUserProfile(
-  user: AuthSession["user"],
+  user: AuthUserLike,
 ): Promise<typeof userProfileTable.$inferSelect> {
   const existing = await db.query.userProfileTable.findFirst({
     where: eq(userProfileTable.userId, user.id),
@@ -206,7 +293,7 @@ export async function ensureUserProfile(
 }
 
 export async function updateUserProfileUsername(
-  user: AuthSession["user"],
+  user: AuthUserLike,
   input: string,
 ): Promise<typeof userProfileTable.$inferSelect> {
   const profile = await ensureUserProfile(user);
@@ -293,23 +380,61 @@ export async function getAuthorizedSessionForThread(
 
 export async function getNormalizedCurrentUser(
   request: FastifyRequest,
-): Promise<{
-  session: AuthSession;
-  profile: typeof userProfileTable.$inferSelect;
-  linkedProviders: string[];
-} | null> {
+): Promise<NormalizedCurrentUser | null> {
   const session = await getAuthSession(request);
-  if (!session) {
+  if (session) {
+    const user = fromSessionUser(session.user);
+    const [profile, linkedProviders] = await Promise.all([
+      ensureUserProfile(user),
+      listLinkedProvidersForUser(user.id),
+    ]);
+
+    return {
+      viewer: {
+        userId: user.id,
+        sessionId: session.session.id,
+        email: user.email,
+        authType: "cookie",
+      },
+      user,
+      session: {
+        id: session.session.id,
+        expiresAt: session.session.expiresAt ?? null,
+        authType: "cookie",
+      },
+      profile,
+      linkedProviders,
+    };
+  }
+
+  const payload = await getVerifiedOAuthAccessToken(request);
+  if (!payload?.sub || typeof payload.sub !== "string") {
+    return null;
+  }
+
+  const user = (await findAuthUserById(payload.sub)) ?? fromAccessTokenPayload(payload);
+  if (!user) {
     return null;
   }
 
   const [profile, linkedProviders] = await Promise.all([
-    ensureUserProfile(session.user),
-    listLinkedProvidersForUser(session.user.id),
+    ensureUserProfile(user),
+    listLinkedProvidersForUser(user.id),
   ]);
 
   return {
-    session,
+    viewer: {
+      userId: user.id,
+      sessionId: null,
+      email: user.email || null,
+      authType: "bearer",
+    },
+    user,
+    session: {
+      id: null,
+      expiresAt: getAccessTokenExpiryDate(payload),
+      authType: "bearer",
+    },
     profile,
     linkedProviders,
   };

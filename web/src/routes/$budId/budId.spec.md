@@ -95,6 +95,7 @@ loader: async ({ params }) => {
    - Idempotent recovery helper that re-runs `terminal/ensure`, reloads terminal state, and replays stored history after reconnects
    - Shared auth-aware EventSource creation before reconnect logic takes over
    - Stops reconnect and polling loops once the browser has already redirected for expired auth
+   - Failed session-record fetches now re-enter the same reconnect backoff path instead of falling into a separate `/api/threads/:id/terminal` polling loop
 
 3. **Agent Stream**
    - SSE connection to `/api/threads/:id/agent/stream`
@@ -147,6 +148,7 @@ terminalOutputTruncated: boolean
 - SSE close → Start reconnect timer
 - Exponential backoff: 1s, 2s, 4s, ... up to 30s
 - On reconnect: rerun `terminal/ensure`, fetch authoritative session state, backfill history, and only then return to `connected`
+- If the SSE stream remains open but the Bud is offline, the route keeps polling `terminal/ensure`; if the stream itself closes, reconnect attempts are driven only by the backoff timer
 
 ## Types
 
