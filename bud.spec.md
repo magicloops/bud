@@ -496,14 +496,15 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/backend-web-better-auth-oauth-provider-spec.md](./design/backend-web-better-auth-oauth-provider-spec.md) | Native mobile auth design review for turning Better Auth into an OAuth 2.1 / OIDC provider, including current blockers and open questions |
 | [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) | Design for the mobile logout and account-switch contract gap, validating the current hosted-session reuse behavior and defining the needed Bud-owned logout/switch-account semantics |
 | [design/mobile-chat-thread-first-backend-contract.md](./design/mobile-chat-thread-first-backend-contract.md) | Design for the first-pass mobile chat backend contract, keeping the existing Bud/thread/message route family while adopting a thread-first mobile list and documenting the required payload/stream cleanup |
+| [design/thread-message-timeline-ux-refresh.md](./design/thread-message-timeline-ux-refresh.md) | Draft design for the next-pass thread message UX work across web and iOS, covering latest-window pagination, bottom-follow scroll behavior, compact tool activity, and the backend changes required for true assistant text streaming |
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
 | [design/terminal-session-lifecycle-and-thread-uniqueness.md](./design/terminal-session-lifecycle-and-thread-uniqueness.md) | Review of the current terminal session lifecycle, why the thread-id uniqueness bug predates the mobile-auth branch, and the recommended fix direction |
-| [PR_SUMMARY.md](./PR_SUMMARY.md) | High-level branch summary for the production-auth PR relative to `origin/main`, including major changes, validation status, and follow-on scope |
+| [PR_SUMMARY.md](./PR_SUMMARY.md) | High-level branch summary for the `mobile-auth` PR relative to `origin/main`, covering the mobile auth foundation, local iOS bring-up work, API contract cleanup, manual validation, and deferred follow-up scope |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
 | [design/](./design/) | Design documents |
 
 ---
 
-*Last updated: 2026-03-20*
+*Last updated: 2026-03-22*
