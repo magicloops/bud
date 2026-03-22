@@ -64,6 +64,7 @@ Recommended local development:
 - leave `VITE_API_BASE_URL` unset
 - set `VITE_API_PROXY_TARGET=http://localhost:3000`
 - use the Vite proxy for the simplest local auth/cookie flow, including `/.well-known/*` metadata routes needed by OAuth discovery
+- local iOS auth also treats `http://localhost:5173` as the public auth origin, with the proxy forwarding browser/mobile-visible `/api/*` and `/.well-known/*` requests to the Fastify process on `3000`
 
 ### `vite.config.ts`
 

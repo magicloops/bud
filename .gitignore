@@ -2,6 +2,8 @@
 .DS_Store
 .env
 .env.*
+!service/.env.example
+!web/.env.example
 .idea/
 .vscode/
 

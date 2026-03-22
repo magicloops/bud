@@ -63,7 +63,10 @@ export async function registerRunRoutes(
         cwd: body.cwd,
         createdByUserId: ownerUserId,
       });
-      reply.code(201).send({ ...result, threadId });
+      reply.code(201).send({
+        run_id: result.runId,
+        thread_id: threadId,
+      });
     } catch (err) {
       server.log.error({ err }, "Failed to create run");
       reply.code(400).send({ error: (err as Error).message });

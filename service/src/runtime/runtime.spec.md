@@ -137,6 +137,11 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 
 This pattern replaces the previous approach of `sendInput` + `waitForReadiness` + `tailOutput`, providing cleaner ownership boundaries where Bud handles all terminal state.
 
+**Terminal SSE Payload Notes**:
+- `terminal.output` carries `seq`, `data`, and `byte_offset`
+- `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
+- the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
+
 **Ownership Notes**:
 - `createRunRecord()` stamps `run.created_by_user_id` from the caller or owning thread
 - `createSessionForThread()` stamps `terminal_session.created_by_user_id`

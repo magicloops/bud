@@ -38,8 +38,8 @@ Bud management and session listing.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/buds` | List the signed-in user's buds with last run info |
-| `GET` | `/api/buds/:budId/sessions` | List active terminal sessions for an owned bud |
-| `DELETE` | `/api/buds/:budId/sessions/:sessionId` | Close a specific session on an owned bud |
+| `GET` | `/api/buds/:bud_id/sessions` | List active terminal sessions for an owned bud |
+| `DELETE` | `/api/buds/:bud_id/sessions/:session_id` | Close a specific session on an owned bud |
 
 **Key Functions**:
 - `normalizeCapabilities(raw)` - Ensure capabilities is an object
@@ -61,36 +61,36 @@ Thread and message management, plus terminal operations (~650 lines).
 |--------|------|-------------|
 | `GET` | `/api/threads` | List the signed-in user's threads (optionally filtered by owned `bud_id`) |
 | `POST` | `/api/threads` | Create a new owned thread on an owned bud |
-| `GET` | `/api/threads/:threadId` | Get owned thread details |
-| `DELETE` | `/api/threads/:threadId` | Soft delete an owned thread |
+| `GET` | `/api/threads/:thread_id` | Get owned thread details |
+| `DELETE` | `/api/threads/:thread_id` | Soft delete an owned thread |
 
 **Message Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads/:threadId/messages` | Get owned messages (limit configurable) |
-| `POST` | `/api/threads/:threadId/messages` | Send a user-owned message (with context sync), triggers agent |
-| `GET` | `/api/threads/:threadId/agent/stream` | SSE for owned agent events |
-| `POST` | `/api/threads/:threadId/cancel` | Cancel an owned running agent |
+| `GET` | `/api/threads/:thread_id/messages` | Get owned messages (limit configurable) |
+| `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync), triggers agent |
+| `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
+| `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
 
 **Run Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads/:threadId/runs` | Get owned run history with cursor pagination |
+| `GET` | `/api/threads/:thread_id/runs` | Get owned run history with cursor pagination |
 
 **Terminal Endpoints** (Thread-Scoped):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads/:threadId/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
-| `POST` | `/api/threads/:threadId/terminal/ensure` | Ensure the owned terminal is running on bud |
-| `GET` | `/api/threads/:threadId/terminal` | Get owned session info |
-| `GET` | `/api/threads/:threadId/terminal/stream` | SSE output stream for an owned session |
-| `POST` | `/api/threads/:threadId/terminal/input` | Send input as the signed-in human user |
-| `POST` | `/api/threads/:threadId/terminal/interrupt` | Send Ctrl+C to an owned session |
-| `POST` | `/api/threads/:threadId/terminal/resize` | Resize an owned terminal |
-| `GET` | `/api/threads/:threadId/terminal/history` | Get owned output history |
+| `POST` | `/api/threads/:thread_id/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
+| `POST` | `/api/threads/:thread_id/terminal/ensure` | Ensure the owned terminal is running on bud |
+| `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
+| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session |
+| `POST` | `/api/threads/:thread_id/terminal/input` | Send input as the signed-in human user |
+| `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send Ctrl+C to an owned session |
+| `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |
+| `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
 
 **Validation Schemas** (Zod):
 - `CreateThreadSchema` - `bud_id` required, `title` optional
@@ -115,6 +115,8 @@ Before creating user message, checks for terminal state changes:
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
 - thread SSE routes now also send an initial heartbeat frame on empty-buffer attaches so the HTTP response stays in SSE mode even before the first real event arrives
+- `POST /api/threads` now returns `{ thread_id }`
+- `POST /api/threads/:thread_id/messages` now returns `{ message_id }`
 
 ### `runs.ts`
 
@@ -136,6 +138,9 @@ Standalone command execution (separate from agent flow).
   title?: string       // Title for auto-created thread
 }
 ```
+
+**Response Shape**:
+- returns snake_case write identifiers: `{ run_id, thread_id }`
 
 ### `me.ts`
 
@@ -175,6 +180,7 @@ Authenticated current-user endpoint backed by shared cookie-or-token auth helper
 - bearer-mode provider-link starts are therefore limited to existing-account / same-email linking semantics; they are not a replacement for explicit cookie-session account-linking
 - `POST /api/me/logout` currently signs out cookie-backed browser sessions only
 - `POST /api/me/oauth/revoke` wraps Better Auth's `/oauth2/revoke` endpoint behind a Bud route so mobile clients do not need to call Better Auth directly
+- mobile/public-client revoke callers must send `client_id`; bearer logout is revocation + local token clearing rather than cookie-session sign-out
 
 **Dependencies**:
 - `../auth/session.js` - Shared viewer resolution and `user_profile` bootstrap
@@ -192,8 +198,9 @@ Available LLM model listing for authenticated product clients.
 
 **Auth Notes**:
 - now uses the shared `requireViewer(...)` contract instead of remaining public
-- keeps the existing camelCase response shape for compatibility with the current web client
-- mobile casing cleanup remains a separate follow-up task
+- returns a normalized snake_case payload so web and mobile share one contract
+- top-level response includes `default_model`
+- model entries expose `display_name`, `is_alias`, and `alias_target`
 
 ## Response Formats
 

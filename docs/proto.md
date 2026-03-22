@@ -70,14 +70,14 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 
 ### 2.3 Terminal Event Stream (Browser)
 
-- URL: `GET /api/threads/:threadId/terminal/stream`
+- URL: `GET /api/threads/:thread_id/terminal/stream`
 - Same SSE headers + keep-alive semantics as runs.
 - Events: `terminal.output`, `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`.
 - Used by the workbench to receive terminal output.
 
 ### 2.4 Agent Event Stream (Browser)
 
-- URL: `GET /api/threads/:threadId/agent/stream`
+- URL: `GET /api/threads/:thread_id/agent/stream`
 - Same SSE headers + keep-alive semantics as runs.
 - Events: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat`.
 - Used by the workbench to receive agent conversation events.
@@ -479,22 +479,26 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
 
 #### 4.4.3 Terminal SSE Events (Backend → Browser)
 
-The browser receives terminal events via SSE at `/api/terminals/:budId/stream`:
+The active browser client receives terminal events via SSE at `/api/threads/:thread_id/terminal/stream`:
 
 * `terminal.output` — base64 output bytes for xterm.js
 * `terminal.status` — terminal state changes
 * `terminal.ready` — readiness assessments for UI display
+* `terminal.bud_offline` — Bud disconnect signal with `{ bud_id, reason }`
+* `terminal.bud_online` — Bud reconnect signal with `{ bud_id }`
 * `heartbeat` — keep-alive (1s dev, 5s prod)
+
+The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a legacy surface and should not be used by new clients.
 
 #### 4.4.4 Terminal REST Endpoints
 
-* `POST /api/terminals/:budId/ensure` — ensure terminal exists
-* `GET /api/terminals/:budId/status` — get current status
-* `GET /api/terminals/:budId/history?bytes=N` — fetch output history
-* `POST /api/terminals/:budId/input` — send input `{ input: "..." }`
-* `POST /api/terminals/:budId/interrupt` — send Ctrl+C
-* `GET /api/terminals/:budId/metrics` — per-terminal metrics
-* `GET /api/terminals/metrics` — aggregate metrics
+* `POST /api/threads/:thread_id/terminal` — create or fetch the active thread-scoped terminal session row
+* `POST /api/threads/:thread_id/terminal/ensure` — ensure the thread-scoped terminal is running on Bud
+* `GET /api/threads/:thread_id/terminal` — get thread-scoped terminal session info
+* `GET /api/threads/:thread_id/terminal/history?bytes=N&since_offset=M` — fetch thread-scoped output history
+* `POST /api/threads/:thread_id/terminal/input` — send input `{ input: "..." }`
+* `POST /api/threads/:thread_id/terminal/interrupt` — send Ctrl+C
+* `POST /api/threads/:thread_id/terminal/resize` — resize terminal `{ cols, rows }`
 
 > Implementations MUST treat `ext` as reserved for forward compatibility; unknown fields MUST be ignored.
 
@@ -556,6 +560,12 @@ The browser receives terminal events via SSE at `/api/terminals/:budId/stream`:
 
 * `terminal.ready`
   `{ "event_id":"...", "ts":1731, "ready":true, "confidence":0.95 }`
+
+* `terminal.bud_offline`
+  `{ "event_id":"...", "ts":1731, "bud_id":"b_01H...", "reason":"disconnected" }`
+
+* `terminal.bud_online`
+  `{ "event_id":"...", "ts":1731, "bud_id":"b_01H..." }`
 
 * `final`
   `{ "event_id":"...", "ts":1731, "status":"succeeded|failed|canceled", "text":"Done." }`

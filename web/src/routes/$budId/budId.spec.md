@@ -49,9 +49,10 @@ New thread creation view - allows users to start a new conversation.
 **Features**:
 - Empty terminal display with placeholder message
 - Message composer for initial message
+- Loads `/api/models` using the normalized snake_case contract (`default_model`, model `display_name`, optional `is_alias`)
 - Thread creation flow:
-  1. POST `/api/threads` to create thread
-  2. POST `/api/threads/:id/messages` to send first message
+  1. POST `/api/threads` to create thread and read `{ thread_id }`
+  2. POST `/api/threads/:id/messages` to send first message and read `{ message_id }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
@@ -139,6 +140,7 @@ terminalOutputTruncated: boolean
 | `output` | Decode base64, write to xterm (no resize - xterm handles rendering) |
 | `status` | Update terminal state |
 | `ready` | Update readiness indicators |
+| `terminal.bud_offline` / `terminal.bud_online` | Update Bud status from snake_case `bud_id` payloads and trigger recovery |
 | `heartbeat` | Track last event time |
 | `history` | Backfill initial output |
 

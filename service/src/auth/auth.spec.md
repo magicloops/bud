@@ -27,10 +27,12 @@ Initializes the Better Auth runtime.
 - Enables implicit same-email linking for trusted providers
 - Prefers the GitHub `login` field when mapping provider profiles to Bud users
 - Adapts Fastify requests/responses to Better Auth's Fetch-style handler
+- Defaults `/oauth2/token` `resource` to Bud's API audience for trusted first-party clients when they omit it, so mobile bearer access tokens are minted as JWTs usable against `/api/me`
+- Verifies mobile bearer JWTs against the mounted OAuth issuer (`BETTER_AUTH_URL + /api/auth`) instead of the bare Better Auth origin, so `/api/me` accepts locally minted tokens with `iss=http://localhost:5173/api/auth`
 - Exposes a shared helper for dispatching internal Better Auth subrequests from Bud-owned routes
 - Exposes a shared helper for forwarding Better Auth headers/cookies back through Fastify replies
 - Registers `GET`/`POST /api/auth/*`
-- Registers root auth-server metadata and protected-resource metadata routes used by OAuth clients/resource servers
+- Registers explicit OpenID discovery, root auth-server metadata, and protected-resource metadata routes used by OAuth clients/resource servers
 - Exports local JWT access-token verification for later bearer-auth route adoption
 
 **Exports**:

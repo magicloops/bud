@@ -145,15 +145,15 @@ function ThreadView() {
     apiFetch('/api/models')
       .then(async (resp) => {
         if (resp.ok) {
-          const data = (await resp.json()) as { models: ModelInfo[]; defaultModel?: string }
+          const data = (await resp.json()) as { models: ModelInfo[]; default_model?: string }
           // Filter to only show aliases for cleaner UI
-          const aliasModels = data.models.filter((m) => m.isAlias)
+          const aliasModels = data.models.filter((m) => m.is_alias)
           // If no aliases, show all models
           const displayModels = aliasModels.length > 0 ? aliasModels : data.models
           setModels(displayModels)
           // Set default model from server config, or first available
           if (!selectedModel) {
-            const serverDefault = data.defaultModel
+            const serverDefault = data.default_model
             const hasDefault = serverDefault && displayModels.some((m) => m.id === serverDefault)
             setSelectedModel(hasDefault ? serverDefault : displayModels[0]?.id ?? '')
           }
@@ -942,7 +942,7 @@ function ThreadView() {
       const handleBudOffline = (event: MessageEvent) => {
         try {
           lastSseEventTimeRef.current = Date.now()
-          const payload = JSON.parse(event.data ?? '{}') as { budId?: string; reason?: string }
+          const payload = JSON.parse(event.data ?? '{}') as { bud_id?: string; reason?: string }
           console.warn('[terminal] Bud went offline', payload)
           setTerminalConnection('reconnecting')
           terminalConnectionRef.current = 'reconnecting'
@@ -959,7 +959,7 @@ function ThreadView() {
       const handleBudOnline = (event: MessageEvent) => {
         try {
           lastSseEventTimeRef.current = Date.now()
-          const payload = JSON.parse(event.data ?? '{}') as { budId?: string }
+          const payload = JSON.parse(event.data ?? '{}') as { bud_id?: string }
           console.log('[terminal] Bud came online', payload)
 
           // Update global bud status context
@@ -1173,7 +1173,7 @@ function ThreadView() {
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
 
-      await messageResp.json() as { messageId: string }
+      await messageResp.json() as { message_id: string }
 
       if (agentEventSourceRef.current) {
         agentEventSourceRef.current.close()

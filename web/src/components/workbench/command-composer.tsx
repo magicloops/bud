@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 export type ModelInfo = {
   id: string
   provider: string
-  displayName: string
+  display_name: string
   capabilities: {
     vision: boolean
     tools: boolean
@@ -13,8 +13,8 @@ export type ModelInfo = {
     reasoning: boolean
     thinking: boolean
   }
-  isAlias?: boolean
-  aliasTarget?: string
+  is_alias?: boolean
+  alias_target?: string
 }
 
 type CommandComposerProps = {
@@ -90,7 +90,7 @@ export function CommandComposer({
               <optgroup key={provider} label={provider.toUpperCase()}>
                 {providerModels.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.displayName}
+                    {model.display_name}
                   </option>
                 ))}
               </optgroup>

@@ -20,6 +20,8 @@
   - Extend integration coverage for `/term` (attach → resize → Take writer) to guard against regressions.
 
 ## Future / Long-Term
+- **Mobile logout + account switching**
+  - Implement the Bud-owned hosted logout and explicit account-switch contract from [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) so mobile sign-out clears the hosted auth session and a follow-up sign-in can reliably choose a different account.
 - **Session durability enhancements**
   - tmux is already the default terminal backend. Future work: reconnect to existing tmux sessions across Bud restarts, scrollback replay, multi-viewers.
 - **Session transcripts & exports**

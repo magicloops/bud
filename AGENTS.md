@@ -364,6 +364,7 @@ See `debug/drizzle-migration-not-applied.md` for context on this decision.
 - **Rust**: `rustfmt`, `clippy`. Async with Tokio; avoid blocking.
 - **TypeScript**: Strict mode, ESLint/Prettier. Pino for structured logs.
 - **React**: Small components, no global mutable state for streams.
+- **API / SSE / WSS fields**: Bud-owned wire contracts should use `snake_case` for request bodies, response bodies, SSE payloads, and Bud↔Service WebSocket payload fields. Internal code may use language-native naming, but translate at the boundary. Only deviate when matching an external third-party contract.
 - **IDs**: ULIDs for runs, events, sessions.
 - **Errors**: Canonical codes: `AUTH_FAILED`, `PROTO_VERSION_MISMATCH`, `BUD_BUSY`, `EXEC_FAILED`, `TIMEOUT`, `CANCELED`, `BUD_DISCONNECTED`, `SERVER_RESTARTED`.
 

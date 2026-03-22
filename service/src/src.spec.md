@@ -18,6 +18,7 @@ Application entry point and Fastify server setup.
 
 **Key Responsibilities**:
 - Initialize Fastify with WebSocket and SSE plugins
+- Register the raw form-urlencoded parser needed for OAuth token/revoke requests before auth routes mount
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
 - Create manager instances (Run, Session, TerminalSession)
 - Register all route handlers
@@ -36,9 +37,9 @@ const agentService = new AgentService(terminalSessionManager, agentEvents, ...);
 ```
 
 **SSE Streaming Routes** (defined inline):
-- `GET /api/runs/:runId/stream` - Run execution events
-- `GET /api/sessions/:sessionId/stream` - Legacy session events
-- `GET /api/terminals/:budId/stream` - Terminal events (legacy bud-scoped)
+- `GET /api/runs/:run_id/stream` - Run execution events
+- `GET /api/sessions/:session_id/stream` - Legacy session events
+- `GET /api/terminals/:bud_id/stream` - Terminal events (legacy bud-scoped)
 
 **Exports**:
 - `buildServer()` - Create configured Fastify instance

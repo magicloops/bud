@@ -63,7 +63,7 @@ const accountLinkStartBodySchema = z.object({
 const oauthRevokeBodySchema = z.object({
   token: z.string().trim().min(1),
   token_type_hint: z.enum(["access_token", "refresh_token"]).optional(),
-  client_id: z.string().trim().min(1).optional(),
+  client_id: z.string().trim().min(1),
   client_secret: z.string().trim().min(1).optional(),
 });
 

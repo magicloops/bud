@@ -1295,7 +1295,7 @@ export class TerminalSessionManager {
     for (const session of sessions) {
       this.events.emit(session.sessionId, {
         event: "terminal.bud_offline",
-        data: { budId, reason: "disconnected" },
+        data: { bud_id: budId, reason: "disconnected" },
         id: ulid()
       });
     }
@@ -1323,7 +1323,7 @@ export class TerminalSessionManager {
     for (const session of sessions) {
       this.events.emit(session.sessionId, {
         event: "terminal.bud_online",
-        data: { budId },
+        data: { bud_id: budId },
         id: ulid()
       });
     }

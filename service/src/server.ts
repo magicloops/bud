@@ -34,6 +34,16 @@ export async function buildServer(): Promise<FastifyInstance> {
           : undefined
     }
   });
+
+  // OAuth token and revoke requests arrive as form-encoded bodies.
+  server.addContentTypeParser(
+    /^application\/x-www-form-urlencoded(?:;.*)?$/i,
+    { parseAs: "string" },
+    (_request, body, done) => {
+      done(null, body);
+    },
+  );
+
   const eventBus = new RunEventBus();
   const runLogger = server.log.child({ component: "run_manager" });
   const runManager = new RunManager(eventBus, runLogger, config.agentDebug);

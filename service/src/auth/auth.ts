@@ -1,7 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
-import { oauthProvider, oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
+import {
+  oauthProvider,
+  oauthProviderAuthServerMetadata,
+  oauthProviderOpenIdConfigMetadata,
+} from "@better-auth/oauth-provider";
 import { oauthProviderResourceClient } from "@better-auth/oauth-provider/resource-client";
 import { config } from "../config.js";
 import { Pool } from "pg";
@@ -9,6 +13,7 @@ import { Pool } from "pg";
 export const AUTH_BASE_PATH = config.betterAuthBasePath;
 export const OAUTH_PROVIDER_SCOPES = ["openid", "profile", "email", "offline_access", "api"] as const;
 export const MOBILE_API_SCOPE = "api";
+const AUTH_ISSUER = new URL(AUTH_BASE_PATH, `${config.betterAuthUrl}/`).toString();
 
 export const authHandlerPoolOptions = {
   connectionString: config.databaseUrl,
@@ -45,6 +50,11 @@ const enabledSocialProviders = Object.fromEntries(
 
 function getOAuthAuthorizationServerMetadataPath(basePath: string): string {
   return `/.well-known/oauth-authorization-server${basePath === "/" ? "" : basePath}`;
+}
+
+function getOpenIdConfigurationPath(basePath: string): string {
+  const normalizedBasePath = basePath === "/" ? "" : basePath;
+  return `${normalizedBasePath}${normalizedBasePath.endsWith("/") ? "" : "/"}${".well-known/openid-configuration"}`;
 }
 
 function getProtectedResourceMetadataPath(resource: string): string {
@@ -104,16 +114,20 @@ export function createAuthOptions(database: Pool): Parameters<typeof betterAuth>
 
 export const auth = betterAuth(createAuthOptions(authPool));
 const oauthResourceActions = oauthProviderResourceClient(auth).getActions();
-const oauthServerMetadataHandler = oauthProviderAuthServerMetadata(auth as typeof auth & {
+const authWithOAuthMetadataApi = auth as typeof auth & {
   api: {
     getOAuthServerConfig: (...args: any[]) => Promise<unknown>;
+    getOpenIdConfig: (...args: any[]) => Promise<unknown>;
   };
-});
+};
+const oauthServerMetadataHandler = oauthProviderAuthServerMetadata(authWithOAuthMetadataApi);
+const openIdConfigMetadataHandler = oauthProviderOpenIdConfigMetadata(authWithOAuthMetadataApi);
 
 export async function verifyOAuthAccessToken(token: string | undefined) {
   return oauthResourceActions.verifyAccessToken(token, {
     verifyOptions: {
       audience: config.apiAudience,
+      issuer: AUTH_ISSUER,
     },
     scopes: [MOBILE_API_SCOPE],
   });
@@ -192,6 +206,61 @@ function buildForwardedHeaders(
   return headers;
 }
 
+function injectDefaultTokenResource(
+  targetUrl: URL,
+  method: string,
+  headers: Headers,
+  body: BodyInit | undefined,
+): BodyInit | undefined {
+  if (method.toUpperCase() !== "POST") {
+    return body;
+  }
+
+  if (targetUrl.pathname !== `${AUTH_BASE_PATH}/oauth2/token`) {
+    return body;
+  }
+
+  const contentType = headers.get("content-type") ?? "";
+  if (!contentType.includes("application/x-www-form-urlencoded")) {
+    return body;
+  }
+
+  let params: URLSearchParams | null = null;
+  if (typeof body === "string") {
+    params = new URLSearchParams(body);
+  } else if (body instanceof URLSearchParams) {
+    params = new URLSearchParams(body);
+  } else if (body && typeof body === "object" && !(body instanceof Buffer) && !(body instanceof Uint8Array)) {
+    params = new URLSearchParams();
+    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      if (value === undefined || value === null) {
+        continue;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item !== undefined && item !== null) {
+            params.append(key, String(item));
+          }
+        }
+        continue;
+      }
+      params.append(key, String(value));
+    }
+  }
+
+  if (!params || params.has("resource")) {
+    return body;
+  }
+
+  const clientId = params.get("client_id")?.trim();
+  if (!clientId || !config.oauthTrustedClientIds.includes(clientId)) {
+    return body;
+  }
+
+  params.set("resource", config.apiAudience);
+  return params;
+}
+
 function toWebRequest(
   request: FastifyRequest,
   options: {
@@ -207,7 +276,12 @@ function toWebRequest(
     options.path
       ? new URL(options.path, url.origin)
       : url;
-  const body = buildAuthBody(options.body ?? request.body, headers.get("content-type"));
+  const body = injectDefaultTokenResource(
+    targetUrl,
+    options.method ?? request.method,
+    headers,
+    buildAuthBody(options.body ?? request.body, headers.get("content-type")),
+  );
   if (body !== undefined && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
@@ -258,6 +332,11 @@ export async function sendAuthResponse(response: Response, reply: FastifyReply):
 export async function registerAuthRoutes(server: FastifyInstance): Promise<void> {
   server.get(getOAuthAuthorizationServerMetadataPath(AUTH_BASE_PATH), async (request, reply) => {
     const response = await oauthServerMetadataHandler(toWebRequest(request));
+    await sendAuthResponse(response, reply);
+  });
+
+  server.get(getOpenIdConfigurationPath(AUTH_BASE_PATH), async (request, reply) => {
+    const response = await openIdConfigMetadataHandler(toWebRequest(request));
     await sendAuthResponse(response, reply);
   });
 

@@ -23,30 +23,30 @@ This document is intentionally local-only:
 
 ## Local Topology
 
-The current local stack is intentionally split across two localhost origins:
+The current local stack uses one public localhost origin for both the hosted auth flow and the mobile-facing OAuth/API bundle:
 
 | Surface | Local Value | Notes |
 |---------|-------------|-------|
-| Web app origin | `http://localhost:5173` | Vite frontend origin |
+| Public app/auth origin | `http://localhost:5173` | Vite frontend origin and public OAuth origin |
 | Hosted mobile login page | `http://localhost:5173/auth/mobile` | Better Auth login handoff UI |
 | Hosted mobile consent page | `http://localhost:5173/auth/mobile/consent` | Better Auth consent handoff UI |
-| Better Auth base URL | `http://localhost:3000` | Service origin |
-| OAuth issuer | `http://localhost:3000/api/auth` | Use this for token validation/debugging |
-| Authorization endpoint | `http://localhost:3000/api/auth/oauth2/authorize` | Start real OAuth flows here |
-| Token endpoint | `http://localhost:3000/api/auth/oauth2/token` | PKCE code exchange |
-| UserInfo endpoint | `http://localhost:3000/api/auth/oauth2/userinfo` | Optional OIDC debugging |
-| JWKS URI | `http://localhost:3000/api/auth/jwks` | JWT verification keys |
-| OpenID configuration | `http://localhost:3000/api/auth/.well-known/openid-configuration` | Discovery |
-| Authorization-server metadata | `http://localhost:3000/.well-known/oauth-authorization-server/api/auth` | OAuth metadata |
-| Protected-resource metadata | `http://localhost:3000/.well-known/oauth-protected-resource/api` | API resource metadata |
-| Bud API base URL | `http://localhost:3000` | Recommended direct API base for native calls |
-| API audience/resource | `http://localhost:5173/api` | This is the audience currently enforced by the service |
+| OAuth issuer | `http://localhost:5173/api/auth` | Use this for token validation/debugging |
+| Authorization endpoint | `http://localhost:5173/api/auth/oauth2/authorize` | Start real OAuth flows here |
+| Token endpoint | `http://localhost:5173/api/auth/oauth2/token` | PKCE code exchange |
+| UserInfo endpoint | `http://localhost:5173/api/auth/oauth2/userinfo` | Optional OIDC debugging |
+| JWKS URI | `http://localhost:5173/api/auth/jwks` | JWT verification keys |
+| OpenID configuration | `http://localhost:5173/api/auth/.well-known/openid-configuration` | Discovery |
+| Authorization-server metadata | `http://localhost:5173/.well-known/oauth-authorization-server/api/auth` | OAuth metadata |
+| Protected-resource metadata | `http://localhost:5173/.well-known/oauth-protected-resource/api` | API resource metadata |
+| Bud API base URL | `http://localhost:5173` | Native calls should use the public proxied origin |
+| API audience/resource | `http://localhost:5173/api` | Audience enforced by the service |
+| Private service process | `http://localhost:3000` | Internal Fastify process behind the Vite proxy |
 
 Important local-dev note:
 
-- the **browser portion** of the flow uses the Vite app at `http://localhost:5173`
-- the **OAuth issuer and token exchange** live at `http://localhost:3000`
-- this split is expected in local dev and is bridged by the frontend proxy for `/api/*` and `/.well-known/*`
+- the public mobile-facing bundle is always centered on `http://localhost:5173`
+- the service process still runs on `http://localhost:3000`
+- the Vite proxy bridges `/api/*` and `/.well-known/*` to the service
 
 ---
 
@@ -59,8 +59,8 @@ Before the iOS team starts testing, the local stack owner should confirm all of 
 3. the web app is running at `http://localhost:5173`
 4. the current auth schema is already applied and the service starts cleanly
 5. at least one social provider used for login is configured locally
-6. a fixed local iOS OAuth client has been created and its `client_id` has been published
-7. `OAUTH_TRUSTED_CLIENT_IDS` includes that local iOS `client_id` if the client should skip consent
+6. `pnpm oauth:provision:ios-local` has been run from `service/`
+7. the printed local bundle has been published to the iOS team
 8. the mobile app has an ATS/local-network strategy that allows local HTTP testing
 
 Practical constraints:
@@ -77,10 +77,10 @@ These are the local values the backend/web stack should be using for the first m
 
 ```dotenv
 APP_BASE_URL=http://localhost:5173
-BETTER_AUTH_URL=http://localhost:3000
+BETTER_AUTH_URL=http://localhost:5173
 API_AUDIENCE=http://localhost:5173/api
-BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3000,http://localhost:5173
-OAUTH_TRUSTED_CLIENT_IDS=<fill-local-ios-client-id>
+BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:5173,http://localhost:3000
+OAUTH_TRUSTED_CLIENT_IDS=bud-ios-dev-local
 ```
 
 Provider prerequisites:
@@ -92,31 +92,34 @@ GOOGLE_CLIENT_ID=<required-if-testing-google>
 GOOGLE_CLIENT_SECRET=<required-if-testing-google>
 ```
 
-Current gap:
+Provision the local iOS client with:
 
-- this repo does **not** yet contain a finalized local client-provisioning script or seed workflow
-- the local `client_id` and `redirect_uri` must therefore be created and published by the backend owner before the mobile team can run the real signed flow
+```bash
+cd service
+pnpm oauth:provision:ios-local
+```
+
+That command is the source of truth for the local `client_id` and auth bundle.
 
 ---
 
 ## Local Environment Bundle To Hand To iOS
 
-Publish the following filled bundle to the mobile team.
+Publish this bundle to the mobile team:
 
 ```yaml
 environment: local
 app_origin: http://localhost:5173
-api_base_url: http://localhost:3000
-issuer: http://localhost:3000/api/auth
-client_id: <fill-local-ios-client-id>
-redirect_uri: <fill-local-ios-redirect-uri>
-authorization_endpoint: http://localhost:3000/api/auth/oauth2/authorize
-token_endpoint: http://localhost:3000/api/auth/oauth2/token
-userinfo_endpoint: http://localhost:3000/api/auth/oauth2/userinfo
-jwks_uri: http://localhost:3000/api/auth/jwks
-openid_configuration_url: http://localhost:3000/api/auth/.well-known/openid-configuration
-authorization_server_metadata_url: http://localhost:3000/.well-known/oauth-authorization-server/api/auth
-protected_resource_metadata_url: http://localhost:3000/.well-known/oauth-protected-resource/api
+issuer: http://localhost:5173/api/auth
+client_id: bud-ios-dev-local
+redirect_uri: chat.bud.app://oauth/callback
+authorization_endpoint: http://localhost:5173/api/auth/oauth2/authorize
+token_endpoint: http://localhost:5173/api/auth/oauth2/token
+userinfo_endpoint: http://localhost:5173/api/auth/oauth2/userinfo
+jwks_uri: http://localhost:5173/api/auth/jwks
+openid_configuration_url: http://localhost:5173/api/auth/.well-known/openid-configuration
+authorization_server_metadata_url: http://localhost:5173/.well-known/oauth-authorization-server/api/auth
+protected_resource_metadata_url: http://localhost:5173/.well-known/oauth-protected-resource/api
 audience: http://localhost:5173/api
 scopes:
   - openid
@@ -124,22 +127,9 @@ scopes:
   - email
   - offline_access
   - api
-hosted_login_url: http://localhost:5173/auth/mobile
-hosted_consent_url: http://localhost:5173/auth/mobile/consent
 trusted_client: true
+logout_notes: Send client_id on POST /api/me/oauth/revoke. Local sign-out uses token revocation; RP-initiated logout is not required for this tranche.
 ```
-
-Recommended local redirect shape:
-
-- custom URI scheme is acceptable for this local pass
-- example pattern: `bud-dev://oauth/callback`
-
-Do not publish a placeholder bundle without filling:
-
-- `client_id`
-- `redirect_uri`
-
-Those two values are required for the iOS team to start the real flow.
 
 ---
 
@@ -147,11 +137,11 @@ Those two values are required for the iOS team to start the real flow.
 
 ### Expected authorize path
 
-1. the app builds an Authorization Code + PKCE request against `http://localhost:3000/api/auth/oauth2/authorize`
+1. the app builds an Authorization Code + PKCE request against `http://localhost:5173/api/auth/oauth2/authorize`
 2. Better Auth redirects the browser to `http://localhost:5173/auth/mobile` when login is needed
 3. the hosted login page resumes the authorization transaction through the frontend proxy at `/api/auth/oauth2/authorize?...`
 4. after login and optional consent, Better Auth redirects to the app's registered `redirect_uri`
-5. the app exchanges the code at `http://localhost:3000/api/auth/oauth2/token`
+5. the app exchanges the code at `http://localhost:5173/api/auth/oauth2/token`
 6. the app uses the returned `access_token` for Bud API calls
 
 ### Important browser-flow warning
@@ -163,7 +153,7 @@ That only verifies ordinary Bud browser sign-in.
 The real mobile test must start from a signed authorization request to:
 
 ```text
-http://localhost:3000/api/auth/oauth2/authorize
+http://localhost:5173/api/auth/oauth2/authorize
 ```
 
 ---
@@ -175,8 +165,8 @@ Use these parameters for the first local test pass:
 | Parameter | Value |
 |-----------|-------|
 | `response_type` | `code` |
-| `client_id` | published local iOS client ID |
-| `redirect_uri` | published local iOS redirect URI |
+| `client_id` | `bud-ios-dev-local` |
+| `redirect_uri` | `chat.bud.app://oauth/callback` |
 | `scope` | `openid profile email offline_access api` |
 | `code_challenge_method` | `S256` |
 | `code_challenge` | client-generated PKCE challenge |
@@ -217,6 +207,7 @@ Authorization: Bearer <access_token>
 - `POST /api/me/logout` is **cookie-session-oriented**
 - bearer callers should expect `cookie_session_required` there
 - bearer mobile logout should currently use token revocation plus local token/session clearing
+- `POST /api/me/oauth/revoke` should include `client_id: bud-ios-dev-local`
 - bearer-mode account linking is still prototype-grade and currently relies on implicit same-email sign-in behavior
 
 ---
@@ -225,17 +216,17 @@ Authorization: Bearer <access_token>
 
 Use this order for the first iOS validation pass:
 
-1. fetch OpenID discovery from `http://localhost:3000/api/auth/.well-known/openid-configuration`
+1. fetch OpenID discovery from `http://localhost:5173/api/auth/.well-known/openid-configuration`
 2. start a real authorize request with PKCE
 3. confirm the browser lands on `http://localhost:5173/auth/mobile` when login is required
 4. complete GitHub or Google sign-in
-5. confirm the app receives the callback at the published `redirect_uri`
-6. exchange the code at `http://localhost:3000/api/auth/oauth2/token`
+5. confirm the app receives the callback at `chat.bud.app://oauth/callback`
+6. exchange the code at `http://localhost:5173/api/auth/oauth2/token`
 7. call `GET /api/me`
 8. call `GET /api/me/accounts`
 9. call `GET /api/me/sessions`
 10. call `GET /api/models`
-11. revoke the token via `POST /api/me/oauth/revoke`
+11. revoke the token via `POST /api/me/oauth/revoke` including `client_id`
 
 If consent is not skipped for the local client:
 
@@ -245,9 +236,7 @@ If consent is not skipped for the local client:
 
 ## Known Local-Only Caveats
 
-- the local audience is currently `http://localhost:5173/api` even though native API calls should go to `http://localhost:3000`
-- the local browser flow intentionally crosses between `5173` and `3000`
-- the current repo does not yet ship an automated local OAuth-client registration tool
+- the private Fastify process still runs on `http://localhost:3000`, but mobile should not target it directly for the local auth bundle
 - direct browser success on `/auth/mobile` is not sufficient proof that the mobile OAuth transaction is working
 - staging and production bundles are intentionally deferred until after this local pass
 

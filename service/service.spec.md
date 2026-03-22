@@ -49,6 +49,7 @@ Checked-in template for local service setup. Includes:
 - Better Auth config (`APP_BASE_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_SECRET`)
 - GitHub/Google OAuth credentials
 - DB/runtime defaults
+- the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
 - optional LLM provider settings
 
 ### `.env` (not committed)
@@ -76,7 +77,7 @@ Database migrations managed by Drizzle Kit.
 
 ### `scripts/` → [scripts/scripts.spec.md](./scripts/scripts.spec.md)
 
-Standalone utility scripts for debugging and queries.
+Standalone utility scripts for debugging, queries, schema bootstrap, and local auth/client provisioning.
 
 ## Package Scripts
 
@@ -92,6 +93,7 @@ Standalone utility scripts for debugging and queries.
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
+| `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
 
 ## API Overview
 
