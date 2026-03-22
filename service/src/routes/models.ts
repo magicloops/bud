@@ -5,11 +5,12 @@
 import type { FastifyInstance } from "fastify";
 import { providerRegistry } from "../llm/index.js";
 import { config } from "../config.js";
+import { requireViewer } from "../auth/session.js";
 
 type ModelInfo = {
   id: string;
   provider: string;
-  displayName: string;
+  display_name: string;
   capabilities: {
     vision: boolean;
     tools: boolean;
@@ -17,8 +18,8 @@ type ModelInfo = {
     reasoning: boolean;
     thinking: boolean;
   };
-  isAlias?: boolean;
-  aliasTarget?: string;
+  is_alias?: boolean;
+  alias_target?: string;
 };
 
 const DISPLAY_NAMES: Record<string, string> = {
@@ -60,7 +61,12 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
    * GET /api/models
    * Returns available LLM models with their capabilities.
    */
-  server.get("/api/models", async (_request, reply) => {
+  server.get("/api/models", async (request, reply) => {
+    const viewer = await requireViewer(request, reply);
+    if (!viewer) {
+      return;
+    }
+
     const models: ModelInfo[] = [];
 
     // Get models from each registered provider
@@ -73,7 +79,7 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
         models.push({
           id: modelId,
           provider: providerName,
-          displayName: getDisplayName(modelId),
+          display_name: getDisplayName(modelId),
           capabilities: {
             vision: capabilities.supportsVision,
             tools: capabilities.supportsTools,
@@ -93,9 +99,9 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
         models.push({
           ...targetModel,
           id: alias,
-          displayName: getDisplayName(alias),
-          isAlias: true,
-          aliasTarget: target,
+          display_name: getDisplayName(alias),
+          is_alias: true,
+          alias_target: target,
         });
       }
     }
@@ -109,7 +115,7 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
 
     return reply.send({
       models,
-      defaultModel: config.defaultModel,
+      default_model: config.defaultModel,
     });
   });
 }

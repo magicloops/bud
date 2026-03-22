@@ -1,10 +1,14 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **Cancel vs interrupt contract**
+  - Decide and implement the product/API contract for agent cancel vs terminal interrupt so web and mobile do not need to guess whether "stop" means aborting the LLM loop, sending Ctrl+C to the terminal, or both.
 - **Bud base dir + local identity mode**
   - Implement the launch-cwd-based Bud base dir model from [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md), including `--base-dir`, `--local`, local identity under `<base-dir>/.bud/`, and the same-change service-side terminal session cwd wiring.
 - **Self-serve Bud install flow**
   - Implement the authenticated `+`-button install modal from [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md), including machine-wide vs local install commands, one-time install tokens, generic `install.sh`, and daemon fallback to the QR/browser claim flow.
+- **Bud terminal dependency preflight**
+  - Show an actionable startup error, or fail fast, when Bud is launched with terminal support enabled but `tmux` is not installed, instead of allowing the claim/connect flow to proceed into handshake or runtime failures.
 - **Session observability**
   - Expose per-session metrics (bytes in/out, writer rotations, truncate counts) via logs + `/metrics` to feed future dashboards.
   - Surface `last_activity_at` + idle TTLs in `/api/sessions` so the UI can flag stale sessions.
@@ -16,6 +20,8 @@
   - Extend integration coverage for `/term` (attach → resize → Take writer) to guard against regressions.
 
 ## Future / Long-Term
+- **Mobile logout + account switching**
+  - Implement the Bud-owned hosted logout and explicit account-switch contract from [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) so mobile sign-out clears the hosted auth session and a follow-up sign-in can reliably choose a different account.
 - **Session durability enhancements**
   - tmux is already the default terminal backend. Future work: reconnect to existing tmux sessions across Bud restarts, scrollback replay, multi-viewers.
 - **Session transcripts & exports**

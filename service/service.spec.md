@@ -6,7 +6,7 @@ Node.js backend service providing REST API, WebSocket gateway, and AI agent orch
 
 The service is the central hub of the Bud system:
 - **REST API** - CRUD for buds, threads, messages, runs, and terminal sessions
-- **Browser Auth** - Better Auth-backed OAuth/session flows for web users
+- **Auth Server** - Better Auth-backed browser sessions plus OAuth/JWT provider endpoints for native clients
 - **WebSocket Gateway** - Persistent connections with bud daemons
 - **SSE Streaming** - Real-time events to web clients
 - **Agent Service** - LLM-powered tool calling via OpenAI
@@ -28,6 +28,7 @@ Package manifest:
 | `@fastify/websocket` | ^10.0.1 | WebSocket support |
 | `fastify-sse-v2` | ^2.2.1 | Server-Sent Events |
 | `better-auth` | ^1.5.5 | Browser auth + OAuth |
+| `@better-auth/oauth-provider` | ^1.5.5 | OAuth 2.1 / OIDC provider + protected-resource metadata |
 | `openai` | ^6.8.1 | OpenAI SDK |
 | `drizzle-orm` | ^0.44.7 | Database ORM |
 | `pg` | ^8.13.1 | PostgreSQL client |
@@ -48,6 +49,7 @@ Checked-in template for local service setup. Includes:
 - Better Auth config (`APP_BASE_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_SECRET`)
 - GitHub/Google OAuth credentials
 - DB/runtime defaults
+- the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
 - optional LLM provider settings
 
 ### `.env` (not committed)
@@ -75,7 +77,7 @@ Database migrations managed by Drizzle Kit.
 
 ### `scripts/` → [scripts/scripts.spec.md](./scripts/scripts.spec.md)
 
-Standalone utility scripts for debugging and queries.
+Standalone utility scripts for debugging, queries, schema bootstrap, and local auth/client provisioning.
 
 ## Package Scripts
 
@@ -91,6 +93,7 @@ Standalone utility scripts for debugging and queries.
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
+| `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
 
 ## API Overview
 
@@ -98,7 +101,13 @@ Standalone utility scripts for debugging and queries.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/me` | Current authenticated user/profile |
+| `GET` | `/api/me` | Current authenticated user/profile via cookie or bearer auth |
+| `GET` | `/api/me/accounts` | Linked-provider account inventory for the current user |
+| `GET` | `/api/me/sessions` | Better Auth browser-session inventory for the current user |
+| `POST` | `/api/me/account-links/:provider/start` | Start a GitHub/Google link flow for cookie or bearer auth |
+| `POST` | `/api/me/logout` | Sign out the current Better Auth browser session |
+| `POST` | `/api/me/oauth/revoke` | Revoke an OAuth access or refresh token through a Bud-owned route |
+| `GET` | `/api/models` | Available LLM models for authenticated product clients |
 | `GET` | `/api/buds` | List registered buds |
 | `GET` | `/api/buds/:id/sessions` | List bud's terminal sessions |
 | `GET` | `/api/threads` | List threads |
@@ -111,6 +120,7 @@ Standalone utility scripts for debugging and queries.
 | `GET` | `/api/threads/:id/terminal/stream` | SSE output stream |
 | `POST` | `/api/threads/:id/terminal/input` | Send terminal input |
 | `GET/POST` | `/api/auth/*` | Better Auth session and OAuth handlers |
+| `GET` | `/.well-known/oauth-authorization-server/api/auth` | Root auth-server metadata for OAuth clients |
 | `GET` | `/healthz` | Health check |
 
 ### WebSocket Endpoints
@@ -180,10 +190,12 @@ pnpm dev
 - `DATABASE_URL` - PostgreSQL connection string
 - `BETTER_AUTH_SECRET` - Better Auth signing/encryption secret
 - `BETTER_AUTH_URL` - Public auth base URL
+- `API_AUDIENCE` - Public API audience/resource for JWT access tokens
 - `OPENAI_API_KEY` - OpenAI API key
 
 **Optional**:
 - `BETTER_AUTH_TRUSTED_ORIGINS` - Allowed browser origins for auth cookies/callbacks
+- `OAUTH_TRUSTED_CLIENT_IDS` - Trusted first-party OAuth client ids
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth
 - `PORT` - Server port (default: 3000)

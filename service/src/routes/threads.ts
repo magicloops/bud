@@ -247,7 +247,7 @@ export async function registerThreadRoutes(
       })
       .returning({ threadId: threadTable.threadId });
 
-    reply.code(201).send({ threadId: thread.threadId });
+    reply.code(201).send({ thread_id: thread.threadId });
   });
 
   server.get("/api/threads/:threadId", async (request, reply) => {
@@ -441,7 +441,7 @@ export async function registerThreadRoutes(
         reasoningEffort: body.reasoning_effort ?? null,
         ownerUserId,
       });
-      reply.code(201).send({ messageId: message.messageId });
+      reply.code(201).send({ message_id: message.messageId });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");
       reply.code(500).send({ error: (err as Error).message });
@@ -717,9 +717,9 @@ export async function registerThreadTerminalRoutes(
       return;
     }
 
-    const query = request.query as { bytes?: string; sinceOffset?: string };
+    const query = request.query as { bytes?: string; since_offset?: string };
     const maxBytes = Math.max(parseInt(query.bytes ?? "4096", 10) || 4096, 0);
-    const sinceOffset = query.sinceOffset ? parseInt(query.sinceOffset, 10) : undefined;
+    const sinceOffset = query.since_offset ? parseInt(query.since_offset, 10) : undefined;
 
     const session = await terminalSessionManager.getSessionForThread(params.threadId);
     if (!session) {

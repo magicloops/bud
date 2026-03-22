@@ -15,13 +15,15 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "tsx src/scripts/db-push.ts",
     "db:studio": "drizzle-kit studio",
-    "db:seed": "tsx src/scripts/seed.ts"
+    "db:seed": "tsx src/scripts/seed.ts",
+    "oauth:provision:ios-local": "tsx src/scripts/provision-ios-local-oauth-client.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
+    "@better-auth/oauth-provider": "^1.5.5",
     "@fastify/websocket": "^10.0.1",
     "better-auth": "^1.5.5",
     "dotenv": "^16.4.5",

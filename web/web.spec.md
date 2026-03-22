@@ -63,7 +63,8 @@ Checked-in template for local frontend setup.
 Recommended local development:
 - leave `VITE_API_BASE_URL` unset
 - set `VITE_API_PROXY_TARGET=http://localhost:3000`
-- use the Vite proxy for the simplest local auth/cookie flow
+- use the Vite proxy for the simplest local auth/cookie flow, including `/.well-known/*` metadata routes needed by OAuth discovery
+- local iOS auth also treats `http://localhost:5173` as the public auth origin, with the proxy forwarding browser/mobile-visible `/api/*` and `/.well-known/*` requests to the Fastify process on `3000`
 
 ### `vite.config.ts`
 
@@ -102,7 +103,7 @@ Static assets served without processing.
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `VITE_API_BASE_URL` | API server URL for cross-origin | (same origin) |
-| `VITE_API_PROXY_TARGET` | Dev proxy target for `/api/*` | `http://localhost:3000` |
+| `VITE_API_PROXY_TARGET` | Dev proxy target for `/api/*` and `/.well-known/*` | `http://localhost:3000` |
 | `VITE_ROUTER_DEVTOOLS` | Enable TanStack Router devtools | `false` |
 
 ## Key Features
@@ -125,10 +126,13 @@ Static assets served without processing.
 ### Browser Auth
 
 - `/login` route for GitHub and Google OAuth
+- `/auth/mobile` hosted OAuth login route for native/mobile authorization requests
+- `/auth/mobile/consent` hosted consent route for forced/non-trusted OAuth flows
 - `/settings` route for profile management and provider linking
 - Root app shell resolves `/api/me` before rendering authenticated state
 - Shared credential-aware `fetch` helper for cookie auth
 - Shared auth-aware `EventSource` creation for SSE streams
+- Better Auth OAuth Provider client plugin preserves signed `oauth_query` state when hosted auth pages start social sign-in
 - Session-expiry redirects now stop background reconnect/poll loops once auth has expired
 
 ### Theming
@@ -156,6 +160,7 @@ Neobrutalist patterns:
 | `react`, `react-dom` | React 19 |
 | `@tanstack/react-router` | Routing |
 | `better-auth` | Browser auth client |
+| `@better-auth/oauth-provider` | Hosted OAuth Provider client plugin |
 | `xterm`, `xterm-addon-fit` | Terminal |
 | `react-markdown` | Markdown |
 | `react-syntax-highlighter` | Code highlighting |

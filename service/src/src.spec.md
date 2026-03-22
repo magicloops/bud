@@ -18,7 +18,8 @@ Application entry point and Fastify server setup.
 
 **Key Responsibilities**:
 - Initialize Fastify with WebSocket and SSE plugins
-- Mount Better Auth routes, current-user session surface, and device-auth claim bootstrap endpoints
+- Register the raw form-urlencoded parser needed for OAuth token/revoke requests before auth routes mount
+- Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
 - Create manager instances (Run, Session, TerminalSession)
 - Register all route handlers
 - Set up SSE streaming endpoints
@@ -36,9 +37,9 @@ const agentService = new AgentService(terminalSessionManager, agentEvents, ...);
 ```
 
 **SSE Streaming Routes** (defined inline):
-- `GET /api/runs/:runId/stream` - Run execution events
-- `GET /api/sessions/:sessionId/stream` - Legacy session events
-- `GET /api/terminals/:budId/stream` - Terminal events (legacy bud-scoped)
+- `GET /api/runs/:run_id/stream` - Run execution events
+- `GET /api/sessions/:session_id/stream` - Legacy session events
+- `GET /api/terminals/:bud_id/stream` - Terminal events (legacy bud-scoped)
 
 **Exports**:
 - `buildServer()` - Create configured Fastify instance
@@ -61,7 +62,10 @@ Environment-based configuration with defaults.
 | `offlineGraceSec` | `WS_OFFLINE_GRACE_SEC` | 90 | Offline detection grace period |
 | `betterAuthUrl` | `BETTER_AUTH_URL` | http://localhost:3000 | Public auth base URL |
 | `appBaseUrl` | `APP_BASE_URL` | `BETTER_AUTH_URL` or http://localhost:3000 | Browser origin used when generating Bud claim URLs |
+| `betterAuthBasePath` | fixed | `/api/auth` | Better Auth mount path and OAuth issuer path |
 | `betterAuthSecret` | `BETTER_AUTH_SECRET` | dev-better-auth-secret-change-me | Better Auth signing/encryption secret |
+| `apiAudience` | `API_AUDIENCE` | `APP_BASE_URL` + `/api` | Audience/resource for JWT access tokens |
+| `oauthTrustedClientIds` | `OAUTH_TRUSTED_CLIENT_IDS` | - | Trusted OAuth client ids cached by Better Auth |
 | `betterAuthTrustedOrigins` | `BETTER_AUTH_TRUSTED_ORIGINS` | http://localhost:5173 | Allowed browser origins for auth |
 | `githubClientId` | `GITHUB_CLIENT_ID` | - | GitHub OAuth client id |
 | `githubClientSecret` | `GITHUB_CLIENT_SECRET` | - | GitHub OAuth client secret |
@@ -74,7 +78,7 @@ Environment-based configuration with defaults.
 | `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | none | Default reasoning effort |
 | `runLogMaxBytes` | `RUN_LOG_MAX_BYTES` | 100MB | Max stored run logs |
 | `terminalIdleTimeoutMinutes` | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle |
-| `terminalIdleCleanupHours` | `TERMINAL_IDLE_CLEANUP_HOURS` | 24 | Close idle sessions |
+| `terminalIdleCleanupHours` | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions (`0` disables destructive cleanup) |
 
 **Protocol Constants**:
 - `PROTO_VERSION = "0.1"` - Base WebSocket protocol
@@ -87,7 +91,7 @@ Environment-based configuration with defaults.
 
 ### `auth/` → [auth.spec.md](./auth/auth.spec.md)
 
-Better Auth runtime integration plus session/profile/ownership helpers used by authenticated API routes.
+Better Auth runtime integration plus session/profile/ownership helpers used by authenticated API routes, now including OAuth Provider/JWT foundations for native mobile auth.
 
 ### `agent/` → [agent.spec.md](./agent/agent.spec.md)
 

@@ -113,7 +113,7 @@ Message input form with options.
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
 
 **Exported Types**:
-- `ModelInfo` - Model metadata (id, provider, displayName, capabilities, isAlias)
+- `ModelInfo` - Model metadata (id, provider, `display_name`, capabilities, optional `is_alias` / `alias_target`)
 
 **Features**:
 - Multi-line textarea

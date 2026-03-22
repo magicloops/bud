@@ -20,7 +20,9 @@ Recommended local setup:
 - Leave `VITE_API_BASE_URL` unset
 - Set `VITE_API_PROXY_TARGET=http://localhost:3000`
 
-That keeps browser requests same-origin from the web app’s perspective while proxying `/api/*` to the service, which is the simplest local auth setup.
+That keeps browser requests same-origin from the web app’s perspective while proxying `/api/*` and `/.well-known/*` to the service, which is the simplest local auth setup.
+
+For the local iOS auth flow, `http://localhost:5173` is also the public auth origin. The service still listens on `http://localhost:3000`, but OAuth discovery, authorize, token, revoke, and `/api/me` should all be consumed through the proxied `5173` origin.
 
 Optional:
 
@@ -36,6 +38,8 @@ Open the app at `http://localhost:5173` after starting the service from [service
 The important routes for auth testing are:
 
 - `/login`
+- `/auth/mobile`
+- `/auth/mobile/consent`
 - `/devices/claim/$flowId`
 - `/`
 

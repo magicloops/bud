@@ -49,9 +49,10 @@ New thread creation view - allows users to start a new conversation.
 **Features**:
 - Empty terminal display with placeholder message
 - Message composer for initial message
+- Loads `/api/models` using the normalized snake_case contract (`default_model`, model `display_name`, optional `is_alias`)
 - Thread creation flow:
-  1. POST `/api/threads` to create thread
-  2. POST `/api/threads/:id/messages` to send first message
+  1. POST `/api/threads` to create thread and read `{ thread_id }`
+  2. POST `/api/threads/:id/messages` to send first message and read `{ message_id }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
@@ -95,6 +96,7 @@ loader: async ({ params }) => {
    - Idempotent recovery helper that re-runs `terminal/ensure`, reloads terminal state, and replays stored history after reconnects
    - Shared auth-aware EventSource creation before reconnect logic takes over
    - Stops reconnect and polling loops once the browser has already redirected for expired auth
+   - Failed session-record fetches now re-enter the same reconnect backoff path instead of falling into a separate `/api/threads/:id/terminal` polling loop
 
 3. **Agent Stream**
    - SSE connection to `/api/threads/:id/agent/stream`
@@ -138,6 +140,7 @@ terminalOutputTruncated: boolean
 | `output` | Decode base64, write to xterm (no resize - xterm handles rendering) |
 | `status` | Update terminal state |
 | `ready` | Update readiness indicators |
+| `terminal.bud_offline` / `terminal.bud_online` | Update Bud status from snake_case `bud_id` payloads and trigger recovery |
 | `heartbeat` | Track last event time |
 | `history` | Backfill initial output |
 
@@ -147,6 +150,7 @@ terminalOutputTruncated: boolean
 - SSE close → Start reconnect timer
 - Exponential backoff: 1s, 2s, 4s, ... up to 30s
 - On reconnect: rerun `terminal/ensure`, fetch authoritative session state, backfill history, and only then return to `connected`
+- If the SSE stream remains open but the Bud is offline, the route keeps polling `terminal/ensure`; if the stream itself closes, reconnect attempts are driven only by the backoff timer
 
 ## Types
 

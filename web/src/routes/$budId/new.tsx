@@ -98,15 +98,15 @@ function NewThreadView() {
     apiFetch('/api/models')
       .then(async (resp) => {
         if (resp.ok) {
-          const data = (await resp.json()) as { models: ModelInfo[]; defaultModel?: string }
+          const data = (await resp.json()) as { models: ModelInfo[]; default_model?: string }
           // Filter to only show aliases for cleaner UI
-          const aliasModels = data.models.filter((m) => m.isAlias)
+          const aliasModels = data.models.filter((m) => m.is_alias)
           // If no aliases, show all models
           const displayModels = aliasModels.length > 0 ? aliasModels : data.models
           setModels(displayModels)
           // Set default model from server config, or first available
           if (!selectedModel) {
-            const serverDefault = data.defaultModel
+            const serverDefault = data.default_model
             const hasDefault = serverDefault && displayModels.some((m) => m.id === serverDefault)
             setSelectedModel(hasDefault ? serverDefault : displayModels[0]?.id ?? '')
           }
@@ -142,10 +142,10 @@ function NewThreadView() {
         const body = await threadResp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${threadResp.status}`)
       }
-      const { threadId } = (await threadResp.json()) as { threadId: string }
+      const { thread_id } = (await threadResp.json()) as { thread_id: string }
 
       // Post message
-      const messageResp = await apiFetch(`/api/threads/${threadId}/messages`, {
+      const messageResp = await apiFetch(`/api/threads/${thread_id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -160,7 +160,7 @@ function NewThreadView() {
       }
 
       // Navigate to the new thread
-      navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
+      navigate({ to: '/$budId/$threadId', params: { budId, threadId: thread_id } })
     } catch (err) {
       setStatus('idle')
       setError(err instanceof Error ? err.message : 'Failed to create thread')

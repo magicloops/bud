@@ -142,6 +142,100 @@ export const authVerificationTable = authSchema.table(
   }),
 );
 
+export const authJwksTable = authSchema.table("jwks", {
+  id: text("id").primaryKey(),
+  publicKey: text("publicKey").notNull(),
+  privateKey: text("privateKey").notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expiresAt", { withTimezone: true }),
+});
+
+export const authOAuthClientTable = authSchema.table(
+  "oauthClient",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("clientId").notNull().unique(),
+    clientSecret: text("clientSecret"),
+    disabled: boolean("disabled"),
+    skipConsent: boolean("skipConsent"),
+    enableEndSession: boolean("enableEndSession"),
+    subjectType: text("subjectType"),
+    scopes: jsonb("scopes").$type<string[]>(),
+    userId: text("userId").references(() => authUserTable.id, { onDelete: "cascade" }),
+    createdAt: timestamp("createdAt", { withTimezone: true }),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }),
+    name: text("name"),
+    uri: text("uri"),
+    icon: text("icon"),
+    contacts: jsonb("contacts").$type<string[]>(),
+    tos: text("tos"),
+    policy: text("policy"),
+    softwareId: text("softwareId"),
+    softwareVersion: text("softwareVersion"),
+    softwareStatement: text("softwareStatement"),
+    redirectUris: jsonb("redirectUris").$type<string[]>().notNull(),
+    postLogoutRedirectUris: jsonb("postLogoutRedirectUris").$type<string[]>(),
+    tokenEndpointAuthMethod: text("tokenEndpointAuthMethod"),
+    grantTypes: jsonb("grantTypes").$type<string[]>(),
+    responseTypes: jsonb("responseTypes").$type<string[]>(),
+    public: boolean("public"),
+    type: text("type"),
+    requirePKCE: boolean("requirePKCE"),
+    referenceId: text("referenceId"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  },
+);
+
+export const authOAuthRefreshTokenTable = authSchema.table("oauthRefreshToken", {
+  id: text("id").primaryKey(),
+  token: text("token").notNull(),
+  clientId: text("clientId")
+    .notNull()
+    .references(() => authOAuthClientTable.clientId, { onDelete: "cascade" }),
+  sessionId: text("sessionId").references(() => authSessionTable.id, { onDelete: "set null" }),
+  userId: text("userId")
+    .notNull()
+    .references(() => authUserTable.id, { onDelete: "cascade" }),
+  referenceId: text("referenceId"),
+  expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).notNull(),
+  revoked: timestamp("revoked", { withTimezone: true }),
+  authTime: timestamp("authTime", { withTimezone: true }),
+  scopes: jsonb("scopes").$type<string[]>().notNull(),
+});
+
+export const authOAuthAccessTokenTable = authSchema.table(
+  "oauthAccessToken",
+  {
+    id: text("id").primaryKey(),
+    token: text("token").notNull().unique(),
+    clientId: text("clientId")
+      .notNull()
+      .references(() => authOAuthClientTable.clientId, { onDelete: "cascade" }),
+    sessionId: text("sessionId").references(() => authSessionTable.id, { onDelete: "set null" }),
+    userId: text("userId").references(() => authUserTable.id, { onDelete: "cascade" }),
+    referenceId: text("referenceId"),
+    refreshId: text("refreshId").references(() => authOAuthRefreshTokenTable.id, {
+      onDelete: "cascade",
+    }),
+    expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).notNull(),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+  },
+);
+
+export const authOAuthConsentTable = authSchema.table("oauthConsent", {
+  id: text("id").primaryKey(),
+  clientId: text("clientId")
+    .notNull()
+    .references(() => authOAuthClientTable.clientId, { onDelete: "cascade" }),
+  userId: text("userId").references(() => authUserTable.id, { onDelete: "cascade" }),
+  referenceId: text("referenceId"),
+  scopes: jsonb("scopes").$type<string[]>().notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).notNull(),
+});
+
 export const userProfileTable = pgTable(
   "user_profile",
   {
@@ -338,7 +432,6 @@ export const terminalSessionTable = pgTable(
   {
     sessionId: text("session_id").primaryKey(),
     threadId: uuid("thread_id")
-      .unique()
       .references(() => threadTable.threadId, { onDelete: "set null" }),
     budId: text("bud_id")
       .notNull()
@@ -373,7 +466,11 @@ export const terminalSessionTable = pgTable(
   (table) => ({
     budStateIdx: index("terminal_session_bud_state_idx").on(table.budId, table.state),
     instanceIdx: index("terminal_session_instance_idx").on(table.instanceId),
-    threadIdx: index("terminal_session_thread_idx").on(table.threadId)
+    threadIdx: index("terminal_session_thread_idx").on(table.threadId),
+    // A thread may have many historical sessions, but only one active (non-closed) session.
+    activeThreadUniqueIdx: uniqueIndex("terminal_session_thread_active_unique_idx")
+      .on(table.threadId)
+      .where(sql`${table.threadId} is not null and ${table.closedAt} is null`),
   })
 );
 

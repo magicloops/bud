@@ -38,8 +38,8 @@ Bud management and session listing.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/buds` | List the signed-in user's buds with last run info |
-| `GET` | `/api/buds/:budId/sessions` | List active terminal sessions for an owned bud |
-| `DELETE` | `/api/buds/:budId/sessions/:sessionId` | Close a specific session on an owned bud |
+| `GET` | `/api/buds/:bud_id/sessions` | List active terminal sessions for an owned bud |
+| `DELETE` | `/api/buds/:bud_id/sessions/:session_id` | Close a specific session on an owned bud |
 
 **Key Functions**:
 - `normalizeCapabilities(raw)` - Ensure capabilities is an object
@@ -49,6 +49,7 @@ Bud management and session listing.
 - All Bud routes call `requireViewer(...)`
 - Bud-scoped routes resolve ownership through `getAuthorizedBud(...)`
 - Session inventory is filtered to `terminal_session.created_by_user_id = viewer.userId`
+- Closing a session marks that specific row closed; revisiting the thread later creates a new active session row
 
 ### `threads.ts`
 
@@ -60,36 +61,36 @@ Thread and message management, plus terminal operations (~650 lines).
 |--------|------|-------------|
 | `GET` | `/api/threads` | List the signed-in user's threads (optionally filtered by owned `bud_id`) |
 | `POST` | `/api/threads` | Create a new owned thread on an owned bud |
-| `GET` | `/api/threads/:threadId` | Get owned thread details |
-| `DELETE` | `/api/threads/:threadId` | Soft delete an owned thread |
+| `GET` | `/api/threads/:thread_id` | Get owned thread details |
+| `DELETE` | `/api/threads/:thread_id` | Soft delete an owned thread |
 
 **Message Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads/:threadId/messages` | Get owned messages (limit configurable) |
-| `POST` | `/api/threads/:threadId/messages` | Send a user-owned message (with context sync), triggers agent |
-| `GET` | `/api/threads/:threadId/agent/stream` | SSE for owned agent events |
-| `POST` | `/api/threads/:threadId/cancel` | Cancel an owned running agent |
+| `GET` | `/api/threads/:thread_id/messages` | Get owned messages (limit configurable) |
+| `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync), triggers agent |
+| `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
+| `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
 
 **Run Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads/:threadId/runs` | Get owned run history with cursor pagination |
+| `GET` | `/api/threads/:thread_id/runs` | Get owned run history with cursor pagination |
 
 **Terminal Endpoints** (Thread-Scoped):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads/:threadId/terminal` | Create/get an owned terminal session (DB only) |
-| `POST` | `/api/threads/:threadId/terminal/ensure` | Ensure the owned terminal is running on bud |
-| `GET` | `/api/threads/:threadId/terminal` | Get owned session info |
-| `GET` | `/api/threads/:threadId/terminal/stream` | SSE output stream for an owned session |
-| `POST` | `/api/threads/:threadId/terminal/input` | Send input as the signed-in human user |
-| `POST` | `/api/threads/:threadId/terminal/interrupt` | Send Ctrl+C to an owned session |
-| `POST` | `/api/threads/:threadId/terminal/resize` | Resize an owned terminal |
-| `GET` | `/api/threads/:threadId/terminal/history` | Get owned output history |
+| `POST` | `/api/threads/:thread_id/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
+| `POST` | `/api/threads/:thread_id/terminal/ensure` | Ensure the owned terminal is running on bud |
+| `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
+| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session |
+| `POST` | `/api/threads/:thread_id/terminal/input` | Send input as the signed-in human user |
+| `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send Ctrl+C to an owned session |
+| `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |
+| `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
 
 **Validation Schemas** (Zod):
 - `CreateThreadSchema` - `bud_id` required, `title` optional
@@ -113,6 +114,9 @@ Before creating user message, checks for terminal state changes:
 - new thread/message/session rows are stamped with the acting or owning user id
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
+- thread SSE routes now also send an initial heartbeat frame on empty-buffer attaches so the HTTP response stays in SSE mode even before the first real event arrives
+- `POST /api/threads` now returns `{ thread_id }`
+- `POST /api/threads/:thread_id/messages` now returns `{ message_id }`
 
 ### `runs.ts`
 
@@ -135,20 +139,29 @@ Standalone command execution (separate from agent flow).
 }
 ```
 
+**Response Shape**:
+- returns snake_case write identifiers: `{ run_id, thread_id }`
+
 ### `me.ts`
 
-Authenticated current-user endpoint backed by Better Auth session helpers.
+Authenticated current-user endpoint backed by shared cookie-or-token auth helpers.
 
 **Endpoints**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/me` | Return normalized user/session/profile/account-linking state |
-| `PATCH` | `/api/me/profile` | Update the signed-in user's Bud-owned profile fields |
+| `GET` | `/api/me` | Return normalized user/session/profile/account-linking state for either cookie or bearer auth |
+| `PATCH` | `/api/me/profile` | Update the signed-in user's Bud-owned profile fields for either cookie or bearer auth |
+| `GET` | `/api/me/accounts` | Return linked-provider account inventory for either cookie or bearer auth |
+| `GET` | `/api/me/sessions` | Return Better Auth browser-session inventory for the current user |
+| `POST` | `/api/me/account-links/:provider/start` | Start a provider-link flow for GitHub/Google and return the authorization URL |
+| `POST` | `/api/me/logout` | Sign out the current Better Auth browser session |
+| `POST` | `/api/me/oauth/revoke` | Revoke an OAuth access or refresh token through Bud's auth surface |
 
 **Response Shape**:
 - `user` - Better Auth user identity (`id`, `email`, `email_verified`, `name`, `image`)
-- `session` - Current session metadata (`id`, `expires_at`)
+- `auth_type` - `cookie` or `bearer`
+- `session` - Current session/token metadata (`id`, `expires_at`); bearer mode reports `id: null`
 - `profile` - Bud-owned profile metadata (`username`, timestamps)
 - `linked_accounts` / `linked_providers` - Provider-linking summary for settings/account UI
 
@@ -158,9 +171,36 @@ Authenticated current-user endpoint backed by Better Auth session helpers.
 - invalid usernames return `400 invalid_username`
 - uniqueness conflicts return `409 username_taken`
 
+**Native Account Surface**:
+- `GET /api/me/accounts` returns linked account rows from `auth.account` with snake_case metadata, scopes, and token-presence flags
+- `GET /api/me/sessions` returns the user's Better Auth browser sessions with `is_current` and `is_active` markers
+- `POST /api/me/account-links/:provider/start` returns a snake_case Bud-owned payload:
+  - cookie auth uses Better Auth `linkSocialAccount` (`strategy: "session_link"`)
+  - bearer auth uses Better Auth `signInSocial` with `requestSignUp: false` to rely on implicit same-email linking (`strategy: "implicit_sign_in"`)
+- bearer-mode provider-link starts are therefore limited to existing-account / same-email linking semantics; they are not a replacement for explicit cookie-session account-linking
+- `POST /api/me/logout` currently signs out cookie-backed browser sessions only
+- `POST /api/me/oauth/revoke` wraps Better Auth's `/oauth2/revoke` endpoint behind a Bud route so mobile clients do not need to call Better Auth directly
+- mobile/public-client revoke callers must send `client_id`; bearer logout is revocation + local token clearing rather than cookie-session sign-out
+
 **Dependencies**:
-- `../auth/session.js` - Session lookup and `user_profile` bootstrap
+- `../auth/session.js` - Shared viewer resolution and `user_profile` bootstrap
 - `./device-auth.ts` - Uses the same browser session model for claim approval
+
+### `models.ts`
+
+Available LLM model listing for authenticated product clients.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/models` | Return model inventory for the authenticated viewer |
+
+**Auth Notes**:
+- now uses the shared `requireViewer(...)` contract instead of remaining public
+- returns a normalized snake_case payload so web and mobile share one contract
+- top-level response includes `default_model`
+- model entries expose `display_name`, `is_alias`, and `alias_target`
 
 ## Response Formats
 

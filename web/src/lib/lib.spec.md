@@ -86,7 +86,24 @@ Better Auth React client configuration.
 - Points auth actions at an absolute `/api/auth` URL
 - In proxy-mode local dev, derives that absolute URL from `window.location.origin`
 - In cross-origin mode, uses `VITE_API_BASE_URL`
-- Powers OAuth entrypoints for the `/login` route
+- Installs the OAuth Provider client plugin so hosted auth pages automatically include Better Auth's signed `oauth_query` when starting social sign-in or consent/continue requests
+- Powers OAuth entrypoints for `/login` and `/auth/mobile`
+
+### `oauth-provider.ts`
+
+Hosted OAuth Provider helpers for app-served mobile auth pages.
+
+**Responsibilities**:
+- Detect Better Auth signed OAuth queries from `window.location.search`
+- Parse mobile-OAuth request details such as `client_id`, `redirect_uri`, requested scopes, and `prompt`
+- Build a safe authorize-resume URL that drops the consumed `login` prompt before sending an already-authenticated browser back to `/api/auth/oauth2/authorize`
+- Format first-party scope labels for the hosted login and consent UIs
+
+**Exports**:
+- `getSignedOAuthQuery(search)` - returns the raw Better Auth signed query string when present
+- `getOAuthRequestDetails(search)` - normalized request details for hosted mobile login/consent pages
+- `hasOAuthPrompt(prompt, value)` - prompt inspection helper
+- `formatOAuthScopeLabel(scope)` - user-facing scope label helper
 
 ### `theme-colors.ts`
 
@@ -153,6 +170,7 @@ cn('text-red-500', isActive && 'font-bold', className)
 | Import | Purpose |
 |--------|---------|
 | `better-auth/react` | Better Auth browser client |
+| `@better-auth/oauth-provider/client` | Signed OAuth Provider query propagation for hosted auth pages |
 | `clsx` | Conditional class names |
 | `tailwind-merge` | Tailwind class deduplication |
 
@@ -161,6 +179,7 @@ cn('text-red-500', isActive && 'font-bold', className)
 | Variable | Purpose |
 |----------|---------|
 | `VITE_API_BASE_URL` | Optional API server URL for cross-origin |
+| `VITE_API_PROXY_TARGET` | Vite dev proxy target for `/api/*` and `/.well-known/*` |
 
 ---
 

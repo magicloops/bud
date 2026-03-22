@@ -1119,12 +1119,14 @@ export class TerminalSessionManager {
   private async runIdleCheck(): Promise<void> {
     const now = new Date();
     const idleThreshold = new Date(now.getTime() - config.terminalIdleTimeoutMinutes * 60 * 1000);
-    const cleanupThreshold = new Date(
-      now.getTime() - config.terminalIdleCleanupHours * 60 * 60 * 1000
-    );
 
     const markedIdle = await this.markIdleSessions(idleThreshold);
-    const closed = await this.closeStaleIdleSessions(cleanupThreshold);
+    const closed =
+      config.terminalIdleCleanupHours > 0
+        ? await this.closeStaleIdleSessions(
+            new Date(now.getTime() - config.terminalIdleCleanupHours * 60 * 60 * 1000)
+          )
+        : 0;
 
     if (markedIdle > 0 || closed > 0) {
       this.logger.info(
@@ -1293,7 +1295,7 @@ export class TerminalSessionManager {
     for (const session of sessions) {
       this.events.emit(session.sessionId, {
         event: "terminal.bud_offline",
-        data: { budId, reason: "disconnected" },
+        data: { bud_id: budId, reason: "disconnected" },
         id: ulid()
       });
     }
@@ -1321,7 +1323,7 @@ export class TerminalSessionManager {
     for (const session of sessions) {
       this.events.emit(session.sessionId, {
         event: "terminal.bud_online",
-        data: { budId },
+        data: { bud_id: budId },
         id: ulid()
       });
     }

@@ -134,6 +134,7 @@ export const isApiError = (error: unknown, status?: number): error is ApiError =
 }
 
 export type ApiCurrentUser = {
+  auth_type?: 'cookie' | 'bearer'
   user: {
     id: string
     email: string
@@ -142,7 +143,7 @@ export type ApiCurrentUser = {
     image: string | null
   }
   session: {
-    id: string
+    id: string | null
     expires_at: string | null
   }
   profile: {
