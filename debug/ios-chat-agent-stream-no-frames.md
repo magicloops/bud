@@ -125,34 +125,40 @@ Implication:
 
 ## Hypotheses
 
-### Hypothesis 1: `5173` opens the SSE response but does not flush frames cleanly to the native client
+### Hypothesis 1: The backend event contract is correct, but the native client is not surfacing raw SSE bytes to the parser
 
 **Confidence:** High
 
 Why:
 
-- the route should emit an immediate heartbeat on empty attach
-- the route should emit periodic heartbeats every second in local dev
-- iOS reports zero parsed frames despite a successful `200 text/event-stream` response
-- the main path difference from the working web client is the native streaming stack, not the high-level endpoint
+- the synthetic probe route streams progressively through both `3000` and `5173`
+- the real mobile `/api/threads/:thread_id/agent/stream` request now shows proxied chunks for:
+  - `retry`
+  - initial `heartbeat`
+  - periodic `heartbeat`
+  - `agent.message`
+  - `final`
+- the proxied request preserves the bearer token and forwarded host/proto headers correctly
+- iOS still reports zero parsed events despite the upstream stream clearly producing valid SSE frames
 
 What would confirm it:
 
-- raw chunked SSE frames appear when hitting `3000` directly but stall or disappear through `5173`
+- raw bytes are present on the iOS socket/stream delegate, but the app still emits no parsed events
 
-### Hypothesis 2: The exact mobile connection is attaching, but writes to that connection are failing or closing before first delivery
+### Hypothesis 2: The final hop from Vite to the native client is still behaving differently than Vite's upstream read path
 
-**Confidence:** Medium-high
+**Confidence:** Medium
 
 Why:
 
-- the current route/event-bus code has no request-scoped “write succeeded” logging
-- write failures inside listener delivery are swallowed to avoid disconnect spam
-- a connection-specific failure could produce “200 open stream, no frames parsed” without disproving that the thread had events
+- Vite proxy logs prove it is receiving the upstream SSE chunks from the service
+- they do not by themselves prove that the downstream mobile socket parsed or consumed them
+- this is now narrower than the original “`5173` cannot stream SSE” theory because generic and real-route upstream chunking both work
 
 What would confirm it:
 
-- request-scoped SSE logging shows attach occurred, `reply.sse(...)` was attempted, and the socket closed or errored before/while frames were written
+- a browser or non-browser client attached to the same proxied agent route receives frames normally while iOS still does not
+- or iOS raw-byte logging shows nothing arriving even though Vite logged upstream chunks
 
 ### Hypothesis 3: iOS replacement-stream timing is interacting badly with a best-effort replay contract
 
@@ -174,21 +180,7 @@ What would confirm it:
 
 - keeping the original stream alive receives frames, but a deliberately reattached stream sometimes misses the turn despite the route being otherwise healthy
 
-### Hypothesis 4: The backend event contract is correct, but the native client is not surfacing raw SSE frames to the parser
-
-**Confidence:** Medium
-
-Why:
-
-- event names and route behavior match the documented contract
-- browser `EventSource` is the known-good consumer
-- native `URLSession`-style streaming may differ in buffering, delimiter handling, or dispatch timing
-
-What would confirm it:
-
-- raw bytes are present at the iOS socket layer or in a non-browser client test, but the iOS parser still reports zero events
-
-### Hypothesis 5: Event-name or payload-shape drift is causing the iOS decoder to drop events silently
+### Hypothesis 4: Event-name or payload-shape drift is causing the iOS decoder to drop events silently
 
 **Confidence:** Low
 
@@ -196,12 +188,109 @@ Why:
 
 - current event names match the mobile team’s expected set
 - shape drift would more likely drop specific event decodes, not all heartbeats plus all turn events
+- in the captured failing request, the wire events were ordinary SSE frames with named events and JSON `data:` payloads
 
 What would confirm it:
 
 - raw SSE frames are definitely arriving, but the parser rejects every event payload
 
+### Hypothesis 5: Service-side write failure on the exact SSE connection
+
+**Confidence:** Low
+
+Why:
+
+- request-scoped service and proxy logging now show a healthy response path for the captured request
+- Vite observed the real event frames for the actual failing mobile request
+- this makes a silent service-side write failure less likely than a downstream/native parsing issue
+
+What would confirm it:
+
+- service logs show heartbeats/events being attempted but the socket closing or erroring before Vite or the client receives them
+
 ## Verification Plan
+
+## Early Verification Results (2026-03-22)
+
+### 1. Direct service SSE streamed correctly during the March 22 verification pass
+
+A temporary dev-only probe route was used during the March 22 verification pass. It emitted:
+
+- an immediate `heartbeat`
+- several timed `probe.tick` frames
+- a terminal `final`
+
+Local `curl -N` against `http://127.0.0.1:3000/api/debug/sse-probe?...` received progressive SSE frames immediately.
+
+### 2. The local Vite proxy also streamed the probe route during that pass
+
+Local `curl -N` against `http://localhost:5173/api/debug/sse-probe?...` also received progressive SSE frames through the proxy.
+
+Implication:
+
+- the broad hypothesis “Vite on `5173` cannot stream SSE at all to non-browser clients” is now weaker
+- the remaining proxy suspicion is narrower: something may still differ specifically for the real authenticated agent route, but the generic local SSE transport path does work
+
+### 3. Temporary instrumentation was used for the real retry
+
+Service-side:
+
+- temporary request-scoped logging captured:
+  - `POST /api/threads/:thread_id/messages` start, insert, and queue points
+  - agent buffer clear / session resolution
+  - `agent.tool_call`, `agent.tool_result`, `agent.message`, and `final` emission points
+  - agent SSE connection ids, attach/replay details, heartbeats, and close timing
+
+Web/Vite-side:
+
+- temporary proxy logging captured:
+  - proxied thread/message request metadata
+  - proxied `/api/threads/:thread_id/agent/stream` response headers
+  - per-chunk stream previews for the proxied agent SSE response
+
+Those temporary debug hooks have since been removed from the codebase after the March 22 capture.
+
+### 4. The real mobile agent-stream request is producing valid frames
+
+For the captured mobile request:
+
+- `GET /api/threads/f92cb50b-a7ff-4658-9188-42aeeb0efc94/agent/stream`
+- `Authorization: Bearer <access_token>`
+- `Accept: text/event-stream`
+- `User-Agent: Bud (unknown version) CFNetwork/3860.300.31 Darwin/24.6.0`
+
+Vite proxy logs showed:
+
+- request reached `localhost:5173`
+- proxy forwarded to `http://localhost:3000`
+- response returned `200 text/event-stream`
+- chunk sequence included:
+  - `retry: 3000`
+  - initial `heartbeat`
+  - periodic `heartbeat`
+  - `agent.message`
+  - `final`
+  - continued `heartbeat` after `final`
+
+Implications:
+
+- the real authenticated agent route is streaming through the proxy, not just the synthetic probe route
+- the service is not stuck before first frame
+- the connection does not automatically close on `final`; clients must treat the `final` event itself as completion
+- this specific turn emitted `agent.message` and `final`, but no `agent.tool_call` or `agent.tool_result`, which is valid for a direct final response turn
+
+### 5. The wire format now looks valid for the captured failing request
+
+The logged chunks show normal SSE framing:
+
+- named `event:` lines
+- one `data:` line per event
+- blank-line delimiters between events
+- JSON payloads with escaped newlines inside the assistant text
+
+Implication:
+
+- the next likely failure point is the native raw-byte consumption / SSE parser layer, not the service route contract
 
 ### 1. Confirm what the current logs already tell us
 
@@ -220,7 +309,7 @@ This will **not** yet answer:
 
 - whether the exact mobile connection successfully received those frames
 
-### 2. Add temporary request-scoped SSE diagnostics
+### 2. Capture request-scoped SSE diagnostics from the real failing request
 
 Instrument `GET /api/threads/:thread_id/agent/stream` and/or `AgentEventBus.attach(...)` with a per-connection id and log:
 
@@ -299,12 +388,17 @@ Important existing finding:
 
 - web currently closes and recreates the agent stream after a successful send, so mobile is not inherently “wrong” to do the same
 
-### 6. If backend/proxy look healthy, ask iOS for raw-byte evidence instead of parsed-event evidence
+### 6. Ask iOS for raw-byte evidence instead of parsed-event evidence
 
 The most useful mobile-side follow-up is:
 
 - log raw byte chunks received from the stream before SSE parsing
 - log the exact framing boundaries seen by the native client
+- log whether the parser ignores:
+  - the leading `retry:` frame
+  - named `heartbeat` events
+  - `final` without connection close
+  - JSON payloads whose strings contain escaped `\n`
 
 That will cleanly separate:
 
@@ -313,10 +407,12 @@ That will cleanly separate:
 
 ## Likely Next Actions Based On Results
 
-- If `3000` streams and `5173` does not: fix or bypass the local proxy path for native SSE debugging.
-- If both `3000` and `5173` stream to `curl`/Node but not iOS: inspect the iOS SSE parser and raw-byte handling.
-- If request-scoped logs show no successful writes for the mobile connection: fix backend SSE write/flush behavior and keep the extra diagnostics until mobile confirms receipt.
-- If reattach tests show replay gaps for the current-turn buffer: tighten the replay contract or change mobile to keep the original stream alive through the turn.
+- Ask iOS to log raw stream bytes for the failing `/agent/stream` request before SSE parsing.
+- Verify the iOS parser handles named events, blank-line delimiters, `retry:` frames, and `final` without waiting for EOF.
+- If we need another backend/proxy correlation pass later, re-add targeted logging temporarily rather than assuming the removed hooks still exist.
+- If raw bytes arrive on iOS but no events parse, fix the native SSE parser.
+- If iOS shows no raw bytes despite Vite logging upstream chunks, investigate the downstream proxy-to-client leg more directly.
+- If later retries show missed turns only after stream replacement, revisit the replay/reattach contract.
 
 ## Conclusion
 
@@ -326,4 +422,10 @@ The checklist correctly narrows the issue away from basic REST auth and message 
 - the backend already emits only the documented agent event names
 - web uses a very similar restart-after-send pattern and still works
 
-That makes a pure “mobile is restarting the stream wrong” explanation too weak on its own. The next debugging step should focus on proving whether the exact mobile connection is actually receiving flushed bytes through `5173`, rather than only whether the route returned `200 text/event-stream`.
+That makes a pure “mobile is restarting the stream wrong” explanation too weak on its own. The current strongest read is:
+
+- the real authenticated stream is producing valid SSE frames
+- the proxy is receiving and forwarding those frames
+- the remaining uncertainty is concentrated in the native client’s raw-byte handling and SSE parsing path
+
+The next debugging step should therefore move to iOS raw stream logging rather than additional generic backend transport checks.

@@ -471,6 +471,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 |----------|---------|
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
 | [IOS_LOCAL_AUTH_HANDOFF.md](./IOS_LOCAL_AUTH_HANDOFF.md) | Root-level handoff for the iOS team with the concrete local OAuth client, `5173`-based auth bundle, required revoke contract, and current validation status |
+| [IOS_CHAT_STREAMING_DEBUG_HANDOFF.md](./IOS_CHAT_STREAMING_DEBUG_HANDOFF.md) | Root-level handoff for the iOS team summarizing the confirmed March 22, 2026 SSE streaming findings, what they rule out, and the remaining raw-byte/parser-focused hypotheses for `/api/threads/:thread_id/agent/stream` |
 | [IOS_MOBILE_BACKEND_HANDOFF.md](./IOS_MOBILE_BACKEND_HANDOFF.md) | Comprehensive root-level handoff for the iOS team covering the current auth assumptions, Bud/thread/message/model API contract, SSE/runtime behavior, and the specific web-client gotchas that matter for mobile integration |
 | [docs/proto.md](./docs/proto.md) | Wire protocol specification |
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
