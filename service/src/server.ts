@@ -18,6 +18,8 @@ import { ContextSyncService } from "./terminal/context-sync-service.js";
 import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
 import { registerMeRoutes } from "./routes/me.js";
 
+const SERVICE_VERSION = "0.0.1";
+
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
     logger: {
@@ -101,9 +103,38 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   server.get("/healthz", async () => ({
     ok: true,
-    version: "0.0.1",
+    version: SERVICE_VERSION,
     time: new Date().toISOString()
   }));
+
+  server.get("/readyz", async (_request, reply) => {
+    const checks: Record<string, "ok" | "error"> = {
+      database: "ok",
+      auth_schema: "ok",
+    };
+
+    try {
+      await pool.query("select 1 from bud limit 1");
+    } catch (err) {
+      checks.database = "error";
+      server.log.error({ err, component: "readyz", check: "database" }, "Readiness check failed");
+    }
+
+    try {
+      await authPool.query('select 1 from "user" limit 1');
+    } catch (err) {
+      checks.auth_schema = "error";
+      server.log.error({ err, component: "readyz", check: "auth_schema" }, "Readiness check failed");
+    }
+
+    const ok = Object.values(checks).every((status) => status === "ok");
+    reply.code(ok ? 200 : 503).send({
+      ok,
+      version: SERVICE_VERSION,
+      time: new Date().toISOString(),
+      checks,
+    });
+  });
 
   server.get("/api/runs/:runId/stream", (request, reply) => {
     const runId = (request.params as { runId: string }).runId;

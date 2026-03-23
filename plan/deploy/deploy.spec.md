@@ -1,6 +1,6 @@
 # deploy
 
-Deployment planning documents for Bud's first production-like prototype environment on Render.
+Deployment planning documents for Bud's first production-like staging environment on Render.
 
 ## Purpose
 
@@ -12,12 +12,13 @@ The plan assumes:
 - one public origin in front of them
 - a single backend instance
 - a prototype rollout focused on reliability for mobile iteration rather than final launch scale
+- Render as the current staging host, with the final production provider decision still open
 
 ## Files
 
 ### `implementation-spec.md`
 
-Parent implementation spec for the prototype Render deployment.
+Parent implementation spec for the prototype Render staging deployment.
 
 Documents:
 
@@ -25,6 +26,7 @@ Documents:
 - fixed prototype constraints
 - phase sequencing
 - rollout risks and definition of done
+- the staging-vs-production platform distinction
 
 ### `phase-1-deployment-contract.md`
 
@@ -80,6 +82,19 @@ Covers:
 - DB/migration posture
 - mobile bundle publication
 - rollback readiness
+- the post-validation platform decision
+
+### `cloudflare-front-door-runbook.md`
+
+Operator runbook for the default single-origin edge layer in front of Render.
+
+Documents:
+
+- the recommended Cloudflare Origin Rule shape
+- cache and WebSocket expectations for service-owned paths
+- deploy order from raw Render origins to the public hostname
+- rollback entry points if the edge layer misroutes traffic
+- the fact that this runbook is the staging default, not a final production commitment
 
 ## Dependencies
 

@@ -1,8 +1,8 @@
-# Prototype Render Deployment Validation Checklist
+# Prototype Render Staging Deployment Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 
-Use this checklist as the release gate for the prototype mobile-testing environment.
+Use this checklist as the release gate for the prototype mobile-testing environment and the place where the post-validation platform decision gets written down.
 
 ---
 
@@ -79,6 +79,12 @@ Use this checklist as the release gate for the prototype mobile-testing environm
 - [ ] the team knows whether schema rollback is supported or whether rollback is forward-fix only.
 - [ ] the team knows how to disable or pause mobile use of the environment if validation fails after rollout.
 
+## 9. Platform Decision
+
+- [ ] the team has written down whether Render remains staging-only or continues toward production use.
+- [ ] if Render remains staging-only, the intended production successor is named explicitly.
+- [ ] if AWS is the current production candidate, the team agrees the target shape is still one public origin with path-based routing rather than split browser/API domains.
+
 ---
 
 ## Sign-Off
@@ -89,6 +95,7 @@ Use this checklist as the release gate for the prototype mobile-testing environm
 - [ ] Bud claim/bootstrap accepted
 - [ ] SSE and `/ws` behavior accepted
 - [ ] Mobile environment bundle published
+- [ ] Platform decision recorded
 
 ---
 

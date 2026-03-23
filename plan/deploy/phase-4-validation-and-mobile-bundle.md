@@ -7,13 +7,14 @@
 
 ## Objective
 
-Prove that the deployed environment behaves like the codebase expects and publish the final environment bundle the mobile team should target.
+Prove that the deployed staging environment behaves like the codebase expects, publish the final environment bundle the mobile team should target, and capture the post-validation platform decision.
 
 By the end of this phase:
 
 - the environment is validated against the real public origin
 - the Bud daemon can claim and reconnect against the deployed stack
 - the mobile team has a stable issuer/base-url/audience bundle
+- the team can decide whether the validated topology stays on Render beyond staging or should move to AWS/another provider for production
 
 ---
 
@@ -100,6 +101,15 @@ Record:
 - rollback path
 - known prototype limitations
 
+### Task 6: Make the post-validation platform call
+
+After the staging environment is validated, record one explicit decision:
+
+- keep using Render beyond staging for now, or
+- treat the validated Render environment as proof-of-shape and move the same one-origin topology to AWS or another provider for production
+
+This phase does not require the migration to happen. It does require the team to avoid leaving the production-platform question implicit.
+
 ---
 
 ## Validation Checklist
@@ -113,6 +123,7 @@ Record:
 - [ ] agent and terminal SSE behave correctly under the public front door
 - [ ] the final mobile environment bundle is published
 - [ ] prototype limitations are documented for the team
+- [ ] the team has written down whether Render remains staging-only or continues toward production use
 
 ---
 
@@ -129,7 +140,8 @@ This phase is complete when:
 
 1. the environment behaves correctly for browser, Bud, and mobile-facing auth flows,
 2. the team has one published environment bundle to target,
-3. known prototype limitations are explicit rather than tribal knowledge.
+3. known prototype limitations are explicit rather than tribal knowledge,
+4. the production-platform decision is explicit instead of implied.
 
 At that point the deployment is ready to support ongoing mobile iteration.
 

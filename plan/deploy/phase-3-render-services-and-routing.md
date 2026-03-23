@@ -7,13 +7,14 @@
 
 ## Objective
 
-Check in a reproducible deployment definition for the prototype environment and wire the single public origin to the Render-hosted workloads.
+Check in a reproducible deployment definition for the prototype staging environment and wire the single public origin to the Render-hosted workloads.
 
 By the end of this phase:
 
 - Render service definitions are checked into the repo
 - `web` and `service` can be deployed from the monorepo without manual drift
 - the public origin routes browser pages, API/auth routes, and Bud WebSocket traffic correctly
+- the repo is explicit that this is the staging/default Render path, not a final production platform endorsement
 
 ---
 
@@ -39,6 +40,7 @@ By the end of this phase:
 ## Expected Files And Areas
 
 - `render.yaml`
+- `cloudflare-front-door-runbook.md`
 - deployment documentation under `plan/deploy/`
 - `service/README.md`
 - `web/README.md`
@@ -109,6 +111,8 @@ If Cloudflare is the chosen front door, document the exact path-routing and prox
 - WebSocket upgrades
 - auth callback routes
 
+Explicitly do not reframe Bud around Render's generic multi-service pattern of "frontend public URL points at backend public URL." Bud's desired public contract remains one origin with path-based routing.
+
 ### Task 6: Align operator-facing deploy docs
 
 Document:
@@ -119,6 +123,11 @@ Document:
 - rollback entry points
 
 The goal is a reproducible deployment, not just a successful one-off dashboard setup.
+
+Those docs should also make the platform intent clear:
+
+- Render is the current staging host
+- the same validated topology may later move to AWS or another provider if that gives us a cleaner production edge story
 
 ---
 
@@ -132,6 +141,7 @@ The goal is a reproducible deployment, not just a successful one-off dashboard s
 - [ ] `/api/*`, `/.well-known/*`, and `/ws` all route to `service`
 - [ ] non-API app routes route to `web`
 - [ ] deploy-order docs are written down rather than implied
+- [ ] the docs state clearly that Render's generic split frontend/backend URL pattern is not Bud's chosen topology
 
 ---
 

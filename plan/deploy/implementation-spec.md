@@ -1,6 +1,6 @@
-# Implementation Spec: Prototype Deployment On Render
+# Implementation Spec: Prototype Staging Deployment On Render
 
-**Status**: Planned
+**Status**: Phase 3 In Progress
 **Created**: 2026-03-23
 **Design Doc**: [../../design/render-deployment-review-and-topology-options.md](../../design/render-deployment-review-and-topology-options.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -26,9 +26,17 @@ The deployment review established the main constraints in the current codebase:
 
 This plan turns that review into an implementation sequence for a prototype Render environment.
 
+It does not lock Render in as the final production host.
+
+The current intent is:
+
+- use Render to stand up the first real staging environment quickly
+- validate the full Bud/browser/mobile contract there
+- keep the production provider decision open, with AWS currently the cleaner leading candidate if we want a more explicit native edge-routing story
+
 ## Objective
 
-Ship one persistent, HTTPS, production-like Bud environment suitable for mobile testing, with the least risky topology that matches the current codebase.
+Ship one persistent, HTTPS, production-like Bud staging environment suitable for mobile testing, with the least risky topology that matches the current codebase.
 
 ## Success Criteria
 
@@ -65,6 +73,7 @@ This plan fixes the prototype deployment shape up front:
    - `/ws` -> `service`
    - everything else -> `web`
 5. Treat Render as the workload host, not necessarily the only public edge.
+6. Keep the final production platform decision open until after staging validation.
 
 ### Prototype Constraints We Are Accepting
 
@@ -72,6 +81,7 @@ This plan fixes the prototype deployment shape up front:
 - No split-domain browser/API deployment.
 - No deployment work to make the backend stateless yet.
 - No redesign of Bud claim/bootstrap URL derivation.
+- No commitment that the eventual production environment must stay on Render.
 
 ### Front-Door Assumption
 
@@ -98,6 +108,7 @@ The most straightforward version of that today is Cloudflare in front of Render.
 Supporting artifact:
 
 - [validation-checklist.md](./validation-checklist.md) is the release gate for the prototype environment.
+- A post-validation platform decision remains open: keep Render for longer, or move the proven topology to AWS or another provider with a stronger native edge-routing story.
 
 ---
 
@@ -110,7 +121,7 @@ These decisions are fixed for this plan:
 - The browser, hosted auth pages, and `/api/auth/*` remain same-origin from the user’s perspective.
 - The Bud daemon connects to one public `wss://.../ws` origin that also exposes `/api/device-auth/*`.
 - The web app remains a static Vite build, not a server-rendered app.
-- Render is the primary runtime host for `web`, `service`, and PostgreSQL.
+- Render is the current staging host for `web`, `service`, and PostgreSQL, not a final production commitment.
 - Production deployment config should be checked into the repo rather than left as dashboard-only state.
 - `db:push` stays a local-development tool; the deployed environment must use an explicit production migration path.
 
@@ -166,6 +177,7 @@ These decisions are fixed for this plan:
 |------|------------|--------|------------|
 | The team accidentally treats the prototype environment as horizontally scalable | Medium | High | Make single-instance service an explicit deploy invariant in config, docs, and validation |
 | Render-only path routing turns out to be unreliable for `/ws` or SSE | Medium | High | Keep the front-door edge layer as the default assumption and validate streaming behavior explicitly |
+| The team mistakes the Render staging plan for a production platform endorsement | Medium | Medium | Document explicitly that Render is the current staging host while the production provider decision remains open |
 | Production deploys accidentally use `db:push` | Medium | High | Lock migration policy in Phase 1 and encode the chosen deploy step in Phase 3 |
 | Auth origin, callback, and audience values drift across web/service/provider config | High | High | Centralize the public-origin contract and publish a single environment bundle in Phase 4 |
 | Small managed Postgres plans hit connection limits | Medium | Medium | Budget `PG_POOL_MAX` explicitly before rollout and validate against the chosen Render database tier |
@@ -181,6 +193,7 @@ These decisions are fixed for this plan:
 4. Deploy a persistent environment.
 5. Run the deployment validation checklist.
 6. Publish the final mobile environment bundle and operator notes.
+7. Decide whether the validated topology should remain on Render or move to AWS/another provider for production.
 
 ### Rollback Guidance
 
@@ -202,6 +215,7 @@ These decisions are fixed for this plan:
 - [ ] SSE and Bud WebSocket behavior are validated in the deployed environment
 - [ ] docs/specs are updated for all changed deployment-facing files
 - [ ] the mobile team has a stable environment bundle to target
+- [ ] the team has explicit guidance on whether Render remains staging-only or graduates toward production use
 
 ---
 
@@ -209,10 +223,10 @@ These decisions are fixed for this plan:
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 1 | Planned | Needs to lock the public-origin and migration contract for the prototype environment |
-| 2 | Planned | Service health/readiness and deploy safety work remains open |
-| 3 | Planned | No checked-in Render deployment definition exists yet |
-| 4 | Planned | Depends on a real deployed environment plus validation |
+| 1 | In Progress | Initial README and env-template normalization is underway so local, prototype, and provider callback guidance all agree on the one-public-origin contract |
+| 2 | In Progress | Initial readiness work is landing via `/readyz`, and package/runtime pinning is now aligned with the documented Node floor; DB budgeting and final deploy guidance still remain |
+| 3 | In Progress | `render.yaml` now encodes the Render-hosted web/service/Postgres footprint, and the Cloudflare front-door runbook captures the default one-origin path-routing contract outside Render for staging |
+| 4 | Planned | Depends on a real deployed environment, staging validation, and a post-validation call on whether production should stay on Render or move to a cleaner edge-routing provider such as AWS |
 
 ---
 

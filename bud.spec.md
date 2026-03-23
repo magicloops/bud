@@ -97,6 +97,8 @@ pending → creating → ready ↔ active → idle → closed
 
 ```
 bud/
+├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
+│
 ├── bud/                    # Rust device daemon
 │   ├── src/
 │   │   └── main.rs         # Monolithic daemon implementation
@@ -476,6 +478,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [reference/IOS_MOBILE_BACKEND_HANDOFF.md](./reference/IOS_MOBILE_BACKEND_HANDOFF.md) | Comprehensive reference handoff for the iOS team covering the current auth assumptions, Bud/thread/message/model API contract, SSE/runtime behavior, and the specific web-client gotchas that matter for mobile integration |
 | [reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md](./reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md) | Reference backend response to the iOS team’s thread-message UX questions, documenting the current paginated message-history contract, non-delta `agent.message` semantics, replay/reconnect rules, stable stream identifiers, and current tool-payload truncation behavior |
 | [reference/AGENT_STREAM_EVENT_FIXTURES.md](./reference/AGENT_STREAM_EVENT_FIXTURES.md) | Checked-in reference fixtures for the current thread agent-stream contract, covering success, failure, cancellation, resume-by-event-id replay, and live-only fallback on replay misses |
+| [reference/render-multi-service-architecture.md](./reference/render-multi-service-architecture.md) | Captured Render guidance for the platform's generic multi-service pattern; useful as a contrast case because it assumes separate frontend/backend public URLs instead of Bud's chosen one-origin path-routing model |
 | [docs/proto.md](./docs/proto.md) | Wire protocol specification |
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
 | [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
@@ -483,10 +486,11 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/mobile-api-simplify/implementation-spec.md](./plan/mobile-api-simplify/implementation-spec.md) | Phased implementation plan for simplifying Bud’s transcript history and agent-stream contracts so both web and mobile can consume a cleaner, more durable thread API |
 | [plan/mobile-api-simplify/progress-checklist.md](./plan/mobile-api-simplify/progress-checklist.md) | Running checklist for the transcript-history and agent-stream simplification work, tracking paging, stream semantics, reference-web adoption, true assistant streaming, and handoff validation |
 | [plan/ios-local-auth/implementation-spec.md](./plan/ios-local-auth/implementation-spec.md) | Focused implementation plan for the local iOS auth handoff, covering public-origin alignment, deterministic client provisioning, revoke cleanup, and bundle publication |
-| [plan/deploy/implementation-spec.md](./plan/deploy/implementation-spec.md) | Phased implementation plan for the prototype Render deployment, covering the single-origin contract, service readiness, checked-in Render config, and deployed mobile-testing validation |
+| [plan/deploy/implementation-spec.md](./plan/deploy/implementation-spec.md) | Phased implementation plan for the prototype Render staging deployment, covering the single-origin contract, service readiness, checked-in Render config, deployed mobile-testing validation, and the post-validation production-provider decision |
 | [plan/api-snake-case-normalization.md](./plan/api-snake-case-normalization.md) | Focused implementation plan for normalizing Bud-owned wire contracts to snake_case across the in-use service, web, stream, and any small daemon-facing payload leaks found during implementation |
 | [plan/mobile-auth/phase-2-deferred-validation-checklist.md](./plan/mobile-auth/phase-2-deferred-validation-checklist.md) | Deferred runtime-validation checklist for the hosted mobile OAuth flow while prototype work proceeds into the API-contract phase |
-| [plan/deploy/validation-checklist.md](./plan/deploy/validation-checklist.md) | Release-gate checklist for the prototype Render deployment, covering public-origin auth, Bud claim/bootstrap, SSE, WebSockets, DB/migration posture, and mobile bundle publication |
+| [plan/deploy/validation-checklist.md](./plan/deploy/validation-checklist.md) | Release-gate checklist for the prototype Render deployment, covering public-origin auth, Bud claim/bootstrap, SSE, WebSockets, DB/migration posture, mobile bundle publication, and the post-validation platform decision |
+| [plan/deploy/cloudflare-front-door-runbook.md](./plan/deploy/cloudflare-front-door-runbook.md) | Operator runbook for the default Cloudflare-in-front-of-Render staging shape, including the exact service-path origin rule, cache bypass expectations, deploy order, rollback entry points, and the note that production may still move to a cleaner edge-routing provider |
 | [plan/fix-session-per-thread/implementation-spec.md](./plan/fix-session-per-thread/implementation-spec.md) | Focused implementation plan for fixing terminal session lifecycle semantics, active-session uniqueness, and idle-close defaults |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [debug/ios-local-oauth-client-provisioning-id-null.md](./debug/ios-local-oauth-client-provisioning-id-null.md) | Debug note documenting why the first run of `pnpm oauth:provision:ios-local` fails on a fresh database: the provisioning script omits the required `auth.oauthClient.id` primary key on insert |
@@ -509,6 +513,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/render-deployment-review-and-topology-options.md](./design/render-deployment-review-and-topology-options.md) | Deployment review of the current web/service/Bud topology for a first production-like Render rollout, including current codebase gaps, Render-specific constraints, and cloud-agnostic infrastructure options |
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
 | [design/terminal-session-lifecycle-and-thread-uniqueness.md](./design/terminal-session-lifecycle-and-thread-uniqueness.md) | Review of the current terminal session lifecycle, why the thread-id uniqueness bug predates the mobile-auth branch, and the recommended fix direction |
+| [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries and service env placeholders |
 | [PR_SUMMARY.md](./PR_SUMMARY.md) | High-level branch summary for the `mobile-auth` PR relative to `origin/main`, covering the mobile auth foundation, local iOS bring-up work, API contract cleanup, manual validation, and deferred follow-up scope |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |

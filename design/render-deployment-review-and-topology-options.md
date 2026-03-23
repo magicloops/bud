@@ -10,6 +10,11 @@ Bud now has three externally relevant runtime surfaces:
 
 This document reviews the current codebase for deployment readiness on Render and outlines cloud-agnostic deployment options for production.
 
+It now distinguishes between:
+
+- a Render-hosted staging environment we can stand up quickly for mobile iteration
+- a longer-term production platform choice, which remains open
+
 ## Executive Summary
 
 The current codebase is deployable to a production-like environment, but only under a specific shape:
@@ -26,7 +31,13 @@ The cleanest near-term model is:
 3. Route `/api/*`, `/.well-known/*`, and `/ws` to `service`.
 4. Route everything else to `web`.
 
-Cloudflare is a reasonable way to do that on top of Render. The same pattern also maps cleanly to AWS, GCP, or other providers with an edge/router layer.
+Cloudflare is a reasonable way to do that on top of Render for staging. The same pattern also maps cleanly to AWS, GCP, or other providers with an edge/router layer.
+
+The main update after reviewing Render's generic multi-service guidance is:
+
+- Render is still a reasonable place to run Bud's first public staging environment
+- Render's generic multi-service pattern is not Bud's target browser architecture
+- if we want the cleanest long-term production story for one public origin with path-based routing, AWS is currently the cleaner default than trying to stretch Render into that role
 
 ## What The Codebase Assumes Today
 
@@ -244,6 +255,8 @@ These are not blockers for a prototype deployment, but they are real production 
 - Render supports monorepo root directories and build filters
 - Render supports `preDeployCommand` in `render.yaml`
 
+These traits make Render a good staging host for Bud's prototype environment.
+
 ### What needs explicit setup on Render
 
 For `web`:
@@ -269,6 +282,28 @@ For the database:
 
 - use managed Postgres from Render or an external provider
 - keep it on a private/internal connection path where possible
+
+### Render's generic multi-service guidance does not match Bud's browser model
+
+Render's multi-service architecture guide presents the common pattern of:
+
+- frontend at one public URL
+- backend at a different public URL
+- frontend configured with the backend's public URL via environment variables
+
+That is a valid Render pattern for many apps, but it is not the right default for Bud today.
+
+Why it does not fit:
+
+- Bud's browser and hosted-auth flow are same-origin in practice
+- Bud wants `/api/auth/*`, `/.well-known/*`, `/api/*`, and `/ws` under one public hostname
+- the Bud daemon also derives its claim/bootstrap HTTP origin from its configured WebSocket origin
+- adopting the generic Render pattern would push us toward split public frontend/backend domains, which Bud is not production-ready for today
+
+Conclusion:
+
+- do not treat Render's generic multi-service guide as Bud's target topology
+- treat it as evidence that Render supports separate services, not evidence that Render solves Bud's one-origin routing requirements by itself
 
 ### Render-specific same-domain note
 
@@ -321,6 +356,8 @@ Cons:
 Fit for Bud today:
 
 - best overall fit
+- the right default for Render staging
+- also the shape that maps most cleanly to AWS production if we move off Render later
 
 ### Option B: Single combined app service serving web and API together
 
@@ -394,7 +431,7 @@ Fit for Bud today:
 
 - experimental option only
 
-## Recommended Prototype Deployment
+## Recommended Prototype / Staging Deployment
 
 ### Recommended shape
 
@@ -414,6 +451,24 @@ It is the best balance of:
 - compatibility with the current auth/browser architecture
 - clean path to future scaling
 - separation of web and backend deploy units
+
+### Staging vs production posture
+
+For Bud today, this recommendation splits into two platform decisions:
+
+- **Staging / prototype**: Render is acceptable and still the fastest path to a real HTTPS environment for mobile testing.
+- **Production**: keep the provider choice open until after staging validation. If we want a cleaner first-class path-routing edge story with fewer provider-specific workarounds, AWS is currently the leading candidate.
+
+This is not because AWS fixes Bud's single-instance backend constraint. It does not.
+
+It is because AWS has a more explicit native path-routing story for:
+
+- one hostname
+- multiple origins/backends
+- WebSocket-capable paths
+- a static frontend plus an API/backend split
+
+That makes AWS a cleaner production successor once the staging environment proves the current Bud contracts end to end.
 
 ### Public routing contract
 
@@ -465,6 +520,21 @@ After migration parity is confirmed:
 
 - move schema application into Render `preDeployCommand`
 
+## Production Successor Note
+
+If the team decides Render is only a staging host, the cleanest production successor is currently:
+
+- static web assets behind CloudFront
+- service behind an ALB or equivalent app origin
+- one CloudFront distribution with path-based behaviors for `/api/*`, `/.well-known/*`, `/ws`, and app routes
+
+That maps closely to Bud's desired one-origin model without requiring the frontend to proxy backend traffic.
+
+It does not change the existing backend constraints:
+
+- `service` should still remain single-instance until Bud connection and SSE state move out of process-local memory
+- split browser/API domains are still a follow-up project, not the default production browser shape
+
 ## Follow-Up Implementation Work
 
 Before or alongside the first real deployment, the next engineering tranche should do the following:
@@ -490,7 +560,7 @@ Before or alongside the first real deployment, the next engineering tranche shou
 
 ## Bottom Line
 
-For Bud's current codebase, the simplest robust production-like deployment is not "one Render service for everything" and not "separate browser/API domains."
+For Bud's current codebase, the simplest robust production-like deployment is not "one Render service for everything," not "Render's generic split frontend/backend URL pattern," and not "separate browser/API domains."
 
 It is:
 
@@ -499,10 +569,11 @@ It is:
 - path-based routing at the edge
 - one backend instance
 
-That gives us a production-like setup on Render without forcing the browser/auth model into a topology it is not yet ready to support.
+That gives us a production-like staging setup on Render without forcing the browser/auth model into a topology it is not yet ready to support, while keeping AWS or another edge-friendly provider open for production.
 
 ## References
 
+- [Render Multi-Service Architectures](https://render.com/docs/multi-service-architecture)
 - [Render Blueprint YAML Reference](https://render.com/docs/blueprint-spec)
 - [Render Monorepo Support](https://render.com/docs/monorepo-support)
 - [Render Default Environment Variables](https://render.com/docs/environment-variables)
@@ -510,3 +581,6 @@ That gives us a production-like setup on Render without forcing the browser/auth
 - [Render WebSockets](https://render.com/docs/websocket)
 - [Render Private Services](https://render.com/docs/private-services)
 - [Render Static Site Redirects And Rewrites](https://render.com/docs/redirects-rewrites)
+- [Render Custom Domains](https://render.com/docs/custom-domains)
+- [Amazon CloudFront Cache Behavior Settings](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/DownloadDistValuesCacheBehavior.html)
+- [Amazon CloudFront WebSocket Support](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/distribution-working-with.websockets.html)

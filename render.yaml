@@ -1,0 +1,97 @@
+# Render hosts the individual Bud workloads. The public same-origin entrypoint
+# is provided by Cloudflare or another path-routing edge layer in front of the
+# two `.onrender.com` origins.
+
+services:
+  - type: web
+    name: bud-web
+    runtime: static
+    plan: free
+    rootDir: web
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: web/dist
+    buildFilter:
+      paths:
+        - web/**
+      ignoredPaths:
+        - web/**/*.spec.md
+        - web/.env.example
+        - web/README.md
+        - web/dist/**
+        - web/plan/**
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+
+  - type: web
+    name: bud-service
+    runtime: node
+    plan: starter
+    region: oregon
+    rootDir: service
+    numInstances: 1
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    preDeployCommand: pnpm db:migrate
+    startCommand: pnpm start
+    healthCheckPath: /readyz
+    buildFilter:
+      paths:
+        - service/**
+      ignoredPaths:
+        - service/**/*.spec.md
+        - service/.env.example
+        - service/README.md
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: "0.0.0.0"
+      - key: LOG_LEVEL
+        value: info
+      # Bud currently opens separate main/auth pg pools, so keep the per-pool
+      # cap conservative on the starter prototype deployment.
+      - key: PG_POOL_MAX
+        value: "5"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bud-postgres
+          property: connectionString
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: ENROLLMENT_HASH_SECRET
+        generateValue: true
+      - key: APP_BASE_URL
+        sync: false
+      - key: BETTER_AUTH_URL
+        sync: false
+      - key: API_AUDIENCE
+        sync: false
+      - key: BETTER_AUTH_TRUSTED_ORIGINS
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+databases:
+  - name: bud-postgres
+    plan: basic-256mb
+    region: oregon
+    postgresMajorVersion: "17"
+    databaseName: bud
+    user: bud
+    ipAllowList: []

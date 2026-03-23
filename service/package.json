@@ -19,7 +19,7 @@
     "oauth:provision:ios-local": "tsx src/scripts/provision-ios-local-oauth-client.ts"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0 || >=22.12.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",

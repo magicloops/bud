@@ -27,9 +27,22 @@ For the local iOS auth flow, `http://localhost:5173` is also the public auth ori
 Optional:
 
 - `VITE_API_BASE_URL=http://localhost:3000`
-  Use this only if you want direct cross-origin API calls instead of the Vite proxy.
+  Use this only if you want direct cross-origin API calls instead of the Vite proxy. It is not the recommended browser deployment shape today.
 - `VITE_ROUTER_DEVTOOLS=true`
 - `VITE_SHOW_SYSTEM_MESSAGES=false`
+
+## Prototype Deployment Contract
+
+For the current prototype deployment, the browser should still see one public origin even though `web` and `service` deploy as separate workloads behind it.
+
+Recommended deployed browser behavior:
+
+- leave `VITE_API_BASE_URL` unset
+- serve the app from the same public origin used by hosted auth pages
+- route `/api/*`, `/.well-known/*`, and `/ws` to `service`
+- route non-API app paths to `web`
+
+Cross-origin browser API mode is intentionally not the default deployment path for the current prototype.
 
 ## Local Run
 
@@ -56,3 +69,4 @@ The important routes for auth testing are:
 
 - Vite 7 requires Node `20.19+` or `22.12+`.
 - For local phone/LAN testing, make sure the service `APP_BASE_URL` points at a web origin the phone can actually open.
+- For the deployed prototype environment, the public browser origin should match `APP_BASE_URL` / `BETTER_AUTH_URL`.
