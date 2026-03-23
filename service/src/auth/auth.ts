@@ -230,22 +230,6 @@ function injectDefaultTokenResource(
     params = new URLSearchParams(body);
   } else if (body instanceof URLSearchParams) {
     params = new URLSearchParams(body);
-  } else if (body && typeof body === "object" && !(body instanceof Buffer) && !(body instanceof Uint8Array)) {
-    params = new URLSearchParams();
-    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
-      if (value === undefined || value === null) {
-        continue;
-      }
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (item !== undefined && item !== null) {
-            params.append(key, String(item));
-          }
-        }
-        continue;
-      }
-      params.append(key, String(value));
-    }
   }
 
   if (!params || params.has("resource")) {

@@ -558,7 +558,7 @@ Current thread-scoped SSE payloads are route-specific. The SSE frame `id:` is th
   `{ "turn_id":"01TURN...", "call_id":"call_123", "name":"terminal.run", "args":{"input":"git status\n"} }`
 
 * `agent.tool_result`
-  `{ "turn_id":"01TURN...", "call_id":"call_123", "message_id":"uuid", "name":"terminal.run", "output":"...", "output_bytes":123, "truncated":false, "omitted_lines":0, "message": { "message_id":"uuid", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.run\",...}", "metadata":{"tool":"terminal.run","call_id":"call_123"}, "created_at":"2026-03-22T22:09:58.000Z" } }`
+  `{ "turn_id":"01TURN...", "call_id":"call_123", "message_id":"uuid", "name":"terminal.run", "summary":"Ran git status", "output":"...", "output_bytes":123, "truncated":false, "output_truncation_reason":null, "omitted_lines":0, "message": { "message_id":"uuid", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.run\",...}", "metadata":{"tool":"terminal.run","call_id":"call_123","summary":"Ran git status","output_truncation_reason":null}, "created_at":"2026-03-22T22:09:58.000Z" } }`
 
 * `terminal.output`
   `{ "event_id":"...", "ts":1731, "data":"base64url" }`
@@ -593,6 +593,7 @@ data: {"turn_id":"01TURN...","message_id":"uuid","text":"...","message":{"messag
 
 * Keep‑alive: `: heartbeat\n\n`
 * Assistant draft semantics: clients may build a temporary assistant row from `agent.message_start` / `agent.message_delta` / `agent.message_done`, but the persisted transcript row still arrives later as `agent.message`
+* Tool-result semantics: `summary` is the compact server-owned label for collapsed UI, while `truncated` / `output_truncation_reason` describe whether the raw tool output itself was partial
 * Resume: Client MAY send header `Last-Event-ID: 01E...` or query param `last_event_id=01E...`; server replays only buffered events strictly after that frame id when it is still available in memory.
 * Replay miss: If the requested resume id is no longer buffered, the server falls back to live-only delivery and the client SHOULD reconcile against canonical history.
 

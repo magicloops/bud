@@ -1,5 +1,7 @@
 # Phase 5: Polish, Validation, And Handoff
 
+**Status**: Complete
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 
 ---
@@ -49,6 +51,13 @@ If needed, add lightweight fields such as:
 - `output_preview`
 - `output_truncation_reason`
 
+Status: implemented.
+
+Current shipped additions:
+
+- compact tool `summary` fields on persisted tool-row metadata and live `agent.tool_result`
+- explicit `output_truncation_reason` values so clients can distinguish Bud-runtime truncation from service backfill truncation
+
 ### Task 2: Publish fixtures
 
 Add checked-in fixtures for:
@@ -60,6 +69,8 @@ Add checked-in fixtures for:
 - cancel stream
 - reconnect/replay example
 
+Status: implemented.
+
 ### Task 3: Update handoff docs
 
 Refresh:
@@ -70,19 +81,31 @@ Refresh:
 
 The goal is to remove stale caveats once the contract really lands.
 
+Status: implemented.
+
 ### Task 4: Run validation passes
 
 Validate both backend and reference web consumption against the new contract.
 
+Status: implemented.
+
+Validation used for closure:
+
+- `pnpm --dir /Users/adam/bud/service build`
+- `pnpm --dir /Users/adam/bud/service test`
+- `pnpm --dir /Users/adam/bud/web build`
+- `git diff --check`
+- manual assistant-stream smoke run reported successful by the user on 2026-03-22
+
 ## Validation Checklist
 
-- [ ] tool truncation and size semantics are fully documented
-- [ ] any added summary/preview fields are stable and documented
-- [ ] fixtures exist for both history and SSE contracts
-- [ ] root handoff docs match actual shipped behavior
-- [ ] service and web specs are updated for all touched areas
-- [ ] end-to-end validation confirms the simplified contract works as designed
+- [x] tool truncation and size semantics are fully documented
+- [x] any added summary/preview fields are stable and documented
+- [x] fixtures exist for both history and SSE contracts
+- [x] root handoff docs match actual shipped behavior
+- [x] service and web specs are updated for all touched areas
+- [x] end-to-end validation confirms the simplified contract works as designed
 
 ## Exit Criteria
 
-This phase is done when a future client team can implement against Bud’s transcript API and SSE contract without needing to inspect server internals or web-specific workaround logic.
+This phase is done when a future client team can implement against Bud’s transcript API and SSE contract without needing to inspect server internals or web-specific workaround logic. That condition is now met for the current contract in this branch.

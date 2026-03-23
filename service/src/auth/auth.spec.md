@@ -27,6 +27,7 @@ Initializes the Better Auth runtime.
 - Enables implicit same-email linking for trusted providers
 - Prefers the GitHub `login` field when mapping provider profiles to Bud users
 - Adapts Fastify requests/responses to Better Auth's Fetch-style handler
+- Normalizes forwarded JSON and form bodies before dispatching to Better Auth, so downstream token-resource injection only reparses already-normalized form payloads
 - Defaults `/oauth2/token` `resource` to Bud's API audience for trusted first-party clients when they omit it, so mobile bearer access tokens are minted as JWTs usable against `/api/me`
 - Verifies mobile bearer JWTs against the mounted OAuth issuer (`BETTER_AUTH_URL + /api/auth`) instead of the bare Better Auth origin, so `/api/me` accepts locally minted tokens with `iss=http://localhost:5173/api/auth`
 - Exposes a shared helper for dispatching internal Better Auth subrequests from Bud-owned routes

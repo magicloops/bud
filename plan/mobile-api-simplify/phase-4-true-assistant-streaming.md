@@ -1,6 +1,6 @@
 # Phase 4: True Assistant Streaming
 
-**Status**: Implemented, validation in progress
+**Status**: Complete
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 
@@ -119,20 +119,18 @@ Current decision:
 
 - [x] assistant text arrives as true deltas, not only one final body
 - [x] final assistant transcript state still converges to canonical persisted history
-- [ ] tool-call orchestration has fresh end-to-end manual validation under the streaming model
+- [x] tool-call orchestration has fresh end-to-end manual validation under the streaming model
 - [x] cancellation and failure semantics remain explicit under the new stream model
 - [x] clients can render draft assistant content without depending on markdown finalization mid-stream
 
 Validation completed in this branch:
 
+- `pnpm --dir /Users/adam/bud/service build`
 - `pnpm --dir /Users/adam/bud/service test`
 - `pnpm --dir /Users/adam/bud/web build`
 - `git diff --check`
-
-Validation still desirable:
-
-- one fresh end-to-end send/tool/final smoke run against the live service/web stack after the Phase 4 changes
+- manual end-to-end send/tool/final smoke run reported successful by the user on 2026-03-22
 
 ## Exit Criteria
 
-This phase is effectively implemented once “assistant streaming” means real incremental backend behavior, not a client illusion built on one final message event. The remaining follow-up is live validation depth, not contract design.
+This phase is complete: “assistant streaming” now means real incremental backend behavior, not a client illusion built on one final message event, and the branch has live validation for the send/tool/final path.

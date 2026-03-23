@@ -115,6 +115,7 @@ Thread and message management, plus terminal operations (~650 lines).
 - agent payloads now include a per-turn `turn_id`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
 - tool events now expose the real `call_id`
+- `agent.tool_result` now also exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
 - `agent.message_done` carries the full draft assistant text just before canonical persistence, which helps reconnecting clients reconcile missed deltas within the in-memory replay window
 - `final` still marks completion, but healthy successful turns no longer require a refetch just to recover assistant/tool message IDs

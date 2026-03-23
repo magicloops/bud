@@ -1,6 +1,6 @@
 # Implementation Spec: Simplify Mobile Transcript API And Stream Contracts
 
-**Status**: In Progress
+**Status**: Complete
 **Created**: 2026-03-22
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Phase 1**: [phase-1-message-history-contract.md](./phase-1-message-history-contract.md)
@@ -62,12 +62,12 @@ The simplest long-term direction is:
 
 ## Success Criteria
 
-- [ ] `GET /api/threads/:thread_id/messages` supports real cursor paging with explicit metadata.
-- [ ] Message ordering is stable and documented across all pages.
-- [ ] Agent SSE events carry stable identifiers sufficient for transcript reconciliation.
-- [ ] Replay/reconnect semantics are explicit and tested.
-- [ ] The reference web thread view no longer depends on `final` full-array replacement for normal correctness.
-- [ ] Tool payload semantics are normalized and documented enough that clients do not need implementation archaeology.
+- [x] `GET /api/threads/:thread_id/messages` supports real cursor paging with explicit metadata.
+- [x] Message ordering is stable and documented across all pages.
+- [x] Agent SSE events carry stable identifiers sufficient for transcript reconciliation.
+- [x] Replay/reconnect semantics are explicit and tested.
+- [x] The reference web thread view no longer depends on `final` full-array replacement for normal correctness.
+- [x] Tool payload semantics are normalized and documented enough that clients do not need implementation archaeology.
 - [x] There is a clean incremental contract for future assistant text streaming, and the first shipped version now exists.
 
 ## Design Anchors
@@ -174,8 +174,9 @@ These decisions are fixed for this plan:
 
 ## Definition Of Done
 
-- [ ] Phase 1-2 contracts are implemented and documented.
-- [ ] The reference web thread view uses those contracts without the current brittle reconciliation pattern.
-- [ ] Mobile-facing docs no longer describe nonexistent paging or implied streaming behavior.
-- [ ] The new transcript and SSE contracts are covered by fixtures and integration-level checks.
-- [ ] Future assistant delta streaming has a clear contract path instead of another ad hoc event addition.
+- [x] Phase 1-2 contracts are implemented and documented.
+- [x] The reference web thread view uses those contracts without the current brittle reconciliation pattern.
+- [x] Mobile-facing docs no longer describe nonexistent paging or implied streaming behavior.
+- [x] The new transcript and SSE contracts are covered by fixtures and integration-level checks.
+- [x] Future assistant delta streaming has a clear contract path instead of another ad hoc event addition.
+- [x] The shipped branch has passed service build, service tests, web build, diff checks, and a live smoke run for the new assistant-streaming path.

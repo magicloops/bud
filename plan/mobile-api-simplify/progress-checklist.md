@@ -75,9 +75,9 @@ Use this as the running status board while the transcript-history and agent-stre
 
 ### Tool Payloads
 
-- [ ] tool truncation semantics are documented per tool.
-- [ ] output-size semantics are documented per tool.
-- [ ] optional summary/preview fields are added if still justified.
+- [x] tool truncation semantics are documented per tool.
+- [x] output-size semantics are documented per tool.
+- [x] optional summary/preview fields are added if still justified.
 
 ### Handoff And Validation
 
@@ -85,7 +85,7 @@ Use this as the running status board while the transcript-history and agent-stre
 - [x] `IOS_MOBILE_BACKEND_HANDOFF.md` is updated.
 - [x] `IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md` is updated.
 - [x] touched specs are updated.
-- [ ] end-to-end validation is complete.
+- [x] end-to-end validation is complete.
 
 ## Overall Progress
 
@@ -94,8 +94,8 @@ Use this as the running status board while the transcript-history and agent-stre
 | 1 | Complete | Cursor-paged history contract, examples, and handoff docs are aligned |
 | 2 | Complete | Stable identifiers, resume-by-event-id replay, checked-in stream fixtures, replay tests, and web/manual validation are now in place |
 | 3 | Complete | Web uses paged history plus backend-provided live identifiers and only falls back to canonical refetch on reconnect/drift |
-| 4 | Implemented | Provider streaming, assistant draft SSE events, web draft reconciliation, and contract docs are in place; additional live validation is still useful |
-| 5 | In Progress | Fixtures and docs are landing early; remaining work is mostly payload polish and broader end-to-end validation |
+| 4 | Complete | Provider streaming, assistant draft SSE events, web draft reconciliation, and the live send/tool/final smoke path are validated |
+| 5 | Complete | Tool-payload semantics, fixtures, handoff docs, and the full build/test/smoke validation set are aligned with the shipped contract |
 
 ## Notes
 

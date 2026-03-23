@@ -151,6 +151,9 @@ This pattern replaces the previous approach of `sendInput` + `waitForReadiness` 
 - `terminal.output` carries `seq`, `data`, and `byte_offset`
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
+- `runCommand()` returns Bud-owned `truncated` / `outputBytes` values for `terminal.run`
+- `capturePane()` currently has no separate truncation flag; agent tool payloads treat capture output as not truncated
+- `tailOutput(maxBytes)` underlies `terminal.interrupt` tool payloads, so interrupt truncation is a service backfill-window concern rather than a Bud runtime limit
 
 **Ownership Notes**:
 - `createRunRecord()` stamps `run.created_by_user_id` from the caller or owning thread

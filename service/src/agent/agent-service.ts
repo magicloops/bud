@@ -167,6 +167,8 @@ const DEFAULT_READINESS_HINTS: ReadinessHints = {
   may_still_be_processing: false
 };
 
+const TOOL_SUMMARY_MAX_CHARS = 96;
+
 // Canonical tool definitions using standard JSON Schema
 // Optional fields are simply omitted from `required` - providers handle transformation
 const CANONICAL_TOOLS: CanonicalTool[] = [
@@ -396,10 +398,12 @@ export class AgentService {
               call_id: toolCall.callId,
               message_id: toolMessage.message_id,
               name: toolCall.tool,
+              summary: toolPayload.summary,
               output: result.output,
               output_bytes: result.outputBytes,
               readiness: result.readiness,
               truncated: result.truncated,
+              output_truncation_reason: toolPayload.output_truncation_reason,
               omitted_lines: result.omittedLines,
               message: toolMessage,
             },
@@ -1126,16 +1130,20 @@ export class AgentService {
     threadId: string,
     directive: Extract<AgentDirective, { type: "tool_call" }>,
     result: TerminalCallResult,
-    ownerUserId?: string | null,
+  ownerUserId?: string | null,
   ): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage }> {
+    const summary = this.buildToolSummary(directive);
+    const outputTruncationReason = this.getToolOutputTruncationReason(directive, result);
     const payload = {
       tool: directive.tool,
       call_id: directive.callId,
       input: directive.input ?? null,
+      summary,
       output: result.output,
       output_bytes: result.outputBytes,
       readiness: result.readiness,
       truncated: result.truncated,
+      output_truncation_reason: outputTruncationReason,
       omitted_lines: result.omittedLines,
       context: result.context
     };
@@ -1154,13 +1162,78 @@ export class AgentService {
       metadata: messageTable.metadata,
       createdAt: messageTable.createdAt,
     });
-    const contextInfo = result.context?.mode === "repl" ? ` [${result.context.program}]` : "";
-    const preview = `${directive.tool} ready=${(result.readiness as { ready?: boolean }).ready ?? false}${contextInfo}`;
-    await recordThreadMessageMetadata(threadId, preview);
+    await recordThreadMessageMetadata(threadId, summary);
     return {
       payload,
       message: this.serializePersistedMessage(toolMessage),
     };
+  }
+
+  private buildToolSummary(
+    directive: Extract<AgentDirective, { type: "tool_call" }>
+  ): string {
+    switch (directive.tool) {
+      case "terminal.run": {
+        const commandSummary = this.summarizeTerminalInput(directive.input ?? "");
+        return commandSummary ? `Ran ${commandSummary}` : "Ran terminal command";
+      }
+      case "terminal.capture":
+        if (directive.wait === true) {
+          return "Captured terminal after waiting for readiness";
+        }
+        if (typeof directive.lines === "number") {
+          return `Captured terminal scrollback (${directive.lines} lines)`;
+        }
+        return "Captured terminal view";
+      case "terminal.interrupt":
+        return "Sent Ctrl+C";
+    }
+  }
+
+  private summarizeTerminalInput(input: string): string | null {
+    const lines = input
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      return null;
+    }
+
+    const firstLine = this.truncateSummary(lines[0], TOOL_SUMMARY_MAX_CHARS);
+    if (lines.length === 1) {
+      return firstLine;
+    }
+
+    const suffix =
+      lines.length === 2 ? "(+1 more line)" : `(+${lines.length - 1} more lines)`;
+    return `${firstLine} ${suffix}`;
+  }
+
+  private truncateSummary(text: string, maxChars: number): string {
+    if (text.length <= maxChars) {
+      return text;
+    }
+    return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+
+  private getToolOutputTruncationReason(
+    directive: Extract<AgentDirective, { type: "tool_call" }>,
+    result: TerminalCallResult
+  ): "bud_runtime_limit" | "service_backfill_limit" | null {
+    if (!result.truncated) {
+      return null;
+    }
+
+    switch (directive.tool) {
+      case "terminal.run":
+        return "bud_runtime_limit";
+      case "terminal.interrupt":
+        return "service_backfill_limit";
+      case "terminal.capture":
+        return null;
+    }
   }
 
   private serializePersistedMessage(message: PersistedAgentMessage): SerializedAgentMessage {

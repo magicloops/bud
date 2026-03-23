@@ -128,7 +128,7 @@ Via `AgentEventBus`, using `threadId` as the channel:
 | `agent.message_delta` | `{ turn_id, delta }` | Incremental assistant-text append |
 | `agent.message_done` | `{ turn_id, text }` | Draft assistant text complete, before canonical persistence |
 | `agent.tool_call` | `{ turn_id, call_id, name, args }` | Before executing tool |
-| `agent.tool_result` | `{ turn_id, call_id, message_id, name, output, ..., message }` | After tool execution, including the persisted canonical tool row |
+| `agent.tool_result` | `{ turn_id, call_id, message_id, name, summary, output, output_truncation_reason, ..., message }` | After tool execution, including the persisted canonical tool row |
 | `agent.message` | `{ turn_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
 | `final` | `{ turn_id, status, message_id?, text? }` or `{ turn_id, status, error }` | Flow complete |
 
@@ -138,6 +138,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `turn_id` groups all live events for one agent turn
 - `agent.message_start` / `agent.message_delta` / `agent.message_done` describe a client-side draft, not a persisted transcript row
 - `call_id` on `agent.tool_call` / `agent.tool_result` matches the persisted tool row `metadata.call_id`
+- tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
 - `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
