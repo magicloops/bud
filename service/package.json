@@ -10,7 +10,7 @@
     "build": "tsc --project tsconfig.json",
     "start": "node dist/server.js",
     "lint": "eslint \"src/**/*.ts\"",
-    "test": "tsx src/runtime/session-manager.test.ts",
+    "test": "node --import tsx --test src/runtime/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "tsx src/scripts/db-push.ts",

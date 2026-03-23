@@ -28,7 +28,7 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
             ▼                               ▼
 ┌─────────────────────┐         ┌─────────────────────┐
 │   OpenAIProvider    │         │  AnthropicProvider  │
-│                     │         │     (Phase 4)       │
+│                     │         │                     │
 │ - GPT-4o, GPT-5     │         │ - Claude 3.5, 4     │
 │ - Reasoning support │         │ - Extended thinking │
 └─────────────────────┘         └─────────────────────┘
@@ -152,18 +152,20 @@ initializeProviders();
 
 // In agent service
 const provider = providerRegistry.getProviderForModel("gpt-5.2");
-const response = await provider.invokeSync!(messages, tools, {
+for await (const event of provider.invoke(messages, tools, {
   model: "gpt-5.2",
   maxOutputTokens: 4096,
   reasoning: { enabled: true, effort: "medium" },
-  responseFormat: "json",
-});
-
-// Extract tool calls
-if (response.toolCalls?.length) {
-  // Handle tool call
+  responseFormat: "text",
+})) {
+  // Handle canonical stream events
 }
 ```
+
+**Current Agent Usage**:
+- `AgentService` now uses provider `invoke()` streams as the primary path for chat turns.
+- The agent reconstructs a `CanonicalResponse` from streamed text/tool/reasoning events after also forwarding assistant draft text to browser clients over SSE.
+- `invokeSync()` remains an optional adapter capability, but it is no longer the main chat-agent path in this repo.
 
 ## Canonical Tool Schema
 

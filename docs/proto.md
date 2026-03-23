@@ -66,7 +66,7 @@ Breaking changes will bump `proto` (e.g., `0.2`).
   `Cache-Control: no-cache, no-transform`,  
   `Connection: keep-alive`
 - Keep‑alive comment every **15 s**.
-- Client MAY use `Last-Event-ID` to resume.
+- Client MAY use `Last-Event-ID` or a route-specific `last_event_id` query parameter to resume when the endpoint supports replay.
 
 ### 2.3 Terminal Event Stream (Browser)
 
@@ -79,9 +79,10 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 
 - URL: `GET /api/threads/:thread_id/agent/stream`
 - Same SSE headers + keep-alive semantics as runs.
-- Events: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat`.
+- Events: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat`.
 - Used by the workbench to receive agent conversation events.
 - Separate from terminal stream to support offline scenarios (conversation without terminal).
+- Draft assistant text is streamed before canonical persistence, then successful agent payloads carry a per-turn `turn_id`, stable tool `call_id`, and canonical persisted transcript rows under `message`.
 
 ---
 
@@ -534,23 +535,30 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
 
 **Event names** and **payloads**. Every event includes:
 
-```json
-{ "event_id":"01E...", "ts":1731, "...": "..." }
-```
+Current thread-scoped SSE payloads are route-specific. The SSE frame `id:` is the event identifier; the JSON payload does not currently embed a second `event_id`.
 
 ### 7.1 Events
 
 * `status`
   `{ "event_id":"...", "ts":1731, "phase":"queued|planning|running|canceling|succeeded|failed|canceled" }`
 
+* `agent.message_start`
+  `{ "turn_id":"01TURN..." }`
+
+* `agent.message_delta`
+  `{ "turn_id":"01TURN...", "delta":"Cloning " }`
+
+* `agent.message_done`
+  `{ "turn_id":"01TURN...", "text":"Cloning repository..." }`
+
 * `agent.message`
-  `{ "event_id":"...", "ts":1731, "text":"Cloning repository..." }`
+  `{ "turn_id":"01TURN...", "message_id":"uuid", "text":"Cloning repository...", "message": { "message_id":"uuid", "role":"assistant", "display_role":"Bud Agent", "content":"Cloning repository...", "metadata":{"status":"succeeded"}, "created_at":"2026-03-22T22:10:00.000Z" } }`
 
 * `agent.tool_call`
-  `{ "event_id":"...", "ts":1731, "name":"terminal.run", "args":{"input":"git status\n"} }`
+  `{ "turn_id":"01TURN...", "call_id":"call_123", "name":"terminal.run", "args":{"input":"git status\n"} }`
 
 * `agent.tool_result`
-  `{ "event_id":"...", "ts":1731, "name":"terminal.run", "output":"..." }`
+  `{ "turn_id":"01TURN...", "call_id":"call_123", "message_id":"uuid", "name":"terminal.run", "output":"...", "output_bytes":123, "truncated":false, "omitted_lines":0, "message": { "message_id":"uuid", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.run\",...}", "metadata":{"tool":"terminal.run","call_id":"call_123"}, "created_at":"2026-03-22T22:09:58.000Z" } }`
 
 * `terminal.output`
   `{ "event_id":"...", "ts":1731, "data":"base64url" }`
@@ -568,7 +576,7 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
   `{ "event_id":"...", "ts":1731, "bud_id":"b_01H..." }`
 
 * `final`
-  `{ "event_id":"...", "ts":1731, "status":"succeeded|failed|canceled", "text":"Done." }`
+  `{ "turn_id":"01TURN...", "status":"succeeded|failed|canceled", "message_id":"uuid?", "text":"Done.", "error":"..." }`
 
 
 ### 7.2 SSE framing
@@ -578,13 +586,15 @@ Server MUST emit in this format:
 ```
 id: 01E...
 event: agent.message
-data: {"event_id":"01E...","ts":1731,"text":"..."}
+data: {"turn_id":"01TURN...","message_id":"uuid","text":"...","message":{"message_id":"uuid","role":"assistant","display_role":"Bud Agent","content":"...","metadata":{"status":"succeeded"},"created_at":"2026-03-22T22:10:00.000Z"}}
 
 \n
 ```
 
 * Keep‑alive: `: heartbeat\n\n`
-* Resume: Client MAY send header `Last-Event-ID: 01E...`; server SHOULD replay from a small ring buffer if available.
+* Assistant draft semantics: clients may build a temporary assistant row from `agent.message_start` / `agent.message_delta` / `agent.message_done`, but the persisted transcript row still arrives later as `agent.message`
+* Resume: Client MAY send header `Last-Event-ID: 01E...` or query param `last_event_id=01E...`; server replays only buffered events strictly after that frame id when it is still available in memory.
+* Replay miss: If the requested resume id is no longer buffered, the server falls back to live-only delivery and the client SHOULD reconcile against canonical history.
 
 ---
 

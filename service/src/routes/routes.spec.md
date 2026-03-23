@@ -68,7 +68,7 @@ Thread and message management, plus terminal operations (~650 lines).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/threads/:thread_id/messages` | Get owned messages (limit configurable) |
+| `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
 | `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync), triggers agent |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
@@ -96,9 +96,104 @@ Thread and message management, plus terminal operations (~650 lines).
 - `CreateThreadSchema` - `bud_id` required, `title` optional
 - `CreateMessageSchema` - `text` required, `cwd` and `reasoning_effort` optional
 - `ThreadParamsSchema` - UUID validation
+- `MessagesQuerySchema` - `limit` plus exclusive `before` / `after` opaque cursors
 - `TerminalEnsureBodySchema` - Optional `shell`, `cwd`, `cols`, `rows`
 - `TerminalResizeBodySchema` - Required `cols`, `rows`
 - `TerminalInputBodySchema` - Required `input`
+
+**Message History Contract**:
+- `GET /api/threads/:thread_id/messages` now returns an envelope: `{ messages, page }`
+- page results are always ordered oldest-to-newest within the returned window
+- cursors are opaque but derived from `(created_at, message_id)` so tied timestamps remain stable
+- `before` requests older history than the cursor boundary (exclusive)
+- `after` requests newer history than the cursor boundary (exclusive)
+- the latest-page request is `GET /api/threads/:thread_id/messages?limit=<n>` with no cursor
+- page metadata includes `has_more_before`, `has_more_after`, `before_cursor`, `after_cursor`, `returned`, and `limit`
+
+**Agent Stream Contract**:
+- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, and `heartbeat`
+- agent payloads now include a per-turn `turn_id`
+- assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
+- tool events now expose the real `call_id`
+- successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
+- `agent.message_done` carries the full draft assistant text just before canonical persistence, which helps reconnecting clients reconcile missed deltas within the in-memory replay window
+- `final` still marks completion, but healthy successful turns no longer require a refetch just to recover assistant/tool message IDs
+- replay can resume from either the standard `Last-Event-ID` header or the optional `last_event_id` query parameter
+- when the provided resume cursor is still in the in-memory buffer, only newer buffered events are replayed
+- when the resume cursor is missing from the buffer, the stream falls back to live-only delivery and clients should reconcile with canonical history
+
+**Message History Examples**:
+
+Latest page:
+```json
+{
+  "messages": [
+    {
+      "message_id": "6c06d627-9043-4d71-a9cc-8b35ef3f7c59",
+      "role": "assistant",
+      "display_role": "Assistant",
+      "content": "Latest reply",
+      "metadata": {},
+      "created_at": "2026-03-22T20:15:04.000Z"
+    },
+    {
+      "message_id": "4b6d4e04-c407-49b0-9738-80985d95cf9b",
+      "role": "user",
+      "display_role": "User",
+      "content": "Newest prompt",
+      "metadata": {},
+      "created_at": "2026-03-22T20:15:09.000Z"
+    }
+  ],
+  "page": {
+    "limit": 2,
+    "returned": 2,
+    "has_more_before": true,
+    "has_more_after": false,
+    "before_cursor": "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMy0yMlQyMDoxNTowNC4wMDBaIiwibWVzc2FnZV9pZCI6IjZjMDZkNjI3LTkwNDMtNGQ3MS1hOWNjLThiMzVlZjNmN2M1OSJ9",
+    "after_cursor": "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMy0yMlQyMDoxNTowOS4wMDBaIiwibWVzc2FnZV9pZCI6IjRiNmQ0ZTA0LWM0MDctNDliMC05NzM4LTgwOTg1ZDk1Y2Y5YiJ9"
+  }
+}
+```
+
+Older page via `before`:
+```json
+{
+  "messages": [
+    {
+      "message_id": "d7d8f7e8-2947-4ba4-91d9-c5f2966d661f",
+      "role": "user",
+      "display_role": "User",
+      "content": "Older prompt",
+      "metadata": {},
+      "created_at": "2026-03-22T20:14:01.000Z"
+    }
+  ],
+  "page": {
+    "limit": 2,
+    "returned": 1,
+    "has_more_before": false,
+    "has_more_after": true,
+    "before_cursor": "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMy0yMlQyMDoxNDowMS4wMDBaIiwibWVzc2FnZV9pZCI6ImQ3ZDhmN2U4LTI5NDctNGJhNC05MWQ5LWM1ZjI5NjZkNjYxZiJ9",
+    "after_cursor": "eyJjcmVhdGVkX2F0IjoiMjAyNi0wMy0yMlQyMDoxNDowMS4wMDBaIiwibWVzc2FnZV9pZCI6ImQ3ZDhmN2U4LTI5NDctNGJhNC05MWQ5LWM1ZjI5NjZkNjYxZiJ9"
+  }
+}
+```
+
+Empty response at the beginning of history:
+```json
+{
+  "messages": [],
+  "page": {
+    "limit": 2,
+    "returned": 0,
+    "has_more_before": false,
+    "has_more_after": true,
+    "before_cursor": null,
+    "after_cursor": null
+  }
+}
+```
 
 **Context Sync Flow** (POST /messages):
 Before creating user message, checks for terminal state changes:
@@ -226,11 +321,35 @@ Available LLM model listing for authenticated product clients.
 ```json
 {
   "message_id": "uuid",
-  "role": "user | assistant | tool",
+  "role": "user | assistant | tool | system",
   "display_role": "string",
   "content": "string",
   "metadata": {},
   "created_at": "ISO date"
+}
+```
+
+**Message Page Response**:
+```json
+{
+  "messages": [
+    {
+      "message_id": "uuid",
+      "role": "user | assistant | tool | system",
+      "display_role": "string",
+      "content": "string",
+      "metadata": {},
+      "created_at": "ISO date"
+    }
+  ],
+  "page": {
+    "limit": 100,
+    "returned": 100,
+    "has_more_before": true,
+    "has_more_after": false,
+    "before_cursor": "opaque cursor",
+    "after_cursor": "opaque cursor"
+  }
 }
 ```
 

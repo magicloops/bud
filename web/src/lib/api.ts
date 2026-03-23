@@ -281,6 +281,18 @@ export type ApiMessage = {
   created_at: string
 }
 
+export type ApiMessagePage = {
+  messages: ApiMessage[]
+  page: {
+    limit: number
+    returned: number
+    has_more_before: boolean
+    has_more_after: boolean
+    before_cursor: string | null
+    after_cursor: string | null
+  }
+}
+
 // Normalize capabilities from API response
 export function normalizeCapabilities(caps: unknown): {
   sessions: boolean

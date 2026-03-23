@@ -30,7 +30,7 @@ Defines agent behavior as "Bud Agent" with:
 - Readiness confidence interpretation (≥0.8 ready, 0.5-0.8 probably ready, <0.5 still processing)
 - Hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (detecting when inside Python/Node/Claude Code vs shell)
-- Output format requirements (JSON with `type`, `status`, `message`)
+- Final-response guidance (direct markdown text, no JSON wrapper)
 
 #### Tool Definitions (Lines 130-191)
 
@@ -60,8 +60,8 @@ Three canonical tool definitions using standard JSON Schema format:
 | `startUserMessage(threadId, options)` | Entry point - spawns async agent flow and carries thread-owner stamping |
 | `runAgentFlow(...)` | Main loop - invoke model, handle tools, emit events |
 | `buildConversation(threadId)` | Load message history into canonical `CanonicalMessage[]` format |
-| `invokeModel(messages, reasoningEffort, signal)` | Call LLM via provider's `invokeSync()` |
-| `parseResponse(response)` | Extract final directive from `CanonicalResponse` |
+| `invokeModel(threadId, turnId, messages, reasoningEffort, signal)` | Consume provider `invoke()` streams, emit draft assistant SSE, and reconstruct a canonical response |
+| `parseResponse(response)` | Extract final assistant text from `CanonicalResponse` |
 | `extractFunctionCall(response)` | Extract tool calls from `response.toolCalls` |
 | `executeTerminalCall(threadId, toolCall)` | Run terminal.* tools via TerminalSessionManager (uses `runCommand()` for terminal.run) |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
@@ -79,16 +79,26 @@ startUserMessage()
                   │
                   ├─► invokeModel()
                   │
+                  ├─► emit agent.message_start / delta / done (text responses only)
+                  │
                   ├─► extractFunctionCall()
                   │      │
                   │      ├─► tool_call found → executeTerminalCall()
                   │      │                      └─► emit agent.tool_result
                   │      │
                   │      └─► no tool → parseResponse()
+                  │                    └─► persist assistant row
                   │                    └─► emit agent.message + final
                   │
                   └─► continue or return
 ```
+
+**Streaming Notes**:
+- The agent no longer asks the model to wrap final answers in JSON.
+- Provider `invoke()` streams are now the primary path; `AgentService` reconstructs a `CanonicalResponse` from provider text/tool/reasoning events.
+- Draft assistant text is emitted live over SSE via `agent.message_start`, `agent.message_delta`, and `agent.message_done`.
+- The persisted assistant transcript row is still created only once the turn resolves, then emitted as `agent.message`.
+- Reasoning blocks are preserved inside the in-memory conversation on tool-call loops so providers that require multi-turn reasoning context do not lose those items.
 
 **Reasoning Effort Support**:
 
@@ -114,12 +124,24 @@ Via `AgentEventBus`, using `threadId` as the channel:
 
 | Event | Data | When |
 |-------|------|------|
-| `agent.tool_call` | `{ id, name, args }` | Before executing tool |
-| `agent.tool_result` | `{ name, output, readiness, ... }` | After tool execution |
-| `agent.message` | `{ text }` | Final response text |
-| `final` | `{ status, text }` or `{ status, error }` | Flow complete |
+| `agent.message_start` | `{ turn_id }` | First visible assistant-text chunk for a turn |
+| `agent.message_delta` | `{ turn_id, delta }` | Incremental assistant-text append |
+| `agent.message_done` | `{ turn_id, text }` | Draft assistant text complete, before canonical persistence |
+| `agent.tool_call` | `{ turn_id, call_id, name, args }` | Before executing tool |
+| `agent.tool_result` | `{ turn_id, call_id, message_id, name, output, ..., message }` | After tool execution, including the persisted canonical tool row |
+| `agent.message` | `{ turn_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
+| `final` | `{ turn_id, status, message_id?, text? }` or `{ turn_id, status, error }` | Flow complete |
 
 Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
+
+**Reconciliation Notes**:
+- `turn_id` groups all live events for one agent turn
+- `agent.message_start` / `agent.message_delta` / `agent.message_done` describe a client-side draft, not a persisted transcript row
+- `call_id` on `agent.tool_call` / `agent.tool_result` matches the persisted tool row `metadata.call_id`
+- `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
+- `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
+- `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
+- replay resume is keyed off the SSE frame `id:` rather than the JSON payload; if the requested resume id is no longer buffered, clients should treat reconnect as drift recovery and refetch canonical history
 
 **Buffer Management**: The event buffer is cleared at the start of each new agent run (`startUserMessage`). This prevents stale events (especially `final` from previous runs) from being replayed to new SSE connections, which would cause the stream to close prematurely.
 

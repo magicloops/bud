@@ -12,6 +12,10 @@ export type TerminalEvent = SseEvent;
 // eslint-disable-next-line no-unused-vars
 type Listener = (evt: SseEvent) => void;
 
+type AttachOptions = {
+  lastEventId?: string | null;
+};
+
 class SseEventBus {
   private readonly listeners = new Map<string, Set<Listener>>();
   private readonly buffers = new Map<string, SseEvent[]>();
@@ -51,7 +55,35 @@ class SseEventBus {
     this.buffers.delete(channelId);
   }
 
-  attach(channelId: string, reply: FastifyReply): () => void {
+  private getReplayBuffer(channelId: string, options?: AttachOptions) {
+    const buffer = this.buffers.get(channelId) ?? [];
+    const lastEventId = options?.lastEventId ?? null;
+
+    if (!lastEventId) {
+      return {
+        buffer,
+        replay: buffer,
+        resumeFound: null as boolean | null,
+      };
+    }
+
+    const lastSeenIndex = buffer.findIndex((event) => event.id === lastEventId);
+    if (lastSeenIndex === -1) {
+      return {
+        buffer,
+        replay: [] as SseEvent[],
+        resumeFound: false,
+      };
+    }
+
+    return {
+      buffer,
+      replay: buffer.slice(lastSeenIndex + 1),
+      resumeFound: true,
+    };
+  }
+
+  attach(channelId: string, reply: FastifyReply, options?: AttachOptions): () => void {
     const listener: Listener = (event) => {
       reply.log.info(
         { channelId, event: event.event, component: "sse" },
@@ -64,20 +96,31 @@ class SseEventBus {
     listeners.add(listener);
     this.listeners.set(channelId, listeners);
 
-    const buffer = this.buffers.get(channelId) ?? [];
+    const replayState = this.getReplayBuffer(channelId, options);
     reply.log.info(
-      { channelId, buffered: buffer.length, component: "sse" },
+      {
+        channelId,
+        buffered: replayState.buffer.length,
+        replaying: replayState.replay.length,
+        lastEventId: options?.lastEventId ?? null,
+        resumeFound: replayState.resumeFound,
+        component: "sse",
+      },
       "SSE listener attached"
     );
     // Prime the SSE response immediately when there is no buffered event to replay.
     // fastify-sse-v2 only initializes the streaming response on the first reply.sse() call.
-    if (buffer.length === 0) {
+    if (replayState.replay.length === 0) {
       reply.sse({
         event: "heartbeat",
-        data: JSON.stringify({ ts: Date.now(), initial: true }),
+        data: JSON.stringify(
+          replayState.buffer.length === 0
+            ? { ts: Date.now(), initial: true }
+            : { ts: Date.now() },
+        ),
       });
     }
-    for (const event of buffer) {
+    for (const event of replayState.replay) {
       listener(event);
     }
 
@@ -99,14 +142,13 @@ class SseEventBus {
    * Attach a callback-style listener for use in manual SSE streams.
    * Replays buffered events immediately.
    */
-  attachCallback(channelId: string, callback: Listener): () => void {
+  attachCallback(channelId: string, callback: Listener, options?: AttachOptions): () => void {
     const listeners = this.listeners.get(channelId) ?? new Set();
     listeners.add(callback);
     this.listeners.set(channelId, listeners);
 
-    // Replay buffered events
-    const buffer = this.buffers.get(channelId) ?? [];
-    for (const event of buffer) {
+    const replayState = this.getReplayBuffer(channelId, options);
+    for (const event of replayState.replay) {
       callback(event);
     }
 

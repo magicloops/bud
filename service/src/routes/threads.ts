@@ -14,7 +14,7 @@ import {
 import { AgentService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
-import { and, asc, desc, eq, lt, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { TerminalEventBus, AgentEventBus } from "../runtime/event-bus.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
@@ -41,8 +41,16 @@ const ThreadListQuerySchema = z.object({
   bud_id: z.string().optional()
 });
 
+const StreamResumeQuerySchema = z.object({
+  last_event_id: z.string().min(1).optional(),
+});
+
 const MessagesQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(100)
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  before: z.string().min(1).optional(),
+  after: z.string().min(1).optional(),
+}).refine((value) => !(value.before && value.after), {
+  message: "before and after cannot both be set",
 });
 
 const RunsQuerySchema = z.object({
@@ -138,6 +146,58 @@ function serializeMessage(row: typeof messageTable.$inferSelect) {
   };
 }
 
+const MessageCursorSchema = z.object({
+  created_at: z.string(),
+  message_id: z.string().uuid(),
+});
+
+type MessageCursor = {
+  createdAt: Date;
+  messageId: string;
+};
+
+function encodeMessageCursor(row: Pick<typeof messageTable.$inferSelect, "createdAt" | "messageId">) {
+  return Buffer.from(
+    JSON.stringify({
+      created_at: row.createdAt.toISOString(),
+      message_id: row.messageId,
+    }),
+    "utf-8",
+  ).toString("base64url");
+}
+
+function decodeMessageCursor(value: string): MessageCursor | null {
+  try {
+    const parsed = MessageCursorSchema.parse(
+      JSON.parse(Buffer.from(value, "base64url").toString("utf-8")),
+    );
+    const createdAt = new Date(parsed.created_at);
+    if (Number.isNaN(createdAt.getTime())) {
+      return null;
+    }
+    return {
+      createdAt,
+      messageId: parsed.message_id,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function olderThanMessageCursor(cursor: MessageCursor) {
+  return or(
+    lt(messageTable.createdAt, cursor.createdAt),
+    and(eq(messageTable.createdAt, cursor.createdAt), lt(messageTable.messageId, cursor.messageId)),
+  );
+}
+
+function newerThanMessageCursor(cursor: MessageCursor) {
+  return or(
+    gt(messageTable.createdAt, cursor.createdAt),
+    and(eq(messageTable.createdAt, cursor.createdAt), gt(messageTable.messageId, cursor.messageId)),
+  );
+}
+
 async function requireAuthorizedThreadAccess(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -155,6 +215,19 @@ async function requireAuthorizedThreadAccess(
   }
 
   return { viewer, thread };
+}
+
+function readLastEventId(request: FastifyRequest, queryValue?: string) {
+  if (queryValue) {
+    return queryValue;
+  }
+
+  const header = request.headers["last-event-id"];
+  if (Array.isArray(header)) {
+    return header[0] ?? null;
+  }
+
+  return typeof header === "string" && header.length > 0 ? header : null;
 }
 
 export async function registerThreadRoutes(
@@ -262,13 +335,27 @@ export async function registerThreadRoutes(
 
   server.get("/api/threads/:threadId/messages", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
-    const query = MessagesQuerySchema.parse(request.query ?? {});
+    const parsedQuery = MessagesQuerySchema.safeParse(request.query ?? {});
+    if (!parsedQuery.success) {
+      reply.code(400).send({ error: "invalid_query", details: parsedQuery.error.message });
+      return;
+    }
+    const query = parsedQuery.data;
     const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
     if (!access) {
       return;
     }
 
     const { thread, viewer } = access;
+    const beforeCursor = query.before ? decodeMessageCursor(query.before) : null;
+    const afterCursor = query.after ? decodeMessageCursor(query.after) : null;
+
+    if ((query.before && !beforeCursor) || (query.after && !afterCursor)) {
+      reply.code(400).send({ error: "invalid_cursor" });
+      return;
+    }
+
+    const fetchNewerWindow = Boolean(afterCursor);
     const rows = await db
       .select()
       .from(messageTable)
@@ -276,11 +363,34 @@ export async function registerThreadRoutes(
         and(
           eq(messageTable.threadId, thread.threadId),
           eq(messageTable.createdByUserId, viewer.userId),
+          beforeCursor ? olderThanMessageCursor(beforeCursor) : undefined,
+          afterCursor ? newerThanMessageCursor(afterCursor) : undefined,
         ),
       )
-      .orderBy(desc(messageTable.createdAt))
-      .limit(query.limit);
-    reply.send(rows.map(serializeMessage));
+      .orderBy(
+        fetchNewerWindow ? asc(messageTable.createdAt) : desc(messageTable.createdAt),
+        fetchNewerWindow ? asc(messageTable.messageId) : desc(messageTable.messageId),
+      )
+      .limit(query.limit + 1);
+
+    const hasExtraRow = rows.length > query.limit;
+    const pageRows = rows.slice(0, query.limit);
+    const orderedRows = fetchNewerWindow ? pageRows : [...pageRows].reverse();
+    const hasMoreBefore = afterCursor ? true : hasExtraRow;
+    const hasMoreAfter = beforeCursor ? true : hasExtraRow && fetchNewerWindow;
+
+    reply.send({
+      messages: orderedRows.map(serializeMessage),
+      page: {
+        limit: query.limit,
+        returned: orderedRows.length,
+        has_more_before: hasMoreBefore,
+        has_more_after: hasMoreAfter,
+        before_cursor: orderedRows.length > 0 ? encodeMessageCursor(orderedRows[0]) : null,
+        after_cursor:
+          orderedRows.length > 0 ? encodeMessageCursor(orderedRows[orderedRows.length - 1]) : null,
+      },
+    });
   });
 
   server.get("/api/threads/:threadId/runs", async (request, reply) => {
@@ -451,13 +561,16 @@ export async function registerThreadRoutes(
   // GET /api/threads/:threadId/agent/stream - SSE for agent events
   server.get("/api/threads/:threadId/agent/stream", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const query = StreamResumeQuerySchema.parse(request.query ?? {});
     const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
     if (!access) {
       return;
     }
 
     // Subscribe to agent events for this thread
-    const detach = agentEvents.attach(params.threadId, reply);
+    const detach = agentEvents.attach(params.threadId, reply, {
+      lastEventId: readLastEventId(request, query.last_event_id),
+    });
 
     // Send periodic heartbeat
     const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
@@ -595,6 +708,7 @@ export async function registerThreadTerminalRoutes(
   // GET /api/threads/:threadId/terminal/stream - SSE output stream
   server.get("/api/threads/:threadId/terminal/stream", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
+    const query = StreamResumeQuerySchema.parse(request.query ?? {});
     const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
     if (!access) {
       return;
@@ -607,7 +721,9 @@ export async function registerThreadTerminalRoutes(
     }
 
     // Subscribe to session events using the event bus
-    const detach = terminalEvents.attach(session.sessionId, reply);
+    const detach = terminalEvents.attach(session.sessionId, reply, {
+      lastEventId: readLastEventId(request, query.last_event_id),
+    });
 
     // Send periodic heartbeat to keep connection alive
     const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;

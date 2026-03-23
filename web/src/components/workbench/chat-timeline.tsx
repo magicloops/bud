@@ -1,5 +1,5 @@
 import ReactJsonView from '@microlink/react-json-view'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
@@ -20,9 +20,20 @@ export type ChatMessage = {
 type ChatTimelineProps = {
   messages: ChatMessage[]
   accentColor: string
+  hasOlderMessages?: boolean
+  isLoadingOlderMessages?: boolean
+  onLoadOlderMessages?: (() => void) | null
+  scrollContainerRef?: MutableRefObject<HTMLDivElement | null>
 }
 
-const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => {
+const ChatTimelineComponent = ({
+  messages,
+  accentColor,
+  hasOlderMessages = false,
+  isLoadingOlderMessages = false,
+  onLoadOlderMessages = null,
+  scrollContainerRef,
+}: ChatTimelineProps) => {
   const [systemColor, setSystemColor] = useState(accentColor || 'var(--avatar-3)')
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const shouldStickRef = useRef(true)
@@ -47,6 +58,16 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
     setSystemColor(getMutedColor(resolved, 0.4))
   }, [accentColor])
 
+  const setScrollNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollRef.current = node
+      if (scrollContainerRef) {
+        scrollContainerRef.current = node
+      }
+    },
+    [scrollContainerRef],
+  )
+
   const orderedMessages = useMemo(() => {
     const sorted = [...messages].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -54,6 +75,11 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
     // Filter out system messages unless config.showSystemMessages is enabled
     return config.showSystemMessages ? sorted : sorted.filter((m) => m.role !== 'system')
   }, [messages])
+
+  const scrollSyncKey = useMemo(() => {
+    const lastMessage = orderedMessages.at(-1)
+    return `${orderedMessages.length}:${lastMessage?.id ?? ''}:${lastMessage?.content.length ?? 0}`
+  }, [orderedMessages])
 
   useEffect(() => {
     const node = scrollRef.current
@@ -81,7 +107,7 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
     requestAnimationFrame(() => {
       requestAnimationFrame(syncScroll)
     })
-  }, [orderedMessages.length])
+  }, [scrollSyncKey])
 
   useEffect(() => {
     const next: Record<string, boolean> = {}
@@ -99,7 +125,25 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
   }, [orderedMessages])
 
   return (
-    <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+    <div ref={setScrollNode} className="flex-1 space-y-3 overflow-y-auto p-4">
+      {onLoadOlderMessages && (
+        <div className="flex justify-center pb-1">
+          {hasOlderMessages ? (
+            <button
+              type="button"
+              onClick={onLoadOlderMessages}
+              disabled={isLoadingOlderMessages}
+              className="rounded-full border-2 border-black bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-foreground shadow-[2px_2px_0px_rgba(0,0,0,1)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+            >
+              {isLoadingOlderMessages ? 'Loading older…' : 'Load older messages'}
+            </button>
+          ) : orderedMessages.length > 0 ? (
+            <p className="text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
+              Start of transcript
+            </p>
+          ) : null}
+        </div>
+      )}
       {orderedMessages.length === 0 && (
         <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
       )}
@@ -108,6 +152,7 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
           const isTool = message.role === 'tool'
           const isSystem = message.role === 'system'
           const isAssistant = message.role === 'assistant' && !isTool
+          const isDraftAssistant = isAssistant && message.metadata?.draft === true
           const payload = isTool ? resolveToolPayload(message) : null
 
           // System messages have distinct minimal styling
@@ -194,6 +239,11 @@ const ChatTimelineComponent = ({ messages, accentColor }: ChatTimelineProps) => 
                   />
                 </div>
               )}
+            </div>
+          ) : isDraftAssistant ? (
+            <div className="whitespace-pre-wrap">
+              {message.content}
+              <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded-sm bg-current align-middle" />
             </div>
           ) : RoleContentRenderer ? (
             <RoleContentRenderer content={message.content} />

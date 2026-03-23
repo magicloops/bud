@@ -87,7 +87,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and local a
 | `build` | `tsc` | Compile TypeScript |
 | `start` | `node dist/server.js` | Run compiled build |
 | `lint` | `eslint "src/**/*.ts"` | Lint source files |
-| `test` | `tsx src/runtime/session-manager.test.ts` | Run tests |
+| `test` | `node --import tsx --test src/runtime/*.test.ts` | Run standalone runtime tests |
 | `db:generate` | `drizzle-kit generate` | Legacy migration generation helper |
 | `db:migrate` | `drizzle-kit migrate` | Legacy migration apply helper |
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
@@ -136,6 +136,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and local a
 |------|--------|
 | `/api/runs/:id/stream` | `status`, `exec.stdout`, `exec.stderr`, `final` |
 | `/api/sessions/:id/stream` | `output`, `status` |
+| `/api/threads/:id/agent/stream` | `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat` |
 | `/api/threads/:id/terminal/stream` | `output`, `ready`, `status`, `heartbeat` |
 
 ## Architecture

@@ -23,8 +23,9 @@ Generic SSE event bus with buffering for replay.
 
 **Key Features**:
 - **Buffering**: Stores up to 1000 events per channel for replay
-- **Replay on attach**: New listeners receive buffered events
-- **Immediate stream priming**: Empty-buffer attaches emit an initial heartbeat frame so `fastify-sse-v2` opens the stream before the route returns
+- **Cursor-aware replay on attach**: New listeners receive buffered events, or only the events after a provided `last_event_id` / `Last-Event-ID` cursor when available
+- **Replay miss fallback**: If a resume cursor is not present in the in-memory buffer, the attach falls back to live-only delivery and relies on canonical history for recovery
+- **Immediate stream priming**: Any attach with zero replayable events emits a heartbeat frame so `fastify-sse-v2` opens the stream before the route returns
 - **Auto-cleanup**: Empty listener sets are removed
 
 **Methods**:
@@ -33,8 +34,17 @@ Generic SSE event bus with buffering for replay.
 |--------|-------------|
 | `emit(channelId, event)` | Broadcast event to listeners and buffer |
 | `clearBuffer(channelId)` | Clear buffer (e.g., on bud disconnect) |
-| `attach(channelId, reply)` | Attach Fastify reply as SSE listener |
-| `attachCallback(channelId, callback)` | Attach callback function as listener |
+| `attach(channelId, reply, { lastEventId? })` | Attach Fastify reply as SSE listener with optional cursor-aware replay |
+| `attachCallback(channelId, callback, { lastEventId? })` | Attach callback function as listener with the same replay semantics |
+
+### `event-bus.test.ts`
+
+Standalone Node test coverage for the replay contract.
+
+**Current Coverage**:
+- full-buffer replay when no cursor is provided
+- replay of only the buffered events after a known last event id
+- live-only fallback when the provided resume cursor is missing from the buffer
 
 ### `run-manager.ts`
 

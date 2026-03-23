@@ -75,17 +75,20 @@ Main thread view with full chat and terminal functionality (~1000 lines).
 **Loader**:
 ```typescript
 loader: async ({ params }) => {
-  const messages = await apiFetchJson(`/api/threads/${params.threadId}/messages?limit=200`)
-  return { messages }
+  const messagePage = await apiFetchJson(`/api/threads/${params.threadId}/messages?limit=100`)
+  return { messagePage }
 }
 ```
 
 **Major Features**:
 
 1. **Chat Timeline**
-   - Loads messages from loader data
+   - Loads the latest paged transcript window from loader data
    - Updates via SSE agent stream
    - Role-based rendering (user, assistant, tool)
+   - Consumes the paged `{ messages, page }` API contract
+   - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
+   - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
 
 2. **Terminal Integration**
    - xterm.js instance with FitAddon
@@ -100,8 +103,14 @@ loader: async ({ params }) => {
 
 3. **Agent Stream**
    - SSE connection to `/api/threads/:id/agent/stream`
-   - Event handling: `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`
-   - Message list updates from events
+   - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`
+   - Builds one per-turn draft assistant row from `agent.message_start` / `agent.message_delta`
+   - Treats `agent.message_done` as the final draft snapshot before canonical persistence
+   - Uses backend-provided `call_id`, `message_id`, and canonical `message` payloads to reconcile live events into the transcript
+   - Replaces draft assistant rows with the canonical persisted assistant row when `agent.message` arrives
+   - Reconnects pass the last seen SSE frame id back as `last_event_id` so the server can replay only newer buffered events when available
+   - Replaces the optimistic user-row id with the real `message_id` returned by `POST /messages`
+   - Healthy successful turns no longer require a mandatory `final` refetch just to learn assistant/tool message ids
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
 
 4. **Connection Management**
@@ -123,6 +132,7 @@ loader: async ({ params }) => {
 // UI state
 status: 'idle' | 'dispatching' | 'streaming'
 messages: ApiMessage[]
+messagePage: ApiMessagePage['page']
 viewMode: 'terminal' | 'web'
 
 // Terminal state
@@ -156,6 +166,7 @@ terminalOutputTruncated: boolean
 
 From `@/lib/api`:
 - `ApiMessage` - Message from API
+- `ApiMessagePage` - Paged transcript window with opaque cursors
 - `decodeTerminalData()` - Base64 decode helper
 
 ## Dependencies

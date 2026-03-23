@@ -61,6 +61,7 @@ export const decodeTerminalData = (data: string) => {
 | `ApiBud` | Bud response (id, name, status, capabilities) |
 | `ApiThread` | Thread response (id, title, session info) |
 | `ApiMessage` | Message response (id, role, content) |
+| `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 

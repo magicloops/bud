@@ -65,15 +65,19 @@ Message list with auto-scroll and collapsible messages.
 **Props**:
 - `messages` - Array of ChatMessage
 - `accentColor` - CSS color for user message accents
+- optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
 **Features**:
-- Auto-scroll to bottom when new messages arrive
+- Auto-scroll to bottom when new messages arrive or when the last visible message grows during assistant streaming
 - "Stick to bottom" behavior with manual scroll override
+- Top-of-timeline "Load older messages" control when older history exists
+- Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
 - Collapsible long messages (>500px) with "Show more/less"
 - Copy message button (appears on hover, bottom-right)
 - JSON payload viewer for tool messages
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
+- Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
 
 **Note**: Renders only the scrollable message area. Parent component provides the container wrapper.
 

@@ -25,6 +25,7 @@ import {
   isAuthRedirectPending,
   isApiError,
   type ApiMessage,
+  type ApiMessagePage,
 } from '@/lib/api'
 import { useLayout } from '@/contexts/layout-context'
 import { useBudStatus } from '@/contexts/bud-status-context'
@@ -40,14 +41,134 @@ const toLoginRedirect = (pathname: string, search = '', hash = '') =>
     },
   })
 
+const THREAD_MESSAGE_PAGE_LIMIT = 100
+const EMPTY_MESSAGE_PAGE: ApiMessagePage['page'] = {
+  limit: THREAD_MESSAGE_PAGE_LIMIT,
+  returned: 0,
+  has_more_before: false,
+  has_more_after: false,
+  before_cursor: null,
+  after_cursor: null,
+}
+
+type AgentToolCallEvent = {
+  turn_id: string
+  call_id: string
+  name: string
+  args?: Record<string, unknown>
+}
+
+type AgentToolResultEvent = {
+  turn_id: string
+  call_id: string
+  name: string
+  message?: ApiMessage
+}
+
+type AgentMessageStartEvent = {
+  turn_id: string
+}
+
+type AgentMessageDeltaEvent = {
+  turn_id: string
+  delta: string
+}
+
+type AgentMessageDoneEvent = {
+  turn_id: string
+  text: string
+}
+
+type AgentMessageEvent = {
+  turn_id: string
+  message_id: string
+  text: string
+  message?: ApiMessage
+}
+
+type AgentFinalEvent = {
+  turn_id: string
+  status: 'succeeded' | 'failed' | 'canceled'
+  message_id?: string
+  text?: string
+  error?: string
+}
+
+const pendingToolMessageId = (callId: string) => `tool_call:${callId}`
+const pendingAssistantMessageId = (turnId: string) => `assistant_draft:${turnId}`
+
+const mergeOlderMessages = (existing: ApiMessage[], older: ApiMessage[]) => {
+  const existingIds = new Set(existing.map((message) => message.message_id))
+  const uniqueOlder = older.filter((message) => !existingIds.has(message.message_id))
+  return [...uniqueOlder, ...existing]
+}
+
+const isSyntheticMessageId = (messageId: string) =>
+  messageId.startsWith('temp_') ||
+  messageId.startsWith('tool_call:') ||
+  messageId.startsWith('assistant_draft:')
+
+const sortMessagesChronologically = (messages: ApiMessage[]) =>
+  [...messages].sort((left, right) => {
+    const timeDelta = new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+    if (timeDelta !== 0) {
+      return timeDelta
+    }
+    return left.message_id.localeCompare(right.message_id)
+  })
+
+const upsertMessage = (existing: ApiMessage[], next: ApiMessage) => {
+  const nextMessages = [...existing]
+  const index = nextMessages.findIndex((message) => message.message_id === next.message_id)
+  if (index === -1) {
+    nextMessages.push(next)
+  } else {
+    nextMessages[index] = next
+  }
+  return sortMessagesChronologically(nextMessages)
+}
+
+const replaceMessageId = (existing: ApiMessage[], currentId: string, nextId: string) =>
+  sortMessagesChronologically(
+    existing.map((message) =>
+      message.message_id === currentId ? { ...message, message_id: nextId } : message,
+    ),
+  )
+
+const removeMessageById = (existing: ApiMessage[], messageId: string) =>
+  existing.filter((message) => message.message_id !== messageId)
+
+const removePendingToolMessagesForTurn = (existing: ApiMessage[], turnId: string) =>
+  existing.filter((message) => {
+    if (!message.message_id.startsWith('tool_call:')) {
+      return true
+    }
+
+    const metadata = message.metadata ?? {}
+    return metadata.turn_id !== turnId
+  })
+
+const upsertDraftAssistantMessage = (
+  existing: ApiMessage[],
+  turnId: string,
+  updater: (current: ApiMessage | null) => ApiMessage,
+) => {
+  const draftId = pendingAssistantMessageId(turnId)
+  const current = existing.find((message) => message.message_id === draftId) ?? null
+  return upsertMessage(existing, updater(current))
+}
+
+const removeDraftAssistantMessageForTurn = (existing: ApiMessage[], turnId: string) =>
+  existing.filter((message) => message.message_id !== pendingAssistantMessageId(turnId))
+
 export const Route = createFileRoute('/$budId/$threadId')({
   loader: async ({ params, location }) => {
     try {
-      const messages = await apiFetchJson<ApiMessage[]>(
-        `/api/threads/${params.threadId}/messages?limit=200`,
+      const messagePage = await apiFetchJson<ApiMessagePage>(
+        `/api/threads/${params.threadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
         { redirectOnUnauthorized: false },
       )
-      return { messages }
+      return { messagePage }
     } catch (error) {
       if (isApiError(error, 401)) {
         throw toLoginRedirect(location.href)
@@ -60,7 +181,7 @@ export const Route = createFileRoute('/$budId/$threadId')({
 
 function ThreadView() {
   const { budId, threadId } = Route.useParams()
-  const { messages: initialMessages } = Route.useLoaderData()
+  const { messagePage: initialMessagePage } = Route.useLoaderData()
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen, toggleThreadPanel } = useLayout()
@@ -69,7 +190,9 @@ function ThreadView() {
   const { updateStatus: updateBudStatus } = useBudStatus()
 
   const [messageText, setMessageText] = useState('')
-  const [messages, setMessages] = useState<ApiMessage[]>(initialMessages)
+  const [messages, setMessages] = useState<ApiMessage[]>(initialMessagePage.messages)
+  const [messagePage, setMessagePage] = useState<ApiMessagePage['page']>(initialMessagePage.page)
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -99,6 +222,10 @@ function ThreadView() {
   const [_terminalDisconnectTime, setTerminalDisconnectTime] = useState<number | null>(null)
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
   const [showDisconnectOverlay, setShowDisconnectOverlay] = useState(false)
+  const chatScrollRef = useRef<HTMLDivElement | null>(null)
+  const pendingPrependAdjustmentRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
+  const messagesRef = useRef<ApiMessage[]>(initialMessagePage.messages)
+  const messagePageRef = useRef<ApiMessagePage['page']>(initialMessagePage.page)
 
   // Terminal refs
   const terminalConnectionRef = useRef<'connected' | 'reconnecting' | 'offline' | 'disconnected'>('disconnected')
@@ -123,6 +250,7 @@ function ThreadView() {
   const agentReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentReconnectAttemptRef = useRef(0)
   const lastAgentEventTimeRef = useRef<number>(Date.now())
+  const lastAgentEventIdRef = useRef<string | null>(null)
   const agentThreadIdRef = useRef<string | null>(null)
 
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
@@ -164,8 +292,62 @@ function ThreadView() {
 
   // Update messages when loader data changes
   useEffect(() => {
-    setMessages(initialMessages)
-  }, [initialMessages])
+    setMessages(initialMessagePage.messages)
+    setMessagePage(initialMessagePage.page)
+    setIsLoadingOlderMessages(false)
+    pendingPrependAdjustmentRef.current = null
+  }, [initialMessagePage])
+
+  useEffect(() => {
+    const pendingAdjustment = pendingPrependAdjustmentRef.current
+    const node = chatScrollRef.current
+    if (!pendingAdjustment || !node) {
+      return
+    }
+
+    requestAnimationFrame(() => {
+      const currentNode = chatScrollRef.current
+      const currentAdjustment = pendingPrependAdjustmentRef.current
+      if (!currentNode || !currentAdjustment) {
+        return
+      }
+      const delta = currentNode.scrollHeight - currentAdjustment.scrollHeight
+      currentNode.scrollTop = currentAdjustment.scrollTop + delta
+      pendingPrependAdjustmentRef.current = null
+    })
+  }, [messages])
+
+  useEffect(() => {
+    messagesRef.current = messages
+    messagePageRef.current = messagePage
+  }, [messagePage, messages])
+
+  useEffect(() => {
+    lastAgentEventIdRef.current = null
+  }, [threadId])
+
+  const mergeLatestMessagePage = useCallback((nextPage: ApiMessagePage) => {
+    pendingPrependAdjustmentRef.current = null
+
+    const latestIds = new Set(nextPage.messages.map((message) => message.message_id))
+    const preservedOlderMessages = messagesRef.current.filter(
+      (message) => !isSyntheticMessageId(message.message_id) && !latestIds.has(message.message_id),
+    )
+
+    setMessages(sortMessagesChronologically([...preservedOlderMessages, ...nextPage.messages]))
+    setMessagePage({
+      ...nextPage.page,
+      returned: preservedOlderMessages.length + nextPage.messages.length,
+      has_more_before:
+        preservedOlderMessages.length > 0
+          ? messagePageRef.current.has_more_before
+          : nextPage.page.has_more_before,
+      before_cursor:
+        preservedOlderMessages.length > 0
+          ? messagePageRef.current.before_cursor
+          : nextPage.page.before_cursor,
+    })
+  }, [])
 
   // Track last sent dimensions to avoid redundant resize requests
   const lastSentDimensionsRef = useRef<{ cols: number; rows: number } | null>(null)
@@ -538,9 +720,10 @@ function ThreadView() {
   const fetchMessages = useCallback(async (thread: string | null) => {
     if (!thread) {
       setMessages([])
+      setMessagePage(EMPTY_MESSAGE_PAGE)
       return
     }
-    const resp = await apiFetch(`/api/threads/${thread}/messages?limit=200`)
+    const resp = await apiFetch(`/api/threads/${thread}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`)
     if (shouldAbortForUnauthorized(resp)) {
       return
     }
@@ -548,15 +731,68 @@ function ThreadView() {
       const body = await resp.json().catch(() => ({}))
       throw new Error(body.error ?? `HTTP ${resp.status}`)
     }
-    const data = (await resp.json()) as ApiMessage[]
-    setMessages(data)
-  }, [shouldAbortForUnauthorized])
+    const data = (await resp.json()) as ApiMessagePage
+    mergeLatestMessagePage(data)
+  }, [mergeLatestMessagePage, shouldAbortForUnauthorized])
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!threadId || !messagePage.has_more_before || !messagePage.before_cursor || isLoadingOlderMessages) {
+      return
+    }
+
+    const node = chatScrollRef.current
+    pendingPrependAdjustmentRef.current = node
+      ? { scrollHeight: node.scrollHeight, scrollTop: node.scrollTop }
+      : null
+
+    setIsLoadingOlderMessages(true)
+
+    try {
+      const resp = await apiFetch(
+        `/api/threads/${threadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}&before=${encodeURIComponent(messagePage.before_cursor)}`,
+      )
+      if (shouldAbortForUnauthorized(resp)) {
+        pendingPrependAdjustmentRef.current = null
+        setIsLoadingOlderMessages(false)
+        return
+      }
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${resp.status}`)
+      }
+
+      const data = (await resp.json()) as ApiMessagePage
+      setMessages((prev) => mergeOlderMessages(prev, data.messages))
+      setMessagePage((prev) => ({
+        ...prev,
+        returned: prev.returned + data.messages.length,
+        has_more_before: data.page.has_more_before,
+        before_cursor: data.page.before_cursor,
+      }))
+    } catch (err) {
+      pendingPrependAdjustmentRef.current = null
+      setError(err instanceof Error ? err.message : 'Failed to load older messages')
+    } finally {
+      setIsLoadingOlderMessages(false)
+    }
+  }, [
+    isLoadingOlderMessages,
+    messagePage.before_cursor,
+    messagePage.has_more_before,
+    shouldAbortForUnauthorized,
+    threadId,
+  ])
 
   // Agent SSE stream with reconnection support
   const connectAgentStream = useCallback((agentThreadId: string) => {
     agentThreadIdRef.current = agentThreadId
+    const resumeSuffix = lastAgentEventIdRef.current
+      ? `?last_event_id=${encodeURIComponent(lastAgentEventIdRef.current)}`
+      : ''
 
-    const agentStream = createAuthEventSource(`/api/threads/${agentThreadId}/agent/stream`)
+    const agentStream = createAuthEventSource(
+      `/api/threads/${agentThreadId}/agent/stream${resumeSuffix}`,
+    )
     const source = agentStream.source
     agentEventSourceRef.current = source
 
@@ -622,55 +858,162 @@ function ThreadView() {
 
     source.addEventListener('agent.tool_call', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
+      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
       // Set status to streaming when we detect agent activity
       setStatus((prev) => prev === 'idle' ? 'streaming' : prev)
       try {
-        const data = JSON.parse(evt.data) as { name: string; args: unknown }
+        const data = JSON.parse(evt.data) as AgentToolCallEvent
         console.log('[agent-sse] tool_call', data.name, data.args)
-        // Add tool call to messages for real-time streaming display
-        const argsObj = (typeof data.args === 'object' && data.args !== null) ? data.args as Record<string, unknown> : {}
-        setMessages((prev) => [
-          ...prev,
-          {
-            message_id: `tool_call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-            role: 'tool',
-            display_role: data.name,
-            content: JSON.stringify({ tool: data.name, ...argsObj }),
-            created_at: new Date().toISOString(),
-            metadata: { tool: data.name, ...argsObj }
-          }
-        ])
+        const argsObj =
+          typeof data.args === 'object' && data.args !== null
+            ? (data.args as Record<string, unknown>)
+            : {}
+        const pendingMessage: ApiMessage = {
+          message_id: pendingToolMessageId(data.call_id),
+          role: 'tool',
+          display_role: data.name,
+          content: JSON.stringify({ tool: data.name, call_id: data.call_id, ...argsObj }),
+          created_at: new Date().toISOString(),
+          metadata: { tool: data.name, call_id: data.call_id, turn_id: data.turn_id, pending: true, ...argsObj },
+        }
+        setMessages((prev) =>
+          upsertMessage(removeDraftAssistantMessageForTurn(prev, data.turn_id), pendingMessage),
+        )
       } catch (e) {
         console.warn('[agent-sse] failed to parse tool_call', e)
       }
     })
 
-    source.addEventListener('agent.tool_result', () => {
+    source.addEventListener('agent.tool_result', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
+      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      try {
+        const data = JSON.parse(evt.data) as AgentToolResultEvent
+        const canonicalMessage = data.message
+        if (!canonicalMessage) {
+          return
+        }
+        setMessages((prev) => {
+          const withoutPending = removeMessageById(prev, pendingToolMessageId(data.call_id))
+          return upsertMessage(withoutPending, canonicalMessage)
+        })
+      } catch (e) {
+        console.warn('[agent-sse] failed to parse agent.tool_result', e)
+      }
+    })
+
+    source.addEventListener('agent.message_start', (evt) => {
+      lastAgentEventTimeRef.current = Date.now()
+      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      setStatus((prev) => prev === 'idle' ? 'streaming' : prev)
+      try {
+        const data = JSON.parse(evt.data) as AgentMessageStartEvent
+        setMessages((prev) =>
+          upsertDraftAssistantMessage(prev, data.turn_id, (current) => ({
+            message_id: pendingAssistantMessageId(data.turn_id),
+            role: 'assistant',
+            display_role: 'Bud Agent',
+            content: current?.content ?? '',
+            created_at: current?.created_at ?? new Date().toISOString(),
+            metadata: {
+              ...(current?.metadata ?? {}),
+              turn_id: data.turn_id,
+              draft: true,
+            },
+          })),
+        )
+      } catch (e) {
+        console.warn('[agent-sse] failed to parse agent.message_start', e)
+      }
+    })
+
+    source.addEventListener('agent.message_delta', (evt) => {
+      lastAgentEventTimeRef.current = Date.now()
+      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      setStatus((prev) => prev === 'idle' ? 'streaming' : prev)
+      try {
+        const data = JSON.parse(evt.data) as AgentMessageDeltaEvent
+        setMessages((prev) =>
+          upsertDraftAssistantMessage(prev, data.turn_id, (current) => ({
+            message_id: pendingAssistantMessageId(data.turn_id),
+            role: 'assistant',
+            display_role: 'Bud Agent',
+            content: `${current?.content ?? ''}${data.delta}`,
+            created_at: current?.created_at ?? new Date().toISOString(),
+            metadata: {
+              ...(current?.metadata ?? {}),
+              turn_id: data.turn_id,
+              draft: true,
+            },
+          })),
+        )
+      } catch (e) {
+        console.warn('[agent-sse] failed to parse agent.message_delta', e)
+      }
+    })
+
+    source.addEventListener('agent.message_done', (evt) => {
+      lastAgentEventTimeRef.current = Date.now()
+      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      try {
+        const data = JSON.parse(evt.data) as AgentMessageDoneEvent
+        setMessages((prev) =>
+          upsertDraftAssistantMessage(prev, data.turn_id, (current) => ({
+            message_id: pendingAssistantMessageId(data.turn_id),
+            role: 'assistant',
+            display_role: 'Bud Agent',
+            content: data.text,
+            created_at: current?.created_at ?? new Date().toISOString(),
+            metadata: {
+              ...(current?.metadata ?? {}),
+              turn_id: data.turn_id,
+              draft: true,
+            },
+          })),
+        )
+      } catch (e) {
+        console.warn('[agent-sse] failed to parse agent.message_done', e)
+      }
     })
 
     source.addEventListener('agent.message', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
+      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
       try {
-        const data = JSON.parse(evt.data) as { text: string }
-        setMessages((prev) => [
-          ...prev,
-          {
-            message_id: `streaming_${Date.now()}`,
+        const data = JSON.parse(evt.data) as AgentMessageEvent
+        const canonicalMessage = data.message
+        if (canonicalMessage) {
+          setMessages((prev) =>
+            upsertMessage(removeDraftAssistantMessageForTurn(prev, data.turn_id), canonicalMessage),
+          )
+          return
+        }
+
+        setMessages((prev) =>
+          upsertMessage(removeDraftAssistantMessageForTurn(prev, data.turn_id), {
+            message_id: data.message_id,
             role: 'assistant',
-            display_role: 'Assistant',
+            display_role: 'Bud Agent',
             content: data.text,
-            created_at: new Date().toISOString()
-          }
-        ])
+            created_at: new Date().toISOString(),
+            metadata: {},
+          }),
+        )
       } catch (e) {
         console.warn('[agent-sse] failed to parse agent.message', e)
       }
     })
 
-    source.addEventListener('final', () => {
+    source.addEventListener('final', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
+      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
       console.log('[agent-sse] final event received')
+      let finalEvent: AgentFinalEvent | null = null
+      try {
+        finalEvent = JSON.parse(evt.data) as AgentFinalEvent
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse final event', error)
+      }
       if (agentReconnectTimerRef.current) {
         clearTimeout(agentReconnectTimerRef.current)
         agentReconnectTimerRef.current = null
@@ -678,10 +1021,20 @@ function ThreadView() {
       agentThreadIdRef.current = null
       cleanupAgent()
       setStatus('idle')
-      if (threadId) {
-        fetchMessages(threadId).catch((err) => {
-          console.error('[agent-sse] failed to fetch final messages', err)
+      if (finalEvent?.turn_id) {
+        const { turn_id: turnId } = finalEvent
+        setMessages((prev) => {
+          const withoutPendingTools = removePendingToolMessagesForTurn(prev, turnId)
+          if (finalEvent?.status === 'failed' || finalEvent?.status === 'canceled') {
+            return removeDraftAssistantMessageForTurn(withoutPendingTools, turnId)
+          }
+          return withoutPendingTools
         })
+      }
+      if (finalEvent?.status === 'failed') {
+        setError(finalEvent.error ?? 'Agent turn failed')
+      } else {
+        setError(null)
       }
     })
 
@@ -1084,6 +1437,7 @@ function ThreadView() {
     if (!threadId) return
 
     agentThreadIdRef.current = null
+    lastAgentEventIdRef.current = null
     if (agentReconnectTimerRef.current) {
       clearTimeout(agentReconnectTimerRef.current)
       agentReconnectTimerRef.current = null
@@ -1173,8 +1527,10 @@ function ThreadView() {
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
 
-      await messageResp.json() as { message_id: string }
+      const { message_id: persistedMessageId } = await messageResp.json() as { message_id: string }
+      setMessages((prev) => replaceMessageId(prev, optimisticId, persistedMessageId))
 
+      lastAgentEventIdRef.current = null
       if (agentEventSourceRef.current) {
         agentEventSourceRef.current.close()
         agentEventSourceRef.current = null
@@ -1233,7 +1589,14 @@ function ThreadView() {
       <div className="flex flex-1 overflow-hidden">
         {/* Chat column - fixed width, contains timeline + thinking indicator */}
         <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
-          <ChatTimeline messages={chatMessages} accentColor="var(--bud-accent-vibrant)" />
+          <ChatTimeline
+            messages={chatMessages}
+            accentColor="var(--bud-accent-vibrant)"
+            hasOlderMessages={messagePage.has_more_before}
+            isLoadingOlderMessages={isLoadingOlderMessages}
+            onLoadOlderMessages={loadOlderMessages}
+            scrollContainerRef={chatScrollRef}
+          />
           <ThinkingIndicator isVisible={status !== 'idle'} />
         </div>
 

@@ -17,6 +17,10 @@ import {
   type CanonicalTool,
   type CanonicalResponse,
   type CanonicalContentBlock,
+  type CanonicalReasoningBlock,
+  type CanonicalToolCall,
+  type CanonicalStopReason,
+  type TokenUsage,
   type ModelConfig,
 } from "../llm/index.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
@@ -52,8 +56,32 @@ type TerminalCallResult = {
   };
 };
 
+type PersistedAgentMessage = {
+  messageId: string;
+  role: string;
+  displayRole: string | null;
+  content: string;
+  metadata: Record<string, unknown>;
+  createdAt: Date;
+};
+
+type SerializedAgentMessage = {
+  message_id: string;
+  role: string;
+  display_role: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+type StreamedModelResponse = {
+  response: CanonicalResponse;
+  draftText: string;
+  hasDraftText: boolean;
+};
+
 const SYSTEM_PROMPT = `
-You are Bud Agent, coordinating terminal access to a user's machine. Always produce STRICT JSON.
+You are Bud Agent, coordinating terminal access to a user's machine.
 You have a persistent terminal; state (cwd, env, running processes) persists across turns.
 
 Tools:
@@ -117,9 +145,11 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
 
 Always check context.hints for additional program-specific guidance.
 
-OUTPUT FORMAT:
-- When done, respond with {"type":"final","status":"succeeded","message":"..."} (or "failed").
-- The "message" field supports markdown formatting. Use it for clarity:
+RESPONSE FORMAT:
+- When you are ready to answer the user, respond directly in markdown text.
+- Do NOT wrap final answers in JSON.
+- If you need a tool, call it directly instead of narrating planned steps first.
+- Use markdown for clarity:
   * **bold** for emphasis
   * \`code\` for commands, paths, and technical terms
   * Code blocks with language tags for multi-line code
@@ -279,6 +309,7 @@ export class AgentService {
     controller: AbortController;
   }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
+    const turnId = ulid();
     this.debug("Starting agent run", { threadId, sessionId, model, entries: conversation.length, reasoningEffort });
     try {
       let steps = 0;
@@ -286,14 +317,22 @@ export class AgentService {
         if (controller.signal.aborted) {
           throw new Error("agent_canceled");
         }
-        const response = await this.invokeModel(conversation, model, reasoningEffort, controller.signal);
+        const { response } = await this.invokeModel(
+          threadId,
+          turnId,
+          conversation,
+          model,
+          reasoningEffort,
+          controller.signal
+        );
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           const callMeta = { input: toolCall.input ?? "" };
           this.events.emit(threadId, {
             event: "agent.tool_call",
             data: {
-              id: ulid(),
+              turn_id: turnId,
+              call_id: toolCall.callId,
               name: toolCall.tool,
               args: callMeta
             },
@@ -307,19 +346,29 @@ export class AgentService {
             callId: toolCall.callId
           });
 
-          // Add assistant message with tool_use
+          const reasoningBlocks = response.content.filter(
+            (
+              block,
+            ): block is CanonicalReasoningBlock =>
+              block.type === "reasoning" || block.type === "reasoning_redacted"
+          );
+
+          // Add assistant message with any provider reasoning plus the tool_use
           conversation.push({
             role: "assistant",
-            content: [{
-              type: "tool_use",
-              id: toolCall.callId,
-              name: this.toolNameForConversation(toolCall.tool),
-              input: callMeta
-            }]
+            content: [
+              ...reasoningBlocks,
+              {
+                type: "tool_use",
+                id: toolCall.callId,
+                name: this.toolNameForConversation(toolCall.tool),
+                input: callMeta
+              }
+            ]
           });
 
           const result = await this.executeTerminalCall(threadId, toolCall);
-          const toolPayload = await this.recordTerminalToolMessage(
+          const { payload: toolPayload, message: toolMessage } = await this.recordTerminalToolMessage(
             threadId,
             toolCall,
             result,
@@ -343,12 +392,16 @@ export class AgentService {
           this.events.emit(threadId, {
             event: "agent.tool_result",
             data: {
+              turn_id: turnId,
+              call_id: toolCall.callId,
+              message_id: toolMessage.message_id,
               name: toolCall.tool,
               output: result.output,
               output_bytes: result.outputBytes,
               readiness: result.readiness,
               truncated: result.truncated,
-              omitted_lines: result.omittedLines
+              omitted_lines: result.omittedLines,
+              message: toolMessage,
             },
             id: ulid()
           });
@@ -358,25 +411,43 @@ export class AgentService {
         }
 
         const directive = this.parseResponse(response);
-        await db.insert(messageTable).values({
+        const [assistantMessage] = await db.insert(messageTable).values({
           threadId,
           role: "assistant",
           displayRole: "Bud Agent",
           content: directive.message,
           createdByUserId: ownerUserId ?? undefined,
           metadata: { status: directive.status }
+        }).returning({
+          messageId: messageTable.messageId,
+          role: messageTable.role,
+          displayRole: messageTable.displayRole,
+          content: messageTable.content,
+          metadata: messageTable.metadata,
+          createdAt: messageTable.createdAt,
         });
         await recordThreadMessageMetadata(threadId, directive.message);
         conversation.push(this.createMessageInput("assistant", directive.message));
+        const serializedAssistantMessage = this.serializePersistedMessage(assistantMessage);
 
         this.events.emit(threadId, {
           event: "agent.message",
-          data: { text: directive.message },
+          data: {
+            turn_id: turnId,
+            message_id: serializedAssistantMessage.message_id,
+            text: directive.message,
+            message: serializedAssistantMessage,
+          },
           id: ulid()
         });
         this.events.emit(threadId, {
           event: "final",
-          data: { status: directive.status, text: directive.message },
+          data: {
+            turn_id: turnId,
+            status: directive.status,
+            text: directive.message,
+            message_id: serializedAssistantMessage.message_id,
+          },
           id: ulid()
         });
 
@@ -400,6 +471,7 @@ export class AgentService {
         this.events.emit(threadId, {
           event: "final",
           data: {
+            turn_id: turnId,
             status: "canceled",
             error: "Agent turn canceled"
           },
@@ -411,6 +483,7 @@ export class AgentService {
       this.events.emit(threadId, {
         event: "final",
         data: {
+          turn_id: turnId,
           status: "failed",
           error: err instanceof Error ? err.message : "agent_failed"
         },
@@ -528,11 +601,13 @@ export class AgentService {
   }
 
   private async invokeModel(
+    threadId: string,
+    turnId: string,
     messages: CanonicalMessage[],
     model: string,
     reasoningEffort: ReasoningEffortSetting,
     signal?: AbortSignal
-  ): Promise<CanonicalResponse> {
+  ): Promise<StreamedModelResponse> {
     const last = messages.at(-1);
     const lastRole = last?.role ?? "n/a";
     this.debug("Calling LLM via provider", {
@@ -555,15 +630,148 @@ export class AgentService {
       model: resolvedModel,
       maxOutputTokens: config.agentMaxOutputTokens,
       reasoning,
-      responseFormat: "json"
+      responseFormat: "text"
     };
 
-    const response = await provider.invokeSync!(
-      messages,
-      CANONICAL_TOOLS,
-      modelConfig,
-      signal
-    );
+    const textBlocks = new Map<number, string>();
+    const reasoningBlocks = new Map<number, CanonicalReasoningBlock>();
+    const toolCallsByIndex = new Map<number, CanonicalToolCall>();
+    const pendingTextPrefixes = new Map<number, string>();
+
+    let responseId: string | null = null;
+    let stopReason: CanonicalStopReason = "end_turn";
+    let usage: TokenUsage | undefined;
+    let draftText = "";
+    let hasDraftText = false;
+    let textBlockCount = 0;
+
+    const emitAssistantDraftStart = () => {
+      if (hasDraftText) {
+        return;
+      }
+      this.events.emit(threadId, {
+        event: "agent.message_start",
+        data: {
+          turn_id: turnId,
+        },
+        id: ulid(),
+      });
+      hasDraftText = true;
+    };
+
+    const emitAssistantDraftDelta = (delta: string) => {
+      if (!delta) {
+        return;
+      }
+      emitAssistantDraftStart();
+      draftText += delta;
+      this.events.emit(threadId, {
+        event: "agent.message_delta",
+        data: {
+          turn_id: turnId,
+          delta,
+        },
+        id: ulid(),
+      });
+    };
+
+    for await (const event of provider.invoke(messages, CANONICAL_TOOLS, modelConfig, signal)) {
+      switch (event.type) {
+        case "message_start":
+          responseId = event.id;
+          break;
+        case "message_done":
+          stopReason = event.stop_reason;
+          usage = event.usage;
+          break;
+        case "content_start":
+          if (event.content_type === "text") {
+            pendingTextPrefixes.set(event.index, textBlockCount > 0 ? "\n" : "");
+            textBlockCount += 1;
+          }
+          break;
+        case "text_delta": {
+          const prefix = pendingTextPrefixes.get(event.index);
+          if (prefix !== undefined) {
+            pendingTextPrefixes.delete(event.index);
+            emitAssistantDraftDelta(prefix);
+          }
+          textBlocks.set(
+            event.index,
+            `${textBlocks.get(event.index) ?? ""}${event.delta}`
+          );
+          emitAssistantDraftDelta(event.delta);
+          break;
+        }
+        case "tool_use_done":
+          toolCallsByIndex.set(event.index, {
+            id: event.id,
+            name: event.name,
+            input: event.input,
+          });
+          break;
+        case "reasoning_done":
+          reasoningBlocks.set(event.index, event.block);
+          break;
+        case "reasoning_redacted":
+          reasoningBlocks.set(event.index, event.block);
+          break;
+        case "error":
+          throw event.error;
+      }
+    }
+
+    if (hasDraftText) {
+      this.events.emit(threadId, {
+        event: "agent.message_done",
+        data: {
+          turn_id: turnId,
+          text: draftText,
+        },
+        id: ulid(),
+      });
+    }
+
+    const orderedIndexes = Array.from(
+      new Set([
+        ...textBlocks.keys(),
+        ...reasoningBlocks.keys(),
+        ...toolCallsByIndex.keys(),
+      ])
+    ).sort((left, right) => left - right);
+
+    const content: CanonicalContentBlock[] = [];
+    for (const index of orderedIndexes) {
+      const reasoningBlock = reasoningBlocks.get(index);
+      if (reasoningBlock) {
+        content.push(reasoningBlock);
+      }
+
+      const textBlock = textBlocks.get(index);
+      if (textBlock !== undefined) {
+        content.push({ type: "text", text: textBlock });
+      }
+
+      const toolCall = toolCallsByIndex.get(index);
+      if (toolCall) {
+        content.push({
+          type: "tool_use",
+          id: toolCall.id,
+          name: toolCall.name,
+          input: toolCall.input,
+        });
+      }
+    }
+
+    const response: CanonicalResponse = {
+      id: responseId ?? ulid(),
+      content,
+      stopReason,
+      usage,
+      toolCalls: Array.from(toolCallsByIndex.entries())
+        .sort(([left], [right]) => left - right)
+        .map(([, toolCall]) => toolCall),
+    };
 
     this.debug("LLM response received", {
       responseId: response.id,
@@ -571,7 +779,11 @@ export class AgentService {
       toolCallCount: response.toolCalls?.length ?? 0
     });
     this.debugCanonicalResponse(response);
-    return response;
+    return {
+      response,
+      draftText,
+      hasDraftText,
+    };
   }
 
   private parseResponse(response: CanonicalResponse): Extract<AgentDirective, { type: "final" }> {
@@ -590,44 +802,11 @@ export class AgentService {
     if (!aggregated) {
       throw new Error("model returned no text or tool call");
     }
-    const trimmed = aggregated.trim();
-    const jsonText = this.stripCodeFence(trimmed);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch (err) {
-      this.logger.warn(
-        {
-          err,
-          responseId: response.id,
-          component: "agent",
-          rawText: trimmed.slice(0, 500)
-        },
-        "Agent response was not JSON; falling back to plain text"
-      );
-      return {
-        type: "final",
-        status: "succeeded",
-        message: trimmed
-      };
-    }
-
-    if (typeof parsed !== "object" || parsed === null) {
-      throw new Error("agent response must be an object");
-    }
-    const payload = parsed as Record<string, unknown>;
-    const type = payload.type;
-    if (type === "final") {
-      const message = typeof payload.message === "string" ? payload.message : "";
-      const status = payload.status === "failed" ? "failed" : "succeeded";
-      return {
-        type: "final",
-        status,
-        message: message || (status === "failed" ? "Agent failed" : "Done.")
-      };
-    }
-    // Model should use function calling API for tool calls, not raw JSON
-    throw new Error(`unknown agent directive type: ${type}`);
+    return {
+      type: "final",
+      status: "succeeded",
+      message: aggregated.trim()
+    };
   }
 
   private normalizeReasoningEffort(requested?: ReasoningEffortSetting | null): ReasoningEffortSetting {
@@ -705,20 +884,6 @@ export class AgentService {
       default:
         return null;
     }
-  }
-
-  private stripCodeFence(text: string) {
-    if (text.startsWith("```")) {
-      const lines = text.split("\n");
-      if (lines.length >= 2) {
-        lines.shift();
-        if (lines[lines.length - 1].trim() === "```") {
-          lines.pop();
-        }
-        return lines.join("\n");
-      }
-    }
-    return text;
   }
 
   private async executeTerminalCall(
@@ -962,7 +1127,7 @@ export class AgentService {
     directive: Extract<AgentDirective, { type: "tool_call" }>,
     result: TerminalCallResult,
     ownerUserId?: string | null,
-  ) {
+  ): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage }> {
     const payload = {
       tool: directive.tool,
       call_id: directive.callId,
@@ -974,18 +1139,39 @@ export class AgentService {
       omitted_lines: result.omittedLines,
       context: result.context
     };
-    await db.insert(messageTable).values({
+    const [toolMessage] = await db.insert(messageTable).values({
       threadId,
       role: "tool",
       displayRole: "Tool",
       content: JSON.stringify(payload),
       createdByUserId: ownerUserId ?? undefined,
       metadata: payload
+    }).returning({
+      messageId: messageTable.messageId,
+      role: messageTable.role,
+      displayRole: messageTable.displayRole,
+      content: messageTable.content,
+      metadata: messageTable.metadata,
+      createdAt: messageTable.createdAt,
     });
     const contextInfo = result.context?.mode === "repl" ? ` [${result.context.program}]` : "";
     const preview = `${directive.tool} ready=${(result.readiness as { ready?: boolean }).ready ?? false}${contextInfo}`;
     await recordThreadMessageMetadata(threadId, preview);
-    return payload;
+    return {
+      payload,
+      message: this.serializePersistedMessage(toolMessage),
+    };
+  }
+
+  private serializePersistedMessage(message: PersistedAgentMessage): SerializedAgentMessage {
+    return {
+      message_id: message.messageId,
+      role: message.role,
+      display_role: message.displayRole ?? message.role,
+      content: message.content,
+      metadata: message.metadata ?? {},
+      created_at: message.createdAt.toISOString(),
+    };
   }
 
   // TODO: capturePane (used for REPL mode) follows a different code path - it asks
