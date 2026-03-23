@@ -2,7 +2,7 @@
 
 **Status:** Current consolidated handoff  
 **Audience:** iOS, backend, web platform, product  
-**Last updated:** 2026-03-22
+**Last updated:** 2026-03-23
 
 ## Purpose
 
@@ -165,7 +165,7 @@ The iOS prototype is feature-complete when a signed-in user can do all of the fo
 | Settings/profile | yes | `/api/me/profile`, `/api/me/accounts`, `/api/me/sessions` |
 | Provider-link start | yes | `/api/me/account-links/:provider/start` |
 | Sign out | partial | revoke/local clear works; hosted-session logout gap remains |
-| Device claim links | yes | claim-flow endpoints and web claim page exist |
+| Device claim links | yes | claim-flow endpoints, hosted claim page, and hosted app-callback handoff now exist |
 
 ## Recommended App Flows
 
@@ -525,6 +525,10 @@ Public/browser-facing endpoints:
 - `GET /api/device-auth/flows/:flow_id`
 - `POST /api/device-auth/flows/:flow_id/approve`
 
+Hosted callback support:
+
+- `/devices/claim/:flow_id?source=ios&mobile_callback_url=...&mobile_error_callback_url=...`
+
 Current product model:
 
 1. the daemon starts the flow
@@ -534,9 +538,28 @@ Current product model:
 5. the approval endpoint links or creates the Bud
 6. the daemon polls until it receives the issued `device_secret`
 
+Current hosted mobile-handoff contract:
+
+- the hosted claim page can preserve those callback params through login resume
+- success callback currently guarantees:
+  - `flow_id`
+  - `bud_id`
+- `thread_id` is not guaranteed in the hosted callback flow today
+- `mobile_error_callback_url` is optional; when present, terminal failures such as expired or rejected claims can return:
+  - `flow_id`
+  - `error`
+  - optional `error_description`
+
+Recommended iOS post-callback behavior:
+
+1. refresh Bud inventory
+2. load `GET /api/threads?bud_id=<bud_id>`
+3. if a thread exists, open the most recent thread
+4. otherwise create the first thread with `POST /api/threads`
+
 For the iOS prototype, acceptable approaches are:
 
-- open the existing hosted claim URL and let the web claim page handle the UX
+- open the existing hosted claim URL and let the web claim page handle the UX, including hosted callback handoff back into the app
 - or implement a native claim screen using the public flow read/approve endpoints
 
 Either way, the app should treat claim-link handling as part of feature-complete product scope.
