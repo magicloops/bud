@@ -7,8 +7,8 @@ services:
     name: bud-web
     runtime: static
     rootDir: web
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
-    staticPublishPath: web/dist
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: dist
     buildFilter:
       paths:
         - web/**
@@ -33,7 +33,7 @@ services:
     region: oregon
     rootDir: service
     numInstances: 1
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     preDeployCommand: pnpm db:migrate
     startCommand: pnpm start
     healthCheckPath: /readyz

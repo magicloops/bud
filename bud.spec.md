@@ -505,6 +505,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/oauth-token-form-urlencoded-415.md](./debug/oauth-token-form-urlencoded-415.md) | Debug note documenting why local OAuth token exchange returned `415 Unsupported Media Type`: Fastify had no parser for `application/x-www-form-urlencoded` before the `/api/auth/*` bridge |
 | [debug/openid-configuration-404.md](./debug/openid-configuration-404.md) | Debug note documenting why local OIDC discovery can return `404` on `GET /api/auth/.well-known/openid-configuration` and why the fix is to mount the OpenID metadata surface explicitly |
 | [debug/post-claim-malformed-hello-frame.md](./debug/post-claim-malformed-hello-frame.md) | Debug note tracing why claim approval succeeds but the first `/ws` reconnect can fail with `Malformed hello frame` on a machine without `tmux` |
+| [debug/render-blueprint-build-failures.md](./debug/render-blueprint-build-failures.md) | Debug note documenting the first Render Blueprint bring-up failures: the Blueprint invoked Corepack unnecessarily even though Render now ships native `pnpm`, and `bud-web` used the wrong root-relative `staticPublishPath` once `rootDir` was set |
 | [debug/terminal-session-default-cwd.md](./debug/terminal-session-default-cwd.md) | Debug note tracing why tmux sessions currently start in `~` when `terminal_ensure` omits cwd for relocated Bud instances |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
 | [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
@@ -525,4 +526,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-03-23*
+*Last updated: 2026-03-24*
