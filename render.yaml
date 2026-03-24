@@ -6,7 +6,7 @@ services:
   - type: web
     name: bud-web
     runtime: static
-    plan: free
+    plan: starter
     rootDir: web
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
     staticPublishPath: web/dist
