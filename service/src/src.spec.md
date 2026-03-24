@@ -23,6 +23,7 @@ Application entry point and Fastify server setup.
 - Create manager instances (Run, Session, TerminalSession)
 - Register all route handlers
 - Set up SSE streaming endpoints
+- Expose `/healthz` as lightweight liveness and `/readyz` as deploy/readiness verification for the primary DB plus auth schema
 - Configure graceful shutdown for both app and auth pools
 
 **Manager Instantiation**:

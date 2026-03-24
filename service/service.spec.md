@@ -18,7 +18,7 @@ The service is the central hub of the Bud system:
 
 Package manifest:
 - **Name**: `@bud/service`
-- **Engine**: Node.js 20+
+- **Engine**: Node.js 20.19+ or 22.12+
 - **Type**: ES Modules
 
 **Key Dependencies**:
@@ -50,6 +50,7 @@ Checked-in template for local service setup. Includes:
 - GitHub/Google OAuth credentials
 - DB/runtime defaults
 - the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
+- the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin and `API_AUDIENCE` points at that origin's `/api` path
 - optional LLM provider settings
 
 ### `.env` (not committed)
@@ -88,8 +89,8 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and local a
 | `start` | `node dist/server.js` | Run compiled build |
 | `lint` | `eslint "src/**/*.ts"` | Lint source files |
 | `test` | `node --import tsx --test src/runtime/*.test.ts` | Run standalone runtime tests |
-| `db:generate` | `drizzle-kit generate` | Legacy migration generation helper |
-| `db:migrate` | `drizzle-kit migrate` | Legacy migration apply helper |
+| `db:generate` | `drizzle-kit generate` | Checked-in migration generation helper |
+| `db:migrate` | `drizzle-kit migrate` | Checked-in migration apply helper for production-like environments |
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
@@ -121,7 +122,8 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and local a
 | `POST` | `/api/threads/:id/terminal/input` | Send terminal input |
 | `GET/POST` | `/api/auth/*` | Better Auth session and OAuth handlers |
 | `GET` | `/.well-known/oauth-authorization-server/api/auth` | Root auth-server metadata for OAuth clients |
-| `GET` | `/healthz` | Health check |
+| `GET` | `/healthz` | Lightweight liveness check |
+| `GET` | `/readyz` | Readiness check that verifies the primary DB schema plus Better Auth schema reachability |
 
 ### WebSocket Endpoints
 

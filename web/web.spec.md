@@ -54,6 +54,8 @@ web/
 | `lint` | `eslint .` | Run ESLint |
 | `preview` | `vite preview` | Preview production build |
 
+The package manifest pins the Node runtime expected by the Vite 7 toolchain: Node `20.19+` or `22.12+`.
+
 ## Configuration Files
 
 ### `.env.example`
@@ -65,6 +67,7 @@ Recommended local development:
 - set `VITE_API_PROXY_TARGET=http://localhost:3000`
 - use the Vite proxy for the simplest local auth/cookie flow, including `/.well-known/*` metadata routes needed by OAuth discovery
 - local iOS auth also treats `http://localhost:5173` as the public auth origin, with the proxy forwarding browser/mobile-visible `/api/*` and `/.well-known/*` requests to the Fastify process on `3000`
+- the prototype deployment recommendation is to keep `VITE_API_BASE_URL` unset there as well and rely on one public origin that routes `/api/*`, `/.well-known/*`, and `/ws` to the service
 
 ### `vite.config.ts`
 
@@ -106,6 +109,8 @@ Static assets served without processing.
 | `VITE_API_PROXY_TARGET` | Dev proxy target for `/api/*` and `/.well-known/*` | `http://localhost:3000` |
 | `VITE_MOBILE_CLAIM_CALLBACK_ALLOWED_PREFIXES` | Comma-separated allowlist of hosted mobile-claim callback prefixes | `chat.bud.app://claim/` |
 | `VITE_ROUTER_DEVTOOLS` | Enable TanStack Router devtools | `false` |
+
+Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-facing deployed environments so auth and API traffic remain same-origin.
 
 ## Key Features
 

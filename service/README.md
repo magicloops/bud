@@ -62,6 +62,34 @@ If you are testing from another machine or phone, replace `localhost` with your 
 - the Bud daemon `BUD_SERVER_URL`
 - the web app `VITE_API_PROXY_TARGET` or `VITE_API_BASE_URL`
 
+## Prototype Deployment Contract
+
+For the current prototype deployment, keep browser and hosted auth traffic on one public origin even though `web` and `service` deploy separately.
+
+Recommended deployed values with public origin `https://bud.example.com`:
+
+- `APP_BASE_URL=https://bud.example.com`
+- `BETTER_AUTH_URL=https://bud.example.com`
+- `API_AUDIENCE=https://bud.example.com/api`
+
+Public routing contract:
+
+- `/api/*` -> `service`
+- `/.well-known/*` -> `service`
+- `/ws` -> `service`
+- everything else -> `web`
+
+Operational constraints for the prototype environment:
+
+- keep `service` single-instance
+- keep browser/API traffic same-origin
+- use `/readyz` as the deploy/readiness check and keep `/healthz` as lightweight liveness
+- set provider callbacks to the same public origin:
+  - `https://bud.example.com/api/auth/callback/github`
+  - `https://bud.example.com/api/auth/callback/google`
+- Bud daemons should target the same public origin via `BUD_SERVER_URL=wss://bud.example.com/ws`
+- do not use `pnpm db:push` in the deployed environment; use an explicit checked-in migration path instead
+
 ## Optional Env
 
 Auth and Bud claim testing do not require an LLM provider key. Chat/agent execution does.
@@ -82,11 +110,12 @@ Auth and Bud claim testing do not require an LLM provider key. Chat/agent execut
 | `pnpm start` | Run the compiled server. |
 | `pnpm lint` | Run ESLint. |
 | `pnpm db:push` | Bootstrap Better Auth tables/schema and push Drizzle schema changes. |
+| `pnpm db:migrate` | Apply checked-in migrations for production-like environments. |
 | `pnpm db:studio` | Open Drizzle Studio. |
 | `pnpm db:seed` | Seed legacy/manual enrollment-token data for dev. |
 | `pnpm oauth:provision:ios-local` | Upsert the fixed local iOS OAuth client and print the exact local auth bundle. |
 
-`db:generate` and `db:migrate` still exist in `package.json`, but local development for this repo uses `db:push`.
+Local development for this repo still uses `db:push`. The prototype deployment plan assumes deployed environments use the checked-in migration path instead of `db:push`.
 
 ## Local Test Flow
 
@@ -105,4 +134,6 @@ Auth and Bud claim testing do not require an LLM provider key. Chat/agent execut
 - Better Auth is mounted at `/api/auth/*`.
 - Current-user normalization is served from `/api/me`.
 - Device-claim bootstrap lives at `/api/device-auth/*`.
+- `/readyz` is the intended deploy/readiness check; `/healthz` is lightweight liveness.
 - Local iOS auth should target the public `http://localhost:5173` origin, not the private service port.
+- The prototype deployment keeps `APP_BASE_URL` and `BETTER_AUTH_URL` on the same public origin.
