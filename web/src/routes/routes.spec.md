@@ -118,15 +118,18 @@ Public device-claim landing page for QR/link onboarding.
 
 **Behavior**:
 - Loads safe claim metadata from `/api/device-auth/flows/:flowId`
-- If the browser is anonymous and the claim is pending, redirects into `/login?redirect=/devices/claim/$flowId`
+- If the browser is anonymous and the claim is pending, redirects into `/login` using the full current claim URL so callback params survive login resume
 - If the browser is authenticated and the claim is pending, auto-posts approval to `/api/device-auth/flows/:flowId/approve`
 - After approval starts, revalidates the flow until the service reports the canonical `approved` or `completed` state so the page stays in sync with Bud reconnects
-- Auto-navigates to `/$budId` after successful approval/completion, but keeps the success UI and manual Bud link as a fallback if the user returns to the page or the redirect is interrupted
+- If allowlisted `source=ios` + `mobile_callback_url` params are present, successful approval/completion redirects back into the app with `flow_id` and `bud_id`
+- If an allowlisted `mobile_error_callback_url` is present, terminal claim failures such as `expired` or `rejected` can redirect back into the app with Bud-owned error fields
+- Otherwise auto-navigates to `/$budId` after successful approval/completion, but keeps the success UI and manual Bud link as a fallback if the user returns to the page or the redirect is interrupted
 - Never displays `device_secret`; it only shows claim status and a Bud deep-link after approval
 
 **Mobile UX**:
 - Optimized for phone QR scans
 - Renders immediate device summary/status without requiring the authenticated app shell
+- Supports hosted-to-native app handoff without changing the underlying device-auth approval API
 
 ### `$budId.tsx`
 

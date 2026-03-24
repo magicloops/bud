@@ -1,13 +1,19 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import {
   apiFetchJson,
   buildLoginUrl,
+  getCurrentAppPath,
   isApiError,
   type ApiDeviceAuthApproval,
   type ApiDeviceAuthFlow,
 } from '@/lib/api'
+import {
+  buildClaimErrorCallbackUrl,
+  buildClaimSuccessCallbackUrl,
+  parseClaimMobileHandoff,
+} from '@/lib/claim-mobile-handoff'
 
 export const Route = createFileRoute('/devices/claim/$flowId')({
   component: DeviceClaimView,
@@ -16,8 +22,21 @@ export const Route = createFileRoute('/devices/claim/$flowId')({
 const FLOW_REFRESH_INTERVAL_MS = 1500
 const AUTO_REDIRECT_DELAY_MS = 800
 
-function getClaimRedirectStorageKey(flowId: string) {
+type ClaimErrorDetails = {
+  code: string | null
+  description: string
+}
+
+function getClaimBrowserRedirectStorageKey(flowId: string) {
   return `device-claim:auto-redirected:${flowId}`
+}
+
+function getClaimMobileSuccessRedirectStorageKey(flowId: string) {
+  return `device-claim:mobile-success-redirected:${flowId}`
+}
+
+function getClaimMobileErrorRedirectStorageKey(flowId: string, errorCode: string) {
+  return `device-claim:mobile-error-redirected:${flowId}:${errorCode}`
 }
 
 async function fetchClaimFlow(flowId: string) {
@@ -26,12 +45,49 @@ async function fetchClaimFlow(flowId: string) {
   })
 }
 
-function getClaimErrorMessage(error: unknown) {
-  if (isApiError(error, 404)) {
-    return 'This Bud claim link is invalid or no longer exists.'
+function getClaimErrorDetails(error: unknown): ClaimErrorDetails {
+  if (isApiError(error)) {
+    const body = error.body
+    const code =
+      typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+        ? body.error
+        : error.message
+
+    if (code === 'device_auth_flow_not_found') {
+      return {
+        code,
+        description: 'This Bud claim link is invalid or no longer exists.',
+      }
+    }
+
+    if (code === 'device_auth_flow_expired') {
+      return {
+        code,
+        description: 'This claim link has expired.',
+      }
+    }
+
+    if (
+      code === 'device_claim_rejected'
+      || code === 'device_claim_conflict'
+      || code === 'installation_claim_conflict'
+    ) {
+      return {
+        code,
+        description: 'This claim could not be approved.',
+      }
+    }
+
+    return {
+      code: code || null,
+      description: error.message,
+    }
   }
 
-  return error instanceof Error ? error.message : 'Failed to load device claim'
+  return {
+    code: null,
+    description: error instanceof Error ? error.message : 'Failed to load device claim',
+  }
 }
 
 function DeviceClaimView() {
@@ -42,7 +98,37 @@ function DeviceClaimView() {
   const [pending, setPending] = useState(true)
   const [approving, setApproving] = useState(false)
   const [approvalAttempted, setApprovalAttempted] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [routeError, setRouteError] = useState<ClaimErrorDetails | null>(null)
+
+  const currentClaimPath = getCurrentAppPath()
+  const loginHref =
+    typeof window === 'undefined'
+      ? `/login?redirect=${encodeURIComponent(`/devices/claim/${flowId}`)}`
+      : buildLoginUrl(currentClaimPath)
+  const callbackSearch = typeof window === 'undefined' ? '' : window.location.search
+  const mobileHandoff = useMemo(() => parseClaimMobileHandoff(callbackSearch), [callbackSearch])
+  const flowStatusError = useMemo<ClaimErrorDetails | null>(() => {
+    if (!flow) {
+      return null
+    }
+
+    if (flow.status === 'expired') {
+      return {
+        code: 'device_auth_flow_expired',
+        description: 'This claim link has expired.',
+      }
+    }
+
+    if (flow.status === 'rejected') {
+      return {
+        code: flow.error_code ?? 'device_claim_rejected',
+        description: 'This claim could not be approved.',
+      }
+    }
+
+    return null
+  }, [flow])
+  const error = routeError ?? flowStatusError
 
   useEffect(() => {
     let cancelled = false
@@ -51,7 +137,7 @@ function DeviceClaimView() {
       setPending(true)
       setApprovalAttempted(false)
       setApproving(false)
-      setError(null)
+      setRouteError(null)
       try {
         const nextFlow = await fetchClaimFlow(flowId)
         if (!cancelled) {
@@ -59,7 +145,7 @@ function DeviceClaimView() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(getClaimErrorMessage(err))
+          setRouteError(getClaimErrorDetails(err))
         }
       } finally {
         if (!cancelled) {
@@ -90,7 +176,7 @@ function DeviceClaimView() {
         const nextFlow = await fetchClaimFlow(flowId)
         if (!cancelled) {
           setFlow(nextFlow)
-          setError(null)
+          setRouteError(null)
           if (nextFlow.status !== 'pending') {
             setApproving(false)
           }
@@ -100,7 +186,7 @@ function DeviceClaimView() {
           nextFlow.status === 'pending' || nextFlow.status === 'approved'
       } catch (err) {
         if (!cancelled) {
-          setError(getClaimErrorMessage(err))
+          setRouteError(getClaimErrorDetails(err))
         }
       } finally {
         if (!cancelled && shouldContinuePolling) {
@@ -125,13 +211,13 @@ function DeviceClaimView() {
     }
 
     const timeout = window.setTimeout(() => {
-      window.location.replace(buildLoginUrl(`/devices/claim/${flowId}`))
+      window.location.replace(loginHref)
     }, 600)
 
     return () => {
       window.clearTimeout(timeout)
     }
-  }, [currentUser, flow, flowId, pending])
+  }, [currentUser, flow, loginHref, pending])
 
   useEffect(() => {
     if (!flow || flow.status !== 'pending' || !currentUser || approving || approvalAttempted) {
@@ -143,7 +229,7 @@ function DeviceClaimView() {
     const approve = async () => {
       setApproving(true)
       setApprovalAttempted(true)
-      setError(null)
+      setRouteError(null)
       try {
         const result = await apiFetchJson<ApiDeviceAuthApproval>(
           `/api/device-auth/flows/${flowId}/approve`,
@@ -169,7 +255,7 @@ function DeviceClaimView() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to approve device claim')
+          setRouteError(getClaimErrorDetails(err))
         }
       } finally {
         if (!cancelled) {
@@ -194,7 +280,29 @@ function DeviceClaimView() {
       return
     }
 
-    const storageKey = getClaimRedirectStorageKey(flowId)
+    if (mobileHandoff.isActive && mobileHandoff.successCallbackUrl) {
+      const successCallbackUrl = mobileHandoff.successCallbackUrl
+      const storageKey = getClaimMobileSuccessRedirectStorageKey(flowId)
+      if (window.sessionStorage.getItem(storageKey) === '1') {
+        return
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        window.sessionStorage.setItem(storageKey, '1')
+        window.location.replace(
+          buildClaimSuccessCallbackUrl(successCallbackUrl, {
+            flowId,
+            budId: flow.approved_bud_id as string,
+          }),
+        )
+      }, AUTO_REDIRECT_DELAY_MS)
+
+      return () => {
+        window.clearTimeout(timeoutId)
+      }
+    }
+
+    const storageKey = getClaimBrowserRedirectStorageKey(flowId)
     if (window.sessionStorage.getItem(storageKey) === '1') {
       return
     }
@@ -210,7 +318,40 @@ function DeviceClaimView() {
     return () => {
       window.clearTimeout(timeoutId)
     }
-  }, [flow, flowId, navigate])
+  }, [flow, flowId, mobileHandoff.isActive, mobileHandoff.successCallbackUrl, navigate])
+
+  useEffect(() => {
+    if (
+      !mobileHandoff.isActive
+      || !mobileHandoff.errorCallbackUrl
+      || !error?.code
+      || typeof window === 'undefined'
+    ) {
+      return
+    }
+
+    const errorCallbackUrl = mobileHandoff.errorCallbackUrl
+    const errorCode = error.code
+    const storageKey = getClaimMobileErrorRedirectStorageKey(flowId, errorCode)
+    if (window.sessionStorage.getItem(storageKey) === '1') {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      window.sessionStorage.setItem(storageKey, '1')
+      window.location.replace(
+        buildClaimErrorCallbackUrl(errorCallbackUrl, {
+          flowId,
+          error: errorCode,
+          errorDescription: error.description,
+        }),
+      )
+    }, AUTO_REDIRECT_DELAY_MS)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [error, flowId, mobileHandoff.errorCallbackUrl, mobileHandoff.isActive])
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-8 text-foreground">
@@ -222,8 +363,12 @@ function DeviceClaimView() {
           <h1 className="text-4xl font-black tracking-tight">Approve this Bud device</h1>
           <p className="max-w-lg text-sm text-muted-foreground">
             {currentUser
-              ? 'Your session is active. Bud will claim this device automatically and deliver its credential directly to the daemon.'
-              : 'You need to sign in before Bud can finish this device claim. You will return here automatically after login.'}
+              ? mobileHandoff.isActive
+                ? 'Your session is active. Bud will claim this device automatically, then return you to the app.'
+                : 'Your session is active. Bud will claim this device automatically and deliver its credential directly to the daemon.'
+              : mobileHandoff.isActive
+                ? 'You need to sign in before Bud can finish this device claim. You will return here automatically after login, then back to the app after approval.'
+                : 'You need to sign in before Bud can finish this device claim. You will return here automatically after login.'}
           </p>
         </div>
 
@@ -255,7 +400,7 @@ function DeviceClaimView() {
 
               {!currentUser && flow.status === 'pending' && (
                 <a
-                  href={buildLoginUrl(`/devices/claim/${flowId}`)}
+                  href={loginHref}
                   className="inline-flex rounded-2xl border-4 border-black bg-[var(--bud-accent-soft)] px-5 py-3 font-semibold shadow-[6px_6px_0px_rgba(0,0,0,1)]"
                 >
                   Continue to sign in
@@ -285,7 +430,7 @@ function DeviceClaimView() {
 
         {error && (
           <div className="mt-4 rounded-xl border-3 border-black bg-destructive px-4 py-3 text-sm font-semibold text-destructive-foreground shadow-[4px_4px_0px_rgba(0,0,0,1)]">
-            {error}
+            {error.description}
           </div>
         )}
       </div>

@@ -210,8 +210,9 @@ Bud device onboarding is now browser-mediated:
 1. The daemon starts a claim with `/api/device-auth/start`
 2. The service returns a short claim URL and QR payload
 3. The browser authenticates the human and approves the claim
-4. The daemon polls `/api/device-auth/poll` for the issued `device_secret`
-5. `/ws` challenge-response resumes as the steady-state auth path
+4. When the claim was opened from iOS with allowlisted callback params, the hosted claim page can return control to the native app after success or terminal failure
+5. The daemon polls `/api/device-auth/poll` for the issued `device_secret`
+6. `/ws` challenge-response resumes as the steady-state auth path
 
 ### 2. Agent Loop (LLM Integration)
 
@@ -475,6 +476,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [reference/IOS_LOCAL_AUTH_HANDOFF.md](./reference/IOS_LOCAL_AUTH_HANDOFF.md) | Reference handoff for the iOS team with the concrete local OAuth client, `5173`-based auth bundle, required revoke contract, and current validation status |
 | [reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md](./reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md) | Reference handoff for the iOS team summarizing the confirmed March 22, 2026 SSE streaming findings, what they rule out, and the remaining raw-byte/parser-focused hypotheses for `/api/threads/:thread_id/agent/stream` |
 | [reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md](./reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md) | Consolidated primary reference handoff for the iOS team covering the shipped bearer-auth, thread-first transcript, agent-stream, terminal, settings, Bud-session, and claim-flow contracts needed to build a feature-complete iOS prototype against the current web/service stack |
+| [reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md) | Reference handoff from the mobile team describing the original hosted-claim redirect gap, the requested callback contract, and the backend/web decisions needed for smooth app re-entry after claim approval |
+| [reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md) | Reference validation runbook for the iOS team covering the hosted Bud-claim callback flow, local prerequisites, expected success/error payloads, and the exact manual test matrix to run |
 | [reference/IOS_MOBILE_BACKEND_HANDOFF.md](./reference/IOS_MOBILE_BACKEND_HANDOFF.md) | Comprehensive reference handoff for the iOS team covering the current auth assumptions, Bud/thread/message/model API contract, SSE/runtime behavior, and the specific web-client gotchas that matter for mobile integration |
 | [reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md](./reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md) | Reference backend response to the iOS team’s thread-message UX questions, documenting the current paginated message-history contract, non-delta `agent.message` semantics, replay/reconnect rules, stable stream identifiers, and current tool-payload truncation behavior |
 | [reference/AGENT_STREAM_EVENT_FIXTURES.md](./reference/AGENT_STREAM_EVENT_FIXTURES.md) | Checked-in reference fixtures for the current thread agent-stream contract, covering success, failure, cancellation, resume-by-event-id replay, and live-only fallback on replay misses |
@@ -483,6 +486,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
 | [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
 | [plan/mobile-auth/implementation-spec.md](./plan/mobile-auth/implementation-spec.md) | Phased implementation plan for native mobile auth, OAuth Provider rollout, and API readiness cleanup |
+| [plan/mobile-claim-redirect/implementation-spec.md](./plan/mobile-claim-redirect/implementation-spec.md) | Phased implementation plan for returning hosted Bud claim flows back into the iOS app, preserving login-resume state and keeping first-thread creation on the client |
 | [plan/mobile-api-simplify/implementation-spec.md](./plan/mobile-api-simplify/implementation-spec.md) | Phased implementation plan for simplifying Bud’s transcript history and agent-stream contracts so both web and mobile can consume a cleaner, more durable thread API |
 | [plan/mobile-api-simplify/progress-checklist.md](./plan/mobile-api-simplify/progress-checklist.md) | Running checklist for the transcript-history and agent-stream simplification work, tracking paging, stream semantics, reference-web adoption, true assistant streaming, and handoff validation |
 | [plan/ios-local-auth/implementation-spec.md](./plan/ios-local-auth/implementation-spec.md) | Focused implementation plan for the local iOS auth handoff, covering public-origin alignment, deterministic client provisioning, revoke cleanup, and bundle publication |
@@ -507,6 +511,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |
 | [design/backend-web-better-auth-oauth-provider-spec.md](./design/backend-web-better-auth-oauth-provider-spec.md) | Native mobile auth design review for turning Better Auth into an OAuth 2.1 / OIDC provider, including current blockers and open questions |
 | [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) | Design for the mobile logout and account-switch contract gap, validating the current hosted-session reuse behavior and defining the needed Bud-owned logout/switch-account semantics |
+| [design/mobile-claim-redirect-handoff.md](./design/mobile-claim-redirect-handoff.md) | Design for returning hosted Bud claims back into the iOS app, covering login-resume parameter preservation, callback validation, and recommended post-claim thread ownership |
 | [design/mobile-chat-thread-first-backend-contract.md](./design/mobile-chat-thread-first-backend-contract.md) | Design for the first-pass mobile chat backend contract, keeping the existing Bud/thread/message route family while adopting a thread-first mobile list and documenting the required payload/stream cleanup |
 | [design/thread-message-timeline-ux-refresh.md](./design/thread-message-timeline-ux-refresh.md) | Draft design for the next-pass thread message UX work across web and iOS, covering latest-window pagination, bottom-follow scroll behavior, compact tool activity, and the backend changes required for true assistant text streaming |
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
@@ -514,7 +519,6 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
 | [design/terminal-session-lifecycle-and-thread-uniqueness.md](./design/terminal-session-lifecycle-and-thread-uniqueness.md) | Review of the current terminal session lifecycle, why the thread-id uniqueness bug predates the mobile-auth branch, and the recommended fix direction |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries and service env placeholders |
-| [PR_SUMMARY.md](./PR_SUMMARY.md) | High-level branch summary for the `mobile-auth` PR relative to `origin/main`, covering the mobile auth foundation, local iOS bring-up work, API contract cleanup, manual validation, and deferred follow-up scope |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
 | [design/](./design/) | Design documents |

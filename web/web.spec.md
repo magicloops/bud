@@ -107,6 +107,7 @@ Static assets served without processing.
 |----------|---------|---------|
 | `VITE_API_BASE_URL` | API server URL for cross-origin | (same origin) |
 | `VITE_API_PROXY_TARGET` | Dev proxy target for `/api/*` and `/.well-known/*` | `http://localhost:3000` |
+| `VITE_MOBILE_CLAIM_CALLBACK_ALLOWED_PREFIXES` | Comma-separated allowlist of hosted mobile-claim callback prefixes | `chat.bud.app://claim/` |
 | `VITE_ROUTER_DEVTOOLS` | Enable TanStack Router devtools | `false` |
 
 Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-facing deployed environments so auth and API traffic remain same-origin.
@@ -139,6 +140,7 @@ Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-
 - Shared auth-aware `EventSource` creation for SSE streams
 - Better Auth OAuth Provider client plugin preserves signed `oauth_query` state when hosted auth pages start social sign-in
 - Session-expiry redirects now stop background reconnect/poll loops once auth has expired
+- Hosted Bud claim pages can optionally hand control back into the native app when allowlisted mobile callback params are present
 
 ### Theming
 
