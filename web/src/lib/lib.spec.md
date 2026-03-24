@@ -78,6 +78,21 @@ export function normalizeCapabilities(caps: unknown): {
 
 Safely extracts capability fields from API response.
 
+### `claim-mobile-handoff.ts`
+
+Hosted-claim callback helpers for native/mobile app handoff.
+
+**Responsibilities**:
+- Parse `/devices/claim/$flowId` search params for `source=ios`, `mobile_callback_url`, and `mobile_error_callback_url`
+- Validate candidate callback URLs against the allowlisted prefixes from `VITE_MOBILE_CLAIM_CALLBACK_ALLOWED_PREFIXES`
+- Normalize whether mobile callback mode is active for the hosted claim route
+- Build final success and error callback URLs while preserving any existing callback query params
+
+**Exports**:
+- `parseClaimMobileHandoff(search)` - normalized mobile-callback state for the claim route
+- `buildClaimSuccessCallbackUrl(baseUrl, payload)` - appends `flow_id` and `bud_id`
+- `buildClaimErrorCallbackUrl(baseUrl, payload)` - appends `flow_id`, `error`, and optional `error_description`
+
 ### `auth-client.ts`
 
 Better Auth React client configuration.
@@ -181,6 +196,7 @@ cn('text-red-500', isActive && 'font-bold', className)
 |----------|---------|
 | `VITE_API_BASE_URL` | Optional API server URL for cross-origin |
 | `VITE_API_PROXY_TARGET` | Vite dev proxy target for `/api/*` and `/.well-known/*` |
+| `VITE_MOBILE_CLAIM_CALLBACK_ALLOWED_PREFIXES` | Comma-separated allowlist of hosted mobile-claim callback prefixes |
 
 ---
 
