@@ -1,5 +1,7 @@
 # Phase 1: Session Ownership And Offline Guardrails
 
+**Status**: Implemented locally, staging validation pending
+
 ## Goal
 
 Make the service treat only the current live socket/tracker for a `budId` as authoritative when updating Bud online/offline routing state.
@@ -68,6 +70,17 @@ The goal is to make a future staging incident distinguishable between:
 - real daemon disconnects still mark the Bud offline and suspend active terminal sessions
 - stale tracker cleanup is visible in logs as stale/no-op cleanup rather than performing destructive side effects
 - `terminal/ensure` no longer returns `bud_offline` for a healthy reconnected Bud because of stale socket cleanup alone
+
+## Current Progress
+
+- `service/src/ws/gateway.ts` now:
+  - clears superseded tracker timeouts during replacement
+  - closes superseded sockets after replacement
+  - ignores heartbeats from superseded sockets
+  - limits timeout/close offline cleanup to the active tracker only
+- `service/src/ws/gateway.test.ts` adds regression coverage for tracker replacement and stale cleanup suppression
+- `pnpm --dir service test` passes locally
+- remaining work in this phase is deployed staging validation
 
 ## Validation Notes
 

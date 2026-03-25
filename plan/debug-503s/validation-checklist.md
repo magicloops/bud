@@ -1,5 +1,8 @@
 # Validation Checklist: False Bud-Offline / Terminal `503` Stabilization
 
+Current state:
+Phase 1 backend guardrails are implemented locally and covered by `pnpm --dir service test`. The remaining checklist items are the staging proof for this hypothesis and the decision point for whether Phase 2 frontend hardening is still needed.
+
 ## Backend Ownership
 
 - [ ] Reconnect a Bud daemon and confirm the newer socket remains authoritative for the same `budId`

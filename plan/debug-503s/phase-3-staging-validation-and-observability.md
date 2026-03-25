@@ -53,3 +53,11 @@ The bug was observed only after the public staging stack was live behind Cloudfl
 - the Bud daemon remains routable through `/ws` after reconnects
 - terminal SSE remains stable without repeated false-offline `503` loops
 - Cloudflare Worker disconnect metrics are explainable as ordinary client churn, not evidence of unresolved backend state loss
+
+## If Phase 1 Is Not Sufficient
+
+Use the same staging runs to decide whether Phase 2 needs to start immediately:
+
+- if `terminal/ensure` `503` loops disappear, hold Phase 2 unless smaller reconnect churn still remains
+- if healthy Buds still appear offline, capture service logs and browser network traces first, then inspect the frontend status-gap reconnect logic and connected-SSE recovery polling
+- only treat Cloudflare Worker behavior as the next primary suspect if service logs show the active tracker remained intact during the failure

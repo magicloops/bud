@@ -89,7 +89,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `build` | `tsc` | Compile TypeScript |
 | `start` | `node dist/server.js` | Run compiled build |
 | `lint` | `eslint "src/**/*.ts"` | Lint source files |
-| `test` | `node --import tsx --test src/runtime/*.test.ts` | Run standalone runtime tests |
+| `test` | `node --import tsx --test src/**/*.test.ts` | Run standalone service tests, including runtime and WebSocket gateway regressions |
 | `db:generate` | `drizzle-kit generate` | Checked-in migration generation helper |
 | `db:migrate` | `drizzle-kit migrate` | Checked-in migration apply helper for production-like environments |
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |

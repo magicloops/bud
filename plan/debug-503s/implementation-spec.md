@@ -1,6 +1,6 @@
 # Implementation Spec: False Bud-Offline / Terminal `503` Stabilization
 
-**Status**: Planned
+**Status**: Phase 1 Implemented, staging validation pending
 **Created**: 2026-03-24
 **Debug Doc**: [../../debug/staging-false-bud-offline-terminal-503s.md](../../debug/staging-false-bud-offline-terminal-503s.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -142,7 +142,7 @@ These assumptions are fixed for this plan:
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 1 | Planned | Root-cause review points to stale tracker cleanup in `service/src/ws/gateway.ts` |
+| 1 | Implemented, staging validation pending | `service/src/ws/gateway.ts` now has active-tracker replacement/cleanup guardrails, superseded-heartbeat suppression, active-only offline transitions, and targeted regression coverage for superseded-session cleanup |
 | 2 | Planned | Frontend reconnect behavior should be revisited only after the backend ownership fix lands |
 | 3 | Planned | Requires deployed staging validation against `https://staging.bud.dev` |
 

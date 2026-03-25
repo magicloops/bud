@@ -174,7 +174,7 @@ type ConnectionState =
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
 
-interface SessionTracker {
+export interface SessionTracker {
   budId: string;
   sessionId: string;
   lastHeartbeat: number;
@@ -184,6 +184,50 @@ interface SessionTracker {
 
 const sessions = new Map<string, SessionTracker>();
 let gatewayLogger: FastifyBaseLogger | null = null;
+
+function clearTrackerTimeout(tracker: SessionTracker | null | undefined): void {
+  if (!tracker?.timeout) {
+    return;
+  }
+  clearTimeout(tracker.timeout);
+  tracker.timeout = undefined;
+}
+
+export function registerActiveSessionTracker(
+  activeSessions: Map<string, SessionTracker>,
+  tracker: SessionTracker
+): SessionTracker | null {
+  const previous = activeSessions.get(tracker.budId) ?? null;
+  clearTrackerTimeout(previous);
+  activeSessions.set(tracker.budId, tracker);
+  return previous;
+}
+
+export function getActiveSessionTracker(
+  activeSessions: Map<string, SessionTracker>,
+  budId: string,
+  tracker: SessionTracker | null | undefined
+): SessionTracker | null {
+  if (!tracker) {
+    return null;
+  }
+  return activeSessions.get(budId) === tracker ? tracker : null;
+}
+
+export function deleteSessionTrackerIfCurrent(
+  activeSessions: Map<string, SessionTracker>,
+  tracker: SessionTracker | null | undefined
+): boolean {
+  if (!tracker) {
+    return false;
+  }
+  if (activeSessions.get(tracker.budId) !== tracker) {
+    return false;
+  }
+  activeSessions.delete(tracker.budId);
+  clearTrackerTimeout(tracker);
+  return true;
+}
 
 export function getActiveBudIds(): string[] {
   return Array.from(sessions.keys());
@@ -237,6 +281,7 @@ export async function registerWsGateway(
 class BudConnection {
   private state: ConnectionState = { kind: "awaiting_hello" };
   private lastPresenceWrite = 0;
+  private tracker: SessionTracker | null = null;
   private readonly server: FastifyInstance;
   private readonly socket: WebSocket;
   private readonly runManager: RunManager;
@@ -709,10 +754,16 @@ class BudConnection {
       return;
     }
     const now = Date.now();
-    const session = sessions.get(this.state.budId);
-    if (session) {
-      session.lastHeartbeat = ts;
-      this.scheduleTimeout(session);
+    const tracker = this.getCurrentTracker();
+    if (tracker) {
+      tracker.lastHeartbeat = ts;
+      this.scheduleTimeout(tracker);
+    } else {
+      this.server.log.info(
+        { budId: this.state.budId, sessionId: this.state.sessionId },
+        "Ignoring heartbeat for superseded bud session"
+      );
+      return;
     }
     if (now - this.lastPresenceWrite > 5_000) {
       this.lastPresenceWrite = now;
@@ -730,17 +781,50 @@ class BudConnection {
       lastHeartbeat: Date.now(),
       socket: this.socket
     };
-    sessions.set(budId, tracker);
+    const previous = registerActiveSessionTracker(sessions, tracker);
+    this.tracker = tracker;
+    this.server.log.info(
+      {
+        budId,
+        sessionId,
+        replacedSessionId: previous?.sessionId ?? null
+      },
+      previous ? "Replaced active bud session tracker" : "Registered active bud session tracker"
+    );
     this.scheduleTimeout(tracker);
+    if (previous && previous.socket !== tracker.socket && previous.socket.readyState === previous.socket.OPEN) {
+      this.server.log.warn(
+        {
+          budId,
+          sessionId,
+          replacedSessionId: previous.sessionId
+        },
+        "Closing superseded bud socket"
+      );
+      try {
+        previous.socket.close();
+      } catch {
+        /* noop */
+      }
+    }
   }
 
   private scheduleTimeout(tracker: SessionTracker) {
-    if (tracker.timeout) {
-      clearTimeout(tracker.timeout);
-    }
+    clearTrackerTimeout(tracker);
     tracker.timeout = setTimeout(() => {
-      sessions.delete(tracker.budId);
-      void markBudOffline(tracker.budId, this.server);
+      const deleted = deleteSessionTrackerIfCurrent(sessions, tracker);
+      if (!deleted) {
+        this.server.log.info(
+          { budId: tracker.budId, sessionId: tracker.sessionId },
+          "Ignoring timeout for superseded bud session"
+        );
+        return;
+      }
+      this.server.log.warn(
+        { budId: tracker.budId, sessionId: tracker.sessionId },
+        "Active bud session heartbeat timed out"
+      );
+      void this.handleOfflineTransition(tracker.budId);
       try {
         tracker.socket.close();
       } catch {
@@ -751,18 +835,42 @@ class BudConnection {
 
   private async handleClose() {
     if (this.state.kind === "connected") {
-      sessions.delete(this.state.budId);
-      // Clear terminal caches (readiness, byte offsets) to avoid stale data on reconnect
-      await this.terminalSessionManager.clearCachesForBud(this.state.budId);
-      // Clear event buffers to prevent stale events from being replayed
-      await this.terminalSessionManager.clearEventBuffersForBud(this.state.budId);
-      // Suspend terminal sessions so ensureSession won't short-circuit on stale "ready" state
-      await this.terminalSessionManager.suspendSessionsForBud(this.state.budId);
-      // Notify all SSE clients that this bud went offline
-      await this.terminalSessionManager.emitBudOfflineForSessions(this.state.budId);
-      await markBudOffline(this.state.budId, this.server);
+      const deleted = deleteSessionTrackerIfCurrent(sessions, this.tracker);
+      if (!deleted) {
+        clearTrackerTimeout(this.tracker);
+        this.server.log.info(
+          { budId: this.state.budId, sessionId: this.state.sessionId },
+          "Ignoring close for superseded bud session"
+        );
+      } else {
+        this.server.log.info(
+          { budId: this.state.budId, sessionId: this.state.sessionId },
+          "Active bud session closed"
+        );
+        await this.handleOfflineTransition(this.state.budId);
+      }
     }
+    this.tracker = null;
     this.state = { kind: "closed" };
+  }
+
+  private getCurrentTracker(): SessionTracker | null {
+    if (this.state.kind !== "connected") {
+      return null;
+    }
+    return getActiveSessionTracker(sessions, this.state.budId, this.tracker);
+  }
+
+  private async handleOfflineTransition(budId: string) {
+    // Clear terminal caches (readiness, byte offsets) to avoid stale data on reconnect
+    await this.terminalSessionManager.clearCachesForBud(budId);
+    // Clear event buffers to prevent stale events from being replayed
+    await this.terminalSessionManager.clearEventBuffersForBud(budId);
+    // Suspend terminal sessions so ensureSession won't short-circuit on stale "ready" state
+    await this.terminalSessionManager.suspendSessionsForBud(budId);
+    // Notify all SSE clients that this bud went offline
+    await this.terminalSessionManager.emitBudOfflineForSessions(budId);
+    await markBudOffline(budId, this.server);
   }
 
   private async sendError(code: string, message: string) {
