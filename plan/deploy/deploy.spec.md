@@ -90,8 +90,8 @@ Operator runbook for the default single-origin edge layer in front of Render.
 
 Documents:
 
-- the recommended Cloudflare Origin Rule shape
-- cache and WebSocket expectations for service-owned paths
+- the recommended route-scoped Cloudflare Worker shape
+- service-path route patterns, forwarded-header preservation, and no-store proxy behavior for service-owned paths
 - deploy order from raw Render origins to the public hostname
 - rollback entry points if the edge layer misroutes traffic
 - the fact that this runbook is the staging default, not a final production commitment

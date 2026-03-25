@@ -225,9 +225,9 @@ These decisions are fixed for this plan:
 |-------|--------|-------|
 | 1 | In Progress | Initial README and env-template normalization is underway so local, prototype, and provider callback guidance all agree on the one-public-origin contract |
 | 2 | In Progress | Initial readiness work is landing via `/readyz`, and package/runtime pinning is now aligned with the documented Node floor; DB budgeting and final deploy guidance still remain |
-| 3 | In Progress | `render.yaml` now encodes the Render-hosted web/service/Postgres footprint, and the Cloudflare front-door runbook captures the default one-origin path-routing contract outside Render for staging |
+| 3 | In Progress | `render.yaml` now encodes the Render-hosted web/service/Postgres footprint, and the Cloudflare front-door runbook captures the default route-scoped Worker contract for one-origin path routing outside Render for staging |
 | 4 | Planned | Depends on a real deployed environment, staging validation, and a post-validation call on whether production should stay on Render or move to a cleaner edge-routing provider such as AWS |
 
 ---
 
-*Last Updated: 2026-03-23*
+*Last Updated: 2026-03-24*

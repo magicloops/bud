@@ -49,8 +49,9 @@ Checked-in template for local service setup. Includes:
 - Better Auth config (`APP_BASE_URL`, `BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_SECRET`)
 - GitHub/Google OAuth credentials
 - DB/runtime defaults
+- the reminder that hosted Postgres providers may require `sslmode=require` in `DATABASE_URL`
 - the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
-- the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin and `API_AUDIENCE` points at that origin's `/api` path
+- the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin, `API_AUDIENCE` points at that origin's `/api` path, and `OAUTH_TRUSTED_CLIENT_IDS` includes the published first-party mobile client ids for that environment
 - optional LLM provider settings
 
 ### `.env` (not committed)

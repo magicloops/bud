@@ -30,6 +30,7 @@ Use [service/.env.example](./.env.example) as the source of truth.
 The critical auth/device-claim values are:
 
 - `DATABASE_URL`
+  For local Postgres this can stay plain. Hosted providers such as Render often require SSL, in which case the URL should include `?sslmode=require`.
 - `APP_BASE_URL`
   The browser origin Bud should print in claim links. With local Vite dev, use `http://localhost:5173`.
 - `BETTER_AUTH_URL`
@@ -37,6 +38,8 @@ The critical auth/device-claim values are:
 - `BETTER_AUTH_SECRET`
 - `BETTER_AUTH_TRUSTED_ORIGINS`
   For the default local setup: `http://localhost:5173,http://localhost:3000`
+- `OAUTH_TRUSTED_CLIENT_IDS`
+  For the default local setup: `bud-ios-dev-local`
 - `API_AUDIENCE`
   For the local iOS flow: `http://localhost:5173/api`
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
@@ -71,6 +74,7 @@ Recommended deployed values with public origin `https://bud.example.com`:
 - `APP_BASE_URL=https://bud.example.com`
 - `BETTER_AUTH_URL=https://bud.example.com`
 - `API_AUDIENCE=https://bud.example.com/api`
+- `OAUTH_TRUSTED_CLIENT_IDS=<published-first-party-client-ids>`
 
 Public routing contract:
 
@@ -84,11 +88,14 @@ Operational constraints for the prototype environment:
 - keep `service` single-instance
 - keep browser/API traffic same-origin
 - use `/readyz` as the deploy/readiness check and keep `/healthz` as lightweight liveness
+- if the hosted Postgres provider requires TLS, add `sslmode=require` to `DATABASE_URL`
 - set provider callbacks to the same public origin:
   - `https://bud.example.com/api/auth/callback/github`
   - `https://bud.example.com/api/auth/callback/google`
 - Bud daemons should target the same public origin via `BUD_SERVER_URL=wss://bud.example.com/ws`
 - do not use `pnpm db:push` in the deployed environment; use an explicit checked-in migration path instead
+- publish the first-party mobile client ids in `OAUTH_TRUSTED_CLIENT_IDS`
+- run the environment-specific iOS provisioning script before handing the bundle to mobile
 
 ## Optional Env
 
@@ -114,6 +121,7 @@ Auth and Bud claim testing do not require an LLM provider key. Chat/agent execut
 | `pnpm db:studio` | Open Drizzle Studio. |
 | `pnpm db:seed` | Seed legacy/manual enrollment-token data for dev. |
 | `pnpm oauth:provision:ios-local` | Upsert the fixed local iOS OAuth client and print the exact local auth bundle. |
+| `pnpm oauth:provision:ios-staging` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using `.env.staging`. |
 
 Local development for this repo still uses `db:push`. The prototype deployment plan assumes deployed environments use the checked-in migration path instead of `db:push`.
 
@@ -128,6 +136,16 @@ Local development for this repo still uses `db:push`. The prototype deployment p
    - `/api/me` returns `401` before login and the normalized user after login
    - Bud prints a claim link + QR
    - approving the claim creates or reuses the Bud and the daemon reconnects over `/ws`
+
+## New Environment Checklist
+
+When creating a new non-local environment, make sure all of these are true together:
+
+1. `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE` all point at the same public origin bundle for that environment.
+2. `DATABASE_URL` includes the provider's required SSL settings when using a hosted Postgres service.
+3. `OAUTH_TRUSTED_CLIENT_IDS` includes the first-party mobile client ids published for that environment.
+4. Provider callback URLs point at `https://<public-origin>/api/auth/callback/{provider}`.
+5. The matching iOS provisioning script has been run against that environment's database before sharing the auth bundle.
 
 ## Notes
 

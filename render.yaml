@@ -71,6 +71,8 @@ services:
         sync: false
       - key: API_AUDIENCE
         sync: false
+      - key: OAUTH_TRUSTED_CLIENT_IDS
+        sync: false
       - key: BETTER_AUTH_TRUSTED_ORIGINS
         sync: false
       - key: GITHUB_CLIENT_ID
