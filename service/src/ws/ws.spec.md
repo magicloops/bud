@@ -14,7 +14,7 @@ Handles real-time communication between the service and bud daemons via WebSocke
 
 ### `gateway.ts`
 
-Main bud daemon WebSocket gateway (~700 lines).
+Main bud daemon WebSocket gateway (~800 lines).
 
 **Connection Lifecycle**:
 
@@ -74,6 +74,23 @@ interface SessionTracker {
 }
 ```
 
+**Active-Tracker Guardrails**:
+
+- session registration now clears any superseded tracker's timeout before replacing the active map entry
+- a successful replacement closes the superseded socket so only one live Bud session remains authoritative
+- heartbeat handling now ignores superseded sockets instead of refreshing the active tracker's timeout/presence
+- timeout and close cleanup now check that the tracker being cleaned up is still the active map entry before deleting the Bud session or emitting offline side effects
+- real offline cleanup still clears caches, clears event buffers, suspends sessions, emits `terminal.bud_offline`, and marks the Bud offline, but only for the active tracker
+
+### `gateway.test.ts`
+
+Standalone Node test coverage for the active-tracker helpers in `gateway.ts`.
+
+**Current Coverage**:
+- replacing the active tracker clears the previous timeout
+- stale cleanup from a superseded tracker is ignored
+- only the currently registered tracker is treated as authoritative
+
 **Exported Functions**:
 
 | Function | Purpose |
@@ -82,6 +99,9 @@ interface SessionTracker {
 | `getActiveBudIds()` | List connected bud IDs |
 | `isBudOnline(budId)` | Check if bud is connected |
 | `sendFrameToBud(budId, frame)` | Send message to specific bud |
+| `registerActiveSessionTracker(...)` | Replace the active tracker for a Bud while retiring the superseded timeout |
+| `getActiveSessionTracker(...)` | Check whether a tracker is still the authoritative active entry for a Bud |
+| `deleteSessionTrackerIfCurrent(...)` | Ignore stale timeout/close cleanup from superseded sockets |
 
 **Authentication Flow**:
 
