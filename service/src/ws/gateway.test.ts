@@ -22,7 +22,7 @@ function makeSocket() {
     },
   };
 
-  return socket as SessionTracker["socket"];
+  return socket as unknown as SessionTracker["socket"];
 }
 
 function makeTracker(budId: string, sessionId: string): SessionTracker {
