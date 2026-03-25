@@ -78,7 +78,7 @@ Database migrations managed by Drizzle Kit.
 
 ### `scripts/` → [scripts/scripts.spec.md](./scripts/scripts.spec.md)
 
-Standalone utility scripts for debugging, queries, schema bootstrap, and local auth/client provisioning.
+Standalone utility scripts for debugging, queries, schema bootstrap, and first-party iOS auth/client provisioning across local and staging environments.
 
 ## Package Scripts
 
@@ -95,6 +95,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and local a
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
 | `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
+| `oauth:provision:ios-staging` | `node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using the checked-in staging env file |
 
 ## API Overview
 

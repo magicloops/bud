@@ -4,7 +4,7 @@ Database utility scripts for development and operations.
 
 ## Purpose
 
-Standalone scripts for database management and auth/bootstrap tasks like seeding, migration verification, table inspection, and first-party local OAuth-client provisioning.
+Standalone scripts for database management and auth/bootstrap tasks like seeding, migration verification, table inspection, and first-party iOS OAuth-client provisioning for local and staging environments.
 
 ## Files
 
@@ -28,6 +28,16 @@ pnpm db:push
 **Why It Exists**:
 In this project, Drizzle Kit does not reliably bootstrap Better Auth's non-`public` schema objects during `push`, so the wrapper creates the auth foundation first using Better Auth's own schema knowledge rather than maintaining hand-written bootstrap SQL.
 
+### `provision-ios-oauth-client-shared.ts`
+
+Shared helper for first-party iOS OAuth-client provisioning scripts.
+
+**Responsibilities**:
+- Upsert deterministic first-party iOS client rows in `auth.oauthClient`
+- Build the published auth bundle from the current `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
+- Print environment-specific warnings when the running config does not match the expected public origin
+- Share one bundle/output shape across local and staging provisioning entrypoints
+
 ### `provision-ios-local-oauth-client.ts`
 
 Creates or updates the fixed first-party local iOS OAuth client and prints the exact local auth bundle to hand to the mobile team.
@@ -44,6 +54,25 @@ Creates or updates the fixed first-party local iOS OAuth client and prints the e
 ```bash
 pnpm oauth:provision:ios-local
 ```
+
+### `provision-ios-staging-oauth-client.ts`
+
+Creates or updates the fixed first-party staging iOS OAuth client and prints the exact staging auth bundle to hand to the mobile team.
+
+**Responsibilities**:
+- Upsert `auth.oauthClient` row `bud-ios-staging`
+- Enforce the staging redirect URI (`chat.bud.app://oauth/callback`)
+- Mark the client as a public native PKCE client with refresh-token support
+- Print the current staging auth bundle derived from `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
+- Warn when the staging env is not aligned with the expected public `https://staging.bud.dev` topology
+
+**Usage**:
+```bash
+pnpm oauth:provision:ios-staging
+```
+
+**Execution Contract**:
+- The package script loads `.env.staging` explicitly via Node's `--env-file` flag before importing `tsx`, so the staging bundle is always derived from the checked-in staging env file rather than whichever shell env happens to be active.
 
 ### `seed.ts`
 
@@ -102,7 +131,7 @@ npx tsx src/scripts/apply-missing-migrations.ts
 | `../db/client.js` | Database connection |
 | `../db/schema.js` | Table definitions |
 | `../auth/auth.js` | Shared OAuth scope/base-path constants for bundle output |
-| `../config.js` | Public-origin config used when printing the local auth bundle |
+| `../config.js` | Public-origin config used when printing the current iOS auth bundle |
 | `pg` | Auth-schema bootstrap connection |
 | `node:child_process` | Re-run Drizzle CLI after bootstrap |
 | `crypto` | Token generation (seed) |

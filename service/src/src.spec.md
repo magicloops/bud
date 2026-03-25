@@ -124,7 +124,7 @@ WebSocket gateways for bud daemon connections and browser terminal access.
 
 ### `scripts/` → [scripts.spec.md](./scripts/scripts.spec.md)
 
-Database utility scripts for development (seeding, migrations, inspection).
+Database utility scripts for development and auth/bootstrap operations (seeding, migrations, inspection, local iOS client provisioning, staging iOS client provisioning).
 
 ## Architecture
 
