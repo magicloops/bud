@@ -4,7 +4,7 @@
 **Created**: 2026-03-23
 **Design Doc**: [../../design/mobile-claim-redirect-handoff.md](../../design/mobile-claim-redirect-handoff.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
-**Mobile Team Note**: [../../IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md](../../IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md)
+**Mobile Team Note**: [../../reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md](../../reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md)
 **Phase 1**: [phase-1-callback-contract-and-helpers.md](./phase-1-callback-contract-and-helpers.md)
 **Phase 2**: [phase-2-claim-route-and-login-resume.md](./phase-2-claim-route-and-login-resume.md)
 **Phase 3**: [phase-3-validation-and-handoff.md](./phase-3-validation-and-handoff.md)
@@ -123,7 +123,7 @@ Service follow-up is only needed if we later decide to centralize redirect polic
 - `web/src/routes/routes.spec.md`
 - `web/src/lib/lib.spec.md`
 - `bud.spec.md`
-- `reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md` if the mobile handoff package is updated in the same tranche
+- `reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md` if the mobile handoff package is updated in the same tranche
 
 ## Spec Files To Update
 
@@ -137,7 +137,7 @@ Service follow-up is only needed if we later decide to centralize redirect polic
 ### Possibly Impacted Docs
 
 - [ ] `design/mobile-claim-redirect-handoff.md` if implementation choices diverge from the current draft
-- [ ] `reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md` if the claim-link handoff notes are updated in the same pass
+- [ ] `reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md` if the claim-link handoff notes are updated in the same pass
 
 ## Impacted Contracts
 

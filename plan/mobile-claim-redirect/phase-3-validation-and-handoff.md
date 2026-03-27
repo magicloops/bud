@@ -38,7 +38,7 @@ By the end of this phase:
 
 - `plan/mobile-claim-redirect/validation-checklist.md`
 - `design/mobile-claim-redirect-handoff.md`
-- `reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md` if the mobile handoff package is updated
+- `reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md` if the mobile handoff package is updated
 - `web/web.spec.md`
 - `web/src/routes/routes.spec.md`
 - `web/src/lib/lib.spec.md`
@@ -125,7 +125,7 @@ After the behavior is verified, update the mobile-facing documentation so it sta
 - [ ] `web/src/lib/lib.spec.md`
 - [ ] `plan/mobile-claim-redirect/validation-checklist.md`
 - [ ] `design/mobile-claim-redirect-handoff.md` if validation changes assumptions
-- [ ] `reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md` if updated in the same tranche
+- [ ] `reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md` if updated in the same tranche
 
 ## Exit Criteria
 

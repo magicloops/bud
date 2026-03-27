@@ -293,6 +293,24 @@ export type ApiMessagePage = {
   }
 }
 
+export type ApiAgentState = {
+  active: boolean
+  turn_id: string | null
+  phase: 'idle' | 'starting' | 'thinking' | 'tool_running' | 'streaming_message'
+  can_cancel: boolean
+  stream_cursor: string
+  pending_tool: {
+    call_id: string
+    name: string
+    args: Record<string, unknown>
+  } | null
+  draft_assistant: {
+    text: string
+    updated_at: string
+  } | null
+  updated_at: string
+}
+
 // Normalize capabilities from API response
 export function normalizeCapabilities(caps: unknown): {
   sessions: boolean

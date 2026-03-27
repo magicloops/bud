@@ -1,18 +1,16 @@
 import { ulid } from "ulid";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { Buffer } from "node:buffer";
 import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
-import { AgentEventBus } from "../runtime/event-bus.js";
-import type { ReadinessHints, PendingCommand } from "../terminal/types.js";
+import type { ReadinessHints } from "../terminal/types.js";
 import { isKnownReplProgram } from "../terminal/known-programs.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import {
   providerRegistry,
-  OpenAIProvider,
   type CanonicalMessage,
   type CanonicalTool,
   type CanonicalResponse,
@@ -24,6 +22,7 @@ import {
   type ModelConfig,
 } from "../llm/index.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
+import { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 
 type AgentDirective =
   | {
@@ -236,7 +235,7 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
   private readonly contextSyncService: ContextSyncService | null;
-  private readonly events: AgentEventBus;
+  private readonly runtime: AgentRuntimeStateManager;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
   private readonly openaiDebugEnabled: boolean;
@@ -246,7 +245,7 @@ export class AgentService {
 
   constructor(
     terminalSessionManager: TerminalSessionManager,
-    events: AgentEventBus,
+    runtime: AgentRuntimeStateManager,
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
     openaiDebugEnabled: boolean,
@@ -254,7 +253,7 @@ export class AgentService {
   ) {
     this.terminalSessionManager = terminalSessionManager;
     this.contextSyncService = contextSyncService ?? null;
-    this.events = events;
+    this.runtime = runtime;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
     this.openaiDebugEnabled = openaiDebugEnabled;
@@ -273,30 +272,37 @@ export class AgentService {
     const requestedEffort = this.normalizeReasoningEffort(options?.reasoningEffort);
     const model = options?.model ?? config.defaultModel;
     const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
+    const turnId = ulid();
+    this.runtime.startTurn(threadId, turnId);
 
-    // Clear old agent events (especially `final`) so new SSE connections
-    // don't receive stale events from previous runs
-    this.events.clearBuffer(threadId);
-
-    // Get or create terminal session for this thread
-    const session = await this.getOrCreateSession(threadId, ownerUserId);
-    const controller = new AbortController();
-    this.cancellations.set(threadId, controller);
-    void this.runAgentFlow({
-      threadId,
-      sessionId: session.sessionId,
-      model,
-      reasoningEffort: requestedEffort,
-      ownerUserId,
-      controller
-    }).catch((err) => {
-      this.logger.error({ err, sessionId: session.sessionId, threadId, component: "agent" }, "Agent flow failed");
-    });
-    return { sessionId: session.sessionId };
+    try {
+      const session = await this.getOrCreateSession(threadId, ownerUserId);
+      const controller = new AbortController();
+      this.cancellations.set(threadId, controller);
+      void this.runAgentFlow({
+        threadId,
+        turnId,
+        sessionId: session.sessionId,
+        model,
+        reasoningEffort: requestedEffort,
+        ownerUserId,
+        controller
+      }).catch((err) => {
+        this.logger.error(
+          { err, sessionId: session.sessionId, threadId, component: "agent" },
+          "Agent flow failed",
+        );
+      });
+      return { sessionId: session.sessionId };
+    } catch (err) {
+      this.runtime.finishTurn(threadId);
+      throw err;
+    }
   }
 
   private async runAgentFlow({
     threadId,
+    turnId,
     sessionId,
     model,
     reasoningEffort,
@@ -304,6 +310,7 @@ export class AgentService {
     controller
   }: {
     threadId: string;
+    turnId: string;
     sessionId: string;
     model: string;
     reasoningEffort: ReasoningEffortSetting;
@@ -311,7 +318,6 @@ export class AgentService {
     controller: AbortController;
   }): Promise<void> {
     const conversation = await this.buildConversation(threadId);
-    const turnId = ulid();
     this.debug("Starting agent run", { threadId, sessionId, model, entries: conversation.length, reasoningEffort });
     try {
       let steps = 0;
@@ -319,6 +325,7 @@ export class AgentService {
         if (controller.signal.aborted) {
           throw new Error("agent_canceled");
         }
+        this.runtime.markThinking(threadId);
         const { response } = await this.invokeModel(
           threadId,
           turnId,
@@ -330,7 +337,7 @@ export class AgentService {
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           const callMeta = { input: toolCall.input ?? "" };
-          this.events.emit(threadId, {
+          const toolCallCursor = this.runtime.emit(threadId, {
             event: "agent.tool_call",
             data: {
               turn_id: turnId,
@@ -338,8 +345,16 @@ export class AgentService {
               name: toolCall.tool,
               args: callMeta
             },
-            id: ulid()
           });
+          this.runtime.setPendingTool(
+            threadId,
+            {
+              call_id: toolCall.callId,
+              name: toolCall.tool,
+              args: callMeta,
+            },
+            toolCallCursor,
+          );
           this.debug("Dispatching tool call", {
             sessionId,
             threadId,
@@ -391,7 +406,7 @@ export class AgentService {
               content: JSON.stringify(toolPayload)
             }]
           });
-          this.events.emit(threadId, {
+          const toolResultCursor = this.runtime.emit(threadId, {
             event: "agent.tool_result",
             data: {
               turn_id: turnId,
@@ -407,8 +422,8 @@ export class AgentService {
               omitted_lines: result.omittedLines,
               message: toolMessage,
             },
-            id: ulid()
           });
+          this.runtime.markThinking(threadId, toolResultCursor);
 
           steps += 1;
           continue;
@@ -434,7 +449,7 @@ export class AgentService {
         conversation.push(this.createMessageInput("assistant", directive.message));
         const serializedAssistantMessage = this.serializePersistedMessage(assistantMessage);
 
-        this.events.emit(threadId, {
+        const messageCursor = this.runtime.emit(threadId, {
           event: "agent.message",
           data: {
             turn_id: turnId,
@@ -442,9 +457,9 @@ export class AgentService {
             text: directive.message,
             message: serializedAssistantMessage,
           },
-          id: ulid()
         });
-        this.events.emit(threadId, {
+        this.runtime.clearDraftAssistant(threadId, messageCursor);
+        this.runtime.emit(threadId, {
           event: "final",
           data: {
             turn_id: turnId,
@@ -452,8 +467,8 @@ export class AgentService {
             text: directive.message,
             message_id: serializedAssistantMessage.message_id,
           },
-          id: ulid()
         });
+        this.runtime.finishTurn(threadId);
 
         this.debug("Agent final response", {
           sessionId,
@@ -472,27 +487,27 @@ export class AgentService {
         canceled ||
         (err instanceof Error && (err.name === "AbortError" || err.message === "The operation was aborted."));
       if (abortLike) {
-        this.events.emit(threadId, {
+        this.runtime.emit(threadId, {
           event: "final",
           data: {
             turn_id: turnId,
             status: "canceled",
             error: "Agent turn canceled"
           },
-          id: ulid()
         });
+        this.runtime.finishTurn(threadId);
         this.debug("Agent turn canceled", { threadId, sessionId });
         return;
       }
-      this.events.emit(threadId, {
+      this.runtime.emit(threadId, {
         event: "final",
         data: {
           turn_id: turnId,
           status: "failed",
           error: err instanceof Error ? err.message : "agent_failed"
         },
-        id: ulid()
       });
+      this.runtime.finishTurn(threadId);
 
       this.debug("Agent run failed", {
         sessionId,
@@ -653,13 +668,13 @@ export class AgentService {
       if (hasDraftText) {
         return;
       }
-      this.events.emit(threadId, {
+      const cursor = this.runtime.emit(threadId, {
         event: "agent.message_start",
         data: {
           turn_id: turnId,
         },
-        id: ulid(),
       });
+      this.runtime.setDraftAssistant(threadId, draftText, cursor);
       hasDraftText = true;
     };
 
@@ -669,14 +684,14 @@ export class AgentService {
       }
       emitAssistantDraftStart();
       draftText += delta;
-      this.events.emit(threadId, {
+      const cursor = this.runtime.emit(threadId, {
         event: "agent.message_delta",
         data: {
           turn_id: turnId,
           delta,
         },
-        id: ulid(),
       });
+      this.runtime.setDraftAssistant(threadId, draftText, cursor);
     };
 
     for await (const event of provider.invoke(messages, CANONICAL_TOOLS, modelConfig, signal)) {
@@ -726,14 +741,14 @@ export class AgentService {
     }
 
     if (hasDraftText) {
-      this.events.emit(threadId, {
+      const cursor = this.runtime.emit(threadId, {
         event: "agent.message_done",
         data: {
           turn_id: turnId,
           text: draftText,
         },
-        id: ulid(),
       });
+      this.runtime.setDraftAssistant(threadId, draftText, cursor);
     }
 
     const orderedIndexes = Array.from(

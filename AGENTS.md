@@ -329,6 +329,19 @@ Implementation guardrails:
 - **Service**: `pnpm install && pnpm dev` (requires PostgreSQL)
 - **Web**: `pnpm install && pnpm dev` (Vite dev server)
 
+### 6.0) Run package-local scripts from the package dir
+
+When running `pnpm` scripts or commands that rely on package-local dev dependencies such as `tsx`, run them from the owning package directory or use `pnpm --dir`.
+
+Examples:
+
+```bash
+cd service && pnpm test
+pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/runtime/agent-runtime-state.test.ts src/runtime/event-bus.test.ts
+```
+
+Do **not** assume repo-root `node --import tsx ...` can resolve package-local dependencies for `service/` or `web/`.
+
 Full setup in each subproject's README or spec file.
 
 ### 6.1) Database Schema Changes (Drizzle)
@@ -421,4 +434,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2026-03-15*
+*Last updated: 2026-03-27*

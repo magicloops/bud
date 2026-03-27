@@ -9,8 +9,8 @@
 **Phase 4**: [phase-4-true-assistant-streaming.md](./phase-4-true-assistant-streaming.md)
 **Phase 5**: [phase-5-polish-validation-and-handoff.md](./phase-5-polish-validation-and-handoff.md)
 **Related Docs**:
-- [../../IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md](../../IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md)
-- [../../IOS_MOBILE_BACKEND_HANDOFF.md](../../IOS_MOBILE_BACKEND_HANDOFF.md)
+- [../../reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md](../../reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md)
+- [../../reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md](../../reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md)
 
 ---
 
@@ -150,9 +150,8 @@ These decisions are fixed for this plan:
 ### Root Docs
 
 - `bud.spec.md`
-- `IOS_MOBILE_BACKEND_HANDOFF.md`
-- `IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md`
-- new fixtures or handoff docs if we publish them at root or under `reference/`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md`
 
 ## Risks
 

@@ -66,7 +66,7 @@ Breaking changes will bump `proto` (e.g., `0.2`).
   `Cache-Control: no-cache, no-transform`,  
   `Connection: keep-alive`
 - Keep‑alive comment every **15 s**.
-- Client MAY use `Last-Event-ID` or a route-specific `last_event_id` query parameter to resume when the endpoint supports replay.
+- Client MAY use `Last-Event-ID` or a route-specific resume query parameter when the endpoint supports replay.
 
 ### 2.3 Terminal Event Stream (Browser)
 
@@ -77,12 +77,15 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 
 ### 2.4 Agent Event Stream (Browser)
 
+- Companion runtime snapshot route: `GET /api/threads/:thread_id/agent/state`
 - URL: `GET /api/threads/:thread_id/agent/stream`
 - Same SSE headers + keep-alive semantics as runs.
-- Events: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat`.
+- Events: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`, `heartbeat`.
 - Used by the workbench to receive agent conversation events.
 - Separate from terminal stream to support offline scenarios (conversation without terminal).
 - Draft assistant text is streamed before canonical persistence, then successful agent payloads carry a per-turn `turn_id`, stable tool `call_id`, and canonical persisted transcript rows under `message`.
+- `GET /api/threads/:thread_id/agent/state` is the authoritative best-effort in-flight snapshot for pending tool, draft assistant, and the current agent resume cursor, including idle snapshots.
+- Fresh no-cursor agent-stream attaches are live-only. Bounded catch-up requires an explicit resume cursor such as `after=<cursor>`.
 
 ---
 
@@ -535,7 +538,7 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
 
 **Event names** and **payloads**. Every event includes:
 
-Current thread-scoped SSE payloads are route-specific. The SSE frame `id:` is the event identifier; the JSON payload does not currently embed a second `event_id`.
+Current thread-scoped SSE payloads are route-specific. For `GET /api/threads/:thread_id/agent/stream`, the SSE frame `id:` is an opaque runtime cursor that can be used for bounded resume; the JSON payload does not embed a second `event_id`.
 
 ### 7.1 Events
 
@@ -559,6 +562,9 @@ Current thread-scoped SSE payloads are route-specific. The SSE frame `id:` is th
 
 * `agent.tool_result`
   `{ "turn_id":"01TURN...", "call_id":"call_123", "message_id":"uuid", "name":"terminal.run", "summary":"Ran git status", "output":"...", "output_bytes":123, "truncated":false, "output_truncation_reason":null, "omitted_lines":0, "message": { "message_id":"uuid", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.run\",...}", "metadata":{"tool":"terminal.run","call_id":"call_123","summary":"Ran git status","output_truncation_reason":null}, "created_at":"2026-03-22T22:09:58.000Z" } }`
+
+* `agent.resync_required`
+  `{ "error":"resync_required", "provided_cursor":"01CUR..." }`
 
 * `terminal.output`
   `{ "event_id":"...", "ts":1731, "data":"base64url" }`
@@ -594,8 +600,13 @@ data: {"turn_id":"01TURN...","message_id":"uuid","text":"...","message":{"messag
 * Keep‑alive: `: heartbeat\n\n`
 * Assistant draft semantics: clients may build a temporary assistant row from `agent.message_start` / `agent.message_delta` / `agent.message_done`, but the persisted transcript row still arrives later as `agent.message`
 * Tool-result semantics: `summary` is the compact server-owned label for collapsed UI, while `truncated` / `output_truncation_reason` describe whether the raw tool output itself was partial
-* Resume: Client MAY send header `Last-Event-ID: 01E...` or query param `last_event_id=01E...`; server replays only buffered events strictly after that frame id when it is still available in memory.
-* Replay miss: If the requested resume id is no longer buffered, the server falls back to live-only delivery and the client SHOULD reconcile against canonical history.
+* Agent runtime bootstrap: clients SHOULD fetch `GET /api/threads/:thread_id/agent/state` and treat its `stream_cursor` as the baseline resume token for the current in-flight snapshot.
+* Agent cursor semantics: for `GET /api/threads/:thread_id/agent/stream`, the SSE frame `id:` is the same opaque cursor space exposed as `/agent/state.stream_cursor`; after incorporating an event with `id: C_next`, the client SHOULD store `C_next` as the next resume cursor.
+* Fresh agent-stream attach: `GET /api/threads/:thread_id/agent/stream` with no cursor is live-only and MUST NOT replay old buffered `agent.*` or `final` events.
+* Resume: client SHOULD send `after=<cursor>` as the primary explicit resume form. The service also accepts header `Last-Event-ID: 01CUR...` or query param `last_event_id=01CUR...` for compatibility; native clients SHOULD NOT mix multiple client-managed resume carriers.
+* Replay miss: if the requested resume cursor is no longer buffered, the server emits `agent.resync_required` and the client SHOULD refetch `/messages` plus `/agent/state` before reattaching.
+* Resume scope: the current implementation keeps a bounded same-instance in-memory window for reconnect convenience; transcript correctness still comes from `/messages` plus `/agent/state`.
+* Runtime overlay semantics: `starting` / `thinking` indicate an active turn but do not themselves create transcript rows; synthetic overlay rows come from `pending_tool` and `draft_assistant`.
 
 ---
 

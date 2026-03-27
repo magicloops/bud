@@ -30,11 +30,12 @@ Application entry point and Fastify server setup.
 ```typescript
 const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
 const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
+const agentRuntime = new AgentRuntimeStateManager();
 
 // Initialize LLM providers (OpenAI, Anthropic based on config)
 initializeProviders();
 
-const agentService = new AgentService(terminalSessionManager, agentEvents, ...);
+const agentService = new AgentService(terminalSessionManager, agentRuntime, ...);
 ```
 
 **SSE Streaming Routes** (defined inline):
@@ -112,7 +113,7 @@ REST API route handlers for buds, threads, messages, runs, and terminal operatio
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 
-Runtime managers for runs, sessions, terminal sessions, and event bus infrastructure.
+Runtime managers for runs, sessions, terminal sessions, generic event buses, and the dedicated agent runtime snapshot/resume store.
 
 ### `terminal/` → [terminal.spec.md](./terminal/terminal.spec.md)
 

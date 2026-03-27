@@ -75,8 +75,11 @@ Main thread view with full chat and terminal functionality (~1000 lines).
 **Loader**:
 ```typescript
 loader: async ({ params }) => {
-  const messagePage = await apiFetchJson(`/api/threads/${params.threadId}/messages?limit=100`)
-  return { messagePage }
+  const [messagePage, agentState] = await Promise.all([
+    apiFetchJson(`/api/threads/${params.threadId}/messages?limit=100`),
+    apiFetchJson(`/api/threads/${params.threadId}/agent/state`)
+  ])
+  return { messagePage, agentState }
 }
 ```
 
@@ -84,6 +87,7 @@ loader: async ({ params }) => {
 
 1. **Chat Timeline**
    - Loads the latest paged transcript window from loader data
+   - Loads `/agent/state` in parallel for the current in-flight bootstrap snapshot
    - Updates via SSE agent stream
    - Role-based rendering (user, assistant, tool)
    - Consumes the paged `{ messages, page }` API contract
@@ -102,13 +106,16 @@ loader: async ({ params }) => {
    - Failed session-record fetches now re-enter the same reconnect backoff path instead of falling into a separate `/api/threads/:id/terminal` polling loop
 
 3. **Agent Stream**
-   - SSE connection to `/api/threads/:id/agent/stream`
-   - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`
+   - Runtime bootstrap from `/api/threads/:id/agent/state`
+   - SSE connection to `/api/threads/:id/agent/stream?after=<stream_cursor>`
+   - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`
    - Builds one per-turn draft assistant row from `agent.message_start` / `agent.message_delta`
    - Treats `agent.message_done` as the final draft snapshot before canonical persistence
    - Uses backend-provided `call_id`, `message_id`, and canonical `message` payloads to reconcile live events into the transcript
    - Replaces draft assistant rows with the canonical persisted assistant row when `agent.message` arrives
-   - Reconnects pass the last seen SSE frame id back as `last_event_id` so the server can replay only newer buffered events when available
+   - Reconnects resume from the latest known runtime cursor, using `after=<cursor>` and compatible `Last-Event-ID` handling
+   - Handles explicit `agent.resync_required` by refetching `/messages` plus `/agent/state` and reattaching
+   - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Replaces the optimistic user-row id with the real `message_id` returned by `POST /messages`
    - Healthy successful turns no longer require a mandatory `final` refetch just to learn assistant/tool message ids
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
