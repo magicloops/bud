@@ -82,8 +82,8 @@ Use this as the running status board while the transcript-history and agent-stre
 ### Handoff And Validation
 
 - [x] fixtures are published for the final transcript and SSE contracts.
-- [x] `IOS_MOBILE_BACKEND_HANDOFF.md` is updated.
-- [x] `IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md` is updated.
+- [x] `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md` is updated.
+- [x] `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md` is updated.
 - [x] touched specs are updated.
 - [x] end-to-end validation is complete.
 

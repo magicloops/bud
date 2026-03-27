@@ -285,7 +285,7 @@ Please report:
 
 - [IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md](./IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md)
 - [reference/IOS_LOCAL_AUTH_HANDOFF.md](./reference/IOS_LOCAL_AUTH_HANDOFF.md)
-- [reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md](./reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md)
+- [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md](./IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md)
 - [design/mobile-claim-redirect-handoff.md](./design/mobile-claim-redirect-handoff.md)
 - [plan/mobile-claim-redirect/implementation-spec.md](./plan/mobile-claim-redirect/implementation-spec.md)
 - [plan/mobile-claim-redirect/validation-checklist.md](./plan/mobile-claim-redirect/validation-checklist.md)

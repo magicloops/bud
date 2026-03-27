@@ -75,8 +75,8 @@ Status: implemented.
 
 Refresh:
 
-- `IOS_MOBILE_BACKEND_HANDOFF.md`
-- `IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md`
 - any related design/spec docs
 
 The goal is to remove stale caveats once the contract really lands.

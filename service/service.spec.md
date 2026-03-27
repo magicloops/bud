@@ -117,6 +117,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `POST` | `/api/threads` | Create thread |
 | `GET` | `/api/threads/:id/messages` | Get messages |
 | `POST` | `/api/threads/:id/messages` | Send message (triggers agent) |
+| `GET` | `/api/threads/:id/agent/state` | Get current in-flight agent snapshot plus resume cursor |
 | `POST` | `/api/threads/:id/cancel` | Cancel running agent |
 | `POST` | `/api/threads/:id/terminal` | Create/get terminal session |
 | `POST` | `/api/threads/:id/terminal/ensure` | Ensure terminal on bud |
@@ -140,8 +141,12 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 |------|--------|
 | `/api/runs/:id/stream` | `status`, `exec.stdout`, `exec.stderr`, `final` |
 | `/api/sessions/:id/stream` | `output`, `status` |
-| `/api/threads/:id/agent/stream` | `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, `heartbeat` |
+| `/api/threads/:id/agent/stream` | `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`, `heartbeat` |
 | `/api/threads/:id/terminal/stream` | `output`, `ready`, `status`, `heartbeat` |
+
+The thread agent contract now splits into:
+- `GET /api/threads/:id/agent/state` for authoritative best-effort in-flight state
+- `GET /api/threads/:id/agent/stream` for live transport plus bounded resume
 
 ## Architecture
 

@@ -67,10 +67,8 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] `service/src/src.spec.md` updated if needed
 - [ ] `web/src/routes/$budId/budId.spec.md` updated
 - [ ] `docs/proto.md` updated
-- [ ] `reference/IOS_MOBILE_BACKEND_HANDOFF.md` updated
-- [ ] `reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md` updated
-- [ ] `reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md` updated
-- [ ] `reference/AGENT_STREAM_EVENT_FIXTURES.md` updated
+- [ ] `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md` updated
+- [ ] `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md` updated
 - [ ] `bud.spec.md` updated
 
 ## Notes

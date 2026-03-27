@@ -86,7 +86,8 @@ State is truth. Stream is transport. Messages are history. Replay is only a reco
 
 - [ ] `GET /api/threads/:thread_id/agent/state` exists and is ownership-aware.
 - [ ] the route returns a best-effort runtime snapshot with `active`, `turn_id`, `phase`, `stream_cursor`, `pending_tool`, and `draft_assistant` fields.
-- [ ] `stream_cursor` is an opaque monotonic resume token that exists before the first emitted event of an active turn and is ideally present on idle snapshots too.
+- [ ] `stream_cursor` is an opaque monotonic resume token that exists before the first emitted event of an active turn and is present on idle snapshots too.
+- [ ] `/agent/state.stream_cursor` and the agent-stream SSE frame `id:` share the same cursor space.
 - [ ] `AgentService` maintains and clears runtime snapshot state across success, failure, and cancellation paths.
 - [ ] the reference web thread route loads `/messages` plus `/agent/state` on open and uses `stream_cursor` when attaching SSE.
 - [ ] a snapshot with cursor `C` includes all runtime effects up to `C`.
@@ -108,9 +109,11 @@ These decisions are fixed for this plan:
 - Treat `GET /api/threads/:thread_id/agent/state` as a best-effort, process-local runtime snapshot, not a durable history surface.
 - Treat `GET /api/threads/:thread_id/agent/stream` as live continuation by default, not as history.
 - Treat `stream_cursor` as a server-owned opaque monotonic resume token, not just "latest emitted SSE id when one exists."
+- Treat `/agent/state.stream_cursor` and agent-stream SSE frame `id:` as one shared resume-token space.
 - Keep replay bounded to the race between `/agent/state` and `/agent/stream` plus short reconnects.
 - A snapshot with cursor `C` must include all runtime effects up to `C`.
 - `/agent/stream` after `C` must either deliver only effects after `C` or explicitly require resync.
+- Native/mobile clients should use `after=<cursor>` as the single client-managed resume carrier rather than mixing multiple resume channels.
 - Do not rely on client-side gap detection and repair as the primary model.
 - Scope the live-only fresh-attach change to the agent stream; do not silently change terminal or run stream semantics in the same pass.
 - Continue authorizing before any browser-facing stream attach or runtime-state read.
@@ -125,6 +128,7 @@ These decisions are fixed for this plan:
 - bounded agent-stream catch-up plus explicit `resync_required`
 - reference-web adoption so the semantics flip does not regress active-turn open
 - explicit fixtures/tests for passive open, active-turn open, and reconnect recovery
+- explicit client-facing rules for runtime overlay projection, `/agent/state` failure fallback, and non-destructive `agent.resync_required` recovery while detached
 
 ### High
 
@@ -177,10 +181,8 @@ These decisions are fixed for this plan:
 ### Root Docs And Fixtures
 
 - `docs/proto.md`
-- `reference/IOS_MOBILE_BACKEND_HANDOFF.md`
-- `reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md`
-- `reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md`
-- `reference/AGENT_STREAM_EVENT_FIXTURES.md`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md`
 - `bud.spec.md`
 
 ## Risks
@@ -211,12 +213,16 @@ These decisions are fixed for this plan:
 - [ ] reference web uses `/messages` plus `/agent/state` as the thread-open baseline.
 - [ ] `stream_cursor` is a real opaque resume token, not merely a nullable last SSE id.
 - [ ] snapshot cursor invariants are documented and tested.
+- [ ] docs state explicitly that agent-stream SSE `id:` is the latest resume cursor after each incorporated event.
 - [ ] no-cursor `agent/stream` attach is live-only in the shipped backend.
 - [ ] bounded cursor-based replay still works for reconnect when the cursor is present in the resume window.
 - [ ] stale or unknown cursor produces explicit `resync_required`.
 - [ ] clients recover from `resync_required` by refetching `/messages` plus `/agent/state`.
 - [ ] completed-thread passive reopen is visually stable.
 - [ ] active-turn open still renders the current in-flight state correctly.
+- [ ] handoff and plan docs define field-driven UI projection for `starting` / `thinking`, `pending_tool`, and `draft_assistant`.
+- [ ] handoff and plan docs define fallback behavior when `/agent/state` fails while `/messages` succeeds.
+- [ ] handoff and plan docs define non-destructive `agent.resync_required` handling while the user is reading older history.
 - [ ] runtime snapshot only resets to idle after final durable state is available.
 - [ ] touched specs, protocol docs, fixtures, and iOS handoffs are updated together.
 - [ ] validation notes are captured in [validation-checklist.md](./validation-checklist.md).

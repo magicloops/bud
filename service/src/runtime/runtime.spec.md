@@ -7,9 +7,45 @@ Runtime managers for runs and terminal sessions, plus event bus infrastructure.
 Orchestrates execution of commands and terminal sessions across connected bud daemons. Handles:
 - Command dispatch and result tracking
 - Thread-scoped terminal sessions (tmux-backed)
-- SSE event broadcasting
+- Generic SSE event broadcasting for run/terminal streams
+- Agent-thread runtime snapshots plus bounded resume state
 
 ## Files
+
+### `agent-runtime-state.ts`
+
+Dedicated runtime store for agent-thread in-flight state and bounded resume.
+
+**Responsibilities**:
+- Own the authoritative best-effort `/api/threads/:thread_id/agent/state` snapshot
+- Allocate opaque monotonic `stream_cursor` values for active and idle snapshots
+- Keep a bounded same-instance replay window with cursor checkpoints
+- Support live-only no-cursor attach plus bounded cursor replay
+- Require explicit `agent.resync_required` when a supplied resume cursor is too old or unknown
+
+**Snapshot Shape**:
+- `active`
+- `turn_id`
+- `phase`
+- `can_cancel`
+- `stream_cursor`
+- `pending_tool`
+- `draft_assistant`
+- `updated_at`
+
+**Phase Values**:
+- `idle`
+- `starting`
+- `thinking`
+- `tool_running`
+- `streaming_message`
+
+**Replay / Cursor Notes**:
+- no-cursor agent attach is live-only
+- `/agent/state` always exposes a resumable `stream_cursor`
+- event-frame `id:` values on the agent stream are the same opaque runtime cursors
+- replay is intentionally bounded and process-local
+- resume misses surface explicit resync instead of silent live-only fallback
 
 ### `event-bus.ts`
 
@@ -19,7 +55,7 @@ Generic SSE event bus with buffering for replay.
 - `SseEventBus` - Base class with channel-keyed listeners and buffers
 - `RunEventBus` - For run execution events
 - `TerminalEventBus` - For terminal session events
-- `AgentEventBus` - For agent conversation events (tool calls, messages, final)
+- `AgentEventBus` - Legacy generic agent bus export retained for compatibility/tests; production agent-thread streaming now uses `agent-runtime-state.ts`
 
 **Key Features**:
 - **Buffering**: Stores up to 1000 events per channel for replay
@@ -37,14 +73,21 @@ Generic SSE event bus with buffering for replay.
 | `attach(channelId, reply, { lastEventId? })` | Attach Fastify reply as SSE listener with optional cursor-aware replay |
 | `attachCallback(channelId, callback, { lastEventId? })` | Attach callback function as listener with the same replay semantics |
 
-### `event-bus.test.ts`
+### `agent-runtime-state.test.ts`
 
-Standalone Node test coverage for the replay contract.
+Standalone Node test coverage for the agent runtime snapshot and bounded-resume contract.
 
 **Current Coverage**:
-- full-buffer replay when no cursor is provided
-- replay of only the buffered events after a known last event id
-- live-only fallback when the provided resume cursor is missing from the buffer
+- idle snapshots expose resumable cursors
+- active turns have a cursor before any visible event
+- no-cursor attach is live-only
+- attach after a known cursor replays only newer visible events
+- stale cursors produce explicit resync
+- finishing a turn returns the snapshot to idle with a fresh cursor
+
+### `event-bus.test.ts`
+
+Standalone Node test coverage for the generic replay contract still used by run/terminal streams.
 
 ### `run-manager.ts`
 

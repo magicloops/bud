@@ -6,7 +6,7 @@ import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
-import { RunEventBus, TerminalEventBus, AgentEventBus } from "./runtime/event-bus.js";
+import { RunEventBus, TerminalEventBus } from "./runtime/event-bus.js";
 import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
@@ -17,6 +17,7 @@ import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 import { ContextSyncService } from "./terminal/context-sync-service.js";
 import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 
 const SERVICE_VERSION = "0.0.1";
 
@@ -50,7 +51,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   const runLogger = server.log.child({ component: "run_manager" });
   const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
   const terminalEvents = new TerminalEventBus();
-  const agentEvents = new AgentEventBus();
+  const agentRuntime = new AgentRuntimeStateManager();
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
   const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
   terminalSessionManager.startIdleChecks();
@@ -68,7 +69,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   const agentLogger = server.log.child({ component: "agent" });
   const agentService = new AgentService(
     terminalSessionManager,
-    agentEvents,
+    agentRuntime,
     agentLogger,
     config.agentDebug,
     config.agentOpenaiDebug,
@@ -89,7 +90,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerDeviceAuthRoutes(server);
   await registerMeRoutes(server);
   await registerBudRoutes(server, terminalSessionManager);
-  await registerThreadRoutes(server, runManager, agentService, agentEvents, contextSyncService);
+  await registerThreadRoutes(server, runManager, agentService, agentRuntime, contextSyncService);
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);
   await registerModelsRoutes(server);

@@ -4,7 +4,7 @@ Status: Draft
 
 Audience: Backend, web platform, iOS
 
-Last updated: 2026-03-26
+Last updated: 2026-03-27
 
 ## 1. Goal
 
@@ -25,11 +25,11 @@ Direct consequence:
 - reopening a completed thread can replay stale previous-turn `agent.tool_call`, `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.message`, and `final` events if the process still has them buffered
 - restarting the service clears that process-local buffer, which matches the mobile report that the flicker disappears after a dev-server restart
 
-The docs are not aligned:
+The earlier mobile handoff docs, which have since been removed from `reference/`, were not aligned:
 
-- [`reference/IOS_MOBILE_BACKEND_HANDOFF.md`](../reference/IOS_MOBILE_BACKEND_HANDOFF.md) can be read as "events are replayed on attach"
-- [`reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md`](../reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md) describes cursor-aware replay and live-only fallback when a resume cursor is missing
-- [`reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md`](../reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md) explicitly matches the current code: no-cursor attach replays the whole current in-memory buffer
+- one could be read as "events are replayed on attach"
+- one described cursor-aware replay and live-only fallback when a resume cursor is missing
+- one explicitly matched the old code path where no-cursor attach replayed the whole current in-memory buffer
 
 This means the mobile team is reacting to a real backend contract problem, not only to local UI implementation details.
 
@@ -105,6 +105,8 @@ Recommended carrier shape:
 
 - preferred public contract: `GET /api/threads/:thread_id/agent/stream?after=<cursor>`
 - compatibility transport such as `Last-Event-ID` or `last_event_id` can remain if useful
+- native/mobile clients should use `after=<cursor>` as the only client-managed resume input rather than mixing multiple resume carriers
+- for agent stream frames, SSE `id:` is the same opaque runtime cursor space exposed as `/agent/state.stream_cursor`
 
 The important point is not the exact field name. It is that the cursor is explicit, opaque, and server-owned.
 
@@ -160,8 +162,9 @@ Route semantics:
 - authorized the same way as `messages` and `agent/stream`
 - `stream_cursor` is an opaque monotonic resume token, not just "latest SSE id if one exists"
 - `stream_cursor` exists before the first visible event of an active turn
-- `stream_cursor` should also be returned on idle snapshots to close `idle -> new turn` races
+- `stream_cursor` is also returned on idle snapshots to close `idle -> new turn` races
 - a snapshot with cursor `C` includes all runtime effects up to `C`
+- a later streamed SSE event with `id: C_next` advances that same cursor space
 - after `final`, the route returns idle state only after final durable state is available and the cursor has advanced past that completion boundary
 
 ### 5.3 Recommended Thread-Open Sequence
@@ -187,6 +190,23 @@ Why this works:
 - the snapshot cursor closes the gap between snapshot fetch and stream attach
 - the bounded catch-up window makes short reconnects feel good without turning SSE into history
 - if resume is impossible, the recovery path is simple and server-owned rather than inferred by the client
+
+If `/messages` succeeds but `/agent/state` fails:
+
+- render the canonical transcript only
+- suppress stop-button and synthetic runtime overlay rows until `/agent/state` succeeds
+- retry `/agent/state`
+- if the client chooses to open the stream before `/agent/state` recovers, attach live-only with no cursor and accept temporarily degraded continuity
+
+### Client Projection Rules
+
+Projection should be field-driven rather than phase-driven.
+
+- `starting` and `thinking` mean the turn is active, but they do not create transcript rows on their own
+- `pending_tool` creates at most one synthetic pending-tool row keyed by `call_id`
+- `draft_assistant` creates at most one synthetic assistant draft row keyed by `turn_id`
+- `can_cancel` rather than `phase` should drive the stop affordance
+- if `agent.resync_required` arrives while the user is reading older history, the client should repair data in the background without forcibly jumping the user to the latest view
 
 ### 5.4 Runtime State Model Inside The Service
 
@@ -257,10 +277,8 @@ The contract should be updated in one pass across:
 - [`docs/proto.md`](../docs/proto.md)
 - [`service/src/routes/routes.spec.md`](../service/src/routes/routes.spec.md)
 - [`service/src/runtime/runtime.spec.md`](../service/src/runtime/runtime.spec.md)
-- [`reference/IOS_MOBILE_BACKEND_HANDOFF.md`](../reference/IOS_MOBILE_BACKEND_HANDOFF.md)
-- [`reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md`](../reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md)
-- [`reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md`](../reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md)
-- [`reference/AGENT_STREAM_EVENT_FIXTURES.md`](../reference/AGENT_STREAM_EVENT_FIXTURES.md)
+- [`reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md`](../reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md)
+- [`reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md`](../reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md)
 
 New fixtures should cover:
 

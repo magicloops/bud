@@ -48,7 +48,7 @@ Three canonical tool definitions using standard JSON Schema format:
 
 **Constructor dependencies**:
 - `TerminalSessionManager` (thread-scoped tmux sessions)
-- `AgentEventBus` (SSE event emission for agent events)
+- `AgentRuntimeStateManager` (authoritative `/agent/state` snapshots plus bounded agent-stream resume)
 - Logger and debug flags
 
 **LLM Provider**: Uses `providerRegistry.getProviderForModel()` to get the appropriate provider based on configured model.
@@ -57,7 +57,7 @@ Three canonical tool definitions using standard JSON Schema format:
 
 | Method | Purpose |
 |--------|---------|
-| `startUserMessage(threadId, options)` | Entry point - spawns async agent flow and carries thread-owner stamping |
+| `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, then spawns async agent flow and carries thread-owner stamping |
 | `runAgentFlow(...)` | Main loop - invoke model, handle tools, emit events |
 | `buildConversation(threadId)` | Load message history into canonical `CanonicalMessage[]` format |
 | `invokeModel(threadId, turnId, messages, reasoningEffort, signal)` | Consume provider `invoke()` streams, emit draft assistant SSE, and reconstruct a canonical response |
@@ -80,15 +80,18 @@ startUserMessage()
                   ├─► invokeModel()
                   │
                   ├─► emit agent.message_start / delta / done (text responses only)
+                  ├─► update `/agent/state` cursor + draft snapshot in lockstep
                   │
                   ├─► extractFunctionCall()
                   │      │
                   │      ├─► tool_call found → executeTerminalCall()
                   │      │                      └─► emit agent.tool_result
+                  │      │                      └─► update `/agent/state` pending tool / phase
                   │      │
                   │      └─► no tool → parseResponse()
                   │                    └─► persist assistant row
                   │                    └─► emit agent.message + final
+                  │                    └─► reset `/agent/state` to idle after final durable state
                   │
                   └─► continue or return
 ```
@@ -99,6 +102,8 @@ startUserMessage()
 - Draft assistant text is emitted live over SSE via `agent.message_start`, `agent.message_delta`, and `agent.message_done`.
 - The persisted assistant transcript row is still created only once the turn resolves, then emitted as `agent.message`.
 - Reasoning blocks are preserved inside the in-memory conversation on tool-call loops so providers that require multi-turn reasoning context do not lose those items.
+- `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
+- Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 
 **Reasoning Effort Support**:
 
@@ -120,7 +125,7 @@ private readonly cancellations = new Map<string, AbortController>();
 
 ## Events Emitted
 
-Via `AgentEventBus`, using `threadId` as the channel:
+Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 
 | Event | Data | When |
 |-------|------|------|
@@ -130,6 +135,7 @@ Via `AgentEventBus`, using `threadId` as the channel:
 | `agent.tool_call` | `{ turn_id, call_id, name, args }` | Before executing tool |
 | `agent.tool_result` | `{ turn_id, call_id, message_id, name, summary, output, output_truncation_reason, ..., message }` | After tool execution, including the persisted canonical tool row |
 | `agent.message` | `{ turn_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
+| `agent.resync_required` | `{ error, provided_cursor }` | Resume cursor was too old or unknown; client must refetch `/messages` plus `/agent/state` |
 | `final` | `{ turn_id, status, message_id?, text? }` or `{ turn_id, status, error }` | Flow complete |
 
 Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
@@ -142,9 +148,10 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
 - `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
-- replay resume is keyed off the SSE frame `id:` rather than the JSON payload; if the requested resume id is no longer buffered, clients should treat reconnect as drift recovery and refetch canonical history
-
-**Buffer Management**: The event buffer is cleared at the start of each new agent run (`startUserMessage`). This prevents stale events (especially `final` from previous runs) from being replayed to new SSE connections, which would cause the stream to close prematurely.
+- replay resume is keyed off the SSE frame `id:` / runtime cursor rather than the JSON payload
+- no-cursor attaches are live-only; bounded replay only happens when the client resumes from an explicit cursor
+- stale or unknown cursors now surface explicit `agent.resync_required` instead of silent live-only fallback
+- runtime state only returns to idle after the final durable state is observable and the runtime cursor has advanced past that completion boundary
 
 ## Dependencies
 
@@ -155,7 +162,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../db/client.js` | Database access |
 | `../db/schema.js` | Table schemas |
 | `../runtime/terminal-session-manager.js` | Thread-scoped terminal sessions |
-| `../runtime/event-bus.js` | SSE event emission |
+| `../runtime/agent-runtime-state.js` | Agent runtime snapshot + bounded-resume emission |
 | `../terminal/types.js` | Readiness hints types |
 | `../db/thread-metadata.js` | Thread activity tracking |
 

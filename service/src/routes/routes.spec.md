@@ -70,6 +70,7 @@ Thread and message management, plus terminal operations (~650 lines).
 |--------|------|-------------|
 | `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
 | `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync), triggers agent |
+| `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
 
@@ -111,17 +112,20 @@ Thread and message management, plus terminal operations (~650 lines).
 - page metadata includes `has_more_before`, `has_more_after`, `before_cursor`, `after_cursor`, `returned`, and `limit`
 
 **Agent Stream Contract**:
-- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `final`, and `heartbeat`
-- agent payloads now include a per-turn `turn_id`
+- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
+- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`, and `heartbeat`
+- agent payloads include a per-turn `turn_id`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
-- tool events now expose the real `call_id`
-- `agent.tool_result` now also exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
+- tool events expose the real `call_id`
+- `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
-- `agent.message_done` carries the full draft assistant text just before canonical persistence, which helps reconnecting clients reconcile missed deltas within the in-memory replay window
-- `final` still marks completion, but healthy successful turns no longer require a refetch just to recover assistant/tool message IDs
-- replay can resume from either the standard `Last-Event-ID` header or the optional `last_event_id` query parameter
-- when the provided resume cursor is still in the in-memory buffer, only newer buffered events are replayed
-- when the resume cursor is missing from the buffer, the stream falls back to live-only delivery and clients should reconcile with canonical history
+- `agent.message_done` carries the full draft assistant text just before canonical persistence
+- `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
+- no-cursor attaches are live-only; they do not replay buffered `agent.*` or `final`
+- bounded replay can resume from `after=<cursor>`, the standard `Last-Event-ID` header, or the optional `last_event_id` query parameter
+- the SSE frame `id:` is the opaque runtime cursor used for bounded replay
+- when the provided resume cursor is still in the bounded in-memory window, only newer buffered events replay
+- when the resume cursor is missing, the route emits `agent.resync_required` and the client should refetch `/messages` plus `/agent/state`
 
 **Message History Examples**:
 
@@ -210,7 +214,7 @@ Before creating user message, checks for terminal state changes:
 - new thread/message/session rows are stamped with the acting or owning user id
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
-- thread SSE routes now also send an initial heartbeat frame on empty-buffer attaches so the HTTP response stays in SSE mode even before the first real event arrives
+- thread SSE routes send an initial heartbeat frame on empty-buffer/live-only attaches so the HTTP response stays in SSE mode even before the first real event arrives
 - `POST /api/threads` now returns `{ thread_id }`
 - `POST /api/threads/:thread_id/messages` now returns `{ message_id }`
 

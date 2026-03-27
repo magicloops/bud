@@ -62,6 +62,7 @@ export const decodeTerminalData = (data: string) => {
 | `ApiThread` | Thread response (id, title, session info) |
 | `ApiMessage` | Message response (id, role, content) |
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
+| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool`, and `draft_assistant` |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 

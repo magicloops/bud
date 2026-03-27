@@ -24,6 +24,7 @@ import {
   getLoginRedirectValue,
   isAuthRedirectPending,
   isApiError,
+  type ApiAgentState,
   type ApiMessage,
   type ApiMessagePage,
 } from '@/lib/api'
@@ -42,14 +43,6 @@ const toLoginRedirect = (pathname: string, search = '', hash = '') =>
   })
 
 const THREAD_MESSAGE_PAGE_LIMIT = 100
-const EMPTY_MESSAGE_PAGE: ApiMessagePage['page'] = {
-  limit: THREAD_MESSAGE_PAGE_LIMIT,
-  returned: 0,
-  has_more_before: false,
-  has_more_after: false,
-  before_cursor: null,
-  after_cursor: null,
-}
 
 type AgentToolCallEvent = {
   turn_id: string
@@ -94,6 +87,11 @@ type AgentFinalEvent = {
   error?: string
 }
 
+type AgentResyncRequiredEvent = {
+  error: 'resync_required'
+  provided_cursor?: string
+}
+
 const pendingToolMessageId = (callId: string) => `tool_call:${callId}`
 const pendingAssistantMessageId = (turnId: string) => `assistant_draft:${turnId}`
 
@@ -107,6 +105,9 @@ const isSyntheticMessageId = (messageId: string) =>
   messageId.startsWith('temp_') ||
   messageId.startsWith('tool_call:') ||
   messageId.startsWith('assistant_draft:')
+
+const isAgentSyntheticMessageId = (messageId: string) =>
+  messageId.startsWith('tool_call:') || messageId.startsWith('assistant_draft:')
 
 const sortMessagesChronologically = (messages: ApiMessage[]) =>
   [...messages].sort((left, right) => {
@@ -161,14 +162,80 @@ const upsertDraftAssistantMessage = (
 const removeDraftAssistantMessageForTurn = (existing: ApiMessage[], turnId: string) =>
   existing.filter((message) => message.message_id !== pendingAssistantMessageId(turnId))
 
+const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
+  if (!agentState.active || !agentState.turn_id || !agentState.pending_tool) {
+    return null
+  }
+
+  const { pending_tool: pendingTool } = agentState
+  return {
+    message_id: pendingToolMessageId(pendingTool.call_id),
+    role: 'tool',
+    display_role: pendingTool.name,
+    content: JSON.stringify({
+      tool: pendingTool.name,
+      call_id: pendingTool.call_id,
+      ...(pendingTool.args ?? {}),
+    }),
+    created_at: agentState.updated_at,
+    metadata: {
+      tool: pendingTool.name,
+      call_id: pendingTool.call_id,
+      turn_id: agentState.turn_id,
+      pending: true,
+      ...(pendingTool.args ?? {}),
+    },
+  }
+}
+
+const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
+  if (!agentState.active || !agentState.turn_id || !agentState.draft_assistant) {
+    return null
+  }
+
+  return {
+    message_id: pendingAssistantMessageId(agentState.turn_id),
+    role: 'assistant',
+    display_role: 'Bud Agent',
+    content: agentState.draft_assistant.text,
+    created_at: agentState.draft_assistant.updated_at,
+    metadata: {
+      turn_id: agentState.turn_id,
+      draft: true,
+    },
+  }
+}
+
+const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAgentState) => {
+  let nextMessages = messages.filter((message) => !isAgentSyntheticMessageId(message.message_id))
+
+  const pendingToolMessage = buildPendingToolMessageFromState(agentState)
+  if (pendingToolMessage) {
+    nextMessages = upsertMessage(nextMessages, pendingToolMessage)
+  }
+
+  const draftAssistantMessage = buildDraftAssistantMessageFromState(agentState)
+  if (draftAssistantMessage) {
+    nextMessages = upsertMessage(nextMessages, draftAssistantMessage)
+  }
+
+  return sortMessagesChronologically(nextMessages)
+}
+
 export const Route = createFileRoute('/$budId/$threadId')({
   loader: async ({ params, location }) => {
     try {
-      const messagePage = await apiFetchJson<ApiMessagePage>(
-        `/api/threads/${params.threadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
-        { redirectOnUnauthorized: false },
-      )
-      return { messagePage }
+      const [messagePage, agentState] = await Promise.all([
+        apiFetchJson<ApiMessagePage>(
+          `/api/threads/${params.threadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
+          { redirectOnUnauthorized: false },
+        ),
+        apiFetchJson<ApiAgentState>(
+          `/api/threads/${params.threadId}/agent/state`,
+          { redirectOnUnauthorized: false },
+        ),
+      ])
+      return { messagePage, agentState }
     } catch (error) {
       if (isApiError(error, 401)) {
         throw toLoginRedirect(location.href)
@@ -181,7 +248,7 @@ export const Route = createFileRoute('/$budId/$threadId')({
 
 function ThreadView() {
   const { budId, threadId } = Route.useParams()
-  const { messagePage: initialMessagePage } = Route.useLoaderData()
+  const { messagePage: initialMessagePage, agentState: initialAgentState } = Route.useLoaderData()
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen, toggleThreadPanel } = useLayout()
@@ -190,10 +257,14 @@ function ThreadView() {
   const { updateStatus: updateBudStatus } = useBudStatus()
 
   const [messageText, setMessageText] = useState('')
-  const [messages, setMessages] = useState<ApiMessage[]>(initialMessagePage.messages)
+  const [messages, setMessages] = useState<ApiMessage[]>(
+    applyAgentStateOverlay(initialMessagePage.messages, initialAgentState),
+  )
   const [messagePage, setMessagePage] = useState<ApiMessagePage['page']>(initialMessagePage.page)
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
-  const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
+  const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>(
+    initialAgentState.active ? 'streaming' : 'idle',
+  )
   const [error, setError] = useState<string | null>(null)
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
@@ -224,7 +295,9 @@ function ThreadView() {
   const [showDisconnectOverlay, setShowDisconnectOverlay] = useState(false)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const pendingPrependAdjustmentRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
-  const messagesRef = useRef<ApiMessage[]>(initialMessagePage.messages)
+  const messagesRef = useRef<ApiMessage[]>(
+    applyAgentStateOverlay(initialMessagePage.messages, initialAgentState),
+  )
   const messagePageRef = useRef<ApiMessagePage['page']>(initialMessagePage.page)
 
   // Terminal refs
@@ -250,7 +323,7 @@ function ThreadView() {
   const agentReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentReconnectAttemptRef = useRef(0)
   const lastAgentEventTimeRef = useRef<number>(Date.now())
-  const lastAgentEventIdRef = useRef<string | null>(null)
+  const agentCursorRef = useRef<string | null>(initialAgentState.stream_cursor)
   const agentThreadIdRef = useRef<string | null>(null)
 
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
@@ -292,11 +365,13 @@ function ThreadView() {
 
   // Update messages when loader data changes
   useEffect(() => {
-    setMessages(initialMessagePage.messages)
+    setMessages(applyAgentStateOverlay(initialMessagePage.messages, initialAgentState))
     setMessagePage(initialMessagePage.page)
     setIsLoadingOlderMessages(false)
     pendingPrependAdjustmentRef.current = null
-  }, [initialMessagePage])
+    agentCursorRef.current = initialAgentState.stream_cursor
+    setStatus(initialAgentState.active ? 'streaming' : 'idle')
+  }, [initialAgentState, initialMessagePage])
 
   useEffect(() => {
     const pendingAdjustment = pendingPrependAdjustmentRef.current
@@ -322,11 +397,7 @@ function ThreadView() {
     messagePageRef.current = messagePage
   }, [messagePage, messages])
 
-  useEffect(() => {
-    lastAgentEventIdRef.current = null
-  }, [threadId])
-
-  const mergeLatestMessagePage = useCallback((nextPage: ApiMessagePage) => {
+  const mergeLatestThreadBootstrap = useCallback((nextPage: ApiMessagePage, nextAgentState: ApiAgentState) => {
     pendingPrependAdjustmentRef.current = null
 
     const latestIds = new Set(nextPage.messages.map((message) => message.message_id))
@@ -334,7 +405,12 @@ function ThreadView() {
       (message) => !isSyntheticMessageId(message.message_id) && !latestIds.has(message.message_id),
     )
 
-    setMessages(sortMessagesChronologically([...preservedOlderMessages, ...nextPage.messages]))
+    const canonicalMessages = sortMessagesChronologically([
+      ...preservedOlderMessages,
+      ...nextPage.messages,
+    ])
+
+    setMessages(applyAgentStateOverlay(canonicalMessages, nextAgentState))
     setMessagePage({
       ...nextPage.page,
       returned: preservedOlderMessages.length + nextPage.messages.length,
@@ -347,7 +423,30 @@ function ThreadView() {
           ? messagePageRef.current.before_cursor
           : nextPage.page.before_cursor,
     })
+    agentCursorRef.current = nextAgentState.stream_cursor
+    setStatus(nextAgentState.active ? 'streaming' : 'idle')
   }, [])
+
+  const refreshAgentState = useCallback(async (targetThreadId: string) => {
+    const nextAgentState = await apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`)
+
+    agentCursorRef.current = nextAgentState.stream_cursor
+    setMessages((prev) => applyAgentStateOverlay(prev, nextAgentState))
+    setStatus(nextAgentState.active ? 'streaming' : 'idle')
+    return nextAgentState
+  }, [])
+
+  const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
+    const [nextPage, nextAgentState] = await Promise.all([
+      apiFetchJson<ApiMessagePage>(
+        `/api/threads/${targetThreadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
+      ),
+      apiFetchJson<ApiAgentState>(`/api/threads/${targetThreadId}/agent/state`),
+    ])
+
+    mergeLatestThreadBootstrap(nextPage, nextAgentState)
+    return { nextPage, nextAgentState }
+  }, [mergeLatestThreadBootstrap])
 
   // Track last sent dimensions to avoid redundant resize requests
   const lastSentDimensionsRef = useRef<{ cols: number; rows: number } | null>(null)
@@ -716,25 +815,6 @@ function ThreadView() {
     }
   }, [budId, refreshTerminalSnapshot, shouldAbortForUnauthorized, threadId, updateBudStatus])
 
-  // Fetch messages helper
-  const fetchMessages = useCallback(async (thread: string | null) => {
-    if (!thread) {
-      setMessages([])
-      setMessagePage(EMPTY_MESSAGE_PAGE)
-      return
-    }
-    const resp = await apiFetch(`/api/threads/${thread}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`)
-    if (shouldAbortForUnauthorized(resp)) {
-      return
-    }
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}))
-      throw new Error(body.error ?? `HTTP ${resp.status}`)
-    }
-    const data = (await resp.json()) as ApiMessagePage
-    mergeLatestMessagePage(data)
-  }, [mergeLatestMessagePage, shouldAbortForUnauthorized])
-
   const loadOlderMessages = useCallback(async () => {
     if (!threadId || !messagePage.has_more_before || !messagePage.before_cursor || isLoadingOlderMessages) {
       return
@@ -786,8 +866,8 @@ function ThreadView() {
   // Agent SSE stream with reconnection support
   const connectAgentStream = useCallback((agentThreadId: string) => {
     agentThreadIdRef.current = agentThreadId
-    const resumeSuffix = lastAgentEventIdRef.current
-      ? `?last_event_id=${encodeURIComponent(lastAgentEventIdRef.current)}`
+    const resumeSuffix = agentCursorRef.current
+      ? `?after=${encodeURIComponent(agentCursorRef.current)}`
       : ''
 
     const agentStream = createAuthEventSource(
@@ -797,6 +877,7 @@ function ThreadView() {
     agentEventSourceRef.current = source
 
     let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
+    let suppressErrorReconnect = false
 
     const cleanupAgent = () => {
       if (heartbeatCheckInterval) {
@@ -830,16 +911,9 @@ function ThreadView() {
     }
 
     source.addEventListener('open', () => {
-      const wasReconnect = agentReconnectAttemptRef.current > 0
       agentReconnectAttemptRef.current = 0
       lastAgentEventTimeRef.current = Date.now()
-      console.log('[agent-sse] connected', { threadId: agentThreadId, wasReconnect })
-
-      if (wasReconnect && threadId) {
-        fetchMessages(threadId).catch((err) => {
-          console.error('[agent-sse] failed to fetch messages on reconnect', err)
-        })
-      }
+      console.log('[agent-sse] connected', { threadId: agentThreadId, after: agentCursorRef.current })
 
       const heartbeatTimeout = import.meta.env.DEV ? 3000 : 15000
       const checkInterval = import.meta.env.DEV ? 1000 : 5000
@@ -858,9 +932,8 @@ function ThreadView() {
 
     source.addEventListener('agent.tool_call', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
-      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
-      // Set status to streaming when we detect agent activity
-      setStatus((prev) => prev === 'idle' ? 'streaming' : prev)
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
+      setStatus('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentToolCallEvent
         console.log('[agent-sse] tool_call', data.name, data.args)
@@ -886,7 +959,7 @@ function ThreadView() {
 
     source.addEventListener('agent.tool_result', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
-      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
       try {
         const data = JSON.parse(evt.data) as AgentToolResultEvent
         const canonicalMessage = data.message
@@ -904,8 +977,8 @@ function ThreadView() {
 
     source.addEventListener('agent.message_start', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
-      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
-      setStatus((prev) => prev === 'idle' ? 'streaming' : prev)
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
+      setStatus('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentMessageStartEvent
         setMessages((prev) =>
@@ -929,8 +1002,8 @@ function ThreadView() {
 
     source.addEventListener('agent.message_delta', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
-      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
-      setStatus((prev) => prev === 'idle' ? 'streaming' : prev)
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
+      setStatus('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentMessageDeltaEvent
         setMessages((prev) =>
@@ -954,7 +1027,7 @@ function ThreadView() {
 
     source.addEventListener('agent.message_done', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
-      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
       try {
         const data = JSON.parse(evt.data) as AgentMessageDoneEvent
         setMessages((prev) =>
@@ -978,7 +1051,7 @@ function ThreadView() {
 
     source.addEventListener('agent.message', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
-      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
       try {
         const data = JSON.parse(evt.data) as AgentMessageEvent
         const canonicalMessage = data.message
@@ -1004,9 +1077,42 @@ function ThreadView() {
       }
     })
 
+    source.addEventListener('agent.resync_required', (evt) => {
+      lastAgentEventTimeRef.current = Date.now()
+      suppressErrorReconnect = true
+
+      let payload: AgentResyncRequiredEvent | null = null
+      try {
+        payload = JSON.parse(evt.data) as AgentResyncRequiredEvent
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse resync event', error)
+      }
+
+      console.warn('[agent-sse] explicit resync required', {
+        threadId: agentThreadId,
+        payload,
+      })
+
+      cleanupAgent()
+      void refreshAgentBootstrap(agentThreadId)
+        .then(() => {
+          if (agentThreadIdRef.current === agentThreadId && !isAuthRedirectPending()) {
+            connectAgentStream(agentThreadId)
+          }
+        })
+        .catch((error) => {
+          if (isAuthRedirectPending()) {
+            return
+          }
+          console.error('[agent-sse] failed to refresh bootstrap after resync', error)
+          setError(error instanceof Error ? error.message : 'Failed to resync thread')
+          scheduleReconnect('resync_refresh_failed')
+        })
+    })
+
     source.addEventListener('final', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
-      lastAgentEventIdRef.current = evt.lastEventId || lastAgentEventIdRef.current
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
       console.log('[agent-sse] final event received')
       let finalEvent: AgentFinalEvent | null = null
       try {
@@ -1018,8 +1124,6 @@ function ThreadView() {
         clearTimeout(agentReconnectTimerRef.current)
         agentReconnectTimerRef.current = null
       }
-      agentThreadIdRef.current = null
-      cleanupAgent()
       setStatus('idle')
       if (finalEvent?.turn_id) {
         const { turn_id: turnId } = finalEvent
@@ -1043,24 +1147,22 @@ function ThreadView() {
         if (unauthorized) {
           return
         }
+        if (suppressErrorReconnect) {
+          return
+        }
 
         console.warn('[agent-sse] error', { readyState: source.readyState, evt })
+        if (agentThreadIdRef.current && source.readyState !== EventSource.CLOSED) {
+          return
+        }
         if (agentThreadIdRef.current) {
           scheduleReconnect('connection_error')
-        } else {
-          cleanupAgent()
-          setStatus('idle')
-          if (threadId) {
-            fetchMessages(threadId).catch((err) => {
-              console.error('[agent-sse] failed to fetch messages after error', err)
-            })
-          }
         }
       })
     })
 
     return cleanupAgent
-  }, [threadId, fetchMessages])
+  }, [refreshAgentBootstrap])
 
   // Auto-connect agent SSE on mount to catch in-progress agent runs
   // This handles the case where we navigate from /new after posting a message
@@ -1436,23 +1538,15 @@ function ThreadView() {
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return
 
-    agentThreadIdRef.current = null
-    lastAgentEventIdRef.current = null
-    if (agentReconnectTimerRef.current) {
-      clearTimeout(agentReconnectTimerRef.current)
-      agentReconnectTimerRef.current = null
-    }
-    agentReconnectAttemptRef.current = 0
-
-    agentEventSourceRef.current?.close()
-    agentEventSourceRef.current = null
-
     try {
       const resp = await apiFetch(`/api/threads/${threadId}/cancel`, { method: 'POST' })
       if (shouldAbortForUnauthorized(resp)) {
         return
       }
-      setStatus('idle')
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        throw new Error(body.error ?? `HTTP ${resp.status}`)
+      }
     } catch (err) {
       if (isAuthRedirectPending()) {
         return
@@ -1530,19 +1624,20 @@ function ThreadView() {
       const { message_id: persistedMessageId } = await messageResp.json() as { message_id: string }
       setMessages((prev) => replaceMessageId(prev, optimisticId, persistedMessageId))
 
-      lastAgentEventIdRef.current = null
-      if (agentEventSourceRef.current) {
-        agentEventSourceRef.current.close()
-        agentEventSourceRef.current = null
+      try {
+        await refreshAgentState(threadId)
+      } catch (error) {
+        console.warn('[agent-sse] failed to refresh agent state after send', error)
       }
-      if (agentReconnectTimerRef.current) {
-        clearTimeout(agentReconnectTimerRef.current)
-        agentReconnectTimerRef.current = null
-      }
-      agentReconnectAttemptRef.current = 0
 
-      setStatus('streaming')
-      connectAgentStream(threadId)
+      if (!agentEventSourceRef.current || agentEventSourceRef.current.readyState === EventSource.CLOSED) {
+        if (agentReconnectTimerRef.current) {
+          clearTimeout(agentReconnectTimerRef.current)
+          agentReconnectTimerRef.current = null
+        }
+        agentReconnectAttemptRef.current = 0
+        connectAgentStream(threadId)
+      }
     } catch (err) {
       if (isAuthRedirectPending()) {
         return

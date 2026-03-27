@@ -246,5 +246,5 @@ So the current highest-signal debugging target is the iOS streaming/parser imple
 
 ## Related Docs
 
-- [ios-chat-agent-stream-no-frames.md](./debug/ios-chat-agent-stream-no-frames.md)
-- [IOS_MOBILE_BACKEND_HANDOFF.md](./IOS_MOBILE_BACKEND_HANDOFF.md)
+- [ios-chat-agent-stream-no-frames.md](../debug/ios-chat-agent-stream-no-frames.md)
+- [IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md](./IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md)

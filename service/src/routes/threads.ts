@@ -16,10 +16,11 @@ import { RunManager } from "../runtime/run-manager.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import { and, asc, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
-import type { TerminalEventBus, AgentEventBus } from "../runtime/event-bus.js";
+import type { TerminalEventBus } from "../runtime/event-bus.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import { getActiveBudIds } from "../ws/gateway.js";
 import { getAuthorizedBud, getAuthorizedThread, requireViewer } from "../auth/session.js";
+import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 
 const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),
@@ -42,7 +43,10 @@ const ThreadListQuerySchema = z.object({
 });
 
 const StreamResumeQuerySchema = z.object({
+  after: z.string().min(1).optional(),
   last_event_id: z.string().min(1).optional(),
+}).refine((value) => !(value.after && value.last_event_id), {
+  message: "after and last_event_id cannot both be set",
 });
 
 const MessagesQuerySchema = z.object({
@@ -234,7 +238,7 @@ export async function registerThreadRoutes(
   server: FastifyInstance,
   _runManager: RunManager,
   agentService: AgentService,
-  agentEvents: AgentEventBus,
+  agentRuntime: AgentRuntimeStateManager,
   contextSyncService: ContextSyncService
 ): Promise<void> {
   server.get("/api/threads", async (request, reply) => {
@@ -558,6 +562,16 @@ export async function registerThreadRoutes(
     }
   });
 
+  server.get("/api/threads/:threadId/agent/state", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
+    reply.send(agentRuntime.getSnapshot(params.threadId));
+  });
+
   // GET /api/threads/:threadId/agent/stream - SSE for agent events
   server.get("/api/threads/:threadId/agent/stream", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
@@ -567,10 +581,26 @@ export async function registerThreadRoutes(
       return;
     }
 
-    // Subscribe to agent events for this thread
-    const detach = agentEvents.attach(params.threadId, reply, {
-      lastEventId: readLastEventId(request, query.last_event_id),
+    const resumeCursor =
+      readLastEventId(request) ??
+      query.after ??
+      query.last_event_id ??
+      null;
+
+    const attachment = agentRuntime.attach(params.threadId, reply, {
+      afterCursor: resumeCursor,
     });
+    if (attachment.status === "resync_required") {
+      reply.sse({
+        event: "agent.resync_required",
+        data: JSON.stringify({
+          error: "resync_required",
+          provided_cursor: attachment.provided_cursor,
+        }),
+      });
+      reply.raw.end();
+      return;
+    }
 
     // Send periodic heartbeat
     const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
@@ -585,7 +615,7 @@ export async function registerThreadRoutes(
     // Cleanup on close
     reply.raw.on("close", () => {
       clearInterval(heartbeatInterval);
-      detach();
+      attachment.detach();
     });
   });
 

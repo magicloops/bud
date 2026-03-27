@@ -82,12 +82,12 @@ The implementation should keep the resume window intentionally small:
 
 Do not silently drop resume failures and do not force the client to infer gaps.
 
-Choose and document one explicit recovery surface such as:
+Use one explicit recovery surface:
 
-- HTTP `409` / `410`
-- an initial SSE event like `agent.resync_required`
+- emit an initial SSE event `agent.resync_required`
+- end that SSE response immediately after the event
 
-The important part is not the exact carrier. It is that the server owns the decision and makes it explicit.
+The important part is that the server owns the decision and makes it explicit.
 
 The final mobile handoff for this phase should make that contract unambiguous.
 
@@ -116,10 +116,8 @@ Update:
 - `docs/proto.md`
 - `service/src/routes/routes.spec.md`
 - `service/src/runtime/runtime.spec.md`
-- `reference/IOS_MOBILE_BACKEND_HANDOFF.md`
-- `reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md`
-- `reference/IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md`
-- `reference/AGENT_STREAM_EVENT_FIXTURES.md`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md`
+- `reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md`
 - `bud.spec.md`
 
 The last-phase handoff doc should reflect the refined message plainly:
@@ -128,9 +126,12 @@ The last-phase handoff doc should reflect the refined message plainly:
 - stream is transport
 - messages are history
 - replay is only bounded reconnect convenience
-
-If we decide to keep `Last-Event-ID` / `last_event_id` as the transport carrier for the cursor, the handoff should say so explicitly.
-If we add a clearer `after=<cursor>` alias, the handoff should present that as the preferred mobile-facing form.
+- agent-stream SSE `id:` is the resume cursor clients advance after each incorporated event
+- idle snapshots always include `stream_cursor`
+- native/mobile clients use `after=<cursor>` as the single client-managed resume carrier
+- `starting` / `thinking` do not synthesize transcript rows by themselves
+- `agent.resync_required` repairs data without forcing older-history readers to jump to latest
+- `Last-Event-ID` / `last_event_id` are documented only as compatibility carriers, with `after=<cursor>` presented as the preferred mobile-facing form
 
 ### Task 6: Run end-to-end validation
 
@@ -152,6 +153,8 @@ Capture final results in [validation-checklist.md](./validation-checklist.md).
 - [ ] stale cursor produces explicit `resync_required`
 - [ ] active-turn open still works with `/agent/state` plus `stream_cursor`
 - [ ] terminal-stream attach behavior is unchanged
+- [ ] handoff/fixtures explicitly describe cursor advancement, idle cursor availability, and single-carrier `after=<cursor>` resume discipline
+- [ ] handoff/fixtures define `/agent/state` failure fallback and detached-reader behavior for `agent.resync_required`
 - [ ] protocol/spec/handoff docs all describe the same semantics
 
 ## Exit Criteria

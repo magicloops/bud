@@ -1,20 +1,14 @@
 # iOS Agent Stream State And Resume Handoff
 
-**Status:** Draft proposed backend contract, not yet shipped  
+**Status:** Current backend contract  
 **Audience:** Backend, web platform, iOS, product  
-**Last Updated:** 2026-03-26
+**Last Updated:** 2026-03-27
 
 ## Purpose
 
-This document is the draft backend handoff for the next iteration of `GET /api/threads/:thread_id/agent/stream`.
+This document is the backend handoff for the current `GET /api/threads/:thread_id/agent/state` plus `GET /api/threads/:thread_id/agent/stream` contract.
 
-It is intentionally future-facing:
-
-- it describes the contract we plan to implement
-- it does **not** claim that this contract is already live in the current backend
-- after implementation, this doc should be re-verified and updated to match the shipped behavior exactly
-
-This draft incorporates:
+It reflects the shipped implementation derived from:
 
 - the iOS handoff in [`IOS_AGENT_STREAM_ATTACH_SEMANTICS_HANDOFF.md`](./IOS_AGENT_STREAM_ATTACH_SEMANTICS_HANDOFF.md)
 - the backend design review in [`../design/mobile-agent-stream-attach-semantics.md`](../design/mobile-agent-stream-attach-semantics.md)
@@ -22,7 +16,7 @@ This draft incorporates:
 
 ## Summary
 
-The proposed model is:
+The current model is:
 
 - `/messages` = durable transcript history
 - `/agent/state` = authoritative current in-flight snapshot
@@ -53,7 +47,7 @@ The new contract removes that ambiguity by separating:
 - current in-flight runtime state
 - short reconnect catch-up
 
-## Proposed Routes
+## Routes
 
 ### 1. Durable Transcript History
 
@@ -92,8 +86,10 @@ GET /api/threads/:thread_id/agent/stream?after=<cursor>
 
 Compatibility note:
 
-- the service may also continue to honor `Last-Event-ID` or `last_event_id`
-- if those compatibility forms remain, mobile should treat `after=<cursor>` as the preferred contract once implementation is complete
+- the service also honors `Last-Event-ID` and `last_event_id` for compatibility and browser/EventSource auto-resume
+- native/mobile clients should use only `after=<cursor>` as the client-managed resume form
+- native/mobile clients should not mix `after=<cursor>` with client-managed `Last-Event-ID` or `last_event_id`
+- when both an existing stream URL and automatic browser resume are present, the backend prefers `Last-Event-ID` over the original query cursor
 
 Semantics:
 
@@ -101,7 +97,7 @@ Semantics:
 - cursor present and resumable: bounded catch-up after that cursor, then live
 - cursor present but not resumable: explicit `resync_required`
 
-## Proposed `/agent/state` Contract
+## `/agent/state` Contract
 
 ### Response Shape
 
@@ -170,11 +166,21 @@ The cursor is:
 - server-owned
 - monotonic
 - available before the first visible event of an active turn
-- ideally available on idle snapshots too
+- returned on idle snapshots too
 
 Mobile should not inspect or derive ordering from the cursor beyond sending it back to the server for resume.
 
-## Proposed `/agent/stream` Semantics
+### Cursor Advancement On Stream
+
+For `GET /api/threads/:thread_id/agent/stream`, the SSE frame `id:` is the runtime resume cursor.
+
+That means:
+
+- `/agent/state.stream_cursor` and the agent-stream SSE `id:` share one cursor space
+- after the client incorporates an SSE event with `id: C_next`, it should store `C_next` as the next resume cursor
+- frames without `id:` such as `heartbeat` or `agent.resync_required` do not advance the cursor
+
+## `/agent/stream` Semantics
 
 ### No Cursor
 
@@ -214,16 +220,20 @@ It is not intended to act like transcript history.
 
 If the supplied cursor is too old, unknown, or otherwise not resumable, the server should explicitly require resync.
 
-Planned contract:
+Current contract:
 
 - `resync_required`
+- delivered as an initial SSE event: `agent.resync_required`
+- payload shape:
 
-Potential transport shapes still to be finalized during implementation:
+```json
+{
+  "error": "resync_required",
+  "provided_cursor": "01CUR..."
+}
+```
 
-- HTTP `409` or `410`
-- an initial SSE event such as `agent.resync_required`
-
-The exact transport carrier is still implementation-pending.
+- after sending `agent.resync_required`, the service ends that SSE response and the client should refetch `/messages` plus `/agent/state` before reattaching
 
 The important part for mobile is:
 
@@ -257,6 +267,40 @@ When a stream disconnect happens:
 5. reconnect from the new cursor
 
 The client should optimize for convergence to the latest coherent state, not perfect delivery of every intermediate token or tool transition.
+
+## Runtime Overlay Projection Rules
+
+Projection is field-driven, not phase-driven.
+
+- `idle`: render the canonical transcript only. No pending-tool row, no draft-assistant row, no stop affordance.
+- `starting`: show active-turn / stop-button state from `active` plus `can_cancel`, but do not invent transcript rows from `phase` alone.
+- `thinking`: same rule as `starting`. The client may show a generic "working" indicator outside the transcript, but should not synthesize tool or assistant rows unless the corresponding fields are present.
+- `pending_tool`: if `pending_tool` is present, render exactly one pending tool overlay row keyed by `call_id`. Replace or remove it when later snapshot or stream state says it is gone.
+- `draft_assistant`: if `draft_assistant` is present, render exactly one draft assistant overlay row keyed by `turn_id`. Replace it with the canonical `agent.message` or `/messages` row when persistence completes.
+- if both `pending_tool` and `draft_assistant` are present, render the fields that are present. Do not synthesize additional rows from `phase` alone.
+
+## Fallback If `/agent/state` Temporarily Fails
+
+If `/messages` succeeds but `/agent/state` fails:
+
+- render the canonical transcript from `/messages`
+- suppress stop-button and synthetic runtime overlay rows until `/agent/state` succeeds
+- retry `/agent/state`; do not infer current runtime state from old transcript rows
+- if the product chooses to open the stream before `/agent/state` recovers, attach live-only with no cursor and accept that resumable continuity is temporarily unavailable
+
+This keeps the client correct even when runtime bootstrap is temporarily unavailable.
+
+## Product Rule For `agent.resync_required` While Reading Older History
+
+Treat `agent.resync_required` as a data-repair signal, not a forced navigation event.
+
+Recommended behavior:
+
+- refetch `/messages` plus `/agent/state` in the background
+- update the local model to the latest canonical state
+- preserve the user's current older-history reading position when possible
+- do not auto-jump to the latest message unless the user was already anchored there or explicitly requests it
+- show a non-blocking "conversation refreshed" or "jump to latest" affordance if the product wants visible confirmation
 
 ## Event Semantics Under The Proposed Model
 
@@ -318,21 +362,26 @@ Mobile should not assume:
 - exact delivery of every token across reconnects
 - client-led gap repair as the primary recovery model
 
-## Open Implementation Details
+## Current Implementation Details
 
-These points are still draft and must be re-verified after code lands:
+The current service implementation uses:
 
-1. Whether the preferred resume transport is `after=<cursor>` only, or also `Last-Event-ID` / `last_event_id`.
-2. Whether `resync_required` is delivered via HTTP status or an initial SSE event.
-3. The exact bounded resume policy:
-   - current turn only
-   - short TTL window
-   - or both
-4. The exact `phase` enum values.
+1. one opaque cursor space shared by `/agent/state.stream_cursor` and agent-stream SSE frame `id:`
+2. `after=<cursor>` as the preferred explicit client-managed resume form
+3. compatibility resume via `Last-Event-ID` and `last_event_id`
+4. explicit `agent.resync_required` SSE delivery on resume misses
+5. a bounded same-instance in-memory replay window for reconnect convenience
+   - currently capped to a small process-local ring buffer (256 entries, 60-second TTL)
+6. current snapshot phases:
+   - `idle`
+   - `starting`
+   - `thinking`
+   - `tool_running`
+   - `streaming_message`
 
-These are implementation details.
+That replay window is intentionally not durable transcript history.
 
-They should not change the core mobile model:
+The durable recovery path remains:
 
 - fetch history
 - fetch state
@@ -341,10 +390,4 @@ They should not change the core mobile model:
 
 ## Relationship To Existing Docs
 
-This draft is intended to become the future-facing companion or replacement for stream-specific sections in:
-
-- [IOS_MOBILE_BACKEND_HANDOFF.md](./IOS_MOBILE_BACKEND_HANDOFF.md)
-- [IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md](./IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md)
-- [IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md](./IOS_THREAD_MESSAGE_UX_BACKEND_RESPONSE.md)
-
-Until implementation lands and this doc is re-verified, those current docs still describe the shipped backend.
+This document replaces the older mobile stream docs that described the pre-change replay model and were removed from the reference package once the bounded-resume contract shipped.

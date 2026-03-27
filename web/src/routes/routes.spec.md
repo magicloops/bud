@@ -186,7 +186,7 @@ useEffect(() => {
 Nested routes for thread views:
 - `/$budId/` (index) - Redirect to most recent thread or `/new`
 - `/$budId/new` - New thread creation view
-- `/$budId/$threadId` - Existing thread conversation
+- `/$budId/$threadId` - Existing thread conversation with `/messages` + `/agent/state` bootstrap and bounded-resume agent SSE
 
 ## Route Tree
 

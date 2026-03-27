@@ -35,15 +35,15 @@ That strongly suggests the issue is not just local UI logic. Attach-time buffere
 
 ## Current Documentation Conflict
 
-Two existing docs currently imply different semantics.
+The older mobile handoff package, which has since been removed from `reference/`, described conflicting semantics.
 
-`reference/IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md` says:
+One older description said:
 
 - replay is process-local, in-memory, and at-least-once
 - if `Last-Event-ID` or `last_event_id` hits an event still in the buffer, only newer events replay
 - if the cursor is missing, the server falls back to live-only delivery
 
-`reference/IOS_MOBILE_BACKEND_HANDOFF.md` says:
+Another older description said:
 
 - events are buffered in memory and replayed on attach
 
@@ -135,7 +135,7 @@ If the client reconnects with no cursor, or a cursor that is no longer in the bu
 - fall back to live-only delivery
 - do not replay buffered frames from the start of the turn
 
-This matches the current preferred reading of `IOS_FEATURE_COMPLETE_PROTOTYPE_HANDOFF.md`.
+This matched the stricter reading of the older mobile handoff package.
 
 ## 4. Completed turns should not reactivate on passive reopen
 

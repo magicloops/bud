@@ -91,7 +91,8 @@ Cursor rule:
 
 - `stream_cursor` is an opaque monotonic resume token
 - it exists before the first visible event of an active turn
-- it should also be returned on idle snapshots so clients can close `idle -> new turn` races cleanly
+- it is also returned on idle snapshots so clients can close `idle -> new turn` races cleanly
+- it shares one cursor space with the agent-stream SSE frame `id:`
 - the token is server-owned and clients must not attempt to inspect or derive ordering beyond exact equality/resume use
 
 ## Implementation Tasks
@@ -123,6 +124,7 @@ Candidate backing for the cursor:
 The concrete encoding matters less than the invariant:
 
 - a snapshot with cursor `C` includes all runtime effects up to `C`
+- the next streamed event delivered after that snapshot will carry an SSE `id:` from the same cursor space
 
 ### Task 2: Update `AgentService` lifecycle tracking and cursor advancement
 
@@ -153,7 +155,7 @@ Route requirements:
 - returns the current snapshot or idle state
 - does not attach any listener or open any long-lived stream
 - uses snake_case at the HTTP boundary
-- returns `stream_cursor` on active snapshots and, ideally, on idle snapshots too
+- returns `stream_cursor` on active snapshots and idle snapshots too
 
 ### Task 4: Add tests
 
@@ -163,6 +165,7 @@ Add targeted coverage for:
 - active turn response
 - cursor exists before first visible event of an active turn
 - cursor is returned on idle snapshots
+- emitted agent-stream SSE `id:` values advance in the same cursor space exposed as `stream_cursor`
 - pending tool presence
 - draft assistant text updates
 - snapshot clear on success/failure/cancel
