@@ -152,6 +152,7 @@ The thread agent contract now splits into:
 
 Canonical persisted transcript rows now expose `client_id` on `/api/threads/:id/messages` and inside the nested `message` payloads carried by `agent.message` / `agent.tool_result`.
 `POST /api/threads/:id/messages` now accepts optional `client_id`, returns `{ message_id, client_id }`, and suppresses duplicate same-thread user retries without starting a second agent turn.
+`GET /api/threads/:id/agent/state` and `GET /api/threads/:id/agent/stream` now also expose pre-persistence assistant/tool `client_id` values so runtime bootstrap, live streaming, and later transcript rows share one message identity.
 
 ## Architecture
 

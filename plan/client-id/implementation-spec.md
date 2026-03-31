@@ -92,12 +92,12 @@ These decisions are locked for this implementation plan:
 - [x] `POST /api/threads/:thread_id/messages` accepts optional `client_id`.
 - [x] `POST /api/threads/:thread_id/messages` returns `{ message_id, client_id }`.
 - [x] missing user-message `client_id` values are generated server-side.
-- [ ] assistant messages get a stable `client_id` before the first draft stream event that references them.
-- [ ] tool messages get a stable `client_id` before `agent.tool_call`.
-- [ ] `/agent/state.pending_tool` includes `client_id`.
-- [ ] `/agent/state.draft_assistant` includes `client_id`.
-- [ ] agent SSE assistant/tool payloads include `client_id` before persistence completes.
-- [ ] persisted assistant/tool `message` payloads include both `message_id` and `client_id`.
+- [x] assistant messages get a stable `client_id` before the first draft stream event that references them.
+- [x] tool messages get a stable `client_id` before `agent.tool_call`.
+- [x] `/agent/state.pending_tool` includes `client_id`.
+- [x] `/agent/state.draft_assistant` includes `client_id`.
+- [x] agent SSE assistant/tool payloads include `client_id` before persistence completes.
+- [x] persisted assistant/tool `message` payloads include both `message_id` and `client_id`.
 - [ ] the reference web client keys message UI state by `client_id` instead of mutating identity from temp/synthetic IDs to `message_id`.
 - [ ] the web client uses UUIDv7 `client_id` generation for new user messages.
 - [ ] the `/new` route also sends a client-generated `client_id` for its first message.
@@ -153,7 +153,8 @@ The repo does not already carry one. This plan standardizes on the `uuid` packag
 
 - Phase 1 is complete in code: schema, UUIDv7 generation, persisted message stamping, transcript serialization, and the historical backfill have all landed.
 - Phase 2 is complete in code: `POST /api/threads/:thread_id/messages` now accepts optional `client_id`, echoes it back, and suppresses duplicate same-thread user retries.
-- Phase 3 and Phase 4 remain outstanding.
+- Phase 3 is complete in code: `/agent/state`, draft assistant SSE, tool SSE, and persisted assistant/tool rows now reuse the same preallocated `client_id`.
+- Phase 4 remains outstanding.
 
 ## Expected Files And Areas
 

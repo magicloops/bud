@@ -74,7 +74,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [x] `service/src/db/db.spec.md` updated
 - [x] `service/src/routes/routes.spec.md` updated
 - [x] `service/src/agent/agent.spec.md` updated
-- [ ] `service/src/runtime/runtime.spec.md` updated if needed
+- [x] `service/src/runtime/runtime.spec.md` updated if needed
 - [ ] `web/src/lib/lib.spec.md` updated
 - [ ] `web/src/routes/$budId/budId.spec.md` updated
 - [x] `docs/proto.md` updated
@@ -85,4 +85,6 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - This checklist validates stable message identity, not a broader request-idempotency architecture.
 - The backfill success note for phase 1 came from the completed `pnpm db:backfill:message-client-ids` run after the schema rollout landed.
+- On 2026-03-30, `pnpm build` passed in `service/` after the phase 3 runtime/SSE `client_id` changes landed.
+- On 2026-03-30, `node --import tsx --test src/runtime/agent-runtime-state.test.ts` passed, including the new snapshot assertions for `pending_tool.client_id` and `draft_assistant.client_id`.
 - If a later tranche adds `attempt_id` or full replay-safe send semantics, add a separate validation pass rather than stretching this checklist.

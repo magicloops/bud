@@ -80,6 +80,7 @@ type StreamedModelResponse = {
   response: CanonicalResponse;
   draftText: string;
   hasDraftText: boolean;
+  assistantClientId: string | null;
 };
 
 const SYSTEM_PROMPT = `
@@ -329,7 +330,7 @@ export class AgentService {
           throw new Error("agent_canceled");
         }
         this.runtime.markThinking(threadId);
-        const { response } = await this.invokeModel(
+        const { response, assistantClientId: streamedAssistantClientId } = await this.invokeModel(
           threadId,
           turnId,
           conversation,
@@ -339,11 +340,13 @@ export class AgentService {
         );
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
+          const toolClientId = generateMessageClientId();
           const callMeta = { input: toolCall.input ?? "" };
           const toolCallCursor = this.runtime.emit(threadId, {
             event: "agent.tool_call",
             data: {
               turn_id: turnId,
+              client_id: toolClientId,
               call_id: toolCall.callId,
               name: toolCall.tool,
               args: callMeta
@@ -352,6 +355,7 @@ export class AgentService {
           this.runtime.setPendingTool(
             threadId,
             {
+              client_id: toolClientId,
               call_id: toolCall.callId,
               name: toolCall.tool,
               args: callMeta,
@@ -392,6 +396,7 @@ export class AgentService {
             threadId,
             toolCall,
             result,
+            toolClientId,
             ownerUserId,
           );
 
@@ -413,6 +418,7 @@ export class AgentService {
             event: "agent.tool_result",
             data: {
               turn_id: turnId,
+              client_id: toolClientId,
               call_id: toolCall.callId,
               message_id: toolMessage.message_id,
               name: toolCall.tool,
@@ -433,8 +439,9 @@ export class AgentService {
         }
 
         const directive = this.parseResponse(response);
+        const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
         const [assistantMessage] = await db.insert(messageTable).values({
-          clientId: generateMessageClientId(),
+          clientId: assistantClientId,
           threadId,
           role: "assistant",
           displayRole: "Bud Agent",
@@ -458,6 +465,7 @@ export class AgentService {
           event: "agent.message",
           data: {
             turn_id: turnId,
+            client_id: assistantClientId,
             message_id: serializedAssistantMessage.message_id,
             text: directive.message,
             message: serializedAssistantMessage,
@@ -668,18 +676,26 @@ export class AgentService {
     let draftText = "";
     let hasDraftText = false;
     let textBlockCount = 0;
+    let assistantClientId: string | null = null;
+
+    const ensureAssistantClientId = () => {
+      assistantClientId ??= generateMessageClientId();
+      return assistantClientId;
+    };
 
     const emitAssistantDraftStart = () => {
       if (hasDraftText) {
         return;
       }
+      const clientId = ensureAssistantClientId();
       const cursor = this.runtime.emit(threadId, {
         event: "agent.message_start",
         data: {
           turn_id: turnId,
+          client_id: clientId,
         },
       });
-      this.runtime.setDraftAssistant(threadId, draftText, cursor);
+      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
       hasDraftText = true;
     };
 
@@ -688,15 +704,17 @@ export class AgentService {
         return;
       }
       emitAssistantDraftStart();
+      const clientId = ensureAssistantClientId();
       draftText += delta;
       const cursor = this.runtime.emit(threadId, {
         event: "agent.message_delta",
         data: {
           turn_id: turnId,
+          client_id: clientId,
           delta,
         },
       });
-      this.runtime.setDraftAssistant(threadId, draftText, cursor);
+      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
     };
 
     for await (const event of provider.invoke(messages, CANONICAL_TOOLS, modelConfig, signal)) {
@@ -746,14 +764,16 @@ export class AgentService {
     }
 
     if (hasDraftText) {
+      const clientId = ensureAssistantClientId();
       const cursor = this.runtime.emit(threadId, {
         event: "agent.message_done",
         data: {
           turn_id: turnId,
+          client_id: clientId,
           text: draftText,
         },
       });
-      this.runtime.setDraftAssistant(threadId, draftText, cursor);
+      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
     }
 
     const orderedIndexes = Array.from(
@@ -807,6 +827,7 @@ export class AgentService {
       response,
       draftText,
       hasDraftText,
+      assistantClientId,
     };
   }
 
@@ -1150,7 +1171,8 @@ export class AgentService {
     threadId: string,
     directive: Extract<AgentDirective, { type: "tool_call" }>,
     result: TerminalCallResult,
-  ownerUserId?: string | null,
+    clientId: string,
+    ownerUserId?: string | null,
   ): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage }> {
     const summary = this.buildToolSummary(directive);
     const outputTruncationReason = this.getToolOutputTruncationReason(directive, result);
@@ -1168,7 +1190,7 @@ export class AgentService {
       context: result.context
     };
     const [toolMessage] = await db.insert(messageTable).values({
-      clientId: generateMessageClientId(),
+      clientId,
       threadId,
       role: "tool",
       displayRole: "Tool",

@@ -10,12 +10,14 @@ export type AgentRuntimePhase =
   | "streaming_message";
 
 export type AgentPendingTool = {
+  client_id: string;
   call_id: string;
   name: string;
   args: Record<string, unknown>;
 };
 
 export type AgentDraftAssistant = {
+  client_id: string;
   text: string;
   updated_at: string;
 };
@@ -53,6 +55,7 @@ type InternalSnapshot = {
   pendingTool: AgentPendingTool | null;
   draftAssistant:
     | {
+        clientId: string;
         text: string;
         updatedAt: Date;
       }
@@ -131,18 +134,25 @@ export class AgentRuntimeStateManager {
       (snapshot) => {
         snapshot.phase = "tool_running";
         snapshot.pendingTool = pendingTool;
+        snapshot.draftAssistant = null;
       },
       cursor,
     );
   }
 
-  setDraftAssistant(threadId: string, text: string, cursor: string): AgentRuntimeSnapshot {
+  setDraftAssistant(
+    threadId: string,
+    clientId: string,
+    text: string,
+    cursor: string,
+  ): AgentRuntimeSnapshot {
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
         snapshot.phase = "streaming_message";
         snapshot.pendingTool = null;
         snapshot.draftAssistant = {
+          clientId,
           text,
           updatedAt: new Date(),
         };
@@ -444,6 +454,7 @@ export class AgentRuntimeStateManager {
       pending_tool: snapshot.pendingTool,
       draft_assistant: snapshot.draftAssistant
         ? {
+            client_id: snapshot.draftAssistant.clientId,
             text: snapshot.draftAssistant.text,
             updated_at: snapshot.draftAssistant.updatedAt.toISOString(),
           }

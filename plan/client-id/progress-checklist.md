@@ -43,24 +43,24 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ### Runtime State
 
-- [ ] `/agent/state.pending_tool` includes `client_id`.
-- [ ] `/agent/state.draft_assistant` includes `client_id`.
+- [x] `/agent/state.pending_tool` includes `client_id`.
+- [x] `/agent/state.draft_assistant` includes `client_id`.
 
 ### Stream Contract
 
-- [ ] `agent.message_start` includes `client_id`.
-- [ ] `agent.message_delta` includes `client_id`.
-- [ ] `agent.message_done` includes `client_id`.
-- [ ] `agent.tool_call` includes `client_id`.
-- [ ] `agent.tool_result` includes `client_id`.
-- [ ] `agent.message` includes `client_id`.
+- [x] `agent.message_start` includes `client_id`.
+- [x] `agent.message_delta` includes `client_id`.
+- [x] `agent.message_done` includes `client_id`.
+- [x] `agent.tool_call` includes `client_id`.
+- [x] `agent.tool_result` includes `client_id`.
+- [x] `agent.message` includes `client_id`.
 
 ### Persistence Alignment
 
-- [ ] assistant `client_id` is allocated before the first streamed draft event.
-- [ ] tool `client_id` is allocated before `agent.tool_call`.
-- [ ] the persisted assistant row reuses the streamed assistant `client_id`.
-- [ ] the persisted tool row reuses the streamed tool `client_id`.
+- [x] assistant `client_id` is allocated before the first streamed draft event.
+- [x] tool `client_id` is allocated before `agent.tool_call`.
+- [x] the persisted assistant row reuses the streamed assistant `client_id`.
+- [x] the persisted tool row reuses the streamed tool `client_id`.
 
 ## Phase 4: Reference Web Adoption And Handoff
 
@@ -87,7 +87,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 |-------|--------|-------|
 | 1 | Complete | Schema, backfill, persisted write stamping, and transcript serialization now carry `client_id` |
 | 2 | Complete | User writes now accept/echo `client_id` and suppress duplicate same-thread retries |
-| 3 | Not Started | `/agent/state` and agent SSE do not yet expose pre-persistence message identity |
+| 3 | Complete | `/agent/state`, draft assistant SSE, tool SSE, and persisted assistant/tool rows now share one preallocated `client_id` |
 | 4 | Not Started | Web still keys optimistic and streaming message state off temp/synthetic IDs |
 
 ## Notes

@@ -41,7 +41,13 @@ test("no-cursor attach is live-only for agent runtime streams", () => {
   runtime.startTurn("thread-1", "turn-1");
   runtime.emit("thread-1", {
     event: "agent.tool_call",
-    data: { turn_id: "turn-1", call_id: "call-1", name: "terminal.run", args: { input: "pwd\n" } },
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+      args: { input: "pwd\n" },
+    },
   });
 
   const replayedEvents: string[] = [];
@@ -54,7 +60,12 @@ test("no-cursor attach is live-only for agent runtime streams", () => {
 
   runtime.emit("thread-1", {
     event: "agent.tool_result",
-    data: { turn_id: "turn-1", call_id: "call-1", name: "terminal.run" },
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+    },
   });
 
   assert.deepEqual(replayedEvents, ["agent.tool_result"]);
@@ -66,17 +77,33 @@ test("attach after a known cursor replays only newer visible events", () => {
   const started = runtime.startTurn("thread-1", "turn-1");
   const toolCallCursor = runtime.emit("thread-1", {
     event: "agent.tool_call",
-    data: { turn_id: "turn-1", call_id: "call-1", name: "terminal.run", args: { input: "pwd\n" } },
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+      args: { input: "pwd\n" },
+    },
   });
   runtime.setPendingTool(
     "thread-1",
-    { call_id: "call-1", name: "terminal.run", args: { input: "pwd\n" } },
+    {
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+      args: { input: "pwd\n" },
+    },
     toolCallCursor,
   );
 
   runtime.emit("thread-1", {
     event: "agent.tool_result",
-    data: { turn_id: "turn-1", call_id: "call-1", name: "terminal.run" },
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+    },
   });
   runtime.markThinking("thread-1");
 
@@ -99,7 +126,7 @@ test("missing resume cursor requires explicit resync", () => {
   runtime.startTurn("thread-1", "turn-1");
   runtime.emit("thread-1", {
     event: "agent.message_start",
-    data: { turn_id: "turn-1" },
+    data: { turn_id: "turn-1", client_id: "assistant-client-1" },
   });
 
   const attachment = runtime.attachCallback("thread-1", () => {}, {
@@ -133,4 +160,47 @@ test("finishing a turn returns the snapshot to idle with a fresh cursor", () => 
   assert.equal(attachment.status, "attached");
   assert.deepEqual(replayedEvents, []);
   attachment.detach();
+});
+
+test("runtime snapshots expose client_id on pending_tool and draft_assistant", () => {
+  const runtime = new AgentRuntimeStateManager();
+  runtime.startTurn("thread-1", "turn-1");
+
+  const toolCursor = runtime.emit("thread-1", {
+    event: "agent.tool_call",
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+      args: { input: "pwd\n" },
+    },
+  });
+  runtime.setPendingTool(
+    "thread-1",
+    {
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+      args: { input: "pwd\n" },
+    },
+    toolCursor,
+  );
+
+  const toolSnapshot = runtime.getSnapshot("thread-1");
+  assert.equal(toolSnapshot.pending_tool?.client_id, "tool-client-1");
+
+  const messageCursor = runtime.emit("thread-1", {
+    event: "agent.message_start",
+    data: {
+      turn_id: "turn-1",
+      client_id: "assistant-client-1",
+    },
+  });
+  runtime.setDraftAssistant("thread-1", "assistant-client-1", "Hello", messageCursor);
+
+  const draftSnapshot = runtime.getSnapshot("thread-1");
+  assert.equal(draftSnapshot.pending_tool, null);
+  assert.equal(draftSnapshot.draft_assistant?.client_id, "assistant-client-1");
+  assert.equal(draftSnapshot.draft_assistant?.text, "Hello");
 });

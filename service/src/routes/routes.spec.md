@@ -114,13 +114,16 @@ Thread and message management, plus terminal operations (~900 lines).
 
 **Agent Stream Contract**:
 - `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
+- `pending_tool` now carries `client_id` in addition to `call_id`, `name`, and `args`
+- `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
 - `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`, and `heartbeat`
 - agent payloads include a per-turn `turn_id`
+- assistant draft events now include top-level `client_id`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
-- tool events expose the real `call_id`
+- tool events expose the real `call_id` plus top-level `client_id`
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
-- those embedded canonical assistant/tool rows now also expose `message.client_id`; the top-level event identity fields remain `message_id` in this phase
+- those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
 - no-cursor attaches are live-only; they do not replay buffered `agent.*` or `final`

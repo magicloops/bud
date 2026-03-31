@@ -29,8 +29,8 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `phase`
 - `can_cancel`
 - `stream_cursor`
-- `pending_tool`
-- `draft_assistant`
+- `pending_tool` (`client_id`, `call_id`, `name`, `args`)
+- `draft_assistant` (`client_id`, `text`, `updated_at`)
 - `updated_at`
 
 **Phase Values**:
@@ -84,6 +84,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - attach after a known cursor replays only newer visible events
 - stale cursors produce explicit resync
 - finishing a turn returns the snapshot to idle with a fresh cursor
+- runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
 
 ### `event-bus.test.ts`
 
