@@ -12,9 +12,9 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ### Storage And Backfill
 
-- [ ] new message rows persist `client_id`
-- [ ] historical rows are backfilled with `client_id`
-- [ ] no rows remain with null `client_id` before final schema tightening
+- [x] new message rows persist `client_id`
+- [x] historical rows are backfilled with `client_id`
+- [x] no rows remain with null `client_id` before final schema tightening
 - [ ] uniqueness enforcement works as intended
 
 ### Read Contract
@@ -71,17 +71,18 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ## Docs / Spec Alignment
 
-- [ ] `service/src/db/db.spec.md` updated
-- [ ] `service/src/routes/routes.spec.md` updated
-- [ ] `service/src/agent/agent.spec.md` updated
+- [x] `service/src/db/db.spec.md` updated
+- [x] `service/src/routes/routes.spec.md` updated
+- [x] `service/src/agent/agent.spec.md` updated
 - [ ] `service/src/runtime/runtime.spec.md` updated if needed
 - [ ] `web/src/lib/lib.spec.md` updated
 - [ ] `web/src/routes/$budId/budId.spec.md` updated
-- [ ] `docs/proto.md` updated
+- [x] `docs/proto.md` updated
 - [ ] relevant reference handoff docs updated
 - [ ] `bud.spec.md` updated
 
 ## Notes
 
 - This checklist validates stable message identity, not a broader request-idempotency architecture.
+- The backfill success note for phase 1 came from the completed `pnpm db:backfill:message-client-ids` run after the schema rollout landed.
 - If a later tranche adds `attempt_id` or full replay-safe send semantics, add a separate validation pass rather than stretching this checklist.

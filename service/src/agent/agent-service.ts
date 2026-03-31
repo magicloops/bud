@@ -3,6 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { Buffer } from "node:buffer";
 import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
+import { generateMessageClientId } from "../db/message-client-id.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
 import type { ReadinessHints } from "../terminal/types.js";
@@ -57,6 +58,7 @@ type TerminalCallResult = {
 
 type PersistedAgentMessage = {
   messageId: string;
+  clientId: string | null;
   role: string;
   displayRole: string | null;
   content: string;
@@ -66,6 +68,7 @@ type PersistedAgentMessage = {
 
 type SerializedAgentMessage = {
   message_id: string;
+  client_id: string | null;
   role: string;
   display_role: string;
   content: string;
@@ -431,6 +434,7 @@ export class AgentService {
 
         const directive = this.parseResponse(response);
         const [assistantMessage] = await db.insert(messageTable).values({
+          clientId: generateMessageClientId(),
           threadId,
           role: "assistant",
           displayRole: "Bud Agent",
@@ -439,6 +443,7 @@ export class AgentService {
           metadata: { status: directive.status }
         }).returning({
           messageId: messageTable.messageId,
+          clientId: messageTable.clientId,
           role: messageTable.role,
           displayRole: messageTable.displayRole,
           content: messageTable.content,
@@ -1163,6 +1168,7 @@ export class AgentService {
       context: result.context
     };
     const [toolMessage] = await db.insert(messageTable).values({
+      clientId: generateMessageClientId(),
       threadId,
       role: "tool",
       displayRole: "Tool",
@@ -1171,6 +1177,7 @@ export class AgentService {
       metadata: payload
     }).returning({
       messageId: messageTable.messageId,
+      clientId: messageTable.clientId,
       role: messageTable.role,
       displayRole: messageTable.displayRole,
       content: messageTable.content,
@@ -1254,6 +1261,7 @@ export class AgentService {
   private serializePersistedMessage(message: PersistedAgentMessage): SerializedAgentMessage {
     return {
       message_id: message.messageId,
+      client_id: message.clientId,
       role: message.role,
       display_role: message.displayRole ?? message.role,
       content: message.content,

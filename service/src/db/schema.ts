@@ -313,6 +313,7 @@ export const messageTable = pgTable(
   "message",
   {
     messageId: uuid("message_id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id"),
     threadId: uuid("thread_id")
       .notNull()
       .references(() => threadTable.threadId, { onDelete: "cascade" }),
@@ -328,7 +329,10 @@ export const messageTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
   },
   (table) => ({
-    threadIdx: index("message_thread_idx").on(table.threadId)
+    threadIdx: index("message_thread_idx").on(table.threadId),
+    clientIdNonNullIdx: uniqueIndex("message_client_id_nonnull_idx")
+      .on(table.clientId)
+      .where(sql`${table.clientId} is not null`)
   })
 );
 

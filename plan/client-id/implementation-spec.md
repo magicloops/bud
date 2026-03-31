@@ -1,6 +1,6 @@
 # Implementation Spec: Message Client IDs
 
-**Status**: Draft
+**Status**: In Progress
 **Created**: 2026-03-30
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -85,13 +85,13 @@ These decisions are locked for this implementation plan:
 
 ## Success Criteria
 
-- [ ] `message` rows have a `client_id` column.
-- [ ] historical `message` rows are backfilled with `client_id`.
+- [x] `message` rows have a `client_id` column.
+- [x] historical `message` rows are backfilled with `client_id`.
 - [ ] end-state schema makes `client_id` non-null and unique.
-- [ ] `GET /api/threads/:thread_id/messages` returns `client_id` on every row.
-- [ ] `POST /api/threads/:thread_id/messages` accepts optional `client_id`.
-- [ ] `POST /api/threads/:thread_id/messages` returns `{ message_id, client_id }`.
-- [ ] missing user-message `client_id` values are generated server-side.
+- [x] `GET /api/threads/:thread_id/messages` returns `client_id` on every row.
+- [x] `POST /api/threads/:thread_id/messages` accepts optional `client_id`.
+- [x] `POST /api/threads/:thread_id/messages` returns `{ message_id, client_id }`.
+- [x] missing user-message `client_id` values are generated server-side.
 - [ ] assistant messages get a stable `client_id` before the first draft stream event that references them.
 - [ ] tool messages get a stable `client_id` before `agent.tool_call`.
 - [ ] `/agent/state.pending_tool` includes `client_id`.
@@ -102,6 +102,7 @@ These decisions are locked for this implementation plan:
 - [ ] the web client uses UUIDv7 `client_id` generation for new user messages.
 - [ ] the `/new` route also sends a client-generated `client_id` for its first message.
 - [ ] protocol/spec/reference docs are updated together.
+- [x] duplicate `client_id` requests on `POST /api/threads/:thread_id/messages` return the existing identifiers without creating a second user row or starting a second agent turn.
 
 ## Non-Goals
 
@@ -147,6 +148,12 @@ The repo does not already carry one. This plan standardizes on the `uuid` packag
 - Do not change pagination logic to depend on `client_id`.
 - Do not rely on `client_id` for full send replay semantics; document the limited first-pass duplicate behavior explicitly.
 - Keep docs/proto/spec updates in the same phase as the client contract flip.
+
+## Current Progress
+
+- Phase 1 is complete in code: schema, UUIDv7 generation, persisted message stamping, transcript serialization, and the historical backfill have all landed.
+- Phase 2 is complete in code: `POST /api/threads/:thread_id/messages` now accepts optional `client_id`, echoes it back, and suppresses duplicate same-thread user retries.
+- Phase 3 and Phase 4 remain outstanding.
 
 ## Expected Files And Areas
 

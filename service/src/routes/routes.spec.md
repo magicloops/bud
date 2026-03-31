@@ -53,7 +53,7 @@ Bud management and session listing.
 
 ### `threads.ts`
 
-Thread and message management, plus terminal operations (~650 lines).
+Thread and message management, plus terminal operations (~900 lines).
 
 **Thread Endpoints**:
 
@@ -95,7 +95,7 @@ Thread and message management, plus terminal operations (~650 lines).
 
 **Validation Schemas** (Zod):
 - `CreateThreadSchema` - `bud_id` required, `title` optional
-- `CreateMessageSchema` - `text` required, `cwd` and `reasoning_effort` optional
+- `CreateMessageSchema` - `text` required, `client_id` optional UUID, `cwd` and `reasoning_effort` optional
 - `ThreadParamsSchema` - UUID validation
 - `MessagesQuerySchema` - `limit` plus exclusive `before` / `after` opaque cursors
 - `TerminalEnsureBodySchema` - Optional `shell`, `cwd`, `cols`, `rows`
@@ -106,6 +106,7 @@ Thread and message management, plus terminal operations (~650 lines).
 - `GET /api/threads/:thread_id/messages` now returns an envelope: `{ messages, page }`
 - page results are always ordered oldest-to-newest within the returned window
 - cursors are opaque but derived from `(created_at, message_id)` so tied timestamps remain stable
+- persisted transcript rows now expose `client_id` alongside `message_id`; during the nullable stage-A rollout, historical rows may briefly return `client_id: null` until the backfill completes
 - `before` requests older history than the cursor boundary (exclusive)
 - `after` requests newer history than the cursor boundary (exclusive)
 - the latest-page request is `GET /api/threads/:thread_id/messages?limit=<n>` with no cursor
@@ -119,6 +120,7 @@ Thread and message management, plus terminal operations (~650 lines).
 - tool events expose the real `call_id`
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
+- those embedded canonical assistant/tool rows now also expose `message.client_id`; the top-level event identity fields remain `message_id` in this phase
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
 - no-cursor attaches are live-only; they do not replay buffered `agent.*` or `final`
@@ -135,6 +137,7 @@ Latest page:
   "messages": [
     {
       "message_id": "6c06d627-9043-4d71-a9cc-8b35ef3f7c59",
+      "client_id": "0195d4d2-3ef4-74a7-9a40-9c4bb0b7fd1c",
       "role": "assistant",
       "display_role": "Assistant",
       "content": "Latest reply",
@@ -143,6 +146,7 @@ Latest page:
     },
     {
       "message_id": "4b6d4e04-c407-49b0-9738-80985d95cf9b",
+      "client_id": "0195d4d2-42ef-7266-99ff-2fa4d4dc2ff2",
       "role": "user",
       "display_role": "User",
       "content": "Newest prompt",
@@ -167,6 +171,7 @@ Older page via `before`:
   "messages": [
     {
       "message_id": "d7d8f7e8-2947-4ba4-91d9-c5f2966d661f",
+      "client_id": "0195d4d2-1f15-7095-9cfe-0b87a8b6fd3d",
       "role": "user",
       "display_role": "User",
       "content": "Older prompt",
@@ -216,7 +221,9 @@ Before creating user message, checks for terminal state changes:
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
 - thread SSE routes send an initial heartbeat frame on empty-buffer/live-only attaches so the HTTP response stays in SSE mode even before the first real event arrives
 - `POST /api/threads` now returns `{ thread_id }`
-- `POST /api/threads/:thread_id/messages` now returns `{ message_id }`
+- `POST /api/threads/:thread_id/messages` now accepts optional `client_id`
+- duplicate user-message retries with the same owned-thread `client_id` short-circuit with `200 { message_id, client_id }` and do not launch a second agent turn
+- fresh user-message writes return `201 { message_id, client_id }`
 
 ### `runs.ts`
 
@@ -326,11 +333,20 @@ Available LLM model listing for authenticated product clients.
 ```json
 {
   "message_id": "uuid",
+  "client_id": "uuidv7 | null",
   "role": "user | assistant | tool | system",
   "display_role": "string",
   "content": "string",
   "metadata": {},
   "created_at": "ISO date"
+}
+```
+
+**Create Message Response**:
+```json
+{
+  "message_id": "uuid",
+  "client_id": "uuidv7"
 }
 ```
 
@@ -340,6 +356,7 @@ Available LLM model listing for authenticated product clients.
   "messages": [
     {
       "message_id": "uuid",
+      "client_id": "uuidv7 | null",
       "role": "user | assistant | tool | system",
       "display_role": "string",
       "content": "string",
@@ -366,6 +383,7 @@ Available LLM model listing for authenticated product clients.
 | `zod` | Request validation |
 | `drizzle-orm` | Query helpers |
 | `../db/client.js` | Database access |
+| `../db/message-client-id.js` | UUIDv7 generation for persisted user-message `client_id` values |
 | `../db/schema.js` | Table schemas |
 | `../agent/index.js` | Agent service |
 | `../runtime/*.js` | Manager classes |

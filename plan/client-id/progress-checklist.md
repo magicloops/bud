@@ -5,39 +5,39 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 ## Status Legend
 
 - `[ ]` not yet started or not yet verified
-- `[x]` implemented and verified
+- `[x]` implemented in code
 - `[-]` deferred or intentionally out of scope for now
 
 ## Phase 1: Schema And Transcript Foundation
 
 ### Storage
 
-- [ ] `message.client_id` added to the schema.
-- [ ] UUIDv7 generation helper added to the service.
-- [ ] staged backfill plan implemented.
-- [ ] historical rows backfilled.
+- [x] `message.client_id` added to the schema.
+- [x] UUIDv7 generation helper added to the service.
+- [x] staged backfill plan implemented.
+- [x] historical rows backfilled.
 - [ ] schema tightened to non-null and unique by end of rollout.
 
 ### Reads
 
-- [ ] transcript serializers include `client_id`.
-- [ ] persisted assistant/tool serializers include `client_id`.
-- [ ] transcript ordering/cursor logic remains unchanged.
+- [x] transcript serializers include `client_id`.
+- [x] persisted assistant/tool serializers include `client_id`.
+- [x] transcript ordering/cursor logic remains unchanged.
 
 ## Phase 2: User Message Write Contract
 
 ### Route Contract
 
-- [ ] `POST /api/threads/:thread_id/messages` accepts optional `client_id`.
-- [ ] missing `client_id` values are generated server-side.
-- [ ] response returns `{ message_id, client_id }`.
+- [x] `POST /api/threads/:thread_id/messages` accepts optional `client_id`.
+- [x] missing `client_id` values are generated server-side.
+- [x] response returns `{ message_id, client_id }`.
 
 ### Duplicate Handling
 
-- [ ] duplicate user `client_id` is detected within the same owned thread.
-- [ ] duplicate send does not create a second user row.
-- [ ] duplicate send does not start a second agent turn.
-- [ ] first-pass idempotency limits are documented.
+- [x] duplicate user `client_id` is detected within the same owned thread.
+- [x] duplicate send does not create a second user row.
+- [x] duplicate send does not start a second agent turn.
+- [x] first-pass idempotency limits are documented.
 
 ## Phase 3: Agent Runtime And Stream Identity
 
@@ -75,8 +75,8 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ### Docs And Specs
 
-- [ ] protocol docs updated.
-- [ ] service specs updated.
+- [x] protocol docs updated.
+- [x] service specs updated.
 - [ ] web specs updated.
 - [ ] root spec updated.
 - [ ] reference handoff docs/fixtures updated.
@@ -85,8 +85,8 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 1 | Not Started | Schema, backfill, and transcript serialization still use `message_id` only today |
-| 2 | Not Started | User writes do not yet accept or echo `client_id` |
+| 1 | Complete | Schema, backfill, persisted write stamping, and transcript serialization now carry `client_id` |
+| 2 | Complete | User writes now accept/echo `client_id` and suppress duplicate same-thread retries |
 | 3 | Not Started | `/agent/state` and agent SSE do not yet expose pre-persistence message identity |
 | 4 | Not Started | Web still keys optimistic and streaming message state off temp/synthetic IDs |
 

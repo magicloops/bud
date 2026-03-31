@@ -84,8 +84,17 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 - Used by the workbench to receive agent conversation events.
 - Separate from terminal stream to support offline scenarios (conversation without terminal).
 - Draft assistant text is streamed before canonical persistence, then successful agent payloads carry a per-turn `turn_id`, stable tool `call_id`, and canonical persisted transcript rows under `message`.
+- Canonical persisted `message` payloads now include both `message_id` and `client_id`; top-level SSE event identifiers remain `message_id` in this rollout phase.
 - `GET /api/threads/:thread_id/agent/state` is the authoritative best-effort in-flight snapshot for pending tool, draft assistant, and the current agent resume cursor, including idle snapshots.
 - Fresh no-cursor agent-stream attaches are live-only. Bounded catch-up requires an explicit resume cursor such as `after=<cursor>`.
+
+### 2.5 Thread Message Write (Browser)
+
+- URL: `POST /api/threads/:thread_id/messages`
+- Request body: `{ "text": "...", "client_id"?: "uuidv7", "cwd"?: "...", "model"?: "...", "reasoning_effort"?: "none|low|medium|high" }`
+- New user-message writes return `201` with `{ "message_id": "uuid", "client_id": "uuidv7" }`
+- Duplicate same-thread user retries using the same authenticated `client_id` return `200` with the existing `{ "message_id": "uuid", "client_id": "uuidv7" }`
+- This is first-pass duplicate suppression, not a full replay-safe idempotency protocol
 
 ---
 
@@ -555,13 +564,13 @@ Current thread-scoped SSE payloads are route-specific. For `GET /api/threads/:th
   `{ "turn_id":"01TURN...", "text":"Cloning repository..." }`
 
 * `agent.message`
-  `{ "turn_id":"01TURN...", "message_id":"uuid", "text":"Cloning repository...", "message": { "message_id":"uuid", "role":"assistant", "display_role":"Bud Agent", "content":"Cloning repository...", "metadata":{"status":"succeeded"}, "created_at":"2026-03-22T22:10:00.000Z" } }`
+  `{ "turn_id":"01TURN...", "message_id":"uuid", "text":"Cloning repository...", "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"assistant", "display_role":"Bud Agent", "content":"Cloning repository...", "metadata":{"status":"succeeded"}, "created_at":"2026-03-22T22:10:00.000Z" } }`
 
 * `agent.tool_call`
   `{ "turn_id":"01TURN...", "call_id":"call_123", "name":"terminal.run", "args":{"input":"git status\n"} }`
 
 * `agent.tool_result`
-  `{ "turn_id":"01TURN...", "call_id":"call_123", "message_id":"uuid", "name":"terminal.run", "summary":"Ran git status", "output":"...", "output_bytes":123, "truncated":false, "output_truncation_reason":null, "omitted_lines":0, "message": { "message_id":"uuid", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.run\",...}", "metadata":{"tool":"terminal.run","call_id":"call_123","summary":"Ran git status","output_truncation_reason":null}, "created_at":"2026-03-22T22:09:58.000Z" } }`
+  `{ "turn_id":"01TURN...", "call_id":"call_123", "message_id":"uuid", "name":"terminal.run", "summary":"Ran git status", "output":"...", "output_bytes":123, "truncated":false, "output_truncation_reason":null, "omitted_lines":0, "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.run\",...}", "metadata":{"tool":"terminal.run","call_id":"call_123","summary":"Ran git status","output_truncation_reason":null}, "created_at":"2026-03-22T22:09:58.000Z" } }`
 
 * `agent.resync_required`
   `{ "error":"resync_required", "provided_cursor":"01CUR..." }`
@@ -592,7 +601,7 @@ Server MUST emit in this format:
 ```
 id: 01E...
 event: agent.message
-data: {"turn_id":"01TURN...","message_id":"uuid","text":"...","message":{"message_id":"uuid","role":"assistant","display_role":"Bud Agent","content":"...","metadata":{"status":"succeeded"},"created_at":"2026-03-22T22:10:00.000Z"}}
+data: {"turn_id":"01TURN...","message_id":"uuid","text":"...","message":{"message_id":"uuid","client_id":"uuidv7","role":"assistant","display_role":"Bud Agent","content":"...","metadata":{"status":"succeeded"},"created_at":"2026-03-22T22:10:00.000Z"}}
 
 \n
 ```

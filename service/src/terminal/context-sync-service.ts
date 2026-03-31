@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { db } from "../db/client.js";
+import { generateMessageClientId } from "../db/message-client-id.js";
 import { terminalSessionTable, messageTable } from "../db/schema.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { TerminalStateSnapshot, StateChangeDetails } from "./types.js";
@@ -315,6 +316,7 @@ Examples:
     ownerUserId?: string | null,
   ): Promise<void> {
     await db.insert(messageTable).values({
+      clientId: generateMessageClientId(),
       threadId,
       role: "system",
       displayRole: "Terminal Status",
