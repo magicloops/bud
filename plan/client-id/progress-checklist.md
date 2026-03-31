@@ -66,20 +66,20 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ### Web Adoption
 
-- [ ] `web` uses the `uuid` package for UUIDv7 generation.
-- [ ] optimistic user sends use browser-generated `client_id`.
-- [ ] existing-thread message rendering keys by `client_id`.
-- [ ] new-thread first message flow sends `client_id`.
-- [ ] assistant/tool draft reconciliation keys by `client_id`.
-- [ ] temp/synthetic IDs are no longer the primary render identity.
+- [x] `web` uses the `uuid` package for UUIDv7 generation.
+- [x] optimistic user sends use browser-generated `client_id`.
+- [x] existing-thread message rendering keys by `client_id`.
+- [x] new-thread first message flow sends `client_id`.
+- [x] assistant/tool draft reconciliation keys by `client_id`.
+- [x] temp/synthetic IDs are no longer the primary render identity.
 
 ### Docs And Specs
 
 - [x] protocol docs updated.
 - [x] service specs updated.
-- [ ] web specs updated.
-- [ ] root spec updated.
-- [ ] reference handoff docs/fixtures updated.
+- [x] web specs updated.
+- [x] root spec updated.
+- [x] reference handoff docs/fixtures updated.
 
 ## Overall Progress
 
@@ -88,7 +88,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 | 1 | Complete | Schema, backfill, persisted write stamping, and transcript serialization now carry `client_id` |
 | 2 | Complete | User writes now accept/echo `client_id` and suppress duplicate same-thread retries |
 | 3 | Complete | `/agent/state`, draft assistant SSE, tool SSE, and persisted assistant/tool rows now share one preallocated `client_id` |
-| 4 | Not Started | Web still keys optimistic and streaming message state off temp/synthetic IDs |
+| 4 | Complete | Web now generates UUIDv7 `client_id` values and uses them as the stable identity for optimistic, runtime, and canonical message reconciliation |
 
 ## Notes
 

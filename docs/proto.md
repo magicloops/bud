@@ -93,6 +93,7 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 
 - URL: `POST /api/threads/:thread_id/messages`
 - Request body: `{ "text": "...", "client_id"?: "uuidv7", "cwd"?: "...", "model"?: "...", "reasoning_effort"?: "none|low|medium|high" }`
+- First-party clients SHOULD generate UUIDv7 `client_id` values before optimistic send so the same identity survives UI bootstrap, live streaming, and later transcript persistence
 - New user-message writes return `201` with `{ "message_id": "uuid", "client_id": "uuidv7" }`
 - Duplicate same-thread user retries using the same authenticated `client_id` return `200` with the existing `{ "message_id": "uuid", "client_id": "uuidv7" }`
 - This is first-pass duplicate suppression, not a full replay-safe idempotency protocol
@@ -610,6 +611,7 @@ data: {"turn_id":"01TURN...","client_id":"uuidv7","message_id":"uuid","text":"..
 * Keep‑alive: `: heartbeat\n\n`
 * Assistant draft semantics: clients may build a temporary assistant row from `agent.message_start` / `agent.message_delta` / `agent.message_done`, but the persisted transcript row still arrives later as `agent.message`
 * Assistant/tool identity semantics: `/agent/state`, the draft/tool SSE events, and the later persisted transcript rows now share the same `client_id`
+* First-party reconciliation semantics: clients SHOULD key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`, while retaining `message_id` on persisted rows for cursors and debugging
 * Tool-result semantics: `summary` is the compact server-owned label for collapsed UI, while `truncated` / `output_truncation_reason` describe whether the raw tool output itself was partial
 * Agent runtime bootstrap: clients SHOULD fetch `GET /api/threads/:thread_id/agent/state` and treat its `stream_cursor` as the baseline resume token for the current in-flight snapshot.
 * Agent cursor semantics: for `GET /api/threads/:thread_id/agent/stream`, the SSE frame `id:` is the same opaque cursor space exposed as `/agent/state.stream_cursor`; after incorporating an event with `id: C_next`, the client SHOULD store `C_next` as the next resume cursor.

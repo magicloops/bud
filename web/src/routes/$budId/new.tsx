@@ -12,7 +12,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useRef, useEffect } from 'react'
 import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
 import { CommandComposer, type ModelInfo } from '@/components/workbench/command-composer'
-import { apiFetch } from '@/lib/api'
+import { apiFetch, generateMessageClientId } from '@/lib/api'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
 import type { Terminal } from 'xterm'
@@ -130,6 +130,7 @@ function NewThreadView() {
     setError(null)
     setStatus('dispatching')
     setMessageText('')
+    const clientId = generateMessageClientId()
 
     try {
       // Create thread
@@ -150,6 +151,7 @@ function NewThreadView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: trimmedMessage,
+          client_id: clientId,
           model: selectedModel || undefined,
           reasoning_effort: reasoningEffort
         })

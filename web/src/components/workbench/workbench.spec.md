@@ -60,7 +60,7 @@ Thread list sidebar for conversation navigation.
 
 Message list with auto-scroll and collapsible messages.
 
-**Type**: `ChatMessage` - Message data (id, role, displayRole, content, metadata)
+**Type**: `ChatMessage` - Message data (stable render `id`, role, displayRole, content, metadata)
 
 **Props**:
 - `messages` - Array of ChatMessage
@@ -78,6 +78,7 @@ Message list with auto-scroll and collapsible messages.
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
+- The parent thread route now supplies `id` from stable message `client_id` identity rather than temp/synthetic placeholders
 
 **Note**: Renders only the scrollable message area. Parent component provides the container wrapper.
 

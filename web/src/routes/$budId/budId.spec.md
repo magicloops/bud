@@ -50,9 +50,10 @@ New thread creation view - allows users to start a new conversation.
 - Empty terminal display with placeholder message
 - Message composer for initial message
 - Loads `/api/models` using the normalized snake_case contract (`default_model`, model `display_name`, optional `is_alias`)
+- Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
   1. POST `/api/threads` to create thread and read `{ thread_id }`
-  2. POST `/api/threads/:id/messages` to send first message and read `{ message_id }`
+  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, ... }` and read `{ message_id, client_id }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
@@ -111,12 +112,14 @@ loader: async ({ params }) => {
    - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`
    - Builds one per-turn draft assistant row from `agent.message_start` / `agent.message_delta`
    - Treats `agent.message_done` as the final draft snapshot before canonical persistence
-   - Uses backend-provided `call_id`, `message_id`, and canonical `message` payloads to reconcile live events into the transcript
-   - Replaces draft assistant rows with the canonical persisted assistant row when `agent.message` arrives
+   - Uses backend-provided `client_id` as the primary message identity for optimistic users, draft assistants, pending tools, and canonical transcript rows
+   - Uses `call_id` for tool semantics and `turn_id` for turn-level cleanup, but not as the rendered message key
+   - Replaces draft assistant rows and pending tool rows by stable `client_id` when canonical persisted rows arrive
    - Reconnects resume from the latest known runtime cursor, using `after=<cursor>` and compatible `Last-Event-ID` handling
    - Handles explicit `agent.resync_required` by refetching `/messages` plus `/agent/state` and reattaching
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
-   - Replaces the optimistic user-row id with the real `message_id` returned by `POST /messages`
+   - Keeps optimistic user identity stable by attaching the persisted `message_id` returned by `POST /messages` onto the existing `client_id`-keyed row
+   - Uses `client_id ?? message_id` only as a rollout fallback for historical/transitional payloads
    - Healthy successful turns no longer require a mandatory `final` refetch just to learn assistant/tool message ids
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
 
@@ -172,7 +175,7 @@ terminalOutputTruncated: boolean
 ## Types
 
 From `@/lib/api`:
-- `ApiMessage` - Message from API
+- `ApiMessage` - Message from API (`message_id`, `client_id`, role, content)
 - `ApiMessagePage` - Paged transcript window with opaque cursors
 - `decodeTerminalData()` - Base64 decode helper
 

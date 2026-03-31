@@ -1,4 +1,5 @@
 // API utilities
+import { v7 as uuidv7 } from 'uuid'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined
 let authRedirectPending = false
@@ -245,6 +246,13 @@ export const decodeTerminalData = (data: string) => {
   }
 }
 
+export const generateMessageClientId = () => uuidv7()
+
+export const resolveMessageClientId = (message: {
+  client_id?: string | null
+  message_id: string
+}) => message.client_id ?? message.message_id
+
 // API types
 export type ApiBud = {
   bud_id: string
@@ -274,6 +282,7 @@ export type ApiThread = {
 
 export type ApiMessage = {
   message_id: string
+  client_id: string | null
   role: string
   display_role: string
   metadata?: Record<string, unknown>
@@ -300,11 +309,13 @@ export type ApiAgentState = {
   can_cancel: boolean
   stream_cursor: string
   pending_tool: {
+    client_id: string
     call_id: string
     name: string
     args: Record<string, unknown>
   } | null
   draft_assistant: {
+    client_id: string
     text: string
     updated_at: string
   } | null

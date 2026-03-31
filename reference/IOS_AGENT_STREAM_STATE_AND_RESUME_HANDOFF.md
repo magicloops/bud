@@ -2,7 +2,7 @@
 
 **Status:** Current backend contract  
 **Audience:** Backend, web platform, iOS, product  
-**Last Updated:** 2026-03-27
+**Last Updated:** 2026-03-30
 
 ## Purpose
 
@@ -18,7 +18,7 @@ It reflects the shipped implementation derived from:
 
 The current model is:
 
-- `/messages` = durable transcript history
+- `/messages` = durable transcript history with canonical `message_id` plus stable public `client_id`
 - `/agent/state` = authoritative current in-flight snapshot
 - `/agent/stream` = live transport plus a small bounded resume window
 - if resume is impossible, the server responds with explicit `resync_required`
@@ -60,6 +60,7 @@ GET /api/threads/:thread_id/messages?limit=<n>&after=<cursor>
 Semantics:
 
 - durable source of truth for transcript rows
+- canonical message rows now expose both `message_id` and `client_id`
 - same pagination model already documented elsewhere
 - remains the baseline on thread open and after resync
 
@@ -111,11 +112,13 @@ Active turn example:
   "can_cancel": true,
   "stream_cursor": "01CUR8W1S9J6K4Q7F2Q9P1ZB3G",
   "pending_tool": {
+    "client_id": "0195f8dd-85cf-7e15-b4b0-4ca3d1f8f2a4",
     "call_id": "call_123",
     "name": "terminal.run",
     "args": { "input": "git status\n" }
   },
   "draft_assistant": {
+    "client_id": "0195f8dd-85d0-7ad7-9377-9fa6990f8774",
     "text": "Working through the repo...",
     "updated_at": "2026-03-26T20:15:04.000Z"
   },
@@ -147,6 +150,7 @@ Idle example:
 - `stream_cursor`: opaque monotonic resume token for the thread runtime
 - `pending_tool`: current in-flight tool call, if any
 - `draft_assistant`: latest draft assistant text snapshot, if any
+- `client_id`: on `/messages`, `pending_tool`, and `draft_assistant`, the stable public/UI message identity
 - `updated_at`: last snapshot update time
 
 ### Important Invariant
@@ -275,8 +279,8 @@ Projection is field-driven, not phase-driven.
 - `idle`: render the canonical transcript only. No pending-tool row, no draft-assistant row, no stop affordance.
 - `starting`: show active-turn / stop-button state from `active` plus `can_cancel`, but do not invent transcript rows from `phase` alone.
 - `thinking`: same rule as `starting`. The client may show a generic "working" indicator outside the transcript, but should not synthesize tool or assistant rows unless the corresponding fields are present.
-- `pending_tool`: if `pending_tool` is present, render exactly one pending tool overlay row keyed by `call_id`. Replace or remove it when later snapshot or stream state says it is gone.
-- `draft_assistant`: if `draft_assistant` is present, render exactly one draft assistant overlay row keyed by `turn_id`. Replace it with the canonical `agent.message` or `/messages` row when persistence completes.
+- `pending_tool`: if `pending_tool` is present, render exactly one pending tool overlay row keyed by `pending_tool.client_id`. Keep `call_id` for tool semantics, but do not use it as the rendered message identity.
+- `draft_assistant`: if `draft_assistant` is present, render exactly one draft assistant overlay row keyed by `draft_assistant.client_id`. Keep `turn_id` for turn-level cleanup, but do not use it as the rendered message identity.
 - if both `pending_tool` and `draft_assistant` are present, render the fields that are present. Do not synthesize additional rows from `phase` alone.
 
 ## Fallback If `/agent/state` Temporarily Fails
@@ -317,14 +321,16 @@ The live event family is still expected to look like:
 
 Success-path reconciliation remains:
 
-- use `turn_id` for draft grouping
+- use `client_id` as the primary message identity across optimistic/runtime/streamed/canonical rows
+- use `turn_id` for draft grouping and turn cleanup
 - use `call_id` for tool lifecycle reconciliation
-- use canonical `message.message_id` when a persisted row exists
+- use canonical `message.message_id` when a persisted row exists for cursors, debugging, and row-level tracing
 
 Important client rule:
 
 - do not treat streamed deltas alone as durable transcript state
 - use canonical `/messages` rows for durable correctness
+- during rollout fallback, use `client_id ?? message_id` only when a historical/transitional payload still lacks `client_id`
 
 ## Runtime Finalization Rule
 

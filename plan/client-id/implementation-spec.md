@@ -98,10 +98,10 @@ These decisions are locked for this implementation plan:
 - [x] `/agent/state.draft_assistant` includes `client_id`.
 - [x] agent SSE assistant/tool payloads include `client_id` before persistence completes.
 - [x] persisted assistant/tool `message` payloads include both `message_id` and `client_id`.
-- [ ] the reference web client keys message UI state by `client_id` instead of mutating identity from temp/synthetic IDs to `message_id`.
-- [ ] the web client uses UUIDv7 `client_id` generation for new user messages.
-- [ ] the `/new` route also sends a client-generated `client_id` for its first message.
-- [ ] protocol/spec/reference docs are updated together.
+- [x] the reference web client keys message UI state by `client_id` instead of mutating identity from temp/synthetic IDs to `message_id`.
+- [x] the web client uses UUIDv7 `client_id` generation for new user messages.
+- [x] the `/new` route also sends a client-generated `client_id` for its first message.
+- [x] protocol/spec/reference docs are updated together.
 - [x] duplicate `client_id` requests on `POST /api/threads/:thread_id/messages` return the existing identifiers without creating a second user row or starting a second agent turn.
 
 ## Non-Goals
@@ -154,7 +154,7 @@ The repo does not already carry one. This plan standardizes on the `uuid` packag
 - Phase 1 is complete in code: schema, UUIDv7 generation, persisted message stamping, transcript serialization, and the historical backfill have all landed.
 - Phase 2 is complete in code: `POST /api/threads/:thread_id/messages` now accepts optional `client_id`, echoes it back, and suppresses duplicate same-thread user retries.
 - Phase 3 is complete in code: `/agent/state`, draft assistant SSE, tool SSE, and persisted assistant/tool rows now reuse the same preallocated `client_id`.
-- Phase 4 remains outstanding.
+- Phase 4 is complete in code: the reference web client now generates UUIDv7 `client_id` values, keys optimistic/runtime message state by `client_id`, and keeps `message_id` attached only as the persisted row identifier.
 
 ## Expected Files And Areas
 
@@ -204,12 +204,29 @@ The repo does not already carry one. This plan standardizes on the `uuid` packag
 3. Add assistant/tool runtime and stream `client_id` support.
 4. Move the reference web client to `client_id`-first rendering.
 5. Tighten schema constraints and update docs/handoffs/specs.
+6. Apply the final schema-tightening `db:push` to remote staging before treating the rollout as complete there.
+
+### Stage B Deployment Note
+
+Because staging currently runs `pnpm db:push` during deploy, the final database hardening should be treated as a two-pass staging rollout:
+
+1. Deploy the Stage A schema/code to staging so deploy-time `db:push` creates the nullable `message.client_id` column plus the partial unique index.
+2. Run `pnpm db:backfill:message-client-ids` against staging after that deploy completes.
+3. Verify staging has no null or duplicate `message.client_id` rows.
+4. Deploy the Stage B schema/code so deploy-time `db:push` flips `message.client_id` to `NOT NULL` and replaces the partial index with the final full unique index.
+
+When the final `message.client_id NOT NULL` + full-unique-index tightening lands, treat staging as an explicit rollout target:
+
+- update `service/src/db/schema.ts` to the Stage B shape
+- run `pnpm db:push` against the remote staging `DATABASE_URL`
+- verify staging has no null or duplicate `message.client_id` rows before and after the push
+- only then treat staging as aligned with local/dev for the final client-id contract
 
 ## Definition Of Done
 
-- [ ] transcript reads, user writes, `/agent/state`, and agent SSE all expose `client_id`
-- [ ] assistant/tool `client_id` values are stable before persistence and match the later persisted row
-- [ ] first-party web no longer depends on temp/synthetic IDs as its primary message identity model
-- [ ] `message_id` remains intact for cursors and debugging
-- [ ] touched specs and protocol/reference docs are updated together
-- [ ] validation notes are captured in [validation-checklist.md](./validation-checklist.md)
+- [x] transcript reads, user writes, `/agent/state`, and agent SSE all expose `client_id`
+- [x] assistant/tool `client_id` values are stable before persistence and match the later persisted row
+- [x] first-party web no longer depends on temp/synthetic IDs as its primary message identity model
+- [x] `message_id` remains intact for cursors and debugging
+- [x] touched specs and protocol/reference docs are updated together
+- [x] validation notes are captured in [validation-checklist.md](./validation-checklist.md)

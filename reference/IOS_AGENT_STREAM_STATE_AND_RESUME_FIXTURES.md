@@ -2,7 +2,7 @@
 
 **Status:** Current backend fixtures  
 **Audience:** Backend, web, iOS  
-**Last Updated:** 2026-03-27
+**Last Updated:** 2026-03-30
 
 This document publishes concrete example sequences for the current contract described in:
 
@@ -77,6 +77,7 @@ Example state:
   "stream_cursor": "01CUR_ACTIVE_4",
   "pending_tool": null,
   "draft_assistant": {
+    "client_id": "0195f8dd-85d0-7ad7-9377-9fa6990f8774",
     "text": "Working through the repo",
     "updated_at": "2026-03-26T21:01:00.000Z"
   },
@@ -89,15 +90,15 @@ Expected stream catch-up:
 ```text
 id: 01CUR_ACTIVE_5
 event: agent.message_delta
-data: {"turn_id":"01TURN_ACTIVE_1","delta":" now."}
+data: {"turn_id":"01TURN_ACTIVE_1","client_id":"0195f8dd-85d0-7ad7-9377-9fa6990f8774","delta":" now."}
 
 id: 01CUR_ACTIVE_6
 event: agent.message_done
-data: {"turn_id":"01TURN_ACTIVE_1","text":"Working through the repo now."}
+data: {"turn_id":"01TURN_ACTIVE_1","client_id":"0195f8dd-85d0-7ad7-9377-9fa6990f8774","text":"Working through the repo now."}
 
 id: 01CUR_ACTIVE_7
 event: agent.message
-data: {"turn_id":"01TURN_ACTIVE_1","message_id":"01MSG_ASSISTANT_9","text":"Working through the repo now.","message":{...}}
+data: {"turn_id":"01TURN_ACTIVE_1","client_id":"0195f8dd-85d0-7ad7-9377-9fa6990f8774","message_id":"01MSG_ASSISTANT_9","text":"Working through the repo now.","message":{...}}
 
 id: 01CUR_ACTIVE_8
 event: final
@@ -171,7 +172,7 @@ Example first post-attach event:
 ```text
 id: 01CUR_IDLE_8
 event: agent.message_start
-data: {"turn_id":"01TURN_NEW_1"}
+data: {"turn_id":"01TURN_NEW_1","client_id":"0195f8dd-85d2-7b57-8d03-6cbce5d6b0a0"}
 ```
 
 ## Fixture 5: `/messages` Succeeds But `/agent/state` Fails
@@ -219,3 +220,9 @@ Expected client behavior:
 - update the local model to the latest canonical state
 - preserve the user's current scroll/read position when possible
 - do not auto-jump to latest unless the user was already there or explicitly chooses to jump
+
+## Identity Rule For All Fixtures
+
+- Use `client_id` as the primary rendered message identity for optimistic users, pending tools, draft assistants, and canonical transcript rows.
+- Keep `message_id` on canonical persisted rows for cursor ordering, debugging, and row-level correlation.
+- During rollout fallback, use `client_id ?? message_id` only when older historical or transitional payloads still omit `client_id`.
