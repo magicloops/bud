@@ -15,7 +15,9 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "tsx src/scripts/db-push.ts",
     "db:backfill:message-client-ids": "tsx src/scripts/backfill-message-client-ids.ts",
+    "db:inspect:message-client-ids": "tsx src/scripts/inspect-message-client-ids.ts",
     "db:studio": "drizzle-kit studio",
+    "db:studio:staging": "DOTENV_CONFIG_PATH=.env.staging drizzle-kit studio",
     "db:seed": "tsx src/scripts/seed.ts",
     "oauth:provision:ios-local": "tsx src/scripts/provision-ios-local-oauth-client.ts",
     "oauth:provision:ios-staging": "node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts"

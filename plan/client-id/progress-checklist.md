@@ -16,7 +16,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [x] UUIDv7 generation helper added to the service.
 - [x] staged backfill plan implemented.
 - [x] historical rows backfilled.
-- [ ] schema tightened to non-null and unique by end of rollout.
+- [x] schema tightened to non-null and unique by end of rollout.
 
 ### Reads
 
@@ -94,3 +94,4 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - Keep this checklist current as implementation lands.
 - If the rollout order changes, update this checklist and the phase docs together.
+- On 2026-03-31, the final Stage B schema shape was applied to staging via manual `pnpm db:push`, and staging now persists `client_id` on new messages.

@@ -119,7 +119,6 @@ loader: async ({ params }) => {
    - Handles explicit `agent.resync_required` by refetching `/messages` plus `/agent/state` and reattaching
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Keeps optimistic user identity stable by attaching the persisted `message_id` returned by `POST /messages` onto the existing `client_id`-keyed row
-   - Uses `client_id ?? message_id` only as a rollout fallback for historical/transitional payloads
    - Healthy successful turns no longer require a mandatory `final` refetch just to learn assistant/tool message ids
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
 

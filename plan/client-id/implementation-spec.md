@@ -1,6 +1,6 @@
 # Implementation Spec: Message Client IDs
 
-**Status**: In Progress
+**Status**: Complete
 **Created**: 2026-03-30
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -87,7 +87,7 @@ These decisions are locked for this implementation plan:
 
 - [x] `message` rows have a `client_id` column.
 - [x] historical `message` rows are backfilled with `client_id`.
-- [ ] end-state schema makes `client_id` non-null and unique.
+- [x] end-state schema makes `client_id` non-null and unique.
 - [x] `GET /api/threads/:thread_id/messages` returns `client_id` on every row.
 - [x] `POST /api/threads/:thread_id/messages` accepts optional `client_id`.
 - [x] `POST /api/threads/:thread_id/messages` returns `{ message_id, client_id }`.
@@ -151,7 +151,7 @@ The repo does not already carry one. This plan standardizes on the `uuid` packag
 
 ## Current Progress
 
-- Phase 1 is complete in code: schema, UUIDv7 generation, persisted message stamping, transcript serialization, and the historical backfill have all landed.
+- Phase 1 is complete in code: schema, UUIDv7 generation, persisted message stamping, transcript serialization, the historical backfill, and the final Stage B `NOT NULL` + unique-index schema shape have all landed.
 - Phase 2 is complete in code: `POST /api/threads/:thread_id/messages` now accepts optional `client_id`, echoes it back, and suppresses duplicate same-thread user retries.
 - Phase 3 is complete in code: `/agent/state`, draft assistant SSE, tool SSE, and persisted assistant/tool rows now reuse the same preallocated `client_id`.
 - Phase 4 is complete in code: the reference web client now generates UUIDv7 `client_id` values, keys optimistic/runtime message state by `client_id`, and keeps `message_id` attached only as the persisted row identifier.
@@ -191,7 +191,7 @@ The repo does not already carry one. This plan standardizes on the `uuid` packag
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
 | We accidentally change transcript ordering semantics while adding `client_id` | Low | High | Keep pagination and cursor ordering on `(created_at, message_id)` only |
-| Historical rows or partial rollout payloads lack `client_id`, breaking clients that switch too early | Medium | High | Backfill first and keep `client_id ?? message_id` fallback during rollout |
+| Historical rows or partial rollout payloads lack `client_id`, breaking clients that switch too early | Medium | High | Backfill first, complete staging rollout, and only then remove transitional fallback code |
 | Assistant/tool events expose inconsistent `client_id` between runtime, stream, and persisted row | Medium | High | Allocate once and thread the same value through runtime state, SSE, and DB insert |
 | Duplicate send handling is mistaken for perfect idempotency | Medium | Medium | Keep first-pass behavior narrow and document non-goals clearly |
 | Web still mutates identity because one path continues to key by `message_id` | Medium | High | Update both existing-thread and new-thread flows together and validate `/agent/state` bootstrap paths |
@@ -204,9 +204,9 @@ The repo does not already carry one. This plan standardizes on the `uuid` packag
 3. Add assistant/tool runtime and stream `client_id` support.
 4. Move the reference web client to `client_id`-first rendering.
 5. Tighten schema constraints and update docs/handoffs/specs.
-6. Apply the final schema-tightening `db:push` to remote staging before treating the rollout as complete there.
+6. Apply the final schema-tightening `db:push` to remote staging and then remove rollout-only compatibility code.
 
-### Stage B Deployment Note
+### Stage B Deployment History
 
 Because staging currently runs `pnpm db:push` during deploy, the final database hardening should be treated as a two-pass staging rollout:
 
@@ -215,12 +215,12 @@ Because staging currently runs `pnpm db:push` during deploy, the final database 
 3. Verify staging has no null or duplicate `message.client_id` rows.
 4. Deploy the Stage B schema/code so deploy-time `db:push` flips `message.client_id` to `NOT NULL` and replaces the partial index with the final full unique index.
 
-When the final `message.client_id NOT NULL` + full-unique-index tightening lands, treat staging as an explicit rollout target:
+That rollout is now complete:
 
-- update `service/src/db/schema.ts` to the Stage B shape
-- run `pnpm db:push` against the remote staging `DATABASE_URL`
-- verify staging has no null or duplicate `message.client_id` rows before and after the push
-- only then treat staging as aligned with local/dev for the final client-id contract
+- `service/src/db/schema.ts` is already in the Stage B shape
+- staging required a manual `pnpm db:push` because deploy-time `pnpm db:migrate` did not include the schema-only client-id changes
+- after that manual push, staging accepted new messages with persisted `client_id` values
+- the temporary web fallback to `client_id ?? message_id` has been removed now that the rollout is complete
 
 ## Definition Of Done
 

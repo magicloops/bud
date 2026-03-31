@@ -25,7 +25,6 @@ import {
   getLoginRedirectValue,
   isAuthRedirectPending,
   isApiError,
-  resolveMessageClientId,
   type ApiAgentState,
   type ApiMessage,
   type ApiMessagePage,
@@ -101,8 +100,7 @@ type AgentResyncRequiredEvent = {
   provided_cursor?: string
 }
 
-const getMessageIdentity = (message: Pick<ApiMessage, 'client_id' | 'message_id'>) =>
-  resolveMessageClientId(message)
+const getMessageIdentity = (message: Pick<ApiMessage, 'client_id'>) => message.client_id
 
 const isOptimisticMessage = (message: ApiMessage) => message.metadata?.optimistic === true
 

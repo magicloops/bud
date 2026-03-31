@@ -16,7 +16,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [x] historical rows are backfilled with `client_id`
 - [x] no rows remain with null `client_id` before final schema tightening
 - [ ] uniqueness enforcement works as intended
-- [ ] the final Stage B `db:push` has been applied successfully to the remote staging database
+- [x] the final Stage B `db:push` has been applied successfully to the remote staging database
 
 ### Read Contract
 
@@ -68,7 +68,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ### Compatibility
 
-- [ ] rollout fallback using `client_id ?? message_id` works for historical or transitional data
+- [-] rollout fallback using `client_id ?? message_id` has been removed after staging alignment and final rollout completion
 
 ## Docs / Spec Alignment
 
@@ -86,8 +86,10 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - This checklist validates stable message identity, not a broader request-idempotency architecture.
 - The backfill success note for phase 1 came from the completed `pnpm db:backfill:message-client-ids` run after the schema rollout landed.
-- For remote staging, the final schema hardening is expected to be a two-pass deploy: Stage A deploy, staging backfill run, then Stage B deploy with the tightening `db:push`.
+- For remote staging, the final schema hardening required the expected two-pass rollout: Stage A deploy, staging backfill run, then a manual Stage B `db:push` because deploy-time `db:migrate` did not apply the schema-only client-id changes.
+- On 2026-03-30, `pnpm db:push` passed in `service/` after the Stage B schema change (`message.client_id NOT NULL` plus the final unique index) landed locally.
 - On 2026-03-30, `pnpm build` passed in `service/` after the phase 3 runtime/SSE `client_id` changes landed.
 - On 2026-03-30, `node --import tsx --test src/runtime/agent-runtime-state.test.ts` passed, including the new snapshot assertions for `pending_tool.client_id` and `draft_assistant.client_id`.
 - On 2026-03-30, `pnpm build` passed in `web/` after the phase 4 `client_id`-first optimistic/runtime reconciliation changes landed.
+- On 2026-03-31, staging accepted new messages with persisted `client_id` values after the manual Stage B `db:push`.
 - If a later tranche adds `attempt_id` or full replay-safe send semantics, add a separate validation pass rather than stretching this checklist.

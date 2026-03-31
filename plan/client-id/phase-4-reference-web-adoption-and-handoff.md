@@ -14,7 +14,6 @@ In scope:
 - optimistic user send keyed by `client_id`
 - assistant/tool runtime and SSE reconciliation keyed by `client_id`
 - `/new` route first-message adoption
-- temporary fallback behavior during rollout
 - protocol/spec/reference documentation updates
 
 Out of scope:
@@ -27,7 +26,6 @@ Out of scope:
 - use the `uuid` package in `web` for UUIDv7 generation
 - key rendered/transient message state by `client_id`
 - keep `message_id` attached on the object for debugging and cursor-oriented logic
-- during rollout, use `client_id ?? message_id` only as a temporary compatibility bridge for historical rows
 
 ## Implementation Steps
 
@@ -80,7 +78,6 @@ Update:
 - [ ] assistant draft rows are keyed by `client_id`.
 - [ ] pending tool rows are keyed by `client_id`.
 - [ ] the `/new` route sends `client_id` on first message creation.
-- [ ] temporary fallback to `client_id ?? message_id` is limited to rollout compatibility.
 - [ ] docs/specs/reference handoffs describe `client_id` consistently.
 
 ## Risks / Notes

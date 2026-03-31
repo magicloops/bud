@@ -25,8 +25,16 @@ Wrapper around `drizzle-kit push` for local schema initialization.
 pnpm db:push
 ```
 
+Custom env file example:
+```bash
+DOTENV_CONFIG_PATH=.env.staging pnpm db:push
+```
+
 **Why It Exists**:
 In this project, Drizzle Kit does not reliably bootstrap Better Auth's non-`public` schema objects during `push`, so the wrapper creates the auth foundation first using Better Auth's own schema knowledge rather than maintaining hand-written bootstrap SQL.
+
+**Environment**:
+- `DOTENV_CONFIG_PATH` - Optional dotenv path override for the wrapper and the spawned `drizzle-kit push` process when targeting a non-default env file such as `.env.staging`
 
 ### `backfill-message-client-ids.ts`
 
@@ -42,8 +50,37 @@ Stage-A rollout helper for `message.client_id`.
 pnpm db:backfill:message-client-ids
 ```
 
+Custom env file example:
+```bash
+DOTENV_CONFIG_PATH=.env.staging pnpm db:backfill:message-client-ids
+```
+
 **Environment**:
 - `MESSAGE_CLIENT_ID_BACKFILL_BATCH_SIZE` - Optional positive integer batch size override (default: `500`)
+- `DOTENV_CONFIG_PATH` - Optional dotenv path override when running the generic package script against a non-default env file (for example `.env.staging`)
+
+### `inspect-message-client-ids.ts`
+
+Diagnostic helper for verifying `message.client_id` rollout state in any environment.
+
+**Responsibilities**:
+- Print the resolved database target for the current env file
+- Verify whether `public.message.client_id` exists and whether it is nullable
+- Show the current `client_id` indexes, row counts, duplicate counts, and a small sample of null/recent rows
+- Exit nonzero when the column is missing or duplicate/null anomalies remain
+
+**Usage**:
+```bash
+pnpm db:inspect:message-client-ids
+```
+
+Custom env file example:
+```bash
+DOTENV_CONFIG_PATH=.env.staging pnpm db:inspect:message-client-ids
+```
+
+**Environment**:
+- `DOTENV_CONFIG_PATH` - Optional dotenv path override when running the inspection against a non-default env file
 
 ### `provision-ios-oauth-client-shared.ts`
 

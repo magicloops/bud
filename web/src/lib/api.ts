@@ -248,11 +248,6 @@ export const decodeTerminalData = (data: string) => {
 
 export const generateMessageClientId = () => uuidv7()
 
-export const resolveMessageClientId = (message: {
-  client_id?: string | null
-  message_id: string
-}) => message.client_id ?? message.message_id
-
 // API types
 export type ApiBud = {
   bud_id: string
@@ -282,7 +277,7 @@ export type ApiThread = {
 
 export type ApiMessage = {
   message_id: string
-  client_id: string | null
+  client_id: string
   role: string
   display_role: string
   metadata?: Record<string, unknown>

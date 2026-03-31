@@ -47,7 +47,6 @@ Uses `VITE_API_BASE_URL` env var if set.
 - `buildLoginUrl()` / `redirectToLogin()` - browser login redirects
 - `ApiError` / `isApiError()` - typed error handling for loaders/runtime calls
 - `generateMessageClientId()` - browser UUIDv7 generator for optimistic/new-thread sends
-- `resolveMessageClientId()` - rollout-safe `client_id ?? message_id` identity helper for transcript/runtime rows
 
 **Terminal Data Decoding**:
 ```typescript
