@@ -21,9 +21,11 @@ import {
   apiFetchJson,
   createAuthEventSource,
   decodeTerminalData,
+  generateMessageClientId,
   getLoginRedirectValue,
   isAuthRedirectPending,
   isApiError,
+  resolveMessageClientId,
   type ApiAgentState,
   type ApiMessage,
   type ApiMessagePage,
@@ -46,6 +48,7 @@ const THREAD_MESSAGE_PAGE_LIMIT = 100
 
 type AgentToolCallEvent = {
   turn_id: string
+  client_id: string
   call_id: string
   name: string
   args?: Record<string, unknown>
@@ -53,27 +56,33 @@ type AgentToolCallEvent = {
 
 type AgentToolResultEvent = {
   turn_id: string
+  client_id: string
   call_id: string
+  message_id?: string
   name: string
   message?: ApiMessage
 }
 
 type AgentMessageStartEvent = {
   turn_id: string
+  client_id: string
 }
 
 type AgentMessageDeltaEvent = {
   turn_id: string
+  client_id: string
   delta: string
 }
 
 type AgentMessageDoneEvent = {
   turn_id: string
+  client_id: string
   text: string
 }
 
 type AgentMessageEvent = {
   turn_id: string
+  client_id: string
   message_id: string
   text: string
   message?: ApiMessage
@@ -92,22 +101,28 @@ type AgentResyncRequiredEvent = {
   provided_cursor?: string
 }
 
-const pendingToolMessageId = (callId: string) => `tool_call:${callId}`
-const pendingAssistantMessageId = (turnId: string) => `assistant_draft:${turnId}`
+const getMessageIdentity = (message: Pick<ApiMessage, 'client_id' | 'message_id'>) =>
+  resolveMessageClientId(message)
+
+const isOptimisticMessage = (message: ApiMessage) => message.metadata?.optimistic === true
+
+const isPendingToolMessage = (message: ApiMessage) =>
+  message.role === 'tool' && message.metadata?.pending === true
+
+const isDraftAssistantMessage = (message: ApiMessage) =>
+  message.role === 'assistant' && message.metadata?.draft === true
 
 const mergeOlderMessages = (existing: ApiMessage[], older: ApiMessage[]) => {
-  const existingIds = new Set(existing.map((message) => message.message_id))
-  const uniqueOlder = older.filter((message) => !existingIds.has(message.message_id))
+  const existingIds = new Set(existing.map(getMessageIdentity))
+  const uniqueOlder = older.filter((message) => !existingIds.has(getMessageIdentity(message)))
   return [...uniqueOlder, ...existing]
 }
 
-const isSyntheticMessageId = (messageId: string) =>
-  messageId.startsWith('temp_') ||
-  messageId.startsWith('tool_call:') ||
-  messageId.startsWith('assistant_draft:')
+const isSyntheticMessage = (message: ApiMessage) =>
+  isOptimisticMessage(message) || isPendingToolMessage(message) || isDraftAssistantMessage(message)
 
-const isAgentSyntheticMessageId = (messageId: string) =>
-  messageId.startsWith('tool_call:') || messageId.startsWith('assistant_draft:')
+const isAgentSyntheticMessage = (message: ApiMessage) =>
+  isPendingToolMessage(message) || isDraftAssistantMessage(message)
 
 const sortMessagesChronologically = (messages: ApiMessage[]) =>
   [...messages].sort((left, right) => {
@@ -115,12 +130,13 @@ const sortMessagesChronologically = (messages: ApiMessage[]) =>
     if (timeDelta !== 0) {
       return timeDelta
     }
-    return left.message_id.localeCompare(right.message_id)
+    return getMessageIdentity(left).localeCompare(getMessageIdentity(right))
   })
 
 const upsertMessage = (existing: ApiMessage[], next: ApiMessage) => {
   const nextMessages = [...existing]
-  const index = nextMessages.findIndex((message) => message.message_id === next.message_id)
+  const nextIdentity = getMessageIdentity(next)
+  const index = nextMessages.findIndex((message) => getMessageIdentity(message) === nextIdentity)
   if (index === -1) {
     nextMessages.push(next)
   } else {
@@ -129,19 +145,38 @@ const upsertMessage = (existing: ApiMessage[], next: ApiMessage) => {
   return sortMessagesChronologically(nextMessages)
 }
 
-const replaceMessageId = (existing: ApiMessage[], currentId: string, nextId: string) =>
-  sortMessagesChronologically(
-    existing.map((message) =>
-      message.message_id === currentId ? { ...message, message_id: nextId } : message,
-    ),
-  )
+const reconcileMessagePersistence = (
+  existing: ApiMessage[],
+  currentClientId: string,
+  nextMessageId: string,
+  nextClientId: string,
+) => {
+  const nextMessages = existing.map((message) => {
+    if (getMessageIdentity(message) !== currentClientId) {
+      return message
+    }
 
-const removeMessageById = (existing: ApiMessage[], messageId: string) =>
-  existing.filter((message) => message.message_id !== messageId)
+    const nextMetadata =
+      message.metadata && typeof message.metadata === 'object'
+        ? Object.fromEntries(
+            Object.entries(message.metadata).filter(([key]) => key !== 'optimistic'),
+          )
+        : undefined
+
+    return {
+      ...message,
+      message_id: nextMessageId,
+      client_id: nextClientId,
+      metadata: nextMetadata && Object.keys(nextMetadata).length > 0 ? nextMetadata : undefined,
+    }
+  })
+
+  return sortMessagesChronologically(nextMessages)
+}
 
 const removePendingToolMessagesForTurn = (existing: ApiMessage[], turnId: string) =>
   existing.filter((message) => {
-    if (!message.message_id.startsWith('tool_call:')) {
+    if (!isPendingToolMessage(message)) {
       return true
     }
 
@@ -151,16 +186,22 @@ const removePendingToolMessagesForTurn = (existing: ApiMessage[], turnId: string
 
 const upsertDraftAssistantMessage = (
   existing: ApiMessage[],
-  turnId: string,
+  clientId: string,
   updater: (current: ApiMessage | null) => ApiMessage,
 ) => {
-  const draftId = pendingAssistantMessageId(turnId)
-  const current = existing.find((message) => message.message_id === draftId) ?? null
+  const current = existing.find((message) => getMessageIdentity(message) === clientId) ?? null
   return upsertMessage(existing, updater(current))
 }
 
 const removeDraftAssistantMessageForTurn = (existing: ApiMessage[], turnId: string) =>
-  existing.filter((message) => message.message_id !== pendingAssistantMessageId(turnId))
+  existing.filter((message) => {
+    if (!isDraftAssistantMessage(message)) {
+      return true
+    }
+
+    const metadata = message.metadata ?? {}
+    return metadata.turn_id !== turnId
+  })
 
 const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
   if (!agentState.active || !agentState.turn_id || !agentState.pending_tool) {
@@ -169,7 +210,8 @@ const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage
 
   const { pending_tool: pendingTool } = agentState
   return {
-    message_id: pendingToolMessageId(pendingTool.call_id),
+    message_id: pendingTool.client_id,
+    client_id: pendingTool.client_id,
     role: 'tool',
     display_role: pendingTool.name,
     content: JSON.stringify({
@@ -194,7 +236,8 @@ const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): ApiMess
   }
 
   return {
-    message_id: pendingAssistantMessageId(agentState.turn_id),
+    message_id: agentState.draft_assistant.client_id,
+    client_id: agentState.draft_assistant.client_id,
     role: 'assistant',
     display_role: 'Bud Agent',
     content: agentState.draft_assistant.text,
@@ -207,7 +250,7 @@ const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): ApiMess
 }
 
 const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAgentState) => {
-  let nextMessages = messages.filter((message) => !isAgentSyntheticMessageId(message.message_id))
+  let nextMessages = messages.filter((message) => !isAgentSyntheticMessage(message))
 
   const pendingToolMessage = buildPendingToolMessageFromState(agentState)
   if (pendingToolMessage) {
@@ -400,9 +443,9 @@ function ThreadView() {
   const mergeLatestThreadBootstrap = useCallback((nextPage: ApiMessagePage, nextAgentState: ApiAgentState) => {
     pendingPrependAdjustmentRef.current = null
 
-    const latestIds = new Set(nextPage.messages.map((message) => message.message_id))
+    const latestIds = new Set(nextPage.messages.map(getMessageIdentity))
     const preservedOlderMessages = messagesRef.current.filter(
-      (message) => !isSyntheticMessageId(message.message_id) && !latestIds.has(message.message_id),
+      (message) => !isSyntheticMessage(message) && !latestIds.has(getMessageIdentity(message)),
     )
 
     const canonicalMessages = sortMessagesChronologically([
@@ -942,7 +985,8 @@ function ThreadView() {
             ? (data.args as Record<string, unknown>)
             : {}
         const pendingMessage: ApiMessage = {
-          message_id: pendingToolMessageId(data.call_id),
+          message_id: data.client_id,
+          client_id: data.client_id,
           role: 'tool',
           display_role: data.name,
           content: JSON.stringify({ tool: data.name, call_id: data.call_id, ...argsObj }),
@@ -966,10 +1010,7 @@ function ThreadView() {
         if (!canonicalMessage) {
           return
         }
-        setMessages((prev) => {
-          const withoutPending = removeMessageById(prev, pendingToolMessageId(data.call_id))
-          return upsertMessage(withoutPending, canonicalMessage)
-        })
+        setMessages((prev) => upsertMessage(prev, canonicalMessage))
       } catch (e) {
         console.warn('[agent-sse] failed to parse agent.tool_result', e)
       }
@@ -982,8 +1023,9 @@ function ThreadView() {
       try {
         const data = JSON.parse(evt.data) as AgentMessageStartEvent
         setMessages((prev) =>
-          upsertDraftAssistantMessage(prev, data.turn_id, (current) => ({
-            message_id: pendingAssistantMessageId(data.turn_id),
+          upsertDraftAssistantMessage(prev, data.client_id, (current) => ({
+            message_id: data.client_id,
+            client_id: data.client_id,
             role: 'assistant',
             display_role: 'Bud Agent',
             content: current?.content ?? '',
@@ -1007,8 +1049,9 @@ function ThreadView() {
       try {
         const data = JSON.parse(evt.data) as AgentMessageDeltaEvent
         setMessages((prev) =>
-          upsertDraftAssistantMessage(prev, data.turn_id, (current) => ({
-            message_id: pendingAssistantMessageId(data.turn_id),
+          upsertDraftAssistantMessage(prev, data.client_id, (current) => ({
+            message_id: data.client_id,
+            client_id: data.client_id,
             role: 'assistant',
             display_role: 'Bud Agent',
             content: `${current?.content ?? ''}${data.delta}`,
@@ -1031,8 +1074,9 @@ function ThreadView() {
       try {
         const data = JSON.parse(evt.data) as AgentMessageDoneEvent
         setMessages((prev) =>
-          upsertDraftAssistantMessage(prev, data.turn_id, (current) => ({
-            message_id: pendingAssistantMessageId(data.turn_id),
+          upsertDraftAssistantMessage(prev, data.client_id, (current) => ({
+            message_id: data.client_id,
+            client_id: data.client_id,
             role: 'assistant',
             display_role: 'Bud Agent',
             content: data.text,
@@ -1065,6 +1109,7 @@ function ThreadView() {
         setMessages((prev) =>
           upsertMessage(removeDraftAssistantMessageForTurn(prev, data.turn_id), {
             message_id: data.message_id,
+            client_id: data.client_id,
             role: 'assistant',
             display_role: 'Bud Agent',
             content: data.text,
@@ -1591,15 +1636,19 @@ function ThreadView() {
     setStatus('dispatching')
     setMessageText('')
 
-    const optimisticId = `temp_${crypto.randomUUID?.() ?? Date.now()}`
+    const optimisticId = generateMessageClientId()
     const optimisticMessage: ApiMessage = {
       message_id: optimisticId,
+      client_id: optimisticId,
       role: 'user',
       display_role: 'User',
       content: trimmedMessage,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      metadata: {
+        optimistic: true,
+      },
     }
-    setMessages((prev) => [...prev, optimisticMessage])
+    setMessages((prev) => upsertMessage(prev, optimisticMessage))
 
     try {
       const messageResp = await apiFetch(`/api/threads/${threadId}/messages`, {
@@ -1607,6 +1656,7 @@ function ThreadView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: trimmedMessage,
+          client_id: optimisticId,
           model: selectedModel || undefined,
           reasoning_effort: reasoningEffort
         })
@@ -1621,8 +1671,13 @@ function ThreadView() {
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
 
-      const { message_id: persistedMessageId } = await messageResp.json() as { message_id: string }
-      setMessages((prev) => replaceMessageId(prev, optimisticId, persistedMessageId))
+      const { message_id: persistedMessageId, client_id: persistedClientId } = await messageResp.json() as {
+        message_id: string
+        client_id: string
+      }
+      setMessages((prev) =>
+        reconcileMessagePersistence(prev, optimisticId, persistedMessageId, persistedClientId),
+      )
 
       try {
         await refreshAgentState(threadId)
@@ -1650,7 +1705,7 @@ function ThreadView() {
 
   const chatMessages: ChatMessage[] = useMemo(() =>
     messages.map((msg) => ({
-      id: msg.message_id,
+      id: getMessageIdentity(msg),
       role: msg.role,
       displayRole: msg.display_role,
       content: msg.content,

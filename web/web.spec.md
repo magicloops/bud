@@ -125,6 +125,7 @@ Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-
 ### Chat Interface
 
 - Message timeline with role-based rendering
+- Stable `client_id`-first message identity across optimistic sends, `/agent/state` bootstrap, agent SSE, and canonical transcript rows
 - Tool call visualization (terminal.run, etc.)
 - Markdown with syntax highlighting
 - Agent streaming via SSE
@@ -169,6 +170,7 @@ Neobrutalist patterns:
 | `better-auth` | Browser auth client |
 | `@better-auth/oauth-provider` | Hosted OAuth Provider client plugin |
 | `xterm`, `xterm-addon-fit` | Terminal |
+| `uuid` | UUIDv7 `client_id` generation for browser-created message identities |
 | `react-markdown` | Markdown |
 | `react-syntax-highlighter` | Code highlighting |
 | `@microlink/react-json-view` | JSON display |

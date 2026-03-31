@@ -13,6 +13,7 @@ import {
 } from "../db/schema.js";
 import { AgentService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
+import { generateMessageClientId } from "../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
 import { and, asc, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
@@ -29,6 +30,7 @@ const CreateThreadSchema = z.object({
 
 const CreateMessageSchema = z.object({
   text: z.string().min(1),
+  client_id: z.string().uuid().optional(),
   cwd: z.string().optional(),
   model: z.string().optional(),
   reasoning_effort: z.enum(["none", "low", "medium", "high"]).optional()
@@ -142,6 +144,7 @@ function serializeThread(row: typeof threadTable.$inferSelect) {
 function serializeMessage(row: typeof messageTable.$inferSelect) {
   return {
     message_id: row.messageId,
+    client_id: row.clientId,
     role: row.role,
     display_role: row.displayRole ?? row.role,
     content: row.content,
@@ -232,6 +235,36 @@ function readLastEventId(request: FastifyRequest, queryValue?: string) {
   }
 
   return typeof header === "string" && header.length > 0 ? header : null;
+}
+
+async function findOwnedUserMessageByClientId(
+  threadId: string,
+  userId: string,
+  clientId: string,
+): Promise<{ messageId: string } | null> {
+  const [message] = await db
+    .select({ messageId: messageTable.messageId })
+    .from(messageTable)
+    .where(
+      and(
+        eq(messageTable.threadId, threadId),
+        eq(messageTable.createdByUserId, userId),
+        eq(messageTable.role, "user"),
+        eq(messageTable.clientId, clientId),
+      ),
+    )
+    .limit(1);
+
+  return message ?? null;
+}
+
+function isUniqueViolation(error: unknown): error is { code: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "23505"
+  );
 }
 
 export async function registerThreadRoutes(
@@ -493,6 +526,20 @@ export async function registerThreadRoutes(
 
     const { thread, viewer } = access;
     const ownerUserId = thread.createdByUserId ?? viewer.userId;
+    const effectiveClientId = body.client_id ?? generateMessageClientId();
+
+    const existingMessage = await findOwnedUserMessageByClientId(
+      thread.threadId,
+      viewer.userId,
+      effectiveClientId,
+    );
+    if (existingMessage) {
+      reply.code(200).send({
+        message_id: existingMessage.messageId,
+        client_id: effectiveClientId,
+      });
+      return;
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Pre-flight context sync
@@ -536,17 +583,44 @@ export async function registerThreadRoutes(
     // Create user message and start agent
     // ─────────────────────────────────────────────────────────────────────────
     const metadata: Record<string, unknown> = body.cwd ? { preferred_cwd: body.cwd } : {};
-    const [message] = await db
-      .insert(messageTable)
-      .values({
-        threadId: thread.threadId,
-        role: "user",
-        displayRole: "User",
-        content: body.text,
-        createdByUserId: viewer.userId,
-        metadata
-      })
-      .returning({ messageId: messageTable.messageId });
+    let messageId: string;
+
+    try {
+      const [message] = await db
+        .insert(messageTable)
+        .values({
+          clientId: effectiveClientId,
+          threadId: thread.threadId,
+          role: "user",
+          displayRole: "User",
+          content: body.text,
+          createdByUserId: viewer.userId,
+          metadata
+        })
+        .returning({ messageId: messageTable.messageId });
+      messageId = message.messageId;
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        const duplicateMessage = await findOwnedUserMessageByClientId(
+          thread.threadId,
+          viewer.userId,
+          effectiveClientId,
+        );
+        if (duplicateMessage) {
+          reply.code(200).send({
+            message_id: duplicateMessage.messageId,
+            client_id: effectiveClientId,
+          });
+          return;
+        }
+
+        reply.code(409).send({ error: "client_id_conflict" });
+        return;
+      }
+
+      throw err;
+    }
+
     await recordThreadMessageMetadata(thread.threadId, body.text);
 
     try {
@@ -555,7 +629,7 @@ export async function registerThreadRoutes(
         reasoningEffort: body.reasoning_effort ?? null,
         ownerUserId,
       });
-      reply.code(201).send({ message_id: message.messageId });
+      reply.code(201).send({ message_id: messageId, client_id: effectiveClientId });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");
       reply.code(500).send({ error: (err as Error).message });

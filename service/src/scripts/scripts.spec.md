@@ -28,6 +28,23 @@ pnpm db:push
 **Why It Exists**:
 In this project, Drizzle Kit does not reliably bootstrap Better Auth's non-`public` schema objects during `push`, so the wrapper creates the auth foundation first using Better Auth's own schema knowledge rather than maintaining hand-written bootstrap SQL.
 
+### `backfill-message-client-ids.ts`
+
+Stage-A rollout helper for `message.client_id`.
+
+**Responsibilities**:
+- Find message rows where `client_id` is still null
+- Assign a generated UUIDv7 `client_id` in ordered batches
+- Fail the script if any rows remain null after the pass completes
+
+**Usage**:
+```bash
+pnpm db:backfill:message-client-ids
+```
+
+**Environment**:
+- `MESSAGE_CLIENT_ID_BACKFILL_BATCH_SIZE` - Optional positive integer batch size override (default: `500`)
+
 ### `provision-ios-oauth-client-shared.ts`
 
 Shared helper for first-party iOS OAuth-client provisioning scripts.
@@ -129,6 +146,7 @@ npx tsx src/scripts/apply-missing-migrations.ts
 | Import | Purpose |
 |--------|---------|
 | `../db/client.js` | Database connection |
+| `../db/message-client-id.js` | UUIDv7 generation for message-client-id backfill |
 | `../db/schema.js` | Table definitions |
 | `../auth/auth.js` | Shared OAuth scope/base-path constants for bundle output |
 | `../config.js` | Public-origin config used when printing the current iOS auth bundle |

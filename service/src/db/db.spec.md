@@ -33,7 +33,7 @@ export const db = drizzle(pool, { schema });
 
 ### `schema.ts`
 
-Drizzle schema definitions (~300 lines). Defines all tables:
+Drizzle schema definitions (~500 lines). Defines all tables:
 
 #### Core Tables
 
@@ -43,7 +43,7 @@ Drizzle schema definitions (~300 lines). Defines all tables:
 | `enrollmentTokenTable` | One-time registration tokens | `tokenHash`, `expiresAt`, `consumedAt` |
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
 | `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `deletedAt`, `createdByUserId` |
-| `messageTable` | Chat messages | `messageId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
+| `messageTable` | Chat messages | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
 
 #### Auth Tables (`auth` schema)
 
@@ -127,11 +127,28 @@ const byteaColumn = customType<{ data: Buffer }>({
 - `thread_bud_idx` - Threads by bud
 - `thread_deleted_idx` - Soft delete filtering
 - `message_thread_idx` - Messages by thread
+- `message_client_id_nonnull_idx` - Stage-A partial unique index for non-null `client_id` values
 - `run_thread_idx` - Runs by thread + started_at
 - `bud_installation_id_idx` - Device continuity lookup by stable installation identity
 - `device_auth_flow_installation_idx` / `device_auth_flow_status_idx` - Claim lookup, expiry, and polling
 - `terminal_session_thread_active_unique_idx` - Enforces at most one non-closed session row per thread
 - Various terminal session indexes for efficient queries
+
+`message.client_id` is intentionally nullable in this rollout stage so older rows can be backfilled before the schema tightens to `NOT NULL`.
+
+### `message-client-id.ts`
+
+Service-owned UUIDv7 helper for message public identities:
+
+```typescript
+export function generateMessageClientId(): string
+```
+
+Used by the current user/assistant/tool/system message insert paths and the historical backfill script so all persisted message rows share one generator.
+
+### `message-client-id.test.ts`
+
+Unit test that verifies `generateMessageClientId()` returns a valid UUIDv7.
 
 ### `run-summary.ts`
 
@@ -214,6 +231,7 @@ Tenant-level isolation is not implemented yet even though the schema remains pre
 | `drizzle-orm/node-postgres` | Drizzle PostgreSQL adapter |
 | `pg` | PostgreSQL client |
 | `drizzle-orm/pg-core` | Table definition helpers |
+| `uuid` | UUIDv7 generation for `message.client_id` |
 
 ---
 

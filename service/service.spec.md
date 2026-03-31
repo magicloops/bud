@@ -34,6 +34,7 @@ Package manifest:
 | `pg` | ^8.13.1 | PostgreSQL client |
 | `zod` | ^3.23.8 | Validation |
 | `ulid` | ^2.3.0 | ID generation |
+| `uuid` | ^13.0.0 | UUIDv7 generation for message `client_id` |
 
 ### `tsconfig.json`
 
@@ -93,6 +94,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `db:generate` | `drizzle-kit generate` | Checked-in migration generation helper |
 | `db:migrate` | `drizzle-kit migrate` | Checked-in migration apply helper for production-like environments |
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
+| `db:backfill:message-client-ids` | `tsx src/scripts/backfill-message-client-ids.ts` | Backfill nullable `message.client_id` rows during the stage-A rollout |
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
 | `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
@@ -147,6 +149,10 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 The thread agent contract now splits into:
 - `GET /api/threads/:id/agent/state` for authoritative best-effort in-flight state
 - `GET /api/threads/:id/agent/stream` for live transport plus bounded resume
+
+Canonical persisted transcript rows now expose `client_id` on `/api/threads/:id/messages` and inside the nested `message` payloads carried by `agent.message` / `agent.tool_result`.
+`POST /api/threads/:id/messages` now accepts optional `client_id`, returns `{ message_id, client_id }`, and suppresses duplicate same-thread user retries without starting a second agent turn.
+`GET /api/threads/:id/agent/state` and `GET /api/threads/:id/agent/stream` now also expose pre-persistence assistant/tool `client_id` values so runtime bootstrap, live streaming, and later transcript rows share one message identity.
 
 ## Architecture
 

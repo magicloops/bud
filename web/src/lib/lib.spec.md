@@ -46,6 +46,8 @@ Uses `VITE_API_BASE_URL` env var if set.
 - `normalizeAppRedirectPath()` - sanitizes internal return targets
 - `buildLoginUrl()` / `redirectToLogin()` - browser login redirects
 - `ApiError` / `isApiError()` - typed error handling for loaders/runtime calls
+- `generateMessageClientId()` - browser UUIDv7 generator for optimistic/new-thread sends
+- `resolveMessageClientId()` - rollout-safe `client_id ?? message_id` identity helper for transcript/runtime rows
 
 **Terminal Data Decoding**:
 ```typescript
@@ -60,9 +62,9 @@ export const decodeTerminalData = (data: string) => {
 |------|-------------|
 | `ApiBud` | Bud response (id, name, status, capabilities) |
 | `ApiThread` | Thread response (id, title, session info) |
-| `ApiMessage` | Message response (id, role, content) |
+| `ApiMessage` | Message response (`message_id`, `client_id`, role, content) |
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
-| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool`, and `draft_assistant` |
+| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, and `draft_assistant.client_id` |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 
@@ -188,6 +190,7 @@ cn('text-red-500', isActive && 'font-bold', className)
 |--------|---------|
 | `better-auth/react` | Better Auth browser client |
 | `@better-auth/oauth-provider/client` | Signed OAuth Provider query propagation for hosted auth pages |
+| `uuid` | UUIDv7 message `client_id` generation |
 | `clsx` | Conditional class names |
 | `tailwind-merge` | Tailwind class deduplication |
 

@@ -204,6 +204,7 @@ async checkAndSync(sessionId: string, threadId: string, ownerUserId?: string | n
 - Uses `claude-haiku-4-5` for fast, cheap LLM summaries
 - Injects messages with `role: "system"` (transformed in provider layer for Anthropic)
 - Stamps injected system messages with the owning user's `created_by_user_id`
+- Stamps injected system messages with a generated UUIDv7 `message.client_id` so context-sync rows share the same public-identity model as user/assistant/tool messages
 
 ## Usage
 
@@ -226,6 +227,7 @@ if (context.mode === "repl" && context.program === "claude") {
 |--------|---------|
 | `../config.js` | `TERMINAL_PROTO_VERSION` constant |
 | `../db/client.js` | Database access (context-sync-service) |
+| `../db/message-client-id.js` | UUIDv7 generation for injected system-message `client_id` values |
 | `../db/schema.js` | Table schemas (context-sync-service) |
 | `../llm/index.js` | LLM provider registry (context-sync-service) |
 | `../runtime/terminal-session-manager.js` | capturePane access (context-sync-service) |
