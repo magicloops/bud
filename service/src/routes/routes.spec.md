@@ -106,7 +106,7 @@ Thread and message management, plus terminal operations (~900 lines).
 - `GET /api/threads/:thread_id/messages` now returns an envelope: `{ messages, page }`
 - page results are always ordered oldest-to-newest within the returned window
 - cursors are opaque but derived from `(created_at, message_id)` so tied timestamps remain stable
-- persisted transcript rows now expose `client_id` alongside `message_id`; during the nullable stage-A rollout, historical rows may briefly return `client_id: null` until the backfill completes
+- persisted transcript rows now expose required `client_id` alongside `message_id`
 - `before` requests older history than the cursor boundary (exclusive)
 - `after` requests newer history than the cursor boundary (exclusive)
 - the latest-page request is `GET /api/threads/:thread_id/messages?limit=<n>` with no cursor
@@ -336,7 +336,7 @@ Available LLM model listing for authenticated product clients.
 ```json
 {
   "message_id": "uuid",
-  "client_id": "uuidv7 | null",
+  "client_id": "uuidv7",
   "role": "user | assistant | tool | system",
   "display_role": "string",
   "content": "string",
@@ -359,7 +359,7 @@ Available LLM model listing for authenticated product clients.
   "messages": [
     {
       "message_id": "uuid",
-      "client_id": "uuidv7 | null",
+      "client_id": "uuidv7",
       "role": "user | assistant | tool | system",
       "display_role": "string",
       "content": "string",

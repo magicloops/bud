@@ -94,8 +94,10 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `db:generate` | `drizzle-kit generate` | Checked-in migration generation helper |
 | `db:migrate` | `drizzle-kit migrate` | Checked-in migration apply helper for production-like environments |
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
-| `db:backfill:message-client-ids` | `tsx src/scripts/backfill-message-client-ids.ts` | Backfill nullable `message.client_id` rows during the stage-A rollout |
+| `db:backfill:message-client-ids` | `tsx src/scripts/backfill-message-client-ids.ts` | Backfill historical `message.client_id` rows before the final Stage B schema tightening |
+| `db:inspect:message-client-ids` | `tsx src/scripts/inspect-message-client-ids.ts` | Inspect the current `message.client_id` schema/data state in the targeted database before or after rollout/backfill |
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
+| `db:studio:staging` | `DOTENV_CONFIG_PATH=.env.staging drizzle-kit studio` | Open Drizzle Studio against the checked-in staging env without manually exporting `DOTENV_CONFIG_PATH` |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
 | `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
 | `oauth:provision:ios-staging` | `node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using the checked-in staging env file |

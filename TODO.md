@@ -1,6 +1,9 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **Schema deploy parity (`db:migrate` vs `db:push`)**
+  - Align staging/production schema rollout with the actual repo workflow: either generate and commit Drizzle SQL migrations for deploy-time `pnpm db:migrate`, or intentionally switch deploys to the audited `pnpm db:push` wrapper.
+  - Capture the current `message.client_id` staging gap as the concrete example: predeploy `pnpm db:migrate` ran, but no generated migration existed, so staging never received the new column before the backfill script ran.
 - **Cancel vs interrupt contract**
   - Decide and implement the product/API contract for agent cancel vs terminal interrupt so web and mobile do not need to guess whether "stop" means aborting the LLM loop, sending Ctrl+C to the terminal, or both.
 - **Bud base dir + local identity mode**

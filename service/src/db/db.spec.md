@@ -127,14 +127,14 @@ const byteaColumn = customType<{ data: Buffer }>({
 - `thread_bud_idx` - Threads by bud
 - `thread_deleted_idx` - Soft delete filtering
 - `message_thread_idx` - Messages by thread
-- `message_client_id_nonnull_idx` - Stage-A partial unique index for non-null `client_id` values
+- `message_client_id_idx` - Final unique index on `message.client_id`
 - `run_thread_idx` - Runs by thread + started_at
 - `bud_installation_id_idx` - Device continuity lookup by stable installation identity
 - `device_auth_flow_installation_idx` / `device_auth_flow_status_idx` - Claim lookup, expiry, and polling
 - `terminal_session_thread_active_unique_idx` - Enforces at most one non-closed session row per thread
 - Various terminal session indexes for efficient queries
 
-`message.client_id` is intentionally nullable in this rollout stage so older rows can be backfilled before the schema tightens to `NOT NULL`.
+`message.client_id` is now required and uniquely constrained in the schema. The historical backfill remains in the repo for staged environments that still need the Stage A -> backfill -> Stage B rollout order.
 
 ### `message-client-id.ts`
 
