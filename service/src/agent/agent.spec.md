@@ -17,6 +17,7 @@ The agent service coordinates AI-assisted terminal interactions. When a user sen
 Simple barrel export:
 ```typescript
 export { AgentService } from "./agent-service.js";
+export { ThreadTitleService, normalizeGeneratedThreadTitle } from "./thread-title-service.js";
 ```
 
 ### `agent-service.ts`
@@ -124,6 +125,27 @@ private readonly cancellations = new Map<string, AbortController>();
 - assistant final messages and tool-result messages are written with `message.created_by_user_id`
 - lazily created terminal sessions inherit the same owner via `createSessionForThread(..., ownerUserId)`
 
+### `thread-title-service.ts`
+
+Best-effort thread-title generation for the first durable user message.
+
+**Responsibilities**:
+- confirm the just-written user row is still the canonical first user message on the thread
+- call Anthropic `claude-haiku-4-5` with a short 3-5 word title prompt
+- sanitize the model output into a plain-text title
+- persist the title with a conditional `thread.title IS NULL` update
+- emit `thread.title` on the existing agent SSE channel and advance the shared runtime cursor
+
+**Notes**:
+- runs fire-and-forget after `AgentService.startUserMessage(...)` succeeds, so the assistant turn is never blocked on title generation
+- if Anthropic is unavailable, the model times out, or another request wins the conditional update first, the thread simply keeps its existing title state
+- normalization now accepts any non-empty cleaned model title rather than rejecting 1-2 word outputs, so concise titles like `Bugfix` or `Assistant Introduction` persist as-is
+- the emitted payload is `{ thread_id, title, source, updated_at }`, where `source` is currently `generated_first_user_message`
+
+### `thread-title-service.test.ts`
+
+Standalone Node tests for title normalization and prompt-output cleanup.
+
 ## Events Emitted
 
 Via `AgentRuntimeStateManager`, using `threadId` as the channel:
@@ -136,6 +158,7 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 | `agent.tool_call` | `{ turn_id, client_id, call_id, name, args }` | Before executing tool |
 | `agent.tool_result` | `{ turn_id, client_id, call_id, message_id, name, summary, output, output_truncation_reason, ..., message }` | After tool execution, including the persisted canonical tool row |
 | `agent.message` | `{ turn_id, client_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
+| `thread.title` | `{ thread_id, title, source, updated_at }` | Best-effort first-message thread title became durable |
 | `agent.resync_required` | `{ error, provided_cursor }` | Resume cursor was too old or unknown; client must refetch `/messages` plus `/agent/state` |
 | `final` | `{ turn_id, status, message_id?, text? }` or `{ turn_id, status, error }` | Flow complete |
 
@@ -151,6 +174,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
 - `message.client_id` is the same stable public identity already exposed on the top-level assistant/tool runtime and stream payloads
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
+- `thread.title` shares the same SSE frame-id cursor space as the agent events, so bounded resume covers title changes without opening a second stream
 - `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
 - replay resume is keyed off the SSE frame `id:` / runtime cursor rather than the JSON payload
 - no-cursor attaches are live-only; bounded replay only happens when the client resumes from an explicit cursor

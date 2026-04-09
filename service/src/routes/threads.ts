@@ -11,7 +11,7 @@ import {
   threadTable,
   terminalSessionTable
 } from "../db/schema.js";
-import { AgentService } from "../agent/index.js";
+import { AgentService, ThreadTitleService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
@@ -272,7 +272,8 @@ export async function registerThreadRoutes(
   _runManager: RunManager,
   agentService: AgentService,
   agentRuntime: AgentRuntimeStateManager,
-  contextSyncService: ContextSyncService
+  contextSyncService: ContextSyncService,
+  threadTitleService: ThreadTitleService,
 ): Promise<void> {
   server.get("/api/threads", async (request, reply) => {
     const viewer = await requireViewer(request, reply);
@@ -629,6 +630,18 @@ export async function registerThreadRoutes(
         reasoningEffort: body.reasoning_effort ?? null,
         ownerUserId,
       });
+
+      void threadTitleService.maybeGenerateFromFirstUserMessage({
+        threadId: thread.threadId,
+        userMessageId: messageId,
+        userMessageText: body.text,
+      }).catch((err) => {
+        server.log.warn(
+          { err, threadId: thread.threadId, messageId, component: "thread_title" },
+          "Thread title generation failed",
+        );
+      });
+
       reply.code(201).send({ message_id: messageId, client_id: effectiveClientId });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");

@@ -4,6 +4,7 @@ import { BudRail, type BudProfile, type BudCapabilities } from '@/components/wor
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { BudSessionsModal } from '@/components/bud-sessions-modal'
 import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
+import { BudRouteContext, type BudRouteContextValue } from '@/contexts/bud-route-context'
 import {
   apiFetchJson,
   fetchCurrentUser,
@@ -22,6 +23,42 @@ const toLoginRedirect = (pathname: string, search = '', hash = '') =>
       redirect: getLoginRedirectValue(pathname, search, hash),
     },
   })
+
+const toThreadSummary = (thread: ApiThread): ThreadSummary => ({
+  thread_id: thread.thread_id,
+  bud_id: thread.bud_id,
+  title: thread.title,
+  created_at: thread.created_at,
+  last_activity_at: thread.last_activity_at,
+  last_message_preview: thread.last_message_preview,
+  message_count: thread.message_count,
+  pinned: thread.pinned,
+  archived: thread.archived,
+  has_terminal_session: thread.has_terminal_session,
+  session_state: thread.session_state,
+  session_id: thread.session_id,
+})
+
+const mergeOptional = <T,>(incoming: T | undefined, existing: T | undefined) =>
+  incoming === undefined ? existing : incoming
+
+const mergeThreadSummary = (
+  existing: ThreadSummary | undefined,
+  incoming: ApiThread | ThreadSummary,
+): ThreadSummary => {
+  const next = toThreadSummary(incoming)
+  if (!existing) {
+    return next
+  }
+
+  return {
+    ...existing,
+    ...next,
+    has_terminal_session: mergeOptional(next.has_terminal_session, existing.has_terminal_session),
+    session_state: mergeOptional(next.session_state, existing.session_state),
+    session_id: mergeOptional(next.session_id, existing.session_id),
+  }
+}
 
 export const Route = createFileRoute('/$budId')({
   beforeLoad: async ({ location }) => {
@@ -63,6 +100,7 @@ function BudLayout() {
 
   // Sessions modal state
   const [sessionsModalOpen, setSessionsModalOpen] = useState(false)
+  const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads.map(toThreadSummary))
 
   // Get threadId from child route match (if we're on /$budId/$threadId)
   const matches = useMatches()
@@ -86,22 +124,8 @@ function BudLayout() {
     })
   }, [rawBuds])
 
-  // Convert API threads to ThreadSummary format
-  const threads: ThreadSummary[] = useMemo(() => {
-    return initialThreads.map((t) => ({
-      thread_id: t.thread_id,
-      bud_id: t.bud_id,
-      title: t.title,
-      created_at: t.created_at,
-      last_activity_at: t.last_activity_at,
-      last_message_preview: t.last_message_preview,
-      message_count: t.message_count,
-      pinned: t.pinned,
-      archived: t.archived,
-      has_terminal_session: t.has_terminal_session,
-      session_state: t.session_state,
-      session_id: t.session_id,
-    }))
+  useEffect(() => {
+    setThreads(initialThreads.map(toThreadSummary))
   }, [initialThreads])
 
   const activeBudProfile = useMemo(() => {
@@ -141,11 +165,33 @@ function BudLayout() {
     }
   }, [navigate, budId])
 
-  const handleThreadDeleted = useCallback((_deletedThreadId: string) => {
-    // Router will handle re-fetching threads on navigation
-    // Just navigate to "new thread" mode
+  const removeThreadSummary = useCallback((threadId: string) => {
+    setThreads((prev) => prev.filter((thread) => thread.thread_id !== threadId))
+  }, [])
+
+  const upsertThreadSummary = useCallback((thread: ApiThread | ThreadSummary) => {
+    setThreads((prev) => {
+      const index = prev.findIndex((entry) => entry.thread_id === thread.thread_id)
+      if (index === -1) {
+        return [mergeThreadSummary(undefined, thread), ...prev]
+      }
+
+      const next = [...prev]
+      next[index] = mergeThreadSummary(next[index], thread)
+      return next
+    })
+  }, [])
+
+  const patchThreadSummary = useCallback((threadId: string, patch: Partial<ThreadSummary>) => {
+    setThreads((prev) =>
+      prev.map((thread) => (thread.thread_id === threadId ? { ...thread, ...patch } : thread)),
+    )
+  }, [])
+
+  const handleThreadDeleted = useCallback((deletedThreadId: string) => {
+    removeThreadSummary(deletedThreadId)
     navigate({ to: '/$budId', params: { budId } })
-  }, [navigate, budId])
+  }, [budId, navigate, removeThreadSummary])
 
   const handleOpenSessions = useCallback(() => {
     setSessionsModalOpen(true)
@@ -187,7 +233,16 @@ function BudLayout() {
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Outlet />
+        <BudRouteContext.Provider
+          value={{
+            threads,
+            upsertThreadSummary,
+            patchThreadSummary,
+            removeThreadSummary,
+          } satisfies BudRouteContextValue}
+        >
+          <Outlet />
+        </BudRouteContext.Provider>
       </div>
     </div>
   )

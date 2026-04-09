@@ -47,6 +47,7 @@ Thread list sidebar for conversation navigation.
 - Terminal session indicators (state dot + icon)
 - Message count badges
 - Relative timestamps ("just now", "5m ago")
+- Titles can update live from `thread.title` stream events because the parent Bud route now patches thread summaries in local state
 
 **Session State Colors**:
 | State | Color |
@@ -129,7 +130,7 @@ Message input form with options.
 
 ### `workspace-top-bar.tsx`
 
-Header bar with bud label and view toggle.
+Header bar with workspace title and view toggle.
 
 **View Modes**:
 - `terminal` - Terminal emulator view
@@ -137,7 +138,7 @@ Header bar with bud label and view toggle.
 
 **Components**:
 - Thread panel toggle (hamburger menu)
-- Bud label display
+- Title display (`New Thread` for compose mode, otherwise the current thread title or `Untitled thread`)
 - Status indicator (Idle/Dispatching/Streaming)
 - View mode toggle buttons
 

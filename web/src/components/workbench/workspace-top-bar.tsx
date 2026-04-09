@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 type ViewMode = 'terminal' | 'web'
 
 type WorkspaceTopBarProps = {
-  budLabel: string
+  title: string
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
@@ -13,7 +13,7 @@ type WorkspaceTopBarProps = {
 }
 
 export function WorkspaceTopBar({
-  budLabel,
+  title,
   view,
   onViewChange,
   onToggleThreads,
@@ -33,7 +33,7 @@ export function WorkspaceTopBar({
             <Menu className="h-5 w-5" />
           </Button>
           <div className="flex flex-col">
-            <p className="font-mono text-lg font-semibold">{budLabel}</p>
+            <p className="font-mono text-lg font-semibold">{title}</p>
           </div>
         </div>
       <div className="flex items-center gap-2">

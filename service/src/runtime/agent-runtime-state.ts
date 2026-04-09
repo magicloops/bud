@@ -172,6 +172,10 @@ export class AgentRuntimeStateManager {
     );
   }
 
+  advanceCursor(threadId: string, cursor: string): AgentRuntimeSnapshot {
+    return this.updateSnapshot(threadId, () => {}, cursor);
+  }
+
   finishTurn(threadId: string): AgentRuntimeSnapshot {
     return this.updateSnapshot(
       threadId,

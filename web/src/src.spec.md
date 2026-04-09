@@ -91,7 +91,7 @@ React components: UI primitives, workbench layouts, message renderers.
 
 ### `contexts/` → [contexts/contexts.spec.md](./contexts/contexts.spec.md)
 
-React context providers for global state (auth session, bud status, layout preferences).
+React context providers for global state plus the Bud-route shared thread-summary context.
 
 ### `lib/` → [lib/lib.spec.md](./lib/lib.spec.md)
 

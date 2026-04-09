@@ -174,7 +174,7 @@ function NewThreadView() {
   return (
     <>
       <WorkspaceTopBar
-        budLabel="New Thread"
+        title="New Thread"
         view={viewMode}
         onViewChange={setViewMode}
         onToggleThreads={toggleThreadPanel}

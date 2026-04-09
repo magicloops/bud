@@ -46,6 +46,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - event-frame `id:` values on the agent stream are the same opaque runtime cursors
 - replay is intentionally bounded and process-local
 - resume misses surface explicit resync instead of silent live-only fallback
+- non-agent thread events such as `thread.title` can advance the same cursor space without mutating the active turn phase, pending tool, or draft assistant snapshot
 
 ### `event-bus.ts`
 
@@ -85,6 +86,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - stale cursors produce explicit resync
 - finishing a turn returns the snapshot to idle with a fresh cursor
 - runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
+- `advanceCursor(...)` preserves in-flight runtime state while acknowledging external thread events already emitted on the shared cursor stream
 
 ### `event-bus.test.ts`
 

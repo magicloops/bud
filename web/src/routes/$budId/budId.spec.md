@@ -57,6 +57,7 @@ New thread creation view - allows users to start a new conversation.
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
+- Top bar title remains the static `New Thread`
 
 **State**:
 - `messageText` - Controlled input
@@ -76,11 +77,12 @@ Main thread view with full chat and terminal functionality (~1000 lines).
 **Loader**:
 ```typescript
 loader: async ({ params }) => {
-  const [messagePage, agentState] = await Promise.all([
+  const [messagePage, agentState, thread] = await Promise.all([
     apiFetchJson(`/api/threads/${params.threadId}/messages?limit=100`),
-    apiFetchJson(`/api/threads/${params.threadId}/agent/state`)
+    apiFetchJson(`/api/threads/${params.threadId}/agent/state`),
+    apiFetchJson(`/api/threads/${params.threadId}`)
   ])
-  return { messagePage, agentState }
+  return { messagePage, agentState, thread }
 }
 ```
 
@@ -89,6 +91,7 @@ loader: async ({ params }) => {
 1. **Chat Timeline**
    - Loads the latest paged transcript window from loader data
    - Loads `/agent/state` in parallel for the current in-flight bootstrap snapshot
+   - Loads canonical thread detail in parallel so the Bud-level thread list can converge even if the title event was missed before attach
    - Updates via SSE agent stream
    - Role-based rendering (user, assistant, tool)
    - Consumes the paged `{ messages, page }` API contract
@@ -109,7 +112,7 @@ loader: async ({ params }) => {
 3. **Agent Stream**
    - Runtime bootstrap from `/api/threads/:id/agent/state`
    - SSE connection to `/api/threads/:id/agent/stream?after=<stream_cursor>`
-   - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`
+   - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`
    - Builds one per-turn draft assistant row from `agent.message_start` / `agent.message_delta`
    - Treats `agent.message_done` as the final draft snapshot before canonical persistence
    - Uses backend-provided `client_id` as the primary message identity for optimistic users, draft assistants, pending tools, and canonical transcript rows
@@ -118,18 +121,24 @@ loader: async ({ params }) => {
    - Reconnects resume from the latest known runtime cursor, using `after=<cursor>` and compatible `Last-Event-ID` handling
    - Handles explicit `agent.resync_required` by refetching `/messages` plus `/agent/state` and reattaching
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
+   - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
    - Keeps optimistic user identity stable by attaching the persisted `message_id` returned by `POST /messages` onto the existing `client_id`-keyed row
    - Healthy successful turns no longer require a mandatory `final` refetch just to learn assistant/tool message ids
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
 
-4. **Connection Management**
+4. **Bud-Level Thread State**
+   - Parent `/$budId` route now owns mutable `threads` state rather than treating loader data as immutable
+   - Child routes receive `threads`, `upsertThreadSummary(...)`, `patchThreadSummary(...)`, and `removeThreadSummary(...)` through a Bud-route React context
+   - Thread-detail upserts merge canonical fields like `title` and `last_message_preview` without clobbering session fields that only come from the thread-list join
+
+5. **Connection Management**
    - Terminal connection states: connected, reconnecting, offline, disconnected
    - Automatic reconnection on SSE close
    - Heartbeat monitoring
    - Active recovery polling while the browser is stranded in reconnecting/offline
    - Disconnect overlay during prolonged outages
 
-5. **Terminal Features**
+6. **Terminal Features**
    - Input buffering and batching
    - Ctrl+C interrupt button
    - Clear terminal option

@@ -11,6 +11,28 @@ Provides shared state across the component tree without prop drilling:
 
 ## Files
 
+### `bud-route-context.tsx`
+
+Route-scoped shared state for the `/$budId` workbench layout.
+
+**Context Value**:
+```typescript
+{
+  threads: ThreadSummary[]
+  upsertThreadSummary: (thread) => void
+  patchThreadSummary: (threadId, patch) => void
+  removeThreadSummary: (threadId) => void
+}
+```
+
+**Exports**:
+- `BudRouteContext` - Raw React context used by the Bud route provider
+- `useBudRouteContext()` - Consumer hook for nested thread routes
+
+**Usage**:
+- `/$budId.tsx` provides the mutable thread-summary state
+- `/$budId/$threadId.tsx` consumes it to merge canonical thread detail and streamed `thread.title` updates into the thread list and top bar
+
 ### `auth-session-context.tsx`
 
 Authenticated browser-session state seeded from the root route loader.
