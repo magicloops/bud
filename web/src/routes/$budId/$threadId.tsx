@@ -28,7 +28,9 @@ import {
   type ApiAgentState,
   type ApiMessage,
   type ApiMessagePage,
+  type ApiThread,
 } from '@/lib/api'
+import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
 import { useBudStatus } from '@/contexts/bud-status-context'
 import type { Terminal } from 'xterm'
@@ -98,6 +100,13 @@ type AgentFinalEvent = {
 type AgentResyncRequiredEvent = {
   error: 'resync_required'
   provided_cursor?: string
+}
+
+type ThreadTitleEvent = {
+  thread_id: string
+  title: string
+  source: 'generated_first_user_message'
+  updated_at: string
 }
 
 const getMessageIdentity = (message: Pick<ApiMessage, 'client_id'>) => message.client_id
@@ -266,7 +275,7 @@ const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAgentStat
 export const Route = createFileRoute('/$budId/$threadId')({
   loader: async ({ params, location }) => {
     try {
-      const [messagePage, agentState] = await Promise.all([
+      const [messagePage, agentState, thread] = await Promise.all([
         apiFetchJson<ApiMessagePage>(
           `/api/threads/${params.threadId}/messages?limit=${THREAD_MESSAGE_PAGE_LIMIT}`,
           { redirectOnUnauthorized: false },
@@ -275,8 +284,9 @@ export const Route = createFileRoute('/$budId/$threadId')({
           `/api/threads/${params.threadId}/agent/state`,
           { redirectOnUnauthorized: false },
         ),
+        apiFetchJson<ApiThread>(`/api/threads/${params.threadId}`, { redirectOnUnauthorized: false }),
       ])
-      return { messagePage, agentState }
+      return { messagePage, agentState, thread }
     } catch (error) {
       if (isApiError(error, 401)) {
         throw toLoginRedirect(location.href)
@@ -289,7 +299,12 @@ export const Route = createFileRoute('/$budId/$threadId')({
 
 function ThreadView() {
   const { budId, threadId } = Route.useParams()
-  const { messagePage: initialMessagePage, agentState: initialAgentState } = Route.useLoaderData()
+  const {
+    messagePage: initialMessagePage,
+    agentState: initialAgentState,
+    thread: initialThread,
+  } = Route.useLoaderData()
+  const { threads, upsertThreadSummary } = useBudRouteContext()
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen, toggleThreadPanel } = useLayout()
@@ -413,6 +428,26 @@ function ThreadView() {
     agentCursorRef.current = initialAgentState.stream_cursor
     setStatus(initialAgentState.active ? 'streaming' : 'idle')
   }, [initialAgentState, initialMessagePage])
+
+  useEffect(() => {
+    upsertThreadSummary(initialThread)
+  }, [initialThread, upsertThreadSummary])
+
+  const currentThread = useMemo(() => {
+    return (
+      threads.find((thread) => thread.thread_id === threadId) ?? {
+        thread_id: initialThread.thread_id,
+        bud_id: initialThread.bud_id,
+        title: initialThread.title,
+        created_at: initialThread.created_at,
+        last_activity_at: initialThread.last_activity_at,
+        last_message_preview: initialThread.last_message_preview,
+        message_count: initialThread.message_count,
+        pinned: initialThread.pinned,
+        archived: initialThread.archived,
+      }
+    )
+  }, [initialThread, threadId, threads])
 
   useEffect(() => {
     const pendingAdjustment = pendingPrependAdjustmentRef.current
@@ -1120,6 +1155,17 @@ function ThreadView() {
       }
     })
 
+    source.addEventListener('thread.title', (evt) => {
+      lastAgentEventTimeRef.current = Date.now()
+      agentCursorRef.current = evt.lastEventId || agentCursorRef.current
+      try {
+        const data = JSON.parse(evt.data) as ThreadTitleEvent
+        upsertThreadSummary({ ...initialThread, title: data.title })
+      } catch (e) {
+        console.warn('[agent-sse] failed to parse thread.title', e)
+      }
+    })
+
     source.addEventListener('agent.resync_required', (evt) => {
       lastAgentEventTimeRef.current = Date.now()
       suppressErrorReconnect = true
@@ -1728,7 +1774,7 @@ function ThreadView() {
   return (
     <>
       <WorkspaceTopBar
-        budLabel="Thread"
+        title={currentThread.title ?? 'Untitled thread'}
         view={viewMode}
         onViewChange={setViewMode}
         onToggleThreads={toggleThreadPanel}

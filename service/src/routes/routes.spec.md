@@ -116,7 +116,7 @@ Thread and message management, plus terminal operations (~900 lines).
 - `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
 - `pending_tool` now carries `client_id` in addition to `call_id`, `name`, and `args`
 - `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
-- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`, and `heartbeat`
+- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
 - agent payloads include a per-turn `turn_id`
 - assistant draft events now include top-level `client_id`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
@@ -215,6 +215,11 @@ Before creating user message, checks for terminal state changes:
 3. If state changed, a system message is injected before the user message
 4. This keeps the agent informed about terminal state transitions (e.g., REPL exit)
 
+**First-Message Title Flow** (POST /messages):
+- after the durable user row is written and the agent turn is successfully started, the route launches a fire-and-forget thread-title task
+- the task only proceeds when the just-written row is still the canonical first user message on the thread and `thread.title` is still `NULL`
+- successful title writes emit `thread.title` on the same `/agent/stream` channel and use the same bounded replay cursor space as the agent events
+
 **Ownership Enforcement**:
 - `requireAuthorizedThreadAccess(...)` gates thread/message/run/terminal routes
 - thread lists filter to `thread.created_by_user_id = viewer.userId`
@@ -227,6 +232,7 @@ Before creating user message, checks for terminal state changes:
 - `POST /api/threads/:thread_id/messages` now accepts optional `client_id`
 - duplicate user-message retries with the same owned-thread `client_id` short-circuit with `200 { message_id, client_id }` and do not launch a second agent turn
 - fresh user-message writes return `201 { message_id, client_id }`
+- `GET /api/threads/:thread_id/agent/stream` may also emit `thread.title { thread_id, title, source, updated_at }`
 
 ### `runs.ts`
 

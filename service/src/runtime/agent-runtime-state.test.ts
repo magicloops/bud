@@ -204,3 +204,58 @@ test("runtime snapshots expose client_id on pending_tool and draft_assistant", (
   assert.equal(draftSnapshot.draft_assistant?.client_id, "assistant-client-1");
   assert.equal(draftSnapshot.draft_assistant?.text, "Hello");
 });
+
+test("advanceCursor preserves runtime state while acknowledging external events", () => {
+  const runtime = new AgentRuntimeStateManager();
+  runtime.startTurn("thread-1", "turn-1");
+
+  const toolCursor = runtime.emit("thread-1", {
+    event: "agent.tool_call",
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+      args: { input: "pwd\n" },
+    },
+  });
+  runtime.setPendingTool(
+    "thread-1",
+    {
+      client_id: "tool-client-1",
+      call_id: "call-1",
+      name: "terminal.run",
+      args: { input: "pwd\n" },
+    },
+    toolCursor,
+  );
+
+  const externalCursor = runtime.emit("thread-1", {
+    event: "thread.title",
+    data: {
+      thread_id: "thread-1",
+      title: "List Directory Contents",
+      source: "generated_first_user_message",
+      updated_at: new Date().toISOString(),
+    },
+  });
+
+  const snapshot = runtime.advanceCursor("thread-1", externalCursor);
+  assert.equal(snapshot.active, true);
+  assert.equal(snapshot.phase, "tool_running");
+  assert.equal(snapshot.pending_tool?.client_id, "tool-client-1");
+  assert.equal(snapshot.stream_cursor, externalCursor);
+
+  const replayedEvents: string[] = [];
+  const attachment = runtime.attachCallback(
+    "thread-1",
+    (event) => {
+      replayedEvents.push(event.event);
+    },
+    { afterCursor: externalCursor },
+  );
+
+  assert.equal(attachment.status, "attached");
+  assert.deepEqual(replayedEvents, []);
+  attachment.detach();
+});

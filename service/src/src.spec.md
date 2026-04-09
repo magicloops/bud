@@ -36,6 +36,7 @@ const agentRuntime = new AgentRuntimeStateManager();
 initializeProviders();
 
 const agentService = new AgentService(terminalSessionManager, agentRuntime, ...);
+const threadTitleService = new ThreadTitleService(agentRuntime, ...);
 ```
 
 **SSE Streaming Routes** (defined inline):
@@ -166,6 +167,8 @@ POST /api/threads/:id/messages
          ├─► Insert message to DB
          │
          └─► agentService.startUserMessage()
+                  │
+                  ├─► threadTitleService.maybeGenerateFromFirstUserMessage() [fire-and-forget on first durable user row]
                   │
                   ▼
              agent/agent-service.ts

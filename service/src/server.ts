@@ -11,7 +11,7 @@ import { RunManager } from "./runtime/run-manager.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
 import { registerModelsRoutes } from "./routes/models.js";
-import { AgentService } from "./agent/index.js";
+import { AgentService, ThreadTitleService } from "./agent/index.js";
 import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 import { ContextSyncService } from "./terminal/context-sync-service.js";
@@ -75,6 +75,10 @@ export async function buildServer(): Promise<FastifyInstance> {
     config.agentOpenaiDebug,
     contextSyncService
   );
+  const threadTitleService = new ThreadTitleService(
+    agentRuntime,
+    server.log.child({ component: "thread_title" }),
+  );
 
   await server.register(websocketPlugin, {
     options: {
@@ -90,7 +94,14 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerDeviceAuthRoutes(server);
   await registerMeRoutes(server);
   await registerBudRoutes(server, terminalSessionManager);
-  await registerThreadRoutes(server, runManager, agentService, agentRuntime, contextSyncService);
+  await registerThreadRoutes(
+    server,
+    runManager,
+    agentService,
+    agentRuntime,
+    contextSyncService,
+    threadTitleService,
+  );
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerRunRoutes(server, runManager);
   await registerModelsRoutes(server);

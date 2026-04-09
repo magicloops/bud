@@ -152,14 +152,16 @@ loader: async ({ params }) => {
 - Auth guard runs before child thread loaders
 - Fetches all buds and threads for current bud in parallel
 - Converts API responses to UI types (`BudProfile`, `ThreadSummary`)
+- Owns mutable thread-summary state so child routes can upsert canonical thread detail, apply streamed `thread.title` updates, and remove deleted rows without waiting for a parent-loader refresh
 - Applies bud accent color theming via CSS custom properties
 - Manages sessions modal state
 - Routes the Bud rail account-settings button into `/settings`
 - Keeps terminal sessions as a separate modal action
-- Renders `BudRail`, `ThreadPanel`, and child routes via `<Outlet />`
+- Renders `BudRail`, `ThreadPanel`, and child routes via `<Outlet />` wrapped in a Bud-route React context provider for thread-summary mutations
 
 **State**:
 - `sessionsModalOpen` - Modal visibility
+- `threads` - Mutable thread summaries seeded from loader data
 - Derived: `activeThreadId` from child route match
 
 **Navigation Handlers**:
@@ -169,6 +171,9 @@ loader: async ({ params }) => {
 | `handleSelectThread(threadId)` | Navigate to `/$budId/$threadId` or `/$budId` |
 | `handleThreadDeleted()` | Navigate back to `/$budId` |
 | `handleNavigateToThread(threadId)` | Navigate to specific thread |
+| `upsertThreadSummary(thread)` | Merge canonical thread detail or stream-driven title updates into local Bud state |
+| `patchThreadSummary(threadId, patch)` | Apply targeted local mutations to an existing summary |
+| `removeThreadSummary(threadId)` | Remove a thread row immediately after delete |
 
 **Theming**:
 ```typescript
