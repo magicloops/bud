@@ -2,11 +2,11 @@
 
 Audience: iOS / mobile team
 
-Last updated: 2026-04-08
+Last updated: 2026-04-08 (post-implementation)
 
 ## 1. What Is Changing
 
-The thread agent stream will gain a new thread-metadata event so the app can replace provisional conversation labels without making a second title-specific API call.
+The thread agent stream now emits a thread-metadata event so the app can replace provisional conversation labels without making a second title-specific API call.
 
 New event on:
 
@@ -16,11 +16,11 @@ New event name:
 
 - `thread.title`
 
-Intended first trigger:
+Current shipped trigger:
 
 - generated from the first user message of a thread
 
-The initial backend design uses Anthropic `claude-haiku-4-5` to create the title, but from the mobile client's perspective this is just a streamed thread metadata update.
+The backend currently uses Anthropic `claude-haiku-4-5` to create the title, but from the mobile client's perspective this is just a streamed thread metadata update.
 
 ## 2. Why This Exists
 
@@ -57,10 +57,17 @@ Field notes:
   - canonical thread identity to patch in local state
 - `title`
   - new durable thread title
+  - this is the server-approved display string; mobile should render it as-is
+  - titles may be short, including one-word or two-word titles such as `Bugfix` or `Assistant Introduction`
 - `source`
-  - optional metadata for debugging/analytics
+  - metadata for debugging/analytics
+  - current shipped value: `generated_first_user_message`
 - `updated_at`
   - server timestamp for last-write-wins reducers if needed
+
+Durability note:
+
+- `thread.title` is emitted only after the backend has successfully persisted the new title on the thread row
 
 ## 4. Ordering Expectations
 
@@ -77,6 +84,7 @@ Client rule:
 
 - apply the title whenever it arrives
 - do not gate title updates on assistant event ordering
+- do not assume titles are sentence-like or 3-5 words long
 
 ## 5. Client Behavior
 
@@ -96,6 +104,12 @@ Update all cached state keyed by `thread_id`:
 - any local thread detail cache
 
 No title-specific follow-up fetch is needed on the happy path.
+
+Do not locally rewrite or validate the title beyond normal UI-safe rendering:
+
+- do not impose a minimum word count
+- do not truncate based on a client-only 3-5 word rule
+- do not title-case or otherwise restyle the string before storing it in thread state
 
 ### 5.3 Idempotency
 
@@ -135,6 +149,7 @@ The only new requirement is:
 
 - listen for `thread.title`
 - patch thread metadata state without forcing a transcript refetch
+- keep using the same stream-resume handling you already use for the rest of the thread agent stream
 
 ## 7. Suggested Mobile Reducer Rule
 
@@ -168,6 +183,10 @@ For a newly created conversation:
 
 This should feel like a normal live upgrade of the conversation label, not a refresh.
 
+Recommended presentation rule:
+
+- once a server title exists, prefer it everywhere over local placeholders like `New thread`
+
 ## 9. No Special Resume Logic Needed
 
 `thread.title` should use the same stream attach/resume path as the rest of the thread agent stream.
@@ -183,6 +202,11 @@ then the existing recovery flow still applies:
 3. reattach the stream
 
 There is no title-specific recovery path.
+
+Because `thread.title` shares the same SSE frame-id cursor space as the rest of the agent stream:
+
+- store resume cursors exactly as you do for other thread agent events
+- do not build a separate resume mechanism for title updates
 
 ## 10. One Future-Proofing Note
 
