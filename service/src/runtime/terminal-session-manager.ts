@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { ulid } from "ulid";
 import { eq, and, isNull, desc, asc, gte, inArray, lt, sql } from "drizzle-orm";
@@ -13,7 +14,11 @@ import { sendFrameToBud, isBudOnline } from "../ws/gateway.js";
 import type {
   PendingCommand,
   TerminalContext,
-  ReadinessAssessment
+  ReadinessAssessment,
+  TerminalSendObservation,
+  TerminalSendObservationMessage,
+  TerminalWaitFor,
+  TerminalObservationView,
 } from "../terminal/types.js";
 import { TerminalEventBus } from "./event-bus.js";
 import { isKnownReplProgram, getProgramInfo } from "../terminal/known-programs.js";
@@ -71,46 +76,93 @@ type TerminalOutputPayload = {
   byte_offset: number;
 };
 
-// Options for tmux capture-pane
-export type CaptureOptions = {
+export type ObserveOptions = {
+  lines?: number;
+  waitFor?: TerminalWaitFor;
+  view?: TerminalObservationView;
+};
+
+type CapturePaneOptions = {
   startLine?: number;
   endLine?: number;
   escapeSequences?: boolean;
   joinLines?: boolean;
 };
 
-// Result of a capture-pane operation
-export type CaptureResult = {
+export type ObserveResult = {
+  view: TerminalObservationView;
   output: string;
   outputBytes: number;
   linesCaptured: number;
+  readiness: ReadinessAssessment;
   error?: string;
 };
 
-// Payload for capture response from Bud
-type CaptureResponsePayload = {
+type ObserveResponsePayload = {
   requestId: string;
+  view: TerminalObservationView;
   output: string;
   outputBytes: number;
   linesCaptured: number;
+  readiness: ReadinessAssessment;
   error: string | null;
 };
 
-// Result of a terminal_run operation (request-response pattern)
-export type RunResult = {
-  output: string; // Decoded UTF-8 string
+type ObserveDebugState = {
+  sessionId: string;
+  requestId: string;
+  view: TerminalObservationView;
+  waitFor: TerminalWaitFor;
+  lines: number;
+  timeoutMs: number;
+  localTimeoutMs: number;
+  startedAt: number;
+  deadlineAt: number;
+  context: TerminalContext;
+  readinessAtDispatch: ReadinessAssessment | null;
+  startOffset: number;
+  latestOffset: number;
+  outputSeen: boolean;
+  outputEventCount: number;
+  timedOutAt?: number;
+};
+
+export type ExecResult = {
+  output: string;
   outputBytes: number;
   truncated: boolean;
   readiness: ReadinessAssessment;
   error?: string;
 };
 
-// Payload for run result from Bud
-type RunResultPayload = {
+type ExecResultPayload = {
   requestId: string;
-  output: string; // Base64
+  output: string;
   outputBytes: number;
   truncated: boolean;
+  readiness: ReadinessAssessment;
+  error: string | null;
+};
+
+export type SendInteraction = {
+  text?: string;
+  submit?: boolean;
+  keys?: string[];
+  observeAfterMs?: number;
+  waitFor?: TerminalWaitFor;
+};
+
+export type SendResult = {
+  submitted: boolean;
+  observation?: TerminalSendObservation | null;
+  readiness: ReadinessAssessment;
+  error?: string;
+};
+
+type SendResultPayload = {
+  requestId: string;
+  submitted: boolean;
+  observation?: TerminalSendObservationMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
 };
@@ -126,22 +178,32 @@ export class TerminalSessionManager {
   private readonly readiness = new Map<string, { assessment: ReadinessAssessment; updatedAt: number }>();
   private readonly lastOffsets = new Map<string, number>();
   private readonly pendingCommands = new Map<string, PendingCommand | null>();
-  private readonly pendingCaptures = new Map<
+  private readonly pendingObserves = new Map<
     string,
     {
-      resolve: (result: CaptureResult) => void;
+      resolve: (result: ObserveResult) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+      state: ObserveDebugState;
+    }
+  >();
+  private readonly pendingExecs = new Map<
+    string,
+    {
+      resolve: (result: ExecResult) => void;
       reject: (error: Error) => void;
       timeout: ReturnType<typeof setTimeout>;
     }
   >();
-  private readonly pendingRuns = new Map<
+  private readonly pendingSends = new Map<
     string,
     {
-      resolve: (result: RunResult) => void;
+      resolve: (result: SendResult) => void;
       reject: (error: Error) => void;
       timeout: ReturnType<typeof setTimeout>;
     }
   >();
+  private readonly recentObserveStates = new Map<string, ObserveDebugState>();
 
   constructor(logger: FastifyBaseLogger, events: TerminalEventBus) {
     this.logger = logger;
@@ -514,6 +576,26 @@ export class TerminalSessionManager {
     const endOffset = payload.byte_offset + buffer.length;
     this.lastOffsets.set(sessionId, endOffset);
 
+    const observeRequestsSeeingOutput: string[] = [];
+    for (const pending of this.pendingObserves.values()) {
+      if (pending.state.sessionId !== sessionId) {
+        continue;
+      }
+      pending.state.outputSeen = true;
+      pending.state.outputEventCount += 1;
+      pending.state.latestOffset = Math.max(pending.state.latestOffset, endOffset);
+      observeRequestsSeeingOutput.push(pending.state.requestId);
+    }
+    if (observeRequestsSeeingOutput.length > 0) {
+      this.debug("terminal output arrived while observe was pending", {
+        sessionId,
+        requestIds: observeRequestsSeeingOutput,
+        byteOffset: payload.byte_offset,
+        endOffset,
+        outputBytes: buffer.length
+      });
+    }
+
     const now = new Date();
     const session = await this.getSession(sessionId);
     if (!session) {
@@ -579,25 +661,7 @@ export class TerminalSessionManager {
   }
 
   async handleTerminalReady(sessionId: string, assessment: ReadinessAssessment): Promise<void> {
-    this.readiness.set(sessionId, { assessment, updatedAt: Date.now() });
-
-    // Clear pending command if we're back at a shell prompt
-    if (
-      assessment.prompt_type === "shell" &&
-      assessment.confidence >= 0.8 &&
-      assessment.hints?.looks_like_prompt
-    ) {
-      const pending = this.pendingCommands.get(sessionId);
-      if (pending) {
-        const durationMs = Date.now() - pending.sentAt;
-        this.debug("clearing pending command - returned to shell", {
-          sessionId,
-          command: pending.command,
-          durationMs
-        });
-        this.pendingCommands.set(sessionId, null);
-      }
-    }
+    this.storeReadinessAssessment(sessionId, assessment);
 
     this.events.emit(sessionId, {
       event: "terminal.ready",
@@ -606,64 +670,112 @@ export class TerminalSessionManager {
     });
   }
 
-  /**
-   * Handle capture response from Bud.
-   */
-  handleCaptureResponse(sessionId: string, payload: CaptureResponsePayload): void {
-    const pending = this.pendingCaptures.get(payload.requestId);
+  handleObserveResult(sessionId: string, payload: ObserveResponsePayload): void {
+    const pending = this.pendingObserves.get(payload.requestId);
+    const observeState = this.recentObserveStates.get(payload.requestId) ?? pending?.state;
+
+    const buffer = Buffer.from(payload.output, "base64");
+    const output = buffer.toString("utf-8");
+    const outputSummary = this.summarizeObservedOutput(output);
+    const latencyMs = observeState ? Date.now() - observeState.startedAt : undefined;
+
     if (!pending) {
+      if (observeState?.timedOutAt) {
+        this.logger.warn(
+        {
+          sessionId,
+          requestId: payload.requestId,
+          waitFor: observeState.waitFor,
+          timeoutMs: observeState.timeoutMs,
+          localTimeoutMs: observeState.localTimeoutMs,
+          latencyMs,
+          lateByMs: Date.now() - observeState.timedOutAt,
+            outputBytes: payload.outputBytes,
+            linesCaptured: payload.linesCaptured,
+            readiness: payload.readiness,
+            outputSummary,
+            component: "terminal_session_manager"
+          },
+          "Observe result arrived after local timeout"
+        );
+        this.recentObserveStates.delete(payload.requestId);
+        return;
+      }
       this.logger.warn(
-        { sessionId, requestId: payload.requestId, component: "terminal_session_manager" },
-        "Orphaned capture response"
+        {
+          sessionId,
+          requestId: payload.requestId,
+          outputBytes: payload.outputBytes,
+          linesCaptured: payload.linesCaptured,
+          readiness: payload.readiness,
+          outputSummary,
+          component: "terminal_session_manager"
+        },
+        "Orphaned observe result"
       );
       return;
     }
 
     clearTimeout(pending.timeout);
-    this.pendingCaptures.delete(payload.requestId);
+    this.pendingObserves.delete(payload.requestId);
+    this.recentObserveStates.delete(payload.requestId);
 
     if (payload.error) {
       pending.reject(new Error(payload.error));
       return;
     }
 
-    // Decode base64 output
-    const buffer = Buffer.from(payload.output, "base64");
-    const output = buffer.toString("utf-8");
-
     this.logger.info(
       {
         sessionId,
         requestId: payload.requestId,
+        view: payload.view,
+        waitFor: observeState?.waitFor,
+        timeoutMs: observeState?.timeoutMs,
+        localTimeoutMs: observeState?.localTimeoutMs,
+        latencyMs,
         outputBytes: payload.outputBytes,
         linesCaptured: payload.linesCaptured,
+        outputSeenDuringWait: observeState?.outputSeen ?? false,
+        outputEventCount: observeState?.outputEventCount ?? 0,
+        outputOffsetDelta: observeState
+          ? Math.max(observeState.latestOffset - observeState.startOffset, 0)
+          : 0,
+        readiness: payload.readiness,
+        outputSummary,
         component: "terminal_session_manager"
       },
-      "Capture response received"
+      "Observe result received"
     );
 
+    this.storeReadinessAssessment(sessionId, payload.readiness);
+    this.events.emit(sessionId, {
+      event: "terminal.ready",
+      data: { assessment: payload.readiness },
+      id: ulid()
+    });
+
     pending.resolve({
+      view: payload.view,
       output,
       outputBytes: payload.outputBytes,
-      linesCaptured: payload.linesCaptured
+      linesCaptured: payload.linesCaptured,
+      readiness: payload.readiness,
     });
   }
 
-  /**
-   * Handle terminal_run_result from Bud (request-response pattern).
-   */
-  handleRunResult(sessionId: string, payload: RunResultPayload): void {
-    const pending = this.pendingRuns.get(payload.requestId);
+  handleExecResult(sessionId: string, payload: ExecResultPayload): void {
+    const pending = this.pendingExecs.get(payload.requestId);
     if (!pending) {
       this.logger.warn(
         { sessionId, requestId: payload.requestId, component: "terminal_session_manager" },
-        "Orphaned run result"
+        "Orphaned exec result"
       );
       return;
     }
 
     clearTimeout(pending.timeout);
-    this.pendingRuns.delete(payload.requestId);
+    this.pendingExecs.delete(payload.requestId);
 
     if (payload.error) {
       pending.reject(new Error(payload.error));
@@ -683,13 +795,84 @@ export class TerminalSessionManager {
         readiness: payload.readiness,
         component: "terminal_session_manager"
       },
-      "Run result received"
+      "Exec result received"
     );
+
+    this.storeReadinessAssessment(sessionId, payload.readiness);
+    this.events.emit(sessionId, {
+      event: "terminal.ready",
+      data: { assessment: payload.readiness },
+      id: ulid()
+    });
 
     pending.resolve({
       output,
       outputBytes: payload.outputBytes,
       truncated: payload.truncated,
+      readiness: payload.readiness
+    });
+  }
+
+  handleSendResult(sessionId: string, payload: SendResultPayload): void {
+    const pending = this.pendingSends.get(payload.requestId);
+    if (!pending) {
+      this.logger.warn(
+        { sessionId, requestId: payload.requestId, component: "terminal_session_manager" },
+        "Orphaned send result"
+      );
+      return;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingSends.delete(payload.requestId);
+
+    if (payload.error) {
+      pending.reject(new Error(payload.error));
+      return;
+    }
+
+    this.logger.info(
+      {
+        sessionId,
+        requestId: payload.requestId,
+        submitted: payload.submitted,
+        observation: payload.observation
+          ? {
+              capturedAfterMs: payload.observation.captured_after_ms,
+              screenChanged: payload.observation.screen_changed,
+              baselineHash: payload.observation.baseline_hash,
+              currentHash: payload.observation.current_hash,
+              linesCaptured: payload.observation.lines_captured,
+              lastNonEmptyLine: payload.observation.last_non_empty_line,
+            }
+          : null,
+        readiness: payload.readiness,
+        component: "terminal_session_manager"
+      },
+      "Send result received"
+    );
+
+    this.storeReadinessAssessment(sessionId, payload.readiness);
+    this.events.emit(sessionId, {
+      event: "terminal.ready",
+      data: { assessment: payload.readiness },
+      id: ulid()
+    });
+
+    pending.resolve({
+      submitted: payload.submitted,
+      observation: payload.observation
+        ? {
+            capturedAfterMs: payload.observation.captured_after_ms,
+            screenChanged: payload.observation.screen_changed,
+            baselineHash: payload.observation.baseline_hash,
+            currentHash: payload.observation.current_hash,
+            linesCaptured: payload.observation.lines_captured,
+            lastNonEmptyLine: payload.observation.last_non_empty_line,
+            previewHead: payload.observation.preview_head ?? null,
+            previewTail: payload.observation.preview_tail ?? null,
+          }
+        : null,
       readiness: payload.readiness
     });
   }
@@ -864,35 +1047,57 @@ export class TerminalSessionManager {
     return { data: combined, totalBytes };
   }
 
-  /**
-   * Capture the rendered terminal screen using tmux capture-pane.
-   */
-  async capturePane(
+  async observeTerminal(
     sessionId: string,
-    options: CaptureOptions = {},
+    options: ObserveOptions = {},
     timeoutMs = 5000
-  ): Promise<CaptureResult> {
+  ): Promise<ObserveResult> {
     const session = await this.getSession(sessionId);
     if (!session) {
       throw new Error("session_not_found");
     }
 
-    const requestId = `cap_${ulid()}`;
+    const requestId = `obs_${ulid()}`;
+    const view = options.view ?? "screen";
+    const waitFor = options.waitFor ?? "none";
+    const lines = options.lines ?? -50;
+    const localGraceMs = 1000;
+    const localTimeoutMs = timeoutMs + localGraceMs;
+    const startedAt = Date.now();
+    const deadlineAt = startedAt + localTimeoutMs;
+    const context = this.getSessionContext(sessionId);
+    const readinessAtDispatch = this.getLatestReadiness(sessionId);
+    const startOffset = this.getLastOffset(sessionId);
+    const observeState: ObserveDebugState = {
+      sessionId,
+      requestId,
+      view,
+      waitFor,
+      lines,
+      timeoutMs,
+      localTimeoutMs,
+      startedAt,
+      deadlineAt,
+      context,
+      readinessAtDispatch,
+      startOffset,
+      latestOffset: startOffset,
+      outputSeen: false,
+      outputEventCount: 0
+    };
 
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
-      type: "terminal_capture",
+      type: "terminal_observe",
       id: `msg_${ulid()}`,
       ts: Date.now(),
       ext: {},
       session_id: sessionId,
       request_id: requestId,
-      options: {
-        start_line: options.startLine ?? -200,
-        end_line: options.endLine ?? null,
-        escape_sequences: options.escapeSequences ?? false,
-        join_lines: options.joinLines ?? true
-      }
+      view,
+      lines,
+      wait_for: waitFor,
+      timeout_ms: timeoutMs,
     };
 
     const sent = sendFrameToBud(session.budId, payload);
@@ -900,52 +1105,107 @@ export class TerminalSessionManager {
       throw new Error("bud_offline");
     }
 
+    this.pruneRecentObserveStates(startedAt);
+    this.recentObserveStates.set(requestId, observeState);
+
     this.logger.info(
-      { sessionId, requestId, startLine: options.startLine, component: "terminal_session_manager" },
-      "Sending capture-pane request"
+      {
+        sessionId,
+        requestId,
+        view,
+        waitFor,
+        lines,
+        timeoutMs,
+        localTimeoutMs,
+        startedAt: new Date(startedAt).toISOString(),
+        deadlineAt: new Date(deadlineAt).toISOString(),
+        context: this.summarizeContextForLog(context),
+        readinessAtDispatch,
+        startOffset,
+        component: "terminal_session_manager"
+      },
+      "Sending terminal_observe request"
     );
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.pendingCaptures.delete(requestId);
-        reject(new Error("capture_timeout"));
-      }, timeoutMs);
+        const pending = this.pendingObserves.get(requestId);
+        if (!pending) {
+          return;
+        }
+        const timedOutAt = Date.now();
+        pending.state.timedOutAt = timedOutAt;
+        pending.state.latestOffset = this.getLastOffset(sessionId);
+        this.pendingObserves.delete(requestId);
+        this.logger.warn(
+          {
+            sessionId,
+            requestId,
+            waitFor: pending.state.waitFor,
+            timeoutMs: pending.state.timeoutMs,
+            localTimeoutMs: pending.state.localTimeoutMs,
+            ageMs: timedOutAt - pending.state.startedAt,
+            deadlineAt: new Date(pending.state.deadlineAt).toISOString(),
+            contextAtDispatch: this.summarizeContextForLog(pending.state.context),
+            contextNow: this.summarizeContextForLog(this.getSessionContext(sessionId)),
+            readinessAtDispatch: pending.state.readinessAtDispatch,
+            readinessNow: this.getLatestReadiness(sessionId),
+            startOffset: pending.state.startOffset,
+            latestOffset: pending.state.latestOffset,
+            outputSeen: pending.state.outputSeen,
+            outputEventCount: pending.state.outputEventCount,
+            offsetDelta: Math.max(pending.state.latestOffset - pending.state.startOffset, 0),
+            component: "terminal_session_manager"
+          },
+          "terminal_observe timed out locally"
+        );
+        reject(new Error("observe_timeout"));
+      }, localTimeoutMs);
 
-      this.pendingCaptures.set(requestId, { resolve, reject, timeout });
+      this.pendingObserves.set(requestId, { resolve, reject, timeout, state: observeState });
     });
   }
 
-  /**
-   * Run a command and get output directly from Bud (request-response pattern).
-   * This is the new clean approach that replaces sendInput + waitForReadiness + tailOutput.
-   */
-  async runCommand(
+  async capturePane(
     sessionId: string,
-    input: Buffer,
+    options: CapturePaneOptions = {},
+    timeoutMs = 5000
+  ): Promise<ObserveResult> {
+    return this.observeTerminal(
+      sessionId,
+      {
+        lines: options.startLine ?? -50,
+        waitFor: "none",
+        view: "screen"
+      },
+      timeoutMs
+    );
+  }
+
+  async execCommand(
+    sessionId: string,
+    command: string,
     options: {
-      mode?: "shell" | "repl";
       timeoutMs?: number;
     } = {}
-  ): Promise<RunResult> {
+  ): Promise<ExecResult> {
     const session = await this.getSession(sessionId);
     if (!session) {
       throw new Error("session_not_found");
     }
 
-    const requestId = `run_${ulid()}`;
+    const requestId = `exec_${ulid()}`;
     const timeoutMs = options.timeoutMs ?? 30000;
-    const mode = options.mode ?? "shell";
 
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
-      type: "terminal_run",
+      type: "terminal_exec",
       id: `msg_${ulid()}`,
       ts: Date.now(),
       ext: {},
       session_id: sessionId,
       request_id: requestId,
-      input: input.toString("base64"),
-      mode,
+      command,
       timeout_ms: timeoutMs
     };
 
@@ -955,18 +1215,79 @@ export class TerminalSessionManager {
     }
 
     this.logger.info(
-      { sessionId, requestId, mode, inputBytes: input.length, component: "terminal_session_manager" },
-      "Sending terminal_run request"
+      { sessionId, requestId, commandLength: command.length, component: "terminal_session_manager" },
+      "Sending terminal_exec request"
     );
 
     return new Promise((resolve, reject) => {
-      // Add buffer to timeout (network + processing overhead)
       const timeout = setTimeout(() => {
-        this.pendingRuns.delete(requestId);
-        reject(new Error("run_timeout"));
+        this.pendingExecs.delete(requestId);
+        reject(new Error("exec_timeout"));
       }, timeoutMs + 10000);
 
-      this.pendingRuns.set(requestId, { resolve, reject, timeout });
+      this.pendingExecs.set(requestId, { resolve, reject, timeout });
+    });
+  }
+
+  async sendInteraction(
+    sessionId: string,
+    interaction: SendInteraction,
+    options: {
+      timeoutMs?: number;
+    } = {}
+  ): Promise<SendResult> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      throw new Error("session_not_found");
+    }
+
+    const requestId = `send_${ulid()}`;
+    const timeoutMs = options.timeoutMs ?? 5000;
+    const waitFor = interaction.waitFor ?? "none";
+    const observeAfterMs = interaction.observeAfterMs ?? 150;
+
+    const payload = {
+      proto: TERMINAL_PROTO_VERSION,
+      type: "terminal_send",
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
+      session_id: sessionId,
+      request_id: requestId,
+      text: interaction.text ?? null,
+      submit: interaction.submit === true,
+      keys: interaction.keys ?? [],
+      observe_after_ms: observeAfterMs,
+      wait_for: waitFor,
+      timeout_ms: timeoutMs,
+    };
+
+    const sent = sendFrameToBud(session.budId, payload);
+    if (!sent) {
+      throw new Error("bud_offline");
+    }
+
+    this.logger.info(
+      {
+        sessionId,
+        requestId,
+        hasText: Boolean(interaction.text),
+        submit: interaction.submit === true,
+        keyCount: interaction.keys?.length ?? 0,
+        observeAfterMs,
+        waitFor,
+        component: "terminal_session_manager"
+      },
+      "Sending terminal_send request"
+    );
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingSends.delete(requestId);
+        reject(new Error("send_timeout"));
+      }, timeoutMs + 1000);
+
+      this.pendingSends.set(requestId, { resolve, reject, timeout });
     });
   }
 
@@ -1369,6 +1690,27 @@ export class TerminalSessionManager {
     return basename.replace(/^\.\//, "");
   }
 
+  private storeReadinessAssessment(sessionId: string, assessment: ReadinessAssessment): void {
+    this.readiness.set(sessionId, { assessment, updatedAt: Date.now() });
+
+    if (
+      assessment.prompt_type === "shell" &&
+      assessment.confidence >= 0.8 &&
+      assessment.hints?.looks_like_prompt
+    ) {
+      const pending = this.pendingCommands.get(sessionId);
+      if (pending) {
+        const durationMs = Date.now() - pending.sentAt;
+        this.debug("clearing pending command - returned to shell", {
+          sessionId,
+          command: pending.command,
+          durationMs
+        });
+        this.pendingCommands.set(sessionId, null);
+      }
+    }
+  }
+
   private async recordInput(
     sessionId: string,
     data: Buffer,
@@ -1407,5 +1749,60 @@ export class TerminalSessionManager {
       return;
     }
     this.logger.info({ ...meta, component: "terminal_session_manager" }, message);
+  }
+
+  private pruneRecentObserveStates(now = Date.now()): void {
+    const retentionMs = 5 * 60 * 1000;
+    for (const [requestId, state] of this.recentObserveStates.entries()) {
+      const referenceTime = state.timedOutAt ?? state.startedAt;
+      if (!this.pendingObserves.has(requestId) && now - referenceTime > retentionMs) {
+        this.recentObserveStates.delete(requestId);
+      }
+    }
+  }
+
+  private summarizeContextForLog(context: TerminalContext): Record<string, unknown> {
+    return {
+      mode: context.mode,
+      program: context.program ?? null,
+      programDisplayName: context.programDisplayName ?? null,
+      interactionStyle: context.interactionStyle ?? null,
+      pendingCommand: context.pendingCommand?.command ?? null,
+      pendingSource: context.pendingCommand?.source ?? null
+    };
+  }
+
+  private summarizeObservedOutput(output: string): Record<string, unknown> {
+    const lines = output.length === 0 ? [] : output.split(/\r?\n/);
+    let lastNonEmptyLine = "";
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (lines[index] && lines[index].trim().length > 0) {
+        lastNonEmptyLine = lines[index];
+        break;
+      }
+    }
+    if (!lastNonEmptyLine && lines.length > 0) {
+      lastNonEmptyLine = lines[lines.length - 1] ?? "";
+    }
+    const summary: Record<string, unknown> = {
+      screenHash: createHash("sha256").update(output).digest("hex").slice(0, 16),
+      lineCount: lines.length,
+      lastNonEmptyLine: this.truncateForLog(lastNonEmptyLine)
+    };
+
+    if (config.agentDebug) {
+      summary.firstLines = lines.slice(0, 2).map((line) => this.truncateForLog(line));
+      summary.lastLines = lines.slice(-2).map((line) => this.truncateForLog(line));
+    }
+
+    return summary;
+  }
+
+  private truncateForLog(value: string, maxLength = 160): string {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `${normalized.slice(0, maxLength - 3)}...`;
   }
 }

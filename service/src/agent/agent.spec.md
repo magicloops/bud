@@ -31,17 +31,19 @@ Defines agent behavior as "Bud Agent" with:
 - Readiness confidence interpretation (≥0.8 ready, 0.5-0.8 probably ready, <0.5 still processing)
 - Hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (detecting when inside Python/Node/Claude Code vs shell)
+- Interactive wait guidance using `wait_for: "changed"` to confirm visible reaction and `wait_for: "settled"` to wait for a short quiet window
 - Final-response guidance (direct markdown text, no JSON wrapper)
 
 #### Tool Definitions (Lines 130-191)
 
-Three canonical tool definitions using standard JSON Schema format:
+Four canonical tool definitions using standard JSON Schema format:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `terminal_run` | `input`, `timeout_ms?` | Send input to terminal (include `\n` for Enter) |
+| `terminal_exec` | `command`, `timeout_ms?` | Run a shell command and return authoritative output |
+| `terminal_send` | `text?`, `submit?`, `keys?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Send interactive input with a default fast post-send observation |
+| `terminal_observe` | `lines?`, `wait_for?`, `view?`, `timeout_ms?` | Observe the rendered terminal screen or recent scrollback |
 | `terminal_interrupt` | none | Send Ctrl+C |
-| `terminal_capture` | `wait?`, `lines?`, `timeout_ms?` | Capture terminal screen with optional readiness wait |
 
 **Note**: Optional parameters (`?`) are simply omitted from the `required` array. The OpenAI provider transforms these to the null-union pattern required by OpenAI strict mode during tool transformation.
 
@@ -64,10 +66,10 @@ Three canonical tool definitions using standard JSON Schema format:
 | `invokeModel(threadId, turnId, messages, reasoningEffort, signal)` | Consume provider `invoke()` streams, emit draft assistant SSE, and reconstruct a canonical response |
 | `parseResponse(response)` | Extract final assistant text from `CanonicalResponse` |
 | `extractFunctionCall(response)` | Extract tool calls from `response.toolCalls` |
-| `executeTerminalCall(threadId, toolCall)` | Run terminal.* tools via TerminalSessionManager (uses `runCommand()` for terminal.run) |
+| `executeTerminalCall(threadId, toolCall)` | Run terminal tools via TerminalSessionManager and enforce shell-vs-interactive behavior |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 | `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
-| `parseCommandFromInput(input)` | Extract command name from terminal input |
+| `parseCommandFromText(input)` | Extract command name from shell-entered text |
 
 **Agent Loop Flow**:
 ```
@@ -106,6 +108,31 @@ startUserMessage()
 - Reasoning blocks are preserved inside the in-memory conversation on tool-call loops so providers that require multi-turn reasoning context do not lose those items.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
+- `terminal.send` summaries are now evidence-based rather than optimistic: the agent records fast post-send observation data and avoids claiming program progress when the screen did not visibly change.
+- `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model, and replay normalization maps any older `screen_stable` tool payloads to `settled`.
+- `terminal.send` now derives an explicit evidence-based `state` (`processing`, `waiting_for_input`, `ready_at_shell`, `ambiguous`) and uses that state to drive `follow_up_hint`, summary language, and `context_after`.
+- `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
+
+### `terminal-send-outcome.ts`
+
+Small helper module for interpreting `terminal.send` evidence.
+
+**Responsibilities**:
+- derive send acceptance states from the fast post-send observation
+- derive an explicit next-step send state from acceptance, readiness, and observed/inferred context
+- build conservative tool summaries such as "Attempted to send ...; no visible change observed after 150ms"
+- generate follow-up hints that steer toward `terminal.observe`, another `terminal.send`, or `terminal.exec` based on evidence
+
+### `terminal-send-outcome.test.ts`
+
+Standalone Node tests for Phase 6 send-result interpretation.
+
+**Current Coverage**:
+- unchanged post-send screens map to `acceptance.status = "no_visible_change"`
+- summaries remain conservative and mention the `150ms` default observe window
+- ambiguous sends recommend `terminal.observe` before the agent assumes the TUI accepted the input
+- settled REPL/TUI updates map to `state.status = "waiting_for_input"`
+- send results that visibly return to shell map their next step back to `terminal.exec`
 
 **Reasoning Effort Support**:
 
@@ -193,6 +220,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../runtime/terminal-session-manager.js` | Thread-scoped terminal sessions |
 | `../runtime/agent-runtime-state.js` | Agent runtime snapshot + bounded-resume emission |
 | `../terminal/types.js` | Readiness hints types |
+| `./terminal-send-outcome.js` | Send-result evidence interpretation for summaries and hints |
 | `../db/thread-metadata.js` | Thread activity tracking |
 
 ## Configuration Used

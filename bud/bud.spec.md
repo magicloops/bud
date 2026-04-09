@@ -161,9 +161,18 @@ terminal_ensure    →    Check/create tmux session
 terminal_input     →    tmux send-keys (text + Enter)
                         Optional: spawn readiness detector
 
-terminal_capture   →    tmux capture-pane
-                        Apply deduplication
-                        Send terminal_capture_response
+terminal_exec      →    tmux send-keys (command + Enter)
+                        Wait for shell quiescence
+                        Send terminal_exec_result
+
+terminal_send      →    tmux send-keys (structured text/keys)
+                        Fast post-send capture after 150ms by default
+                        Optional: wait for shell_ready, changed, or settled
+                        Send terminal_send_result
+
+terminal_observe   →    tmux capture-pane
+                        Optional: wait with the shared changed/settled engine before capture
+                        Send terminal_observe_result
 
 terminal_interrupt →    tmux send-keys C-c
                         Optional: spawn readiness detector
@@ -197,6 +206,12 @@ For interactive programs like Claude Code:
 - Compares `capture-pane` hashes at intervals
 - Waits for N consecutive identical screens
 - Handles apps with natural processing pauses
+
+For the Phase 6/7 agent-facing send/observe path specifically:
+- Bud now captures an immediate post-send screen by default after `150ms`
+- `terminal_send_result` includes both dispatch success and fast screen evidence
+- explicit agent-facing waits now use `changed` / `settled`, which start sampling immediately instead of waiting through the old blind `screen_stable` loop
+- the older activity-based detector remains for low-level `terminal_input` / `terminal_interrupt` readiness events
 
 ## Dependencies
 

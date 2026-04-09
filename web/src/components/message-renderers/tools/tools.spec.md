@@ -4,7 +4,7 @@ Tool-specific content renderers for displaying tool call results in chat.
 
 ## Purpose
 
-Provides components for rendering tool-specific UI within chat messages. When the agent calls tools like `terminal.run`, these renderers display the results in a user-friendly format.
+Provides components for rendering tool-specific UI within chat messages. When the agent calls tools like `terminal.exec`, `terminal.send`, and `terminal.observe`, these renderers display the results in a user-friendly format.
 
 ## Files
 
@@ -14,7 +14,9 @@ Registry mapping tool names to their renderers:
 
 ```typescript
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
-  'terminal.run': TerminalRunContent,
+  'terminal.exec': TerminalExecContent,
+  'terminal.send': TerminalSendContent,
+  'terminal.observe': TerminalObserveContent,
 }
 ```
 
@@ -22,20 +24,26 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
 
 ### `terminal-run.tsx`
 
-Renders `terminal.run` tool calls as styled terminal commands.
+Renders the revised terminal tool contract:
 
 **Props**:
-- `payload.input` - The command input (string)
+- `payload.command` - Shell command for `terminal.exec`
+- `payload.text` / `payload.submit` / `payload.keys` - Interactive input summary for `terminal.send`
+- `payload.state` / `payload.acceptance` / `payload.observation` / `payload.context_after` - Evidence-based send-result state for `terminal.send`
+- `payload.view` / `payload.lines` - Observation metadata for `terminal.observe`
 
 **Rendering**:
-- Black background with rounded corners
-- Green `$` prompt prefix
-- Green command text in monospace font
-- Whitespace preserved
+- `terminal.exec`: black terminal-style command block
+- `terminal.send`: evidence-oriented card showing send state, next action, observation timing, context source, visible last-line preview, and follow-up hint
+- `terminal.observe`: dashed observation badge, including explicit wait mode when present
 
-**Example Output**:
-```
+**Example Outputs**:
+```text
 $ ls -la
+```
+```text
+Submit: Enter
+Keys: q
 ```
 
 ## Types
@@ -60,7 +68,6 @@ export type ToolContentRenderer = ComponentType<ToolContentRendererProps>
 
 <!-- SPEC:TODO -->
 Potential tool renderers to add:
-- `terminal.capture` - Display captured terminal screen
 - `terminal.interrupt` - Show Ctrl+C indicator
 - File operations (read, write, edit)
 

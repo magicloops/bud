@@ -41,8 +41,9 @@ WebSocket message frame types matching the service protocol:
 | `RunFrame` | ← Service | Command execution request |
 | `TerminalEnsureFrame` | ← Service | Create/verify tmux session |
 | `TerminalInputFrame` | ← Service | Send input to terminal |
-| `TerminalCaptureFrame` | ← Service | Request capture-pane output |
-| `TerminalRunFrame` | ← Service | Request-response command execution |
+| `TerminalExecFrame` | ← Service | Request-response shell execution |
+| `TerminalSendFrame` | ← Service | Structured interactive input with optional fast post-send observation |
+| `TerminalObserveFrame` | ← Service | Explicit screen inspection |
 | `AwaitReady` | Config | Readiness detection options |
 
 #### Run Executor (Lines 435-660)
@@ -74,13 +75,21 @@ Hash-based deduplication for `capture-pane` output:
 - **`handle_resize`** - Resize via `tmux resize-window`
 - **`handle_interrupt`** - Send Ctrl+C via `tmux send-keys C-c`
 - **`handle_close`** - Kill session via `tmux kill-session`
-- **`handle_capture`** - Execute `tmux capture-pane` with options
-- **`handle_run`** - Request-response pattern for agent's `terminal.run`:
-  - Sends input to tmux
-  - Waits for readiness using mode-specific detection
-  - Returns output directly in `terminal_run_result` message
-  - Shell mode: quiescence-based (reads from log file)
-  - REPL mode: activity-based (compares capture-pane hashes)
+- **`handle_exec`** - Request-response pattern for agent `terminal.exec`:
+  - Sends a shell command plus Enter to tmux
+  - Waits for quiescence using the pipe-pane log
+  - Returns output directly in `terminal_exec_result`
+- **`handle_send`** - Structured interactive input path for agent `terminal.send`:
+  - Sends literal text, optional submit, and special keys
+  - Captures a fast post-send screen observation after `observe_after_ms` (default `150ms`)
+  - Defaults to `wait_for: "none"` and `timeout_ms: 5000`
+  - Can explicitly wait for `shell_ready`, `changed`, or `settled`
+  - Reuses a pre-send baseline capture so waits can detect immediate redraws and echoed input
+  - Returns dispatch status plus `observation` and readiness in `terminal_send_result`
+- **`handle_observe`** - Explicit screen observation for agent `terminal.observe`:
+  - Optionally waits with the same immediate-start screen engine used by `terminal.send`
+  - Reuses the wait capture instead of always performing a second `capture-pane`
+  - Returns `terminal_observe_result`
 
 **Output Streaming**:
 - Uses `tmux pipe-pane` to capture output to a session log under `BUD_TERMINAL_BASE_DIR/sessions/{session_id}/terminal.log`
@@ -113,6 +122,17 @@ Hash-based deduplication for `capture-pane` output:
 - Declares ready when screen unchanged for N consecutive checks
 - Designed for apps like Claude Code that have natural processing pauses
 - Default: 5s intervals, 2 stable checks required, 60s max wait
+
+**Phase 6 Note**:
+- The agent-facing `terminal.send` path no longer relies on activity stability by default; it now uses an immediate fast capture after send and reserves `screen_stable` for explicit wait requests.
+
+**Phase 7 Note**:
+- Agent-facing `terminal.send` / `terminal.observe` now share an immediate-start screen wait helper that:
+  - supports `changed` and `settled`
+  - polls every `100ms`
+  - treats `settled` as a short quiet window (`300ms`) instead of the older blind delay loop
+  - returns timeout assessments that stay conservative instead of treating a missed wait as positive readiness
+- The older `ActivityDetector` remains in place for low-level `terminal_input` / `terminal_interrupt` readiness events.
 
 #### Main Application (Lines 2365-2875)
 

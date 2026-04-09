@@ -119,23 +119,65 @@ const TerminalReadySchema = TerminalEnvelopeSchema.extend({
   assessment: z.record(z.unknown())
 });
 
-const TerminalCaptureResponseSchema = TerminalEnvelopeSchema.extend({
-  type: z.literal("terminal_capture_response"),
+const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_observe_result"),
   session_id: z.string(),
   request_id: z.string(),
+  view: z.literal("screen"),
   output: z.string(),  // base64
   output_bytes: z.number().int().nonnegative(),
   lines_captured: z.number().int().nonnegative(),
+  readiness: z.object({
+    ready: z.boolean(),
+    confidence: z.number(),
+    trigger: z.string(),
+    prompt_type: z.string().optional(),
+    hints: z.record(z.boolean()).optional(),
+    quiet_for_ms: z.number().optional(),
+    activity_checks: z.number().optional(),
+    stable_checks: z.number().optional()
+  }),
   error: z.string().nullable()
 });
 
-const TerminalRunResultSchema = TerminalEnvelopeSchema.extend({
-  type: z.literal("terminal_run_result"),
+const TerminalExecResultSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_exec_result"),
   session_id: z.string(),
   request_id: z.string(),
   output: z.string(), // base64
   output_bytes: z.number().int().nonnegative(),
   truncated: z.boolean(),
+  readiness: z.object({
+    ready: z.boolean(),
+    confidence: z.number(),
+    trigger: z.string(),
+    prompt_type: z.string().optional(),
+    hints: z.record(z.boolean()).optional(),
+    quiet_for_ms: z.number().optional(),
+    activity_checks: z.number().optional(),
+    stable_checks: z.number().optional()
+  }),
+  error: z.string().nullable()
+});
+
+const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_send_result"),
+  session_id: z.string(),
+  request_id: z.string(),
+  submitted: z.boolean(),
+  observation: z
+    .object({
+      captured_after_ms: z.number().int().nonnegative(),
+      screen_changed: z.boolean(),
+      baseline_hash: z.string(),
+      current_hash: z.string(),
+      lines_captured: z.number().int().nonnegative(),
+      last_non_empty_line: z.string(),
+      preview_head: z.string().nullable().optional(),
+      preview_tail: z.string().nullable().optional()
+    })
+    .nullable()
+    .optional(),
   readiness: z.object({
     ready: z.boolean(),
     confidence: z.number(),
@@ -370,11 +412,14 @@ class BudConnection {
       case "terminal_ready":
         await this.handleTerminalReady(parsed);
         break;
-      case "terminal_capture_response":
-        await this.handleTerminalCaptureResponse(parsed);
+      case "terminal_observe_result":
+        await this.handleTerminalObserveResult(parsed);
         break;
-      case "terminal_run_result":
-        await this.handleTerminalRunResult(parsed);
+      case "terminal_exec_result":
+        await this.handleTerminalExecResult(parsed);
+        break;
+      case "terminal_send_result":
+        await this.handleTerminalSendResult(parsed);
         break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
@@ -495,48 +540,73 @@ class BudConnection {
     await this.terminalSessionManager.handleTerminalReady(sessionId, result.data.assessment as unknown as import("../terminal/types.js").ReadinessAssessment);
   }
 
-  private async handleTerminalCaptureResponse(raw: unknown) {
+  private async handleTerminalObserveResult(raw: unknown) {
     if (!config.terminalEnabled) {
       return;
     }
     if (this.state.kind !== "connected") {
       return;
     }
-    const result = TerminalCaptureResponseSchema.safeParse(raw);
+    const result = TerminalObserveResultSchema.safeParse(raw);
     if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid terminal_capture_response frame");
+      logDebug({ error: result.error.message }, "Invalid terminal_observe_result frame");
       return;
     }
 
     const sessionId = result.data.session_id;
-    this.terminalSessionManager.handleCaptureResponse(sessionId, {
+    this.terminalSessionManager.handleObserveResult(sessionId, {
       requestId: result.data.request_id,
+      view: result.data.view,
       output: result.data.output,
       outputBytes: result.data.output_bytes,
       linesCaptured: result.data.lines_captured,
+      readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });
   }
 
-  private async handleTerminalRunResult(raw: unknown): Promise<void> {
+  private async handleTerminalExecResult(raw: unknown): Promise<void> {
     if (!config.terminalEnabled) {
       return;
     }
     if (this.state.kind !== "connected") {
       return;
     }
-    const result = TerminalRunResultSchema.safeParse(raw);
+    const result = TerminalExecResultSchema.safeParse(raw);
     if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid terminal_run_result frame");
+      logDebug({ error: result.error.message }, "Invalid terminal_exec_result frame");
       return;
     }
 
     const sessionId = result.data.session_id;
-    this.terminalSessionManager.handleRunResult(sessionId, {
+    this.terminalSessionManager.handleExecResult(sessionId, {
       requestId: result.data.request_id,
       output: result.data.output,
       outputBytes: result.data.output_bytes,
       truncated: result.data.truncated,
+      readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
+      error: result.data.error
+    });
+  }
+
+  private async handleTerminalSendResult(raw: unknown): Promise<void> {
+    if (!config.terminalEnabled) {
+      return;
+    }
+    if (this.state.kind !== "connected") {
+      return;
+    }
+    const result = TerminalSendResultSchema.safeParse(raw);
+    if (!result.success) {
+      logDebug({ error: result.error.message }, "Invalid terminal_send_result frame");
+      return;
+    }
+
+    const sessionId = result.data.session_id;
+    this.terminalSessionManager.handleSendResult(sessionId, {
+      requestId: result.data.request_id,
+      submitted: result.data.submitted,
+      observation: result.data.observation ?? null,
       readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });

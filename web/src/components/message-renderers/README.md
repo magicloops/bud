@@ -84,7 +84,9 @@ Add to `tools/index.ts`:
 import { MyToolContent } from './my-tool'
 
 const toolContentRenderers: Record<string, ToolContentRenderer> = {
-  'terminal.run': TerminalRunContent,
+  'terminal.exec': TerminalExecContent,
+  'terminal.send': TerminalSendContent,
+  'terminal.observe': TerminalObserveContent,
   'my.tool': MyToolContent,  // Add your renderer here
 }
 ```
@@ -93,7 +95,7 @@ That's it! The chat timeline will automatically use your renderer for matching t
 
 ## How It Works
 
-1. **Tool messages** have a `payload.tool` field (e.g., `"terminal.run"`)
+1. **Tool messages** have a `payload.tool` field (e.g., `"terminal.exec"`)
 2. `chat-timeline.tsx` calls `getToolContentRenderer(toolName)`
 3. If a renderer exists, it renders the tool-specific summary content
 4. If not, only the "Show payload" button appears (graceful fallback)

@@ -45,8 +45,8 @@ test("no-cursor attach is live-only for agent runtime streams", () => {
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { input: "pwd\n" },
+      name: "terminal.exec",
+      args: { command: "pwd" },
     },
   });
 
@@ -64,7 +64,7 @@ test("no-cursor attach is live-only for agent runtime streams", () => {
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
+      name: "terminal.exec",
     },
   });
 
@@ -81,8 +81,8 @@ test("attach after a known cursor replays only newer visible events", () => {
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { input: "pwd\n" },
+      name: "terminal.exec",
+      args: { command: "pwd" },
     },
   });
   runtime.setPendingTool(
@@ -90,8 +90,8 @@ test("attach after a known cursor replays only newer visible events", () => {
     {
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { input: "pwd\n" },
+      name: "terminal.exec",
+      args: { command: "pwd" },
     },
     toolCallCursor,
   );
@@ -102,7 +102,7 @@ test("attach after a known cursor replays only newer visible events", () => {
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
+      name: "terminal.exec",
     },
   });
   runtime.markThinking("thread-1");
@@ -172,8 +172,8 @@ test("runtime snapshots expose client_id on pending_tool and draft_assistant", (
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { input: "pwd\n" },
+      name: "terminal.exec",
+      args: { command: "pwd" },
     },
   });
   runtime.setPendingTool(
@@ -181,8 +181,8 @@ test("runtime snapshots expose client_id on pending_tool and draft_assistant", (
     {
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { input: "pwd\n" },
+      name: "terminal.exec",
+      args: { command: "pwd" },
     },
     toolCursor,
   );
@@ -215,8 +215,8 @@ test("advanceCursor preserves runtime state while acknowledging external events"
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { input: "pwd\n" },
+      name: "terminal.exec",
+      args: { command: "pwd" },
     },
   });
   runtime.setPendingTool(
@@ -224,8 +224,8 @@ test("advanceCursor preserves runtime state while acknowledging external events"
     {
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.run",
-      args: { input: "pwd\n" },
+      name: "terminal.exec",
+      args: { command: "pwd" },
     },
     toolCursor,
   );

@@ -14,7 +14,41 @@ export type TerminalPromptType =
   | "database"
   | "unknown";
 
-export type TerminalReadyTrigger = "prompt_detected" | "quiescence" | "timeout" | "activity_stable";
+export type TerminalReadyTrigger =
+  | "prompt_detected"
+  | "quiescence"
+  | "timeout"
+  | "activity_stable"
+  | "changed"
+  | "settled";
+export type TerminalWaitFor =
+  | "none"
+  | "shell_ready"
+  | "changed"
+  | "settled";
+export type TerminalObservationView = "screen";
+
+export interface TerminalSendObservation {
+  capturedAfterMs: number;
+  screenChanged: boolean;
+  baselineHash: string;
+  currentHash: string;
+  linesCaptured: number;
+  lastNonEmptyLine: string;
+  previewHead?: string | null;
+  previewTail?: string | null;
+}
+
+export interface TerminalSendObservationMessage {
+  captured_after_ms: number;
+  screen_changed: boolean;
+  baseline_hash: string;
+  current_hash: string;
+  lines_captured: number;
+  last_non_empty_line: string;
+  preview_head?: string | null;
+  preview_tail?: string | null;
+}
 
 export interface TerminalEnvelope {
   type: string;
@@ -125,12 +159,16 @@ export interface TerminalReadyMessage extends TerminalEnvelope {
   last_line: string;
 }
 
-/**
- * Request-response pattern for terminal.run tool.
- * Bud waits for readiness and returns output directly.
- */
-export interface TerminalRunResultMessage extends TerminalEnvelope {
-  type: "terminal_run_result";
+export interface TerminalExecMessage extends TerminalEnvelope {
+  type: "terminal_exec";
+  session_id: string;
+  request_id: string;
+  command: string;
+  timeout_ms?: number;
+}
+
+export interface TerminalExecResultMessage extends TerminalEnvelope {
+  type: "terminal_exec_result";
   session_id: string;
   request_id: string;
   output: string; // base64
@@ -140,10 +178,54 @@ export interface TerminalRunResultMessage extends TerminalEnvelope {
   error: string | null;
 }
 
+export interface TerminalSendMessage extends TerminalEnvelope {
+  type: "terminal_send";
+  session_id: string;
+  request_id: string;
+  text?: string;
+  submit?: boolean;
+  keys?: string[];
+  observe_after_ms?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
+}
+
+export interface TerminalSendResultMessage extends TerminalEnvelope {
+  type: "terminal_send_result";
+  session_id: string;
+  request_id: string;
+  submitted: boolean;
+  observation?: TerminalSendObservationMessage | null;
+  readiness: ReadinessAssessment;
+  error: string | null;
+}
+
+export interface TerminalObserveMessage extends TerminalEnvelope {
+  type: "terminal_observe";
+  session_id: string;
+  request_id: string;
+  view?: TerminalObservationView;
+  lines?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
+}
+
+export interface TerminalObserveResultMessage extends TerminalEnvelope {
+  type: "terminal_observe_result";
+  session_id: string;
+  request_id: string;
+  view: TerminalObservationView;
+  output: string; // base64
+  output_bytes: number;
+  lines_captured: number;
+  readiness: ReadinessAssessment;
+  error: string | null;
+}
+
 // Command stack tracking types
 
 export interface PendingCommand {
-  input: string; // Raw input sent, e.g., "claude\n"
+  input: string; // Raw input sent, e.g., "claude" or "claude\n"
   command: string; // Parsed command name, e.g., "claude"
   sentAt: number; // Timestamp when sent
   source: "agent" | "user" | "system"; // Who sent this command

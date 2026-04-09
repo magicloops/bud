@@ -130,8 +130,9 @@ Thread-scoped terminal session management using tmux (~800 lines).
 - `readiness` - Map of sessionId → { assessment, updatedAt }
 - `lastOffsets` - Map of sessionId → last known byte offset
 - `pendingCommands` - Map of sessionId → PendingCommand (for REPL context)
-- `pendingCaptures` - Map of requestId → { resolve, reject, timeout }
-- `pendingRuns` - Map of requestId → { resolve, reject, timeout } (for terminal_run)
+- `pendingObserves` - Map of requestId → { resolve, reject, timeout }
+- `pendingExecs` - Map of requestId → { resolve, reject, timeout }
+- `pendingSends` - Map of requestId → { resolve, reject, timeout }
 
 **Key Methods**:
 
@@ -145,15 +146,18 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `sendInterrupt(sessionId)` | Send Ctrl+C |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
 | `closeSession(sessionId, reason)` | Close session |
-| `capturePane(sessionId, options)` | Execute capture-pane |
-| `runCommand(sessionId, input, options)` | Request-response command execution |
+| `observeTerminal(sessionId, options)` | Explicit screen observation request-response |
+| `capturePane(sessionId, options)` | Compatibility wrapper used by context sync |
+| `execCommand(sessionId, command, options)` | Request-response shell execution |
+| `sendInteraction(sessionId, interaction, options)` | Request-response interactive input / keypress dispatch |
 | `tailOutput(sessionId, bytes, options)` | Get recent output from DB |
 | `setPendingCommand(sessionId, command)` | Track REPL program execution |
 | `handleTerminalStatus(sessionId, payload)` | Bud reports session state |
 | `handleTerminalOutput(sessionId, payload)` | Store and broadcast output |
 | `handleTerminalReady(sessionId, assessment)` | Readiness assessment received |
-| `handleCaptureResponse(sessionId, payload)` | Capture result received |
-| `handleRunResult(sessionId, payload)` | Run command result received |
+| `handleObserveResult(sessionId, payload)` | Observe result received |
+| `handleExecResult(sessionId, payload)` | Exec result received |
+| `handleSendResult(sessionId, payload)` | Send result received |
 | `startIdleChecks()` / `stopIdleChecks()` | Periodic idle-state management; destructive cleanup runs only when explicitly configured |
 
 **Session States**:
@@ -174,31 +178,40 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 2. Provides `getContext(sessionId)` for agent to understand terminal state
 3. Uses `known-programs.ts` registry for program-specific hints
 
-**Capture Protocol**:
+**Observe Protocol**:
 
-1. Service sends `terminal_capture` with `request_id`
-2. Bud executes `tmux capture-pane`
-3. Bud sends `terminal_capture_response` with matching `request_id`
-4. Promise resolves with capture result
+1. Service sends `terminal_observe` with `request_id`
+2. Bud optionally waits using `shell_ready`, `changed`, or `settled`, then reuses that capture for the response when possible
+3. Bud sends `terminal_observe_result` with matching `request_id`
+4. Promise resolves with screen output plus readiness
 
-**Run Protocol** (request-response for terminal.run):
+**Exec Protocol**:
 
-1. Service sends `terminal_run` with `request_id`, `input`, `mode`
-2. Bud sends input to tmux
-3. Bud waits for readiness:
-   - Shell mode: quiescence-based (watches log file for quiet period)
-   - REPL mode: activity-based (compares capture-pane hashes)
-4. Bud sends `terminal_run_result` with output, readiness assessment
-5. Promise resolves with `RunResult`
+1. Service sends `terminal_exec` with `request_id` and `command`
+2. Bud sends the command plus Enter to tmux
+3. Bud waits for shell quiescence
+4. Bud sends `terminal_exec_result` with output and readiness
+5. Promise resolves with `ExecResult`
 
-This pattern replaces the previous approach of `sendInput` + `waitForReadiness` + `tailOutput`, providing cleaner ownership boundaries where Bud handles all terminal state.
+**Send Protocol**:
+
+1. Service sends `terminal_send` with structured `text` / `submit` / `keys`
+2. Bud dispatches literal text and special keys to tmux
+3. Bud captures a fast post-send screen observation after `observe_after_ms` (default `150ms`)
+4. Bud optionally waits for `shell_ready`, `changed`, or `settled` when explicitly requested
+5. Bud sends `terminal_send_result` with dispatch status, fast observation evidence, and readiness
+
+These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. Bud now owns shell execution output, interactive acknowledgement, and explicit observation as separate operations.
 
 **Terminal SSE Payload Notes**:
 - `terminal.output` carries `seq`, `data`, and `byte_offset`
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
-- `runCommand()` returns Bud-owned `truncated` / `outputBytes` values for `terminal.run`
-- `capturePane()` currently has no separate truncation flag; agent tool payloads treat capture output as not truncated
+- `execCommand()` returns Bud-owned `truncated` / `outputBytes` values for `terminal.exec`
+- `sendInteraction()` now defaults to `waitFor: "none"`, `observeAfterMs: 150`, and a `5000ms` timeout so the agent gets immediate evidence instead of blindly waiting for delayed screen stability
+- `handleSendResult()` now resolves a richer send contract including `observation` (`screenChanged`, hashes, preview lines, last visible line) in addition to readiness
+- `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
+- `observeTerminal()` returns rendered screen output; agent payloads treat observation as non-truncated
 - `tailOutput(maxBytes)` underlies `terminal.interrupt` tool payloads, so interrupt truncation is a service backfill-window concern rather than a Bud runtime limit
 
 **Ownership Notes**:

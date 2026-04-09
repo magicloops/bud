@@ -238,6 +238,7 @@ struct TerminalConfig {
     shell: String,
     tmux_available: bool,
     tmux_version: Option<String>,
+    debug_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -329,6 +330,8 @@ const ACTIVITY_DEFAULT_INITIAL_DELAY_MS: u64 = 2000;
 const ACTIVITY_DEFAULT_INTERVAL_MS: u64 = 5000;
 const ACTIVITY_DEFAULT_STABLE_COUNT: u32 = 2;
 const ACTIVITY_DEFAULT_MAX_WAIT_MS: u64 = 60_000;
+const SCREEN_WAIT_POLL_INTERVAL_MS: u64 = 100;
+const SCREEN_WAIT_SETTLED_QUIET_MS: u64 = 300;
 
 #[derive(Debug, Deserialize, Clone, Default)]
 struct AwaitReady {
@@ -346,34 +349,38 @@ struct AwaitReady {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct TerminalCaptureFrame {
+struct TerminalExecFrame {
     #[serde(flatten)]
     envelope: Envelope,
     session_id: String,
     request_id: String,
-    #[serde(default)]
-    options: CaptureOptions,
+    command: String,
+    timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
-struct CaptureOptions {
-    start_line: Option<i32>, // -N for scrollback, 0 for top, None for all
-    end_line: Option<i32>,   // None for bottom
-    escape_sequences: bool,  // -e flag (include ANSI colors)
-    join_lines: bool,        // -J flag (join wrapped lines)
-}
-
-/// Request-response pattern for terminal.run tool
-/// Service sends input, Bud waits for readiness and returns output directly
 #[derive(Debug, Deserialize, Clone)]
-struct TerminalRunFrame {
+struct TerminalSendFrame {
     #[serde(flatten)]
     envelope: Envelope,
     session_id: String,
     request_id: String,
-    #[serde(rename = "input")]
-    data: String, // base64
-    mode: Option<String>, // "shell" | "repl"
+    text: Option<String>,
+    submit: Option<bool>,
+    keys: Option<Vec<String>>,
+    observe_after_ms: Option<u64>,
+    wait_for: Option<String>,
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalObserveFrame {
+    #[serde(flatten)]
+    envelope: Envelope,
+    session_id: String,
+    request_id: String,
+    view: Option<String>,
+    lines: Option<i32>,
+    wait_for: Option<String>,
     timeout_ms: Option<u64>,
 }
 
@@ -609,6 +616,182 @@ fn simple_hash(data: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     data.hash(&mut hasher);
     hasher.finish()
+}
+
+#[derive(Clone, Debug)]
+struct CaptureLogSummary {
+    hash: u64,
+    line_count: usize,
+    last_non_empty_line: String,
+    preview_head: Option<String>,
+    preview_tail: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScreenWaitMode {
+    None,
+    Changed,
+    Settled,
+}
+
+#[derive(Debug)]
+struct ScreenCaptureState {
+    capture: String,
+    summary: CaptureLogSummary,
+    captured_after_ms: u64,
+}
+
+#[derive(Debug)]
+struct ScreenWaitResult {
+    capture: String,
+    summary: CaptureLogSummary,
+    assessment: Value,
+    captured_after_ms: u64,
+    changed_since_baseline: bool,
+    check_count: u32,
+    stable_checks: u32,
+}
+
+fn summarize_capture_for_log(content: &str, include_preview: bool) -> CaptureLogSummary {
+    let lines: Vec<&str> = content.lines().collect();
+    let line_count = lines.len();
+    let last_non_empty_line = lines
+        .iter()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .copied()
+        .unwrap_or_else(|| content.trim_end_matches(&['\r', '\n'][..]));
+
+    CaptureLogSummary {
+        hash: simple_hash(content.as_bytes()),
+        line_count,
+        last_non_empty_line: truncate_log_value(last_non_empty_line, 160),
+        preview_head: include_preview.then(|| preview_lines(&lines, false)),
+        preview_tail: include_preview.then(|| preview_lines(&lines, true)),
+    }
+}
+
+fn preview_lines(lines: &[&str], from_end: bool) -> String {
+    let preview_count = 2;
+    let selected: Vec<&str> = if from_end {
+        lines
+            .iter()
+            .rev()
+            .take(preview_count)
+            .copied()
+            .collect::<Vec<&str>>()
+            .into_iter()
+            .rev()
+            .collect()
+    } else {
+        lines.iter().take(preview_count).copied().collect()
+    };
+    truncate_log_value(&selected.join(" | "), 240)
+}
+
+fn truncate_log_value(value: &str, max_chars: usize) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<&str>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    let truncated: String = normalized.chars().take(max_chars.saturating_sub(3)).collect();
+    format!("{truncated}...")
+}
+
+fn assess_capture_readiness(capture: &str) -> Value {
+    let last_line = capture
+        .lines()
+        .last()
+        .unwrap_or_else(|| capture.trim_end_matches(&['\r', '\n'][..]));
+    ReadinessDetector::assess(capture, last_line, 0, 0)
+}
+
+fn build_send_observation_payload(
+    baseline_capture: &str,
+    current_capture: &str,
+    captured_after_ms: u64,
+) -> Value {
+    let baseline_summary = summarize_capture_for_log(baseline_capture, true);
+    let current_summary = summarize_capture_for_log(current_capture, true);
+
+    json!({
+        "captured_after_ms": captured_after_ms,
+        "screen_changed": baseline_summary.hash != current_summary.hash,
+        "baseline_hash": format!("{:016x}", baseline_summary.hash),
+        "current_hash": format!("{:016x}", current_summary.hash),
+        "lines_captured": current_summary.line_count,
+        "last_non_empty_line": current_summary.last_non_empty_line,
+        "preview_head": current_summary.preview_head,
+        "preview_tail": current_summary.preview_tail,
+    })
+}
+
+fn parse_screen_wait_mode(wait_for: &str) -> Result<ScreenWaitMode> {
+    match wait_for {
+        "none" => Ok(ScreenWaitMode::None),
+        "changed" => Ok(ScreenWaitMode::Changed),
+        "settled" | "screen_stable" => Ok(ScreenWaitMode::Settled),
+        _ => bail!("unsupported wait_for mode: {wait_for}"),
+    }
+}
+
+fn set_json_number(map: &mut Map<String, Value>, key: &str, value: u64) {
+    map.insert(key.to_string(), Value::Number(Number::from(value)));
+}
+
+fn build_screen_wait_assessment(
+    capture: &str,
+    trigger: &str,
+    quiet_for_ms: u64,
+    check_count: u32,
+    stable_checks: u32,
+    may_still_be_processing: Option<bool>,
+    confidence_override: Option<f64>,
+    confidence_floor: Option<f64>,
+    ready_override: Option<bool>,
+) -> Value {
+    let mut assessment = assess_capture_readiness(capture);
+
+    if let Some(map) = assessment.as_object_mut() {
+        map.insert("trigger".into(), Value::String(trigger.to_string()));
+        set_json_number(map, "quiet_for_ms", quiet_for_ms);
+        if check_count > 0 {
+            set_json_number(map, "activity_checks", check_count as u64);
+        }
+        if stable_checks > 0 {
+            set_json_number(map, "stable_checks", stable_checks as u64);
+        }
+
+        if let Some(next) = confidence_override {
+            if let Some(number) = Number::from_f64(next) {
+                map.insert("confidence".into(), Value::Number(number));
+            }
+        } else if let Some(floor) = confidence_floor {
+            let current = map
+                .get("confidence")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0);
+            let next = current.max(floor);
+            if let Some(number) = Number::from_f64(next) {
+                map.insert("confidence".into(), Value::Number(number));
+            }
+        }
+
+        if let Some(ready) = ready_override {
+            map.insert("ready".into(), Value::Bool(ready));
+        }
+
+        if let Some(processing) = may_still_be_processing {
+            if let Some(hints) = map.get_mut("hints").and_then(|value| value.as_object_mut()) {
+                hints.insert(
+                    "may_still_be_processing".into(),
+                    Value::Bool(processing),
+                );
+            }
+        }
+    }
+
+    assessment
 }
 
 impl TerminalManager {
@@ -965,158 +1148,27 @@ impl TerminalManager {
         Ok(())
     }
 
-    async fn handle_capture(&self, frame: TerminalCaptureFrame) -> Result<()> {
+    async fn handle_observe(&self, frame: TerminalObserveFrame) -> Result<()> {
         if !self.config.enabled {
-            return Ok(());
-        }
-
-        let session_id = &frame.session_id;
-        let (handle, sender) = {
-            let inner = self.inner.lock().await;
-            (
-                inner.sessions.get(session_id).cloned(),
-                inner.sender.clone(),
-            )
-        };
-
-        let Some(sender) = sender else {
-            warn!(
-                request_id = %frame.request_id,
-                session_id = session_id,
-                "terminal_capture dropped; no sender"
-            );
-            return Ok(());
-        };
-
-        // If no session handle, send error response
-        let Some(handle) = handle else {
-            let response = json!({
-                "proto": TERMINAL_PROTO_VERSION,
-                "type": "terminal_capture_response",
-                "id": new_message_id(),
-                "ts": now_millis(),
-                "ext": {},
-                "session_id": session_id,
-                "request_id": frame.request_id,
-                "output": "",
-                "output_bytes": 0,
-                "lines_captured": 0,
-                "error": "no_session"
-            });
-            send_ws_frame(&sender, response)?;
-            return Ok(());
-        };
-
-        // Build capture-pane command
-        let mut args = vec!["capture-pane", "-p", "-t", &handle.session_name];
-
-        // Temporary storage for string representations
-        let start_str;
-        let end_str;
-
-        if frame.options.join_lines {
-            args.push("-J");
-        }
-        if frame.options.escape_sequences {
-            args.push("-e");
-        }
-        if let Some(start) = frame.options.start_line {
-            start_str = start.to_string();
-            args.extend(["-S", &start_str]);
-        }
-        if let Some(end) = frame.options.end_line {
-            end_str = end.to_string();
-            args.extend(["-E", &end_str]);
-        }
-
-        info!(
-            request_id = %frame.request_id,
-            session_id = session_id,
-            session = %handle.session_name,
-            start_line = ?frame.options.start_line,
-            end_line = ?frame.options.end_line,
-            "executing capture-pane"
-        );
-
-        let output = Command::new("tmux")
-            .args(&args)
-            .output()
-            .await
-            .with_context(|| "failed to execute tmux capture-pane")?;
-
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr).to_string();
-            let response = json!({
-                "proto": TERMINAL_PROTO_VERSION,
-                "type": "terminal_capture_response",
-                "id": new_message_id(),
-                "ts": now_millis(),
-                "ext": {},
-                "session_id": session_id,
-                "request_id": frame.request_id,
-                "output": "",
-                "output_bytes": 0,
-                "lines_captured": 0,
-                "error": error
-            });
-            send_ws_frame(&sender, response)?;
-            return Ok(());
-        }
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let line_count = output_str.lines().count();
-
-        info!(
-            request_id = %frame.request_id,
-            session_id = session_id,
-            output_bytes = output.stdout.len(),
-            lines_captured = line_count,
-            "capture-pane completed"
-        );
-
-        // Send response with raw output (no deduplication - let service layer handle if needed)
-        let response = json!({
-            "proto": TERMINAL_PROTO_VERSION,
-            "type": "terminal_capture_response",
-            "id": new_message_id(),
-            "ts": now_millis(),
-            "ext": {},
-            "session_id": session_id,
-            "request_id": frame.request_id,
-            "output": BASE64_STANDARD.encode(output_str.as_bytes()),
-            "output_bytes": output_str.len(),
-            "lines_captured": line_count,
-            "error": Value::Null
-        });
-
-        send_ws_frame(&sender, response)?;
-        Ok(())
-    }
-
-    /// Handle terminal_run request (request-response pattern for terminal.run tool)
-    /// Sends input to terminal, waits for readiness, and returns output directly
-    async fn handle_run(&self, frame: TerminalRunFrame) -> Result<()> {
-        if !self.config.enabled {
-            return self.send_run_error(&frame, "terminal_disabled").await;
+            return self.send_observe_error(&frame, "terminal_disabled").await;
         }
 
         let session_id = &frame.session_id;
         let request_id = &frame.request_id;
-        let mode = frame.mode.as_deref().unwrap_or("shell");
+        let view = frame.view.as_deref().unwrap_or("screen");
+        let wait_for = frame.wait_for.as_deref().unwrap_or("none");
         let timeout_ms = frame.timeout_ms.unwrap_or(30_000);
+        let lines = frame.lines.unwrap_or(-50);
 
-        // Decode input
-        let data = BASE64_STANDARD
-            .decode(frame.data.as_bytes())
-            .map_err(|err| anyhow!("invalid terminal run input: {}", err))?;
+        if view != "screen" {
+            return self.send_observe_error(&frame, "unsupported_view").await;
+        }
 
-        // Get session handle
         let handle = self.ensure_handle_for_session(session_id, None).await?;
         let Some(handle) = handle else {
-            return self.send_run_error(&frame, "session_not_found").await;
+            return self.send_observe_error(&frame, "session_not_found").await;
         };
 
-        // Get sender
         let sender = {
             let inner = self.inner.lock().await;
             inner.sender.clone()
@@ -1125,63 +1177,178 @@ impl TerminalManager {
             warn!(
                 request_id = request_id,
                 session_id = session_id,
-                "terminal_run dropped; no sender"
+                "terminal_observe dropped; no sender"
             );
             return Ok(());
         };
 
-        // Record starting offset (for shell mode output retrieval)
+        let start_offset = handle.offset.load(Ordering::SeqCst);
+        info!(
+            request_id = request_id,
+            session_id = session_id,
+            session = %handle.session_name,
+            view = view,
+            wait_for = wait_for,
+            lines = lines,
+            timeout_ms = timeout_ms,
+            start_offset = start_offset,
+            "terminal_observe received"
+        );
+
+        let readiness_wait_start = Instant::now();
+        let (readiness, output, capture_ms, capture_summary, reused_wait_capture) =
+            if wait_for == "shell_ready" {
+                let readiness = self
+                    .resolve_readiness_after_interaction(
+                        &handle,
+                        request_id,
+                        wait_for,
+                        timeout_ms,
+                        start_offset,
+                    )
+                    .await?;
+
+                let capture_start = Instant::now();
+                let output = self
+                    .run_capture_pane_with_lines(&handle.session_name, Some(lines))
+                    .await?;
+                let capture_ms = capture_start.elapsed().as_millis() as u64;
+                let capture_summary =
+                    summarize_capture_for_log(&output, self.config.debug_enabled);
+                (readiness, output, capture_ms, capture_summary, false)
+            } else {
+                let wait_result = self
+                    .wait_for_screen_state(
+                        &handle,
+                        request_id,
+                        wait_for,
+                        timeout_ms,
+                        None,
+                        Some(lines),
+                    )
+                    .await?;
+                (
+                    wait_result.assessment,
+                    wait_result.capture,
+                    wait_result.captured_after_ms,
+                    wait_result.summary,
+                    true,
+                )
+            };
+        let readiness_wait_ms = readiness_wait_start.elapsed().as_millis() as u64;
+        let output_bytes = output.as_bytes().len();
+        let lines_captured = output.lines().count();
+
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_observe_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": session_id,
+            "request_id": request_id,
+            "view": "screen",
+            "output": BASE64_STANDARD.encode(output.as_bytes()),
+            "output_bytes": output_bytes,
+            "lines_captured": lines_captured,
+            "readiness": readiness,
+            "error": Value::Null,
+        });
+        send_ws_frame(&sender, payload)?;
+
+        info!(
+            request_id = request_id,
+            session_id = session_id,
+            wait_for = wait_for,
+            lines = lines,
+            readiness_wait_ms = readiness_wait_ms,
+            capture_ms = capture_ms,
+            reused_wait_capture = reused_wait_capture,
+            output_bytes = output_bytes,
+            lines_captured = lines_captured,
+            capture_hash = format!("{:016x}", capture_summary.hash),
+            capture_line_count = capture_summary.line_count,
+            last_non_empty_line = %capture_summary.last_non_empty_line,
+            preview_head = ?capture_summary.preview_head.as_deref(),
+            preview_tail = ?capture_summary.preview_tail.as_deref(),
+            "terminal_observe_result sent"
+        );
+
+        Ok(())
+    }
+
+    async fn handle_exec(&self, frame: TerminalExecFrame) -> Result<()> {
+        if !self.config.enabled {
+            return self.send_exec_error(&frame, "terminal_disabled").await;
+        }
+
+        let session_id = &frame.session_id;
+        let request_id = &frame.request_id;
+        let timeout_ms = frame.timeout_ms.unwrap_or(30_000);
+
+        if frame.command.trim().is_empty() {
+            return self.send_exec_error(&frame, "empty_command").await;
+        }
+
+        if frame.command.contains('\n') || frame.command.contains('\r') {
+            return self
+                .send_exec_error(&frame, "command_must_not_contain_newlines")
+                .await;
+        }
+
+        let handle = self.ensure_handle_for_session(session_id, None).await?;
+        let Some(handle) = handle else {
+            return self.send_exec_error(&frame, "session_not_found").await;
+        };
+
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let Some(sender) = sender else {
+            warn!(
+                request_id = request_id,
+                session_id = session_id,
+                "terminal_exec dropped; no sender"
+            );
+            return Ok(());
+        };
+
         let start_offset = handle.offset.load(Ordering::SeqCst);
 
         info!(
             request_id = request_id,
             session_id = session_id,
-            mode = mode,
-            input_bytes = data.len(),
+            command_len = frame.command.len(),
             start_offset = start_offset,
-            "terminal_run received"
+            "terminal_exec received"
         );
 
-        // Send input to tmux (same logic as handle_input)
-        let input = String::from_utf8_lossy(&data).to_string();
-        let trimmed_end = input.trim_end_matches(|c| c == '\n' || c == '\r');
-        let newline_count = input.len() - trimmed_end.len();
-
-        if !trimmed_end.is_empty() {
-            let status = Command::new("tmux")
-                .args(["send-keys", "-t", &handle.session_name, "-l", trimmed_end])
-                .status()
-                .await
-                .with_context(|| "failed to dispatch tmux send-keys")?;
-            if !status.success() {
-                return self.send_run_error(&frame, "send_keys_failed").await;
-            }
+        if let Err(err) = self
+            .dispatch_interaction_to_tmux(
+                &handle,
+                Some(frame.command.as_str()),
+                true,
+                &[],
+            )
+            .await
+        {
+            warn!(
+                request_id = request_id,
+                session_id = session_id,
+                error = %err,
+                "terminal_exec dispatch failed"
+            );
+            return self.send_exec_error(&frame, "send_keys_failed").await;
         }
 
-        for _ in 0..newline_count {
-            let status = Command::new("tmux")
-                .args(["send-keys", "-t", &handle.session_name, "Enter"])
-                .status()
-                .await?;
-            if !status.success() {
-                warn!(request_id = request_id, "tmux send-keys Enter failed");
-            }
-        }
+        let (assessment, output, output_bytes, truncated) = self
+            .wait_quiescence_and_read(&handle, start_offset, timeout_ms)
+            .await?;
 
-        // Wait for readiness and collect output
-        let (assessment, output, output_bytes, truncated) = if mode == "repl" {
-            // Activity-based: compare capture-pane hashes
-            self.wait_activity_and_capture(&handle, timeout_ms).await?
-        } else {
-            // Quiescence-based: watch log file
-            self.wait_quiescence_and_read(&handle, start_offset, timeout_ms)
-                .await?
-        };
-
-        // Send response
         let payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
-            "type": "terminal_run_result",
+            "type": "terminal_exec_result",
             "id": new_message_id(),
             "ts": now_millis(),
             "ext": {},
@@ -1200,14 +1367,253 @@ impl TerminalManager {
             session_id = session_id,
             output_bytes = output_bytes,
             truncated = truncated,
-            "terminal_run_result sent"
+            "terminal_exec_result sent"
         );
 
         Ok(())
     }
 
-    /// Send error response for terminal_run
-    async fn send_run_error(&self, frame: &TerminalRunFrame, error: &str) -> Result<()> {
+    async fn handle_send(&self, frame: TerminalSendFrame) -> Result<()> {
+        if !self.config.enabled {
+            return self.send_send_error(&frame, "terminal_disabled").await;
+        }
+
+        let session_id = &frame.session_id;
+        let request_id = &frame.request_id;
+        let wait_for = frame.wait_for.as_deref().unwrap_or("none");
+        let timeout_ms = frame.timeout_ms.unwrap_or(5_000);
+        let observe_after_ms = frame.observe_after_ms.unwrap_or(150);
+        let submit = frame.submit.unwrap_or(false);
+        let text = frame.text.as_deref();
+        let keys = frame.keys.clone().unwrap_or_default();
+
+        if text.is_none() && !submit && keys.is_empty() {
+            return self.send_send_error(&frame, "empty_interaction").await;
+        }
+
+        let handle = self.ensure_handle_for_session(session_id, None).await?;
+        let Some(handle) = handle else {
+            return self.send_send_error(&frame, "session_not_found").await;
+        };
+
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let Some(sender) = sender else {
+            warn!(
+                request_id = request_id,
+                session_id = session_id,
+                "terminal_send dropped; no sender"
+            );
+            return Ok(());
+        };
+
+        let start_offset = handle.offset.load(Ordering::SeqCst);
+        let baseline_capture = match self.run_capture_pane(&handle.session_name).await {
+            Ok(capture) => Some(capture),
+            Err(err) => {
+                warn!(
+                    request_id = request_id,
+                    session_id = session_id,
+                    error = %err,
+                    "terminal_send baseline capture failed"
+                );
+                None
+            }
+        };
+
+        let submitted = match self
+            .dispatch_interaction_to_tmux(&handle, text, submit, &keys)
+            .await
+        {
+            Ok(submitted) => submitted,
+            Err(err) => {
+                warn!(
+                    request_id = request_id,
+                    session_id = session_id,
+                    error = %err,
+                    "terminal_send dispatch failed"
+                );
+                return self.send_send_error(&frame, "send_keys_failed").await;
+            }
+        };
+
+        let (observation, readiness) = match wait_for {
+            "none" => {
+                let post_send_capture = if let Some(baseline_capture) = baseline_capture.as_ref() {
+                    if observe_after_ms > 0 {
+                        time::sleep(Duration::from_millis(observe_after_ms)).await;
+                    }
+                    match self
+                        .capture_screen_state(&handle.session_name, None, observe_after_ms)
+                        .await
+                    {
+                        Ok(current) => {
+                            let observation = build_send_observation_payload(
+                                baseline_capture,
+                                &current.capture,
+                                current.captured_after_ms,
+                            );
+                            if self.config.debug_enabled {
+                                info!(
+                                    request_id = request_id,
+                                    session_id = session_id,
+                                    session = %handle.session_name,
+                                    captured_after_ms = current.captured_after_ms,
+                                    screen_changed = observation
+                                        .get("screen_changed")
+                                        .and_then(|value| value.as_bool())
+                                        .unwrap_or(false),
+                                    baseline_hash = observation
+                                        .get("baseline_hash")
+                                        .and_then(|value| value.as_str())
+                                        .unwrap_or("unknown"),
+                                    current_hash = observation
+                                        .get("current_hash")
+                                        .and_then(|value| value.as_str())
+                                        .unwrap_or("unknown"),
+                                    last_non_empty_line = observation
+                                        .get("last_non_empty_line")
+                                        .and_then(|value| value.as_str())
+                                        .unwrap_or(""),
+                                    preview_tail = observation
+                                        .get("preview_tail")
+                                        .and_then(|value| value.as_str()),
+                                    "terminal_send fast post-send observation captured"
+                                );
+                            }
+                            Some((observation, assess_capture_readiness(&current.capture)))
+                        }
+                        Err(err) => {
+                            warn!(
+                                request_id = request_id,
+                                session_id = session_id,
+                                error = %err,
+                                "terminal_send post-send capture failed"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                if let Some((observation, readiness)) = post_send_capture {
+                    (Some(observation), readiness)
+                } else {
+                    (
+                        None,
+                        self.resolve_readiness_after_interaction(
+                            &handle,
+                            request_id,
+                            wait_for,
+                            timeout_ms,
+                            start_offset,
+                        )
+                        .await?,
+                    )
+                }
+            }
+            "shell_ready" => {
+                let shell_wait_start = Instant::now();
+                let readiness = self
+                    .resolve_readiness_after_interaction(
+                        &handle,
+                        request_id,
+                        wait_for,
+                        timeout_ms,
+                        start_offset,
+                    )
+                    .await?;
+                let captured_after_ms = shell_wait_start.elapsed().as_millis() as u64;
+                let observation = if let Some(baseline_capture) = baseline_capture.as_ref() {
+                    match self
+                        .capture_screen_state(
+                            &handle.session_name,
+                            None,
+                            captured_after_ms,
+                        )
+                        .await
+                    {
+                        Ok(current) => Some(build_send_observation_payload(
+                            baseline_capture,
+                            &current.capture,
+                            current.captured_after_ms,
+                        )),
+                        Err(err) => {
+                            warn!(
+                                request_id = request_id,
+                                session_id = session_id,
+                                error = %err,
+                                "terminal_send final capture after shell_ready failed"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                (observation, readiness)
+            }
+            "changed" | "settled" | "screen_stable" => {
+                let wait_result = self
+                    .wait_for_screen_state(
+                        &handle,
+                        request_id,
+                        wait_for,
+                        timeout_ms,
+                        baseline_capture.as_deref(),
+                        None,
+                    )
+                    .await?;
+
+                let observation = baseline_capture.as_ref().map(|baseline| {
+                    build_send_observation_payload(
+                        baseline,
+                        &wait_result.capture,
+                        wait_result.captured_after_ms,
+                    )
+                });
+
+                (
+                    observation,
+                    wait_result.assessment,
+                )
+            }
+            _ => return self.send_send_error(&frame, "unsupported_wait_for").await,
+        };
+
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_send_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": session_id,
+            "request_id": request_id,
+            "submitted": submitted,
+            "observation": observation.unwrap_or(Value::Null),
+            "readiness": readiness,
+            "error": Value::Null,
+        });
+        send_ws_frame(&sender, payload)?;
+
+        info!(
+            request_id = request_id,
+            session_id = session_id,
+            wait_for = wait_for,
+            observe_after_ms = observe_after_ms,
+            submitted = submitted,
+            key_count = keys.len(),
+            has_text = text.is_some(),
+            "terminal_send_result sent"
+        );
+
+        Ok(())
+    }
+
+    async fn send_exec_error(&self, frame: &TerminalExecFrame, error: &str) -> Result<()> {
         let sender = {
             let inner = self.inner.lock().await;
             inner.sender.clone()
@@ -1216,14 +1622,14 @@ impl TerminalManager {
             warn!(
                 request_id = %frame.request_id,
                 error = error,
-                "terminal_run error but no sender"
+                "terminal_exec error but no sender"
             );
             return Ok(());
         };
 
         let payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
-            "type": "terminal_run_result",
+            "type": "terminal_exec_result",
             "id": new_message_id(),
             "ts": now_millis(),
             "ext": {},
@@ -1232,16 +1638,324 @@ impl TerminalManager {
             "output": "",
             "output_bytes": 0,
             "truncated": false,
-            "readiness": {
-                "ready": false,
-                "confidence": 0.0,
-                "trigger": "error",
-                "hints": {}
-            },
+            "readiness": Self::error_readiness(),
             "error": error,
         });
         send_ws_frame(&sender, payload)?;
         Ok(())
+    }
+
+    async fn send_send_error(&self, frame: &TerminalSendFrame, error: &str) -> Result<()> {
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let Some(sender) = sender else {
+            warn!(
+                request_id = %frame.request_id,
+                error = error,
+                "terminal_send error but no sender"
+            );
+            return Ok(());
+        };
+
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_send_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": frame.session_id,
+            "request_id": frame.request_id,
+            "submitted": false,
+            "readiness": Self::error_readiness(),
+            "error": error,
+        });
+        send_ws_frame(&sender, payload)?;
+        Ok(())
+    }
+
+    async fn send_observe_error(&self, frame: &TerminalObserveFrame, error: &str) -> Result<()> {
+        let sender = {
+            let inner = self.inner.lock().await;
+            inner.sender.clone()
+        };
+        let Some(sender) = sender else {
+            warn!(
+                request_id = %frame.request_id,
+                error = error,
+                "terminal_observe error but no sender"
+            );
+            return Ok(());
+        };
+
+        let payload = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_observe_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": frame.session_id,
+            "request_id": frame.request_id,
+            "view": "screen",
+            "output": "",
+            "output_bytes": 0,
+            "lines_captured": 0,
+            "readiness": Self::error_readiness(),
+            "error": error,
+        });
+        send_ws_frame(&sender, payload)?;
+        Ok(())
+    }
+
+    fn error_readiness() -> Value {
+        json!({
+            "ready": false,
+            "confidence": 0.0,
+            "trigger": "error",
+            "hints": {
+                "looks_like_prompt": false,
+                "looks_like_confirmation": false,
+                "looks_like_password": false,
+                "looks_like_pager": false,
+                "looks_like_error": true,
+                "may_still_be_processing": false
+            }
+        })
+    }
+
+    async fn dispatch_interaction_to_tmux(
+        &self,
+        handle: &Arc<TerminalHandle>,
+        text: Option<&str>,
+        submit: bool,
+        keys: &[String],
+    ) -> Result<bool> {
+        let mut submitted = false;
+
+        if let Some(text) = text {
+            submitted |= self
+                .send_text_payload_to_tmux(&handle.session_name, text, submit)
+                .await?;
+        } else if submit {
+            self.send_tmux_key(&handle.session_name, "Enter").await?;
+            submitted = true;
+        }
+
+        for key in keys {
+            submitted |= self
+                .send_interaction_key(&handle.session_name, key)
+                .await?;
+        }
+
+        Ok(submitted)
+    }
+
+    async fn send_text_payload_to_tmux(
+        &self,
+        session_name: &str,
+        text: &str,
+        submit: bool,
+    ) -> Result<bool> {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let segments: Vec<&str> = normalized.split('\n').collect();
+        let mut submitted = false;
+
+        for (index, segment) in segments.iter().enumerate() {
+            if !segment.is_empty() {
+                self.send_literal_text(session_name, segment).await?;
+                submitted = true;
+            }
+
+            let should_press_enter =
+                index + 1 < segments.len() || (submit && index + 1 == segments.len());
+            if should_press_enter {
+                self.send_tmux_key(session_name, "Enter").await?;
+                submitted = true;
+            }
+        }
+
+        if normalized.is_empty() && submit {
+            self.send_tmux_key(session_name, "Enter").await?;
+            submitted = true;
+        }
+
+        Ok(submitted)
+    }
+
+    async fn send_literal_text(&self, session_name: &str, text: &str) -> Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+
+        let status = Command::new("tmux")
+            .args(["send-keys", "-t", session_name, "-l", text])
+            .status()
+            .await
+            .with_context(|| "failed to dispatch tmux send-keys (literal text)")?;
+
+        if !status.success() {
+            bail!("tmux send-keys literal text failed");
+        }
+
+        Ok(())
+    }
+
+    async fn send_tmux_key(&self, session_name: &str, key: &str) -> Result<()> {
+        let status = Command::new("tmux")
+            .args(["send-keys", "-t", session_name, key])
+            .status()
+            .await
+            .with_context(|| format!("failed to dispatch tmux send-keys ({key})"))?;
+
+        if !status.success() {
+            bail!("tmux send-keys {key} failed");
+        }
+
+        Ok(())
+    }
+
+    async fn send_interaction_key(&self, session_name: &str, key: &str) -> Result<bool> {
+        let normalized = key.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            return Ok(false);
+        }
+
+        match normalized.as_str() {
+            "enter" | "return" => {
+                self.send_tmux_key(session_name, "Enter").await?;
+                Ok(true)
+            }
+            "space" | "spacebar" => {
+                self.send_literal_text(session_name, " ").await?;
+                Ok(true)
+            }
+            "tab" => {
+                self.send_tmux_key(session_name, "Tab").await?;
+                Ok(true)
+            }
+            "escape" | "esc" => {
+                self.send_tmux_key(session_name, "Escape").await?;
+                Ok(true)
+            }
+            "up" | "arrowup" => {
+                self.send_tmux_key(session_name, "Up").await?;
+                Ok(true)
+            }
+            "down" | "arrowdown" => {
+                self.send_tmux_key(session_name, "Down").await?;
+                Ok(true)
+            }
+            "left" | "arrowleft" => {
+                self.send_tmux_key(session_name, "Left").await?;
+                Ok(true)
+            }
+            "right" | "arrowright" => {
+                self.send_tmux_key(session_name, "Right").await?;
+                Ok(true)
+            }
+            "backspace" => {
+                self.send_tmux_key(session_name, "BSpace").await?;
+                Ok(true)
+            }
+            "delete" => {
+                self.send_tmux_key(session_name, "DC").await?;
+                Ok(true)
+            }
+            "home" => {
+                self.send_tmux_key(session_name, "Home").await?;
+                Ok(true)
+            }
+            "end" => {
+                self.send_tmux_key(session_name, "End").await?;
+                Ok(true)
+            }
+            "pageup" => {
+                self.send_tmux_key(session_name, "PageUp").await?;
+                Ok(true)
+            }
+            "pagedown" => {
+                self.send_tmux_key(session_name, "PageDown").await?;
+                Ok(true)
+            }
+            _ if key.chars().count() == 1 => {
+                self.send_literal_text(session_name, key).await?;
+                Ok(true)
+            }
+            _ => bail!("unsupported interaction key: {key}"),
+        }
+    }
+
+    async fn resolve_readiness_after_interaction(
+        &self,
+        handle: &Arc<TerminalHandle>,
+        request_id: &str,
+        wait_for: &str,
+        timeout_ms: u64,
+        start_offset: u64,
+    ) -> Result<Value> {
+        info!(
+            request_id = request_id,
+            session_id = %handle.session_id,
+            session = %handle.session_name,
+            wait_for = wait_for,
+            timeout_ms = timeout_ms,
+            start_offset = start_offset,
+            "resolving readiness after interaction"
+        );
+
+        let wait_start = Instant::now();
+        let assessment = match wait_for {
+            "shell_ready" => {
+                let (assessment, _, _, _) = self
+                    .wait_quiescence_and_read(handle, start_offset, timeout_ms)
+                    .await?;
+                assessment
+            }
+            "changed" => {
+                self
+                    .wait_for_screen_state(
+                        handle,
+                        request_id,
+                        wait_for,
+                        timeout_ms,
+                        None,
+                        None,
+                    )
+                    .await?
+                    .assessment
+            }
+            "settled" | "screen_stable" => {
+                let (assessment, _, _, _) = self
+                    .wait_activity_and_capture(handle, request_id, timeout_ms)
+                    .await?;
+                assessment
+            }
+            "none" => {
+                let capture = self.run_capture_pane(&handle.session_name).await?;
+                assess_capture_readiness(&capture)
+            }
+            _ => bail!("unsupported wait_for mode: {wait_for}"),
+        };
+
+        info!(
+            request_id = request_id,
+            session_id = %handle.session_id,
+            session = %handle.session_name,
+            wait_for = wait_for,
+            elapsed_ms = wait_start.elapsed().as_millis() as u64,
+            readiness_trigger = assessment
+                .get("trigger")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown"),
+            readiness_confidence = assessment
+                .get("confidence")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0),
+            "readiness resolution complete"
+        );
+
+        Ok(assessment)
     }
 
     /// Wait for quiescence (shell mode) and read output from log file
@@ -1336,84 +2050,43 @@ impl TerminalManager {
     async fn wait_activity_and_capture(
         &self,
         handle: &Arc<TerminalHandle>,
+        request_id: &str,
         timeout_ms: u64,
     ) -> Result<(serde_json::Value, Vec<u8>, usize, bool)> {
-        let interval_ms = 5000;
-        let stable_count_target = 2;
-        let initial_delay_ms = 2000;
-
-        // Initial delay
-        time::sleep(Duration::from_millis(initial_delay_ms)).await;
-
-        let start = Instant::now();
-        let mut last_hash: Option<u64> = None;
-        let mut stable_count = 0;
-        let mut check_count = 0;
-
-        loop {
-            // Check timeout
-            if start.elapsed() >= Duration::from_millis(timeout_ms) {
-                break;
-            }
-
-            // Capture pane and hash
-            let capture = self.run_capture_pane(&handle.session_name).await?;
-            let hash = self.hash_content(&capture);
-            check_count += 1;
-
-            if Some(hash) == last_hash {
-                stable_count += 1;
-                if stable_count >= stable_count_target {
-                    // Screen is stable
-                    break;
-                }
-            } else {
-                stable_count = 0;
-            }
-            last_hash = Some(hash);
-
-            time::sleep(Duration::from_millis(interval_ms)).await;
-        }
-
-        // Final capture for output
-        let capture = self.run_capture_pane(&handle.session_name).await?;
-        let output = capture.into_bytes();
+        let wait_result = self
+            .wait_for_screen_state(
+                handle,
+                request_id,
+                "settled",
+                timeout_ms,
+                None,
+                None,
+            )
+            .await?;
+        let output = wait_result.capture.into_bytes();
         let output_bytes = output.len();
-
-        let confidence = if stable_count >= stable_count_target {
-            0.85
-        } else {
-            0.5
-        };
-        let trigger = if stable_count >= stable_count_target {
-            "activity_stable"
-        } else {
-            "timeout"
-        };
-
-        let assessment = json!({
-            "ready": confidence >= 0.5,
-            "confidence": confidence,
-            "trigger": trigger,
-            "hints": {
-                "looks_like_prompt": false,
-                "looks_like_confirmation": false,
-                "looks_like_password": false,
-                "looks_like_pager": false,
-                "looks_like_error": false,
-                "may_still_be_processing": confidence < 0.7
-            },
-            "activity_checks": check_count,
-            "stable_checks": stable_count
-        });
-
-        Ok((assessment, output, output_bytes, false)) // capture-pane doesn't truncate
+        Ok((wait_result.assessment, output, output_bytes, false))
     }
 
-    /// Run tmux capture-pane and return the output
+    /// Run tmux capture-pane and return the output.
     async fn run_capture_pane(&self, session_name: &str) -> Result<String> {
+        self.run_capture_pane_with_lines(session_name, None).await
+    }
+
+    async fn run_capture_pane_with_lines(
+        &self,
+        session_name: &str,
+        start_line: Option<i32>,
+    ) -> Result<String> {
+        let mut args = vec!["capture-pane", "-p", "-J", "-t", session_name];
+        let start_line_owned;
+        if let Some(start) = start_line {
+            start_line_owned = start.to_string();
+            args.extend(["-S", &start_line_owned]);
+        }
+
         let output = Command::new("tmux")
-            .args(["capture-pane", "-p", "-t", session_name])
+            .args(&args)
             .output()
             .await
             .with_context(|| "failed to execute tmux capture-pane")?;
@@ -1426,6 +2099,243 @@ impl TerminalManager {
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    async fn capture_screen_state(
+        &self,
+        session_name: &str,
+        start_line: Option<i32>,
+        captured_after_ms: u64,
+    ) -> Result<ScreenCaptureState> {
+        let capture = self
+            .run_capture_pane_with_lines(session_name, start_line)
+            .await?;
+        let summary = summarize_capture_for_log(&capture, self.config.debug_enabled);
+        Ok(ScreenCaptureState {
+            capture,
+            summary,
+            captured_after_ms,
+        })
+    }
+
+    async fn wait_for_screen_state(
+        &self,
+        handle: &Arc<TerminalHandle>,
+        request_id: &str,
+        wait_for: &str,
+        timeout_ms: u64,
+        baseline_capture: Option<&str>,
+        start_line: Option<i32>,
+    ) -> Result<ScreenWaitResult> {
+        let mode = parse_screen_wait_mode(wait_for)?;
+        if mode == ScreenWaitMode::None {
+            let current = self
+                .capture_screen_state(&handle.session_name, start_line, 0)
+                .await?;
+            return Ok(ScreenWaitResult {
+                assessment: assess_capture_readiness(&current.capture),
+                capture: current.capture,
+                summary: current.summary,
+                captured_after_ms: current.captured_after_ms,
+                changed_since_baseline: false,
+                check_count: 0,
+                stable_checks: 0,
+            });
+        }
+
+        let baseline = match baseline_capture {
+            Some(existing) => ScreenCaptureState {
+                capture: existing.to_string(),
+                summary: summarize_capture_for_log(existing, self.config.debug_enabled),
+                captured_after_ms: 0,
+            },
+            None => self
+                .capture_screen_state(&handle.session_name, start_line, 0)
+                .await?,
+        };
+
+        let started_at = Instant::now();
+        let baseline_hash = baseline.summary.hash;
+        let mut last_summary = baseline.summary.clone();
+        let mut final_state = baseline;
+        let mut last_change_at = started_at;
+        let mut changed_since_baseline = false;
+        let mut check_count = 0;
+        let mut stable_checks = 0;
+
+        if self.config.debug_enabled {
+            info!(
+                request_id = request_id,
+                session_id = %handle.session_id,
+                session = %handle.session_name,
+                wait_for = wait_for,
+                timeout_ms = timeout_ms,
+                interval_ms = SCREEN_WAIT_POLL_INTERVAL_MS,
+                quiet_ms = SCREEN_WAIT_SETTLED_QUIET_MS,
+                baseline_hash = format!("{:016x}", final_state.summary.hash),
+                baseline_line_count = final_state.summary.line_count,
+                baseline_last_non_empty_line = %final_state.summary.last_non_empty_line,
+                preview_head = ?final_state.summary.preview_head.as_deref(),
+                preview_tail = ?final_state.summary.preview_tail.as_deref(),
+                "screen wait started"
+            );
+        }
+
+        loop {
+            let elapsed_ms = started_at.elapsed().as_millis() as u64;
+            if elapsed_ms >= timeout_ms {
+                let quiet_for_ms = last_change_at.elapsed().as_millis() as u64;
+                let (may_still_be_processing, confidence_override, ready_override) = match mode {
+                    ScreenWaitMode::Changed => (Some(false), Some(0.35), Some(false)),
+                    ScreenWaitMode::Settled => (Some(true), Some(0.4), Some(false)),
+                    ScreenWaitMode::None => (None, None, None),
+                };
+                let assessment = build_screen_wait_assessment(
+                    &final_state.capture,
+                    "timeout",
+                    quiet_for_ms,
+                    check_count,
+                    stable_checks,
+                    may_still_be_processing,
+                    confidence_override,
+                    None,
+                    ready_override,
+                );
+
+                if self.config.debug_enabled {
+                    info!(
+                        request_id = request_id,
+                        session_id = %handle.session_id,
+                        session = %handle.session_name,
+                        wait_for = wait_for,
+                        timeout_ms = timeout_ms,
+                        elapsed_ms = elapsed_ms,
+                        quiet_for_ms = quiet_for_ms,
+                        check_count = check_count,
+                        stable_checks = stable_checks,
+                        changed_since_baseline = changed_since_baseline,
+                        final_hash = format!("{:016x}", final_state.summary.hash),
+                        final_last_non_empty_line = %final_state.summary.last_non_empty_line,
+                        "screen wait timed out"
+                    );
+                }
+
+                return Ok(ScreenWaitResult {
+                    assessment,
+                    capture: final_state.capture,
+                    summary: final_state.summary,
+                    captured_after_ms: final_state.captured_after_ms,
+                    changed_since_baseline,
+                    check_count,
+                    stable_checks,
+                });
+            }
+
+            let sleep_ms = SCREEN_WAIT_POLL_INTERVAL_MS.min(timeout_ms.saturating_sub(elapsed_ms));
+            if sleep_ms > 0 {
+                time::sleep(Duration::from_millis(sleep_ms)).await;
+            }
+
+            let current = self
+                .capture_screen_state(
+                    &handle.session_name,
+                    start_line,
+                    started_at.elapsed().as_millis() as u64,
+                )
+                .await?;
+            check_count += 1;
+
+            let changed_from_previous = current.summary.hash != last_summary.hash;
+            let changed_from_baseline = current.summary.hash != baseline_hash;
+
+            if changed_from_baseline {
+                changed_since_baseline = true;
+            }
+
+            if changed_from_previous {
+                last_change_at = Instant::now();
+                stable_checks = 0;
+            } else {
+                stable_checks += 1;
+            }
+
+            let quiet_for_ms = last_change_at.elapsed().as_millis() as u64;
+
+            if self.config.debug_enabled {
+                info!(
+                    request_id = request_id,
+                    session_id = %handle.session_id,
+                    session = %handle.session_name,
+                    wait_for = wait_for,
+                    check_count = check_count,
+                    stable_checks = stable_checks,
+                    changed_from_previous = changed_from_previous,
+                    changed_from_baseline = changed_from_baseline,
+                    changed_since_baseline = changed_since_baseline,
+                    captured_after_ms = current.captured_after_ms,
+                    quiet_for_ms = quiet_for_ms,
+                    screen_hash = format!("{:016x}", current.summary.hash),
+                    line_count = current.summary.line_count,
+                    last_non_empty_line = %current.summary.last_non_empty_line,
+                    preview_head = ?current.summary.preview_head.as_deref(),
+                    preview_tail = ?current.summary.preview_tail.as_deref(),
+                    "screen wait capture check"
+                );
+            }
+
+            match mode {
+                ScreenWaitMode::Changed if changed_from_baseline => {
+                    let assessment = build_screen_wait_assessment(
+                        &current.capture,
+                        "changed",
+                        quiet_for_ms,
+                        check_count,
+                        stable_checks,
+                        Some(true),
+                        None,
+                        Some(0.6),
+                        Some(true),
+                    );
+
+                    return Ok(ScreenWaitResult {
+                        assessment,
+                        capture: current.capture,
+                        summary: current.summary,
+                        captured_after_ms: current.captured_after_ms,
+                        changed_since_baseline,
+                        check_count,
+                        stable_checks,
+                    });
+                }
+                ScreenWaitMode::Settled if quiet_for_ms >= SCREEN_WAIT_SETTLED_QUIET_MS => {
+                    let assessment = build_screen_wait_assessment(
+                        &current.capture,
+                        "settled",
+                        quiet_for_ms,
+                        check_count,
+                        stable_checks,
+                        Some(false),
+                        None,
+                        Some(0.85),
+                        Some(true),
+                    );
+
+                    return Ok(ScreenWaitResult {
+                        assessment,
+                        capture: current.capture,
+                        summary: current.summary,
+                        captured_after_ms: current.captured_after_ms,
+                        changed_since_baseline,
+                        check_count,
+                        stable_checks,
+                    });
+                }
+                _ => {
+                    last_summary = current.summary.clone();
+                    final_state = current;
+                }
+            }
+        }
     }
 
     /// Hash content for activity-based detection
@@ -2313,6 +3223,7 @@ impl BudApp {
             shell: default_shell.clone(),
             tmux_available,
             tmux_version,
+            debug_enabled,
         };
         Self {
             args,
@@ -2639,13 +3550,17 @@ impl BudApp {
                 let frame: TerminalCloseFrame = serde_json::from_str(text)?;
                 self.terminal_manager.handle_close(frame).await?;
             }
-            "terminal_capture" => {
-                let frame: TerminalCaptureFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_capture(frame).await?;
+            "terminal_exec" => {
+                let frame: TerminalExecFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_exec(frame).await?;
             }
-            "terminal_run" => {
-                let frame: TerminalRunFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_run(frame).await?;
+            "terminal_send" => {
+                let frame: TerminalSendFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_send(frame).await?;
+            }
+            "terminal_observe" => {
+                let frame: TerminalObserveFrame = serde_json::from_str(text)?;
+                self.terminal_manager.handle_observe(frame).await?;
             }
             "error" => {
                 let err: ErrorFrame = serde_json::from_str(text)?;
@@ -3101,4 +4016,74 @@ async fn main() -> Result<()> {
 fn setup_tracing() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     fmt().with_env_filter(env_filter).with_target(false).init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_screen_wait_mode_supports_phase_seven_modes() {
+        assert_eq!(parse_screen_wait_mode("none").unwrap(), ScreenWaitMode::None);
+        assert_eq!(parse_screen_wait_mode("changed").unwrap(), ScreenWaitMode::Changed);
+        assert_eq!(parse_screen_wait_mode("settled").unwrap(), ScreenWaitMode::Settled);
+    }
+
+    #[test]
+    fn parse_screen_wait_mode_still_accepts_legacy_alias() {
+        assert_eq!(
+            parse_screen_wait_mode("screen_stable").unwrap(),
+            ScreenWaitMode::Settled
+        );
+    }
+
+    #[test]
+    fn build_screen_wait_assessment_applies_phase_seven_overrides() {
+        let assessment = build_screen_wait_assessment(
+            "Claude is thinking...\n",
+            "settled",
+            350,
+            3,
+            2,
+            Some(false),
+            Some(0.85),
+            None,
+            Some(true),
+        );
+
+        assert_eq!(
+            assessment.get("trigger").and_then(|value| value.as_str()),
+            Some("settled")
+        );
+        assert_eq!(
+            assessment.get("ready").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(
+            assessment
+                .get("confidence")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0)
+                >= 0.85
+        );
+        assert_eq!(
+            assessment
+                .get("hints")
+                .and_then(|value| value.get("may_still_be_processing"))
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            assessment
+                .get("activity_checks")
+                .and_then(|value| value.as_u64()),
+            Some(3)
+        );
+        assert_eq!(
+            assessment
+                .get("stable_checks")
+                .and_then(|value| value.as_u64()),
+            Some(2)
+        );
+    }
 }

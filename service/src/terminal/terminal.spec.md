@@ -28,7 +28,11 @@ export type TerminalPromptType =
   | "database" | "unknown";
 
 export type TerminalReadyTrigger =
-  | "prompt_detected" | "quiescence" | "timeout" | "activity_stable";
+  | "prompt_detected" | "quiescence" | "timeout" | "activity_stable"
+  | "changed" | "settled";
+
+export type TerminalWaitFor =
+  | "none" | "shell_ready" | "changed" | "settled";
 ```
 
 **Message Types**:
@@ -44,7 +48,10 @@ export type TerminalReadyTrigger =
 | `TerminalStatusMessage` | ← Bud | Session state report |
 | `TerminalOutputMessage` | ← Bud | Output chunk with byte offset |
 | `TerminalReadyMessage` | ← Bud | Readiness assessment |
-| `TerminalRunResultMessage` | ← Bud | Run command result (request-response) |
+| `TerminalExecMessage` / `TerminalExecResultMessage` | ↔ | Request-response shell execution |
+| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Structured interactive input with fast post-send evidence |
+| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit rendered-screen observation |
+| `TerminalSendObservation` / `TerminalSendObservationMessage` | Internal / Wire | Fast post-send screen evidence |
 
 **Readiness Types**:
 
@@ -70,11 +77,19 @@ export interface ReadinessAssessment {
 }
 ```
 
-**Run Result Type** (request-response for terminal.run):
+**Terminal Request/Response Types**:
 
 ```typescript
-export interface TerminalRunResultMessage extends TerminalEnvelope {
-  type: "terminal_run_result";
+export interface TerminalExecMessage extends TerminalEnvelope {
+  type: "terminal_exec";
+  session_id: string;
+  request_id: string;
+  command: string;
+  timeout_ms?: number;
+}
+
+export interface TerminalExecResultMessage extends TerminalEnvelope {
+  type: "terminal_exec_result";
   session_id: string;
   request_id: string;
   output: string;           // base64-encoded command output
@@ -82,6 +97,38 @@ export interface TerminalRunResultMessage extends TerminalEnvelope {
   truncated: boolean;       // true if output exceeded 64KB
   readiness: ReadinessAssessment;
   error: string | null;
+}
+
+export interface TerminalSendMessage extends TerminalEnvelope {
+  type: "terminal_send";
+  session_id: string;
+  request_id: string;
+  text?: string;
+  submit?: boolean;
+  keys?: string[];
+  observe_after_ms?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
+}
+
+export interface TerminalSendResultMessage extends TerminalEnvelope {
+  type: "terminal_send_result";
+  session_id: string;
+  request_id: string;
+  submitted: boolean;
+  observation?: TerminalSendObservationMessage | null;
+  readiness: ReadinessAssessment;
+  error: string | null;
+}
+
+export interface TerminalObserveMessage extends TerminalEnvelope {
+  type: "terminal_observe";
+  session_id: string;
+  request_id: string;
+  view?: "screen";
+  lines?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
 }
 ```
 
@@ -120,6 +167,16 @@ await_ready: {
   activity_initial_delay_ms?: number; // Default: 2000ms
 }
 ```
+
+**Phase 6/7 Interactive Wait Notes**:
+- `terminal.send` now defaults to a fast post-send observation after `150ms`
+- `terminal.send` now defaults to `wait_for: "none"` and `timeout_ms: 5000`
+- agent-facing explicit waits are now `changed` and `settled`
+- `terminal.send` and `terminal.observe` share the same immediate-start screen wait engine for `changed` / `settled`
+- `settled` means "screen has been quiet for a short window", not the older blind `screen_stable` loop
+- `submitted` means Bud dispatched at least one text/key/Enter event to tmux
+- `observation.screen_changed` is the main signal for whether the foreground program visibly reacted right away
+- low-level `terminal_input` / `terminal_interrupt` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
 
 ### `known-programs.ts`
 
@@ -200,7 +257,8 @@ async checkAndSync(sessionId: string, threadId: string, ownerUserId?: string | n
 | Screen has vim-style line numbers | tui |
 
 **Integration Points**:
-- Clears `pendingCommands` when shell detected (fixes `terminal.run` output method selection)
+- Clears `pendingCommands` when shell detected so `terminal.exec` and `terminal.send` context stays aligned after REPL exit
+- `refreshSnapshot(...)` now also clears `pendingCommands` when the captured state already looks like shell, so inferred context is less likely to outlive an observed REPL exit
 - Uses `claude-haiku-4-5` for fast, cheap LLM summaries
 - Injects messages with `role: "system"` (transformed in provider layer for Anthropic)
 - Stamps injected system messages with the owning user's `created_by_user_id`

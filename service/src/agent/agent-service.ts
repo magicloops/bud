@@ -6,10 +6,18 @@ import { db } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
-import type { ReadinessHints } from "../terminal/types.js";
+import type { ReadinessHints, TerminalWaitFor } from "../terminal/types.js";
 import { isKnownReplProgram } from "../terminal/known-programs.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
+import {
+  buildTerminalSendFollowUpHint,
+  buildTerminalSendSummary,
+  deriveTerminalSendState,
+  deriveTerminalSendAcceptance,
+  type TerminalSendAcceptance,
+  type TerminalSendState,
+} from "./terminal-send-outcome.js";
 import {
   providerRegistry,
   type CanonicalMessage,
@@ -24,15 +32,39 @@ import {
 } from "../llm/index.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
+import type { TerminalSendObservation } from "../terminal/types.js";
 
 type AgentDirective =
   | {
       type: "tool_call";
-      tool: "terminal.run" | "terminal.interrupt" | "terminal.capture";
-      input?: string;
+      tool: "terminal.exec";
+      command: string;
       timeoutMs?: number;
-      lines?: number;  // For terminal.capture: scrollback lines
-      wait?: boolean;  // For terminal.capture: wait for readiness first
+      callId: string;
+    }
+  | {
+      type: "tool_call";
+      tool: "terminal.send";
+      text?: string;
+      submit?: boolean;
+      keys?: string[];
+      observeAfterMs?: number;
+      waitFor?: TerminalWaitFor;
+      timeoutMs?: number;
+      callId: string;
+    }
+  | {
+      type: "tool_call";
+      tool: "terminal.observe";
+      lines?: number;
+      waitFor?: TerminalWaitFor;
+      timeoutMs?: number;
+      callId: string;
+    }
+  | {
+      type: "tool_call";
+      tool: "terminal.interrupt";
+      timeoutMs?: number;
       callId: string;
     }
   | {
@@ -42,17 +74,28 @@ type AgentDirective =
     };
 
 type TerminalCallResult = {
-  output: string;
-  outputBytes: number;
+  kind: "command_result" | "interaction_ack" | "observation";
+  output?: string;
+  outputBytes?: number;
   readiness: Record<string, unknown>;
-  truncated: boolean;
-  omittedLines: number;
-  context?: {
+  truncated?: boolean;
+  omittedLines?: number;
+  definitive?: boolean;
+  submitted?: boolean;
+  observation?: TerminalSendObservation | null;
+  acceptance?: TerminalSendAcceptance;
+  state?: TerminalSendState;
+  view?: "screen";
+  error?: string;
+  followUpHint?: string;
+  contextAfter?: {
     mode: "shell" | "repl" | "unknown";
     program?: string;
     programDisplayName?: string;
     interactionStyle?: string;
     hints?: string[];
+    source?: "observed" | "inferred";
+    observationStatus?: TerminalSendState["status"];
   };
 };
 
@@ -88,26 +131,42 @@ You are Bud Agent, coordinating terminal access to a user's machine.
 You have a persistent terminal; state (cwd, env, running processes) persists across turns.
 
 Tools:
-- {"type":"tool_call","tool":"terminal.run","input":"ls -la\\n","timeout_ms":30000}
-- {"type":"tool_call","tool":"terminal.capture"}
-- {"type":"tool_call","tool":"terminal.capture","wait":true}
+- {"type":"tool_call","tool":"terminal.exec","command":"pwd","timeout_ms":10000}
+- {"type":"tool_call","tool":"terminal.send","text":"python","submit":true}
+- {"type":"tool_call","tool":"terminal.send","text":"q"}
+- {"type":"tool_call","tool":"terminal.observe","lines":-50,"wait_for":"settled"}
 - {"type":"tool_call","tool":"terminal.interrupt"}
 
 Tool Responses:
 All terminal tools return a JSON result containing:
-- output: Terminal output text (already included - no need to capture separately)
+- kind: "command_result" | "interaction_ack" | "observation"
 - readiness: { ready, confidence, trigger, hints }
-- context: { mode: "shell"|"repl", program?, hints? }
-
-IMPORTANT: You do NOT need to call terminal.capture after terminal.run. The output is already in the response.
-Only use terminal.capture for: TUI apps (rendered screen), scrollback history (lines: -200), or low confidence waits (wait: true).
+- context_after: { mode: "shell"|"repl"|"unknown", program?, hints?, source? }
+- terminal.send also returns post-send evidence fields such as observation, acceptance, and state when available
 
 Guidelines:
-- Include \\n to press Enter. For confirmations, send "y\\n". For single-key prompts (like q to exit pager), send just the key.
+- terminal.exec is for shell commands and should be your default in shell context.
+- Do NOT include \\n in terminal.exec commands.
+- terminal.send is for interactive input, confirmations, single-key actions, and launching interactive programs from shell.
+- terminal.send includes a short post-send observation by default. If it reports no visible change, do not assume the program accepted the input.
+- terminal.observe is for explicit screen inspection or extra scrollback after interactive work.
+- Use wait_for:"changed" when you only need to confirm that a TUI/REPL reacted.
+- Use wait_for:"settled" when you need the screen to go quiet before deciding the next step.
+- terminal.observe is NOT the normal follow-up after terminal.exec. Only observe after exec if:
+  - definitive is false
+  - truncated is true
+  - readiness confidence is low
+  - the user explicitly needs the rendered terminal screen
 - Check readiness from tool results to decide your next action:
   - confidence >= 0.8: Terminal is ready, send next command
   - confidence 0.5-0.8: Probably ready, verify output makes sense before proceeding
-  - confidence < 0.5: Likely still processing, use terminal.capture with wait:true
+  - confidence < 0.5: Likely still processing, use terminal.observe with wait_for:"settled"
+- For terminal.send specifically:
+  - Use state as your primary signal for the next action. It is derived from observed post-send behavior and outranks inferred context where they disagree.
+  - If state.status is "ambiguous", verify with terminal.observe before claiming the program accepted the input
+  - If state.status is "processing", use terminal.observe for progress
+  - If state.status is "waiting_for_input", another terminal.send is reasonable for the active interactive program
+  - If state.status is "ready_at_shell", switch back to terminal.exec for shell commands
 - Use the hints object to understand terminal state:
   - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
   - looks_like_confirmation: Waiting for y/n or yes/no response
@@ -115,13 +174,9 @@ Guidelines:
   - looks_like_pager: In a pager like less/more (send 'q' to exit, space to continue)
   - may_still_be_processing: Output suggests command is still running
 - Use interrupt if a command hangs or you need to stop it.
-- terminal.capture is NOT needed after terminal.run (output is already included). Use it only for:
-  - TUI apps: Get the rendered screen layout (visual representation)
-  - Scrollback: Retrieve more history with lines:-200 or lines:-500
-  - Low confidence: If terminal.run returns confidence < 0.5, use terminal.capture with wait:true
 
 CONTEXT AWARENESS (CRITICAL):
-Tool results include a "context" field indicating what program is currently running in the terminal.
+Tool results include a "context_after" field indicating what program is currently running in the terminal.
 - When context.mode is "shell": You are at a shell prompt. Send shell commands.
 - When context.mode is "repl": You are INSIDE an interactive program, NOT at a shell.
   * The context.program field tells you which program (e.g., "claude", "python", "node")
@@ -135,7 +190,7 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
   * Ask Claude to perform tasks: "Please review src/main.rs for bugs"
   * To run shell commands, ask Claude: "Run npm test"
   * Do NOT send raw shell syntax like "cat file.txt" - Claude will misinterpret it
-  * To exit, send "exit\\n" or use terminal.interrupt
+  * To exit, use terminal.send with text "exit" and submit true, or use terminal.interrupt
 - When context.program is "python" or "python3":
   * Send Python code, not shell commands
   * Use print() to display output
@@ -147,6 +202,7 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
   * Commands typically end with semicolons
 
 Always check context.hints for additional program-specific guidance.
+If context_after.source is "inferred", treat it as a likely program hint rather than proof that the last send was accepted.
 
 RESPONSE FORMAT:
 - When you are ready to answer the user, respond directly in markdown text.
@@ -176,21 +232,21 @@ const TOOL_SUMMARY_MAX_CHARS = 96;
 // Optional fields are simply omitted from `required` - providers handle transformation
 const CANONICAL_TOOLS: CanonicalTool[] = [
   {
-    name: "terminal_run",
-    description: "Send input to the terminal and receive output. Returns: terminal output, readiness assessment, and context. Include \\n to press Enter.",
+    name: "terminal_exec",
+    description: "Run a shell command in the persistent terminal session. Use only when the terminal is at a shell prompt. Do not include newline characters.",
     parameters: {
       type: "object",
       properties: {
-        input: {
+        command: {
           type: "string",
-          description: "Exact input to send (include \\n for Enter)."
+          description: "Shell command to execute at the current shell prompt."
         },
         timeout_ms: {
           type: "integer",
-          description: "Optional max wait for readiness (ms)."
+          description: "Optional max wait for command completion/readiness (ms)."
         }
       },
-      required: ["input"],
+      required: ["command"],
       additionalProperties: false
     }
   },
@@ -205,29 +261,66 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
     }
   },
   {
-    name: "terminal_capture",
+    name: "terminal_send",
     description:
-      "Capture terminal screen (for TUI apps, scrollback history, or waiting). " +
-      "NOT needed after terminal.run - output is already included. Use for: " +
-      "TUI apps (rendered screen), scrollback (lines: -200), or low confidence waits (wait: true).",
+      "Send interactive input to the current terminal program. Use for REPL/TUI input, confirmations, launching interactive programs, and single-key actions.",
     parameters: {
       type: "object",
       properties: {
-        wait: {
-          type: "boolean",
-          description:
-            "Wait for terminal to become ready before capturing. " +
-            "Use after terminal.run returns low confidence. Default: false."
+        text: {
+          type: "string",
+          description: "Optional text to send literally to the terminal."
         },
-        lines: {
+        submit: {
+          type: "boolean",
+          description: "When true, press Enter after sending the text."
+        },
+        keys: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional special keys or single-key actions, e.g. q, space, enter, tab, escape, up."
+        },
+        observe_after_ms: {
           type: "integer",
-          description:
-            "Lines of scrollback history. Negative = from current position. " +
-            "Default: -50. Use -200 or -500 for more history."
+          description: "Optional delay before the default fast post-send observation (ms). Defaults to 150ms."
+        },
+        wait_for: {
+          type: "string",
+          enum: ["none", "shell_ready", "changed", "settled"],
+          description: "Optional wait mode after sending input."
         },
         timeout_ms: {
           type: "integer",
-          description: "Max wait time in ms (only applies if wait=true). Default: 5000."
+          description: "Optional max wait time in ms. Defaults to 5000ms for terminal.send."
+        }
+      },
+      required: [],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "terminal_observe",
+    description: "Observe the rendered terminal screen or recent scrollback after interactive work or when more visibility is needed.",
+    parameters: {
+      type: "object",
+      properties: {
+        lines: {
+          type: "integer",
+          description: "Optional number of scrollback lines to include. Negative values mean recent history."
+        },
+        wait_for: {
+          type: "string",
+          enum: ["none", "shell_ready", "changed", "settled"],
+          description: "Optional wait mode before observing."
+        },
+        view: {
+          type: "string",
+          enum: ["screen"],
+          description: "Observation view. Current implementation supports rendered screen view."
+        },
+        timeout_ms: {
+          type: "integer",
+          description: "Optional max wait time in ms."
         }
       },
       required: [],
@@ -341,7 +434,7 @@ export class AgentService {
         const toolCall = this.extractFunctionCall(response);
         if (toolCall) {
           const toolClientId = generateMessageClientId();
-          const callMeta = { input: toolCall.input ?? "" };
+          const callMeta = this.buildToolArgs(toolCall);
           const toolCallCursor = this.runtime.emit(threadId, {
             event: "agent.tool_call",
             data: {
@@ -366,7 +459,7 @@ export class AgentService {
             sessionId,
             threadId,
             tool: toolCall.tool,
-            input: toolCall.input ?? "",
+            args: callMeta,
             callId: toolCall.callId
           });
 
@@ -400,8 +493,8 @@ export class AgentService {
             ownerUserId,
           );
 
-          // Refresh snapshot after terminal.run so context sync has accurate state
-          if (toolCall.tool === "terminal.run" && this.contextSyncService) {
+          // Refresh snapshot after state-changing terminal actions.
+          if (toolCall.tool !== "terminal.observe" && this.contextSyncService) {
             await this.contextSyncService.refreshSnapshot(sessionId);
           }
 
@@ -559,7 +652,14 @@ export class AgentService {
           const payload = JSON.parse(raw) as {
             call_id?: string;
             tool?: string;
-            input?: string;
+            command?: string;
+            text?: string;
+            submit?: boolean;
+            keys?: string[];
+            observe_after_ms?: number;
+            wait_for?: TerminalWaitFor;
+            lines?: number;
+            view?: "screen";
           };
           const callId =
             typeof payload.call_id === "string" && payload.call_id
@@ -568,16 +668,34 @@ export class AgentService {
           const toolName = typeof payload.tool === "string" ? payload.tool : null;
 
           let toolInput: Record<string, unknown> = {};
-          if (toolName === "terminal.run") {
-            const input = typeof payload.input === "string" ? payload.input : null;
-            if (!input) {
-              throw new Error("tool payload missing input");
+          if (toolName === "terminal.exec") {
+            const command = typeof payload.command === "string" ? payload.command : null;
+            if (!command) {
+              throw new Error("tool payload missing command");
             }
-            toolInput = { input };
-          } else if (toolName === "terminal.capture" || toolName === "terminal.interrupt") {
+            toolInput = { command };
+          } else if (toolName === "terminal.send") {
+            const waitFor = this.parseWaitForArg(payload.wait_for);
+            toolInput = {
+              ...(typeof payload.text === "string" ? { text: payload.text } : {}),
+              ...(payload.submit === true ? { submit: true } : {}),
+              ...(Array.isArray(payload.keys) ? { keys: payload.keys } : {}),
+              ...(typeof payload.observe_after_ms === "number"
+                ? { observe_after_ms: payload.observe_after_ms }
+                : {}),
+              ...(waitFor ? { wait_for: waitFor } : {})
+            };
+          } else if (toolName === "terminal.observe") {
+            const waitFor = this.parseWaitForArg(payload.wait_for);
+            toolInput = {
+              ...(typeof payload.lines === "number" ? { lines: payload.lines } : {}),
+              ...(typeof payload.view === "string" ? { view: payload.view } : {}),
+              ...(waitFor ? { wait_for: waitFor } : {})
+            };
+          } else if (toolName === "terminal.interrupt") {
             toolInput = {};
           } else {
-            // Skip unknown tools (legacy shell.run messages)
+            // Skip unknown tools, including old local developer-only terminal rows.
             continue;
           }
 
@@ -587,7 +705,9 @@ export class AgentService {
             content: [{
               type: "tool_use",
               id: callId,
-              name: this.toolNameForConversation(toolName as "terminal.run" | "terminal.capture" | "terminal.interrupt"),
+              name: this.toolNameForConversation(
+                toolName as "terminal.exec" | "terminal.send" | "terminal.observe" | "terminal.interrupt"
+              ),
               input: toolInput
             }]
           });
@@ -862,14 +982,18 @@ export class AgentService {
     return desired;
   }
 
-  private toolNameForConversation(tool: "terminal.run" | "terminal.interrupt" | "terminal.capture") {
+  private toolNameForConversation(
+    tool: "terminal.exec" | "terminal.send" | "terminal.observe" | "terminal.interrupt"
+  ) {
     switch (tool) {
-      case "terminal.run":
-        return "terminal_run";
+      case "terminal.exec":
+        return "terminal_exec";
+      case "terminal.send":
+        return "terminal_send";
       case "terminal.interrupt":
         return "terminal_interrupt";
-      case "terminal.capture":
-        return "terminal_capture";
+      case "terminal.observe":
+        return "terminal_observe";
     }
   }
 
@@ -900,29 +1024,46 @@ export class AgentService {
     const callId = toolCall.id;
 
     switch (toolCall.name) {
-      case "terminal_run":
-        if (!args.input || typeof args.input !== "string") {
-          throw new Error("function_call missing input argument");
+      case "terminal_exec":
+        if (!args.command || typeof args.command !== "string") {
+          throw new Error("function_call missing command argument");
         }
         return {
           type: "tool_call",
-          tool: "terminal.run",
-          input: args.input,
+          tool: "terminal.exec",
+          command: args.command,
           timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
           callId
         };
+      case "terminal_send": {
+        const keys = Array.isArray(args.keys)
+          ? args.keys.filter((value): value is string => typeof value === "string")
+          : undefined;
+        return {
+          type: "tool_call",
+          tool: "terminal.send",
+          text: typeof args.text === "string" ? args.text : undefined,
+          submit: args.submit === true,
+          keys: keys?.length ? keys : undefined,
+          observeAfterMs: typeof args.observe_after_ms === "number" ? args.observe_after_ms : undefined,
+          waitFor: this.parseWaitForArg(args.wait_for),
+          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
+          callId
+        };
+      }
       case "terminal_interrupt":
         return {
           type: "tool_call",
           tool: "terminal.interrupt",
+          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
           callId
         };
-      case "terminal_capture":
+      case "terminal_observe":
         return {
           type: "tool_call",
-          tool: "terminal.capture",
-          wait: args.wait === true,
+          tool: "terminal.observe",
           lines: typeof args.lines === "number" ? args.lines : undefined,
+          waitFor: this.parseWaitForArg(args.wait_for),
           timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
           callId
         };
@@ -938,8 +1079,7 @@ export class AgentService {
     const session = await this.getOrCreateSession(threadId);
     const sessionId = session.sessionId;
 
-    // Helper to get context for tool results
-    const getContext = () => {
+    const getInferredContext = () => {
       const ctx = this.terminalSessionManager.getSessionContext(sessionId);
       return {
         mode: ctx.mode,
@@ -949,6 +1089,19 @@ export class AgentService {
         hints: ctx.hints
       };
     };
+
+    const buildContextAfter = (options?: {
+      readiness?: Record<string, unknown>;
+      sendState?: TerminalSendState;
+    }) => this.buildContextAfterSnapshot(getInferredContext(), options);
+
+    const latestReadiness = (trigger: string, ready = true, confidence = 0.6) =>
+      this.normalizeReadiness(this.terminalSessionManager.getLatestReadiness(sessionId), {
+        ready,
+        confidence,
+        trigger,
+        hints: DEFAULT_READINESS_HINTS
+      });
 
     if (directive.tool === "terminal.interrupt") {
       await this.terminalSessionManager.sendInterrupt(sessionId);
@@ -966,110 +1119,204 @@ export class AgentService {
       });
       this.logReadinessDecision(directive.tool, finalReadiness);
       return {
+        kind: "interaction_ack",
         output: decoded,
         outputBytes: tail.totalBytes,
         readiness: finalReadiness,
         truncated: tail.data.length < tail.totalBytes,
         omittedLines: 0,
-        context: getContext()
+        submitted: true,
+        followUpHint: "Inspect the terminal state before continuing if the interrupted program may still be active.",
+        contextAfter: buildContextAfter({ readiness: finalReadiness })
       };
     }
 
-    // terminal.capture - uses tmux capture-pane for TUI/REPL visibility
-    if (directive.tool === "terminal.capture") {
+    if (directive.tool === "terminal.observe") {
       const lines = directive.lines ?? -50;
-      const shouldWait = directive.wait === true;
+      const waitFor = directive.waitFor ?? "none";
 
-      this.debug("terminal.capture", { sessionId, lines, wait: shouldWait });
-
-      let readiness: Record<string, unknown>;
-
-      if (shouldWait) {
-        const sessionReadiness = await this.terminalSessionManager.waitForReadiness(
-          sessionId,
-          directive.timeoutMs ?? 5000
-        );
-        readiness = this.normalizeReadiness(sessionReadiness, {
-          ready: false,
-          confidence: 0.3,
-          trigger: "wait_timeout",
-          hints: { ...DEFAULT_READINESS_HINTS, may_still_be_processing: true }
-        });
-        this.logReadinessDecision(directive.tool, readiness);
-      } else {
-        readiness = { ready: true, confidence: 1.0, trigger: "capture" };
-      }
+      this.debug("terminal.observe", { sessionId, lines, waitFor });
 
       try {
-        const capture = await this.terminalSessionManager.capturePane(
+        const capture = await this.terminalSessionManager.observeTerminal(
           sessionId,
-          { startLine: lines, joinLines: true },
+          { lines, waitFor, view: "screen" },
           directive.timeoutMs ?? 5000
         );
-        if (capture.error) {
-          throw new Error(capture.error);
-        }
-
-        this.logTerminalOutput("terminal.capture", capture.output);
+        const readiness = this.normalizeReadiness(capture.readiness, {
+          ready: waitFor === "none",
+          confidence: waitFor === "none" ? 0.7 : 0.5,
+          trigger: waitFor === "none" ? "observe" : waitFor,
+          hints: waitFor === "none"
+            ? DEFAULT_READINESS_HINTS
+            : { ...DEFAULT_READINESS_HINTS, may_still_be_processing: true }
+        });
+        this.logReadinessDecision(directive.tool, readiness);
+        this.logTerminalOutput("terminal.observe", capture.output);
 
         return {
+          kind: "observation",
           output: capture.output,
           outputBytes: capture.outputBytes,
           readiness,
           truncated: false,
           omittedLines: 0,
-          context: getContext()
+          view: capture.view,
+          contextAfter: buildContextAfter({ readiness })
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(
           { sessionId, error: message, component: "agent_terminal" },
-          "capture-pane failed"
+          "terminal.observe failed"
         );
         throw err;
       }
     }
 
-    // terminal.run - use new request-response pattern
-    const input = directive.input ?? "";
+    if (directive.tool === "terminal.send") {
+      const hasText = typeof directive.text === "string" && directive.text.length > 0;
+      const hasKeys = (directive.keys?.length ?? 0) > 0;
+      const hasAction = hasText || hasKeys || directive.submit === true;
+      const contextBefore = getInferredContext();
 
-    // Track command if launching a known REPL
-    if (input.includes("\n")) {
-      const command = this.parseCommandFromInput(input);
-      if (command && isKnownReplProgram(command)) {
-        this.terminalSessionManager.setPendingCommand(sessionId, {
-          input,
-          command,
-          sentAt: Date.now(),
-          source: "agent"
-        });
+      if (!hasAction) {
+        return {
+          kind: "interaction_ack",
+          readiness: latestReadiness("invalid_send", false, 0.2),
+          submitted: false,
+          error: "empty_interaction",
+          followUpHint: "Provide text, keys, or submit:true when using terminal.send.",
+          contextAfter: buildContextAfter()
+        };
       }
+
+      if (contextBefore.mode === "shell" && directive.submit === true && hasText) {
+        const command = this.parseCommandFromText(directive.text ?? "");
+        if (command && isKnownReplProgram(command)) {
+          this.terminalSessionManager.setPendingCommand(sessionId, {
+            input: directive.text ?? "",
+            command,
+            sentAt: Date.now(),
+            source: "agent"
+          });
+        }
+      }
+
+      this.debug("terminal.send", {
+        sessionId,
+        hasText,
+        submit: directive.submit === true,
+        keyCount: directive.keys?.length ?? 0,
+        waitFor: directive.waitFor ?? null,
+        program: contextBefore.program
+      });
+
+      const result = await this.terminalSessionManager.sendInteraction(
+        sessionId,
+        {
+          text: directive.text,
+          submit: directive.submit,
+          keys: directive.keys,
+          observeAfterMs: directive.observeAfterMs,
+          waitFor: directive.waitFor
+        },
+        { timeoutMs: directive.timeoutMs ?? 5000 }
+      );
+
+      const finalReadiness = this.normalizeReadiness(result.readiness, {
+        ready: true,
+        confidence: 0.6,
+        trigger: directive.waitFor ?? "send",
+        hints: DEFAULT_READINESS_HINTS
+      });
+      this.logReadinessDecision(directive.tool, finalReadiness);
+
+      const acceptance = deriveTerminalSendAcceptance(result.observation);
+      const contextAfterWithoutState = buildContextAfter({ readiness: finalReadiness });
+      const state = deriveTerminalSendState({
+        acceptance,
+        readinessHints: (finalReadiness.hints as ReadinessHints | undefined) ?? DEFAULT_READINESS_HINTS,
+        readinessTrigger: typeof finalReadiness.trigger === "string" ? finalReadiness.trigger : null,
+        readinessReady: finalReadiness.ready === true,
+        contextAfter: contextAfterWithoutState
+      });
+      const contextAfter = buildContextAfter({ readiness: finalReadiness, sendState: state });
+      const followUpHint = buildTerminalSendFollowUpHint({
+        acceptance,
+        observation: result.observation,
+        state,
+        readinessHints: (finalReadiness.hints as ReadinessHints | undefined) ?? DEFAULT_READINESS_HINTS,
+        contextAfter
+      });
+
+      return {
+        kind: "interaction_ack",
+        readiness: finalReadiness,
+        submitted: result.submitted,
+        observation: result.observation,
+        acceptance,
+        state,
+        followUpHint,
+        contextAfter
+      };
     }
 
-    // Determine mode based on current context
-    const context = getContext();
-    const mode = context.mode === "repl" ? "repl" : "shell";
+    const contextBefore = getInferredContext();
+    const command = directive.command.trim();
 
-    this.debug("terminal.run using request-response", {
+    if (!command) {
+      return {
+        kind: "command_result",
+        readiness: latestReadiness("invalid_exec", false, 0.2),
+        definitive: false,
+        error: "empty_command",
+        followUpHint: "Provide a shell command string when using terminal.exec.",
+        contextAfter: buildContextAfter()
+      };
+    }
+
+    if (contextBefore.mode !== "shell") {
+      return {
+        kind: "command_result",
+        readiness: latestReadiness("not_in_shell_context", false, 0.35),
+        definitive: false,
+        error: "not_in_shell_context",
+        followUpHint:
+          contextBefore.mode === "repl"
+            ? `The terminal is inside ${contextBefore.programDisplayName ?? contextBefore.program ?? "an interactive program"}. Use terminal.send instead of terminal.exec.`
+            : "The terminal is not confidently at a shell prompt. Observe or use terminal.send if you are interacting with a program.",
+        contextAfter: buildContextAfter()
+      };
+    }
+
+    const launchCommand = this.parseCommandFromText(command);
+    if (launchCommand && isKnownReplProgram(launchCommand)) {
+      this.terminalSessionManager.setPendingCommand(sessionId, {
+        input: `${command}\n`,
+        command: launchCommand,
+        sentAt: Date.now(),
+        source: "agent"
+      });
+    }
+
+    this.debug("terminal.exec", {
       sessionId,
-      mode,
-      inputLength: input.length,
-      program: context.program
+      command,
+      program: contextBefore.program
     });
 
     try {
-      // Single request-response call - output comes directly from Bud
-      const result = await this.terminalSessionManager.runCommand(
+      const result = await this.terminalSessionManager.execCommand(
         sessionId,
-        Buffer.from(input, "utf-8"),
-        { mode, timeoutMs: directive.timeoutMs ?? 30000 }
+        command,
+        { timeoutMs: directive.timeoutMs ?? 30000 }
       );
 
-      // Strip ANSI and normalize
       const cleanOutput = this.stripAnsi(result.output);
       const normalizedOutput = this.normalizeCRLF(cleanOutput);
 
-      this.logTerminalOutput("terminal.run", normalizedOutput);
+      this.logTerminalOutput("terminal.exec", normalizedOutput);
 
       const finalReadiness: Record<string, unknown> = this.normalizeReadiness(result.readiness, {
         ready: true,
@@ -1079,19 +1326,39 @@ export class AgentService {
       });
       this.logReadinessDecision(directive.tool, finalReadiness);
 
+      const contextAfter = buildContextAfter({ readiness: finalReadiness });
+      const hints = finalReadiness.hints as Record<string, boolean> | undefined;
+      const definitive =
+        !result.truncated &&
+        typeof finalReadiness.confidence === "number" &&
+        finalReadiness.confidence >= 0.8 &&
+        hints?.may_still_be_processing !== true &&
+        contextAfter.mode === "shell";
+
+      const followUpHint = definitive
+        ? undefined
+        : contextAfter.mode === "repl"
+          ? `The command launched ${contextAfter.programDisplayName ?? contextAfter.program ?? "an interactive program"}. Use terminal.send to continue.`
+          : result.truncated
+            ? "The command output was truncated. Observe only if you need more rendered terminal context."
+            : "Observe only if you need the rendered terminal screen or the command may still be processing.";
+
       return {
+        kind: "command_result",
         output: normalizedOutput,
         outputBytes: result.outputBytes,
         readiness: finalReadiness,
         truncated: result.truncated,
         omittedLines: 0,
-        context: getContext() // Refresh context after command
+        definitive,
+        followUpHint,
+        contextAfter: buildContextAfter({ readiness: finalReadiness })
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
         { sessionId, error: message, component: "agent_terminal" },
-        "terminal.run failed"
+        "terminal.exec failed"
       );
       throw err;
     }
@@ -1167,6 +1434,76 @@ export class AgentService {
     return obj;
   }
 
+  private buildContextAfterSnapshot(
+    inferredContext: NonNullable<TerminalCallResult["contextAfter"]>,
+    options?: {
+      readiness?: Record<string, unknown>;
+      sendState?: TerminalSendState;
+    }
+  ): NonNullable<TerminalCallResult["contextAfter"]> {
+    const source = this.readinessLooksLikeObservedShell(options?.readiness)
+      ? "observed"
+      : "inferred";
+    const observationStatus = options?.sendState?.status;
+
+    if (source === "observed") {
+      return {
+        mode: "shell",
+        hints: this.buildContextHints(undefined, observationStatus),
+        source,
+        observationStatus,
+      };
+    }
+
+    return {
+      ...inferredContext,
+      hints: this.buildContextHints(inferredContext.hints, observationStatus),
+      source,
+      observationStatus,
+    };
+  }
+
+  private readinessLooksLikeObservedShell(readiness?: Record<string, unknown>): boolean {
+    if (!readiness) {
+      return false;
+    }
+
+    const hints = readiness.hints as Record<string, unknown> | undefined;
+    return (
+      readiness.prompt_type === "shell" &&
+      typeof readiness.confidence === "number" &&
+      readiness.confidence >= 0.8 &&
+      hints?.looks_like_prompt === true
+    );
+  }
+
+  private buildContextHints(
+    existingHints?: string[],
+    observationStatus?: TerminalSendState["status"]
+  ): string[] | undefined {
+    const prefixes: string[] = [];
+
+    switch (observationStatus) {
+      case "ambiguous":
+        prefixes.push("Last send was ambiguous. Verify visible state before assuming the input was accepted.");
+        break;
+      case "processing":
+        prefixes.push("Last send produced visible activity. Inspect progress before sending more input.");
+        break;
+      case "waiting_for_input":
+        prefixes.push("Last send appears settled and the interactive UI may be waiting for more input.");
+        break;
+      case "ready_at_shell":
+        prefixes.push("Last send appears to have returned to a shell prompt.");
+        break;
+      default:
+        break;
+    }
+
+    const hints = [...prefixes, ...(existingHints ?? [])];
+    return hints.length > 0 ? hints : undefined;
+  }
+
   private async recordTerminalToolMessage(
     threadId: string,
     directive: Extract<AgentDirective, { type: "tool_call" }>,
@@ -1174,20 +1511,29 @@ export class AgentService {
     clientId: string,
     ownerUserId?: string | null,
   ): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage }> {
-    const summary = this.buildToolSummary(directive);
+    const summary = this.buildToolSummary(directive, result);
     const outputTruncationReason = this.getToolOutputTruncationReason(directive, result);
     const payload = {
       tool: directive.tool,
       call_id: directive.callId,
-      input: directive.input ?? null,
+      ...this.buildToolArgs(directive),
       summary,
+      kind: result.kind,
       output: result.output,
       output_bytes: result.outputBytes,
       readiness: result.readiness,
       truncated: result.truncated,
       output_truncation_reason: outputTruncationReason,
       omitted_lines: result.omittedLines,
-      context: result.context
+      definitive: result.definitive,
+      submitted: result.submitted,
+      observation: this.serializeTerminalSendObservation(result.observation),
+      acceptance: result.acceptance,
+      state: this.serializeTerminalSendState(result.state),
+      view: result.view,
+      error: result.error,
+      follow_up_hint: result.followUpHint,
+      context_after: result.contextAfter
     };
     const [toolMessage] = await db.insert(messageTable).values({
       clientId,
@@ -1214,45 +1560,43 @@ export class AgentService {
   }
 
   private buildToolSummary(
-    directive: Extract<AgentDirective, { type: "tool_call" }>
+    directive: Extract<AgentDirective, { type: "tool_call" }>,
+    result: TerminalCallResult
   ): string {
     switch (directive.tool) {
-      case "terminal.run": {
-        const commandSummary = this.summarizeTerminalInput(directive.input ?? "");
+      case "terminal.exec": {
+        const commandSummary = this.truncateSummary(directive.command, TOOL_SUMMARY_MAX_CHARS);
         return commandSummary ? `Ran ${commandSummary}` : "Ran terminal command";
       }
-      case "terminal.capture":
-        if (directive.wait === true) {
-          return "Captured terminal after waiting for readiness";
+      case "terminal.send":
+        return this.summarizeInteractiveSend(directive, result);
+      case "terminal.observe":
+        if (directive.waitFor && directive.waitFor !== "none") {
+          return `Observed terminal after waiting for ${directive.waitFor}`;
         }
         if (typeof directive.lines === "number") {
-          return `Captured terminal scrollback (${directive.lines} lines)`;
+          return `Observed terminal screen (${directive.lines} lines)`;
         }
-        return "Captured terminal view";
+        return "Observed terminal screen";
       case "terminal.interrupt":
         return "Sent Ctrl+C";
     }
   }
 
-  private summarizeTerminalInput(input: string): string | null {
-    const lines = input
-      .replace(/\r\n/g, "\n")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (lines.length === 0) {
-      return null;
-    }
-
-    const firstLine = this.truncateSummary(lines[0], TOOL_SUMMARY_MAX_CHARS);
-    if (lines.length === 1) {
-      return firstLine;
-    }
-
-    const suffix =
-      lines.length === 2 ? "(+1 more line)" : `(+${lines.length - 1} more lines)`;
-    return `${firstLine} ${suffix}`;
+  private summarizeInteractiveSend(
+    directive: Extract<AgentDirective, { type: "tool_call"; tool: "terminal.send" }>,
+    result: TerminalCallResult,
+  ): string {
+    return buildTerminalSendSummary(
+      {
+        text: directive.text,
+        submit: directive.submit,
+        keys: directive.keys
+      },
+      result.observation,
+      result.state,
+      (result.readiness.hints as ReadinessHints | undefined) ?? DEFAULT_READINESS_HINTS,
+    );
   }
 
   private truncateSummary(text: string, maxChars: number): string {
@@ -1271,13 +1615,92 @@ export class AgentService {
     }
 
     switch (directive.tool) {
-      case "terminal.run":
+      case "terminal.exec":
         return "bud_runtime_limit";
+      case "terminal.send":
+        return null;
       case "terminal.interrupt":
         return "service_backfill_limit";
-      case "terminal.capture":
+      case "terminal.observe":
         return null;
     }
+  }
+
+  private buildToolArgs(
+    directive: Extract<AgentDirective, { type: "tool_call" }>
+  ): Record<string, unknown> {
+    switch (directive.tool) {
+      case "terminal.exec":
+        return { command: directive.command };
+      case "terminal.send":
+        return {
+          ...(typeof directive.text === "string" ? { text: directive.text } : {}),
+          ...(directive.submit === true ? { submit: true } : {}),
+          ...(directive.keys?.length ? { keys: directive.keys } : {}),
+          ...(typeof directive.observeAfterMs === "number"
+            ? { observe_after_ms: directive.observeAfterMs }
+            : {}),
+          ...(directive.waitFor ? { wait_for: directive.waitFor } : {})
+        };
+      case "terminal.observe":
+        return {
+          ...(typeof directive.lines === "number" ? { lines: directive.lines } : {}),
+          ...(directive.waitFor ? { wait_for: directive.waitFor } : {}),
+          view: "screen"
+        };
+      case "terminal.interrupt":
+        return {};
+    }
+  }
+
+  private parseWaitForArg(value: unknown): TerminalWaitFor | undefined {
+    if (
+      value === "none" ||
+      value === "shell_ready" ||
+      value === "changed" ||
+      value === "settled"
+    ) {
+      return value;
+    }
+    if (value === "screen_stable") {
+      return "settled";
+    }
+    return undefined;
+  }
+
+  private serializeTerminalSendObservation(
+    observation?: TerminalSendObservation | null,
+  ): Record<string, unknown> | null {
+    if (!observation) {
+      return null;
+    }
+
+    return {
+      captured_after_ms: observation.capturedAfterMs,
+      screen_changed: observation.screenChanged,
+      baseline_hash: observation.baselineHash,
+      current_hash: observation.currentHash,
+      lines_captured: observation.linesCaptured,
+      last_non_empty_line: observation.lastNonEmptyLine,
+      preview_head: observation.previewHead ?? null,
+      preview_tail: observation.previewTail ?? null,
+    };
+  }
+
+  private serializeTerminalSendState(
+    state?: TerminalSendState,
+  ): Record<string, unknown> | null {
+    if (!state) {
+      return null;
+    }
+
+    return {
+      status: state.status,
+      next_action: state.nextAction,
+      settled: state.settled,
+      waiting_for_input: state.waitingForInput,
+      may_still_be_processing: state.mayStillBeProcessing,
+    };
   }
 
   private serializePersistedMessage(message: PersistedAgentMessage): SerializedAgentMessage {
@@ -1446,9 +1869,9 @@ export class AgentService {
   }
 
   /**
-   * Parse the command name from terminal input.
+   * Parse the command name from shell-entered text.
    */
-  private parseCommandFromInput(input: string): string | null {
+  private parseCommandFromText(input: string): string | null {
     const trimmed = input.replace(/[\r\n]+$/, "").trim();
     if (!trimmed) return null;
     const firstWord = trimmed.split(/\s+/)[0];

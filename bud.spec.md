@@ -252,8 +252,9 @@ User Message
 ```
 
 **Available Tools**:
-- `terminal.run` - Send input to terminal (with `\n` for Enter)
-- `terminal.capture` - Get current terminal screen content
+- `terminal.exec` - Run a shell command and return authoritative output
+- `terminal.send` - Send interactive input, confirmations, and keypresses
+- `terminal.observe` - Inspect the rendered terminal screen explicitly
 - `terminal.interrupt` - Send SIGINT (Ctrl+C)
 
 ### 3. Terminal Readiness Detection
@@ -274,7 +275,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 
 ```json
 {
-  "context": {
+  "context_after": {
     "mode": "repl",
     "program": "python",
     "programDisplayName": "Python REPL",
@@ -293,10 +294,10 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 1. Web UI POST /api/threads/:id/messages { content: "list files" }
 2. Service creates message record, starts agent loop
 3. Service calls OpenAI with thread context
-4. OpenAI returns tool_call: terminal.run("ls -la\n")
-5. Service sends WebSocket frame to daemon
-6. Daemon executes in tmux, streams output back
-7. Service captures output, calls OpenAI with result
+4. OpenAI returns tool_call: terminal.exec("ls -la")
+5. Service sends `terminal_exec` to the daemon
+6. Daemon executes in tmux and returns `terminal_exec_result`
+7. Service decides whether follow-up observation is needed, then calls OpenAI with result
 8. OpenAI returns final response
 9. Service stores assistant message, emits SSE events
 10. Web UI renders response in chat timeline
@@ -502,6 +503,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/debug-503s/validation-checklist.md](./plan/debug-503s/validation-checklist.md) | Release-gate checklist for the false-offline stabilization pass, covering backend tracker ownership, browser multi-tab/refresh behavior, SSE and `/ws` reconnects, and post-fix observability review |
 | [plan/fix-session-per-thread/implementation-spec.md](./plan/fix-session-per-thread/implementation-spec.md) | Focused implementation plan for fixing terminal session lifecycle semantics, active-session uniqueness, and idle-close defaults |
 | [plan/revised-terminal-contract/implementation-spec.md](./plan/revised-terminal-contract/implementation-spec.md) | Breaking implementation plan for replacing the overloaded `terminal.run` / `terminal.capture` agent contract with separate shell execution, interactive input, and explicit observation tools |
+| [plan/revised-terminal-contract/implementation-spec-follow-up.md](./plan/revised-terminal-contract/implementation-spec-follow-up.md) | Follow-up implementation plan for stabilizing the new `terminal.exec` / `terminal.send` / `terminal.observe` contract around TUI input parity, fast post-send observation, and evidence-based agent behavior |
 | [plan/client-id/implementation-spec.md](./plan/client-id/implementation-spec.md) | Phased implementation plan for adding stable UUIDv7 `client_id` values to messages, keeping `message_id` as the persisted row identifier, and threading the new identity through transcript reads, user writes, `/agent/state`, agent SSE, and first-party client reconciliation |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
@@ -519,6 +521,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/staging-false-bud-offline-terminal-503s.md](./debug/staging-false-bud-offline-terminal-503s.md) | Debug note documenting the current staging disconnect investigation, with the strongest hypothesis that stale WebSocket tracker cleanup in the service can make a still-connected Bud appear offline, plus the frontend/Cloudflare signals that amplify or accompany that state |
 | [debug/agent-stream-state-and-resume-implementation.md](./debug/agent-stream-state-and-resume-implementation.md) | Debug note documenting the stale attach replay problem, the split between durable transcript vs in-flight runtime state, and the implemented `/agent/state` plus bounded-resume fix direction |
 | [debug/terminal-session-default-cwd.md](./debug/terminal-session-default-cwd.md) | Debug note tracing why tmux sessions currently start in `~` when `terminal_ensure` omits cwd for relocated Bud instances |
+| [debug/terminal-send-observe-context-quality.md](./debug/terminal-send-observe-context-quality.md) | Debug note documenting the now-working Claude Code flow under the revised terminal contract, plus the remaining inefficiencies: `terminal.observe` replaying stale pane history and `terminal.send` returning too little semantic post-send context to avoid extra observes |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
 | [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
 | [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |
@@ -536,6 +539,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
 | [design/terminal-session-lifecycle-and-thread-uniqueness.md](./design/terminal-session-lifecycle-and-thread-uniqueness.md) | Review of the current terminal session lifecycle, why the thread-id uniqueness bug predates the mobile-auth branch, and the recommended fix direction |
 | [design/terminal-command-and-interaction-contract.md](./design/terminal-command-and-interaction-contract.md) | Design for separating shell command execution, interactive terminal input, and explicit observation so the model no longer encodes `\n` for shell commands and no longer treats post-exec capture as a normal follow-up |
+| [design/terminal-send-confirmation-and-fast-observe.md](./design/terminal-send-confirmation-and-fast-observe.md) | Design for restoring send-plus-proof behavior to TUIs and REPLs by giving `terminal.send` a default fast post-send observation, replacing blind `screen_stable` waits with a `settled` model, and separating transport success from observed program response |
+| [design/terminal-delta-observation-and-minimal-tool-payloads.md](./design/terminal-delta-observation-and-minimal-tool-payloads.md) | Design for making `terminal.send` and default `terminal.observe` return additive deltas instead of replay-heavy snapshots, while keeping explicit full-screen/history modes and reducing the model-facing tool payload to success, readiness, and delta |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries and service env placeholders |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
@@ -543,4 +548,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-08*
+*Last updated: 2026-04-09*
