@@ -12,6 +12,7 @@ This folder turns the design work in:
 - [../../design/terminal-command-and-interaction-contract.md](../../design/terminal-command-and-interaction-contract.md)
 - [../../design/terminal-send-confirmation-and-fast-observe.md](../../design/terminal-send-confirmation-and-fast-observe.md)
 - [../../design/terminal-delta-observation-and-minimal-tool-payloads.md](../../design/terminal-delta-observation-and-minimal-tool-payloads.md)
+- [../../design/reconsidering-terminal-exec-vs-terminal-send.md](../../design/reconsidering-terminal-exec-vs-terminal-send.md)
 
 into actionable implementation and validation plans.
 
@@ -33,6 +34,7 @@ The follow-up stabilization plan assumes:
 - the active follow-up work starts at Phase 6 with a `1000ms` default fast post-send observation and a `5000ms` timeout target
 - the next follow-up after functional correctness is to make both send and default observe delta-first and reduce the model-facing payload to success, readiness, and delta
 - Phase 10-12 are now the implemented delta-first contract, while Phase 13 remains the cleanup/validation tranche
+- the next follow-up after the delta-first stabilization is to remove `terminal.exec` entirely if it still does not provide meaningfully stronger guarantees than `terminal.send`
 
 ## Files
 
@@ -54,7 +56,7 @@ Parent implementation spec for stabilizing the already-cut-over revised contract
 Documents:
 
 - the observed regressions in TUI text delivery, wait behavior, and optimistic send results
-- the follow-up Phase 5-13 sequencing, with Phase 5 deprecated, Phase 6 as the original active starting point, and Phase 10-13 capturing the delta-first follow-up
+- the follow-up Phase 5-15 sequencing, with Phase 5 deprecated, Phase 6 as the original active starting point, Phase 10-13 capturing the delta-first follow-up, and Phase 14-15 capturing the send-first `terminal.exec` removal work
 - the stabilization-specific risks and definition of done
 
 ### `phase-1-service-tool-contract-and-agent-harness.md`
@@ -172,6 +174,22 @@ Delta-first finalization phase covering:
 - protocol/spec/doc updates for the delta-first contract
 - manual validation of append-heavy and repaint-heavy interactive cases
 
+### `phase-14-remove-terminal-exec-and-adopt-send-first-contract.md`
+
+Send-first simplification phase covering:
+
+- complete removal of `terminal.exec`
+- removal of `terminal_exec` from the Bud/service protocol
+- prompt/policy updates so `terminal.send` becomes the primary tool for shell and interactive input
+
+### `phase-15-tests-docs-and-validation-for-send-first-removal.md`
+
+Send-first finalization phase covering:
+
+- tests and docs for `terminal.exec` removal
+- protocol/spec cleanup for the send-first contract
+- manual validation of shell and interactive flows after the simplification
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -193,6 +211,7 @@ Manual verification checklist for the stabilization follow-up.
 - [../../design/terminal-command-and-interaction-contract.md](../../design/terminal-command-and-interaction-contract.md) - main design review and recommended contract split
 - [../../design/terminal-send-confirmation-and-fast-observe.md](../../design/terminal-send-confirmation-and-fast-observe.md) - follow-up design for transport parity, fast post-send observation, and evidence-based send results
 - [../../design/terminal-delta-observation-and-minimal-tool-payloads.md](../../design/terminal-delta-observation-and-minimal-tool-payloads.md) - follow-up design for additive deltas, default delta-first observe behavior, and minimal model-facing tool payloads
+- [../../design/reconsidering-terminal-exec-vs-terminal-send.md](../../design/reconsidering-terminal-exec-vs-terminal-send.md) - follow-up design review of whether `terminal.exec` should be removed entirely in favor of a send-first contract
 - [../../design/terminal-context-sync.md](../../design/terminal-context-sync.md) - current context-sync behavior that must keep working after the tool cutover
 - [../../design/agent-terminal-context-awareness.md](../../design/agent-terminal-context-awareness.md) - current context-tracking assumptions and known REPL guidance
 - [../../design/terminal-run-refactor-v2.md](../../design/terminal-run-refactor-v2.md) - current request-response ownership direction for command execution

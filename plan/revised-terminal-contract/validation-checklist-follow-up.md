@@ -49,8 +49,8 @@ Transport parity is no longer the active blocker after the successful Claude Cod
 
 ## Shell And Browser Regression Check
 
-- [ ] Confirm `terminal.exec` still handles a simple shell command such as `pwd`
-- [ ] Confirm `terminal.exec` still fails explicitly when the terminal is in a REPL/TUI context
+- [ ] Confirm simple shell commands still work via `terminal.send` when the terminal is at a shell prompt
+- [ ] Confirm `terminal.send` still works correctly when the terminal is already in a REPL/TUI context
 - [ ] Confirm manual browser typing still works after the helper/runtime refactor
 
 ## Docs And Specs
@@ -84,3 +84,12 @@ Transport parity is no longer the active blocker after the successful Claude Cod
 - [ ] Confirm model-facing tool results for default send/observe center on success, readiness, and delta
 - [ ] Confirm any richer comparison metadata remains internal or debug-only
 - [ ] Confirm the agent can still choose `screen` / `history` observe modes explicitly when delta is insufficient
+
+## Send-First `terminal.exec` Removal
+
+- [ ] Confirm `terminal.exec` no longer appears in the active model-facing tool list
+- [ ] Confirm simple shell commands such as `pwd`, `ls`, and `git status` work through `terminal.send`
+- [ ] Confirm multiline shell authoring such as heredocs works through `terminal.send`
+- [ ] Confirm longer-running shell commands still lead the agent toward `terminal.observe` when needed
+- [ ] Confirm REPL/TUI flows still work after the removal of `terminal.exec`
+- [ ] Confirm active docs and specs no longer describe `terminal.exec` as part of the live contract

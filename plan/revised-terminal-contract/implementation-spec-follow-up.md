@@ -6,6 +6,7 @@
 - [../../design/terminal-command-and-interaction-contract.md](../../design/terminal-command-and-interaction-contract.md)
 - [../../design/terminal-send-confirmation-and-fast-observe.md](../../design/terminal-send-confirmation-and-fast-observe.md)
 - [../../design/terminal-delta-observation-and-minimal-tool-payloads.md](../../design/terminal-delta-observation-and-minimal-tool-payloads.md)
+- [../../design/reconsidering-terminal-exec-vs-terminal-send.md](../../design/reconsidering-terminal-exec-vs-terminal-send.md)
 **Prior Cutover Plan**: [implementation-spec.md](./implementation-spec.md)
 **Progress Checklist**: [progress-checklist-follow-up.md](./progress-checklist-follow-up.md)
 **Validation Checklist**: [validation-checklist-follow-up.md](./validation-checklist-follow-up.md)
@@ -18,6 +19,8 @@
 **Phase 11**: [phase-11-delta-first-observe-modes-and-delivered-baseline-tracking.md](./phase-11-delta-first-observe-modes-and-delivered-baseline-tracking.md)
 **Phase 12**: [phase-12-agent-contract-payload-slimming-and-tool-surface.md](./phase-12-agent-contract-payload-slimming-and-tool-surface.md)
 **Phase 13**: [phase-13-tests-docs-and-validation-delta-follow-up.md](./phase-13-tests-docs-and-validation-delta-follow-up.md)
+**Phase 14**: [phase-14-remove-terminal-exec-and-adopt-send-first-contract.md](./phase-14-remove-terminal-exec-and-adopt-send-first-contract.md)
+**Phase 15**: [phase-15-tests-docs-and-validation-for-send-first-removal.md](./phase-15-tests-docs-and-validation-for-send-first-removal.md)
 
 ---
 
@@ -52,6 +55,8 @@ Additional validation on 2026-04-09 showed that the revised contract is now func
 
 This document now also covers the next follow-up phases that move the contract toward additive delta output and minimal model-facing payloads.
 
+Latest review on 2026-04-09 also raised a more structural question: whether `terminal.exec` still earns a place in the model-facing contract at all. The current implementation uses the same tmux submission model as `terminal.send`, lacks a real exit code, and fails on natural multiline shell-authoring tasks. This document now also covers the follow-up removal phases that simplify the contract down to `terminal.send` plus `terminal.observe`.
+
 ## Objective
 
 Preserve the split `exec` / `send` / `observe` contract while fixing the new implementation so that:
@@ -62,6 +67,12 @@ Preserve the split `exec` / `send` / `observe` contract while fixing the new imp
 - agent follow-up behavior is driven by observed state rather than inferred state alone
 - send and default observe return additive deltas rather than replay-heavy snapshots by default
 - the model-facing tool payload is reduced to success, readiness, and delta
+
+The newer follow-up objective extends that stabilization work further:
+
+- remove `terminal.exec` entirely rather than preserving a weakly authoritative shell-only tool
+- make `terminal.send` the primary terminal input interface for both shell and interactive programs
+- keep `terminal.observe` as the explicit secondary hatch for longer-running or ambiguous operations
 
 ## Fixed Decisions
 
@@ -83,6 +94,7 @@ These decisions are fixed for the follow-up work:
 - explicit `screen` and `history` observe modes should remain available for broader inspection.
 - send and observe should share delivered-baseline tracking so repeated content is suppressed across tool calls.
 - hashes, preview fragments, line counts, and similar comparison details should remain internal by default rather than model-facing.
+- if `terminal.exec` does not provide meaningfully stronger guarantees than `terminal.send`, it should be removed rather than preserved for compatibility.
 
 ## Success Criteria
 
@@ -119,6 +131,8 @@ These decisions are fixed for the follow-up work:
 | 11 | [phase-11-delta-first-observe-modes-and-delivered-baseline-tracking.md](./phase-11-delta-first-observe-modes-and-delivered-baseline-tracking.md) | High | Make observe delta-first by default, keep explicit `screen` / `history`, and suppress repetition across send/observe |
 | 12 | [phase-12-agent-contract-payload-slimming-and-tool-surface.md](./phase-12-agent-contract-payload-slimming-and-tool-surface.md) | Medium | Align agent prompting, persisted tool results, and developer-visible rendering with the minimal delta-first contract |
 | 13 | [phase-13-tests-docs-and-validation-delta-follow-up.md](./phase-13-tests-docs-and-validation-delta-follow-up.md) | High | Add delta-focused tests, docs, specs, and validation coverage |
+| 14 | [phase-14-remove-terminal-exec-and-adopt-send-first-contract.md](./phase-14-remove-terminal-exec-and-adopt-send-first-contract.md) | High | Remove `terminal.exec` entirely and simplify the model-facing contract to `terminal.send` + `terminal.observe` |
+| 15 | [phase-15-tests-docs-and-validation-for-send-first-removal.md](./phase-15-tests-docs-and-validation-for-send-first-removal.md) | High | Finish the send-first removal track with tests, docs, specs, and manual validation |
 
 ## Expected Files And Areas
 
@@ -167,6 +181,8 @@ Only to the extent required to make the new `terminal.send` result understandabl
 - Phase 10 should land before Phase 11, because the shared internal delta engine and additive send delta become the basis for observe-default delta behavior.
 - Phase 12 should only tighten prompt/payload/tool-surface policy after the delta contract is stable.
 - Phase 13 should be the final pass that documents and validates the delta-first contract end to end.
+- Phase 14 intentionally reopens the contract question after the delta-first work: if `terminal.exec` still lacks unique value, remove it completely rather than preserving it as a compatibility layer.
+- Phase 15 should be the final cleanup/validation pass for the send-first contract after `terminal.exec` removal.
 
 ## Risks
 
@@ -180,6 +196,7 @@ Only to the extent required to make the new `terminal.send` result understandabl
 | Delta extraction becomes noisy under repaint-heavy TUIs | Medium | High | Use a hybrid additive engine with repaint fallback to bounded current-tail excerpts |
 | Default observe loses too much context in cases where full screen is actually needed | Medium | Medium | Keep explicit `screen` and `history` modes and teach the agent when to request them |
 | Minimal model-facing payload removes fields the current prompt or renderer implicitly relied on | Medium | Medium | Stage payload slimming after the delta engine and update prompt/rendering together in Phase 12 |
+| Removing `terminal.exec` makes shell-command turns harder for the model to interpret | Medium | Medium | Tighten send-first shell guidance and validate common shell authoring flows explicitly in Phase 15 |
 
 ## Rollout Strategy
 
@@ -192,6 +209,8 @@ Only to the extent required to make the new `terminal.send` result understandabl
 7. Make `terminal.observe` delta-first by default, while preserving explicit `screen` and `history` observe modes.
 8. Update the agent/tool surface so the model-facing contract stays minimal and the broader visibility modes are explicit.
 9. Finish with a second docs/tests/validation sweep focused on the delta-first contract.
+10. If `terminal.exec` still does not provide uniquely stronger guarantees, remove it completely and move to a send-first model.
+11. Finish with a final send-first docs/tests/validation sweep so no active contract surfaces still assume `terminal.exec`.
 
 ## Definition Of Done
 
