@@ -250,6 +250,13 @@ struct TerminalManager {
 struct TerminalState {
     sender: Option<OutboundSender>,
     sessions: HashMap<String, Arc<TerminalHandle>>,
+    delivered_captures: HashMap<String, DeliveredCaptureState>,
+}
+
+#[derive(Clone, Debug)]
+struct DeliveredCaptureState {
+    capture: String,
+    start_line: Option<i32>,
 }
 
 struct TerminalHandle {
@@ -332,6 +339,11 @@ const ACTIVITY_DEFAULT_STABLE_COUNT: u32 = 2;
 const ACTIVITY_DEFAULT_MAX_WAIT_MS: u64 = 60_000;
 const SCREEN_WAIT_POLL_INTERVAL_MS: u64 = 100;
 const SCREEN_WAIT_SETTLED_QUIET_MS: u64 = 300;
+const DEFAULT_DELTA_CAPTURE_START_LINE: i32 = -50;
+const LOW_SIGNAL_SEPARATOR_MIN_RUN: usize = 4;
+const MAX_VISIBLE_DELTA_LINES: usize = 20;
+const MAX_CHANGED_WINDOW_LINES: usize = 20;
+const MAX_VISIBLE_DELTA_BYTES: usize = 4096;
 
 #[derive(Debug, Deserialize, Clone, Default)]
 struct AwaitReady {
@@ -652,6 +664,14 @@ struct ScreenWaitResult {
     stable_checks: u32,
 }
 
+#[derive(Debug, Clone)]
+struct AdditiveDeltaPayload {
+    changed: bool,
+    text: String,
+    truncated: bool,
+    strategy: &'static str,
+}
+
 fn summarize_capture_for_log(content: &str, include_preview: bool) -> CaptureLogSummary {
     let lines: Vec<&str> = content.lines().collect();
     let line_count = lines.len();
@@ -706,24 +726,200 @@ fn assess_capture_readiness(capture: &str) -> Value {
     ReadinessDetector::assess(capture, last_line, 0, 0)
 }
 
-fn build_send_observation_payload(
-    baseline_capture: &str,
-    current_capture: &str,
-    captured_after_ms: u64,
-) -> Value {
-    let baseline_summary = summarize_capture_for_log(baseline_capture, true);
-    let current_summary = summarize_capture_for_log(current_capture, true);
+fn tail_excerpt_from_lines(lines: &[&str], max_lines: usize) -> String {
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n")
+}
 
+fn is_low_signal_separator_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    if first.is_alphanumeric() || first.is_whitespace() {
+        return false;
+    }
+
+    let mut count = 1;
+    for ch in chars {
+        if ch != first {
+            return false;
+        }
+        count += 1;
+    }
+
+    count >= LOW_SIGNAL_SEPARATOR_MIN_RUN
+}
+
+fn strip_low_signal_delta_lines(text: &str) -> String {
+    let filtered: Vec<&str> = text
+        .lines()
+        .filter(|line| !is_low_signal_separator_line(line))
+        .collect();
+
+    let Some(start) = filtered.iter().position(|line| !line.trim().is_empty()) else {
+        return String::new();
+    };
+    let end = filtered
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .unwrap_or(start);
+
+    filtered[start..=end].join("\n")
+}
+
+fn truncate_text_to_bytes(text: &str, max_bytes: usize) -> (String, bool) {
+    if text.len() <= max_bytes {
+        return (text.to_string(), false);
+    }
+
+    if max_bytes <= 3 {
+        return ("...".chars().take(max_bytes).collect(), true);
+    }
+
+    let keep_bytes = max_bytes.saturating_sub(3);
+    let mut start = text.len().saturating_sub(keep_bytes);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+
+    (format!("...{}", &text[start..]), true)
+}
+
+fn common_prefix_line_count<'a>(baseline: &[&'a str], current: &[&'a str]) -> usize {
+    let limit = baseline.len().min(current.len());
+    let mut count = 0;
+    while count < limit && baseline[count] == current[count] {
+        count += 1;
+    }
+    count
+}
+
+fn common_suffix_line_count<'a>(baseline: &[&'a str], current: &[&'a str], prefix: usize) -> usize {
+    let baseline_remaining = baseline.len().saturating_sub(prefix);
+    let current_remaining = current.len().saturating_sub(prefix);
+    let limit = baseline_remaining.min(current_remaining);
+    let mut count = 0;
+    while count < limit
+        && baseline[baseline.len() - 1 - count] == current[current.len() - 1 - count]
+    {
+        count += 1;
+    }
+    count
+}
+
+fn build_additive_delta_payload(
+    baseline_capture: Option<&str>,
+    current_capture: &str,
+) -> AdditiveDeltaPayload {
+    let current_lines: Vec<&str> = current_capture.lines().collect();
+    let tail_fallback = |strategy: &'static str, changed: bool| {
+        let excerpt = tail_excerpt_from_lines(&current_lines, MAX_VISIBLE_DELTA_LINES);
+        let normalized_excerpt = strip_low_signal_delta_lines(&excerpt);
+        let (text, truncated) =
+            truncate_text_to_bytes(&normalized_excerpt, MAX_VISIBLE_DELTA_BYTES);
+        AdditiveDeltaPayload {
+            changed,
+            text,
+            truncated,
+            strategy,
+        }
+    };
+
+    let Some(baseline_capture) = baseline_capture else {
+        if current_capture.is_empty() {
+            return AdditiveDeltaPayload {
+                changed: false,
+                text: String::new(),
+                truncated: false,
+                strategy: "no_baseline_empty",
+            };
+        }
+        return tail_fallback("initial_tail", true);
+    };
+
+    if baseline_capture == current_capture {
+        return AdditiveDeltaPayload {
+            changed: false,
+            text: String::new(),
+            truncated: false,
+            strategy: "unchanged",
+        };
+    }
+
+    let baseline_lines: Vec<&str> = baseline_capture.lines().collect();
+    let prefix = common_prefix_line_count(&baseline_lines, &current_lines);
+    let suffix = common_suffix_line_count(&baseline_lines, &current_lines, prefix);
+
+    let current_middle_end = current_lines.len().saturating_sub(suffix);
+    let current_middle = if prefix <= current_middle_end {
+        &current_lines[prefix..current_middle_end]
+    } else {
+        &[][..]
+    };
+
+    let append_like = prefix == baseline_lines.len() && current_lines.len() >= baseline_lines.len();
+    let mut strategy = "tail_fallback";
+    let candidate = if append_like {
+        strategy = "novel_suffix";
+        current_lines[prefix..].join("\n")
+    } else if !current_middle.is_empty()
+        && (prefix > 0 || suffix > 0)
+        && current_middle.len() <= MAX_CHANGED_WINDOW_LINES
+    {
+        strategy = "changed_window";
+        current_middle.join("\n")
+    } else if prefix < current_lines.len() {
+        let suffix_candidate = current_lines[prefix..].join("\n");
+        if !suffix_candidate.trim().is_empty()
+            && suffix_candidate.lines().count() <= MAX_CHANGED_WINDOW_LINES * 2
+        {
+            strategy = "suffix_fallback";
+            suffix_candidate
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    let candidate = strip_low_signal_delta_lines(&candidate);
+    if candidate.trim().is_empty() && !current_capture.is_empty() {
+        return tail_fallback("tail_fallback", true);
+    }
+
+    let (text, truncated) = truncate_text_to_bytes(&candidate, MAX_VISIBLE_DELTA_BYTES);
+    AdditiveDeltaPayload {
+        changed: true,
+        text,
+        truncated,
+        strategy,
+    }
+}
+
+fn build_delta_payload_json(delta: &AdditiveDeltaPayload) -> Value {
     json!({
-        "captured_after_ms": captured_after_ms,
-        "screen_changed": baseline_summary.hash != current_summary.hash,
-        "baseline_hash": format!("{:016x}", baseline_summary.hash),
-        "current_hash": format!("{:016x}", current_summary.hash),
-        "lines_captured": current_summary.line_count,
-        "last_non_empty_line": current_summary.last_non_empty_line,
-        "preview_head": current_summary.preview_head,
-        "preview_tail": current_summary.preview_tail,
+        "changed": delta.changed,
+        "text": delta.text,
+        "truncated": delta.truncated,
     })
+}
+
+fn start_line_for_observe_view(view: &str, lines: i32) -> Option<i32> {
+    match view {
+        "screen" => None,
+        "delta" | "history" => Some(lines),
+        _ => Some(lines),
+    }
+}
+
+fn parse_observe_view(view: &str) -> Result<&str> {
+    match view {
+        "delta" | "screen" | "history" => Ok(view),
+        _ => bail!("unsupported_view"),
+    }
 }
 
 fn parse_screen_wait_mode(wait_for: &str) -> Result<ScreenWaitMode> {
@@ -800,6 +996,7 @@ impl TerminalManager {
             inner: Arc::new(Mutex::new(TerminalState {
                 sender: None,
                 sessions: HashMap::new(),
+                delivered_captures: HashMap::new(),
             })),
             config,
         }
@@ -816,6 +1013,7 @@ impl TerminalManager {
         for (_, handle) in inner.sessions.drain() {
             handle.watcher.abort();
         }
+        inner.delivered_captures.clear();
         inner.sender = None;
     }
 
@@ -1132,6 +1330,7 @@ impl TerminalManager {
                 "terminal session closed"
             );
         }
+        inner.delivered_captures.remove(session_id);
         drop(inner);
 
         if let Some(sender) = sender {
@@ -1155,13 +1354,20 @@ impl TerminalManager {
 
         let session_id = &frame.session_id;
         let request_id = &frame.request_id;
-        let view = frame.view.as_deref().unwrap_or("screen");
+        let view = frame.view.as_deref().unwrap_or("delta");
         let wait_for = frame.wait_for.as_deref().unwrap_or("none");
         let timeout_ms = frame.timeout_ms.unwrap_or(30_000);
         let lines = frame.lines.unwrap_or(-50);
+        let view = match parse_observe_view(view) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                return self.send_observe_error(&frame, "unsupported_view").await;
+            }
+        };
+        let start_line = start_line_for_observe_view(view, lines);
 
-        if view != "screen" {
-            return self.send_observe_error(&frame, "unsupported_view").await;
+        if view == "delta" && wait_for == "shell_ready" {
+            return self.send_observe_error(&frame, "unsupported_wait_for").await;
         }
 
         let handle = self.ensure_handle_for_session(session_id, None).await?;
@@ -1190,13 +1396,43 @@ impl TerminalManager {
             view = view,
             wait_for = wait_for,
             lines = lines,
+            start_line = ?start_line,
             timeout_ms = timeout_ms,
             start_offset = start_offset,
             "terminal_observe received"
         );
 
+        let delivered_baseline = if view == "delta" {
+            self.get_delivered_capture(session_id, start_line).await
+        } else {
+            None
+        };
+        let wait_baseline = if view == "delta"
+            && delivered_baseline.is_none()
+            && wait_for != "none"
+            && wait_for != "shell_ready"
+        {
+            match self
+                .run_capture_pane_with_lines(&handle.session_name, start_line)
+                .await
+            {
+                Ok(capture) => Some(capture),
+                Err(err) => {
+                    warn!(
+                        request_id = request_id,
+                        session_id = session_id,
+                        error = %err,
+                        "terminal_observe baseline capture failed"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let readiness_wait_start = Instant::now();
-        let (readiness, output, capture_ms, capture_summary, reused_wait_capture) =
+        let (readiness, current_capture, capture_ms, capture_summary, reused_wait_capture) =
             if wait_for == "shell_ready" {
                 let readiness = self
                     .resolve_readiness_after_interaction(
@@ -1210,7 +1446,7 @@ impl TerminalManager {
 
                 let capture_start = Instant::now();
                 let output = self
-                    .run_capture_pane_with_lines(&handle.session_name, Some(lines))
+                    .run_capture_pane_with_lines(&handle.session_name, start_line)
                     .await?;
                 let capture_ms = capture_start.elapsed().as_millis() as u64;
                 let capture_summary =
@@ -1223,8 +1459,10 @@ impl TerminalManager {
                         request_id,
                         wait_for,
                         timeout_ms,
-                        None,
-                        Some(lines),
+                        wait_baseline
+                            .as_deref()
+                            .or(delivered_baseline.as_deref()),
+                        start_line,
                     )
                     .await?;
                 (
@@ -1236,8 +1474,46 @@ impl TerminalManager {
                 )
             };
         let readiness_wait_ms = readiness_wait_start.elapsed().as_millis() as u64;
-        let output_bytes = output.as_bytes().len();
-        let lines_captured = output.lines().count();
+        let (output, output_bytes, lines_captured, changed, truncated) = match view {
+            "delta" => {
+                let comparison_baseline = delivered_baseline
+                    .as_deref()
+                    .or(wait_baseline.as_deref());
+                let delta = build_additive_delta_payload(comparison_baseline, &current_capture);
+                let fallback_delta = if delivered_baseline.is_none()
+                    && delta.text.is_empty()
+                    && !delta.changed
+                {
+                    Some(build_additive_delta_payload(None, &current_capture))
+                } else {
+                    None
+                };
+                let output = fallback_delta
+                    .as_ref()
+                    .map(|value| value.text.clone())
+                    .unwrap_or_else(|| delta.text.clone());
+                let output_bytes = output.as_bytes().len();
+                let lines_captured = output.lines().count();
+                (
+                    output,
+                    output_bytes,
+                    lines_captured,
+                    Some(delta.changed),
+                    Some(
+                        fallback_delta
+                            .as_ref()
+                            .map(|value| value.truncated)
+                            .unwrap_or(delta.truncated),
+                    ),
+                )
+            }
+            "screen" | "history" => {
+                let output_bytes = current_capture.as_bytes().len();
+                let lines_captured = current_capture.lines().count();
+                (current_capture.clone(), output_bytes, lines_captured, None, None)
+            }
+            _ => unreachable!("unsupported observe view"),
+        };
 
         let payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
@@ -1247,25 +1523,36 @@ impl TerminalManager {
             "ext": {},
             "session_id": session_id,
             "request_id": request_id,
-            "view": "screen",
+            "view": view,
             "output": BASE64_STANDARD.encode(output.as_bytes()),
             "output_bytes": output_bytes,
             "lines_captured": lines_captured,
+            "changed": changed,
+            "truncated": truncated,
             "readiness": readiness,
             "error": Value::Null,
         });
         send_ws_frame(&sender, payload)?;
 
+        if view == "delta" {
+            self.store_delivered_capture(session_id, &current_capture, start_line)
+                .await;
+        }
+
         info!(
             request_id = request_id,
             session_id = session_id,
+            view = view,
             wait_for = wait_for,
             lines = lines,
+            start_line = ?start_line,
             readiness_wait_ms = readiness_wait_ms,
             capture_ms = capture_ms,
             reused_wait_capture = reused_wait_capture,
             output_bytes = output_bytes,
             lines_captured = lines_captured,
+            delta_changed = changed,
+            delta_truncated = truncated,
             capture_hash = format!("{:016x}", capture_summary.hash),
             capture_line_count = capture_summary.line_count,
             last_non_empty_line = %capture_summary.last_non_empty_line,
@@ -1382,7 +1669,7 @@ impl TerminalManager {
         let request_id = &frame.request_id;
         let wait_for = frame.wait_for.as_deref().unwrap_or("none");
         let timeout_ms = frame.timeout_ms.unwrap_or(5_000);
-        let observe_after_ms = frame.observe_after_ms.unwrap_or(150);
+        let observe_after_ms = frame.observe_after_ms.unwrap_or(1000);
         let submit = frame.submit.unwrap_or(false);
         let text = frame.text.as_deref();
         let keys = frame.keys.clone().unwrap_or_default();
@@ -1410,7 +1697,11 @@ impl TerminalManager {
         };
 
         let start_offset = handle.offset.load(Ordering::SeqCst);
-        let baseline_capture = match self.run_capture_pane(&handle.session_name).await {
+        let delta_start_line = Some(DEFAULT_DELTA_CAPTURE_START_LINE);
+        let baseline_capture = match self
+            .capture_screen_state(&handle.session_name, delta_start_line, 0)
+            .await
+        {
             Ok(capture) => Some(capture),
             Err(err) => {
                 warn!(
@@ -1439,80 +1730,57 @@ impl TerminalManager {
             }
         };
 
-        let (observation, readiness) = match wait_for {
+        let (delta, readiness, current_capture, current_summary, captured_after_ms) = match wait_for {
             "none" => {
-                let post_send_capture = if let Some(baseline_capture) = baseline_capture.as_ref() {
-                    if observe_after_ms > 0 {
-                        time::sleep(Duration::from_millis(observe_after_ms)).await;
-                    }
-                    match self
-                        .capture_screen_state(&handle.session_name, None, observe_after_ms)
-                        .await
-                    {
-                        Ok(current) => {
-                            let observation = build_send_observation_payload(
-                                baseline_capture,
-                                &current.capture,
-                                current.captured_after_ms,
-                            );
-                            if self.config.debug_enabled {
-                                info!(
-                                    request_id = request_id,
-                                    session_id = session_id,
-                                    session = %handle.session_name,
-                                    captured_after_ms = current.captured_after_ms,
-                                    screen_changed = observation
-                                        .get("screen_changed")
-                                        .and_then(|value| value.as_bool())
-                                        .unwrap_or(false),
-                                    baseline_hash = observation
-                                        .get("baseline_hash")
-                                        .and_then(|value| value.as_str())
-                                        .unwrap_or("unknown"),
-                                    current_hash = observation
-                                        .get("current_hash")
-                                        .and_then(|value| value.as_str())
-                                        .unwrap_or("unknown"),
-                                    last_non_empty_line = observation
-                                        .get("last_non_empty_line")
-                                        .and_then(|value| value.as_str())
-                                        .unwrap_or(""),
-                                    preview_tail = observation
-                                        .get("preview_tail")
-                                        .and_then(|value| value.as_str()),
-                                    "terminal_send fast post-send observation captured"
-                                );
-                            }
-                            Some((observation, assess_capture_readiness(&current.capture)))
-                        }
-                        Err(err) => {
-                            warn!(
-                                request_id = request_id,
-                                session_id = session_id,
-                                error = %err,
-                                "terminal_send post-send capture failed"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
+                if observe_after_ms > 0 {
+                    time::sleep(Duration::from_millis(observe_after_ms)).await;
+                }
 
-                if let Some((observation, readiness)) = post_send_capture {
-                    (Some(observation), readiness)
-                } else {
-                    (
-                        None,
-                        self.resolve_readiness_after_interaction(
-                            &handle,
-                            request_id,
-                            wait_for,
-                            timeout_ms,
-                            start_offset,
-                        )
-                        .await?,
+                match self
+                    .capture_screen_state(
+                        &handle.session_name,
+                        delta_start_line,
+                        observe_after_ms,
                     )
+                    .await
+                {
+                    Ok(current) => {
+                        let delta = build_additive_delta_payload(
+                            baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                            &current.capture,
+                        );
+                        let readiness = assess_capture_readiness(&current.capture);
+                        let captured_after_ms = current.captured_after_ms;
+                        (
+                            Some(delta),
+                            readiness,
+                            Some(current.capture),
+                            Some(current.summary),
+                            Some(captured_after_ms),
+                        )
+                    }
+                    Err(err) => {
+                        warn!(
+                            request_id = request_id,
+                            session_id = session_id,
+                            error = %err,
+                            "terminal_send post-send capture failed"
+                        );
+                        (
+                            None,
+                            self.resolve_readiness_after_interaction(
+                                &handle,
+                                request_id,
+                                wait_for,
+                                timeout_ms,
+                                start_offset,
+                            )
+                            .await?,
+                            None,
+                            None,
+                            None,
+                        )
+                    }
                 }
             }
             "shell_ready" => {
@@ -1527,34 +1795,38 @@ impl TerminalManager {
                     )
                     .await?;
                 let captured_after_ms = shell_wait_start.elapsed().as_millis() as u64;
-                let observation = if let Some(baseline_capture) = baseline_capture.as_ref() {
-                    match self
-                        .capture_screen_state(
-                            &handle.session_name,
-                            None,
-                            captured_after_ms,
-                        )
-                        .await
-                    {
-                        Ok(current) => Some(build_send_observation_payload(
-                            baseline_capture,
+                match self
+                    .capture_screen_state(
+                        &handle.session_name,
+                        delta_start_line,
+                        captured_after_ms,
+                    )
+                    .await
+                {
+                    Ok(current) => {
+                        let delta = build_additive_delta_payload(
+                            baseline_capture.as_ref().map(|state| state.capture.as_str()),
                             &current.capture,
-                            current.captured_after_ms,
-                        )),
-                        Err(err) => {
-                            warn!(
-                                request_id = request_id,
-                                session_id = session_id,
-                                error = %err,
-                                "terminal_send final capture after shell_ready failed"
-                            );
-                            None
-                        }
+                        );
+                        let captured_after_ms = current.captured_after_ms;
+                        (
+                            Some(delta),
+                            readiness,
+                            Some(current.capture),
+                            Some(current.summary),
+                            Some(captured_after_ms),
+                        )
                     }
-                } else {
-                    None
-                };
-                (observation, readiness)
+                    Err(err) => {
+                        warn!(
+                            request_id = request_id,
+                            session_id = session_id,
+                            error = %err,
+                            "terminal_send final capture after shell_ready failed"
+                        );
+                        (None, readiness, None, None, None)
+                    }
+                }
             }
             "changed" | "settled" | "screen_stable" => {
                 let wait_result = self
@@ -1563,26 +1835,30 @@ impl TerminalManager {
                         request_id,
                         wait_for,
                         timeout_ms,
-                        baseline_capture.as_deref(),
-                        None,
+                        baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                        delta_start_line,
                     )
                     .await?;
-
-                let observation = baseline_capture.as_ref().map(|baseline| {
-                    build_send_observation_payload(
-                        baseline,
-                        &wait_result.capture,
-                        wait_result.captured_after_ms,
-                    )
-                });
+                let delta = build_additive_delta_payload(
+                    baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                    &wait_result.capture,
+                );
 
                 (
-                    observation,
+                    Some(delta),
                     wait_result.assessment,
+                    Some(wait_result.capture),
+                    Some(wait_result.summary),
+                    Some(wait_result.captured_after_ms),
                 )
             }
             _ => return self.send_send_error(&frame, "unsupported_wait_for").await,
         };
+
+        if let Some(current_capture) = current_capture.as_deref() {
+            self.store_delivered_capture(session_id, current_capture, delta_start_line)
+                .await;
+        }
 
         let payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
@@ -1593,7 +1869,10 @@ impl TerminalManager {
             "session_id": session_id,
             "request_id": request_id,
             "submitted": submitted,
-            "observation": observation.unwrap_or(Value::Null),
+            "delta": delta
+                .as_ref()
+                .map(build_delta_payload_json)
+                .unwrap_or(Value::Null),
             "readiness": readiness,
             "error": Value::Null,
         });
@@ -1607,6 +1886,24 @@ impl TerminalManager {
             submitted = submitted,
             key_count = keys.len(),
             has_text = text.is_some(),
+            delta_changed = ?delta.as_ref().map(|value| value.changed),
+            delta_truncated = ?delta.as_ref().map(|value| value.truncated),
+            delta_text_bytes = ?delta.as_ref().map(|value| value.text.as_bytes().len()),
+            captured_after_ms = ?captured_after_ms,
+            capture_hash = ?current_summary
+                .as_ref()
+                .map(|summary| format!("{:016x}", summary.hash)),
+            capture_line_count = ?current_summary.as_ref().map(|summary| summary.line_count),
+            last_non_empty_line = current_summary
+                .as_ref()
+                .map(|summary| summary.last_non_empty_line.as_str())
+                .unwrap_or(""),
+            preview_head = ?current_summary
+                .as_ref()
+                .and_then(|summary| summary.preview_head.as_deref()),
+            preview_tail = ?current_summary
+                .as_ref()
+                .and_then(|summary| summary.preview_tail.as_deref()),
             "terminal_send_result sent"
         );
 
@@ -1668,6 +1965,7 @@ impl TerminalManager {
             "session_id": frame.session_id,
             "request_id": frame.request_id,
             "submitted": false,
+            "delta": Value::Null,
             "readiness": Self::error_readiness(),
             "error": error,
         });
@@ -1697,10 +1995,12 @@ impl TerminalManager {
             "ext": {},
             "session_id": frame.session_id,
             "request_id": frame.request_id,
-            "view": "screen",
+            "view": frame.view.as_deref().unwrap_or("delta"),
             "output": "",
             "output_bytes": 0,
             "lines_captured": 0,
+            "changed": Value::Null,
+            "truncated": Value::Null,
             "readiness": Self::error_readiness(),
             "error": error,
         });
@@ -1722,6 +2022,35 @@ impl TerminalManager {
                 "may_still_be_processing": false
             }
         })
+    }
+
+    async fn get_delivered_capture(
+        &self,
+        session_id: &str,
+        start_line: Option<i32>,
+    ) -> Option<String> {
+        let inner = self.inner.lock().await;
+        inner
+            .delivered_captures
+            .get(session_id)
+            .filter(|state| state.start_line == start_line)
+            .map(|state| state.capture.clone())
+    }
+
+    async fn store_delivered_capture(
+        &self,
+        session_id: &str,
+        capture: &str,
+        start_line: Option<i32>,
+    ) {
+        let mut inner = self.inner.lock().await;
+        inner.delivered_captures.insert(
+            session_id.to_string(),
+            DeliveredCaptureState {
+                capture: capture.to_string(),
+                start_line,
+            },
+        );
     }
 
     async fn dispatch_interaction_to_tmux(
@@ -4085,5 +4414,67 @@ mod tests {
                 .and_then(|value| value.as_u64()),
             Some(2)
         );
+    }
+
+    #[test]
+    fn additive_delta_prefers_novel_suffix_for_append_like_changes() {
+        let delta = build_additive_delta_payload(Some("line 1\nline 2"), "line 1\nline 2\nline 3");
+
+        assert!(delta.changed);
+        assert_eq!(delta.text, "line 3");
+        assert!(!delta.truncated);
+        assert_eq!(delta.strategy, "novel_suffix");
+    }
+
+    #[test]
+    fn additive_delta_uses_changed_window_for_localized_rewrite() {
+        let delta = build_additive_delta_payload(
+            Some("alpha\nbeta\ngamma\ndelta"),
+            "alpha\nbeta updated\ngamma updated\ndelta",
+        );
+
+        assert!(delta.changed);
+        assert_eq!(delta.text, "beta updated\ngamma updated");
+        assert!(!delta.truncated);
+        assert_eq!(delta.strategy, "changed_window");
+    }
+
+    #[test]
+    fn additive_delta_falls_back_to_tail_for_large_repaint() {
+        let baseline = (0..50)
+            .map(|index| format!("before {index}"))
+            .collect::<Vec<String>>()
+            .join("\n");
+        let current = (0..50)
+            .map(|index| format!("after {index}"))
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        let delta = build_additive_delta_payload(Some(&baseline), &current);
+
+        assert!(delta.changed);
+        assert_eq!(delta.strategy, "tail_fallback");
+        assert!(delta.text.contains("after 49"));
+    }
+
+    #[test]
+    fn additive_delta_strips_low_signal_separator_lines() {
+        let delta = build_additive_delta_payload(
+            Some("ready"),
+            "ready\n────────────────────────\nDo you want to proceed?",
+        );
+
+        assert!(delta.changed);
+        assert_eq!(delta.text, "Do you want to proceed?");
+        assert_eq!(delta.strategy, "novel_suffix");
+    }
+
+    #[test]
+    fn additive_delta_preserves_single_separator_glyph_lines() {
+        let delta = build_additive_delta_payload(Some("ready"), "ready\n─\nnext");
+
+        assert!(delta.changed);
+        assert_eq!(delta.text, "─\nnext");
+        assert_eq!(delta.strategy, "novel_suffix");
     }
 }

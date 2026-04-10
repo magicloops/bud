@@ -146,7 +146,7 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `sendInterrupt(sessionId)` | Send Ctrl+C |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
 | `closeSession(sessionId, reason)` | Close session |
-| `observeTerminal(sessionId, options)` | Explicit screen observation request-response |
+| `observeTerminal(sessionId, options)` | Explicit delta/screen/history observation request-response |
 | `capturePane(sessionId, options)` | Compatibility wrapper used by context sync |
 | `execCommand(sessionId, command, options)` | Request-response shell execution |
 | `sendInteraction(sessionId, interaction, options)` | Request-response interactive input / keypress dispatch |
@@ -183,7 +183,7 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 1. Service sends `terminal_observe` with `request_id`
 2. Bud optionally waits using `shell_ready`, `changed`, or `settled`, then reuses that capture for the response when possible
 3. Bud sends `terminal_observe_result` with matching `request_id`
-4. Promise resolves with screen output plus readiness
+4. Promise resolves with delta by default, or full screen/history when explicitly requested
 
 **Exec Protocol**:
 
@@ -197,9 +197,9 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 
 1. Service sends `terminal_send` with structured `text` / `submit` / `keys`
 2. Bud dispatches literal text and special keys to tmux
-3. Bud captures a fast post-send screen observation after `observe_after_ms` (default `150ms`)
+3. Bud captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
 4. Bud optionally waits for `shell_ready`, `changed`, or `settled` when explicitly requested
-5. Bud sends `terminal_send_result` with dispatch status, fast observation evidence, and readiness
+5. Bud sends `terminal_send_result` with dispatch status, additive delta, and readiness
 
 These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. Bud now owns shell execution output, interactive acknowledgement, and explicit observation as separate operations.
 
@@ -208,10 +208,10 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
 - `execCommand()` returns Bud-owned `truncated` / `outputBytes` values for `terminal.exec`
-- `sendInteraction()` now defaults to `waitFor: "none"`, `observeAfterMs: 150`, and a `5000ms` timeout so the agent gets immediate evidence instead of blindly waiting for delayed screen stability
-- `handleSendResult()` now resolves a richer send contract including `observation` (`screenChanged`, hashes, preview lines, last visible line) in addition to readiness
+- `sendInteraction()` now defaults to `waitFor: "none"`, `observeAfterMs: 1000`, and a `5000ms` timeout so the agent gets immediate delta evidence instead of blindly waiting for delayed screen stability
+- `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, and readiness
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
-- `observeTerminal()` returns rendered screen output; agent payloads treat observation as non-truncated
+- `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests
 - `tailOutput(maxBytes)` underlies `terminal.interrupt` tool payloads, so interrupt truncation is a service backfill-window concern rather than a Bud runtime limit
 
 **Ownership Notes**:

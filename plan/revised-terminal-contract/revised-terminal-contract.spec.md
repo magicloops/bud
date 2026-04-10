@@ -30,8 +30,9 @@ The follow-up stabilization plan assumes:
 - the original Phase 1-4 docs remain as historical record of the cutover work
 - the current issues are in the implementation details of `terminal.send` / `terminal.observe`, not in the decision to split the tools
 - the original transport-parity concern is now documented as a deprecated Phase 5 investigation after successful Claude Code send validation on 2026-04-09
-- the active follow-up work starts at Phase 6 with a `150ms` default fast post-send observation and a `5000ms` timeout target
+- the active follow-up work starts at Phase 6 with a `1000ms` default fast post-send observation and a `5000ms` timeout target
 - the next follow-up after functional correctness is to make both send and default observe delta-first and reduce the model-facing payload to success, readiness, and delta
+- Phase 10-12 are now the implemented delta-first contract, while Phase 13 remains the cleanup/validation tranche
 
 ## Files
 
@@ -110,7 +111,7 @@ Status note:
 
 Follow-up stabilization phase covering:
 
-- default fast post-send observation at `150ms`
+- default fast post-send observation at `1000ms`
 - richer `terminal.send` result semantics
 - evidence-based summaries and persisted metadata
 - default fast-observe send timeout target of `5000ms`

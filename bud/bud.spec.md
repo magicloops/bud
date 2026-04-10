@@ -166,11 +166,12 @@ terminal_exec      →    tmux send-keys (command + Enter)
                         Send terminal_exec_result
 
 terminal_send      →    tmux send-keys (structured text/keys)
-                        Fast post-send capture after 150ms by default
+                        Fast post-send delta capture after 1000ms by default
                         Optional: wait for shell_ready, changed, or settled
                         Send terminal_send_result
 
 terminal_observe   →    tmux capture-pane
+                        Default: return delta; explicit screen/history available
                         Optional: wait with the shared changed/settled engine before capture
                         Send terminal_observe_result
 
@@ -208,10 +209,12 @@ For interactive programs like Claude Code:
 - Handles apps with natural processing pauses
 
 For the Phase 6/7 agent-facing send/observe path specifically:
-- Bud now captures an immediate post-send screen by default after `150ms`
-- `terminal_send_result` includes both dispatch success and fast screen evidence
+- Bud now captures an immediate post-send screen by default after `1000ms`
+- `terminal_send_result` includes both dispatch success and additive delta evidence
 - explicit agent-facing waits now use `changed` / `settled`, which start sampling immediately instead of waiting through the old blind `screen_stable` loop
 - the older activity-based detector remains for low-level `terminal_input` / `terminal_interrupt` readiness events
+- default `terminal.observe` now returns additive delta and only replays full screen/history when explicitly requested
+- delta text is lightly normalized for LLM consumption by stripping separator-only lines made from one repeated non-alphanumeric glyph run of 4+ characters; explicit `screen` / `history` output remains unchanged
 
 ## Dependencies
 

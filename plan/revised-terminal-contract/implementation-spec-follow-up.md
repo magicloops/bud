@@ -1,6 +1,6 @@
 # Implementation Spec: Revised Terminal Contract Stabilization
 
-**Status**: Draft
+**Status**: Implemented (manual validation pending)
 **Created**: 2026-04-09
 **Design Docs**:
 - [../../design/terminal-command-and-interaction-contract.md](../../design/terminal-command-and-interaction-contract.md)
@@ -71,7 +71,7 @@ These decisions are fixed for the follow-up work:
 - Do not reintroduce `terminal.run` or `terminal.capture` as first-class agent tools.
 - Preserve the original Phase 1-4 plan docs as historical implementation record.
 - Deprecate Phase 5 as an active implementation phase after the successful Claude Code send validation on 2026-04-09; keep it as a record of the investigated hypothesis.
-- `terminal.send` should include a default fast post-send observation of `150ms`.
+- `terminal.send` should include a default fast post-send observation of `1000ms`.
 - The default interactive timeout for the fast-observe send path should be `5000ms`.
 - `terminal.send` results must distinguish transport dispatch from observed program response.
 - The agent-facing wait model should move away from the current blind `screen_stable` behavior toward immediate-start `changed` / `settled` semantics.
@@ -183,7 +183,7 @@ Only to the extent required to make the new `terminal.send` result understandabl
 
 ## Rollout Strategy
 
-1. Start with Phase 6: add a richer `terminal.send` result contract with a default `150ms` fast post-send observation and a `5000ms` timeout.
+1. Start with Phase 6: add a richer `terminal.send` result contract with a default `1000ms` fast post-send observation and a `5000ms` timeout.
 2. Replace the current slow `screen_stable` behavior with an immediate-start runtime wait engine.
 3. Tighten service summaries, context handling, and developer-visible tool rendering around observed state.
 4. Finish with tests, docs, specs, and manual validation against real interactive programs.

@@ -15,8 +15,8 @@ import type {
   PendingCommand,
   TerminalContext,
   ReadinessAssessment,
-  TerminalSendObservation,
-  TerminalSendObservationMessage,
+  TerminalDelta,
+  TerminalDeltaMessage,
   TerminalWaitFor,
   TerminalObservationView,
 } from "../terminal/types.js";
@@ -94,6 +94,8 @@ export type ObserveResult = {
   output: string;
   outputBytes: number;
   linesCaptured: number;
+  changed?: boolean;
+  truncated?: boolean;
   readiness: ReadinessAssessment;
   error?: string;
 };
@@ -104,6 +106,8 @@ type ObserveResponsePayload = {
   output: string;
   outputBytes: number;
   linesCaptured: number;
+  changed?: boolean | null;
+  truncated?: boolean | null;
   readiness: ReadinessAssessment;
   error: string | null;
 };
@@ -154,7 +158,7 @@ export type SendInteraction = {
 
 export type SendResult = {
   submitted: boolean;
-  observation?: TerminalSendObservation | null;
+  delta?: TerminalDelta | null;
   readiness: ReadinessAssessment;
   error?: string;
 };
@@ -162,7 +166,7 @@ export type SendResult = {
 type SendResultPayload = {
   requestId: string;
   submitted: boolean;
-  observation?: TerminalSendObservationMessage | null;
+  delta?: TerminalDeltaMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
 };
@@ -760,6 +764,8 @@ export class TerminalSessionManager {
       output,
       outputBytes: payload.outputBytes,
       linesCaptured: payload.linesCaptured,
+      changed: typeof payload.changed === "boolean" ? payload.changed : undefined,
+      truncated: typeof payload.truncated === "boolean" ? payload.truncated : undefined,
       readiness: payload.readiness,
     });
   }
@@ -836,14 +842,12 @@ export class TerminalSessionManager {
         sessionId,
         requestId: payload.requestId,
         submitted: payload.submitted,
-        observation: payload.observation
+        delta: payload.delta
           ? {
-              capturedAfterMs: payload.observation.captured_after_ms,
-              screenChanged: payload.observation.screen_changed,
-              baselineHash: payload.observation.baseline_hash,
-              currentHash: payload.observation.current_hash,
-              linesCaptured: payload.observation.lines_captured,
-              lastNonEmptyLine: payload.observation.last_non_empty_line,
+              changed: payload.delta.changed,
+              textBytes: Buffer.byteLength(payload.delta.text, "utf-8"),
+              truncated: payload.delta.truncated,
+              summary: this.summarizeObservedOutput(payload.delta.text),
             }
           : null,
         readiness: payload.readiness,
@@ -861,16 +865,11 @@ export class TerminalSessionManager {
 
     pending.resolve({
       submitted: payload.submitted,
-      observation: payload.observation
+      delta: payload.delta
         ? {
-            capturedAfterMs: payload.observation.captured_after_ms,
-            screenChanged: payload.observation.screen_changed,
-            baselineHash: payload.observation.baseline_hash,
-            currentHash: payload.observation.current_hash,
-            linesCaptured: payload.observation.lines_captured,
-            lastNonEmptyLine: payload.observation.last_non_empty_line,
-            previewHead: payload.observation.preview_head ?? null,
-            previewTail: payload.observation.preview_tail ?? null,
+            changed: payload.delta.changed,
+            text: payload.delta.text,
+            truncated: payload.delta.truncated,
           }
         : null,
       readiness: payload.readiness
@@ -1058,7 +1057,7 @@ export class TerminalSessionManager {
     }
 
     const requestId = `obs_${ulid()}`;
-    const view = options.view ?? "screen";
+    const view = options.view ?? "delta";
     const waitFor = options.waitFor ?? "none";
     const lines = options.lines ?? -50;
     const localGraceMs = 1000;
@@ -1176,7 +1175,7 @@ export class TerminalSessionManager {
       {
         lines: options.startLine ?? -50,
         waitFor: "none",
-        view: "screen"
+        view: "history"
       },
       timeoutMs
     );
@@ -1244,7 +1243,7 @@ export class TerminalSessionManager {
     const requestId = `send_${ulid()}`;
     const timeoutMs = options.timeoutMs ?? 5000;
     const waitFor = interaction.waitFor ?? "none";
-    const observeAfterMs = interaction.observeAfterMs ?? 150;
+    const observeAfterMs = interaction.observeAfterMs ?? 1000;
 
     const payload = {
       proto: TERMINAL_PROTO_VERSION,

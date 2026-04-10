@@ -26,28 +26,18 @@ export type TerminalWaitFor =
   | "shell_ready"
   | "changed"
   | "settled";
-export type TerminalObservationView = "screen";
+export type TerminalObservationView = "delta" | "screen" | "history";
 
-export interface TerminalSendObservation {
-  capturedAfterMs: number;
-  screenChanged: boolean;
-  baselineHash: string;
-  currentHash: string;
-  linesCaptured: number;
-  lastNonEmptyLine: string;
-  previewHead?: string | null;
-  previewTail?: string | null;
+export interface TerminalDelta {
+  changed: boolean;
+  text: string;
+  truncated: boolean;
 }
 
-export interface TerminalSendObservationMessage {
-  captured_after_ms: number;
-  screen_changed: boolean;
-  baseline_hash: string;
-  current_hash: string;
-  lines_captured: number;
-  last_non_empty_line: string;
-  preview_head?: string | null;
-  preview_tail?: string | null;
+export interface TerminalDeltaMessage {
+  changed: boolean;
+  text: string;
+  truncated: boolean;
 }
 
 export interface TerminalEnvelope {
@@ -195,7 +185,7 @@ export interface TerminalSendResultMessage extends TerminalEnvelope {
   session_id: string;
   request_id: string;
   submitted: boolean;
-  observation?: TerminalSendObservationMessage | null;
+  delta?: TerminalDeltaMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
 }
@@ -218,6 +208,8 @@ export interface TerminalObserveResultMessage extends TerminalEnvelope {
   output: string; // base64
   output_bytes: number;
   lines_captured: number;
+  changed?: boolean | null;
+  truncated?: boolean | null;
   readiness: ReadinessAssessment;
   error: string | null;
 }

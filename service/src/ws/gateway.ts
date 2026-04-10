@@ -123,10 +123,12 @@ const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_observe_result"),
   session_id: z.string(),
   request_id: z.string(),
-  view: z.literal("screen"),
+  view: z.enum(["delta", "screen", "history"]),
   output: z.string(),  // base64
   output_bytes: z.number().int().nonnegative(),
   lines_captured: z.number().int().nonnegative(),
+  changed: z.boolean().nullable().optional(),
+  truncated: z.boolean().nullable().optional(),
   readiness: z.object({
     ready: z.boolean(),
     confidence: z.number(),
@@ -165,16 +167,11 @@ const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
   session_id: z.string(),
   request_id: z.string(),
   submitted: z.boolean(),
-  observation: z
+  delta: z
     .object({
-      captured_after_ms: z.number().int().nonnegative(),
-      screen_changed: z.boolean(),
-      baseline_hash: z.string(),
-      current_hash: z.string(),
-      lines_captured: z.number().int().nonnegative(),
-      last_non_empty_line: z.string(),
-      preview_head: z.string().nullable().optional(),
-      preview_tail: z.string().nullable().optional()
+      changed: z.boolean(),
+      text: z.string(),
+      truncated: z.boolean()
     })
     .nullable()
     .optional(),
@@ -560,6 +557,8 @@ class BudConnection {
       output: result.data.output,
       outputBytes: result.data.output_bytes,
       linesCaptured: result.data.lines_captured,
+      changed: result.data.changed ?? undefined,
+      truncated: result.data.truncated ?? undefined,
       readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });
@@ -606,7 +605,7 @@ class BudConnection {
     this.terminalSessionManager.handleSendResult(sessionId, {
       requestId: result.data.request_id,
       submitted: result.data.submitted,
-      observation: result.data.observation ?? null,
+      delta: result.data.delta ?? null,
       readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });

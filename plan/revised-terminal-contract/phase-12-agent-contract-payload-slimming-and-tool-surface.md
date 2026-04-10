@@ -1,7 +1,7 @@
 # Phase 12: Agent Contract, Payload Slimming, And Tool Surface
 
 **Parent Plan**: [implementation-spec-follow-up.md](./implementation-spec-follow-up.md)
-**Status**: Draft
+**Status**: Implemented
 
 ---
 

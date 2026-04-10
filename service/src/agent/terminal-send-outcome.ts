@@ -1,4 +1,4 @@
-import type { ReadinessHints, TerminalSendObservation } from "../terminal/types.js";
+import type { ReadinessHints, TerminalDelta } from "../terminal/types.js";
 
 type SendDirectiveSummaryInput = {
   text?: string;
@@ -26,16 +26,16 @@ export type TerminalSendAcceptance = {
 };
 
 export function deriveTerminalSendAcceptance(
-  observation?: TerminalSendObservation | null,
+  delta?: TerminalDelta | null,
 ): TerminalSendAcceptance {
-  if (!observation) {
+  if (!delta) {
     return {
       status: "observation_unavailable",
       reason: "no_post_send_observation",
     };
   }
 
-  if (observation.screenChanged) {
+  if (delta.changed) {
     return {
       status: "observed_change",
       reason: "screen_changed_after_send",
@@ -119,7 +119,7 @@ export function deriveTerminalSendState(args: {
 
 export function buildTerminalSendSummary(
   input: SendDirectiveSummaryInput,
-  observation?: TerminalSendObservation | null,
+  delta?: TerminalDelta | null,
   state?: TerminalSendState | null,
   readinessHints?: Partial<ReadinessHints> | null,
 ): string {
@@ -142,41 +142,40 @@ export function buildTerminalSendSummary(
       ? `Attempted to ${fragments.join(" and ")}`
       : "Attempted to send interactive input";
 
-  if (!observation) {
+  if (!delta) {
     return action;
   }
 
-  const afterMs = `${observation.capturedAfterMs}ms`;
-  if (!observation.screenChanged) {
-    return `${action}; no visible change observed after ${afterMs}`;
+  if (!delta.changed) {
+    return `${action}; no visible delta observed`;
   }
 
   if (state?.status === "waiting_for_input") {
-    return `${action}; observed a screen update after ${afterMs} and the UI appears settled and waiting for more input`;
+    return `${action}; observed new terminal content and the UI appears settled and waiting for more input`;
   }
 
   if (state?.status === "ready_at_shell") {
-    return `${action}; observed a screen update after ${afterMs} and the terminal appears back at a shell prompt`;
+    return `${action}; observed new terminal content and the terminal appears back at a shell prompt`;
   }
 
   if (readinessHints?.may_still_be_processing === true) {
-    return `${action}; observed terminal activity after ${afterMs}`;
+    return `${action}; observed new terminal activity`;
   }
 
-  return `${action}; observed a screen update after ${afterMs}`;
+  return `${action}; observed new terminal content`;
 }
 
 export function buildTerminalSendFollowUpHint(args: {
   acceptance: TerminalSendAcceptance;
-  observation?: TerminalSendObservation | null;
+  delta?: TerminalDelta | null;
   state: TerminalSendState;
   readinessHints?: Partial<ReadinessHints> | null;
   contextAfter: SendContextSummaryInput;
 }): string | undefined {
-  const { acceptance, observation, state, readinessHints, contextAfter } = args;
+  const { acceptance, delta, state, readinessHints, contextAfter } = args;
 
   if (acceptance.status === "no_visible_change") {
-    return "No visible screen change was observed after sending input. Use terminal.observe before assuming the program accepted it.";
+    return "No visible delta was observed after sending input. Use terminal.observe before assuming the program accepted it.";
   }
 
   if (acceptance.status === "observation_unavailable") {
@@ -191,14 +190,14 @@ export function buildTerminalSendFollowUpHint(args: {
     return "The terminal appears back at a shell prompt. Use terminal.exec for the next shell command.";
   }
 
-  if (state.status === "waiting_for_input" && observation?.screenChanged && contextAfter.mode === "repl") {
+  if (state.status === "waiting_for_input" && delta?.changed && contextAfter.mode === "repl") {
     const program =
       contextAfter.programDisplayName ?? contextAfter.program ?? "the interactive program";
-    return `Observed a screen update and ${program} appears settled and waiting for more input. Another terminal.send is reasonable if you need to continue the interaction.`;
+    return `Observed new terminal content and ${program} appears settled and waiting for more input. Another terminal.send is reasonable if you need to continue the interaction.`;
   }
 
   if (state.status === "waiting_for_input") {
-    return "Observed a settled screen update after sending input. Another terminal.send is reasonable if the interactive UI is clearly waiting for more input.";
+    return "Observed settled terminal delta after sending input. Another terminal.send is reasonable if the interactive UI is clearly waiting for more input.";
   }
 
   return undefined;

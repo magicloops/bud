@@ -49,9 +49,9 @@ export type TerminalWaitFor =
 | `TerminalOutputMessage` | ← Bud | Output chunk with byte offset |
 | `TerminalReadyMessage` | ← Bud | Readiness assessment |
 | `TerminalExecMessage` / `TerminalExecResultMessage` | ↔ | Request-response shell execution |
-| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Structured interactive input with fast post-send evidence |
-| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit rendered-screen observation |
-| `TerminalSendObservation` / `TerminalSendObservationMessage` | Internal / Wire | Fast post-send screen evidence |
+| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Structured interactive input with fast post-send delta |
+| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit delta/screen/history observation |
+| `TerminalDelta` / `TerminalDeltaMessage` | Internal / Wire | Minimal additive delta payload for send/observe |
 
 **Readiness Types**:
 
@@ -116,7 +116,7 @@ export interface TerminalSendResultMessage extends TerminalEnvelope {
   session_id: string;
   request_id: string;
   submitted: boolean;
-  observation?: TerminalSendObservationMessage | null;
+  delta?: TerminalDeltaMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
 }
@@ -125,7 +125,7 @@ export interface TerminalObserveMessage extends TerminalEnvelope {
   type: "terminal_observe";
   session_id: string;
   request_id: string;
-  view?: "screen";
+  view?: "delta" | "screen" | "history";
   lines?: number;
   wait_for?: TerminalWaitFor;
   timeout_ms?: number;
@@ -169,13 +169,14 @@ await_ready: {
 ```
 
 **Phase 6/7 Interactive Wait Notes**:
-- `terminal.send` now defaults to a fast post-send observation after `150ms`
+- `terminal.send` now defaults to a fast post-send delta capture after `1000ms`
 - `terminal.send` now defaults to `wait_for: "none"` and `timeout_ms: 5000`
 - agent-facing explicit waits are now `changed` and `settled`
 - `terminal.send` and `terminal.observe` share the same immediate-start screen wait engine for `changed` / `settled`
 - `settled` means "screen has been quiet for a short window", not the older blind `screen_stable` loop
 - `submitted` means Bud dispatched at least one text/key/Enter event to tmux
-- `observation.screen_changed` is the main signal for whether the foreground program visibly reacted right away
+- `delta.changed` is the main signal for whether the foreground program visibly reacted right away
+- default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested
 - low-level `terminal_input` / `terminal_interrupt` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
 
 ### `known-programs.ts`

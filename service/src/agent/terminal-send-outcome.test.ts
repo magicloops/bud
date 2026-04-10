@@ -9,12 +9,9 @@ import {
 
 test("deriveTerminalSendAcceptance reports no visible change for unchanged screens", () => {
   const acceptance = deriveTerminalSendAcceptance({
-    capturedAfterMs: 150,
-    screenChanged: false,
-    baselineHash: "aaaa",
-    currentHash: "aaaa",
-    linesCaptured: 40,
-    lastNonEmptyLine: "Claude Code",
+    changed: false,
+    text: "",
+    truncated: false,
   });
 
   assert.deepEqual(acceptance, {
@@ -30,12 +27,9 @@ test("buildTerminalSendSummary describes unchanged screens conservatively", () =
       submit: true,
     },
     {
-      capturedAfterMs: 150,
-      screenChanged: false,
-      baselineHash: "aaaa",
-      currentHash: "aaaa",
-      linesCaptured: 40,
-      lastNonEmptyLine: "Claude Code",
+      changed: false,
+      text: "",
+      truncated: false,
     },
     {
       status: "ambiguous",
@@ -49,7 +43,7 @@ test("buildTerminalSendSummary describes unchanged screens conservatively", () =
 
   assert.equal(
     summary,
-    'Attempted to send "Please review src/main.rs" and press Enter; no visible change observed after 150ms',
+    'Attempted to send "Please review src/main.rs" and press Enter; no visible delta observed',
   );
 });
 
@@ -66,13 +60,10 @@ test("buildTerminalSendFollowUpHint recommends observe when no visible change wa
       waitingForInput: false,
       mayStillBeProcessing: false,
     },
-    observation: {
-      capturedAfterMs: 150,
-      screenChanged: false,
-      baselineHash: "aaaa",
-      currentHash: "aaaa",
-      linesCaptured: 40,
-      lastNonEmptyLine: "Claude Code",
+    delta: {
+      changed: false,
+      text: "",
+      truncated: false,
     },
     readinessHints: { may_still_be_processing: false },
     contextAfter: {
@@ -84,7 +75,7 @@ test("buildTerminalSendFollowUpHint recommends observe when no visible change wa
 
   assert.equal(
     hint,
-    "No visible screen change was observed after sending input. Use terminal.observe before assuming the program accepted it.",
+    "No visible delta was observed after sending input. Use terminal.observe before assuming the program accepted it.",
   );
 });
 
@@ -128,13 +119,10 @@ test("buildTerminalSendFollowUpHint points back to terminal.exec when send retur
       waitingForInput: false,
       mayStillBeProcessing: false,
     },
-    observation: {
-      capturedAfterMs: 150,
-      screenChanged: true,
-      baselineHash: "aaaa",
-      currentHash: "bbbb",
-      linesCaptured: 40,
-      lastNonEmptyLine: "user@host:~/bud$",
+    delta: {
+      changed: true,
+      text: "user@host:~/bud$",
+      truncated: false,
     },
     readinessHints: {
       may_still_be_processing: false,

@@ -42,7 +42,7 @@ WebSocket message frame types matching the service protocol:
 | `TerminalEnsureFrame` | ← Service | Create/verify tmux session |
 | `TerminalInputFrame` | ← Service | Send input to terminal |
 | `TerminalExecFrame` | ← Service | Request-response shell execution |
-| `TerminalSendFrame` | ← Service | Structured interactive input with optional fast post-send observation |
+| `TerminalSendFrame` | ← Service | Structured interactive input with optional fast post-send delta |
 | `TerminalObserveFrame` | ← Service | Explicit screen inspection |
 | `AwaitReady` | Config | Readiness detection options |
 
@@ -81,14 +81,18 @@ Hash-based deduplication for `capture-pane` output:
   - Returns output directly in `terminal_exec_result`
 - **`handle_send`** - Structured interactive input path for agent `terminal.send`:
   - Sends literal text, optional submit, and special keys
-  - Captures a fast post-send screen observation after `observe_after_ms` (default `150ms`)
+  - Captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
   - Defaults to `wait_for: "none"` and `timeout_ms: 5000`
   - Can explicitly wait for `shell_ready`, `changed`, or `settled`
   - Reuses a pre-send baseline capture so waits can detect immediate redraws and echoed input
-  - Returns dispatch status plus `observation` and readiness in `terminal_send_result`
-- **`handle_observe`** - Explicit screen observation for agent `terminal.observe`:
+  - Strips low-signal separator-only lines from delta text when a line is a single repeated non-alphanumeric glyph run of 4+ characters
+  - Returns dispatch status plus additive `delta` and readiness in `terminal_send_result`
+- **`handle_observe`** - Explicit delta/screen/history observation for agent `terminal.observe`:
+  - Defaults to `view: "delta"` and supports explicit `screen` / `history` modes
   - Optionally waits with the same immediate-start screen engine used by `terminal.send`
   - Reuses the wait capture instead of always performing a second `capture-pane`
+  - Tracks the last delivered capture per session so default observe suppresses repeated transcript content
+  - Applies the same low-signal separator stripping to default delta output, while explicit `screen` / `history` remain raw
   - Returns `terminal_observe_result`
 
 **Output Streaming**:
@@ -124,7 +128,7 @@ Hash-based deduplication for `capture-pane` output:
 - Default: 5s intervals, 2 stable checks required, 60s max wait
 
 **Phase 6 Note**:
-- The agent-facing `terminal.send` path no longer relies on activity stability by default; it now uses an immediate fast capture after send and reserves `screen_stable` for explicit wait requests.
+- The agent-facing `terminal.send` path no longer relies on activity stability by default; it now uses an immediate fast delta capture after send and reserves `screen_stable` for explicit wait requests.
 
 **Phase 7 Note**:
 - Agent-facing `terminal.send` / `terminal.observe` now share an immediate-start screen wait helper that:
@@ -132,6 +136,7 @@ Hash-based deduplication for `capture-pane` output:
   - polls every `100ms`
   - treats `settled` as a short quiet window (`300ms`) instead of the older blind delay loop
   - returns timeout assessments that stay conservative instead of treating a missed wait as positive readiness
+- the same Bud-side delta engine now powers both `terminal.send` and default `terminal.observe`
 - The older `ActivityDetector` remains in place for low-level `terminal_input` / `terminal_interrupt` readiness events.
 
 #### Main Application (Lines 2365-2875)

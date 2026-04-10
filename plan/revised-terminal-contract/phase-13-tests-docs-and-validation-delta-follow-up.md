@@ -1,7 +1,7 @@
 # Phase 13: Tests, Docs, And Validation For Delta Follow-Up
 
 **Parent Plan**: [implementation-spec-follow-up.md](./implementation-spec-follow-up.md)
-**Status**: Draft
+**Status**: Implemented (manual validation pending)
 
 ---
 
@@ -11,7 +11,7 @@ Finish the delta-observation follow-up with tests, docs, and validation that pro
 
 By the end of this phase:
 
-- automated coverage exists for delta extraction and payload shaping where practical
+- automated coverage exists for Bud-owned delta extraction and service-side delta-driven send behavior where practical
 - protocol/spec/docs describe delta-first behavior and explicit observe modes
 - manual validation covers both append-heavy and repaint-heavy interactive workflows
 
@@ -51,14 +51,15 @@ Cover at least:
 - repaint fallback to bounded current-tail excerpt
 - explicit observe mode routing
 
-### Task 2: Add or update service tests
+### Task 2: Add or update service tests and targeted verification
 
 Cover at least:
 
-- minimal model-facing send payload shaping
-- default observe delta shaping
-- delivered-baseline tracking across send and observe
-- explicit `screen` / `history` observe behavior
+- delta-based send summaries and conservative follow-up behavior
+- module-level verification that the delta-first send/observe surfaces still load cleanly
+- explicit `screen` / `history` observe behavior in the updated contracts
+
+Delivered-baseline tracking is Bud-owned in the current implementation and is covered there rather than duplicated in service tests.
 
 ### Task 3: Update protocol documentation
 
@@ -89,10 +90,10 @@ Run the manual scenarios in [validation-checklist-follow-up.md](./validation-che
 
 ## Validation Checklist
 
-- [ ] Bud helper tests cover delta extraction and fallback behavior where practical
-- [ ] service tests cover minimal payload shaping and delivered-baseline tracking
-- [ ] `docs/proto.md` reflects the delta-first send/observe contract
-- [ ] touched specs describe the delta-first follow-up accurately
+- [x] Bud helper tests cover delta extraction and fallback behavior where practical
+- [x] service tests or targeted verification cover service-side delta payload shaping where practical
+- [x] `docs/proto.md` reflects the delta-first send/observe contract
+- [x] touched specs describe the delta-first follow-up accurately
 - [ ] manual validation passes for Claude Code, at least one REPL, a repaint-heavy wait scenario, and normal shell exec flows
 
 ## Exit Criteria

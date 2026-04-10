@@ -390,7 +390,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "text": "python",
     "submit": true,
     "keys": [],
-    "observe_after_ms": 150,
+    "observe_after_ms": 1000,
     "wait_for": "none",
     "timeout_ms": 5000,
     "ext": {} }
@@ -402,7 +402,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   * `text`: optional literal text to send
   * `submit`: when true, Bud MUST press Enter after sending text
   * `keys`: optional ordered list of special keys or single-key actions
-  * `observe_after_ms`: optional delay before the default fast post-send screen capture (default: 150)
+  * `observe_after_ms`: optional delay before the default fast post-send screen capture (default: 1000)
   * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"none"` for `terminal.send`)
   * `timeout_ms`: max wait time for readiness (default: 5000 for `terminal.send`)
 
@@ -411,12 +411,16 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   { "proto": "0.2", "type": "terminal_observe", "id": "...", "ts": 1731,
     "session_id": "sess_01...",
     "request_id": "obs_01...",
-    "view": "screen",
+    "view": "delta",
     "lines": -50,
     "wait_for": "settled",
     "timeout_ms": 30000,
     "ext": {} }
   ```
+
+  **Fields:**
+  * `view`: `"delta"` | `"screen"` | `"history"` (default: `"delta"`)
+  * `lines`: for `delta` / `history`, negative values mean recent scrollback lines
 
 #### 4.4.2 Bud → Backend Messages
 
@@ -505,15 +509,10 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "session_id": "sess_01...",
     "request_id": "send_01...",
     "submitted": true,
-    "observation": {
-      "captured_after_ms": 150,
-      "screen_changed": true,
-      "baseline_hash": "8f0c5a4f8b0d9b7a",
-      "current_hash": "3d8e5bc2a10d0e1f",
-      "lines_captured": 43,
-      "last_non_empty_line": "Thinking...",
-      "preview_head": "╭ Claude Code | project",
-      "preview_tail": "Thinking..."
+    "delta": {
+      "changed": true,
+      "text": "Do you want to proceed?\n1. Yes\n2. No",
+      "truncated": false
     },
     "readiness": { "ready": true, "confidence": 0.85, "trigger": "settled", "hints": { "looks_like_prompt": false, "looks_like_confirmation": false, "looks_like_password": false, "looks_like_pager": false, "looks_like_error": false, "may_still_be_processing": false }, "quiet_for_ms": 320, "activity_checks": 3, "stable_checks": 2 },
     "error": null,
@@ -522,11 +521,10 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
 
   **Fields:**
   * `submitted`: true when Bud successfully dispatched at least one text/key/Enter event to tmux; this is transport success, not proof that the foreground program accepted or acted on the input
-  * `observation`: optional fast post-send screen evidence captured after `observe_after_ms`
-    * `screen_changed`: whether the rendered screen changed relative to the pre-send baseline
-    * `baseline_hash` / `current_hash`: content fingerprints for debugging
-    * `last_non_empty_line`: last visible non-empty line from the fast capture
-    * `preview_head` / `preview_tail`: optional short previews for debugging and logs
+  * `delta`: optional additive post-send delta
+    * `changed`: whether Bud observed a visible change relative to the pre-send baseline
+    * `text`: additive-only visible content from the current screen
+    * `truncated`: true when the delta fell back to a bounded excerpt
   * `readiness`: readiness assessment derived from the post-send state or explicit wait mode
     * `changed` returns on the first visible screen delta after the pre-send baseline
     * `settled` starts sampling immediately and returns once the screen has been quiet for a short window
@@ -537,16 +535,26 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   { "proto": "0.2", "type": "terminal_observe_result", "id": "...", "ts": 1731,
     "session_id": "sess_01...",
     "request_id": "obs_01...",
-    "view": "screen",
-    "output": "base64-encoded-screen-content",
-    "output_bytes": 4096,
-    "lines_captured": 50,
+    "view": "delta",
+    "output": "base64-encoded-delta-or-capture",
+    "output_bytes": 512,
+    "lines_captured": 8,
+    "changed": true,
+    "truncated": false,
     "readiness": { "ready": true, "confidence": 0.85, "trigger": "settled", "hints": { "looks_like_prompt": false, "looks_like_confirmation": false, "looks_like_password": false, "looks_like_pager": false, "looks_like_error": false, "may_still_be_processing": false }, "quiet_for_ms": 330, "activity_checks": 4, "stable_checks": 3 },
     "error": null,
     "ext": {} }
   ```
 
-`terminal.send` and `terminal.observe` now share the same immediate-start screen wait engine for `changed` / `settled`, so both paths reason about fast TUI/REPL behavior using the same baseline-capture and quiet-window semantics.
+  **Fields:**
+  * `view`: `"delta"` | `"screen"` | `"history"`
+  * `output`: base64-encoded payload for the selected view
+    * for `delta`, this is additive-only new/changed visible content
+    * for `screen`, this is the current full rendered screen
+    * for `history`, this is the requested scrollback/history window
+  * `changed` / `truncated`: populated for `view: "delta"` and omitted otherwise
+
+`terminal.send` and `terminal.observe` now share the same delta engine and immediate-start screen wait engine for `changed` / `settled`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
 
 #### 4.4.3 Terminal SSE Events (Backend → Browser)
 

@@ -18,7 +18,7 @@ Transport parity is no longer the active blocker after the successful Claude Cod
 ## Fast Post-Send Evidence
 
 - [ ] Confirm `terminal.send` returns a post-send observation by default
-- [ ] Confirm the default post-send observation wait is `150ms`
+- [ ] Confirm the default post-send observation wait is `1000ms`
 - [ ] Confirm the default timeout for the fast-observe send path is `5000ms`
 - [ ] Confirm the result distinguishes dispatch success from observed response
 - [ ] Confirm an unchanged screen is represented as ambiguous or not observed

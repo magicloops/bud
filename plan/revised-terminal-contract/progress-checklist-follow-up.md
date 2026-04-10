@@ -8,7 +8,7 @@
 ## Phase 6: Fast Post-Send Observation And Send Result Contract
 
 - [x] Add a richer `terminal.send` result variant in service types
-- [x] Add default fast post-send observation to the agent send path at `150ms`
+- [x] Add default fast post-send observation to the agent send path at `1000ms`
 - [x] Set the default fast-observe send timeout to `5000ms`
 - [x] Persist send-result evidence rather than only readiness optimism
 - [x] Rewrite send summaries and follow-up hints around observed evidence
@@ -41,32 +41,32 @@
 
 ## Phase 10: Shared Delta Engine And Send Payload Minimization
 
-- [ ] Add a shared internal delta engine in Bud
-- [ ] Implement additive-only delta extraction with repaint fallback
-- [ ] Route `terminal.send` through the shared delta engine
-- [ ] Reduce the model-facing send payload to success, readiness, and delta
-- [ ] Keep hashes/previews/line counts internal-only by default
+- [x] Add a shared internal delta engine in Bud
+- [x] Implement additive-only delta extraction with repaint fallback
+- [x] Route `terminal.send` through the shared delta engine
+- [x] Reduce the model-facing send payload to success, readiness, and delta
+- [x] Keep hashes/previews/line counts internal-only by default
 
 ## Phase 11: Delta-First Observe Modes And Delivered-Baseline Tracking
 
-- [ ] Make default `terminal.observe` delta-first
-- [ ] Add explicit observe modes for `delta`, `screen`, and `history`
-- [ ] Track the last delivered agent-visible baseline across send and observe
-- [ ] Suppress repeated content across sequential send/observe tool calls
-- [ ] Add repaint fallback behavior for noisy observe deltas
+- [x] Make default `terminal.observe` delta-first
+- [x] Add explicit observe modes for `delta`, `screen`, and `history`
+- [x] Track the last delivered agent-visible baseline across send and observe
+- [x] Suppress repeated content across sequential send/observe tool calls
+- [x] Add repaint fallback behavior for noisy observe deltas
 
 ## Phase 12: Agent Contract, Payload Slimming, And Tool Surface
 
-- [ ] Slim model-facing tool results to the minimal delta-first contract
-- [ ] Rework agent guidance around explicit `screen` / `history` observe modes
-- [ ] Remove low-level comparison details from the default model transcript
-- [ ] Update developer-visible tool rendering for the delta-first contract
-- [ ] Keep richer internal comparison metadata off the main tool-result path
+- [x] Slim model-facing tool results to the minimal delta-first contract
+- [x] Rework agent guidance around explicit `screen` / `history` observe modes
+- [x] Remove low-level comparison details from the default model transcript
+- [x] Update developer-visible tool rendering for the delta-first contract
+- [x] Keep richer internal comparison metadata off the main tool-result path
 
 ## Phase 13: Tests, Docs, And Validation For Delta Follow-Up
 
-- [ ] Add Bud helper tests for delta extraction and fallback behavior where practical
-- [ ] Add service tests for minimal payload shaping and delivered-baseline tracking
-- [ ] Update `docs/proto.md` for the delta-first contract
-- [ ] Update touched specs and plan docs
+- [x] Add Bud helper tests for delta extraction and fallback behavior where practical
+- [x] Add service tests or targeted verification for service-side delta payload shaping where practical
+- [x] Update `docs/proto.md` for the delta-first contract
+- [x] Update touched specs and plan docs
 - [ ] Complete manual validation for Claude Code, a REPL, repaint-heavy waits, and shell exec flows

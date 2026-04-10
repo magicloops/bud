@@ -59,7 +59,7 @@ The result contract needs to expose evidence instead of optimism.
   "text": "Please summarize the design doc as a haiku.",
   "submit": true,
   "keys": [],
-  "observe_after_ms": 150,
+  "observe_after_ms": 1000,
   "wait_for": "none",
   "timeout_ms": 5000
 }
@@ -94,7 +94,7 @@ Update the service-side type system so `terminal.send` has a dedicated result va
 
 ### Task 2: Add default fast post-send observation
 
-For the agent path, `terminal.send` should trigger a lightweight capture after `150ms` unless the caller overrides it explicitly.
+For the agent path, `terminal.send` should trigger a lightweight capture after `1000ms` unless the caller overrides it explicitly.
 
 This should be enough to answer:
 
@@ -121,7 +121,7 @@ Replace overly strong summaries such as:
 
 with evidence-based summaries such as:
 
-- "Attempted to send the prompt; no visible change observed after 150ms"
+- "Attempted to send the prompt; no visible change observed after 1000ms"
 - "Attempted to send the prompt; observed Claude begin rendering output"
 
 ### Task 5: Persist the richer send metadata
@@ -137,7 +137,7 @@ Without forcing developers to infer meaning from a single readiness blob.
 ## Validation Checklist
 
 - [ ] `terminal.send` returns a post-send observation by default
-- [ ] the default post-send observation wait is `150ms`
+- [ ] the default post-send observation wait is `1000ms`
 - [ ] the default timeout for the fast-observe send path is `5000ms`
 - [ ] the result clearly distinguishes dispatch success from observed program response
 - [ ] unchanged screens are represented as ambiguous or not observed, not as success
