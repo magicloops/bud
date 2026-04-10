@@ -39,6 +39,10 @@ export class ContextSyncService {
       const { hash, lastLine, capture } = await this.captureCurrentState(sessionId);
       const currentMode = this.detectModeHeuristic(capture, lastLine);
 
+      if (currentMode === "shell") {
+        this.terminalSessionManager.clearPendingCommand(sessionId);
+      }
+
       await this.updateSnapshot(sessionId, hash, lastLine, currentMode, null);
 
       this.logger.debug(
@@ -69,7 +73,7 @@ export class ContextSyncService {
       const currentMode = this.detectModeHeuristic(capture, lastLine);
 
       // 3. Clear pendingCommands if mode changed to shell
-      // This ensures terminal.run uses correct output method (tailOutput vs capturePane)
+      // This ensures inferred terminal context is aligned after an interactive program exits.
       if (currentMode === "shell") {
         this.terminalSessionManager.clearPendingCommand(sessionId);
       }

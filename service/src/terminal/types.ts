@@ -14,7 +14,31 @@ export type TerminalPromptType =
   | "database"
   | "unknown";
 
-export type TerminalReadyTrigger = "prompt_detected" | "quiescence" | "timeout" | "activity_stable";
+export type TerminalReadyTrigger =
+  | "prompt_detected"
+  | "quiescence"
+  | "timeout"
+  | "activity_stable"
+  | "changed"
+  | "settled";
+export type TerminalWaitFor =
+  | "none"
+  | "shell_ready"
+  | "changed"
+  | "settled";
+export type TerminalObservationView = "delta" | "screen" | "history";
+
+export interface TerminalDelta {
+  changed: boolean;
+  text: string;
+  truncated: boolean;
+}
+
+export interface TerminalDeltaMessage {
+  changed: boolean;
+  text: string;
+  truncated: boolean;
+}
 
 export interface TerminalEnvelope {
   type: string;
@@ -125,17 +149,48 @@ export interface TerminalReadyMessage extends TerminalEnvelope {
   last_line: string;
 }
 
-/**
- * Request-response pattern for terminal.run tool.
- * Bud waits for readiness and returns output directly.
- */
-export interface TerminalRunResultMessage extends TerminalEnvelope {
-  type: "terminal_run_result";
+export interface TerminalSendMessage extends TerminalEnvelope {
+  type: "terminal_send";
   session_id: string;
   request_id: string;
+  text?: string;
+  submit?: boolean;
+  keys?: string[];
+  observe_after_ms?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
+}
+
+export interface TerminalSendResultMessage extends TerminalEnvelope {
+  type: "terminal_send_result";
+  session_id: string;
+  request_id: string;
+  submitted: boolean;
+  delta?: TerminalDeltaMessage | null;
+  readiness: ReadinessAssessment;
+  error: string | null;
+}
+
+export interface TerminalObserveMessage extends TerminalEnvelope {
+  type: "terminal_observe";
+  session_id: string;
+  request_id: string;
+  view?: TerminalObservationView;
+  lines?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
+}
+
+export interface TerminalObserveResultMessage extends TerminalEnvelope {
+  type: "terminal_observe_result";
+  session_id: string;
+  request_id: string;
+  view: TerminalObservationView;
   output: string; // base64
   output_bytes: number;
-  truncated: boolean;
+  lines_captured: number;
+  changed?: boolean | null;
+  truncated?: boolean | null;
   readiness: ReadinessAssessment;
   error: string | null;
 }
@@ -143,7 +198,7 @@ export interface TerminalRunResultMessage extends TerminalEnvelope {
 // Command stack tracking types
 
 export interface PendingCommand {
-  input: string; // Raw input sent, e.g., "claude\n"
+  input: string; // Raw input sent, e.g., "claude" or "claude\n"
   command: string; // Parsed command name, e.g., "claude"
   sentAt: number; // Timestamp when sent
   source: "agent" | "user" | "system"; // Who sent this command

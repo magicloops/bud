@@ -369,32 +369,45 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "reason": "requested", "ext": {} }
   ```
 
-* `terminal_capture` — capture terminal screen via tmux capture-pane
+* `terminal_send` — send structured interactive input to the current program
   ```json
-  { "proto": "0.2", "type": "terminal_capture", "id": "...", "ts": 1731,
+  { "proto": "0.2", "type": "terminal_send", "id": "...", "ts": 1731,
     "session_id": "sess_01...",
-    "request_id": "cap_01...",
-    "options": { "start_line": -200, "end_line": null, "escape_sequences": false, "join_lines": true },
-    "ext": {} }
-  ```
-
-* `terminal_run` — run command and get output (request-response pattern for agent)
-  ```json
-  { "proto": "0.2", "type": "terminal_run", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "run_01...",
-    "input": "base64-encoded-input",
-    "mode": "shell",
-    "timeout_ms": 30000,
+    "request_id": "send_01...",
+    "text": "pwd",
+    "submit": true,
+    "keys": [],
+    "observe_after_ms": 1000,
+    "wait_for": "none",
+    "timeout_ms": 5000,
     "ext": {} }
   ```
 
   **Fields:**
   * `session_id`: target terminal session ID
   * `request_id`: unique ID for response correlation
-  * `input`: base64-encoded input to send to terminal
-  * `mode`: `"shell"` (quiescence-based) or `"repl"` (activity-based)
-  * `timeout_ms`: max wait time for readiness (default: 30000)
+  * `text`: optional literal text to send; this is now the primary shell-command path as well as the interactive-input path
+  * `submit`: when true, Bud MUST press Enter after sending text
+  * `keys`: optional ordered list of special keys or single-key actions
+  * `observe_after_ms`: optional delay before the default fast post-send screen capture (default: 1000)
+  * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"none"` for `terminal.send`)
+  * `timeout_ms`: max wait time for readiness (default: 5000 for `terminal.send`)
+
+* `terminal_observe` — explicitly inspect rendered screen / scrollback
+  ```json
+  { "proto": "0.2", "type": "terminal_observe", "id": "...", "ts": 1731,
+    "session_id": "sess_01...",
+    "request_id": "obs_01...",
+    "view": "delta",
+    "lines": -50,
+    "wait_for": "settled",
+    "timeout_ms": 30000,
+    "ext": {} }
+  ```
+
+  **Fields:**
+  * `view`: `"delta"` | `"screen"` | `"history"` (default: `"delta"`)
+  * `lines`: for `delta` / `history`, negative values mean recent scrollback lines
 
 #### 4.4.2 Bud → Backend Messages
 
@@ -437,61 +450,62 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   **Readiness Assessment Fields:**
   * `ready`: boolean — terminal is ready for next input
   * `confidence`: 0.0–1.0 — confidence level (≥0.8 high, 0.5–0.8 medium, <0.5 low)
-  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt` | `activity_stable`
+  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt` | `activity_stable` | `changed` | `settled`
   * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
   * `hints`: object of boolean flags for agent decision-making
 
-* `terminal_capture_response` — response to terminal_capture request
+* `terminal_send_result` — acknowledgement for `terminal_send`
   ```json
-  { "proto": "0.2", "type": "terminal_capture_response", "id": "...", "ts": 1731,
+  { "proto": "0.2", "type": "terminal_send_result", "id": "...", "ts": 1731,
     "session_id": "sess_01...",
-    "request_id": "cap_01...",
-    "output": "base64-encoded-screen-content",
-    "output_bytes": 4096,
-    "lines_captured": 50,
-    "error": null,
-    "ext": {} }
-  ```
-
-* `terminal_run_result` — response to terminal_run request (request-response pattern)
-  ```json
-  { "proto": "0.2", "type": "terminal_run_result", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "run_01...",
-    "output": "base64-encoded-command-output",
-    "output_bytes": 1234,
-    "truncated": false,
-    "readiness": {
-      "ready": true,
-      "confidence": 0.95,
-      "trigger": "prompt_detected",
-      "prompt_type": "shell",
-      "hints": {
-        "looks_like_prompt": true,
-        "looks_like_confirmation": false,
-        "looks_like_password": false,
-        "looks_like_pager": false,
-        "looks_like_error": false,
-        "may_still_be_processing": false
-      },
-      "quiet_for_ms": 1500
+    "request_id": "send_01...",
+    "submitted": true,
+    "delta": {
+      "changed": true,
+      "text": "Do you want to proceed?\n1. Yes\n2. No",
+      "truncated": false
     },
+    "readiness": { "ready": true, "confidence": 0.85, "trigger": "settled", "hints": { "looks_like_prompt": false, "looks_like_confirmation": false, "looks_like_password": false, "looks_like_pager": false, "looks_like_error": false, "may_still_be_processing": false }, "quiet_for_ms": 320, "activity_checks": 3, "stable_checks": 2 },
     "error": null,
     "ext": {} }
   ```
 
   **Fields:**
-  * `session_id`: terminal session ID
-  * `request_id`: matches the request for correlation
-  * `output`: base64-encoded command output
-  * `output_bytes`: size of output in bytes
-  * `truncated`: true if output exceeded max size (64KB)
-  * `readiness`: readiness assessment (same as terminal_ready)
-  * `error`: error message if failed, null otherwise
+  * `submitted`: true when Bud successfully dispatched at least one text/key/Enter event to tmux; this is transport success, not proof that the foreground program accepted or acted on the input
+  * `delta`: optional additive post-send delta
+    * `changed`: whether Bud observed a visible change relative to the pre-send baseline
+    * `text`: additive-only visible content from the current screen
+    * `truncated`: true when the delta fell back to a bounded excerpt
+  * `readiness`: readiness assessment derived from the post-send state or explicit wait mode
+    * `changed` returns on the first visible screen delta after the pre-send baseline
+    * `settled` starts sampling immediately and returns once the screen has been quiet for a short window
+  * `error`: error string when dispatch or capture failed
 
-  **Mode-specific behavior:**
-  * `"shell"` mode: reads output from pipe-pane log file, uses quiescence-based detection
-  * `"repl"` mode: captures screen via tmux capture-pane, uses activity-based detection
+* `terminal_observe_result` — response to `terminal_observe`
+  ```json
+  { "proto": "0.2", "type": "terminal_observe_result", "id": "...", "ts": 1731,
+    "session_id": "sess_01...",
+    "request_id": "obs_01...",
+    "view": "delta",
+    "output": "base64-encoded-delta-or-capture",
+    "output_bytes": 512,
+    "lines_captured": 8,
+    "changed": true,
+    "truncated": false,
+    "readiness": { "ready": true, "confidence": 0.85, "trigger": "settled", "hints": { "looks_like_prompt": false, "looks_like_confirmation": false, "looks_like_password": false, "looks_like_pager": false, "looks_like_error": false, "may_still_be_processing": false }, "quiet_for_ms": 330, "activity_checks": 4, "stable_checks": 3 },
+    "error": null,
+    "ext": {} }
+  ```
+
+  **Fields:**
+  * `view`: `"delta"` | `"screen"` | `"history"`
+  * `output`: base64-encoded payload for the selected view
+    * for `delta`, this is additive-only new/changed visible content
+    * for `screen`, this is the current full rendered screen
+    * for `history`, this is the requested scrollback/history window
+  * `changed` / `truncated`: populated for `view: "delta"` and omitted otherwise
+
+`terminal.send` and `terminal.observe` now share the same delta engine and immediate-start screen wait engine for `changed` / `settled`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
 
 #### 4.4.3 Terminal SSE Events (Backend → Browser)
 
@@ -570,10 +584,10 @@ Current thread-scoped SSE payloads are route-specific. For `GET /api/threads/:th
   `{ "turn_id":"01TURN...", "client_id":"uuidv7", "message_id":"uuid", "text":"Cloning repository...", "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"assistant", "display_role":"Bud Agent", "content":"Cloning repository...", "metadata":{"status":"succeeded"}, "created_at":"2026-03-22T22:10:00.000Z" } }`
 
 * `agent.tool_call`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "name":"terminal.run", "args":{"input":"git status\n"} }`
+  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "name":"terminal.send", "args":{"text":"git status","submit":true} }`
 
 * `agent.tool_result`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "message_id":"uuid", "name":"terminal.run", "summary":"Ran git status", "output":"...", "output_bytes":123, "truncated":false, "output_truncation_reason":null, "omitted_lines":0, "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.run\",...}", "metadata":{"tool":"terminal.run","call_id":"call_123","summary":"Ran git status","output_truncation_reason":null}, "created_at":"2026-03-22T22:09:58.000Z" } }`
+  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "message_id":"uuid", "name":"terminal.send", "summary":"Attempted to send \"git status\" and press Enter; observed new terminal content", "readiness":{"ready":true,"confidence":0.84,"trigger":"settled"}, "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.send\",...}", "metadata":{"tool":"terminal.send","call_id":"call_123","summary":"Attempted to send \\\"git status\\\" and press Enter; observed new terminal content"}, "created_at":"2026-03-22T22:09:58.000Z" } }`
 
 * `agent.resync_required`
   `{ "error":"resync_required", "provided_cursor":"01CUR..." }`

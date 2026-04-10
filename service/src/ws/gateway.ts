@@ -119,23 +119,42 @@ const TerminalReadySchema = TerminalEnvelopeSchema.extend({
   assessment: z.record(z.unknown())
 });
 
-const TerminalCaptureResponseSchema = TerminalEnvelopeSchema.extend({
-  type: z.literal("terminal_capture_response"),
+const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_observe_result"),
   session_id: z.string(),
   request_id: z.string(),
+  view: z.enum(["delta", "screen", "history"]),
   output: z.string(),  // base64
   output_bytes: z.number().int().nonnegative(),
   lines_captured: z.number().int().nonnegative(),
+  changed: z.boolean().nullable().optional(),
+  truncated: z.boolean().nullable().optional(),
+  readiness: z.object({
+    ready: z.boolean(),
+    confidence: z.number(),
+    trigger: z.string(),
+    prompt_type: z.string().optional(),
+    hints: z.record(z.boolean()).optional(),
+    quiet_for_ms: z.number().optional(),
+    activity_checks: z.number().optional(),
+    stable_checks: z.number().optional()
+  }),
   error: z.string().nullable()
 });
 
-const TerminalRunResultSchema = TerminalEnvelopeSchema.extend({
-  type: z.literal("terminal_run_result"),
+const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_send_result"),
   session_id: z.string(),
   request_id: z.string(),
-  output: z.string(), // base64
-  output_bytes: z.number().int().nonnegative(),
-  truncated: z.boolean(),
+  submitted: z.boolean(),
+  delta: z
+    .object({
+      changed: z.boolean(),
+      text: z.string(),
+      truncated: z.boolean()
+    })
+    .nullable()
+    .optional(),
   readiness: z.object({
     ready: z.boolean(),
     confidence: z.number(),
@@ -370,11 +389,11 @@ class BudConnection {
       case "terminal_ready":
         await this.handleTerminalReady(parsed);
         break;
-      case "terminal_capture_response":
-        await this.handleTerminalCaptureResponse(parsed);
+      case "terminal_observe_result":
+        await this.handleTerminalObserveResult(parsed);
         break;
-      case "terminal_run_result":
-        await this.handleTerminalRunResult(parsed);
+      case "terminal_send_result":
+        await this.handleTerminalSendResult(parsed);
         break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
@@ -495,48 +514,51 @@ class BudConnection {
     await this.terminalSessionManager.handleTerminalReady(sessionId, result.data.assessment as unknown as import("../terminal/types.js").ReadinessAssessment);
   }
 
-  private async handleTerminalCaptureResponse(raw: unknown) {
+  private async handleTerminalObserveResult(raw: unknown) {
     if (!config.terminalEnabled) {
       return;
     }
     if (this.state.kind !== "connected") {
       return;
     }
-    const result = TerminalCaptureResponseSchema.safeParse(raw);
+    const result = TerminalObserveResultSchema.safeParse(raw);
     if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid terminal_capture_response frame");
+      logDebug({ error: result.error.message }, "Invalid terminal_observe_result frame");
       return;
     }
 
     const sessionId = result.data.session_id;
-    this.terminalSessionManager.handleCaptureResponse(sessionId, {
+    this.terminalSessionManager.handleObserveResult(sessionId, {
       requestId: result.data.request_id,
+      view: result.data.view,
       output: result.data.output,
       outputBytes: result.data.output_bytes,
       linesCaptured: result.data.lines_captured,
+      changed: result.data.changed ?? undefined,
+      truncated: result.data.truncated ?? undefined,
+      readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });
   }
 
-  private async handleTerminalRunResult(raw: unknown): Promise<void> {
+  private async handleTerminalSendResult(raw: unknown): Promise<void> {
     if (!config.terminalEnabled) {
       return;
     }
     if (this.state.kind !== "connected") {
       return;
     }
-    const result = TerminalRunResultSchema.safeParse(raw);
+    const result = TerminalSendResultSchema.safeParse(raw);
     if (!result.success) {
-      logDebug({ error: result.error.message }, "Invalid terminal_run_result frame");
+      logDebug({ error: result.error.message }, "Invalid terminal_send_result frame");
       return;
     }
 
     const sessionId = result.data.session_id;
-    this.terminalSessionManager.handleRunResult(sessionId, {
+    this.terminalSessionManager.handleSendResult(sessionId, {
       requestId: result.data.request_id,
-      output: result.data.output,
-      outputBytes: result.data.output_bytes,
-      truncated: result.data.truncated,
+      submitted: result.data.submitted,
+      delta: result.data.delta ?? null,
       readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });

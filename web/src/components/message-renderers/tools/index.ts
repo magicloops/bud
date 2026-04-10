@@ -1,5 +1,8 @@
 import type { ToolContentRenderer } from '../types'
-import { TerminalRunContent } from './terminal-run'
+import {
+  TerminalObserveContent,
+  TerminalSendContent,
+} from './terminal-run'
 
 /**
  * Registry mapping tool names to their content renderers.
@@ -9,5 +12,6 @@ import { TerminalRunContent } from './terminal-run'
  * 2. Import and add it to this registry
  */
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
-  'terminal.run': TerminalRunContent,
+  'terminal.send': TerminalSendContent,
+  'terminal.observe': TerminalObserveContent,
 }

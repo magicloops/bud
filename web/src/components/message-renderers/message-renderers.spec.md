@@ -6,7 +6,7 @@ Modular rendering system for chat message content.
 
 Provides a registry-based system for rendering message content based on:
 1. **Role** - Who sent the message (user, assistant)
-2. **Tool** - What tool was called (terminal.run, etc.)
+2. **Tool** - What tool was called (`terminal.send`, `terminal.observe`, etc.)
 
 This allows easy extension by adding new renderer components.
 
@@ -23,7 +23,7 @@ Main entry point with lookup functions.
 
 **Usage**:
 ```typescript
-const ToolRenderer = getToolContentRenderer('terminal.run')
+const ToolRenderer = getToolContentRenderer('terminal.send')
 if (ToolRenderer) {
   return <ToolRenderer payload={toolPayload} />
 }
@@ -57,7 +57,7 @@ Role-based renderers (user, assistant). Uses markdown rendering with syntax high
 
 ### `tools/` → [tools/tools.spec.md](./tools/tools.spec.md)
 
-Tool-specific renderers (terminal.run). Shows tool calls with styled output.
+Tool-specific renderers for the revised terminal contract. Shows send/observe calls with concise summaries, and now surfaces evidence-based `terminal.send` state so developers can distinguish ambiguous sends from settled interactive waits.
 
 ## Extension Pattern
 
