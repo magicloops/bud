@@ -1,0 +1,52 @@
+# Thread Terminal Boundaries Progress Checklist
+
+Companion checklist for [implementation-spec.md](./implementation-spec.md).
+
+## Status Legend
+
+- `[ ]` not started
+- `[~]` in progress
+- `[x]` completed
+- `[-]` deferred or intentionally out of scope
+
+## Phase 1: Browser Transport Boundary
+
+- [ ] Add browser-side terminal transport/controller module.
+- [ ] Add isolated xterm adapter that recovers `wasUserInput`.
+- [ ] Move outbound terminal wiring out of `web/src/routes/$budId/$threadId.tsx`.
+- [ ] Add explicit `human` vs `emulator_protocol` classification in the controller.
+- [ ] Add temporary debug logging/assertions for outbound classification.
+
+## Phase 2: Structured Browser Input And Source Tagging
+
+- [ ] Add `POST /api/threads/:thread_id/terminal/send`.
+- [ ] Reuse the existing structured Bud/runtime send path behind the new route.
+- [ ] Move normal browser typing/special-key interaction onto the structured route.
+- [ ] Keep a narrow raw-bytes fallback for unsupported cases.
+- [ ] Propagate explicit source taxonomy through touched service/runtime/daemon paths.
+- [ ] Stop treating emulator protocol as human input in logs/runtime writes.
+
+## Phase 3: Terminal State Bootstrap
+
+- [ ] Add `GET /api/threads/:thread_id/terminal/state`.
+- [ ] Return `latest_byte_offset` plus safe bootstrap snapshot.
+- [ ] Update reference web open flow to use `terminal/state`.
+- [ ] Update reference web reconnect/bootstrap flow to stop using `/terminal/history` as the normal redraw path.
+
+## Phase 4: Live-Only Stream And Durable Resume
+
+- [ ] Add `after_offset` support to terminal stream attach.
+- [ ] Make no-cursor terminal-stream attach live-only.
+- [ ] Implement durable catch-up for terminal output after an offset.
+- [ ] Track `last_rendered_byte_offset` in the reference web client.
+- [ ] Reclassify `/terminal/history` as explicit scrollback/history only.
+
+## Phase 5: Validation, Docs, And Cleanup
+
+- [ ] Add/update focused tests for source classification and stream semantics.
+- [ ] Update `docs/proto.md`.
+- [ ] Update touched web/service/bud specs.
+- [ ] Update `bud.spec.md`.
+- [ ] Run the manual validation checklist.
+- [ ] Minimize and document any retained compatibility/fallback paths.
+

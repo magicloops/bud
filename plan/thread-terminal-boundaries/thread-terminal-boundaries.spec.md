@@ -1,0 +1,100 @@
+# thread-terminal-boundaries
+
+Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally.
+
+## Purpose
+
+This folder turns the design review in [../../design/terminal-human-input-boundaries-and-replay-semantics.md](../../design/terminal-human-input-boundaries-and-replay-semantics.md) into an actionable implementation and validation plan.
+
+The current plan assumes:
+
+- the thread-view `1;2c` symptom is a real browser-terminal transport-boundary problem, not just a parser glitch
+- the current web client incorrectly treats xterm outbound data as synonymous with human keystrokes
+- replay-safe terminal bootstrap requires an explicit state route rather than raw historical parser replay
+- terminal-stream fresh attach should become live-only, with explicit durable offset-based catch-up when the client resumes
+- browser, service, and daemon semantics should distinguish `human` input from `emulator_protocol`
+- the current single-instance prototype architecture remains the deployment model for this work
+
+## Files
+
+### `implementation-spec.md`
+
+Parent implementation spec for the thread-terminal-boundaries work.
+
+Documents:
+
+- the current contract problem
+- the chosen browser-boundary plus safe-bootstrap plus durable-resume direction
+- phase sequencing
+- risks and definition of done
+
+### `phase-1-browser-transport-boundary.md`
+
+Browser-foundation phase covering:
+
+- the new terminal transport/controller layer
+- xterm adapter isolation
+- explicit `human` vs `emulator_protocol` classification
+- removal of direct `onData -> /terminal/input` coupling from the thread route
+
+### `phase-2-structured-browser-input-and-source-tagging.md`
+
+Browser/service transport phase covering:
+
+- browser-facing `POST /terminal/send`
+- reuse of the existing structured Bud/runtime send path
+- source tagging across browser/service/daemon
+- narrow raw-fallback handling for unsupported cases
+
+### `phase-3-terminal-state-bootstrap-and-reference-web-adoption.md`
+
+Bootstrap phase covering:
+
+- `GET /terminal/state`
+- safe bootstrap snapshot generation
+- reference web adoption
+- removal of normal `/terminal/history` replay as browser bootstrap
+
+### `phase-4-live-only-terminal-stream-and-durable-resume.md`
+
+Stream-semantics phase covering:
+
+- live-only no-cursor terminal-stream attach
+- explicit `after_offset` durable catch-up
+- reference web offset-based reconnect behavior
+- `/terminal/history` reclassification
+
+### `phase-5-validation-docs-and-cleanup.md`
+
+Finalization phase covering:
+
+- tests
+- protocol/spec/doc updates
+- compatibility cleanup
+- final validation work
+
+### `progress-checklist.md`
+
+Running implementation checklist for the plan.
+
+### `validation-checklist.md`
+
+Manual verification checklist for the plan.
+
+## Dependencies
+
+- [../../design/terminal-human-input-boundaries-and-replay-semantics.md](../../design/terminal-human-input-boundaries-and-replay-semantics.md) - primary design review and recommended contract
+- [../../debug/thread-terminal-1-2c-da-replay.md](../../debug/thread-terminal-1-2c-da-replay.md) - current debug findings and challenged hypotheses
+- [../../reference/unknown-terminal-input.md](../../reference/unknown-terminal-input.md) - original note reviewed during the investigation
+- [../revised-terminal-contract/implementation-spec-follow-up.md](../revised-terminal-contract/implementation-spec-follow-up.md) - current terminal tool-contract follow-up work this plan builds alongside rather than replacing
+- [../../bud.spec.md](../../bud.spec.md) - root architecture and documentation catalog
+
+## TODOs / Technical Debt
+
+<!-- SPEC:TODO -->
+- The first-pass `terminal/state` bootstrap is intentionally allowed to be text-first rather than perfectly style-faithful.
+- The structured browser input route may keep a narrow raw fallback path until key/text coverage is fully validated across the supported browser flows.
+
+---
+
+*Referenced by: [../../bud.spec.md](../../bud.spec.md)*
