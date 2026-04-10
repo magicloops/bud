@@ -14,7 +14,7 @@ type SendContextSummaryInput = {
 
 export type TerminalSendState = {
   status: "processing" | "waiting_for_input" | "ready_at_shell" | "ambiguous";
-  nextAction: "observe" | "send" | "exec" | "verify";
+  nextAction: "observe" | "send" | "verify";
   settled: boolean;
   waitingForInput: boolean;
   mayStillBeProcessing: boolean;
@@ -91,7 +91,7 @@ export function deriveTerminalSendState(args: {
   if (contextAfter.mode === "shell" && readinessReady === true) {
     return {
       status: "ready_at_shell",
-      nextAction: "exec",
+      nextAction: "send",
       settled,
       waitingForInput: false,
       mayStillBeProcessing,
@@ -187,7 +187,7 @@ export function buildTerminalSendFollowUpHint(args: {
   }
 
   if (state.status === "ready_at_shell") {
-    return "The terminal appears back at a shell prompt. Use terminal.exec for the next shell command.";
+    return "The terminal appears back at a shell prompt. Use terminal.send with submit:true for the next shell command.";
   }
 
   if (state.status === "waiting_for_input" && delta?.changed && contextAfter.mode === "repl") {

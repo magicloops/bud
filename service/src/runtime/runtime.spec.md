@@ -131,7 +131,6 @@ Thread-scoped terminal session management using tmux (~800 lines).
 - `lastOffsets` - Map of sessionId → last known byte offset
 - `pendingCommands` - Map of sessionId → PendingCommand (for REPL context)
 - `pendingObserves` - Map of requestId → { resolve, reject, timeout }
-- `pendingExecs` - Map of requestId → { resolve, reject, timeout }
 - `pendingSends` - Map of requestId → { resolve, reject, timeout }
 
 **Key Methods**:
@@ -148,7 +147,6 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `closeSession(sessionId, reason)` | Close session |
 | `observeTerminal(sessionId, options)` | Explicit delta/screen/history observation request-response |
 | `capturePane(sessionId, options)` | Compatibility wrapper used by context sync |
-| `execCommand(sessionId, command, options)` | Request-response shell execution |
 | `sendInteraction(sessionId, interaction, options)` | Request-response interactive input / keypress dispatch |
 | `tailOutput(sessionId, bytes, options)` | Get recent output from DB |
 | `setPendingCommand(sessionId, command)` | Track REPL program execution |
@@ -156,7 +154,6 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `handleTerminalOutput(sessionId, payload)` | Store and broadcast output |
 | `handleTerminalReady(sessionId, assessment)` | Readiness assessment received |
 | `handleObserveResult(sessionId, payload)` | Observe result received |
-| `handleExecResult(sessionId, payload)` | Exec result received |
 | `handleSendResult(sessionId, payload)` | Send result received |
 | `startIdleChecks()` / `stopIdleChecks()` | Periodic idle-state management; destructive cleanup runs only when explicitly configured |
 
@@ -185,14 +182,6 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 3. Bud sends `terminal_observe_result` with matching `request_id`
 4. Promise resolves with delta by default, or full screen/history when explicitly requested
 
-**Exec Protocol**:
-
-1. Service sends `terminal_exec` with `request_id` and `command`
-2. Bud sends the command plus Enter to tmux
-3. Bud waits for shell quiescence
-4. Bud sends `terminal_exec_result` with output and readiness
-5. Promise resolves with `ExecResult`
-
 **Send Protocol**:
 
 1. Service sends `terminal_send` with structured `text` / `submit` / `keys`
@@ -201,13 +190,12 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 4. Bud optionally waits for `shell_ready`, `changed`, or `settled` when explicitly requested
 5. Bud sends `terminal_send_result` with dispatch status, additive delta, and readiness
 
-These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. Bud now owns shell execution output, interactive acknowledgement, and explicit observation as separate operations.
+These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. The active model-facing contract is now send-first: shell and interactive input both flow through `terminal.send`, while `terminal.observe` is the explicit inspection hatch.
 
 **Terminal SSE Payload Notes**:
 - `terminal.output` carries `seq`, `data`, and `byte_offset`
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
-- `execCommand()` returns Bud-owned `truncated` / `outputBytes` values for `terminal.exec`
 - `sendInteraction()` now defaults to `waitFor: "none"`, `observeAfterMs: 1000`, and a `5000ms` timeout so the agent gets immediate delta evidence instead of blindly waiting for delayed screen stability
 - `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, and readiness
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly

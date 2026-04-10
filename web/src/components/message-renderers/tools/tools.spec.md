@@ -4,7 +4,7 @@ Tool-specific content renderers for displaying tool call results in chat.
 
 ## Purpose
 
-Provides components for rendering tool-specific UI within chat messages. When the agent calls tools like `terminal.exec`, `terminal.send`, and `terminal.observe`, these renderers display the results in a user-friendly format.
+Provides components for rendering tool-specific UI within chat messages. When the agent calls tools like `terminal.send` and `terminal.observe`, these renderers display the results in a user-friendly format.
 
 ## Files
 
@@ -14,7 +14,6 @@ Registry mapping tool names to their renderers:
 
 ```typescript
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
-  'terminal.exec': TerminalExecContent,
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
 }
@@ -27,13 +26,11 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
 Renders the revised terminal tool contract:
 
 **Props**:
-- `payload.command` - Shell command for `terminal.exec`
-- `payload.text` / `payload.submit` / `payload.keys` - Interactive input summary for `terminal.send`
+- `payload.text` / `payload.submit` / `payload.keys` - Send-first input summary for `terminal.send`
 - `payload.delta` / `payload.readiness` / `payload.context_after` - Delta-first send-result state for `terminal.send`
 - `payload.view` / `payload.lines` - Observation metadata for `terminal.observe`
 
 **Rendering**:
-- `terminal.exec`: black terminal-style command block
 - `terminal.send`: compact delta-first card showing readiness, context source, submitted state, and any visible delta excerpt
 - `terminal.observe`: dashed observation badge, including explicit wait mode when present
 

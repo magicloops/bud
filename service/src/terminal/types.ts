@@ -149,25 +149,6 @@ export interface TerminalReadyMessage extends TerminalEnvelope {
   last_line: string;
 }
 
-export interface TerminalExecMessage extends TerminalEnvelope {
-  type: "terminal_exec";
-  session_id: string;
-  request_id: string;
-  command: string;
-  timeout_ms?: number;
-}
-
-export interface TerminalExecResultMessage extends TerminalEnvelope {
-  type: "terminal_exec_result";
-  session_id: string;
-  request_id: string;
-  output: string; // base64
-  output_bytes: number;
-  truncated: boolean;
-  readiness: ReadinessAssessment;
-  error: string | null;
-}
-
 export interface TerminalSendMessage extends TerminalEnvelope {
   type: "terminal_send";
   session_id: string;

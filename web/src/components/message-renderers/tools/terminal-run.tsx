@@ -1,21 +1,5 @@
 import type { ToolContentRendererProps } from '../types'
 
-/**
- * Renders terminal tool payloads for the revised exec/send/observe contract.
- */
-export function TerminalExecContent({ payload }: ToolContentRendererProps) {
-  const command = (payload.command as string | undefined)?.trim()
-
-  if (!command) return null
-
-  return (
-    <div className="rounded-md bg-black/90 px-3 py-2 font-mono text-[12px] leading-relaxed">
-      <span className="select-none text-green-600/70">$ </span>
-      <span className="whitespace-pre-wrap text-green-400">{command}</span>
-    </div>
-  )
-}
-
 export function TerminalSendContent({ payload }: ToolContentRendererProps) {
   const text = payload.text as string | undefined
   const submit = payload.submit === true

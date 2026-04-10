@@ -161,11 +161,8 @@ terminal_ensure    →    Check/create tmux session
 terminal_input     →    tmux send-keys (text + Enter)
                         Optional: spawn readiness detector
 
-terminal_exec      →    tmux send-keys (command + Enter)
-                        Wait for shell quiescence
-                        Send terminal_exec_result
-
 terminal_send      →    tmux send-keys (structured text/keys)
+                        Primary send-first path for shell commands and interactive input
                         Fast post-send delta capture after 1000ms by default
                         Optional: wait for shell_ready, changed, or settled
                         Send terminal_send_result

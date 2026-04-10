@@ -1,7 +1,7 @@
 # Phase 14: Remove `terminal.exec` And Adopt A Send-First Contract
 
 **Parent Plan**: [implementation-spec-follow-up.md](./implementation-spec-follow-up.md)
-**Status**: Planned
+**Status**: Implemented
 
 ---
 
@@ -140,4 +140,3 @@ The current tmux-backed implementation means `terminal.exec` and `terminal.send`
 - `terminal_exec` / `terminal_exec_result` are gone from the Bud/service wire contract
 - shell commands can be executed through `terminal.send` without relying on `terminal.exec`
 - docs/specs/tool rendering no longer describe `terminal.exec` as an active part of the contract
-

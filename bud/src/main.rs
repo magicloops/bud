@@ -361,16 +361,6 @@ struct AwaitReady {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct TerminalExecFrame {
-    #[serde(flatten)]
-    envelope: Envelope,
-    session_id: String,
-    request_id: String,
-    command: String,
-    timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 struct TerminalSendFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -1564,102 +1554,6 @@ impl TerminalManager {
         Ok(())
     }
 
-    async fn handle_exec(&self, frame: TerminalExecFrame) -> Result<()> {
-        if !self.config.enabled {
-            return self.send_exec_error(&frame, "terminal_disabled").await;
-        }
-
-        let session_id = &frame.session_id;
-        let request_id = &frame.request_id;
-        let timeout_ms = frame.timeout_ms.unwrap_or(30_000);
-
-        if frame.command.trim().is_empty() {
-            return self.send_exec_error(&frame, "empty_command").await;
-        }
-
-        if frame.command.contains('\n') || frame.command.contains('\r') {
-            return self
-                .send_exec_error(&frame, "command_must_not_contain_newlines")
-                .await;
-        }
-
-        let handle = self.ensure_handle_for_session(session_id, None).await?;
-        let Some(handle) = handle else {
-            return self.send_exec_error(&frame, "session_not_found").await;
-        };
-
-        let sender = {
-            let inner = self.inner.lock().await;
-            inner.sender.clone()
-        };
-        let Some(sender) = sender else {
-            warn!(
-                request_id = request_id,
-                session_id = session_id,
-                "terminal_exec dropped; no sender"
-            );
-            return Ok(());
-        };
-
-        let start_offset = handle.offset.load(Ordering::SeqCst);
-
-        info!(
-            request_id = request_id,
-            session_id = session_id,
-            command_len = frame.command.len(),
-            start_offset = start_offset,
-            "terminal_exec received"
-        );
-
-        if let Err(err) = self
-            .dispatch_interaction_to_tmux(
-                &handle,
-                Some(frame.command.as_str()),
-                true,
-                &[],
-            )
-            .await
-        {
-            warn!(
-                request_id = request_id,
-                session_id = session_id,
-                error = %err,
-                "terminal_exec dispatch failed"
-            );
-            return self.send_exec_error(&frame, "send_keys_failed").await;
-        }
-
-        let (assessment, output, output_bytes, truncated) = self
-            .wait_quiescence_and_read(&handle, start_offset, timeout_ms)
-            .await?;
-
-        let payload = json!({
-            "proto": TERMINAL_PROTO_VERSION,
-            "type": "terminal_exec_result",
-            "id": new_message_id(),
-            "ts": now_millis(),
-            "ext": {},
-            "session_id": session_id,
-            "request_id": request_id,
-            "output": BASE64_STANDARD.encode(&output),
-            "output_bytes": output_bytes,
-            "truncated": truncated,
-            "readiness": assessment,
-            "error": Value::Null,
-        });
-        send_ws_frame(&sender, payload)?;
-
-        info!(
-            request_id = request_id,
-            session_id = session_id,
-            output_bytes = output_bytes,
-            truncated = truncated,
-            "terminal_exec_result sent"
-        );
-
-        Ok(())
-    }
-
     async fn handle_send(&self, frame: TerminalSendFrame) -> Result<()> {
         if !self.config.enabled {
             return self.send_send_error(&frame, "terminal_disabled").await;
@@ -1907,38 +1801,6 @@ impl TerminalManager {
             "terminal_send_result sent"
         );
 
-        Ok(())
-    }
-
-    async fn send_exec_error(&self, frame: &TerminalExecFrame, error: &str) -> Result<()> {
-        let sender = {
-            let inner = self.inner.lock().await;
-            inner.sender.clone()
-        };
-        let Some(sender) = sender else {
-            warn!(
-                request_id = %frame.request_id,
-                error = error,
-                "terminal_exec error but no sender"
-            );
-            return Ok(());
-        };
-
-        let payload = json!({
-            "proto": TERMINAL_PROTO_VERSION,
-            "type": "terminal_exec_result",
-            "id": new_message_id(),
-            "ts": now_millis(),
-            "ext": {},
-            "session_id": frame.session_id,
-            "request_id": frame.request_id,
-            "output": "",
-            "output_bytes": 0,
-            "truncated": false,
-            "readiness": Self::error_readiness(),
-            "error": error,
-        });
-        send_ws_frame(&sender, payload)?;
         Ok(())
     }
 
@@ -3878,10 +3740,6 @@ impl BudApp {
             "terminal_close" => {
                 let frame: TerminalCloseFrame = serde_json::from_str(text)?;
                 self.terminal_manager.handle_close(frame).await?;
-            }
-            "terminal_exec" => {
-                let frame: TerminalExecFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_exec(frame).await?;
             }
             "terminal_send" => {
                 let frame: TerminalSendFrame = serde_json::from_str(text)?;

@@ -131,23 +131,6 @@ type ObserveDebugState = {
   timedOutAt?: number;
 };
 
-export type ExecResult = {
-  output: string;
-  outputBytes: number;
-  truncated: boolean;
-  readiness: ReadinessAssessment;
-  error?: string;
-};
-
-type ExecResultPayload = {
-  requestId: string;
-  output: string;
-  outputBytes: number;
-  truncated: boolean;
-  readiness: ReadinessAssessment;
-  error: string | null;
-};
-
 export type SendInteraction = {
   text?: string;
   submit?: boolean;
@@ -189,14 +172,6 @@ export class TerminalSessionManager {
       reject: (error: Error) => void;
       timeout: ReturnType<typeof setTimeout>;
       state: ObserveDebugState;
-    }
-  >();
-  private readonly pendingExecs = new Map<
-    string,
-    {
-      resolve: (result: ExecResult) => void;
-      reject: (error: Error) => void;
-      timeout: ReturnType<typeof setTimeout>;
     }
   >();
   private readonly pendingSends = new Map<
@@ -770,55 +745,6 @@ export class TerminalSessionManager {
     });
   }
 
-  handleExecResult(sessionId: string, payload: ExecResultPayload): void {
-    const pending = this.pendingExecs.get(payload.requestId);
-    if (!pending) {
-      this.logger.warn(
-        { sessionId, requestId: payload.requestId, component: "terminal_session_manager" },
-        "Orphaned exec result"
-      );
-      return;
-    }
-
-    clearTimeout(pending.timeout);
-    this.pendingExecs.delete(payload.requestId);
-
-    if (payload.error) {
-      pending.reject(new Error(payload.error));
-      return;
-    }
-
-    // Decode base64 output
-    const buffer = Buffer.from(payload.output, "base64");
-    const output = buffer.toString("utf-8");
-
-    this.logger.info(
-      {
-        sessionId,
-        requestId: payload.requestId,
-        outputBytes: payload.outputBytes,
-        truncated: payload.truncated,
-        readiness: payload.readiness,
-        component: "terminal_session_manager"
-      },
-      "Exec result received"
-    );
-
-    this.storeReadinessAssessment(sessionId, payload.readiness);
-    this.events.emit(sessionId, {
-      event: "terminal.ready",
-      data: { assessment: payload.readiness },
-      id: ulid()
-    });
-
-    pending.resolve({
-      output,
-      outputBytes: payload.outputBytes,
-      truncated: payload.truncated,
-      readiness: payload.readiness
-    });
-  }
-
   handleSendResult(sessionId: string, payload: SendResultPayload): void {
     const pending = this.pendingSends.get(payload.requestId);
     if (!pending) {
@@ -1179,53 +1105,6 @@ export class TerminalSessionManager {
       },
       timeoutMs
     );
-  }
-
-  async execCommand(
-    sessionId: string,
-    command: string,
-    options: {
-      timeoutMs?: number;
-    } = {}
-  ): Promise<ExecResult> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
-      throw new Error("session_not_found");
-    }
-
-    const requestId = `exec_${ulid()}`;
-    const timeoutMs = options.timeoutMs ?? 30000;
-
-    const payload = {
-      proto: TERMINAL_PROTO_VERSION,
-      type: "terminal_exec",
-      id: `msg_${ulid()}`,
-      ts: Date.now(),
-      ext: {},
-      session_id: sessionId,
-      request_id: requestId,
-      command,
-      timeout_ms: timeoutMs
-    };
-
-    const sent = sendFrameToBud(session.budId, payload);
-    if (!sent) {
-      throw new Error("bud_offline");
-    }
-
-    this.logger.info(
-      { sessionId, requestId, commandLength: command.length, component: "terminal_session_manager" },
-      "Sending terminal_exec request"
-    );
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingExecs.delete(requestId);
-        reject(new Error("exec_timeout"));
-      }, timeoutMs + 10000);
-
-      this.pendingExecs.set(requestId, { resolve, reject, timeout });
-    });
   }
 
   async sendInteraction(

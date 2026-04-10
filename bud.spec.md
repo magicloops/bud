@@ -252,8 +252,7 @@ User Message
 ```
 
 **Available Tools**:
-- `terminal.exec` - Run a shell command and return authoritative output
-- `terminal.send` - Send interactive input, confirmations, and keypresses
+- `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and keypresses
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
 - `terminal.interrupt` - Send SIGINT (Ctrl+C)
 
@@ -294,9 +293,9 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 1. Web UI POST /api/threads/:id/messages { content: "list files" }
 2. Service creates message record, starts agent loop
 3. Service calls OpenAI with thread context
-4. OpenAI returns tool_call: terminal.exec("ls -la")
-5. Service sends `terminal_exec` to the daemon
-6. Daemon executes in tmux and returns `terminal_exec_result`
+4. OpenAI returns tool_call: terminal.send({ text: "ls -la", submit: true })
+5. Service sends `terminal_send` to the daemon
+6. Daemon submits the input in tmux and returns `terminal_send_result` with readiness and delta
 7. Service decides whether follow-up observation is needed, then calls OpenAI with result
 8. OpenAI returns final response
 9. Service stores assistant message, emits SSE events

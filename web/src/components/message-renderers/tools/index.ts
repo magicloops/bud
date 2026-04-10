@@ -1,6 +1,5 @@
 import type { ToolContentRenderer } from '../types'
 import {
-  TerminalExecContent,
   TerminalObserveContent,
   TerminalSendContent,
 } from './terminal-run'
@@ -13,7 +12,6 @@ import {
  * 2. Import and add it to this registry
  */
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
-  'terminal.exec': TerminalExecContent,
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
 }

@@ -36,12 +36,11 @@ Defines agent behavior as "Bud Agent" with:
 
 #### Tool Definitions (Lines 130-191)
 
-Four canonical tool definitions using standard JSON Schema format:
+Three canonical tool definitions using standard JSON Schema format:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `terminal_exec` | `command`, `timeout_ms?` | Run a shell command and return authoritative output |
-| `terminal_send` | `text?`, `submit?`, `keys?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Send interactive input with a default fast post-send delta |
+| `terminal_send` | `text?`, `submit?`, `keys?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a default fast post-send delta |
 | `terminal_observe` | `lines?`, `wait_for?`, `view?`, `timeout_ms?` | Observe terminal deltas by default, with explicit full-screen/history modes |
 | `terminal_interrupt` | none | Send Ctrl+C |
 
@@ -133,7 +132,7 @@ Standalone Node tests for Phase 6 send-result interpretation.
 - summaries remain conservative when no visible delta was observed
 - ambiguous sends recommend `terminal.observe` before the agent assumes the TUI accepted the input
 - settled REPL/TUI updates still map to `state.status = "waiting_for_input"`
-- send results that visibly return to shell map their next step back to `terminal.exec`
+- send results that visibly return to shell map their next step back to another `terminal.send`
 
 **Reasoning Effort Support**:
 

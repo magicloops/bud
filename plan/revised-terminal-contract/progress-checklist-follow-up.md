@@ -73,15 +73,15 @@
 
 ## Phase 14: Remove `terminal.exec` And Adopt A Send-First Contract
 
-- [ ] Remove `terminal.exec` from the model-facing tool list
-- [ ] Remove service/runtime handling for `terminal.exec`
-- [ ] Remove Bud protocol handling for `terminal_exec` / `terminal_exec_result`
-- [ ] Rewrite agent guidance so `terminal.send` is the normal tool for shell commands
-- [ ] Update developer-visible tool surfaces for the send-first model
+- [x] Remove `terminal.exec` from the model-facing tool list
+- [x] Remove service/runtime handling for `terminal.exec`
+- [x] Remove Bud protocol handling for `terminal_exec` / `terminal_exec_result`
+- [x] Rewrite agent guidance so `terminal.send` is the normal tool for shell commands
+- [x] Update developer-visible tool surfaces for the send-first model
 
 ## Phase 15: Tests, Docs, And Validation For Send-First Removal
 
-- [ ] Add or update automated coverage for the send-first contract where practical
-- [ ] Update `docs/proto.md` to remove `terminal.exec`
-- [ ] Update touched specs and plan docs for the send-first contract
+- [x] Add or update automated coverage for the send-first contract where practical
+- [x] Update `docs/proto.md` to remove `terminal.exec`
+- [x] Update touched specs and plan docs for the send-first contract
 - [ ] Complete manual validation for shell-command sends, multiline shell authoring, and interactive flows after `terminal.exec` removal

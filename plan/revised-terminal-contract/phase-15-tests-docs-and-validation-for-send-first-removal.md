@@ -1,7 +1,7 @@
 # Phase 15: Tests, Docs, And Validation For Send-First Removal
 
 **Parent Plan**: [implementation-spec-follow-up.md](./implementation-spec-follow-up.md)
-**Status**: Planned
+**Status**: In Progress
 
 ---
 
@@ -80,4 +80,3 @@ Run the updated validation checklist after Phase 14 lands.
 ## Exit Criteria
 
 This phase is done when the repo documents and validates the send-first contract end to end and no active docs, specs, or tests still assume `terminal.exec` exists.
-

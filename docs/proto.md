@@ -369,25 +369,12 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "reason": "requested", "ext": {} }
   ```
 
-* `terminal_exec` — run a shell command in the persistent terminal
-  ```json
-  { "proto": "0.2", "type": "terminal_exec", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "exec_01...",
-    "command": "pwd",
-    "timeout_ms": 30000,
-    "ext": {} }
-  ```
-
-  **Fields:**
-  * `command`: shell command string; Bud is responsible for submitting Enter
-
 * `terminal_send` — send structured interactive input to the current program
   ```json
   { "proto": "0.2", "type": "terminal_send", "id": "...", "ts": 1731,
     "session_id": "sess_01...",
     "request_id": "send_01...",
-    "text": "python",
+    "text": "pwd",
     "submit": true,
     "keys": [],
     "observe_after_ms": 1000,
@@ -399,7 +386,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   **Fields:**
   * `session_id`: target terminal session ID
   * `request_id`: unique ID for response correlation
-  * `text`: optional literal text to send
+  * `text`: optional literal text to send; this is now the primary shell-command path as well as the interactive-input path
   * `submit`: when true, Bud MUST press Enter after sending text
   * `keys`: optional ordered list of special keys or single-key actions
   * `observe_after_ms`: optional delay before the default fast post-send screen capture (default: 1000)
@@ -466,42 +453,6 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt` | `activity_stable` | `changed` | `settled`
   * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
   * `hints`: object of boolean flags for agent decision-making
-
-* `terminal_exec_result` — response to `terminal_exec`
-  ```json
-  { "proto": "0.2", "type": "terminal_exec_result", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "exec_01...",
-    "output": "base64-encoded-command-output",
-    "output_bytes": 1234,
-    "truncated": false,
-    "readiness": {
-      "ready": true,
-      "confidence": 0.95,
-      "trigger": "prompt_detected",
-      "prompt_type": "shell",
-      "hints": {
-        "looks_like_prompt": true,
-        "looks_like_confirmation": false,
-        "looks_like_password": false,
-        "looks_like_pager": false,
-        "looks_like_error": false,
-        "may_still_be_processing": false
-      },
-      "quiet_for_ms": 1500
-    },
-    "error": null,
-    "ext": {} }
-  ```
-
-  **Fields:**
-  * `session_id`: terminal session ID
-  * `request_id`: matches the request for correlation
-  * `output`: base64-encoded command output
-  * `output_bytes`: size of output in bytes
-  * `truncated`: true if output exceeded max size (64KB)
-  * `readiness`: readiness assessment (same as terminal_ready)
-  * `error`: error message if failed, null otherwise
 
 * `terminal_send_result` — acknowledgement for `terminal_send`
   ```json
@@ -633,10 +584,10 @@ Current thread-scoped SSE payloads are route-specific. For `GET /api/threads/:th
   `{ "turn_id":"01TURN...", "client_id":"uuidv7", "message_id":"uuid", "text":"Cloning repository...", "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"assistant", "display_role":"Bud Agent", "content":"Cloning repository...", "metadata":{"status":"succeeded"}, "created_at":"2026-03-22T22:10:00.000Z" } }`
 
 * `agent.tool_call`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "name":"terminal.exec", "args":{"command":"git status"} }`
+  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "name":"terminal.send", "args":{"text":"git status","submit":true} }`
 
 * `agent.tool_result`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "message_id":"uuid", "name":"terminal.exec", "summary":"Ran git status", "output":"...", "output_bytes":123, "truncated":false, "output_truncation_reason":null, "omitted_lines":0, "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.exec\",...}", "metadata":{"tool":"terminal.exec","call_id":"call_123","summary":"Ran git status","output_truncation_reason":null}, "created_at":"2026-03-22T22:09:58.000Z" } }`
+  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "message_id":"uuid", "name":"terminal.send", "summary":"Attempted to send \"git status\" and press Enter; observed new terminal content", "readiness":{"ready":true,"confidence":0.84,"trigger":"settled"}, "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.send\",...}", "metadata":{"tool":"terminal.send","call_id":"call_123","summary":"Attempted to send \\\"git status\\\" and press Enter; observed new terminal content"}, "created_at":"2026-03-22T22:09:58.000Z" } }`
 
 * `agent.resync_required`
   `{ "error":"resync_required", "provided_cursor":"01CUR..." }`

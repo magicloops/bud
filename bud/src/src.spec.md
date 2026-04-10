@@ -41,7 +41,6 @@ WebSocket message frame types matching the service protocol:
 | `RunFrame` | ← Service | Command execution request |
 | `TerminalEnsureFrame` | ← Service | Create/verify tmux session |
 | `TerminalInputFrame` | ← Service | Send input to terminal |
-| `TerminalExecFrame` | ← Service | Request-response shell execution |
 | `TerminalSendFrame` | ← Service | Structured interactive input with optional fast post-send delta |
 | `TerminalObserveFrame` | ← Service | Explicit screen inspection |
 | `AwaitReady` | Config | Readiness detection options |
@@ -75,12 +74,9 @@ Hash-based deduplication for `capture-pane` output:
 - **`handle_resize`** - Resize via `tmux resize-window`
 - **`handle_interrupt`** - Send Ctrl+C via `tmux send-keys C-c`
 - **`handle_close`** - Kill session via `tmux kill-session`
-- **`handle_exec`** - Request-response pattern for agent `terminal.exec`:
-  - Sends a shell command plus Enter to tmux
-  - Waits for quiescence using the pipe-pane log
-  - Returns output directly in `terminal_exec_result`
 - **`handle_send`** - Structured interactive input path for agent `terminal.send`:
   - Sends literal text, optional submit, and special keys
+  - Serves as the primary input path for both shell commands and interactive programs
   - Captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
   - Defaults to `wait_for: "none"` and `timeout_ms: 5000`
   - Can explicitly wait for `shell_ready`, `changed`, or `settled`

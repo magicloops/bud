@@ -73,7 +73,7 @@ export class ContextSyncService {
       const currentMode = this.detectModeHeuristic(capture, lastLine);
 
       // 3. Clear pendingCommands if mode changed to shell
-      // This ensures terminal.exec/send context is aligned after an interactive program exits.
+      // This ensures inferred terminal context is aligned after an interactive program exits.
       if (currentMode === "shell") {
         this.terminalSessionManager.clearPendingCommand(sessionId);
       }

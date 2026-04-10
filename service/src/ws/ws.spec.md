@@ -48,8 +48,7 @@ Browser/Client                 Service                      Bud Daemon
 | `TerminalOutputSchema` | Terminal output chunks |
 | `TerminalReadySchema` | Readiness assessments |
 | `TerminalObserveResultSchema` | Delta-first observe results with explicit screen/history modes |
-| `TerminalExecResultSchema` | Shell command results |
-| `TerminalSendResultSchema` | Interactive send acknowledgements plus fast post-send delta |
+| `TerminalSendResultSchema` | Send-first acknowledgements plus fast post-send delta |
 
 **Connection States**:
 
@@ -153,7 +152,6 @@ If a stored Bud already has an `installationId`, the gateway rejects a mismatche
 | `terminal_output` | `terminalSessionManager.handleOutput()` |
 | `terminal_ready` | `terminalSessionManager.handleTerminalReady()` |
 | `terminal_observe_result` | `terminalSessionManager.handleObserveResult()` |
-| `terminal_exec_result` | `terminalSessionManager.handleExecResult()` |
 | `terminal_send_result` | `terminalSessionManager.handleSendResult()` with optional additive `delta` (`changed`, `text`, `truncated`) |
 
 **Capabilities Tracking**:

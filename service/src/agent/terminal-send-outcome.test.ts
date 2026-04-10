@@ -106,7 +106,7 @@ test("deriveTerminalSendState marks settled repl updates as waiting for more inp
   });
 });
 
-test("buildTerminalSendFollowUpHint points back to terminal.exec when send returns to shell", () => {
+test("buildTerminalSendFollowUpHint points back to terminal.send when send returns to shell", () => {
   const hint = buildTerminalSendFollowUpHint({
     acceptance: {
       status: "observed_change",
@@ -114,7 +114,7 @@ test("buildTerminalSendFollowUpHint points back to terminal.exec when send retur
     },
     state: {
       status: "ready_at_shell",
-      nextAction: "exec",
+      nextAction: "send",
       settled: true,
       waitingForInput: false,
       mayStillBeProcessing: false,
@@ -135,6 +135,6 @@ test("buildTerminalSendFollowUpHint points back to terminal.exec when send retur
 
   assert.equal(
     hint,
-    "The terminal appears back at a shell prompt. Use terminal.exec for the next shell command.",
+    "The terminal appears back at a shell prompt. Use terminal.send with submit:true for the next shell command.",
   );
 });
