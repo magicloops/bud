@@ -17,6 +17,7 @@ import type {
   ReadinessAssessment,
   TerminalDelta,
   TerminalDeltaMessage,
+  TerminalInputSource,
   TerminalWaitFor,
   TerminalObservationView,
 } from "../terminal/types.js";
@@ -89,6 +90,12 @@ type CapturePaneOptions = {
   joinLines?: boolean;
 };
 
+export type TerminalInputRecordOptions = {
+  source?: TerminalInputSource;
+  runId?: string;
+  userId?: string;
+};
+
 export type ObserveResult = {
   view: TerminalObservationView;
   output: string;
@@ -153,6 +160,38 @@ type SendResultPayload = {
   readiness: ReadinessAssessment;
   error: string | null;
 };
+
+export type BrowserTerminalStateSnapshot = {
+  sessionId: string;
+  state: SessionState;
+  latestByteOffset: number;
+  readiness: ReadinessAssessment | null;
+  snapshot: {
+    text: string;
+    source: "capture_pane" | "unavailable";
+  };
+  updatedAt: string | null;
+};
+
+export type TerminalReplayChunk = {
+  seq: number;
+  byteOffset: number;
+  data: Buffer;
+};
+
+export type TerminalReplayPlan =
+  | {
+      status: "ok";
+      latestByteOffset: number;
+      earliestByteOffset: number | null;
+      chunks: TerminalReplayChunk[];
+    }
+  | {
+      status: "resync_required";
+      latestByteOffset: number;
+      earliestByteOffset: number | null;
+      chunks: [];
+    };
 
 // Timeout for clearing stale pending commands (30 minutes)
 const STALE_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
@@ -356,7 +395,7 @@ export class TerminalSessionManager {
   async sendInput(
     sessionId: string,
     data: Buffer,
-    options: { source?: "agent" | "user" | "system"; runId?: string; userId?: string } = {}
+    options: TerminalInputRecordOptions = {}
   ): Promise<{ ok: boolean; error?: string }> {
     const session = await this.getSession(sessionId);
     if (!session) {
@@ -1112,6 +1151,7 @@ export class TerminalSessionManager {
     interaction: SendInteraction,
     options: {
       timeoutMs?: number;
+      source?: TerminalInputSource;
     } = {}
   ): Promise<SendResult> {
     const session = await this.getSession(sessionId);
@@ -1123,6 +1163,21 @@ export class TerminalSessionManager {
     const timeoutMs = options.timeoutMs ?? 5000;
     const waitFor = interaction.waitFor ?? "none";
     const observeAfterMs = interaction.observeAfterMs ?? 1000;
+    const source = options.source ?? "agent";
+    const rawInput = `${interaction.text ?? ""}${interaction.submit === true ? "\n" : ""}`;
+
+    if (!this.pendingCommands.get(sessionId) && rawInput.includes("\n")) {
+      const command = this.parseCommandFromInput(rawInput);
+      if (command && isKnownReplProgram(command)) {
+        this.pendingCommands.set(sessionId, {
+          input: rawInput,
+          command,
+          sentAt: Date.now(),
+          source,
+        });
+        this.debug("tracking pending command", { sessionId, command, source });
+      }
+    }
 
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
@@ -1149,6 +1204,7 @@ export class TerminalSessionManager {
       {
         sessionId,
         requestId,
+        source,
         hasText: Boolean(interaction.text),
         submit: interaction.submit === true,
         keyCount: interaction.keys?.length ?? 0,
@@ -1592,7 +1648,7 @@ export class TerminalSessionManager {
   private async recordInput(
     sessionId: string,
     data: Buffer,
-    options: { source?: "agent" | "user" | "system"; runId?: string; userId?: string }
+    options: TerminalInputRecordOptions
   ) {
     try {
       await db.insert(terminalSessionInputLogTable).values({

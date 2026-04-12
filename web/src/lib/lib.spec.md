@@ -4,7 +4,7 @@ Utility functions and shared helpers.
 
 ## Purpose
 
-Provides common utilities for API communication, browser auth, theming, and class name management.
+Provides common utilities for API communication, browser auth, terminal transport boundaries, theming, and class name management.
 
 ## Files
 
@@ -12,73 +12,66 @@ Provides common utilities for API communication, browser auth, theming, and clas
 
 API utilities and type definitions.
 
-**URL Building**:
+**Key responsibilities**:
+- Build relative or absolute API URLs for same-origin and cross-origin modes
+- Centralize credentialed `fetch(...)` calls plus auth-expiry redirects
+- Create auth-aware `EventSource` instances for SSE routes
+- Decode base64 terminal output into bytes or UTF-8 text
+- Define shared API response/request types used by routes and controllers
+
+**Terminal helpers**:
 ```typescript
-export const buildApiUrl = (path: string) => {
-  if (apiBaseUrl) return new URL(path, apiBaseUrl).toString()
-  return path
-}
-
-export const buildAbsoluteApiUrl = (path: string) => {
-  if (apiBaseUrl) return new URL(path, apiBaseUrl).toString()
-  return new URL(path, window.location.origin).toString()
-}
-
-export const apiFetch = (path: string, init?: ApiRequestInit) =>
-  fetch(buildApiUrl(path), {
-    ...init,
-    credentials: init?.credentials ?? 'include',
-  })
+export const decodeBase64Bytes = (data: string) => Uint8Array
+export const decodeTerminalChunk = (data: string, skipBytes = 0) => ({ byteLength, text })
+export const decodeTerminalData = (data: string) => string
 ```
 
-**Auth-Aware Transport**:
-- `apiFetch()` always includes credentials
-- runtime `401` responses redirect the browser back to `/login`
-- login redirects are deduplicated in-module so long-lived reconnect loops can detect an in-flight auth redirect
-- `fetchCurrentUser()` normalizes `/api/me`
-- `updateCurrentUserProfile()` writes Bud-owned profile updates back to `/api/me/profile`
-- `createAuthEventSource()` centralizes credentialed SSE setup plus auth-expiry checks
-- `buildAbsoluteApiUrl()` exists specifically for clients like Better Auth that require a fully-qualified base URL even in same-origin/proxy dev mode
+`decodeTerminalChunk(...)` exists so terminal replay code can trim overlapping bytes before decoding a durable chunk back into text.
 
-Uses `VITE_API_BASE_URL` env var if set.
+**Terminal-related API types**:
+- `BrowserTerminalInputSource` - Browser source taxonomy: `human` or `emulator_protocol`
+- `ApiTerminalState` - Safe terminal bootstrap snapshot with `session_id`, `state`, `latest_byte_offset`, `readiness`, `snapshot`, `updated_at`
+- `ApiTerminalSendRequest` / `ApiTerminalSendResponse` - Structured browser terminal-send contract
 
-**Auth Utilities**:
-- `normalizeAppRedirectPath()` - sanitizes internal return targets
-- `buildLoginUrl()` / `redirectToLogin()` - browser login redirects
-- `ApiError` / `isApiError()` - typed error handling for loaders/runtime calls
-- `generateMessageClientId()` - browser UUIDv7 generator for optimistic/new-thread sends
+**Other important API types**:
+- `ApiBud` - Bud response (id, name, status, capabilities)
+- `ApiThread` - Thread response (id, title, session info)
+- `ApiMessage` - Message response (`message_id`, `client_id`, role, content)
+- `ApiMessagePage` - Cursor-paged thread transcript window with `{ messages, page }`
+- `ApiAgentState` - Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, and `draft_assistant.client_id`
+- `ApiCurrentUser` - Authenticated user/session/profile payload from `/api/me`
+- `ApiUpdateProfileInput` - Username update payload for `/api/me/profile`
 
-**Terminal Data Decoding**:
-```typescript
-export const decodeTerminalData = (data: string) => {
-  // Decode base64 → binary → UTF-8 text
-}
-```
+### `terminal-xterm-input.ts`
 
-**API Types**:
+xterm-specific browser input classification.
 
-| Type | Description |
-|------|-------------|
-| `ApiBud` | Bud response (id, name, status, capabilities) |
-| `ApiThread` | Thread response (id, title, session info) |
-| `ApiMessage` | Message response (`message_id`, `client_id`, role, content) |
-| `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
-| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, and `draft_assistant.client_id` |
-| `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
-| `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
+**Responsibilities**:
+- Hooks xterm internal `coreService.onUserInput` and `coreService.onData`
+- Distinguishes likely human keystrokes from xterm-emitted emulator protocol replies
+- Falls back to public `terminal.onData(...)` classification when the internal hooks are unavailable
+- Exposes `{ data, source }` events for the terminal controller
 
-**Capability Normalization**:
-```typescript
-export function normalizeCapabilities(caps: unknown): {
-  sessions: boolean
-  sessions_backends: string[]
-  tmux_version?: string
-  terminal: boolean
-  terminal_backends: string[]
-} | null
-```
+### `thread-terminal-controller.ts`
 
-Safely extracts capability fields from API response.
+Browser-side terminal transport controller.
+
+**Responsibilities**:
+- Attaches to xterm and consumes classified input from `terminal-xterm-input.ts`
+- Routes normal browser typing and modeled keys through structured `/terminal/send`
+- Keeps a narrow raw fallback for unsupported human sequences and emulator protocol traffic
+- Tracks `lastRenderedByteOffset` so reconnects can resume with `after_offset=<n>`
+- Applies safe `/terminal/state` bootstrap snapshots before live stream attach
+- Trims overlapping durable replay bytes before writing into xterm
+
+**Structured coverage in the first pass**:
+- Printable text batches
+- Enter / submit
+- Tab
+- Backspace
+- Escape
+- Arrow keys, Home/End, Delete, PageUp/PageDown
+- Ctrl+C through the existing interrupt route
 
 ### `claim-mobile-handoff.ts`
 
@@ -87,7 +80,7 @@ Hosted-claim callback helpers for native/mobile app handoff.
 **Responsibilities**:
 - Parse `/devices/claim/$flowId` search params for `source=ios`, `mobile_callback_url`, and `mobile_error_callback_url`
 - Validate candidate callback URLs against the allowlisted prefixes from `VITE_MOBILE_CLAIM_CALLBACK_ALLOWED_PREFIXES`
-- Normalize whether mobile callback mode is active for the hosted claim route
+- Normalize whether mobile callback mode is active for the claim route
 - Build final success and error callback URLs while preserving any existing callback query params
 
 **Exports**:
@@ -117,70 +110,24 @@ Hosted OAuth Provider helpers for app-served mobile auth pages.
 - Build a safe authorize-resume URL that drops the consumed `login` prompt before sending an already-authenticated browser back to `/api/auth/oauth2/authorize`
 - Format first-party scope labels for the hosted login and consent UIs
 
-**Exports**:
-- `getSignedOAuthQuery(search)` - returns the raw Better Auth signed query string when present
-- `getOAuthRequestDetails(search)` - normalized request details for hosted mobile login/consent pages
-- `hasOAuthPrompt(prompt, value)` - prompt inspection helper
-- `formatOAuthScopeLabel(scope)` - user-facing scope label helper
-
 ### `theme-colors.ts`
 
 Color manipulation for bud-specific theming.
 
-**OKLCH Parsing**:
-```typescript
-function parseOklch(color: string): { l, c, h } | null
-```
-
-Parses `oklch(0.70 0.25 330)` format.
-
-**Color Utilities**:
-
-| Function | Purpose |
-|----------|---------|
-| `getMutedColor(color, factor)` | Reduce chroma (saturation) |
-| `resolveCssVar(variable)` | Resolve CSS variable to computed value |
-| `deriveBudPalette(color)` | Generate vibrant/muted/soft variants |
-
-**Default Avatar Colors**:
-```typescript
-export const DEFAULT_AVATAR_COLORS = [
-  'oklch(0.70 0.25 330)',  // Pink
-  'oklch(0.65 0.24 50)',   // Orange
-  'oklch(0.68 0.22 190)',  // Cyan
-  'oklch(0.72 0.23 280)',  // Purple
-  'oklch(0.66 0.21 140)'   // Green
-]
-```
-
-**Palette Generation**:
-```typescript
-deriveBudPalette(color) → {
-  vibrant: color,           // Full saturation
-  muted: getMutedColor(color, 0.6),   // 60% chroma
-  soft: getMutedColor(color, 0.35)    // 35% chroma
-}
-```
+**Key functions**:
+- `getMutedColor(color, factor)` - Reduce chroma (saturation)
+- `resolveCssVar(variable)` - Resolve CSS variable to computed value
+- `deriveBudPalette(color)` - Generate vibrant/muted/soft variants
 
 ### `utils.ts`
 
 General utilities.
 
-**Class Name Utility**:
+**Key function**:
 ```typescript
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
-```
-
-Combines:
-- `clsx` - Conditional class names
-- `twMerge` - Deduplicates Tailwind classes
-
-**Usage**:
-```typescript
-cn('text-red-500', isActive && 'font-bold', className)
-// Properly merges Tailwind utilities
 ```
 
 ## Dependencies
@@ -190,6 +137,7 @@ cn('text-red-500', isActive && 'font-bold', className)
 | `better-auth/react` | Better Auth browser client |
 | `@better-auth/oauth-provider/client` | Signed OAuth Provider query propagation for hosted auth pages |
 | `uuid` | UUIDv7 message `client_id` generation |
+| `xterm` | Terminal types for browser transport helpers |
 | `clsx` | Conditional class names |
 | `tailwind-merge` | Tailwind class deduplication |
 

@@ -18,61 +18,30 @@ Provides the route components under `/$budId/`:
 Redirect-only route that auto-selects content based on thread availability.
 
 **Behavior**:
-```typescript
-loader: async ({ params }) => {
-  const threads = await apiFetchJson(`/api/threads?bud_id=${params.budId}`)
-
-  if (threads.length === 0) {
-    throw redirect({ to: '/$budId/new' })
-  }
-
-  const mostRecent = threads.reduce(/* by last_activity_at */)
-  throw redirect({ to: '/$budId/$threadId', params: { threadId: mostRecent.thread_id } })
-}
-```
-
-**Features**:
 - Fetches threads for the current bud
-- Inherits auth gating from parent `/$budId`
-- Redirects to most recent thread (by `last_activity_at`, fallback to `created_at`)
-- Redirects to `/new` if no threads exist
-- Error handling: throws on fetch failure (doesn't mask errors)
+- Redirects to the most recent thread by `last_activity_at` (fallback `created_at`)
+- Redirects to `/$budId/new` if the bud has no threads
+- Inherits auth gating from the parent `/$budId` route
 
 ### `new.tsx`
 
 **Route**: `/$budId/new`
 
-New thread creation view - allows users to start a new conversation.
-
-**IMPORTANT**: See bidirectional comment in file header linking to `$threadId.tsx`. These routes share layout structure and must be updated together.
+New thread creation view.
 
 **Features**:
 - Empty terminal display with placeholder message
-- Message composer for initial message
+- Message composer for the first user message
 - Loads `/api/models` using the normalized snake_case contract (`default_model`, model `display_name`, optional `is_alias`)
 - Generates a browser UUIDv7 `client_id` before the first message send
-- Thread creation flow:
-  1. POST `/api/threads` to create thread and read `{ thread_id }`
-  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, ... }` and read `{ message_id, client_id }`
-  3. Navigate to `/$budId/$threadId`
-- Terminal initialization (xterm.js) but no connection
-- View mode toggle (terminal/web)
-- Top bar title remains the static `New Thread`
-
-**State**:
-- `messageText` - Controlled input
-- `status` - idle | dispatching | streaming
-- `error` - Error messages
-- `reasoningEffort` - Agent thinking level
-- `viewMode` - terminal | web
+- Creates a thread via `POST /api/threads`, then writes the first message via `POST /api/threads/:id/messages`
+- Navigates to `/$budId/$threadId` after the first send succeeds
 
 ### `$threadId.tsx`
 
 **Route**: `/$budId/$threadId`
 
-Main thread view with full chat and terminal functionality (~1000 lines).
-
-**IMPORTANT**: See bidirectional comment in file header linking to `new.tsx`. These routes share layout structure and must be updated together.
+Main thread view with chat, terminal streaming, and reconnect/recovery behavior.
 
 **Loader**:
 ```typescript
@@ -80,125 +49,99 @@ loader: async ({ params }) => {
   const [messagePage, agentState, thread] = await Promise.all([
     apiFetchJson(`/api/threads/${params.threadId}/messages?limit=100`),
     apiFetchJson(`/api/threads/${params.threadId}/agent/state`),
-    apiFetchJson(`/api/threads/${params.threadId}`)
+    apiFetchJson(`/api/threads/${params.threadId}`),
   ])
   return { messagePage, agentState, thread }
 }
 ```
 
-**Major Features**:
+**Major features**:
 
-1. **Chat Timeline**
-   - Loads the latest paged transcript window from loader data
-   - Loads `/agent/state` in parallel for the current in-flight bootstrap snapshot
-   - Loads canonical thread detail in parallel so the Bud-level thread list can converge even if the title event was missed before attach
-   - Updates via SSE agent stream
-   - Role-based rendering (user, assistant, tool)
-   - Consumes the paged `{ messages, page }` API contract
-   - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
-   - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
+1. **Chat timeline**
+- Loads the latest paged transcript window plus `/agent/state` and canonical thread detail in parallel
+- Prepends older history through `before=<page.before_cursor>` while preserving scroll position
+- Reconciles optimistic, runtime, and canonical rows by stable `client_id`
+- Applies `thread.title` patches into the Bud-level thread-summary state
 
-2. **Terminal Integration**
-   - xterm.js instance with FitAddon
-   - SSE connection to `/api/threads/:id/terminal/stream`
-   - Input forwarding to `/api/threads/:id/terminal/input`
-   - Resize handling via `/api/threads/:id/terminal/resize` (only when dimensions change)
-   - Reconnection logic with exponential backoff
-   - Idempotent recovery helper that re-runs `terminal/ensure`, reloads terminal state, and replays stored history after reconnects
-   - Shared auth-aware EventSource creation before reconnect logic takes over
-   - Stops reconnect and polling loops once the browser has already redirected for expired auth
-   - Failed session-record fetches now re-enter the same reconnect backoff path instead of falling into a separate `/api/threads/:id/terminal` polling loop
+2. **Terminal bootstrap and transport**
+- Initializes xterm.js plus FitAddon once and keeps the terminal mounted across view switches
+- Uses a browser-side terminal controller instead of forwarding raw xterm `onData(...)` directly to the service
+- Creates or reuses the thread terminal session row via `POST /terminal`
+- Recovers terminal readiness via `POST /terminal/ensure`
+- Bootstraps xterm from `GET /terminal/state` rather than replaying `/terminal/history` through xterm on every open/reconnect
+- Routes normal browser typing and modeled keys through `POST /terminal/send`
+- Keeps `POST /terminal/input` only as a narrow raw fallback for unsupported human sequences and emulator protocol traffic
+- Sends resize updates only when terminal dimensions actually change
+- Uses the existing interrupt route for Ctrl+C
 
-3. **Agent Stream**
-   - Runtime bootstrap from `/api/threads/:id/agent/state`
-   - SSE connection to `/api/threads/:id/agent/stream?after=<stream_cursor>`
-   - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`
-   - Builds one per-turn draft assistant row from `agent.message_start` / `agent.message_delta`
-   - Treats `agent.message_done` as the final draft snapshot before canonical persistence
-   - Uses backend-provided `client_id` as the primary message identity for optimistic users, draft assistants, pending tools, and canonical transcript rows
-   - Uses `call_id` for tool semantics and `turn_id` for turn-level cleanup, but not as the rendered message key
-   - Replaces draft assistant rows and pending tool rows by stable `client_id` when canonical persisted rows arrive
-   - Reconnects resume from the latest known runtime cursor, using `after=<cursor>` and compatible `Last-Event-ID` handling
-   - Handles explicit `agent.resync_required` by refetching `/messages` plus `/agent/state` and reattaching
-   - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
-   - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
-   - Keeps optimistic user identity stable by attaching the persisted `message_id` returned by `POST /messages` onto the existing `client_id`-keyed row
-   - Healthy successful turns no longer require a mandatory `final` refetch just to learn assistant/tool message ids
-   - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
+3. **Terminal stream semantics**
+- Connects to `GET /terminal/stream` in live-only mode when no durable cursor is available
+- Resumes with `?after_offset=<last_rendered_byte_offset>` after safe snapshot bootstrap or reconnect catch-up
+- Writes `terminal.output` through the controller so overlapping durable replay bytes are trimmed before rendering
+- Handles explicit `terminal.resync_required` by reloading `/terminal/state` and reattaching instead of replaying stale history blindly
+- Keeps `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`, and heartbeat handling on the live SSE path
 
-4. **Bud-Level Thread State**
-   - Parent `/$budId` route now owns mutable `threads` state rather than treating loader data as immutable
-   - Child routes receive `threads`, `upsertThreadSummary(...)`, `patchThreadSummary(...)`, and `removeThreadSummary(...)` through a Bud-route React context
-   - Thread-detail upserts merge canonical fields like `title` and `last_message_preview` without clobbering session fields that only come from the thread-list join
+4. **Agent stream**
+- Uses `/agent/state` for best-effort bootstrap and `/agent/stream` for live transport plus bounded resume
+- Builds per-turn draft assistant rows from `agent.message_start` and `agent.message_delta`
+- Replaces pending draft/tool rows with canonical persisted messages when `agent.message` / `agent.tool_result` arrive
+- Refetches `/messages` plus `/agent/state` on `agent.resync_required`
 
-5. **Connection Management**
-   - Terminal connection states: connected, reconnecting, offline, disconnected
-   - Automatic reconnection on SSE close
-   - Heartbeat monitoring
-   - Active recovery polling while the browser is stranded in reconnecting/offline
-   - Disconnect overlay during prolonged outages
+5. **Connection management**
+- Tracks terminal connection state as `connected`, `reconnecting`, `offline`, or `disconnected`
+- Uses exponential-backoff reconnect scheduling for closed terminal streams
+- Polls `terminal/ensure` only while the SSE stream is still open but the Bud is offline/reconnecting
+- Shows a dimming reconnect overlay during prolonged outages
 
-6. **Terminal Features**
-   - Input buffering and batching
-   - Ctrl+C interrupt button
-   - Clear terminal option
-   - History backfill on connect
-   - Scroll-to-top detection for more history loading
+**Terminal event handling**:
 
-**State**:
+| Event | Action |
+|-------|--------|
+| `terminal.output` | Trim overlapping bytes by `byte_offset`, then write through the controller |
+| `terminal.status` | Update terminal state |
+| `terminal.ready` | Update readiness indicators |
+| `terminal.bud_offline` / `terminal.bud_online` | Update Bud status and trigger recovery |
+| `terminal.resync_required` | Reload `/terminal/state`, mark truncation, and reattach |
+| `heartbeat` | Track last event time for stale-connection detection |
+
+**State highlights**:
 ```typescript
-// UI state
 status: 'idle' | 'dispatching' | 'streaming'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
 viewMode: 'terminal' | 'web'
-
-// Terminal state
 terminalState: string
 terminalConnection: 'connected' | 'reconnecting' | 'offline' | 'disconnected'
-terminalReadiness: { ready, confidence, trigger, hints }
+terminalReadiness: { ready, confidence, trigger, hints } | null
 terminalHasOutput: boolean
 terminalOutputTruncated: boolean
 ```
-
-**Terminal Event Handling**:
-
-| Event | Action |
-|-------|--------|
-| `output` | Decode base64, write to xterm (no resize - xterm handles rendering) |
-| `status` | Update terminal state |
-| `ready` | Update readiness indicators |
-| `terminal.bud_offline` / `terminal.bud_online` | Update Bud status from snake_case `bud_id` payloads and trigger recovery |
-| `heartbeat` | Track last event time |
-| `history` | Backfill initial output |
-
-**Resize Optimization**: Terminal resize requests are only sent when dimensions actually change (window resize, panel toggle). Output events don't trigger resize - xterm handles content rendering internally. Dimension tracking via `lastSentDimensionsRef` prevents redundant requests.
-
-**Connection Recovery**:
-- SSE close → Start reconnect timer
-- Exponential backoff: 1s, 2s, 4s, ... up to 30s
-- On reconnect: rerun `terminal/ensure`, fetch authoritative session state, backfill history, and only then return to `connected`
-- If the SSE stream remains open but the Bud is offline, the route keeps polling `terminal/ensure`; if the stream itself closes, reconnect attempts are driven only by the backoff timer
 
 ## Types
 
 From `@/lib/api`:
 - `ApiMessage` - Message from API (`message_id`, `client_id`, role, content)
 - `ApiMessagePage` - Paged transcript window with opaque cursors
-- `decodeTerminalData()` - Base64 decode helper
+- `ApiTerminalState` - Safe terminal bootstrap snapshot
+- `ApiTerminalSendRequest` - Structured browser terminal send contract
+
+From `@/lib/thread-terminal-controller`:
+- `ThreadTerminalController` - Browser terminal transport controller
 
 ## Dependencies
 
 | Import | Purpose |
 |--------|---------|
-| `@tanstack/react-router` | Route definition, navigation |
+| `@tanstack/react-router` | Route definition and navigation |
 | `xterm` | Terminal emulator |
 | `xterm-addon-fit` | Auto-fit terminal size |
 | `@/components/workbench/*` | UI components |
 | `@/components/debug-panel` | Dev-only debug info |
 | `@/contexts/layout-context` | Thread panel toggle |
 | `@/contexts/bud-status-context` | Bud online status |
-| `@/lib/api` | API utilities |
+| `@/lib/api` | API utilities and terminal route types |
+| `@/lib/terminal-xterm-input` | xterm input classification |
+| `@/lib/thread-terminal-controller` | Browser terminal transport controller |
 | `lucide-react` | Icons |
 
 ---

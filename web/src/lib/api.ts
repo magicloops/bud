@@ -232,21 +232,32 @@ export const createAuthEventSource = (path: string) => {
   return { source, checkUnauthorized }
 }
 
-export const decodeTerminalData = (data: string) => {
+export const decodeBase64Bytes = (data: string) => {
   if (typeof window === 'undefined' || typeof window.atob !== 'function') {
-    return ''
+    return new Uint8Array()
   }
   try {
     const binary = atob(data)
-    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
-    const decoder = new TextDecoder()
-    return decoder.decode(bytes)
+    return Uint8Array.from(binary, (char) => char.charCodeAt(0))
   } catch {
-    return ''
+    return new Uint8Array()
   }
 }
 
+export const decodeTerminalChunk = (data: string, skipBytes = 0) => {
+  const bytes = decodeBase64Bytes(data)
+  const slicedBytes = skipBytes > 0 ? bytes.subarray(skipBytes) : bytes
+  return {
+    byteLength: slicedBytes.byteLength,
+    text: new TextDecoder().decode(slicedBytes),
+  }
+}
+
+export const decodeTerminalData = (data: string) => decodeTerminalChunk(data).text
+
 export const generateMessageClientId = () => uuidv7()
+
+export type BrowserTerminalInputSource = 'human' | 'emulator_protocol'
 
 // API types
 export type ApiBud = {
@@ -315,6 +326,45 @@ export type ApiAgentState = {
     updated_at: string
   } | null
   updated_at: string
+}
+
+export type ApiTerminalReadiness = {
+  ready: boolean
+  confidence: number
+  trigger: string
+  hints: {
+    looks_like_prompt?: boolean
+    looks_like_confirmation?: boolean
+    looks_like_password?: boolean
+    looks_like_pager?: boolean
+    looks_like_error?: boolean
+    may_still_be_processing?: boolean
+  }
+}
+
+export type ApiTerminalState = {
+  session_id: string
+  state: string
+  latest_byte_offset: number
+  readiness: ApiTerminalReadiness | null
+  snapshot: {
+    text: string
+    source: 'capture_pane' | 'unavailable'
+  }
+  updated_at: string | null
+}
+
+export type ApiTerminalSendRequest = {
+  text?: string
+  submit?: boolean
+  keys?: string[]
+  source?: BrowserTerminalInputSource
+  raw_input?: string
+}
+
+export type ApiTerminalSendResponse = {
+  ok: true
+  submitted: boolean
 }
 
 // Normalize capabilities from API response

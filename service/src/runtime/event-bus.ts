@@ -14,6 +14,7 @@ type Listener = (evt: SseEvent) => void;
 
 type AttachOptions = {
   lastEventId?: string | null;
+  replayBuffered?: boolean;
 };
 
 class SseEventBus {
@@ -57,6 +58,14 @@ class SseEventBus {
 
   private getReplayBuffer(channelId: string, options?: AttachOptions) {
     const buffer = this.buffers.get(channelId) ?? [];
+    if (options?.replayBuffered === false) {
+      return {
+        buffer,
+        replay: [] as SseEvent[],
+        resumeFound: null as boolean | null,
+      };
+    }
+
     const lastEventId = options?.lastEventId ?? null;
 
     if (!lastEventId) {

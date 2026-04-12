@@ -117,10 +117,12 @@ Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-
 ### Real-time Terminal
 
 - xterm.js terminal emulator
+- Safe bootstrap snapshots from `/api/threads/:id/terminal/state`
 - SSE streaming from `/api/threads/:id/terminal/stream`
-- Input forwarding to `/api/threads/:id/terminal/input`
+- Structured browser terminal send via `/api/threads/:id/terminal/send`
+- Narrow raw fallback via `/api/threads/:id/terminal/input`
 - Automatic reconnection with exponential backoff
-- History backfill on connect
+- Durable catch-up via `after_offset=<last_rendered_byte_offset>` when available
 
 ### Chat Interface
 

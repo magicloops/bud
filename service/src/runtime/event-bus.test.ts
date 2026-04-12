@@ -27,6 +27,32 @@ test("attachCallback replays the full buffer when no cursor is provided", () => 
   detach();
 });
 
+test("attachCallback can opt into live-only mode even without a resume cursor", () => {
+  const bus = new AgentEventBus();
+  const bufferedEvents = [makeEvent("evt_1", "agent.tool_call"), makeEvent("evt_2", "agent.message")];
+
+  for (const event of bufferedEvents) {
+    bus.emit("thread-1", event);
+  }
+
+  const replayed: SseEvent[] = [];
+  const detach = bus.attachCallback(
+    "thread-1",
+    (event) => {
+      replayed.push(event);
+    },
+    { replayBuffered: false },
+  );
+
+  assert.deepEqual(replayed, []);
+
+  const liveEvent = makeEvent("evt_3", "final");
+  bus.emit("thread-1", liveEvent);
+
+  assert.deepEqual(replayed, [liveEvent]);
+  detach();
+});
+
 test("attachCallback replays only buffered events after the provided last event id", () => {
   const bus = new AgentEventBus();
   const events = [

@@ -125,8 +125,10 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `POST` | `/api/threads/:id/cancel` | Cancel running agent |
 | `POST` | `/api/threads/:id/terminal` | Create/get terminal session |
 | `POST` | `/api/threads/:id/terminal/ensure` | Ensure terminal on bud |
+| `GET` | `/api/threads/:id/terminal/state` | Safe terminal bootstrap snapshot |
 | `GET` | `/api/threads/:id/terminal/stream` | SSE output stream |
-| `POST` | `/api/threads/:id/terminal/input` | Send terminal input |
+| `POST` | `/api/threads/:id/terminal/send` | Structured browser terminal input |
+| `POST` | `/api/threads/:id/terminal/input` | Source-tagged raw terminal input fallback |
 | `GET/POST` | `/api/auth/*` | Better Auth session and OAuth handlers |
 | `GET` | `/.well-known/oauth-authorization-server/api/auth` | Root auth-server metadata for OAuth clients |
 | `GET` | `/healthz` | Lightweight liveness check |
@@ -146,13 +148,15 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `/api/runs/:id/stream` | `status`, `exec.stdout`, `exec.stderr`, `final` |
 | `/api/sessions/:id/stream` | `output`, `status` |
 | `/api/threads/:id/agent/stream` | `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`, `heartbeat` |
-| `/api/threads/:id/terminal/stream` | `output`, `ready`, `status`, `heartbeat` |
+| `/api/threads/:id/terminal/stream` | `terminal.output`, `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`, `terminal.resync_required`, `heartbeat` |
 
 The thread agent contract now splits into:
 - `GET /api/threads/:id/agent/state` for authoritative best-effort in-flight state
 - `GET /api/threads/:id/agent/stream` for live transport plus bounded resume
 
 Canonical persisted transcript rows now expose `client_id` on `/api/threads/:id/messages` and inside the nested `message` payloads carried by `agent.message` / `agent.tool_result`.
+`GET /api/threads/:id/terminal/state` now provides the safe browser bootstrap snapshot for xterm, while `GET /api/threads/:id/terminal/stream` is live-only unless the client supplies `after_offset=<n>` for durable catch-up.
+`POST /api/threads/:id/terminal/send` is now the normal browser typing path; `POST /api/threads/:id/terminal/input` remains the narrow raw fallback for unsupported sequences and emulator protocol traffic.
 `POST /api/threads/:id/messages` now accepts optional `client_id`, returns `{ message_id, client_id }`, and suppresses duplicate same-thread user retries without starting a second agent turn.
 `GET /api/threads/:id/agent/state` and `GET /api/threads/:id/agent/stream` now also expose pre-persistence assistant/tool `client_id` values so runtime bootstrap, live streaming, and later transcript rows share one message identity.
 

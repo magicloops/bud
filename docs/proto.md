@@ -70,10 +70,22 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 
 ### 2.3 Terminal Event Stream (Browser)
 
+- Companion bootstrap route: `GET /api/threads/:thread_id/terminal/state`
 - URL: `GET /api/threads/:thread_id/terminal/stream`
+- Optional durable resume query: `?after_offset=<byte_offset>`
 - Same SSE headers + keep-alive semantics as runs.
-- Events: `terminal.output`, `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`.
-- Used by the workbench to receive terminal output.
+- Events: `terminal.output`, `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`, `terminal.resync_required`, `heartbeat`.
+- With no `after_offset`, the stream is live-only and does not replay buffered terminal output.
+- With `after_offset`, the backend replays only durable output strictly after that byte offset, then continues live.
+- If the requested offset is too old for the retained durable output window, the backend emits `terminal.resync_required` and the browser should refetch `/terminal/state`.
+- Used by the workbench to receive terminal output and reconnect safely without replaying raw xterm history through the terminal emulator.
+
+### 2.3.1 Terminal Browser Write Surface
+
+- Structured path: `POST /api/threads/:thread_id/terminal/send`
+- Transitional raw fallback: `POST /api/threads/:thread_id/terminal/input`
+- Normal browser typing SHOULD use the structured send path with `text`, `submit`, and `keys`.
+- Raw fallback exists for unsupported browser sequences and emulator protocol traffic that should not be conflated with human keystrokes.
 
 ### 2.4 Agent Event Stream (Browser)
 

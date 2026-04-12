@@ -53,7 +53,7 @@ Bud management and session listing.
 
 ### `threads.ts`
 
-Thread and message management, plus terminal operations (~900 lines).
+Thread and message management, plus terminal operations (~1400 lines).
 
 **Thread Endpoints**:
 
@@ -87,8 +87,10 @@ Thread and message management, plus terminal operations (~900 lines).
 | `POST` | `/api/threads/:thread_id/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
 | `POST` | `/api/threads/:thread_id/terminal/ensure` | Ensure the owned terminal is running on bud |
 | `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
-| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session |
-| `POST` | `/api/threads/:thread_id/terminal/input` | Send input as the signed-in human user |
+| `GET` | `/api/threads/:thread_id/terminal/state` | Get a safe owned bootstrap snapshot plus `latest_byte_offset` |
+| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session; live-only by default, durable catch-up with `after_offset` |
+| `POST` | `/api/threads/:thread_id/terminal/send` | Send structured browser terminal interaction (`text`, `submit`, `keys`) |
+| `POST` | `/api/threads/:thread_id/terminal/input` | Send source-tagged raw fallback input |
 | `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send Ctrl+C to an owned session |
 | `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |
 | `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
@@ -100,7 +102,10 @@ Thread and message management, plus terminal operations (~900 lines).
 - `MessagesQuerySchema` - `limit` plus exclusive `before` / `after` opaque cursors
 - `TerminalEnsureBodySchema` - Optional `shell`, `cwd`, `cols`, `rows`
 - `TerminalResizeBodySchema` - Required `cols`, `rows`
-- `TerminalInputBodySchema` - Required `input`
+- `BrowserTerminalInputSourceSchema` - Browser source taxonomy (`human`, `emulator_protocol`)
+- `TerminalInputBodySchema` - Required `input`, optional `source`
+- `TerminalSendBodySchema` - Structured browser send payload with `text`, `submit`, `keys`, optional `source`, optional `raw_input`
+- `TerminalStreamQuerySchema` - Optional durable replay cursor via `after_offset`
 
 **Message History Contract**:
 - `GET /api/threads/:thread_id/messages` now returns an envelope: `{ messages, page }`
@@ -131,6 +136,15 @@ Thread and message management, plus terminal operations (~900 lines).
 - the SSE frame `id:` is the opaque runtime cursor used for bounded replay
 - when the provided resume cursor is still in the bounded in-memory window, only newer buffered events replay
 - when the resume cursor is missing, the route emits `agent.resync_required` and the client should refetch `/messages` plus `/agent/state`
+
+**Terminal Stream Contract**:
+- `GET /api/threads/:thread_id/terminal/state` returns `{ session_id, state, latest_byte_offset, readiness, snapshot, updated_at }`
+- `snapshot.text` is a safe bootstrap surface intended for direct xterm rendering, not raw historical output replay
+- `GET /api/threads/:thread_id/terminal/stream` with no `after_offset` is live-only; it does not replay buffered `terminal.output`
+- `GET /api/threads/:thread_id/terminal/stream?after_offset=<n>` replays only durable output strictly after that byte offset, then continues live
+- when durable output can no longer satisfy the requested offset, the route emits `terminal.resync_required` and closes so the browser can refetch `/terminal/state`
+- `POST /api/threads/:thread_id/terminal/send` routes normal browser typing and modeled keys through the structured Bud `terminal_send` path
+- `POST /api/threads/:thread_id/terminal/input` remains a narrow, source-tagged raw fallback for unsupported browser cases and emulator protocol traffic
 
 **Message History Examples**:
 

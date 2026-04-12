@@ -197,11 +197,13 @@ export interface TerminalObserveResultMessage extends TerminalEnvelope {
 
 // Command stack tracking types
 
+export type TerminalInputSource = "agent" | "human" | "emulator_protocol" | "system";
+
 export interface PendingCommand {
   input: string; // Raw input sent, e.g., "claude" or "claude\n"
   command: string; // Parsed command name, e.g., "claude"
   sentAt: number; // Timestamp when sent
-  source: "agent" | "user" | "system"; // Who sent this command
+  source: TerminalInputSource; // Who sent this command
 }
 
 export type TerminalContextMode = "shell" | "repl" | "unknown";

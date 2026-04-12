@@ -114,11 +114,13 @@ export interface TerminalObserveMessage extends TerminalEnvelope {
 **Command Tracking Types**:
 
 ```typescript
+export type TerminalInputSource = "agent" | "human" | "emulator_protocol" | "system";
+
 export interface PendingCommand {
   input: string;      // Raw input, e.g., "claude\n"
   command: string;    // Parsed name, e.g., "claude"
   sentAt: number;
-  source: "agent" | "user" | "system";
+  source: "agent" | "human" | "emulator_protocol" | "system";
 }
 
 export type TerminalContextMode = "shell" | "repl" | "unknown";
@@ -150,7 +152,7 @@ await_ready: {
 **Phase 6/7 Interactive Wait Notes**:
 - `terminal.send` now defaults to a fast post-send delta capture after `1000ms`
 - `terminal.send` now defaults to `wait_for: "none"` and `timeout_ms: 5000`
-- `terminal.send` is now the primary tool for both shell commands and interactive input
+- `terminal.send` is now the primary tool for both shell commands and interactive input, including normal browser typing through the service `/terminal/send` surface
 - agent-facing explicit waits are now `changed` and `settled`
 - `terminal.send` and `terminal.observe` share the same immediate-start screen wait engine for `changed` / `settled`
 - `settled` means "screen has been quiet for a short window", not the older blind `screen_stable` loop

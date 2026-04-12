@@ -10,6 +10,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 - **Persistent Terminal Sessions**: Unlike ephemeral shell commands, Bud maintains stateful terminal sessions where environment variables, working directories, and running processes persist across interactions.
 - **Thread-Scoped Sessions**: Each conversation thread owns its terminal session, enabling parallel workstreams without state collision.
+- **Browser Terminal Boundaries**: The web client now bootstraps terminal state from safe snapshots and treats normal human typing separately from emulator protocol and raw replay traffic.
 - **Context-Aware Agent**: The LLM understands terminal state (prompt detection, REPL detection, pager detection) and adapts its behavior accordingly.
 
 ---
@@ -202,6 +203,7 @@ The web app now consumes that foundation through:
 - `/devices/claim/$flowId` for QR/link-based Bud approval
 - an auth-aware app shell that resolves the current user before protected routes load
 - credential-aware API and SSE helpers so cookie auth works consistently across loaders and live streams
+- browser terminal transport boundaries so xterm protocol output is not treated as synonymous with human keystrokes
 - an OAuth Provider client plugin that preserves Better Auth's signed mobile resume state through hosted auth pages
 - auth-expiry-aware reconnect guards so live thread views stop polling once browser auth is gone
 - per-user route filtering so browser users only receive their own Buds, threads, runs, sessions, and messages

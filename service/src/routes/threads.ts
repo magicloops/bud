@@ -9,13 +9,15 @@ import {
   runSummaryTable,
   runTable,
   threadTable,
+  terminalSessionInputLogTable,
+  terminalSessionOutputTable,
   terminalSessionTable
 } from "../db/schema.js";
 import { AgentService, ThreadTitleService } from "../agent/index.js";
 import { RunManager } from "../runtime/run-manager.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
-import { and, asc, desc, eq, gt, isNull, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { TerminalEventBus } from "../runtime/event-bus.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
@@ -78,8 +80,27 @@ const TerminalResizeBodySchema = z.object({
   rows: z.number().int().positive().min(1).max(200)
 });
 
+const BrowserTerminalInputSourceSchema = z.enum(["human", "emulator_protocol"]);
+
 const TerminalInputBodySchema = z.object({
-  input: z.string().min(1)
+  input: z.string().min(1),
+  source: BrowserTerminalInputSourceSchema.optional()
+});
+
+const TerminalSendBodySchema = z
+  .object({
+    text: z.string().optional(),
+    submit: z.boolean().optional(),
+    keys: z.array(z.string().min(1)).max(32).optional(),
+    source: BrowserTerminalInputSourceSchema.optional(),
+    raw_input: z.string().optional()
+  })
+  .refine((value) => Boolean(value.text) || value.submit === true || (value.keys?.length ?? 0) > 0, {
+    message: "text, submit, or keys is required"
+  });
+
+const TerminalStreamQuerySchema = z.object({
+  after_offset: z.coerce.number().int().min(0).optional()
 });
 
 const RUN_TAIL_MAX_BYTES = 16 * 1024;
@@ -125,6 +146,187 @@ async function readRunTail(
   buffers.reverse();
   const text = Buffer.concat(buffers).toString("utf-8");
   return { text, bytes: collected };
+}
+
+const TERMINAL_AUDIT_KEY_TO_BYTES = new Map<string, string>([
+  ["Backspace", "\u007f"],
+  ["Delete", "\u001b[3~"],
+  ["Down", "\u001b[B"],
+  ["End", "\u001b[F"],
+  ["Escape", "\u001b"],
+  ["Home", "\u001b[H"],
+  ["Left", "\u001b[D"],
+  ["PageDown", "\u001b[6~"],
+  ["PageUp", "\u001b[5~"],
+  ["Right", "\u001b[C"],
+  ["Tab", "\t"],
+  ["Up", "\u001b[A"],
+])
+
+type DurableTerminalReplayChunk = {
+  seq: number
+  byteOffset: number
+  data: Buffer
+}
+
+type DurableTerminalReplayPlan =
+  | {
+      status: 'ok'
+      latestByteOffset: number
+      earliestByteOffset: number | null
+      chunks: DurableTerminalReplayChunk[]
+    }
+  | {
+      status: 'resync_required'
+      latestByteOffset: number
+      earliestByteOffset: number | null
+      chunks: []
+    }
+
+function buildTerminalSendAuditBuffer(body: z.infer<typeof TerminalSendBodySchema>) {
+  if (body.raw_input) {
+    return Buffer.from(body.raw_input, 'utf-8')
+  }
+
+  const parts: string[] = []
+  if (typeof body.text === 'string' && body.text.length > 0) {
+    parts.push(body.text)
+  }
+  if (body.submit === true) {
+    parts.push('\n')
+  }
+  for (const key of body.keys ?? []) {
+    const mapped = TERMINAL_AUDIT_KEY_TO_BYTES.get(key)
+    if (mapped) {
+      parts.push(mapped)
+      continue
+    }
+    if (key.length === 1) {
+      parts.push(key)
+    }
+  }
+
+  return Buffer.from(parts.join(''), 'utf-8')
+}
+
+async function recordStructuredTerminalInput(params: {
+  sessionId: string
+  source: z.infer<typeof BrowserTerminalInputSourceSchema>
+  userId?: string
+  auditBuffer: Buffer
+  server: FastifyInstance
+}) {
+  if (params.auditBuffer.length === 0) {
+    return
+  }
+
+  try {
+    await db.insert(terminalSessionInputLogTable).values({
+      sessionId: params.sessionId,
+      data: params.auditBuffer,
+      source: params.source,
+      userId: params.userId,
+    })
+    await db
+      .update(terminalSessionTable)
+      .set({
+        totalInputBytes: sql`coalesce(total_input_bytes, 0) + ${params.auditBuffer.length}`,
+        lastInputAt: new Date(),
+        lastActivityAt: new Date(),
+      })
+      .where(eq(terminalSessionTable.sessionId, params.sessionId))
+  } catch (error) {
+    params.server.log.warn(
+      { error, sessionId: params.sessionId, component: 'terminal_input_audit' },
+      'Failed to record structured terminal input',
+    )
+  }
+}
+
+async function buildTerminalReplayPlan(
+  sessionId: string,
+  afterOffset: number,
+): Promise<DurableTerminalReplayPlan> {
+  const [sessionRow] = await db
+    .select({ latestByteOffset: terminalSessionTable.totalOutputBytes })
+    .from(terminalSessionTable)
+    .where(eq(terminalSessionTable.sessionId, sessionId))
+    .limit(1)
+
+  const latestByteOffset = sessionRow?.latestByteOffset ?? 0
+
+  const [earliestRow] = await db
+    .select({ byteOffset: terminalSessionOutputTable.byteOffset })
+    .from(terminalSessionOutputTable)
+    .where(eq(terminalSessionOutputTable.sessionId, sessionId))
+    .orderBy(asc(terminalSessionOutputTable.byteOffset))
+    .limit(1)
+
+  const earliestByteOffset = earliestRow?.byteOffset ?? null
+
+  if (earliestByteOffset !== null && afterOffset < earliestByteOffset && latestByteOffset > afterOffset) {
+    return {
+      status: 'resync_required',
+      latestByteOffset,
+      earliestByteOffset,
+      chunks: [],
+    }
+  }
+
+  if (afterOffset >= latestByteOffset) {
+    return {
+      status: 'ok',
+      latestByteOffset,
+      earliestByteOffset,
+      chunks: [],
+    }
+  }
+
+  const rows = await db
+    .select({
+      seq: terminalSessionOutputTable.seq,
+      byteOffset: terminalSessionOutputTable.byteOffset,
+      data: terminalSessionOutputTable.data,
+    })
+    .from(terminalSessionOutputTable)
+    .where(
+      and(
+        eq(terminalSessionOutputTable.sessionId, sessionId),
+        sql`${terminalSessionOutputTable.byteOffset} + octet_length(${terminalSessionOutputTable.data}) > ${afterOffset}`,
+      ),
+    )
+    .orderBy(asc(terminalSessionOutputTable.byteOffset))
+
+  return {
+    status: 'ok',
+    latestByteOffset,
+    earliestByteOffset,
+    chunks: rows.map((row) => ({
+      seq: row.seq,
+      byteOffset: row.byteOffset,
+      data: Buffer.from(row.data),
+    })),
+  }
+}
+
+function projectTerminalReplayChunk(chunk: DurableTerminalReplayChunk, afterOffset: number) {
+  const endOffset = chunk.byteOffset + chunk.data.length
+  if (endOffset <= afterOffset) {
+    return null
+  }
+
+  const skipBytes = Math.max(afterOffset - chunk.byteOffset, 0)
+  const nextBuffer = skipBytes > 0 ? chunk.data.subarray(skipBytes) : chunk.data
+  if (nextBuffer.length === 0) {
+    return null
+  }
+
+  return {
+    seq: chunk.seq,
+    byte_offset: chunk.byteOffset + skipBytes,
+    data: nextBuffer.toString('base64'),
+    end_offset: endOffset,
+  }
 }
 
 function serializeThread(row: typeof threadTable.$inferSelect) {
@@ -822,74 +1024,279 @@ export async function registerThreadTerminalRoutes(
     };
   });
 
-  // GET /api/threads/:threadId/terminal/stream - SSE output stream
-  server.get("/api/threads/:threadId/terminal/stream", async (request, reply) => {
-    const params = ThreadParamsSchema.parse(request.params);
-    const query = StreamResumeQuerySchema.parse(request.query ?? {});
-    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+  // GET /api/threads/:threadId/terminal/state - Safe terminal bootstrap state
+  server.get("/api/threads/:threadId/terminal/state", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params)
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId)
     if (!access) {
-      return;
+      return
     }
 
-    const session = await terminalSessionManager.getSessionForThread(params.threadId);
+    const session = await terminalSessionManager.getSessionForThread(params.threadId)
     if (!session) {
-      reply.code(404).send({ error: "no_terminal_session" });
-      return;
+      return reply.code(404).send({ error: "no_terminal_session" })
     }
 
-    // Subscribe to session events using the event bus
-    const detach = terminalEvents.attach(session.sessionId, reply, {
-      lastEventId: readLastEventId(request, query.last_event_id),
-    });
+    const [sessionRow] = await db
+      .select({
+        state: terminalSessionTable.state,
+        latestByteOffset: terminalSessionTable.totalOutputBytes,
+        lastActivityAt: terminalSessionTable.lastActivityAt,
+      })
+      .from(terminalSessionTable)
+      .where(eq(terminalSessionTable.sessionId, session.sessionId))
+      .limit(1)
 
-    // Send periodic heartbeat to keep connection alive
-    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
+    let snapshotText = ""
+    let snapshotSource: 'capture_pane' | 'unavailable' = 'unavailable'
+    let readiness = terminalSessionManager.getLatestReadiness(session.sessionId)
+
+    if (isBudOnline(session.budId)) {
+      try {
+        const capture = await terminalSessionManager.capturePane(session.sessionId, { startLine: -200 }, 2500)
+        snapshotText = capture.output
+        snapshotSource = 'capture_pane'
+        if (!readiness) {
+          readiness = capture.readiness
+        }
+      } catch (error) {
+        server.log.warn(
+          { error, sessionId: session.sessionId, component: 'terminal_state' },
+          'Failed to capture terminal state snapshot',
+        )
+      }
+    }
+
+    return {
+      session_id: session.sessionId,
+      state: sessionRow?.state ?? session.state,
+      latest_byte_offset: sessionRow?.latestByteOffset ?? 0,
+      readiness,
+      snapshot: {
+        text: snapshotText,
+        source: snapshotSource,
+      },
+      updated_at: sessionRow?.lastActivityAt?.toISOString() ?? null,
+    }
+  })
+
+  // GET /api/threads/:threadId/terminal/stream - SSE output stream with durable offset resume
+  server.get("/api/threads/:threadId/terminal/stream", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params)
+    const query = TerminalStreamQuerySchema.safeParse(request.query ?? {})
+    if (!query.success) {
+      return reply.code(400).send({ error: 'invalid_query', details: query.error.message })
+    }
+
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId)
+    if (!access) {
+      return
+    }
+
+    const session = await terminalSessionManager.getSessionForThread(params.threadId)
+    if (!session) {
+      reply.code(404).send({ error: 'no_terminal_session' })
+      return
+    }
+
+    const afterOffset = query.data.after_offset ?? null
+    const replayPlan =
+      afterOffset === null
+        ? { status: 'ok', latestByteOffset: 0, earliestByteOffset: null, chunks: [] } satisfies DurableTerminalReplayPlan
+        : await buildTerminalReplayPlan(session.sessionId, afterOffset)
+
+    if (replayPlan.status === 'resync_required' && afterOffset !== null) {
+      reply.sse({
+        event: 'terminal.resync_required',
+        data: JSON.stringify({
+          error: 'resync_required',
+          session_id: session.sessionId,
+          provided_after_offset: afterOffset,
+          latest_byte_offset: replayPlan.latestByteOffset,
+          earliest_available_offset: replayPlan.earliestByteOffset,
+        }),
+      })
+      reply.raw.end()
+      return
+    }
+
+    let deliveredOffset = afterOffset ?? 0
+    const pendingEvents: Array<{ event: string; data: Record<string, unknown>; id?: string }> = []
+    let primed = false
+
+    const emitEvent = (event: { event: string; data: Record<string, unknown>; id?: string }) => {
+      if (event.event === 'terminal.output') {
+        const payload = event.data as { seq?: unknown; data?: unknown; byte_offset?: unknown }
+        if (typeof payload.data !== 'string' || typeof payload.byte_offset !== 'number') {
+          return
+        }
+
+        const buffer = Buffer.from(payload.data, 'base64')
+        const endOffset = payload.byte_offset + buffer.length
+        if (endOffset <= deliveredOffset) {
+          return
+        }
+
+        const skipBytes = Math.max(deliveredOffset - payload.byte_offset, 0)
+        const nextBuffer = skipBytes > 0 ? buffer.subarray(skipBytes) : buffer
+        if (nextBuffer.length === 0) {
+          deliveredOffset = endOffset
+          return
+        }
+
+        reply.sse({
+          event: event.event,
+          id: event.id,
+          data: JSON.stringify({
+            seq: typeof payload.seq === 'number' ? payload.seq : null,
+            data: nextBuffer.toString('base64'),
+            byte_offset: payload.byte_offset + skipBytes,
+          }),
+        })
+        deliveredOffset = endOffset
+        return
+      }
+
+      reply.sse({ event: event.event, id: event.id, data: JSON.stringify(event.data) })
+    }
+
+    const detach = terminalEvents.attachCallback(
+      session.sessionId,
+      (event) => {
+        if (!primed) {
+          pendingEvents.push(event)
+          return
+        }
+        emitEvent(event)
+      },
+      { replayBuffered: false },
+    )
+
+    reply.sse({ event: 'heartbeat', data: JSON.stringify({ ts: Date.now(), initial: true }) })
+
+    for (const chunk of replayPlan.chunks) {
+      const projected = projectTerminalReplayChunk(chunk, deliveredOffset)
+      if (!projected) {
+        continue
+      }
+      reply.sse({
+        event: 'terminal.output',
+        data: JSON.stringify({
+          seq: projected.seq,
+          data: projected.data,
+          byte_offset: projected.byte_offset,
+        }),
+      })
+      deliveredOffset = projected.end_offset
+    }
+
+    primed = true
+    for (const event of pendingEvents) {
+      emitEvent(event)
+    }
+
+    const heartbeatMs = process.env.NODE_ENV === 'production' ? 5000 : 1000
     const heartbeatInterval = setInterval(() => {
       try {
-        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
+        reply.sse({ event: 'heartbeat', data: JSON.stringify({ ts: Date.now() }) })
       } catch {
-        clearInterval(heartbeatInterval);
+        clearInterval(heartbeatInterval)
       }
-    }, heartbeatMs);
+    }, heartbeatMs)
 
-    // Cleanup on close
-    reply.raw.on("close", () => {
-      clearInterval(heartbeatInterval);
-      detach();
-    });
-  });
+    reply.raw.on('close', () => {
+      clearInterval(heartbeatInterval)
+      detach()
+    })
+  })
 
-  // POST /api/threads/:threadId/terminal/input - Send input
-  server.post("/api/threads/:threadId/terminal/input", async (request, reply) => {
-    const params = ThreadParamsSchema.parse(request.params);
-    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+  // POST /api/threads/:threadId/terminal/send - Structured browser terminal input
+  server.post("/api/threads/:threadId/terminal/send", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params)
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId)
     if (!access) {
-      return;
+      return
     }
 
-    const { viewer } = access;
-    const body = TerminalInputBodySchema.safeParse(request.body);
+    const { viewer } = access
+    const body = TerminalSendBodySchema.safeParse(request.body)
     if (!body.success) {
-      return reply.code(400).send({ error: "input_required" });
+      return reply.code(400).send({ error: 'invalid_body', details: body.error.message })
     }
 
-    const session = await terminalSessionManager.getSessionForThread(params.threadId);
+    const session = await terminalSessionManager.getSessionForThread(params.threadId)
     if (!session) {
-      return reply.code(404).send({ error: "no_terminal_session" });
+      return reply.code(404).send({ error: 'no_terminal_session' })
     }
 
+    const source = body.data.source ?? 'human'
+    const auditBuffer = buildTerminalSendAuditBuffer(body.data)
+
+    try {
+      const interactionPromise = terminalSessionManager.sendInteraction(
+        session.sessionId,
+        {
+          text: body.data.text,
+          submit: body.data.submit,
+          keys: body.data.keys,
+        },
+        { timeoutMs: 5000, source },
+      )
+
+      await recordStructuredTerminalInput({
+        sessionId: session.sessionId,
+        source,
+        userId: source === 'human' ? viewer.userId : undefined,
+        auditBuffer,
+        server,
+      })
+
+      const result = await interactionPromise
+      return {
+        ok: true,
+        submitted: result.submitted,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'terminal_unavailable'
+      return reply.code(503).send({ error: message })
+    }
+  })
+
+  // POST /api/threads/:threadId/terminal/input - Send raw input fallback
+  server.post("/api/threads/:threadId/terminal/input", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params)
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId)
+    if (!access) {
+      return
+    }
+
+    const { viewer } = access
+    const body = TerminalInputBodySchema.safeParse(request.body)
+    if (!body.success) {
+      return reply.code(400).send({ error: 'input_required' })
+    }
+
+    const session = await terminalSessionManager.getSessionForThread(params.threadId)
+    if (!session) {
+      return reply.code(404).send({ error: 'no_terminal_session' })
+    }
+
+    const source = body.data.source ?? 'human'
     const result = await terminalSessionManager.sendInput(
       session.sessionId,
-      Buffer.from(body.data.input, "utf-8"),
-      { source: "user", userId: viewer.userId }
-    );
+      Buffer.from(body.data.input, 'utf-8'),
+      {
+        source,
+        userId: source === 'human' ? viewer.userId : undefined,
+      },
+    )
 
     if (!result.ok) {
-      return reply.code(503).send({ error: result.error ?? "terminal_unavailable" });
+      return reply.code(503).send({ error: result.error ?? 'terminal_unavailable' })
     }
 
-    return { ok: true };
-  });
+    return { ok: true }
+  })
 
   // POST /api/threads/:threadId/terminal/interrupt - Send Ctrl+C
   server.post("/api/threads/:threadId/terminal/interrupt", async (request, reply) => {
