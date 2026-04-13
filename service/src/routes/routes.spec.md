@@ -53,7 +53,7 @@ Bud management and session listing.
 
 ### `threads.ts`
 
-Thread and message management, plus terminal operations (~1400 lines).
+Thread and message management, plus terminal operations (~1450 lines).
 
 **Thread Endpoints**:
 
@@ -140,8 +140,10 @@ Thread and message management, plus terminal operations (~1400 lines).
 **Terminal Stream Contract**:
 - `GET /api/threads/:thread_id/terminal/state` returns `{ session_id, state, latest_byte_offset, readiness, snapshot, updated_at }`
 - `snapshot.text` is a safe bootstrap surface intended for direct xterm rendering, not raw historical output replay
+- the route currently emits temporary service-side logs summarizing snapshot line shape (`lineCount`, trailing blank lines, last non-empty line) to validate the cursor-bootstrap regression without changing the HTTP payload
 - `GET /api/threads/:thread_id/terminal/stream` with no `after_offset` is live-only; it does not replay buffered `terminal.output`
 - `GET /api/threads/:thread_id/terminal/stream?after_offset=<n>` replays only durable output strictly after that byte offset, then continues live
+- the stream route currently emits temporary replay-plan logs (`attachMode`, `requestedAfterOffset`, `latestByteOffset`, `chunkCount`) so the team can verify whether the browser is resuming exactly at the bootstrap tip with zero durable replay
 - when durable output can no longer satisfy the requested offset, the route emits `terminal.resync_required` and closes so the browser can refetch `/terminal/state`
 - `POST /api/threads/:thread_id/terminal/send` routes normal browser typing and modeled keys through the structured Bud `terminal_send` path
 - `POST /api/threads/:thread_id/terminal/input` remains a narrow, source-tagged raw fallback for unsupported browser cases and emulator protocol traffic

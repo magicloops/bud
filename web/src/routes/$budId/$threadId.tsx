@@ -111,6 +111,102 @@ type ThreadTitleEvent = {
   updated_at: string
 }
 
+type TerminalSnapshotDebugSummary = {
+  lineCount: number
+  trailingBlankLines: number
+  endsWithNewline: boolean
+  lastLineLength: number
+  lastLine: string
+  lastNonEmptyLine: string
+}
+
+type TerminalBootstrapDebugInfo = {
+  sessionId: string
+  latestByteOffset: number
+  snapshotSource: string
+  snapshotSummary: TerminalSnapshotDebugSummary
+  loadedAt: string
+}
+
+const debugTerminalBootstrap = (message: string, details: Record<string, unknown>) => {
+  if (!import.meta.env.DEV) {
+    return
+  }
+
+  console.debug(`[terminal-bootstrap] ${message}`, details)
+}
+
+const truncateTerminalDebugText = (value: string, maxLength = 160) => {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+const summarizeTerminalSnapshotText = (text: string): TerminalSnapshotDebugSummary => {
+  const normalized = text.replace(/\r\n/g, '\n')
+  const lines = normalized.length === 0 ? [] : normalized.split('\n')
+  let trailingBlankLines = 0
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if ((lines[index] ?? '').trim().length === 0) {
+      trailingBlankLines += 1
+      continue
+    }
+    break
+  }
+
+  let lastNonEmptyLine = ''
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if ((lines[index] ?? '').trim().length > 0) {
+      lastNonEmptyLine = lines[index] ?? ''
+      break
+    }
+  }
+
+  const lastLine = lines.length > 0 ? (lines[lines.length - 1] ?? '') : ''
+
+  return {
+    lineCount: lines.length,
+    trailingBlankLines,
+    endsWithNewline: normalized.endsWith('\n'),
+    lastLineLength: lastLine.length,
+    lastLine: truncateTerminalDebugText(lastLine),
+    lastNonEmptyLine: truncateTerminalDebugText(lastNonEmptyLine),
+  }
+}
+
+const readTerminalBufferMetrics = (terminal: Terminal | null) => {
+  if (!terminal) {
+    return null
+  }
+
+  const activeBuffer = terminal.buffer.active
+  return {
+    cols: terminal.cols,
+    rows: terminal.rows,
+    cursorX: activeBuffer.cursorX,
+    cursorY: activeBuffer.cursorY,
+    viewportY: activeBuffer.viewportY,
+    baseY: activeBuffer.baseY,
+    bufferLength: activeBuffer.length,
+    cursorAtViewportBottom: activeBuffer.cursorY >= terminal.rows - 1,
+  }
+}
+
+const readPaneMetrics = (pane: HTMLDivElement | null) => {
+  if (!pane) {
+    return null
+  }
+
+  const rect = pane.getBoundingClientRect()
+  return {
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+    connected: pane.isConnected,
+  }
+}
+
 const getMessageIdentity = (message: Pick<ApiMessage, 'client_id'>) => message.client_id
 
 const isOptimisticMessage = (message: ApiMessage) => message.metadata?.optimistic === true
@@ -373,6 +469,7 @@ function ThreadView() {
   const currentSessionIdRef = useRef<string | null>(null)
   const terminalRecoveryInFlightRef = useRef(false)
   const terminalReadyRef = useRef(false)
+  const terminalBootstrapInfoRef = useRef<TerminalBootstrapDebugInfo | null>(null)
 
   // Agent stream state
   const agentEventSourceRef = useRef<EventSource | null>(null)
@@ -531,13 +628,23 @@ function ThreadView() {
     const term = terminalRef.current
     const pane = terminalPaneRef.current
     if (!addon || !term || !pane || !pane.isConnected || !term.element) return
+    const beforeMetrics = readTerminalBufferMetrics(term)
+    const paneMetrics = readPaneMetrics(pane)
     try {
       addon.fit()
       const cols = term.cols
       const rows = term.rows
       // Only send resize to backend if dimensions actually changed
       const last = lastSentDimensionsRef.current
-      if (cols > 0 && rows > 0 && (!last || last.cols !== cols || last.rows !== rows)) {
+      const shouldSendResize = cols > 0 && rows > 0 && (!last || last.cols !== cols || last.rows !== rows)
+      debugTerminalBootstrap('fitTerminal completed', {
+        pane: paneMetrics,
+        before: beforeMetrics,
+        after: readTerminalBufferMetrics(term),
+        shouldSendResize,
+        lastSentDimensions: last,
+      })
+      if (shouldSendResize) {
         lastSentDimensionsRef.current = { cols, rows }
         sendTerminalResizeRef.current(cols, rows)
       }
@@ -549,6 +656,9 @@ function ThreadView() {
   const resetTerminal = useCallback(() => {
     const term = terminalRef.current
     if (term && term.element) {
+      debugTerminalBootstrap('resetting terminal instance', {
+        terminalBeforeReset: readTerminalBufferMetrics(term),
+      })
       term.reset()
     }
     setTerminalHasOutput(false)
@@ -811,6 +921,32 @@ function ThreadView() {
 
   const loadTerminalState = useCallback(async (targetThreadId: string) => {
     const body = await apiFetchJson<ApiTerminalState>(`/api/threads/${targetThreadId}/terminal/state`)
+    const snapshotSummary = summarizeTerminalSnapshotText(body.snapshot.text)
+    terminalBootstrapInfoRef.current = {
+      sessionId: body.session_id,
+      latestByteOffset: body.latest_byte_offset,
+      snapshotSource: body.snapshot.source,
+      snapshotSummary,
+      loadedAt: new Date().toISOString(),
+    }
+    debugTerminalBootstrap('loaded terminal state response', {
+      threadId: targetThreadId,
+      sessionId: body.session_id,
+      state: body.state,
+      latestByteOffset: body.latest_byte_offset,
+      snapshotSource: body.snapshot.source,
+      snapshot: snapshotSummary,
+      readiness: body.readiness
+        ? {
+            ready: body.readiness.ready,
+            confidence: body.readiness.confidence,
+            trigger: body.readiness.trigger,
+            promptType: body.readiness.prompt_type ?? null,
+          }
+        : null,
+      terminalBeforeApply: readTerminalBufferMetrics(terminalRef.current),
+      pane: readPaneMetrics(terminalPaneRef.current),
+    })
     currentSessionIdRef.current = body.session_id
     setTerminalState(body.state)
     setTerminalReadiness(body.readiness)
@@ -819,6 +955,15 @@ function ThreadView() {
     if (terminalControllerRef.current) {
       await terminalControllerRef.current.applyStateSnapshot(body)
     }
+
+    debugTerminalBootstrap('applied terminal state response in route', {
+      threadId: targetThreadId,
+      sessionId: body.session_id,
+      latestByteOffset: body.latest_byte_offset,
+      snapshot: snapshotSummary,
+      terminalAfterApply: readTerminalBufferMetrics(terminalRef.current),
+      pane: readPaneMetrics(terminalPaneRef.current),
+    })
 
     setTerminalHasOutput(body.snapshot.text.length > 0)
     const term = terminalRef.current
@@ -830,6 +975,27 @@ function ThreadView() {
 
     return body
   }, [])
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+
+      debugTerminalBootstrap('document became visible', {
+        threadId,
+        connection: terminalConnectionRef.current,
+        terminal: readTerminalBufferMetrics(terminalRef.current),
+        pane: readPaneMetrics(terminalPaneRef.current),
+        bootstrap: terminalBootstrapInfoRef.current,
+      })
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [threadId])
 
   const recoverTerminalSession = useCallback(async (reason: string): Promise<boolean> => {
     if (!threadId) {
@@ -1319,6 +1485,7 @@ function ThreadView() {
       setTerminalOutputTruncated(false)
       setTerminalReadiness(null)
       currentSessionIdRef.current = null
+      terminalBootstrapInfoRef.current = null
       lastConnectedThreadIdRef.current = threadId
     }
 
@@ -1331,6 +1498,7 @@ function ThreadView() {
       setTerminalState('idle')
       lastConnectedThreadIdRef.current = null
       currentSessionIdRef.current = null
+      terminalBootstrapInfoRef.current = null
       return
     }
 
@@ -1422,6 +1590,18 @@ function ThreadView() {
         controller.getSessionId() === currentSessionIdRef.current
           ? controller.getLastRenderedByteOffset()
           : null
+      debugTerminalBootstrap('attaching terminal stream', {
+        threadId,
+        sessionId: currentSessionIdRef.current,
+        connectionState: terminalConnectionRef.current,
+        controllerSessionId: controller?.getSessionId() ?? null,
+        controllerLastRenderedByteOffset: controller?.getLastRenderedByteOffset() ?? null,
+        requestedAfterOffset: afterOffset,
+        bootstrap: terminalBootstrapInfoRef.current,
+        resumeAtBootstrapOffset:
+          afterOffset !== null &&
+          afterOffset === terminalBootstrapInfoRef.current?.latestByteOffset,
+      })
       const streamSuffix =
         afterOffset === null ? '' : `?after_offset=${encodeURIComponent(String(afterOffset))}`
       const terminalStream = createAuthEventSource(`/api/threads/${threadId}/terminal/stream${streamSuffix}`)

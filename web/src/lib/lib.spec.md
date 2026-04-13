@@ -62,7 +62,9 @@ Browser-side terminal transport controller.
 - Keeps a narrow raw fallback for unsupported human sequences and emulator protocol traffic
 - Tracks `lastRenderedByteOffset` so reconnects can resume with `after_offset=<n>`
 - Applies safe `/terminal/state` bootstrap snapshots before live stream attach
+- Temporarily trims trailing blank snapshot rows before writing into xterm to validate whether pane-shaped capture output is what pushes the reconstructed cursor to the bottom of the viewport
 - Trims overlapping durable replay bytes before writing into xterm
+- Temporarily logs snapshot-shape and xterm buffer metrics in dev so the safe-bootstrap cursor regression can be validated before changing behavior
 
 **Structured coverage in the first pass**:
 - Printable text batches

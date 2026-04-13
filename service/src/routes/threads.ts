@@ -21,7 +21,7 @@ import { and, asc, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { TerminalEventBus } from "../runtime/event-bus.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
-import { getActiveBudIds } from "../ws/gateway.js";
+import { getActiveBudIds, isBudOnline } from "../ws/gateway.js";
 import { getAuthorizedBud, getAuthorizedThread, requireViewer } from "../auth/session.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 
@@ -326,6 +326,50 @@ function projectTerminalReplayChunk(chunk: DurableTerminalReplayChunk, afterOffs
     byte_offset: chunk.byteOffset + skipBytes,
     data: nextBuffer.toString('base64'),
     end_offset: endOffset,
+  }
+}
+
+function truncateDebugText(value: string, maxLength = 160) {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+function summarizeTerminalTextForDebug(text: string, visibleRows?: number | null) {
+  const normalized = text.replace(/\r\n/g, '\n')
+  const lines = normalized.length === 0 ? [] : normalized.split('\n')
+  let trailingBlankLines = 0
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if ((lines[index] ?? '').trim().length === 0) {
+      trailingBlankLines += 1
+      continue
+    }
+    break
+  }
+
+  let lastNonEmptyLine = ''
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if ((lines[index] ?? '').trim().length > 0) {
+      lastNonEmptyLine = lines[index] ?? ''
+      break
+    }
+  }
+
+  const lastLine = lines.length > 0 ? (lines[lines.length - 1] ?? '') : ''
+
+  return {
+    lineCount: lines.length,
+    trailingBlankLines,
+    endsWithNewline: normalized.endsWith('\n'),
+    visibleRows: visibleRows ?? null,
+    fillsVisibleRows: visibleRows ? lines.length >= visibleRows : null,
+    trailingBlankRowsVsViewport:
+      visibleRows && trailingBlankLines > 0 ? Math.min(trailingBlankLines, visibleRows) : 0,
+    lastLineLength: lastLine.length,
+    lastLine: truncateDebugText(lastLine),
+    lastNonEmptyLine: truncateDebugText(lastNonEmptyLine),
   }
 }
 
@@ -1050,12 +1094,21 @@ export async function registerThreadTerminalRoutes(
     let snapshotText = ""
     let snapshotSource: 'capture_pane' | 'unavailable' = 'unavailable'
     let readiness = terminalSessionManager.getLatestReadiness(session.sessionId)
+    let snapshotCaptureMeta: Record<string, unknown> | null = null
 
     if (isBudOnline(session.budId)) {
       try {
         const capture = await terminalSessionManager.capturePane(session.sessionId, { startLine: -200 }, 2500)
         snapshotText = capture.output
         snapshotSource = 'capture_pane'
+        snapshotCaptureMeta = {
+          view: capture.view,
+          outputBytes: capture.outputBytes,
+          linesCaptured: capture.linesCaptured,
+          changed: capture.changed ?? null,
+          truncated: capture.truncated ?? null,
+          error: capture.error ?? null,
+        }
         if (!readiness) {
           readiness = capture.readiness
         }
@@ -1066,6 +1119,30 @@ export async function registerThreadTerminalRoutes(
         )
       }
     }
+
+    const snapshotSummary = summarizeTerminalTextForDebug(snapshotText, session.rows)
+    server.log.info(
+      {
+        threadId: params.threadId,
+        sessionId: session.sessionId,
+        budId: session.budId,
+        state: sessionRow?.state ?? session.state,
+        latestByteOffset: sessionRow?.latestByteOffset ?? 0,
+        snapshotSource,
+        snapshotSummary,
+        snapshotCaptureMeta,
+        readiness: readiness
+          ? {
+              ready: readiness.ready,
+              confidence: readiness.confidence,
+              trigger: readiness.trigger,
+              prompt_type: readiness.prompt_type ?? null,
+            }
+          : null,
+        component: 'terminal_state_debug',
+      },
+      'Terminal state bootstrap snapshot prepared',
+    )
 
     return {
       session_id: session.sessionId,
@@ -1104,6 +1181,30 @@ export async function registerThreadTerminalRoutes(
       afterOffset === null
         ? { status: 'ok', latestByteOffset: 0, earliestByteOffset: null, chunks: [] } satisfies DurableTerminalReplayPlan
         : await buildTerminalReplayPlan(session.sessionId, afterOffset)
+
+    const firstReplayChunk = replayPlan.chunks[0]
+    const lastReplayChunk = replayPlan.chunks[replayPlan.chunks.length - 1]
+    server.log.info(
+      {
+        threadId: params.threadId,
+        sessionId: session.sessionId,
+        budId: session.budId,
+        requestedAfterOffset: afterOffset,
+        attachMode: afterOffset === null ? 'live_only' : 'durable_resume',
+        replayStatus: replayPlan.status,
+        latestByteOffset: replayPlan.latestByteOffset,
+        earliestByteOffset: replayPlan.earliestByteOffset,
+        resumeAtTip: afterOffset !== null ? afterOffset >= replayPlan.latestByteOffset : null,
+        chunkCount: replayPlan.chunks.length,
+        firstChunkByteOffset: firstReplayChunk?.byteOffset ?? null,
+        lastChunkByteOffset: lastReplayChunk?.byteOffset ?? null,
+        lastChunkEndOffset: lastReplayChunk
+          ? lastReplayChunk.byteOffset + lastReplayChunk.data.length
+          : null,
+        component: 'terminal_stream_debug',
+      },
+      'Terminal stream attach plan computed',
+    )
 
     if (replayPlan.status === 'resync_required' && afterOffset !== null) {
       reply.sse({

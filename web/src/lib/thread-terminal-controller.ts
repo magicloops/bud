@@ -51,6 +51,78 @@ const ESCAPE_SEQUENCE_TO_KEY = new Map<string, string>([
 
 const UNSUPPORTED_CONTROL_CHARACTER_PATTERN = /[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]/
 
+function truncateDebugText(value: string, maxLength = 160) {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+function summarizeTerminalTextForDebug(text: string) {
+  const normalized = text.replace(/\r\n/g, '\n')
+  const lines = normalized.length === 0 ? [] : normalized.split('\n')
+  let trailingBlankLines = 0
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if ((lines[index] ?? '').trim().length === 0) {
+      trailingBlankLines += 1
+      continue
+    }
+    break
+  }
+
+  let lastNonEmptyLine = ''
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if ((lines[index] ?? '').trim().length > 0) {
+      lastNonEmptyLine = lines[index] ?? ''
+      break
+    }
+  }
+
+  const lastLine = lines.length > 0 ? (lines[lines.length - 1] ?? '') : ''
+
+  return {
+    lineCount: lines.length,
+    trailingBlankLines,
+    endsWithNewline: normalized.endsWith('\n'),
+    lastLineLength: lastLine.length,
+    lastLine: truncateDebugText(lastLine),
+    lastNonEmptyLine: truncateDebugText(lastNonEmptyLine),
+  }
+}
+
+function trimTrailingBlankSnapshotLines(text: string) {
+  const normalized = text.replace(/\r\n/g, '\n')
+  const lines = normalized.length === 0 ? [] : normalized.split('\n')
+  let endIndex = lines.length
+  while (endIndex > 0 && (lines[endIndex - 1] ?? '').trim().length === 0) {
+    endIndex -= 1
+  }
+
+  return {
+    text: lines.slice(0, endIndex).join('\n'),
+    trimmedTrailingBlankLines: lines.length - endIndex,
+  }
+}
+
+function readTerminalBufferMetrics(terminal: Terminal | null) {
+  if (!terminal) {
+    return null
+  }
+
+  const activeBuffer = terminal.buffer.active
+  return {
+    cols: terminal.cols,
+    rows: terminal.rows,
+    cursorX: activeBuffer.cursorX,
+    cursorY: activeBuffer.cursorY,
+    viewportY: activeBuffer.viewportY,
+    baseY: activeBuffer.baseY,
+    bufferLength: activeBuffer.length,
+    cursorAtViewportBottom: activeBuffer.cursorY >= terminal.rows - 1,
+  }
+}
+
 export class ThreadTerminalController {
   private readonly transport: TerminalTransport
   private readonly debugEnabled: boolean
@@ -75,6 +147,9 @@ export class ThreadTerminalController {
   attachTerminal(terminal: Terminal) {
     this.inputSubscription?.dispose()
     this.terminal = terminal
+    this.debug('attached xterm instance to terminal controller', {
+      terminal: readTerminalBufferMetrics(terminal),
+    })
     this.inputSubscription = attachClassifiedTerminalInput(terminal, {
       onData: (event) => {
         this.handleClassifiedInput(event.data, event.source)
@@ -115,11 +190,31 @@ export class ThreadTerminalController {
     }
 
     this.writeMode = 'bootstrap'
+    const snapshotSummary = summarizeTerminalTextForDebug(state.snapshot.text)
+    const trimmedSnapshot = trimTrailingBlankSnapshotLines(state.snapshot.text)
+    const trimmedSnapshotSummary = summarizeTerminalTextForDebug(trimmedSnapshot.text)
+    this.debug('applying terminal state snapshot', {
+      sessionId: state.session_id,
+      latestByteOffset: this.lastRenderedByteOffset,
+      snapshotSource: state.snapshot.source,
+      snapshot: snapshotSummary,
+      trimmedSnapshot: trimmedSnapshotSummary,
+      trimmedTrailingBlankLines: trimmedSnapshot.trimmedTrailingBlankLines,
+      terminalBefore: readTerminalBufferMetrics(terminal),
+    })
     terminal.reset()
 
-    const snapshotText = state.snapshot.text
+    // Temporary validation experiment: collapse pane-shaped trailing blank rows
+    // so we can isolate whether they are what pushes the reconstructed xterm
+    // cursor to the bottom of the viewport after safe bootstrap.
+    const snapshotText = trimmedSnapshot.text
     if (!snapshotText) {
       this.writeMode = 'idle'
+      this.debug('applied empty terminal state snapshot', {
+        sessionId: state.session_id,
+        trimmedTrailingBlankLines: trimmedSnapshot.trimmedTrailingBlankLines,
+        terminalAfter: readTerminalBufferMetrics(terminal),
+      })
       return
     }
 
@@ -127,6 +222,14 @@ export class ThreadTerminalController {
       terminal.write(snapshotText, () => resolve())
     })
     this.writeMode = 'idle'
+    this.debug('applied terminal state snapshot', {
+      sessionId: state.session_id,
+      latestByteOffset: this.lastRenderedByteOffset,
+      snapshot: snapshotSummary,
+      trimmedSnapshot: trimmedSnapshotSummary,
+      trimmedTrailingBlankLines: trimmedSnapshot.trimmedTrailingBlankLines,
+      terminalAfter: readTerminalBufferMetrics(terminal),
+    })
   }
 
   writeOutput(data: string, byteOffset: number) {
@@ -138,10 +241,25 @@ export class ThreadTerminalController {
     const fullChunk = decodeTerminalChunk(data)
     const endOffset = byteOffset + fullChunk.byteLength
     if (endOffset <= this.lastRenderedByteOffset) {
+      this.debug('dropping already-rendered terminal output chunk', {
+        sessionId: this.sessionId,
+        byteOffset,
+        endOffset,
+        lastRenderedByteOffset: this.lastRenderedByteOffset,
+      })
       return
     }
 
     const skipBytes = Math.max(this.lastRenderedByteOffset - byteOffset, 0)
+    if (skipBytes > 0) {
+      this.debug('trimming overlapping terminal output chunk', {
+        sessionId: this.sessionId,
+        byteOffset,
+        endOffset,
+        lastRenderedByteOffset: this.lastRenderedByteOffset,
+        skipBytes,
+      })
+    }
     const nextChunk = skipBytes > 0 ? decodeTerminalChunk(data, skipBytes) : fullChunk
     if (!nextChunk.text) {
       this.lastRenderedByteOffset = endOffset
