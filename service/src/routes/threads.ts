@@ -21,6 +21,7 @@ import { and, asc, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { TerminalEventBus } from "../runtime/event-bus.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
+import type { BrowserTerminalBootstrap } from "../terminal/types.js";
 import { getActiveBudIds, isBudOnline } from "../ws/gateway.js";
 import { getAuthorizedBud, getAuthorizedThread, requireViewer } from "../auth/session.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
@@ -378,6 +379,52 @@ function summarizeTerminalTextForDebug(text: string, visibleRows?: number | null
     lastLine: truncateDebugText(lastLine),
     lastNonEmptyLine: truncateDebugText(lastNonEmptyLine),
   }
+}
+
+function getTerminalBootstrapText(bootstrap: BrowserTerminalBootstrap) {
+  switch (bootstrap.kind) {
+    case "grid":
+      return bootstrap.screen.lines.join("\n");
+    case "text":
+      return bootstrap.text;
+    case "unavailable":
+      return "";
+  }
+}
+
+function summarizeTerminalBootstrapForDebug(bootstrap: BrowserTerminalBootstrap) {
+  if (bootstrap.kind === "grid") {
+    return {
+      kind: bootstrap.kind,
+      source: bootstrap.source,
+      captureScope: bootstrap.capture_scope,
+      pane: bootstrap.pane,
+      cursor: bootstrap.cursor,
+      paneMode: bootstrap.pane_mode ?? null,
+      screen: summarizeTerminalTextForDebug(
+        bootstrap.screen.lines.join("\n"),
+        bootstrap.pane.rows,
+      ),
+      trailingSpacesPreserved: bootstrap.screen.trailing_spaces_preserved,
+      wraps: bootstrap.screen.wraps ?? null,
+    };
+  }
+
+  if (bootstrap.kind === "text") {
+    return {
+      kind: bootstrap.kind,
+      source: bootstrap.source,
+      pane: bootstrap.pane,
+      degradedReason: bootstrap.degraded_reason,
+      captureScope: bootstrap.capture_scope ?? null,
+      text: summarizeTerminalTextForDebug(bootstrap.text, bootstrap.pane?.rows ?? null),
+    };
+  }
+
+  return {
+    kind: bootstrap.kind,
+    reason: bootstrap.reason,
+  };
 }
 
 function serializeThread(row: typeof threadTable.$inferSelect) {
@@ -1098,36 +1145,47 @@ export async function registerThreadTerminalRoutes(
       .where(eq(terminalSessionTable.sessionId, session.sessionId))
       .limit(1)
 
-    let snapshotText = ""
-    let snapshotSource: 'capture_pane' | 'unavailable' = 'unavailable'
+    let bootstrap: BrowserTerminalBootstrap = {
+      kind: "unavailable",
+      reason: isBudOnline(session.budId) ? "capture_unavailable" : "bud_offline",
+    }
     let readiness = terminalSessionManager.getLatestReadiness(session.sessionId)
-    let snapshotCaptureMeta: Record<string, unknown> | null = null
+    let bootstrapCaptureMeta: Record<string, unknown> | null = null
 
     if (isBudOnline(session.budId)) {
       try {
-        const capture = await terminalSessionManager.capturePane(session.sessionId, { startLine: -200 }, 2500)
-        snapshotText = capture.output
-        snapshotSource = 'capture_pane'
-        snapshotCaptureMeta = {
-          view: capture.view,
-          outputBytes: capture.outputBytes,
-          linesCaptured: capture.linesCaptured,
-          changed: capture.changed ?? null,
-          truncated: capture.truncated ?? null,
-          error: capture.error ?? null,
+        const captured = await terminalSessionManager.captureBootstrap(session.sessionId, 2500)
+        bootstrap = captured.bootstrap
+        const bootstrapText = getTerminalBootstrapText(bootstrap)
+        bootstrapCaptureMeta = {
+          kind: bootstrap.kind,
+          outputBytes: Buffer.byteLength(bootstrapText, "utf-8"),
+          linesCaptured:
+            bootstrap.kind === "grid"
+              ? bootstrap.screen.lines.length
+              : bootstrapText.length === 0
+                ? 0
+                : bootstrapText.split("\n").length,
         }
         if (!readiness) {
-          readiness = capture.readiness
+          readiness = captured.readiness
         }
       } catch (error) {
         server.log.warn(
           { error, sessionId: session.sessionId, component: 'terminal_state' },
-          'Failed to capture terminal state snapshot',
+          'Failed to capture terminal bootstrap state',
         )
+        bootstrap = {
+          kind: "unavailable",
+          reason: "capture_failed",
+        }
       }
     }
 
-    const snapshotSummary = summarizeTerminalTextForDebug(snapshotText, session.rows)
+    const snapshotText = getTerminalBootstrapText(bootstrap)
+    const snapshotSource =
+      bootstrap.kind === "unavailable" ? "unavailable" : "capture_pane"
+    const bootstrapSummary = summarizeTerminalBootstrapForDebug(bootstrap)
     server.log.info(
       {
         threadId: params.threadId,
@@ -1135,9 +1193,8 @@ export async function registerThreadTerminalRoutes(
         budId: session.budId,
         state: sessionRow?.state ?? session.state,
         latestByteOffset: sessionRow?.latestByteOffset ?? 0,
-        snapshotSource,
-        snapshotSummary,
-        snapshotCaptureMeta,
+        bootstrapSummary,
+        bootstrapCaptureMeta,
         readiness: readiness
           ? {
               ready: readiness.ready,
@@ -1148,7 +1205,7 @@ export async function registerThreadTerminalRoutes(
           : null,
         component: 'terminal_state_debug',
       },
-      'Terminal state bootstrap snapshot prepared',
+      'Terminal state bootstrap prepared',
     )
 
     return {
@@ -1156,6 +1213,7 @@ export async function registerThreadTerminalRoutes(
       state: sessionRow?.state ?? session.state,
       latest_byte_offset: sessionRow?.latestByteOffset ?? 0,
       readiness,
+      bootstrap,
       snapshot: {
         text: snapshotText,
         source: snapshotSource,

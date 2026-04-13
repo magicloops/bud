@@ -69,16 +69,18 @@ loader: async ({ params }) => {
 - Creates or reuses the thread terminal session row via `POST /terminal`
 - Recovers terminal readiness via `POST /terminal/ensure`
 - Bootstraps xterm from `GET /terminal/state` rather than replaying `/terminal/history` through xterm on every open/reconnect
-- The current validation experiment trims trailing blank rows from `snapshot.text` before writing it into xterm so the team can confirm whether pane-shaped captures are the direct cause of the misplaced cursor
+- Treats `bootstrap.kind: "grid"` as the preferred restore path, using pane geometry, capture scope, explicit cursor position, and exact visible rows from the service
+- Degrades grid bootstrap to text when the local xterm geometry does not match the captured pane geometry
+- Restricts the trailing-blank trim workaround to degraded/text bootstrap paths instead of applying it to full-fidelity grid restores
 - Routes normal browser typing and modeled keys through `POST /terminal/send` with dispatch-only semantics (`observe: null`)
 - Keeps `POST /terminal/input` only as a narrow raw fallback for unsupported human sequences and emulator protocol traffic
 - Sends resize updates only when terminal dimensions actually change
 - Uses the existing interrupt route for Ctrl+C
-- Includes temporary dev-only diagnostics around snapshot application, fit timing, stream attach offsets, and tab visibility restore while the safe-bootstrap cursor regression is under investigation
+- Includes dev-only diagnostics around bootstrap application, fit timing, stream attach offsets, and tab visibility restore while the richer contract is being validated
 
 3. **Terminal stream semantics**
 - Connects to `GET /terminal/stream` in live-only mode when no durable cursor is available
-- Resumes with `?after_offset=<last_rendered_byte_offset>` after safe snapshot bootstrap or reconnect catch-up
+- Resumes with `?after_offset=<last_rendered_byte_offset>` after safe bootstrap or reconnect catch-up
 - Writes `terminal.output` through the controller so overlapping durable replay bytes are trimmed before rendering
 - Handles explicit `terminal.resync_required` by reloading `/terminal/state` and reattaching instead of replaying stale history blindly
 - Keeps `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`, and heartbeat handling on the live SSE path
@@ -124,7 +126,7 @@ terminalOutputTruncated: boolean
 From `@/lib/api`:
 - `ApiMessage` - Message from API (`message_id`, `client_id`, role, content)
 - `ApiMessagePage` - Paged transcript window with opaque cursors
-- `ApiTerminalState` - Safe terminal bootstrap snapshot
+- `ApiTerminalState` - Safe terminal bootstrap response with richer `bootstrap` kinds
 - `ApiTerminalSendRequest` - Structured browser terminal send contract
 
 From `@/lib/thread-terminal-controller`:

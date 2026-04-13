@@ -129,6 +129,28 @@ const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   lines_captured: z.number().int().nonnegative(),
   changed: z.boolean().nullable().optional(),
   truncated: z.boolean().nullable().optional(),
+  screen_state: z
+    .object({
+      capture_scope: z.enum(["normal", "alternate", "pane_mode"]),
+      pane: z.object({
+        cols: z.number().int().nonnegative(),
+        rows: z.number().int().nonnegative(),
+      }),
+      cursor: z.object({
+        row: z.number().int().nonnegative(),
+        col: z.number().int().nonnegative(),
+        visible: z.boolean(),
+        shape: z.enum(["block", "underline", "bar", "unknown"]).nullable().optional(),
+      }),
+      screen: z.object({
+        lines: z.array(z.string()),
+        trailing_spaces_preserved: z.boolean(),
+        wraps: z.boolean().nullable().optional(),
+      }),
+      pane_mode: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   readiness: z.object({
     ready: z.boolean(),
     confidence: z.number(),
@@ -536,6 +558,7 @@ class BudConnection {
       linesCaptured: result.data.lines_captured,
       changed: result.data.changed ?? undefined,
       truncated: result.data.truncated ?? undefined,
+      screenState: result.data.screen_state ?? undefined,
       readiness: result.data.readiness as unknown as import("../terminal/types.js").ReadinessAssessment,
       error: result.data.error
     });

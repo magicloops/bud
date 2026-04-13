@@ -27,6 +27,7 @@ import {
   type ApiAgentState,
   type ApiMessage,
   type ApiMessagePage,
+  type ApiTerminalBootstrap,
   type ApiTerminalSendRequest,
   type ApiTerminalState,
   type ApiThread,
@@ -111,6 +112,14 @@ type ThreadTitleEvent = {
   updated_at: string
 }
 
+type TerminalBootstrapDebugInfo = {
+  sessionId: string
+  latestByteOffset: number
+  bootstrapKind: ApiTerminalBootstrap['kind']
+  bootstrapSummary: Record<string, unknown>
+  loadedAt: string
+}
+
 type TerminalSnapshotDebugSummary = {
   lineCount: number
   trailingBlankLines: number
@@ -118,14 +127,6 @@ type TerminalSnapshotDebugSummary = {
   lastLineLength: number
   lastLine: string
   lastNonEmptyLine: string
-}
-
-type TerminalBootstrapDebugInfo = {
-  sessionId: string
-  latestByteOffset: number
-  snapshotSource: string
-  snapshotSummary: TerminalSnapshotDebugSummary
-  loadedAt: string
 }
 
 const debugTerminalBootstrap = (message: string, details: Record<string, unknown>) => {
@@ -174,6 +175,48 @@ const summarizeTerminalSnapshotText = (text: string): TerminalSnapshotDebugSumma
     lastLine: truncateTerminalDebugText(lastLine),
     lastNonEmptyLine: truncateTerminalDebugText(lastNonEmptyLine),
   }
+}
+
+const summarizeTerminalBootstrap = (bootstrap: ApiTerminalBootstrap): Record<string, unknown> => {
+  if (bootstrap.kind === 'grid') {
+    return {
+      kind: bootstrap.kind,
+      source: bootstrap.source,
+      captureScope: bootstrap.capture_scope,
+      pane: bootstrap.pane,
+      cursor: bootstrap.cursor,
+      paneMode: bootstrap.pane_mode ?? null,
+      screen: summarizeTerminalSnapshotText(bootstrap.screen.lines.join('\n')),
+      trailingSpacesPreserved: bootstrap.screen.trailing_spaces_preserved,
+      wraps: bootstrap.screen.wraps ?? null,
+    }
+  }
+
+  if (bootstrap.kind === 'text') {
+    return {
+      kind: bootstrap.kind,
+      source: bootstrap.source,
+      pane: bootstrap.pane,
+      degradedReason: bootstrap.degraded_reason,
+      captureScope: bootstrap.capture_scope ?? null,
+      text: summarizeTerminalSnapshotText(bootstrap.text),
+    }
+  }
+
+  return {
+    kind: bootstrap.kind,
+    reason: bootstrap.reason,
+  }
+}
+
+const terminalBootstrapHasOutput = (bootstrap: ApiTerminalBootstrap) => {
+  if (bootstrap.kind === 'grid') {
+    return true
+  }
+  if (bootstrap.kind === 'text') {
+    return bootstrap.text.length > 0
+  }
+  return false
 }
 
 const readTerminalBufferMetrics = (terminal: Terminal | null) => {
@@ -921,12 +964,12 @@ function ThreadView() {
 
   const loadTerminalState = useCallback(async (targetThreadId: string) => {
     const body = await apiFetchJson<ApiTerminalState>(`/api/threads/${targetThreadId}/terminal/state`)
-    const snapshotSummary = summarizeTerminalSnapshotText(body.snapshot.text)
+    const bootstrapSummary = summarizeTerminalBootstrap(body.bootstrap)
     terminalBootstrapInfoRef.current = {
       sessionId: body.session_id,
       latestByteOffset: body.latest_byte_offset,
-      snapshotSource: body.snapshot.source,
-      snapshotSummary,
+      bootstrapKind: body.bootstrap.kind,
+      bootstrapSummary,
       loadedAt: new Date().toISOString(),
     }
     debugTerminalBootstrap('loaded terminal state response', {
@@ -934,8 +977,7 @@ function ThreadView() {
       sessionId: body.session_id,
       state: body.state,
       latestByteOffset: body.latest_byte_offset,
-      snapshotSource: body.snapshot.source,
-      snapshot: snapshotSummary,
+      bootstrap: bootstrapSummary,
       readiness: body.readiness
         ? {
             ready: body.readiness.ready,
@@ -960,12 +1002,12 @@ function ThreadView() {
       threadId: targetThreadId,
       sessionId: body.session_id,
       latestByteOffset: body.latest_byte_offset,
-      snapshot: snapshotSummary,
+      bootstrap: bootstrapSummary,
       terminalAfterApply: readTerminalBufferMetrics(terminalRef.current),
       pane: readPaneMetrics(terminalPaneRef.current),
     })
 
-    setTerminalHasOutput(body.snapshot.text.length > 0)
+    setTerminalHasOutput(terminalBootstrapHasOutput(body.bootstrap))
     const term = terminalRef.current
     if (term) {
       setTerminalScrolledToTop(term.buffer.active.viewportY === 0)

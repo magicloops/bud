@@ -6,7 +6,7 @@ Source code for the Bud device daemon - a Rust CLI that connects remote machines
 
 ### `main.rs`
 
-Monolithic implementation (~2,900 lines) containing all daemon functionality. The code is organized into logical sections:
+Monolithic implementation (~4,500 lines) containing all daemon functionality. The code is organized into logical sections:
 
 #### CLI & Configuration (Lines 1-140)
 
@@ -134,6 +134,7 @@ Hash-based deduplication for `capture-pane` output:
   - treats `settled` as a short quiet window (`300ms`) instead of the older blind delay loop
   - returns timeout assessments that stay conservative instead of treating a missed wait as positive readiness
 - the same Bud-side delta engine now powers both `terminal.send` and default `terminal.observe`
+- `terminal_observe(view: "screen")` now performs an exact visible-screen capture using tmux pane metadata plus non-joined `capture-pane -N`, and can return `screen_state` with capture scope, pane geometry, cursor position, and one string per visible row
 - The older `ActivityDetector` remains in place for low-level `terminal_input` / `terminal_interrupt` readiness events.
 
 #### Main Application (Lines 2365-2875)

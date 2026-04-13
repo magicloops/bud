@@ -80,6 +80,14 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 - If the requested offset is too old for the retained durable output window, the backend emits `terminal.resync_required` and the browser should refetch `/terminal/state`.
 - Used by the workbench to receive terminal output and reconnect safely without replaying raw xterm history through the terminal emulator.
 
+`GET /api/threads/:thread_id/terminal/state` now returns a richer bootstrap contract alongside `latest_byte_offset`:
+
+- `bootstrap.kind: "grid"` for cursor-aware visible-screen restore with pane geometry, capture scope, and screen rows
+- `bootstrap.kind: "text"` for explicit degraded text restore
+- `bootstrap.kind: "unavailable"` when the backend cannot provide a safe bootstrap surface
+
+The transitional `snapshot` field may still be present for compatibility, but new clients SHOULD treat `bootstrap` as the source of truth.
+
 ### 2.3.1 Terminal Browser Write Surface
 
 - Structured path: `POST /api/threads/:thread_id/terminal/send`
@@ -501,12 +509,21 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   { "proto": "0.2", "type": "terminal_observe_result", "id": "...", "ts": 1731,
     "session_id": "sess_01...",
     "request_id": "obs_01...",
-    "view": "delta",
+    "view": "screen",
     "output": "base64-encoded-delta-or-capture",
     "output_bytes": 512,
-    "lines_captured": 8,
-    "changed": true,
-    "truncated": false,
+    "lines_captured": 40,
+    "screen_state": {
+      "capture_scope": "normal",
+      "pane": { "cols": 120, "rows": 40 },
+      "cursor": { "row": 18, "col": 27, "visible": true, "shape": "block" },
+      "screen": {
+        "lines": ["..."],
+        "trailing_spaces_preserved": true,
+        "wraps": true
+      },
+      "pane_mode": null
+    },
     "readiness": { "ready": true, "confidence": 0.85, "trigger": "settled", "hints": { "looks_like_prompt": false, "looks_like_confirmation": false, "looks_like_password": false, "looks_like_pager": false, "looks_like_error": false, "may_still_be_processing": false }, "quiet_for_ms": 330, "activity_checks": 4, "stable_checks": 3 },
     "error": null,
     "ext": {} }
@@ -519,6 +536,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     * for `screen`, this is the current full rendered screen
     * for `history`, this is the requested scrollback/history window
   * `changed` / `truncated`: populated for `view: "delta"` and omitted otherwise
+  * `screen_state`: optional exact visible-screen metadata for `view: "screen"`, including capture scope, pane geometry, cursor position, and one string per visible row
 
 When `observe` is present, `terminal.send` and `terminal.observe` share the same delta engine and immediate-start screen wait engine for `changed` / `settled`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
 
@@ -540,6 +558,7 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
 * `POST /api/threads/:thread_id/terminal` — create or fetch the active thread-scoped terminal session row
 * `POST /api/threads/:thread_id/terminal/ensure` — ensure the thread-scoped terminal is running on Bud
 * `GET /api/threads/:thread_id/terminal` — get thread-scoped terminal session info
+* `GET /api/threads/:thread_id/terminal/state` — get `{ session_id, state, latest_byte_offset, readiness, bootstrap, updated_at }`, with transitional `snapshot` compatibility
 * `GET /api/threads/:thread_id/terminal/history?bytes=N&since_offset=M` — fetch thread-scoped output history
 * `POST /api/threads/:thread_id/terminal/send` — send structured input `{ text?, submit?, keys?, observe? }`
 * `POST /api/threads/:thread_id/terminal/input` — send raw fallback input `{ input: "..." }`

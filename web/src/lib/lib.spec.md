@@ -30,7 +30,7 @@ export const decodeTerminalData = (data: string) => string
 
 **Terminal-related API types**:
 - `BrowserTerminalInputSource` - Browser source taxonomy: `human` or `emulator_protocol`
-- `ApiTerminalState` - Safe terminal bootstrap snapshot with `session_id`, `state`, `latest_byte_offset`, `readiness`, `snapshot`, `updated_at`
+- `ApiTerminalState` - Safe terminal bootstrap response with `session_id`, `state`, `latest_byte_offset`, `readiness`, `bootstrap`, `updated_at`, plus transitional `snapshot`
 - `ApiTerminalSendRequest` / `ApiTerminalSendResponse` - Structured browser terminal-send contract, including optional nested `observe`
 
 **Other important API types**:
@@ -61,10 +61,12 @@ Browser-side terminal transport controller.
 - Routes normal browser typing and modeled keys through structured `/terminal/send`, explicitly setting `observe: null` so typing is not gated on post-send observation
 - Keeps a narrow raw fallback for unsupported human sequences and emulator protocol traffic
 - Tracks `lastRenderedByteOffset` so reconnects can resume with `after_offset=<n>`
-- Applies safe `/terminal/state` bootstrap snapshots before live stream attach
-- Temporarily trims trailing blank snapshot rows before writing into xterm to validate whether pane-shaped capture output is what pushes the reconstructed cursor to the bottom of the viewport
+- Applies richer `/terminal/state` bootstrap payloads before live stream attach
+- Uses `bootstrap.kind: "grid"` as the preferred restore path, rendering exact visible rows plus explicit cursor placement through xterm's public write path
+- Explicitly degrades `grid` bootstrap to text when local xterm geometry does not match the captured pane geometry
+- Restricts trailing-blank trimming to degraded/text bootstrap paths instead of applying it to full-fidelity grid restores
 - Trims overlapping durable replay bytes before writing into xterm
-- Temporarily logs snapshot-shape and xterm buffer metrics in dev so the safe-bootstrap cursor regression can be validated before changing behavior
+- Logs bootstrap-shape and xterm buffer metrics in dev so cursor/bootstrap regressions remain inspectable while the richer contract rolls out
 
 **Structured coverage in the first pass**:
 - Printable text batches

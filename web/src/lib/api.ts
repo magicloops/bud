@@ -332,6 +332,7 @@ export type ApiTerminalReadiness = {
   ready: boolean
   confidence: number
   trigger: string
+  prompt_type?: string
   hints: {
     looks_like_prompt?: boolean
     looks_like_confirmation?: boolean
@@ -342,12 +343,54 @@ export type ApiTerminalReadiness = {
   }
 }
 
+export type ApiTerminalCaptureScope = 'normal' | 'alternate' | 'pane_mode'
+export type ApiTerminalCursorShape = 'block' | 'underline' | 'bar' | 'unknown'
+
+export type ApiTerminalBootstrap =
+  | {
+      kind: 'grid'
+      source: 'tmux_capture'
+      capture_scope: ApiTerminalCaptureScope
+      pane: {
+        cols: number
+        rows: number
+      }
+      cursor: {
+        row: number
+        col: number
+        visible: boolean
+        shape?: ApiTerminalCursorShape | null
+      }
+      screen: {
+        lines: string[]
+        trailing_spaces_preserved: boolean
+        wraps?: boolean | null
+      }
+      pane_mode?: string | null
+    }
+  | {
+      kind: 'text'
+      source: 'tmux_screen' | 'tmux_history_capture'
+      pane: {
+        cols: number
+        rows: number
+      } | null
+      text: string
+      degraded_reason: string
+      capture_scope?: ApiTerminalCaptureScope | null
+    }
+  | {
+      kind: 'unavailable'
+      reason: string
+    }
+
 export type ApiTerminalState = {
   session_id: string
   state: string
   latest_byte_offset: number
   readiness: ApiTerminalReadiness | null
-  snapshot: {
+  bootstrap: ApiTerminalBootstrap
+  snapshot?: {
     text: string
     source: 'capture_pane' | 'unavailable'
   }

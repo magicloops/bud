@@ -1,5 +1,6 @@
 import type { Terminal } from 'xterm'
 import {
+  type ApiTerminalBootstrap,
   decodeTerminalChunk,
   type ApiTerminalSendRequest,
   type ApiTerminalState,
@@ -105,6 +106,78 @@ function trimTrailingBlankSnapshotLines(text: string) {
   }
 }
 
+function gridBootstrapToText(bootstrap: Extract<ApiTerminalBootstrap, { kind: 'grid' }>) {
+  return bootstrap.screen.lines.join('\n')
+}
+
+function buildGridBootstrapRenderSequence(
+  bootstrap: Extract<ApiTerminalBootstrap, { kind: 'grid' }>
+) {
+  const parts = ['\u001b[2J', '\u001b[H']
+  const rowCount = bootstrap.screen.lines.length
+
+  for (let row = 0; row < rowCount; row += 1) {
+    const line = bootstrap.screen.lines[row] ?? ''
+    parts.push(`\u001b[${row + 1};1H`)
+    if (line.length > 0) {
+      parts.push(line)
+    }
+  }
+
+  const finalRow = Math.max(0, Math.min(bootstrap.cursor.row, Math.max(bootstrap.pane.rows - 1, 0)))
+  const finalCol = Math.max(0, Math.min(bootstrap.cursor.col, Math.max(bootstrap.pane.cols - 1, 0)))
+  parts.push(`\u001b[${finalRow + 1};${finalCol + 1}H`)
+
+  switch (bootstrap.cursor.shape) {
+    case 'block':
+      parts.push('\u001b[2 q')
+      break
+    case 'underline':
+      parts.push('\u001b[4 q')
+      break
+    case 'bar':
+      parts.push('\u001b[6 q')
+      break
+    default:
+      break
+  }
+
+  parts.push(bootstrap.cursor.visible ? '\u001b[?25h' : '\u001b[?25l')
+  return parts.join('')
+}
+
+function summarizeTerminalBootstrapForDebug(bootstrap: ApiTerminalBootstrap) {
+  if (bootstrap.kind === 'grid') {
+    return {
+      kind: bootstrap.kind,
+      source: bootstrap.source,
+      captureScope: bootstrap.capture_scope,
+      pane: bootstrap.pane,
+      cursor: bootstrap.cursor,
+      paneMode: bootstrap.pane_mode ?? null,
+      screen: summarizeTerminalTextForDebug(gridBootstrapToText(bootstrap)),
+      trailingSpacesPreserved: bootstrap.screen.trailing_spaces_preserved,
+      wraps: bootstrap.screen.wraps ?? null,
+    }
+  }
+
+  if (bootstrap.kind === 'text') {
+    return {
+      kind: bootstrap.kind,
+      source: bootstrap.source,
+      pane: bootstrap.pane,
+      degradedReason: bootstrap.degraded_reason,
+      captureScope: bootstrap.capture_scope ?? null,
+      text: summarizeTerminalTextForDebug(bootstrap.text),
+    }
+  }
+
+  return {
+    kind: bootstrap.kind,
+    reason: bootstrap.reason,
+  }
+}
+
 function readTerminalBufferMetrics(terminal: Terminal | null) {
   if (!terminal) {
     return null
@@ -190,28 +263,93 @@ export class ThreadTerminalController {
     }
 
     this.writeMode = 'bootstrap'
-    const snapshotSummary = summarizeTerminalTextForDebug(state.snapshot.text)
-    const trimmedSnapshot = trimTrailingBlankSnapshotLines(state.snapshot.text)
-    const trimmedSnapshotSummary = summarizeTerminalTextForDebug(trimmedSnapshot.text)
+    const bootstrapSummary = summarizeTerminalBootstrapForDebug(state.bootstrap)
+    const terminalBefore = readTerminalBufferMetrics(terminal)
     this.debug('applying terminal state snapshot', {
       sessionId: state.session_id,
       latestByteOffset: this.lastRenderedByteOffset,
-      snapshotSource: state.snapshot.source,
-      snapshot: snapshotSummary,
-      trimmedSnapshot: trimmedSnapshotSummary,
-      trimmedTrailingBlankLines: trimmedSnapshot.trimmedTrailingBlankLines,
-      terminalBefore: readTerminalBufferMetrics(terminal),
+      bootstrap: bootstrapSummary,
+      terminalBefore,
     })
     terminal.reset()
 
-    // Temporary validation experiment: collapse pane-shaped trailing blank rows
-    // so we can isolate whether they are what pushes the reconstructed xterm
-    // cursor to the bottom of the viewport after safe bootstrap.
+    if (state.bootstrap.kind === 'unavailable') {
+      this.writeMode = 'idle'
+      this.debug('applied unavailable terminal bootstrap', {
+        sessionId: state.session_id,
+        bootstrap: bootstrapSummary,
+        terminalAfter: readTerminalBufferMetrics(terminal),
+      })
+      return
+    }
+
+    if (state.bootstrap.kind === 'grid') {
+      const geometryMismatch =
+        terminal.cols > 0 &&
+        terminal.rows > 0 &&
+        (terminal.cols !== state.bootstrap.pane.cols || terminal.rows !== state.bootstrap.pane.rows)
+
+      if (!geometryMismatch) {
+        const renderSequence = buildGridBootstrapRenderSequence(state.bootstrap)
+        await new Promise<void>((resolve) => {
+          terminal.write(renderSequence, () => resolve())
+        })
+        this.writeMode = 'idle'
+        this.debug('applied grid terminal bootstrap', {
+          sessionId: state.session_id,
+          latestByteOffset: this.lastRenderedByteOffset,
+          bootstrap: bootstrapSummary,
+          terminalAfter: readTerminalBufferMetrics(terminal),
+        })
+        return
+      }
+
+      this.debug('degrading grid terminal bootstrap to text fallback', {
+        sessionId: state.session_id,
+        latestByteOffset: this.lastRenderedByteOffset,
+        bootstrap: bootstrapSummary,
+        terminalGeometry: {
+          cols: terminal.cols,
+          rows: terminal.rows,
+        },
+      })
+
+      const degradedText = trimTrailingBlankSnapshotLines(gridBootstrapToText(state.bootstrap))
+      const degradedSummary = summarizeTerminalTextForDebug(degradedText.text)
+      if (!degradedText.text) {
+        this.writeMode = 'idle'
+        this.debug('applied empty degraded text bootstrap', {
+          sessionId: state.session_id,
+          bootstrap: bootstrapSummary,
+          trimmedTrailingBlankLines: degradedText.trimmedTrailingBlankLines,
+          terminalAfter: readTerminalBufferMetrics(terminal),
+        })
+        return
+      }
+
+      await new Promise<void>((resolve) => {
+        terminal.write(degradedText.text, () => resolve())
+      })
+      this.writeMode = 'idle'
+      this.debug('applied degraded text bootstrap from grid capture', {
+        sessionId: state.session_id,
+        latestByteOffset: this.lastRenderedByteOffset,
+        bootstrap: bootstrapSummary,
+        degradedText: degradedSummary,
+        trimmedTrailingBlankLines: degradedText.trimmedTrailingBlankLines,
+        terminalAfter: readTerminalBufferMetrics(terminal),
+      })
+      return
+    }
+
+    const trimmedSnapshot = trimTrailingBlankSnapshotLines(state.bootstrap.text)
+    const trimmedSnapshotSummary = summarizeTerminalTextForDebug(trimmedSnapshot.text)
     const snapshotText = trimmedSnapshot.text
     if (!snapshotText) {
       this.writeMode = 'idle'
-      this.debug('applied empty terminal state snapshot', {
+      this.debug('applied empty text terminal bootstrap', {
         sessionId: state.session_id,
+        bootstrap: bootstrapSummary,
         trimmedTrailingBlankLines: trimmedSnapshot.trimmedTrailingBlankLines,
         terminalAfter: readTerminalBufferMetrics(terminal),
       })
@@ -222,10 +360,10 @@ export class ThreadTerminalController {
       terminal.write(snapshotText, () => resolve())
     })
     this.writeMode = 'idle'
-    this.debug('applied terminal state snapshot', {
+    this.debug('applied text terminal bootstrap', {
       sessionId: state.session_id,
       latestByteOffset: this.lastRenderedByteOffset,
-      snapshot: snapshotSummary,
+      bootstrap: bootstrapSummary,
       trimmedSnapshot: trimmedSnapshotSummary,
       trimmedTrailingBlankLines: trimmedSnapshot.trimmedTrailingBlankLines,
       terminalAfter: readTerminalBufferMetrics(terminal),

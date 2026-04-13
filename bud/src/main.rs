@@ -394,6 +394,74 @@ struct TerminalObserveFrame {
     timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TerminalCaptureScope {
+    Normal,
+    Alternate,
+    PaneMode,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TerminalCursorShape {
+    Block,
+    Underline,
+    Bar,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TerminalScreenStateMessage {
+    capture_scope: TerminalCaptureScope,
+    pane: TerminalPaneSize,
+    cursor: TerminalCursorState,
+    screen: TerminalScreenGrid,
+    pane_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TerminalPaneSize {
+    cols: u16,
+    rows: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TerminalCursorState {
+    row: u16,
+    col: u16,
+    visible: bool,
+    shape: Option<TerminalCursorShape>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TerminalScreenGrid {
+    lines: Vec<String>,
+    trailing_spaces_preserved: bool,
+    wraps: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct TmuxPaneMetadata {
+    cols: u16,
+    rows: u16,
+    cursor_x: u16,
+    cursor_y: u16,
+    cursor_visible: bool,
+    cursor_shape: Option<TerminalCursorShape>,
+    capture_scope: TerminalCaptureScope,
+    pane_mode: Option<String>,
+    wraps: Option<bool>,
+}
+
+#[derive(Debug)]
+struct VisibleScreenCaptureState {
+    capture: String,
+    summary: CaptureLogSummary,
+    captured_after_ms: u64,
+    screen_state: TerminalScreenStateMessage,
+}
+
 impl RunExecutor {
     fn new(initial_cwd: PathBuf) -> Self {
         Self {
@@ -1039,6 +1107,53 @@ fn build_screen_wait_assessment(
     assessment
 }
 
+fn parse_tmux_bool(value: &str) -> bool {
+    matches!(value.trim(), "1" | "on" | "true" | "yes")
+}
+
+fn parse_tmux_u16(value: &str, field: &str) -> Result<u16> {
+    value
+        .trim()
+        .parse::<u16>()
+        .with_context(|| format!("failed to parse tmux {field}: {value}"))
+}
+
+fn parse_cursor_shape(value: &str) -> Option<TerminalCursorShape> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(match normalized.as_str() {
+        "block" => TerminalCursorShape::Block,
+        "underline" | "underscore" => TerminalCursorShape::Underline,
+        "bar" | "beam" | "vertical" => TerminalCursorShape::Bar,
+        _ => TerminalCursorShape::Unknown,
+    })
+}
+
+fn normalize_visible_screen_lines(capture: &str, expected_rows: u16) -> Vec<String> {
+    let mut lines = capture
+        .replace("\r\n", "\n")
+        .split('\n')
+        .map(|line| line.to_string())
+        .collect::<Vec<String>>();
+
+    if lines.len() == expected_rows as usize + 1 && lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+
+    if lines.len() > expected_rows as usize {
+        lines.truncate(expected_rows as usize);
+    }
+
+    while lines.len() < expected_rows as usize {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
 impl TerminalManager {
     fn new(config: TerminalConfig) -> Self {
         Self {
@@ -1523,7 +1638,8 @@ impl TerminalManager {
                 )
             };
         let readiness_wait_ms = readiness_wait_start.elapsed().as_millis() as u64;
-        let (output, output_bytes, lines_captured, changed, truncated) = match view {
+        let mut screen_state: Option<TerminalScreenStateMessage> = None;
+        let (output, output_bytes, lines_captured, changed, truncated, output_summary) = match view {
             "delta" => {
                 let comparison_baseline = delivered_baseline
                     .as_deref()
@@ -1554,12 +1670,36 @@ impl TerminalManager {
                             .map(|value| value.truncated)
                             .unwrap_or(delta.truncated),
                     ),
+                    capture_summary.clone(),
                 )
             }
-            "screen" | "history" => {
+            "screen" => {
+                let visible_screen = self
+                    .capture_visible_screen_state(&handle.session_name, capture_ms)
+                    .await?;
+                let output_bytes = visible_screen.capture.as_bytes().len();
+                let lines_captured = visible_screen.screen_state.screen.lines.len();
+                screen_state = Some(visible_screen.screen_state);
+                (
+                    visible_screen.capture,
+                    output_bytes,
+                    lines_captured,
+                    None,
+                    None,
+                    visible_screen.summary,
+                )
+            }
+            "history" => {
                 let output_bytes = current_capture.as_bytes().len();
                 let lines_captured = current_capture.lines().count();
-                (current_capture.clone(), output_bytes, lines_captured, None, None)
+                (
+                    current_capture.clone(),
+                    output_bytes,
+                    lines_captured,
+                    None,
+                    None,
+                    capture_summary.clone(),
+                )
             }
             _ => unreachable!("unsupported observe view"),
         };
@@ -1578,6 +1718,7 @@ impl TerminalManager {
             "lines_captured": lines_captured,
             "changed": changed,
             "truncated": truncated,
+            "screen_state": screen_state,
             "readiness": readiness,
             "error": Value::Null,
         });
@@ -1602,11 +1743,11 @@ impl TerminalManager {
             lines_captured = lines_captured,
             delta_changed = changed,
             delta_truncated = truncated,
-            capture_hash = format!("{:016x}", capture_summary.hash),
-            capture_line_count = capture_summary.line_count,
-            last_non_empty_line = %capture_summary.last_non_empty_line,
-            preview_head = ?capture_summary.preview_head.as_deref(),
-            preview_tail = ?capture_summary.preview_tail.as_deref(),
+            capture_hash = format!("{:016x}", output_summary.hash),
+            capture_line_count = output_summary.line_count,
+            last_non_empty_line = %output_summary.last_non_empty_line,
+            preview_head = ?output_summary.preview_head.as_deref(),
+            preview_tail = ?output_summary.preview_tail.as_deref(),
             "terminal_observe_result sent"
         );
 
@@ -2360,6 +2501,124 @@ impl TerminalManager {
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    async fn fetch_tmux_pane_metadata(&self, session_name: &str) -> Result<TmuxPaneMetadata> {
+        let format = "#{pane_width}\t#{pane_height}\t#{cursor_x}\t#{cursor_y}\t#{cursor_flag}\t#{cursor_shape}\t#{alternate_on}\t#{pane_in_mode}\t#{pane_mode}\t#{wrap_flag}";
+        let output = Command::new("tmux")
+            .args(["display-message", "-p", "-t", session_name, format])
+            .output()
+            .await
+            .with_context(|| "failed to fetch tmux pane metadata")?;
+
+        if !output.status.success() {
+            bail!(
+                "tmux display-message failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let text = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
+        let mut parts = text.split('\t');
+
+        let cols = parse_tmux_u16(parts.next().unwrap_or_default(), "pane_width")?;
+        let rows = parse_tmux_u16(parts.next().unwrap_or_default(), "pane_height")?;
+        let cursor_x = parse_tmux_u16(parts.next().unwrap_or_default(), "cursor_x")?;
+        let cursor_y = parse_tmux_u16(parts.next().unwrap_or_default(), "cursor_y")?;
+        let cursor_visible = parse_tmux_bool(parts.next().unwrap_or_default());
+        let cursor_shape = parse_cursor_shape(parts.next().unwrap_or_default());
+        let alternate_on = parse_tmux_bool(parts.next().unwrap_or_default());
+        let pane_in_mode = parse_tmux_bool(parts.next().unwrap_or_default());
+        let pane_mode = parts
+            .next()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let wraps = parts.next().map(parse_tmux_bool);
+
+        let capture_scope = if pane_in_mode {
+            TerminalCaptureScope::PaneMode
+        } else if alternate_on {
+            TerminalCaptureScope::Alternate
+        } else {
+            TerminalCaptureScope::Normal
+        };
+
+        Ok(TmuxPaneMetadata {
+            cols,
+            rows,
+            cursor_x: cursor_x.min(cols.saturating_sub(1)),
+            cursor_y: cursor_y.min(rows.saturating_sub(1)),
+            cursor_visible,
+            cursor_shape,
+            capture_scope,
+            pane_mode,
+            wraps,
+        })
+    }
+
+    async fn run_capture_visible_screen(
+        &self,
+        session_name: &str,
+        metadata: &TmuxPaneMetadata,
+    ) -> Result<String> {
+        let mut args = vec!["capture-pane", "-p", "-N", "-t", session_name];
+        match metadata.capture_scope {
+            TerminalCaptureScope::Alternate => args.insert(2, "-a"),
+            TerminalCaptureScope::PaneMode => args.insert(2, "-M"),
+            TerminalCaptureScope::Normal => {}
+        }
+
+        let output = Command::new("tmux")
+            .args(&args)
+            .output()
+            .await
+            .with_context(|| "failed to execute tmux capture-pane for visible screen")?;
+
+        if !output.status.success() {
+            bail!(
+                "tmux visible-screen capture failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    async fn capture_visible_screen_state(
+        &self,
+        session_name: &str,
+        captured_after_ms: u64,
+    ) -> Result<VisibleScreenCaptureState> {
+        let metadata = self.fetch_tmux_pane_metadata(session_name).await?;
+        let raw_capture = self.run_capture_visible_screen(session_name, &metadata).await?;
+        let lines = normalize_visible_screen_lines(&raw_capture, metadata.rows);
+        let capture = lines.join("\n");
+        let summary = summarize_capture_for_log(&capture, self.config.debug_enabled);
+
+        Ok(VisibleScreenCaptureState {
+            capture,
+            summary,
+            captured_after_ms,
+            screen_state: TerminalScreenStateMessage {
+                capture_scope: metadata.capture_scope,
+                pane: TerminalPaneSize {
+                    cols: metadata.cols,
+                    rows: metadata.rows,
+                },
+                cursor: TerminalCursorState {
+                    row: metadata.cursor_y,
+                    col: metadata.cursor_x,
+                    visible: metadata.cursor_visible,
+                    shape: metadata.cursor_shape,
+                },
+                screen: TerminalScreenGrid {
+                    lines,
+                    trailing_spaces_preserved: true,
+                    wraps: metadata.wraps,
+                },
+                pane_mode: metadata.pane_mode,
+            },
+        })
     }
 
     async fn capture_screen_state(

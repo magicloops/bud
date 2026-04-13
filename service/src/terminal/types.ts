@@ -28,6 +28,9 @@ export type TerminalWaitFor =
   | "changed"
   | "settled";
 export type TerminalObservationView = "delta" | "screen" | "history";
+export type TerminalBootstrapKind = "grid" | "text" | "unavailable";
+export type TerminalCaptureScope = "normal" | "alternate" | "pane_mode";
+export type TerminalCursorShape = "block" | "underline" | "bar" | "unknown";
 
 export interface TerminalDelta {
   changed: boolean;
@@ -186,6 +189,26 @@ export interface TerminalObserveMessage extends TerminalEnvelope {
   timeout_ms?: number;
 }
 
+export interface TerminalScreenStateMessage {
+  capture_scope: TerminalCaptureScope;
+  pane: {
+    cols: number;
+    rows: number;
+  };
+  cursor: {
+    row: number;
+    col: number;
+    visible: boolean;
+    shape?: TerminalCursorShape | null;
+  };
+  screen: {
+    lines: string[];
+    trailing_spaces_preserved: boolean;
+    wraps?: boolean | null;
+  };
+  pane_mode?: string | null;
+}
+
 export interface TerminalObserveResultMessage extends TerminalEnvelope {
   type: "terminal_observe_result";
   session_id: string;
@@ -196,9 +219,48 @@ export interface TerminalObserveResultMessage extends TerminalEnvelope {
   lines_captured: number;
   changed?: boolean | null;
   truncated?: boolean | null;
+  screen_state?: TerminalScreenStateMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
 }
+
+export type BrowserTerminalBootstrap =
+  | {
+      kind: "grid";
+      source: "tmux_capture";
+      capture_scope: TerminalCaptureScope;
+      pane: {
+        cols: number;
+        rows: number;
+      };
+      cursor: {
+        row: number;
+        col: number;
+        visible: boolean;
+        shape?: TerminalCursorShape | null;
+      };
+      screen: {
+        lines: string[];
+        trailing_spaces_preserved: boolean;
+        wraps?: boolean | null;
+      };
+      pane_mode?: string | null;
+    }
+  | {
+      kind: "text";
+      source: "tmux_screen" | "tmux_history_capture";
+      pane: {
+        cols: number;
+        rows: number;
+      } | null;
+      text: string;
+      degraded_reason: string;
+      capture_scope?: TerminalCaptureScope | null;
+    }
+  | {
+      kind: "unavailable";
+      reason: string;
+    };
 
 // Command stack tracking types
 

@@ -51,6 +51,8 @@ export type TerminalWaitFor =
 | `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Primary send-first terminal input with fast post-send delta |
 | `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit delta/screen/history observation |
 | `TerminalDelta` / `TerminalDeltaMessage` | Internal / Wire | Minimal additive delta payload for send/observe |
+| `TerminalScreenStateMessage` | Wire | Exact visible-screen metadata for `view: "screen"` |
+| `BrowserTerminalBootstrap` | Service/Web | Rich `/terminal/state` bootstrap union (`grid` / `text` / `unavailable`) |
 
 **Readiness Types**:
 
@@ -165,6 +167,7 @@ await_ready: {
 - `delta.changed` is the main signal for whether the foreground program visibly reacted right away
 - `readiness.trigger: "dispatch_only"` marks sends where Bud returned after dispatch without measuring the resulting screen state
 - default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested
+- `terminal.observe(view: "screen")` can now carry `screen_state` with capture scope, pane geometry, cursor position, and exact visible rows so `/terminal/state` can bootstrap xterm without replaying raw history
 - low-level `terminal_input` / `terminal_interrupt` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
 
 ### `known-programs.ts`

@@ -12,12 +12,14 @@ import {
 import { config, TERMINAL_PROTO_VERSION } from "../config.js";
 import { sendFrameToBud, isBudOnline } from "../ws/gateway.js";
 import type {
+  BrowserTerminalBootstrap,
   PendingCommand,
   TerminalContext,
   ReadinessAssessment,
   TerminalDelta,
   TerminalDeltaMessage,
   TerminalInputSource,
+  TerminalScreenStateMessage,
   TerminalWaitFor,
   TerminalObservationView,
 } from "../terminal/types.js";
@@ -103,6 +105,7 @@ export type ObserveResult = {
   linesCaptured: number;
   changed?: boolean;
   truncated?: boolean;
+  screenState?: TerminalScreenStateMessage | null;
   readiness: ReadinessAssessment;
   error?: string;
 };
@@ -115,6 +118,7 @@ type ObserveResponsePayload = {
   linesCaptured: number;
   changed?: boolean | null;
   truncated?: boolean | null;
+  screenState?: TerminalScreenStateMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
 };
@@ -175,7 +179,8 @@ export type BrowserTerminalStateSnapshot = {
   state: SessionState;
   latestByteOffset: number;
   readiness: ReadinessAssessment | null;
-  snapshot: {
+  bootstrap: BrowserTerminalBootstrap;
+  snapshot?: {
     text: string;
     source: "capture_pane" | "unavailable";
   };
@@ -804,6 +809,7 @@ export class TerminalSessionManager {
       linesCaptured: payload.linesCaptured,
       changed: typeof payload.changed === "boolean" ? payload.changed : undefined,
       truncated: typeof payload.truncated === "boolean" ? payload.truncated : undefined,
+      screenState: payload.screenState ?? undefined,
       readiness: payload.readiness,
     });
   }
@@ -1168,6 +1174,60 @@ export class TerminalSessionManager {
       },
       timeoutMs
     );
+  }
+
+  async captureBootstrap(
+    sessionId: string,
+    timeoutMs = 2500
+  ): Promise<{
+    bootstrap: BrowserTerminalBootstrap;
+    readiness: ReadinessAssessment;
+  }> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      throw new Error("session_not_found");
+    }
+
+    const screen = await this.observeTerminal(
+      sessionId,
+      {
+        waitFor: "none",
+        view: "screen",
+      },
+      timeoutMs
+    );
+
+    if (screen.screenState) {
+      return {
+        bootstrap: {
+          kind: "grid",
+          source: "tmux_capture",
+          capture_scope: screen.screenState.capture_scope,
+          pane: screen.screenState.pane,
+          cursor: screen.screenState.cursor,
+          screen: screen.screenState.screen,
+          pane_mode: screen.screenState.pane_mode ?? null,
+        },
+        readiness: screen.readiness,
+      };
+    }
+
+    return {
+      bootstrap: {
+        kind: "text",
+        source: "tmux_screen",
+        pane:
+          session.cols > 0 && session.rows > 0
+            ? {
+                cols: session.cols,
+                rows: session.rows,
+              }
+            : null,
+        text: screen.output,
+        degraded_reason: "screen_state_unavailable",
+      },
+      readiness: screen.readiness,
+    };
   }
 
   async sendInteraction(

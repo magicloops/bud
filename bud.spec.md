@@ -10,7 +10,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 - **Persistent Terminal Sessions**: Unlike ephemeral shell commands, Bud maintains stateful terminal sessions where environment variables, working directories, and running processes persist across interactions.
 - **Thread-Scoped Sessions**: Each conversation thread owns its terminal session, enabling parallel workstreams without state collision.
-- **Browser Terminal Boundaries**: The web client now bootstraps terminal state from safe snapshots and treats normal human typing separately from emulator protocol and raw replay traffic.
+- **Browser Terminal Boundaries**: The web client now bootstraps terminal state from an explicit safe bootstrap contract (`grid` / `text` / `unavailable`), uses exact visible-screen metadata when available, and treats normal human typing separately from emulator protocol and raw replay traffic.
 - **Context-Aware Agent**: The LLM understands terminal state (prompt detection, REPL detection, pager detection) and adapts its behavior accordingly.
 
 ---
@@ -531,6 +531,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/terminal-send-observe-context-quality.md](./debug/terminal-send-observe-context-quality.md) | Debug note documenting the now-working Claude Code flow under the revised terminal contract, plus the remaining inefficiencies: `terminal.observe` replaying stale pane history and `terminal.send` returning too little semantic post-send context to avoid extra observes |
 | [debug/thread-terminal-1-2c-da-replay.md](./debug/thread-terminal-1-2c-da-replay.md) | Debug note challenging the "missing ESC" theory for the thread-view `1;2c` symptom and documenting the stronger finding that replayed terminal control queries can provoke xterm DA replies that the web client forwards upstream as shell input, amplified by duplicate reconnect replay paths |
 | [debug/thread-terminal-cursor-bottom-after-safe-bootstrap.md](./debug/thread-terminal-cursor-bottom-after-safe-bootstrap.md) | Debug note documenting the current hypotheses for the xterm cursor-regression after safe terminal bootstrap, centered on text-only pane snapshots, skipped cursor-restoring bytes, fit timing, and missing tab-restore refits |
+| [debug/thread-terminal-tui-colors-missing-after-bootstrap.md](./debug/thread-terminal-tui-colors-missing-after-bootstrap.md) | Debug note reviewing the current rich terminal bootstrap path and documenting the core finding that refresh/new-page TUI color loss is structural: live ANSI bytes preserve styling, while bootstrap currently restores only a plain text grid plus cursor/geometry metadata |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
 | [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
 | [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |

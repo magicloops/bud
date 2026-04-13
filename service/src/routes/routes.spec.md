@@ -87,7 +87,7 @@ Thread and message management, plus terminal operations (~1450 lines).
 | `POST` | `/api/threads/:thread_id/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
 | `POST` | `/api/threads/:thread_id/terminal/ensure` | Ensure the owned terminal is running on bud |
 | `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
-| `GET` | `/api/threads/:thread_id/terminal/state` | Get a safe owned bootstrap snapshot plus `latest_byte_offset` |
+| `GET` | `/api/threads/:thread_id/terminal/state` | Get a safe owned terminal bootstrap (`grid` / `text` / `unavailable`) plus `latest_byte_offset` |
 | `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session; live-only by default, durable catch-up with `after_offset` |
 | `POST` | `/api/threads/:thread_id/terminal/send` | Send structured browser terminal interaction (`text`, `submit`, `keys`) |
 | `POST` | `/api/threads/:thread_id/terminal/input` | Send source-tagged raw fallback input |
@@ -138,9 +138,11 @@ Thread and message management, plus terminal operations (~1450 lines).
 - when the resume cursor is missing, the route emits `agent.resync_required` and the client should refetch `/messages` plus `/agent/state`
 
 **Terminal Stream Contract**:
-- `GET /api/threads/:thread_id/terminal/state` returns `{ session_id, state, latest_byte_offset, readiness, snapshot, updated_at }`
-- `snapshot.text` is a safe bootstrap surface intended for direct xterm rendering, not raw historical output replay
-- the route currently emits temporary service-side logs summarizing snapshot line shape (`lineCount`, trailing blank lines, last non-empty line) to validate the cursor-bootstrap regression without changing the HTTP payload
+- `GET /api/threads/:thread_id/terminal/state` now returns `{ session_id, state, latest_byte_offset, readiness, bootstrap, updated_at }`, with transitional `snapshot` compatibility
+- `bootstrap.kind: "grid"` is the preferred visible-screen restore path and carries pane geometry, cursor state, capture scope, and one string per visible row
+- `bootstrap.kind: "text"` is an explicit degraded fallback rather than an implicit cursor-accurate snapshot
+- `bootstrap.kind: "unavailable"` is used when Bud is offline or capture fails
+- the route currently emits service-side logs summarizing the prepared bootstrap so cursor/bootstrap regressions can be validated without changing the durable stream contract
 - `GET /api/threads/:thread_id/terminal/stream` with no `after_offset` is live-only; it does not replay buffered `terminal.output`
 - `GET /api/threads/:thread_id/terminal/stream?after_offset=<n>` replays only durable output strictly after that byte offset, then continues live
 - the stream route currently emits temporary replay-plan logs (`attachMode`, `requestedAfterOffset`, `latestByteOffset`, `chunkCount`) so the team can verify whether the browser is resuming exactly at the bootstrap tip with zero durable replay

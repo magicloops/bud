@@ -148,6 +148,7 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `closeSession(sessionId, reason)` | Close session |
 | `observeTerminal(sessionId, options)` | Explicit delta/screen/history observation request-response |
 | `capturePane(sessionId, options)` | Compatibility wrapper used by context sync |
+| `captureBootstrap(sessionId)` | Build rich browser bootstrap data from `terminal_observe(view: "screen")` |
 | `sendInteraction(sessionId, interaction, options)` | Request-response interactive input / keypress dispatch, including structured-source pending-command tracking |
 | `tailOutput(sessionId, bytes, options)` | Get recent output from DB |
 | `setPendingCommand(sessionId, command)` | Track REPL program execution |
@@ -180,8 +181,9 @@ When agent or browser structured send launches commands like `python`, `node`, o
 
 1. Service sends `terminal_observe` with `request_id`
 2. Bud optionally waits using `shell_ready`, `changed`, or `settled`, then reuses that capture for the response when possible
-3. Bud sends `terminal_observe_result` with matching `request_id`
-4. Promise resolves with delta by default, or full screen/history when explicitly requested
+3. For `view: "screen"`, Bud now also attaches exact visible-screen metadata (`screen_state`) with pane geometry, capture scope, cursor position, and row-preserved screen lines
+4. Bud sends `terminal_observe_result` with matching `request_id`
+5. Promise resolves with delta by default, or full screen/history when explicitly requested
 
 **Send Protocol**:
 
@@ -196,13 +198,13 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 **Terminal SSE Payload Notes**:
 - `terminal.output` carries `seq`, `data`, and `byte_offset`
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
-- thread routes can bootstrap from a safe `/terminal/state` snapshot, then resume with `after_offset=<last_rendered_byte_offset>` against durable output rather than generic event-bus replay
+- thread routes can now bootstrap from a richer `/terminal/state` `bootstrap` union (`grid` / `text` / `unavailable`), then resume with `after_offset=<last_rendered_byte_offset>` against durable output rather than generic event-bus replay
 - no-cursor terminal attaches are intentionally live-only; terminal routes opt out of generic buffered replay with `replayBuffered: false`
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
 - `sendInteraction()` now normalizes a nested optional `observe` object: browser typing uses `observe: null` for low-latency dispatch-only sends, while agent/tool callers can opt into `{}` or explicit wait parameters for post-send evidence
 - `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, and readiness
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
-- `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests
+- `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests; `view: "screen"` now surfaces exact visible-screen metadata that `/terminal/state` reuses for rich bootstrap
 - `tailOutput(maxBytes)` underlies `terminal.interrupt` tool payloads, so interrupt truncation is a service backfill-window concern rather than a Bud runtime limit
 
 **Ownership Notes**:

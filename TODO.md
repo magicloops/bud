@@ -23,6 +23,9 @@
   - Extend integration coverage for `/term` (attach → resize → Take writer) to guard against regressions.
 
 ## Future / Long-Term
+- **Style-aware TUI bootstrap fidelity**
+  - Extend the rich terminal bootstrap contract so refresh/new-page restores can preserve TUI colors and other styling, instead of only restoring plain text rows plus cursor/geometry metadata.
+  - Keep this as a follow-up to the current cursor/geometry bootstrap work; see [debug/thread-terminal-tui-colors-missing-after-bootstrap.md](./debug/thread-terminal-tui-colors-missing-after-bootstrap.md).
 - **Mobile logout + account switching**
   - Implement the Bud-owned hosted logout and explicit account-switch contract from [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) so mobile sign-out clears the hosted auth session and a follow-up sign-in can reliably choose a different account.
 - **Session durability enhancements**
