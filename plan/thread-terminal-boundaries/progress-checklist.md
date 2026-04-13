@@ -50,3 +50,11 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] Run the manual validation checklist.
 - [ ] Minimize and document any retained compatibility/fallback paths.
 
+## Phase 6: Optional Observation Send Adoption
+
+- [ ] Add optional `observe` support to the shared `terminal_send` contract.
+- [ ] Make dispatch-only send the default for normal browser xterm interaction.
+- [ ] Update the browser controller so typing no longer waits on observed-send latency.
+- [ ] Expose explicit observation controls through the agent-facing terminal send path.
+- [ ] Document the intended default observation behavior for browser vs agent callers.
+- [ ] Validate that observed and unobserved sends still preserve source/audit semantics.

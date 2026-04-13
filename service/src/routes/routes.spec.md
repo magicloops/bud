@@ -145,7 +145,7 @@ Thread and message management, plus terminal operations (~1450 lines).
 - `GET /api/threads/:thread_id/terminal/stream?after_offset=<n>` replays only durable output strictly after that byte offset, then continues live
 - the stream route currently emits temporary replay-plan logs (`attachMode`, `requestedAfterOffset`, `latestByteOffset`, `chunkCount`) so the team can verify whether the browser is resuming exactly at the bootstrap tip with zero durable replay
 - when durable output can no longer satisfy the requested offset, the route emits `terminal.resync_required` and closes so the browser can refetch `/terminal/state`
-- `POST /api/threads/:thread_id/terminal/send` routes normal browser typing and modeled keys through the structured Bud `terminal_send` path
+- `POST /api/threads/:thread_id/terminal/send` routes normal browser typing and modeled keys through the structured Bud `terminal_send` path, with browser callers defaulting to `observe: null` and higher-level callers allowed to supply nested observation options
 - `POST /api/threads/:thread_id/terminal/input` remains a narrow, source-tagged raw fallback for unsupported browser cases and emulator protocol traffic
 
 **Message History Examples**:

@@ -138,3 +138,29 @@ test("buildTerminalSendFollowUpHint points back to terminal.send when send retur
     "The terminal appears back at a shell prompt. Use terminal.send with submit:true for the next shell command.",
   );
 });
+
+test("buildTerminalSendFollowUpHint explains dispatch-only sends without observation", () => {
+  const hint = buildTerminalSendFollowUpHint({
+    acceptance: {
+      status: "observation_unavailable",
+      reason: "no_post_send_observation",
+    },
+    state: {
+      status: "ambiguous",
+      nextAction: "verify",
+      settled: false,
+      waitingForInput: false,
+      mayStillBeProcessing: false,
+    },
+    delta: null,
+    readinessHints: null,
+    contextAfter: {
+      mode: "unknown",
+    },
+  });
+
+  assert.equal(
+    hint,
+    "Interactive input was dispatched, but no fast observation was captured. Observe before assuming the program accepted it.",
+  );
+});

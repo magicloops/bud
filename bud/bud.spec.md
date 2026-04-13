@@ -163,8 +163,8 @@ terminal_input     →    tmux send-keys (text + Enter)
 
 terminal_send      →    tmux send-keys (structured text/keys)
                         Primary send-first path for shell commands and interactive input
-                        Fast post-send delta capture after 1000ms by default
-                        Optional: wait for shell_ready, changed, or settled
+                        Optional: post-send observe { after_ms, wait_for, timeout_ms }
+                        Omit observe for dispatch-only sends
                         Send terminal_send_result
 
 terminal_observe   →    tmux capture-pane
@@ -206,8 +206,8 @@ For interactive programs like Claude Code:
 - Handles apps with natural processing pauses
 
 For the Phase 6/7 agent-facing send/observe path specifically:
-- Bud now captures an immediate post-send screen by default after `1000ms`
-- `terminal_send_result` includes both dispatch success and additive delta evidence
+- Bud now keeps one shared `terminal_send` path and treats post-send observation as optional
+- `terminal_send_result` includes dispatch success, and only includes additive delta evidence when observation was requested
 - explicit agent-facing waits now use `changed` / `settled`, which start sampling immediately instead of waiting through the old blind `screen_stable` loop
 - the older activity-based detector remains for low-level `terminal_input` / `terminal_interrupt` readiness events
 - default `terminal.observe` now returns additive delta and only replays full screen/history when explicitly requested

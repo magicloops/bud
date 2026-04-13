@@ -310,6 +310,7 @@ export class ThreadTerminalController {
       this.enqueue(async () => {
         await this.transport.send({
           ...action.request,
+          observe: null,
           source,
           raw_input: data,
         })
@@ -348,6 +349,7 @@ export class ThreadTerminalController {
     return this.enqueue(async () => {
       await this.transport.send({
         text,
+        observe: null,
         source: 'human',
         raw_input: text,
       })

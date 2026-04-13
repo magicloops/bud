@@ -77,8 +77,9 @@ Hash-based deduplication for `capture-pane` output:
 - **`handle_send`** - Structured interactive input path for agent `terminal.send`:
   - Sends literal text, optional submit, and special keys
   - Serves as the primary input path for both shell commands and interactive programs
-  - Captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
-  - Defaults to `wait_for: "none"` and `timeout_ms: 5000`
+  - Accepts optional nested `observe` config for post-send capture and waiting
+  - When `observe` is present, captures a fast post-send delta baseline after `1000ms` by default
+  - When `observe` is omitted, returns an immediate dispatch-only acknowledgement
   - Can explicitly wait for `shell_ready`, `changed`, or `settled`
   - Reuses a pre-send baseline capture so waits can detect immediate redraws and echoed input
   - Strips low-signal separator-only lines from delta text when a line is a single repeated non-alphanumeric glyph run of 4+ characters

@@ -70,7 +70,7 @@ loader: async ({ params }) => {
 - Recovers terminal readiness via `POST /terminal/ensure`
 - Bootstraps xterm from `GET /terminal/state` rather than replaying `/terminal/history` through xterm on every open/reconnect
 - The current validation experiment trims trailing blank rows from `snapshot.text` before writing it into xterm so the team can confirm whether pane-shaped captures are the direct cause of the misplaced cursor
-- Routes normal browser typing and modeled keys through `POST /terminal/send`
+- Routes normal browser typing and modeled keys through `POST /terminal/send` with dispatch-only semantics (`observe: null`)
 - Keeps `POST /terminal/input` only as a narrow raw fallback for unsupported human sequences and emulator protocol traffic
 - Sends resize updates only when terminal dimensions actually change
 - Uses the existing interrupt route for Ctrl+C

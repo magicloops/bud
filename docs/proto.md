@@ -84,7 +84,8 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 
 - Structured path: `POST /api/threads/:thread_id/terminal/send`
 - Transitional raw fallback: `POST /api/threads/:thread_id/terminal/input`
-- Normal browser typing SHOULD use the structured send path with `text`, `submit`, and `keys`.
+- Normal browser typing SHOULD use the structured send path with `text`, `submit`, and `keys`, and SHOULD omit `observe` (or send `observe: null`) so keystrokes stay fire-and-forget.
+- Agent/tooling callers that need proof of visible terminal reaction SHOULD use the same structured send path with an `observe` object.
 - Raw fallback exists for unsupported browser sequences and emulator protocol traffic that should not be conflated with human keystrokes.
 
 ### 2.4 Agent Event Stream (Browser)
@@ -389,9 +390,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "text": "pwd",
     "submit": true,
     "keys": [],
-    "observe_after_ms": 1000,
-    "wait_for": "none",
-    "timeout_ms": 5000,
+    "observe": { "after_ms": 1000, "wait_for": "none", "timeout_ms": 5000 },
     "ext": {} }
   ```
 
@@ -401,9 +400,12 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   * `text`: optional literal text to send; this is now the primary shell-command path as well as the interactive-input path
   * `submit`: when true, Bud MUST press Enter after sending text
   * `keys`: optional ordered list of special keys or single-key actions
-  * `observe_after_ms`: optional delay before the default fast post-send screen capture (default: 1000)
-  * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"none"` for `terminal.send`)
-  * `timeout_ms`: max wait time for readiness (default: 5000 for `terminal.send`)
+  * `observe`: optional post-send observation request
+    * `after_ms`: optional delay before the default fast post-send screen capture (default: 1000 when `observe` is present)
+    * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"none"` when `observe` is present)
+    * `timeout_ms`: max wait time for readiness (default: 5000 when `observe` is present)
+  * If `observe` is omitted or `null`, Bud SHOULD return an immediate dispatch acknowledgement without waiting for a capture or readiness proof.
+  * Bud currently accepts the older flat `observe_after_ms` / `wait_for` / `timeout_ms` fields as a compatibility fallback during rollout.
 
 * `terminal_observe` — explicitly inspect rendered screen / scrollback
   ```json
@@ -462,7 +464,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   **Readiness Assessment Fields:**
   * `ready`: boolean — terminal is ready for next input
   * `confidence`: 0.0–1.0 — confidence level (≥0.8 high, 0.5–0.8 medium, <0.5 low)
-  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt` | `activity_stable` | `changed` | `settled`
+  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt` | `activity_stable` | `changed` | `settled` | `dispatch_only`
   * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
   * `hints`: object of boolean flags for agent decision-making
 
@@ -484,13 +486,14 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
 
   **Fields:**
   * `submitted`: true when Bud successfully dispatched at least one text/key/Enter event to tmux; this is transport success, not proof that the foreground program accepted or acted on the input
-  * `delta`: optional additive post-send delta
+  * `delta`: optional additive post-send delta, populated when a post-send observation was requested
     * `changed`: whether Bud observed a visible change relative to the pre-send baseline
     * `text`: additive-only visible content from the current screen
     * `truncated`: true when the delta fell back to a bounded excerpt
-  * `readiness`: readiness assessment derived from the post-send state or explicit wait mode
+  * `readiness`: readiness assessment derived from the post-send state or explicit wait mode when observation was requested
     * `changed` returns on the first visible screen delta after the pre-send baseline
     * `settled` starts sampling immediately and returns once the screen has been quiet for a short window
+    * `dispatch_only` means Bud successfully dispatched input but did not wait for post-send observation
   * `error`: error string when dispatch or capture failed
 
 * `terminal_observe_result` — response to `terminal_observe`
@@ -517,7 +520,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     * for `history`, this is the requested scrollback/history window
   * `changed` / `truncated`: populated for `view: "delta"` and omitted otherwise
 
-`terminal.send` and `terminal.observe` now share the same delta engine and immediate-start screen wait engine for `changed` / `settled`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
+When `observe` is present, `terminal.send` and `terminal.observe` share the same delta engine and immediate-start screen wait engine for `changed` / `settled`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
 
 #### 4.4.3 Terminal SSE Events (Backend → Browser)
 
@@ -538,7 +541,8 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
 * `POST /api/threads/:thread_id/terminal/ensure` — ensure the thread-scoped terminal is running on Bud
 * `GET /api/threads/:thread_id/terminal` — get thread-scoped terminal session info
 * `GET /api/threads/:thread_id/terminal/history?bytes=N&since_offset=M` — fetch thread-scoped output history
-* `POST /api/threads/:thread_id/terminal/input` — send input `{ input: "..." }`
+* `POST /api/threads/:thread_id/terminal/send` — send structured input `{ text?, submit?, keys?, observe? }`
+* `POST /api/threads/:thread_id/terminal/input` — send raw fallback input `{ input: "..." }`
 * `POST /api/threads/:thread_id/terminal/interrupt` — send Ctrl+C
 * `POST /api/threads/:thread_id/terminal/resize` — resize terminal `{ cols, rows }`
 
@@ -596,7 +600,7 @@ Current thread-scoped SSE payloads are route-specific. For `GET /api/threads/:th
   `{ "turn_id":"01TURN...", "client_id":"uuidv7", "message_id":"uuid", "text":"Cloning repository...", "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"assistant", "display_role":"Bud Agent", "content":"Cloning repository...", "metadata":{"status":"succeeded"}, "created_at":"2026-03-22T22:10:00.000Z" } }`
 
 * `agent.tool_call`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "name":"terminal.send", "args":{"text":"git status","submit":true} }`
+  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "name":"terminal.send", "args":{"text":"git status","submit":true,"observe":{}} }`
 
 * `agent.tool_result`
   `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "message_id":"uuid", "name":"terminal.send", "summary":"Attempted to send \"git status\" and press Enter; observed new terminal content", "readiness":{"ready":true,"confidence":0.84,"trigger":"settled"}, "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.send\",...}", "metadata":{"tool":"terminal.send","call_id":"call_123","summary":"Attempted to send \\\"git status\\\" and press Enter; observed new terminal content"}, "created_at":"2026-03-22T22:09:58.000Z" } }`

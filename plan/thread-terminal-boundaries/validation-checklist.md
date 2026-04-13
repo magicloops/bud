@@ -86,8 +86,26 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] `bud/src/src.spec.md` updated if needed.
 - [ ] `bud.spec.md` updated.
 
+## Phase 6: Optional Observation Send Adoption
+
+### Browser Latency
+
+- [ ] Normal browser typing no longer waits on the previous observed-send delay.
+- [ ] Enter, paste, and the validated common navigation/edit keys also use dispatch-only structured sends where intended.
+- [ ] The browser controller no longer queues human typing behind post-send observation waits.
+
+### Agent Observation
+
+- [ ] Agent/tool callers can request observation and still receive the intended delta/readiness behavior.
+- [ ] Agent/tool callers can omit observation when fire-and-forget behavior is acceptable.
+- [ ] Interleaving observed and unobserved sends on one session does not mis-correlate results.
+
+### Contract Alignment
+
+- [ ] `terminal_send` optional observation is documented consistently across the daemon, service, and web notes.
+- [ ] Browser xterm and agent usage both rely on the same shared send primitive rather than separate core send implementations.
+
 ## Notes
 
 - The first-pass bootstrap route may intentionally prioritize replay safety over perfect style fidelity.
 - If IME, Alt/Meta, or browser-specific key paths remain on the raw fallback path, record that clearly rather than marking them as implicitly covered.
-

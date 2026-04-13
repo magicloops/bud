@@ -369,7 +369,15 @@ struct TerminalSendFrame {
     text: Option<String>,
     submit: Option<bool>,
     keys: Option<Vec<String>>,
+    observe: Option<TerminalSendObserveFrame>,
     observe_after_ms: Option<u64>,
+    wait_for: Option<String>,
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TerminalSendObserveFrame {
+    after_ms: Option<u64>,
     wait_for: Option<String>,
     timeout_ms: Option<u64>,
 }
@@ -919,6 +927,57 @@ fn parse_screen_wait_mode(wait_for: &str) -> Result<ScreenWaitMode> {
         "settled" | "screen_stable" => Ok(ScreenWaitMode::Settled),
         _ => bail!("unsupported wait_for mode: {wait_for}"),
     }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedTerminalSendObserve {
+    after_ms: u64,
+    wait_for: String,
+    timeout_ms: u64,
+}
+
+fn resolve_terminal_send_observe(frame: &TerminalSendFrame) -> Option<ResolvedTerminalSendObserve> {
+    if let Some(observe) = &frame.observe {
+        return Some(ResolvedTerminalSendObserve {
+            after_ms: observe.after_ms.unwrap_or(1000),
+            wait_for: observe
+                .wait_for
+                .clone()
+                .unwrap_or_else(|| "none".to_string()),
+            timeout_ms: observe.timeout_ms.unwrap_or(5_000),
+        });
+    }
+
+    let legacy_observe_requested =
+        frame.observe_after_ms.is_some() || frame.wait_for.is_some() || frame.timeout_ms.is_some();
+    if !legacy_observe_requested {
+        return None;
+    }
+
+    Some(ResolvedTerminalSendObserve {
+        after_ms: frame.observe_after_ms.unwrap_or(1000),
+        wait_for: frame
+            .wait_for
+            .clone()
+            .unwrap_or_else(|| "none".to_string()),
+        timeout_ms: frame.timeout_ms.unwrap_or(5_000),
+    })
+}
+
+fn dispatch_only_readiness() -> Value {
+    json!({
+        "ready": false,
+        "confidence": 0.0,
+        "trigger": "dispatch_only",
+        "hints": {
+            "looks_like_prompt": false,
+            "looks_like_confirmation": false,
+            "looks_like_password": false,
+            "looks_like_pager": false,
+            "looks_like_error": false,
+            "may_still_be_processing": false
+        }
+    })
 }
 
 fn set_json_number(map: &mut Map<String, Value>, key: &str, value: u64) {
@@ -1561,9 +1620,11 @@ impl TerminalManager {
 
         let session_id = &frame.session_id;
         let request_id = &frame.request_id;
-        let wait_for = frame.wait_for.as_deref().unwrap_or("none");
-        let timeout_ms = frame.timeout_ms.unwrap_or(5_000);
-        let observe_after_ms = frame.observe_after_ms.unwrap_or(1000);
+        let observe = resolve_terminal_send_observe(&frame);
+        let wait_for = observe
+            .as_ref()
+            .map(|value| value.wait_for.as_str())
+            .unwrap_or("none");
         let submit = frame.submit.unwrap_or(false);
         let text = frame.text.as_deref();
         let keys = frame.keys.clone().unwrap_or_default();
@@ -1591,23 +1652,6 @@ impl TerminalManager {
         };
 
         let start_offset = handle.offset.load(Ordering::SeqCst);
-        let delta_start_line = Some(DEFAULT_DELTA_CAPTURE_START_LINE);
-        let baseline_capture = match self
-            .capture_screen_state(&handle.session_name, delta_start_line, 0)
-            .await
-        {
-            Ok(capture) => Some(capture),
-            Err(err) => {
-                warn!(
-                    request_id = request_id,
-                    session_id = session_id,
-                    error = %err,
-                    "terminal_send baseline capture failed"
-                );
-                None
-            }
-        };
-
         let submitted = match self
             .dispatch_interaction_to_tmux(&handle, text, submit, &keys)
             .await
@@ -1624,130 +1668,152 @@ impl TerminalManager {
             }
         };
 
-        let (delta, readiness, current_capture, current_summary, captured_after_ms) = match wait_for {
-            "none" => {
-                if observe_after_ms > 0 {
-                    time::sleep(Duration::from_millis(observe_after_ms)).await;
-                }
-
-                match self
-                    .capture_screen_state(
-                        &handle.session_name,
-                        delta_start_line,
-                        observe_after_ms,
-                    )
+        let delta_start_line = Some(DEFAULT_DELTA_CAPTURE_START_LINE);
+        let (delta, readiness, current_capture, current_summary, captured_after_ms) =
+            if let Some(observe) = observe.as_ref() {
+                let baseline_capture = match self
+                    .capture_screen_state(&handle.session_name, delta_start_line, 0)
                     .await
                 {
-                    Ok(current) => {
-                        let delta = build_additive_delta_payload(
-                            baseline_capture.as_ref().map(|state| state.capture.as_str()),
-                            &current.capture,
-                        );
-                        let readiness = assess_capture_readiness(&current.capture);
-                        let captured_after_ms = current.captured_after_ms;
-                        (
-                            Some(delta),
-                            readiness,
-                            Some(current.capture),
-                            Some(current.summary),
-                            Some(captured_after_ms),
-                        )
-                    }
+                    Ok(capture) => Some(capture),
                     Err(err) => {
                         warn!(
                             request_id = request_id,
                             session_id = session_id,
                             error = %err,
-                            "terminal_send post-send capture failed"
+                            "terminal_send baseline capture failed"
                         );
-                        (
-                            None,
-                            self.resolve_readiness_after_interaction(
+                        None
+                    }
+                };
+
+                match observe.wait_for.as_str() {
+                    "none" => {
+                        if observe.after_ms > 0 {
+                            time::sleep(Duration::from_millis(observe.after_ms)).await;
+                        }
+
+                        match self
+                            .capture_screen_state(
+                                &handle.session_name,
+                                delta_start_line,
+                                observe.after_ms,
+                            )
+                            .await
+                        {
+                            Ok(current) => {
+                                let delta = build_additive_delta_payload(
+                                    baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                                    &current.capture,
+                                );
+                                let readiness = assess_capture_readiness(&current.capture);
+                                let captured_after_ms = current.captured_after_ms;
+                                (
+                                    Some(delta),
+                                    readiness,
+                                    Some(current.capture),
+                                    Some(current.summary),
+                                    Some(captured_after_ms),
+                                )
+                            }
+                            Err(err) => {
+                                warn!(
+                                    request_id = request_id,
+                                    session_id = session_id,
+                                    error = %err,
+                                    "terminal_send post-send capture failed"
+                                );
+                                (
+                                    None,
+                                    self.resolve_readiness_after_interaction(
+                                        &handle,
+                                        request_id,
+                                        observe.wait_for.as_str(),
+                                        observe.timeout_ms,
+                                        start_offset,
+                                    )
+                                    .await?,
+                                    None,
+                                    None,
+                                    None,
+                                )
+                            }
+                        }
+                    }
+                    "shell_ready" => {
+                        let shell_wait_start = Instant::now();
+                        let readiness = self
+                            .resolve_readiness_after_interaction(
                                 &handle,
                                 request_id,
-                                wait_for,
-                                timeout_ms,
+                                observe.wait_for.as_str(),
+                                observe.timeout_ms,
                                 start_offset,
                             )
-                            .await?,
-                            None,
-                            None,
-                            None,
-                        )
+                            .await?;
+                        let captured_after_ms = shell_wait_start.elapsed().as_millis() as u64;
+                        match self
+                            .capture_screen_state(
+                                &handle.session_name,
+                                delta_start_line,
+                                captured_after_ms,
+                            )
+                            .await
+                        {
+                            Ok(current) => {
+                                let delta = build_additive_delta_payload(
+                                    baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                                    &current.capture,
+                                );
+                                let captured_after_ms = current.captured_after_ms;
+                                (
+                                    Some(delta),
+                                    readiness,
+                                    Some(current.capture),
+                                    Some(current.summary),
+                                    Some(captured_after_ms),
+                                )
+                            }
+                            Err(err) => {
+                                warn!(
+                                    request_id = request_id,
+                                    session_id = session_id,
+                                    error = %err,
+                                    "terminal_send final capture after shell_ready failed"
+                                );
+                                (None, readiness, None, None, None)
+                            }
+                        }
                     }
-                }
-            }
-            "shell_ready" => {
-                let shell_wait_start = Instant::now();
-                let readiness = self
-                    .resolve_readiness_after_interaction(
-                        &handle,
-                        request_id,
-                        wait_for,
-                        timeout_ms,
-                        start_offset,
-                    )
-                    .await?;
-                let captured_after_ms = shell_wait_start.elapsed().as_millis() as u64;
-                match self
-                    .capture_screen_state(
-                        &handle.session_name,
-                        delta_start_line,
-                        captured_after_ms,
-                    )
-                    .await
-                {
-                    Ok(current) => {
+                    "changed" | "settled" | "screen_stable" => {
+                        let wait_result = self
+                            .wait_for_screen_state(
+                                &handle,
+                                request_id,
+                                observe.wait_for.as_str(),
+                                observe.timeout_ms,
+                                baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                                delta_start_line,
+                            )
+                            .await?;
                         let delta = build_additive_delta_payload(
                             baseline_capture.as_ref().map(|state| state.capture.as_str()),
-                            &current.capture,
+                            &wait_result.capture,
                         );
-                        let captured_after_ms = current.captured_after_ms;
+
                         (
                             Some(delta),
-                            readiness,
-                            Some(current.capture),
-                            Some(current.summary),
-                            Some(captured_after_ms),
+                            wait_result.assessment,
+                            Some(wait_result.capture),
+                            Some(wait_result.summary),
+                            Some(wait_result.captured_after_ms),
                         )
                     }
-                    Err(err) => {
-                        warn!(
-                            request_id = request_id,
-                            session_id = session_id,
-                            error = %err,
-                            "terminal_send final capture after shell_ready failed"
-                        );
-                        (None, readiness, None, None, None)
-                    }
+                    _ => return self.send_send_error(&frame, "unsupported_wait_for").await,
                 }
-            }
-            "changed" | "settled" | "screen_stable" => {
-                let wait_result = self
-                    .wait_for_screen_state(
-                        &handle,
-                        request_id,
-                        wait_for,
-                        timeout_ms,
-                        baseline_capture.as_ref().map(|state| state.capture.as_str()),
-                        delta_start_line,
-                    )
-                    .await?;
-                let delta = build_additive_delta_payload(
-                    baseline_capture.as_ref().map(|state| state.capture.as_str()),
-                    &wait_result.capture,
-                );
-
-                (
-                    Some(delta),
-                    wait_result.assessment,
-                    Some(wait_result.capture),
-                    Some(wait_result.summary),
-                    Some(wait_result.captured_after_ms),
-                )
-            }
-            _ => return self.send_send_error(&frame, "unsupported_wait_for").await,
-        };
+            } else {
+                (None, dispatch_only_readiness(), None, None, None)
+            };
 
         if let Some(current_capture) = current_capture.as_deref() {
             self.store_delivered_capture(session_id, current_capture, delta_start_line)
@@ -1776,7 +1842,11 @@ impl TerminalManager {
             request_id = request_id,
             session_id = session_id,
             wait_for = wait_for,
-            observe_after_ms = observe_after_ms,
+            observe_enabled = observe.is_some(),
+            observe_after_ms = observe
+                .as_ref()
+                .map(|value| value.after_ms)
+                .unwrap_or(0),
             submitted = submitted,
             key_count = keys.len(),
             has_text = text.is_some(),
@@ -4334,5 +4404,60 @@ mod tests {
         assert!(delta.changed);
         assert_eq!(delta.text, "─\nnext");
         assert_eq!(delta.strategy, "novel_suffix");
+    }
+
+    #[test]
+    fn resolve_terminal_send_observe_defaults_when_observe_object_is_present() {
+        let frame = TerminalSendFrame {
+            envelope: Envelope {
+                kind: "terminal_send".to_string(),
+                proto: TERMINAL_PROTO_VERSION.to_string(),
+                id: "msg_1".to_string(),
+                ts: 0,
+                ext: Value::Null,
+            },
+            session_id: "sess_1".to_string(),
+            request_id: "send_1".to_string(),
+            text: Some("pwd".to_string()),
+            submit: Some(true),
+            keys: Some(vec![]),
+            observe: Some(TerminalSendObserveFrame {
+                after_ms: None,
+                wait_for: None,
+                timeout_ms: None,
+            }),
+            observe_after_ms: None,
+            wait_for: None,
+            timeout_ms: None,
+        };
+
+        let observe = resolve_terminal_send_observe(&frame).expect("observe config");
+        assert_eq!(observe.after_ms, 1000);
+        assert_eq!(observe.wait_for, "none");
+        assert_eq!(observe.timeout_ms, 5_000);
+    }
+
+    #[test]
+    fn resolve_terminal_send_observe_is_none_for_dispatch_only_requests() {
+        let frame = TerminalSendFrame {
+            envelope: Envelope {
+                kind: "terminal_send".to_string(),
+                proto: TERMINAL_PROTO_VERSION.to_string(),
+                id: "msg_1".to_string(),
+                ts: 0,
+                ext: Value::Null,
+            },
+            session_id: "sess_1".to_string(),
+            request_id: "send_1".to_string(),
+            text: Some("a".to_string()),
+            submit: Some(false),
+            keys: Some(vec![]),
+            observe: None,
+            observe_after_ms: None,
+            wait_for: None,
+            timeout_ms: None,
+        };
+
+        assert!(resolve_terminal_send_observe(&frame).is_none());
     }
 }

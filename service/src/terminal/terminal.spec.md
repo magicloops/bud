@@ -78,6 +78,13 @@ export interface ReadinessAssessment {
 
 **Terminal Request/Response Types**:
 
+```typescript
+export interface TerminalSendObserve {
+  after_ms?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
+}
+
 export interface TerminalSendMessage extends TerminalEnvelope {
   type: "terminal_send";
   session_id: string;
@@ -85,9 +92,7 @@ export interface TerminalSendMessage extends TerminalEnvelope {
   text?: string;
   submit?: boolean;
   keys?: string[];
-  observe_after_ms?: number;
-  wait_for?: TerminalWaitFor;
-  timeout_ms?: number;
+  observe?: TerminalSendObserve | null;
 }
 
 export interface TerminalSendResultMessage extends TerminalEnvelope {
@@ -150,14 +155,15 @@ await_ready: {
 ```
 
 **Phase 6/7 Interactive Wait Notes**:
-- `terminal.send` now defaults to a fast post-send delta capture after `1000ms`
-- `terminal.send` now defaults to `wait_for: "none"` and `timeout_ms: 5000`
+- `terminal.send` now supports optional nested `observe`; when present it defaults to a fast post-send delta capture after `1000ms`
+- omitting `observe` produces a dispatch-only acknowledgement with no post-send delta capture
 - `terminal.send` is now the primary tool for both shell commands and interactive input, including normal browser typing through the service `/terminal/send` surface
 - agent-facing explicit waits are now `changed` and `settled`
 - `terminal.send` and `terminal.observe` share the same immediate-start screen wait engine for `changed` / `settled`
 - `settled` means "screen has been quiet for a short window", not the older blind `screen_stable` loop
 - `submitted` means Bud dispatched at least one text/key/Enter event to tmux
 - `delta.changed` is the main signal for whether the foreground program visibly reacted right away
+- `readiness.trigger: "dispatch_only"` marks sends where Bud returned after dispatch without measuring the resulting screen state
 - default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested
 - low-level `terminal_input` / `terminal_interrupt` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
 

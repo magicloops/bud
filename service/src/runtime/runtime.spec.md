@@ -185,11 +185,11 @@ When agent or browser structured send launches commands like `python`, `node`, o
 
 **Send Protocol**:
 
-1. Service sends `terminal_send` with structured `text` / `submit` / `keys`
+1. Service sends `terminal_send` with structured `text` / `submit` / `keys` plus optional nested `observe`
 2. Bud dispatches literal text and special keys to tmux
-3. Bud captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
-4. Bud optionally waits for `shell_ready`, `changed`, or `settled` when explicitly requested
-5. Bud sends `terminal_send_result` with dispatch status, additive delta, and readiness
+3. If `observe` is present, Bud captures a fast post-send delta baseline after `observe.after_ms` (default `1000ms`)
+4. If `observe` requests a wait, Bud optionally waits for `shell_ready`, `changed`, or `settled`
+5. Bud sends `terminal_send_result` immediately for dispatch-only sends, or with additive delta/readiness when observation was requested
 
 These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. The active model-facing contract is now send-first: shell and interactive input both flow through `terminal.send`, while `terminal.observe` is the explicit inspection hatch.
 
@@ -199,7 +199,7 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - thread routes can bootstrap from a safe `/terminal/state` snapshot, then resume with `after_offset=<last_rendered_byte_offset>` against durable output rather than generic event-bus replay
 - no-cursor terminal attaches are intentionally live-only; terminal routes opt out of generic buffered replay with `replayBuffered: false`
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
-- `sendInteraction()` now defaults to `waitFor: "none"`, `observeAfterMs: 1000`, and a `5000ms` timeout so the agent/browser gets immediate delta evidence instead of blindly waiting for delayed screen stability
+- `sendInteraction()` now normalizes a nested optional `observe` object: browser typing uses `observe: null` for low-latency dispatch-only sends, while agent/tool callers can opt into `{}` or explicit wait parameters for post-send evidence
 - `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, and readiness
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
 - `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests

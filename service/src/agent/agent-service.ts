@@ -28,6 +28,12 @@ import {
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 
+type TerminalSendObserveDirective = {
+  afterMs?: number;
+  waitFor?: TerminalWaitFor;
+  timeoutMs?: number;
+};
+
 type AgentDirective =
   | {
       type: "tool_call";
@@ -35,9 +41,7 @@ type AgentDirective =
       text?: string;
       submit?: boolean;
       keys?: string[];
-      observeAfterMs?: number;
-      waitFor?: TerminalWaitFor;
-      timeoutMs?: number;
+      observe?: TerminalSendObserveDirective | null;
       callId: string;
     }
   | {
@@ -114,8 +118,8 @@ You are Bud Agent, coordinating terminal access to a user's machine.
 You have a persistent terminal; state (cwd, env, running processes) persists across turns.
 
 Tools:
-- {"type":"tool_call","tool":"terminal.send","text":"pwd","submit":true}
-- {"type":"tool_call","tool":"terminal.send","text":"python","submit":true}
+- {"type":"tool_call","tool":"terminal.send","text":"pwd","submit":true,"observe":{}}
+- {"type":"tool_call","tool":"terminal.send","text":"python","submit":true,"observe":{"wait_for":"changed"}}
 - {"type":"tool_call","tool":"terminal.send","text":"q"}
 - {"type":"tool_call","tool":"terminal.observe","lines":-50,"wait_for":"settled"}
 - {"type":"tool_call","tool":"terminal.interrupt"}
@@ -125,7 +129,7 @@ All terminal tools return a JSON result containing:
 - kind: "interaction_ack" | "observation"
 - readiness: { ready, confidence, trigger, hints }
 - context_after: { mode: "shell"|"repl"|"unknown", program?, hints?, source? }
-- terminal.send returns delta: { changed, text, truncated } when a post-send observation is available
+- terminal.send returns delta: { changed, text, truncated } only when a post-send observation was requested
 - terminal.observe defaults to view:"delta" and returns delta in output; use view:"screen" or view:"history" for broader context
 
 Guidelines:
@@ -133,17 +137,19 @@ Guidelines:
 - For normal shell commands, send the command text with submit:true instead of adding a trailing \\n yourself.
 - Multiline shell input is allowed when you intentionally need it (for example heredocs or pasted scripts).
 - terminal.send is also for interactive input, confirmations, single-key actions, and launching interactive programs from shell.
-- terminal.send includes a short post-send delta by default. If delta.changed is false or delta.text is empty, do not assume the program accepted the input.
+- Add observe:{} when you want the default fast post-send delta after sending input.
+- Add observe:{ wait_for:"changed" } when you only need to confirm that a TUI/REPL reacted.
+- Add observe:{ wait_for:"settled" } when you need the screen to go quiet before deciding the next step.
+- Omit observe when dispatch-only behavior is acceptable and you plan to inspect state separately later.
 - terminal.observe is for explicit screen inspection or extra scrollback after interactive work.
 - terminal.observe defaults to a delta view. Use view:"screen" for the full current screen and view:"history" for recent scrollback/history.
-- Use wait_for:"changed" when you only need to confirm that a TUI/REPL reacted.
-- Use wait_for:"settled" when you need the screen to go quiet before deciding the next step.
 - Check readiness from tool results to decide your next action:
   - confidence >= 0.8: Terminal is ready, send next command
   - confidence 0.5-0.8: Probably ready, verify output makes sense before proceeding
   - confidence < 0.5: Likely still processing, use terminal.observe with wait_for:"settled"
 - For terminal.send specifically:
-  - If delta.changed is false, verify with terminal.observe before claiming the program accepted the input
+  - If you requested observe and delta.changed is false, verify with terminal.observe before claiming the program accepted the input
+  - If you omitted observe, do not assume the program accepted the input until you observe or otherwise verify the state
   - If readiness hints suggest ongoing processing, use terminal.observe for progress
   - If context_after.mode is "repl" and the delta shows the UI is asking for more input, another terminal.send is reasonable
   - If context_after.mode is "shell", another terminal.send is the normal way to run the next shell command
@@ -239,18 +245,27 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
           items: { type: "string" },
           description: "Optional special keys or single-key actions, e.g. q, space, enter, tab, escape, up."
         },
-        observe_after_ms: {
-          type: "integer",
-          description: "Optional delay before the default fast post-send observation (ms). Defaults to 1000ms."
-        },
-        wait_for: {
-          type: "string",
-          enum: ["none", "shell_ready", "changed", "settled"],
-          description: "Optional wait mode after sending input."
-        },
-        timeout_ms: {
-          type: "integer",
-          description: "Optional max wait time in ms. Defaults to 5000ms for terminal.send."
+        observe: {
+          type: "object",
+          description:
+            "Optional post-send observation request. Use {} for the default fast post-send delta, or set after_ms / wait_for / timeout_ms to customize it.",
+          properties: {
+            after_ms: {
+              type: "integer",
+              description: "Optional delay before the post-send observation (ms). Defaults to 1000ms when observe is present."
+            },
+            wait_for: {
+              type: "string",
+              enum: ["none", "shell_ready", "changed", "settled"],
+              description: "Optional wait mode after sending input."
+            },
+            timeout_ms: {
+              type: "integer",
+              description: "Optional max wait time in ms for the post-send observation. Defaults to 5000ms when observe is present."
+            }
+          },
+          required: [],
+          additionalProperties: false
         }
       },
       required: [],
@@ -614,8 +629,10 @@ export class AgentService {
             text?: string;
             submit?: boolean;
             keys?: string[];
+            observe?: Record<string, unknown> | null;
             observe_after_ms?: number;
             wait_for?: TerminalWaitFor;
+            timeout_ms?: number;
             lines?: number;
             view?: TerminalObservationView;
           };
@@ -627,15 +644,16 @@ export class AgentService {
 
           let toolInput: Record<string, unknown> = {};
           if (toolName === "terminal.send") {
-            const waitFor = this.parseWaitForArg(payload.wait_for);
+            const observe = this.parseTerminalSendObserveArg(payload.observe, {
+              afterMs: payload.observe_after_ms,
+              waitFor: payload.wait_for,
+              timeoutMs: payload.timeout_ms,
+            });
             toolInput = {
               ...(typeof payload.text === "string" ? { text: payload.text } : {}),
               ...(payload.submit === true ? { submit: true } : {}),
               ...(Array.isArray(payload.keys) ? { keys: payload.keys } : {}),
-              ...(typeof payload.observe_after_ms === "number"
-                ? { observe_after_ms: payload.observe_after_ms }
-                : {}),
-              ...(waitFor ? { wait_for: waitFor } : {})
+              ...(observe !== null ? { observe: this.serializeTerminalSendObserveArg(observe) } : {})
             };
           } else if (toolName === "terminal.observe") {
             const waitFor = this.parseWaitForArg(payload.wait_for);
@@ -984,9 +1002,11 @@ export class AgentService {
           text: typeof args.text === "string" ? args.text : undefined,
           submit: args.submit === true,
           keys: keys?.length ? keys : undefined,
-          observeAfterMs: typeof args.observe_after_ms === "number" ? args.observe_after_ms : undefined,
-          waitFor: this.parseWaitForArg(args.wait_for),
-          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
+          observe: this.parseTerminalSendObserveArg(args.observe, {
+            afterMs: args.observe_after_ms,
+            waitFor: args.wait_for,
+            timeoutMs: args.timeout_ms,
+          }),
           callId
         };
       }
@@ -1159,7 +1179,8 @@ export class AgentService {
         hasText,
         submit: directive.submit === true,
         keyCount: directive.keys?.length ?? 0,
-        waitFor: directive.waitFor ?? null,
+        observeRequested: directive.observe != null,
+        waitFor: directive.observe?.waitFor ?? null,
         program: contextBefore.program
       });
 
@@ -1169,16 +1190,15 @@ export class AgentService {
           text: directive.text,
           submit: directive.submit,
           keys: directive.keys,
-          observeAfterMs: directive.observeAfterMs,
-          waitFor: directive.waitFor
+          observe: directive.observe ?? null,
         },
-        { timeoutMs: directive.timeoutMs ?? 5000 }
+        { timeoutMs: directive.observe?.timeoutMs ?? 5000 }
       );
 
       const finalReadiness = this.normalizeReadiness(result.readiness, {
-        ready: true,
-        confidence: 0.6,
-        trigger: directive.waitFor ?? "send",
+        ready: false,
+        confidence: 0.0,
+        trigger: "dispatch_only",
         hints: DEFAULT_READINESS_HINTS
       });
       this.logReadinessDecision(directive.tool, finalReadiness);
@@ -1421,16 +1441,15 @@ export class AgentService {
     directive: Extract<AgentDirective, { type: "tool_call" }>
   ): Record<string, unknown> {
     switch (directive.tool) {
-      case "terminal.send":
+      case "terminal.send": {
+        const observe = this.serializeTerminalSendObserveArg(directive.observe);
         return {
           ...(typeof directive.text === "string" ? { text: directive.text } : {}),
           ...(directive.submit === true ? { submit: true } : {}),
           ...(directive.keys?.length ? { keys: directive.keys } : {}),
-          ...(typeof directive.observeAfterMs === "number"
-            ? { observe_after_ms: directive.observeAfterMs }
-            : {}),
-          ...(directive.waitFor ? { wait_for: directive.waitFor } : {})
+          ...(observe !== undefined ? { observe } : {})
         };
+      }
       case "terminal.observe":
         return {
           ...(typeof directive.lines === "number" ? { lines: directive.lines } : {}),
@@ -1455,6 +1474,52 @@ export class AgentService {
       return "settled";
     }
     return undefined;
+  }
+
+  private parseTerminalSendObserveArg(
+    value: unknown,
+    legacy?: {
+      afterMs?: unknown;
+      waitFor?: unknown;
+      timeoutMs?: unknown;
+    },
+  ): TerminalSendObserveDirective | null {
+    if (value === null) {
+      return null;
+    }
+
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      const waitFor = this.parseWaitForArg(record.wait_for);
+      return {
+        ...(typeof record.after_ms === "number" ? { afterMs: record.after_ms } : {}),
+        ...(waitFor ? { waitFor } : {}),
+        ...(typeof record.timeout_ms === "number" ? { timeoutMs: record.timeout_ms } : {}),
+      };
+    }
+
+    const waitFor = this.parseWaitForArg(legacy?.waitFor);
+    const fallback = {
+      ...(typeof legacy?.afterMs === "number" ? { afterMs: legacy.afterMs } : {}),
+      ...(waitFor ? { waitFor } : {}),
+      ...(typeof legacy?.timeoutMs === "number" ? { timeoutMs: legacy.timeoutMs } : {}),
+    };
+
+    return Object.keys(fallback).length > 0 ? fallback : null;
+  }
+
+  private serializeTerminalSendObserveArg(
+    observe?: TerminalSendObserveDirective | null,
+  ): Record<string, unknown> | undefined {
+    if (observe === null || observe === undefined) {
+      return undefined;
+    }
+
+    return {
+      ...(typeof observe.afterMs === "number" ? { after_ms: observe.afterMs } : {}),
+      ...(observe.waitFor ? { wait_for: observe.waitFor } : {}),
+      ...(typeof observe.timeoutMs === "number" ? { timeout_ms: observe.timeoutMs } : {}),
+    };
   }
 
   private serializeTerminalDelta(

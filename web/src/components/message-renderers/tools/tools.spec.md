@@ -31,7 +31,7 @@ Renders the revised terminal tool contract:
 - `payload.view` / `payload.lines` - Observation metadata for `terminal.observe`
 
 **Rendering**:
-- `terminal.send`: compact delta-first card showing readiness, context source, submitted state, and any visible delta excerpt
+- `terminal.send`: compact delta-first card showing readiness, context source, submitted state, and any visible delta excerpt, while distinguishing `No observation` from an observed-but-unchanged result
 - `terminal.observe`: dashed observation badge, including explicit wait mode when present
 
 **Example Outputs**:

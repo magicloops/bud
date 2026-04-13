@@ -142,8 +142,11 @@ export type SendInteraction = {
   text?: string;
   submit?: boolean;
   keys?: string[];
-  observeAfterMs?: number;
-  waitFor?: TerminalWaitFor;
+  observe?: {
+    afterMs?: number;
+    waitFor?: TerminalWaitFor;
+    timeoutMs?: number;
+  } | null;
 };
 
 export type SendResult = {
@@ -159,6 +162,12 @@ type SendResultPayload = {
   delta?: TerminalDeltaMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
+};
+
+type ResolvedSendObservation = {
+  afterMs: number;
+  waitFor: TerminalWaitFor;
+  timeoutMs: number;
 };
 
 export type BrowserTerminalStateSnapshot = {
@@ -195,6 +204,21 @@ export type TerminalReplayPlan =
 
 // Timeout for clearing stale pending commands (30 minutes)
 const STALE_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
+
+function normalizeSendObservation(
+  interaction: SendInteraction,
+  fallbackTimeoutMs: number,
+): ResolvedSendObservation | null {
+  if (interaction.observe === null || interaction.observe === undefined) {
+    return null;
+  }
+
+  return {
+    afterMs: interaction.observe.afterMs ?? 1000,
+    waitFor: interaction.observe.waitFor ?? "none",
+    timeoutMs: interaction.observe.timeoutMs ?? fallbackTimeoutMs,
+  };
+}
 
 export class TerminalSessionManager {
   private readonly logger: FastifyBaseLogger;
@@ -1160,9 +1184,9 @@ export class TerminalSessionManager {
     }
 
     const requestId = `send_${ulid()}`;
-    const timeoutMs = options.timeoutMs ?? 5000;
-    const waitFor = interaction.waitFor ?? "none";
-    const observeAfterMs = interaction.observeAfterMs ?? 1000;
+    const fallbackTimeoutMs = options.timeoutMs ?? 5000;
+    const observe = normalizeSendObservation(interaction, fallbackTimeoutMs);
+    const timeoutMs = observe?.timeoutMs ?? fallbackTimeoutMs;
     const source = options.source ?? "agent";
     const rawInput = `${interaction.text ?? ""}${interaction.submit === true ? "\n" : ""}`;
 
@@ -1190,9 +1214,13 @@ export class TerminalSessionManager {
       text: interaction.text ?? null,
       submit: interaction.submit === true,
       keys: interaction.keys ?? [],
-      observe_after_ms: observeAfterMs,
-      wait_for: waitFor,
-      timeout_ms: timeoutMs,
+      observe: observe
+        ? {
+            after_ms: observe.afterMs,
+            wait_for: observe.waitFor,
+            timeout_ms: observe.timeoutMs,
+          }
+        : null,
     };
 
     const sent = sendFrameToBud(session.budId, payload);
@@ -1208,8 +1236,10 @@ export class TerminalSessionManager {
         hasText: Boolean(interaction.text),
         submit: interaction.submit === true,
         keyCount: interaction.keys?.length ?? 0,
-        observeAfterMs,
-        waitFor,
+        observeEnabled: observe !== null,
+        observeAfterMs: observe?.afterMs ?? null,
+        waitFor: observe?.waitFor ?? null,
+        timeoutMs,
         component: "terminal_session_manager"
       },
       "Sending terminal_send request"

@@ -3,6 +3,8 @@
 **Status**: Draft
 **Created**: 2026-04-10
 **Design Doc**: [../../design/terminal-human-input-boundaries-and-replay-semantics.md](../../design/terminal-human-input-boundaries-and-replay-semantics.md)
+**Latency Follow-Up Design**: [../../design/browser-terminal-typing-latency-and-send-modes.md](../../design/browser-terminal-typing-latency-and-send-modes.md)
+**Daemon Follow-Up Design**: [../../design/daemon-terminal-send-ack-and-optional-observation.md](../../design/daemon-terminal-send-ack-and-optional-observation.md)
 **Debug Note**: [../../debug/thread-terminal-1-2c-da-replay.md](../../debug/thread-terminal-1-2c-da-replay.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -11,6 +13,7 @@
 **Phase 3**: [phase-3-terminal-state-bootstrap-and-reference-web-adoption.md](./phase-3-terminal-state-bootstrap-and-reference-web-adoption.md)
 **Phase 4**: [phase-4-live-only-terminal-stream-and-durable-resume.md](./phase-4-live-only-terminal-stream-and-durable-resume.md)
 **Phase 5**: [phase-5-validation-docs-and-cleanup.md](./phase-5-validation-docs-and-cleanup.md)
+**Phase 6**: [phase-6-optional-observation-send-adoption.md](./phase-6-optional-observation-send-adoption.md)
 
 ---
 
@@ -33,6 +36,8 @@ That means the current web terminal boundary does not distinguish:
 
 The design review in [../../design/terminal-human-input-boundaries-and-replay-semantics.md](../../design/terminal-human-input-boundaries-and-replay-semantics.md) recommends treating this as a transport-boundary and stream/bootstrap problem, not as a one-off xterm filtering bug.
 
+Follow-up validation after the first structured browser-send rollout exposed a second-order regression: browser typing now inherits an agent-oriented observed-send wait and therefore pays avoidable latency. The follow-up design notes recommend keeping one shared `terminal_send` path while making observation optional and explicitly requested instead of splitting browser and agent onto separate daemon send implementations.
+
 ## Objective
 
 Implement a structural fix for thread-view terminal input and reconnect behavior by:
@@ -44,6 +49,7 @@ Implement a structural fix for thread-view terminal input and reconnect behavior
 5. changing terminal stream semantics so no-cursor attach is live-only and explicit resume uses durable output offsets
 6. reclassifying `/terminal/history` as explicit history/scrollback instead of reconnect bootstrap
 7. preserving correct ownership and audit semantics so emulator protocol is not logged as human input
+8. refining the shared `terminal_send` contract so observation is optional and browser xterm.js usage does not inherit agent-oriented send latency
 
 ## Why This Matters
 
@@ -87,6 +93,9 @@ These decisions are fixed for this plan:
 - Reclassify `/terminal/history` as explicit history/scrollback, not reconnect bootstrap.
 - Preserve user ownership and authorization on every new read/write/stream route.
 - Preserve audit semantics by distinguishing `human`, `emulator_protocol`, `agent`, and `system` sources.
+- Keep one shared structured send implementation for browser and agent callers; vary observation behavior, not the underlying tmux dispatch path.
+- Normal browser typing should not pay post-send observation latency when live terminal SSE already provides the display update path.
+- Agent/tool callers should request observation explicitly when they need delta/readiness rather than relying on browser defaults or a separate daemon send primitive.
 
 ## Success Criteria
 
@@ -96,6 +105,9 @@ These decisions are fixed for this plan:
 - [ ] Emulator protocol traffic is no longer logged or handled as if the user typed it.
 - [ ] The browser has a structured `POST /api/threads/:thread_id/terminal/send` route for normal terminal interaction.
 - [ ] The browser keeps a narrow source-tagged raw-bytes fallback only for unsupported cases during rollout.
+- [ ] The shared `terminal_send` contract supports optional observation rather than forcing one observation policy on every caller.
+- [ ] Normal browser xterm interaction no longer waits on the agent-oriented observation window by default.
+- [ ] Agent/tool callers can still opt into observed-send delta/readiness when needed.
 - [ ] `GET /api/threads/:thread_id/terminal/state` exists and returns safe bootstrap state plus `latest_byte_offset`.
 - [ ] The thread view no longer replays raw `/terminal/history` back through xterm during normal open/reconnect.
 - [ ] Terminal stream attach without `after_offset` is live-only.
@@ -114,6 +126,7 @@ These decisions are fixed for this plan:
 - changing the agent `terminal.send` / `terminal.observe` model except where browser reuse is helpful
 - changing terminal session lifecycle semantics beyond what is needed for safe bootstrap/resume
 - solving cross-instance replay/state durability beyond the current single-instance prototype assumptions
+- forking the daemon/runtime into separate primary browser-send and agent-send implementations
 
 ## Phase Overview
 
@@ -124,6 +137,7 @@ These decisions are fixed for this plan:
 | 3 | [phase-3-terminal-state-bootstrap-and-reference-web-adoption.md](./phase-3-terminal-state-bootstrap-and-reference-web-adoption.md) | Urgent | A safe `terminal/state` bootstrap route replaces raw-history replay on open/reconnect in the reference web client |
 | 4 | [phase-4-live-only-terminal-stream-and-durable-resume.md](./phase-4-live-only-terminal-stream-and-durable-resume.md) | Urgent | Terminal stream semantics become live-only by default with explicit `after_offset` durable catch-up, and `/terminal/history` is no longer part of normal reconnect bootstrap |
 | 5 | [phase-5-validation-docs-and-cleanup.md](./phase-5-validation-docs-and-cleanup.md) | High | Tests, docs, specs, validation, and cleanup land together so the new terminal boundary is stable and understandable |
+| 6 | [phase-6-optional-observation-send-adoption.md](./phase-6-optional-observation-send-adoption.md) | Urgent | The shared `terminal_send` path gains optional observation so browser xterm typing becomes dispatch-fast again while agent/tool callers keep explicit observed-send behavior |
 
 ## Sequencing Notes
 
@@ -133,6 +147,8 @@ These decisions are fixed for this plan:
 - Phase 3 must land before Phase 4 flips stream semantics, otherwise open/reconnect would lose bootstrap behavior.
 - Phase 4 should change terminal-stream semantics in a terminal-specific route/path, not by silently changing generic SSE event-bus behavior for every route.
 - Phase 5 should update protocol/spec/docs in the same sweep as final code cleanup so the new boundary does not drift in docs immediately.
+- Phase 6 builds on Phase 2's shared structured-send path: do not solve browser latency by reintroducing raw `/terminal/input` as the primary browser transport.
+- Phase 6 should keep one daemon/runtime send implementation and make observation optional rather than splitting browser and agent onto separate core send handlers.
 
 ## Expected Files And Areas
 
@@ -149,6 +165,7 @@ These decisions are fixed for this plan:
 
 - `service/src/routes/threads.ts`
 - `service/src/runtime/terminal-session-manager.ts`
+- `service/src/agent/`
 - `service/src/runtime/event-bus.ts`
 - `service/src/routes/routes.spec.md`
 - `service/src/runtime/runtime.spec.md`
@@ -175,6 +192,7 @@ These decisions are fixed for this plan:
 | Byte-offset resume misses edge cases around session replacement or closed sessions | Medium | Medium | Include session identity in `terminal/state`, explicitly refetch state when session identity changes, and validate reconnect/session-replacement cases |
 | Audit/source tagging remains inconsistent across browser, service, and daemon paths | Medium | High | Define source taxonomy early in Phase 1/2 and update all touched write paths together |
 | The old `/terminal/input` route survives in active browser use and the contract stays mixed | Medium | Medium | Make Phase 2 explicitly move the reference web client off `/terminal/input` for normal typing and leave the raw route as a documented fallback only |
+| Browser typing remains latency-bound even after moving onto structured send | High | High | Make observation optional on the shared `terminal_send` path and validate that the browser waits only for dispatch, not observed terminal change |
 
 ## Rollout Strategy
 
@@ -183,6 +201,7 @@ These decisions are fixed for this plan:
 3. Add `terminal/state` and move the reference web client to safe bootstrap.
 4. Flip terminal stream semantics to live-only by default with explicit offset catch-up.
 5. Finish with tests, docs, specs, validation, and cleanup.
+6. Refine the shared send contract so observation is optional and update browser xterm plus agent usage accordingly.
 
 ## Definition Of Done
 
@@ -191,6 +210,7 @@ These decisions are fixed for this plan:
 - [ ] The backend no longer treats emulator protocol as human input.
 - [ ] Reference web terminal open/reconnect no longer depends on replaying raw `/terminal/history` through xterm.
 - [ ] Terminal stream semantics are live-only by default with explicit durable resume.
+- [ ] Browser xterm typing uses the shared structured send path without default observation latency.
+- [ ] Agent/tool callers can still opt into observed-send proof on that same shared path.
 - [ ] Manual browser terminal interaction still works across the validated key/text cases.
 - [ ] The plan folder, touched specs, and protocol docs describe the shipped contract consistently.
-

@@ -31,7 +31,7 @@ export const decodeTerminalData = (data: string) => string
 **Terminal-related API types**:
 - `BrowserTerminalInputSource` - Browser source taxonomy: `human` or `emulator_protocol`
 - `ApiTerminalState` - Safe terminal bootstrap snapshot with `session_id`, `state`, `latest_byte_offset`, `readiness`, `snapshot`, `updated_at`
-- `ApiTerminalSendRequest` / `ApiTerminalSendResponse` - Structured browser terminal-send contract
+- `ApiTerminalSendRequest` / `ApiTerminalSendResponse` - Structured browser terminal-send contract, including optional nested `observe`
 
 **Other important API types**:
 - `ApiBud` - Bud response (id, name, status, capabilities)
@@ -58,7 +58,7 @@ Browser-side terminal transport controller.
 
 **Responsibilities**:
 - Attaches to xterm and consumes classified input from `terminal-xterm-input.ts`
-- Routes normal browser typing and modeled keys through structured `/terminal/send`
+- Routes normal browser typing and modeled keys through structured `/terminal/send`, explicitly setting `observe: null` so typing is not gated on post-send observation
 - Keeps a narrow raw fallback for unsupported human sequences and emulator protocol traffic
 - Tracks `lastRenderedByteOffset` so reconnects can resume with `after_offset=<n>`
 - Applies safe `/terminal/state` bootstrap snapshots before live stream attach

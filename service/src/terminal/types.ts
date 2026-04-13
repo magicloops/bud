@@ -19,6 +19,7 @@ export type TerminalReadyTrigger =
   | "quiescence"
   | "timeout"
   | "activity_stable"
+  | "dispatch_only"
   | "changed"
   | "settled";
 export type TerminalWaitFor =
@@ -149,6 +150,12 @@ export interface TerminalReadyMessage extends TerminalEnvelope {
   last_line: string;
 }
 
+export interface TerminalSendObserve {
+  after_ms?: number;
+  wait_for?: TerminalWaitFor;
+  timeout_ms?: number;
+}
+
 export interface TerminalSendMessage extends TerminalEnvelope {
   type: "terminal_send";
   session_id: string;
@@ -156,9 +163,7 @@ export interface TerminalSendMessage extends TerminalEnvelope {
   text?: string;
   submit?: boolean;
   keys?: string[];
-  observe_after_ms?: number;
-  wait_for?: TerminalWaitFor;
-  timeout_ms?: number;
+  observe?: TerminalSendObserve | null;
 }
 
 export interface TerminalSendResultMessage extends TerminalEnvelope {

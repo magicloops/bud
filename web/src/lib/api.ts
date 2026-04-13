@@ -358,6 +358,11 @@ export type ApiTerminalSendRequest = {
   text?: string
   submit?: boolean
   keys?: string[]
+  observe?: {
+    after_ms?: number
+    wait_for?: 'none' | 'shell_ready' | 'changed' | 'settled'
+    timeout_ms?: number
+  } | null
   source?: BrowserTerminalInputSource
   raw_input?: string
 }

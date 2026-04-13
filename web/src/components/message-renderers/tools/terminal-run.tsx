@@ -7,6 +7,7 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
   const delta = isRecord(payload.delta) ? payload.delta : null
   const readiness = isRecord(payload.readiness) ? payload.readiness : null
   const contextAfter = isRecord(payload.context_after) ? payload.context_after : null
+  const deltaObserved = delta !== null
   const deltaChanged = delta?.changed === true
   const deltaText = typeof delta?.text === 'string' && delta.text.length > 0 ? delta.text : null
   const deltaTruncated = delta?.truncated === true
@@ -14,6 +15,7 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
   const readinessConfidence =
     typeof readiness?.confidence === 'number' ? readiness.confidence : null
   const readinessTrigger = typeof readiness?.trigger === 'string' ? readiness.trigger : null
+  const readinessWasMeasured = readinessTrigger !== 'dispatch_only'
   const submitted = typeof payload.submitted === 'boolean' ? payload.submitted : null
   const contextMode = typeof contextAfter?.mode === 'string' ? contextAfter.mode : null
   const contextProgram =
@@ -29,10 +31,10 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
   return (
     <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed">
       <div className="mb-2 flex flex-wrap gap-2">
-        <span className={deltaBadgeClassName(deltaChanged)}>
-          {deltaChanged ? 'Visible delta' : 'No visible delta'}
+        <span className={deltaBadgeClassName(deltaObserved, deltaChanged)}>
+          {!deltaObserved ? 'No observation' : deltaChanged ? 'Visible delta' : 'No visible delta'}
         </span>
-        {readinessConfidence !== null ? (
+        {readinessConfidence !== null && readinessWasMeasured ? (
           <span className="rounded-full border border-border bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground">
             {readinessReady ? 'Ready' : 'Not ready'} {Math.round(readinessConfidence * 100)}%
           </span>
@@ -92,9 +94,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
 }
 
-function deltaBadgeClassName(changed: boolean): string {
+function deltaBadgeClassName(observed: boolean, changed: boolean): string {
   const base =
     'rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide'
+
+  if (!observed) {
+    return `${base} bg-slate-500/15 text-slate-700 dark:text-slate-300`
+  }
 
   return changed
     ? `${base} bg-emerald-500/15 text-emerald-700 dark:text-emerald-300`

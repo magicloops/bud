@@ -31,7 +31,7 @@ Defines agent behavior as "Bud Agent" with:
 - Readiness confidence interpretation (≥0.8 ready, 0.5-0.8 probably ready, <0.5 still processing)
 - Hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (detecting when inside Python/Node/Claude Code vs shell)
-- Interactive wait guidance using `wait_for: "changed"` to confirm visible reaction and `wait_for: "settled"` to wait for a short quiet window
+- Interactive wait guidance using `observe: { wait_for: "changed" }` to confirm visible reaction and `observe: { wait_for: "settled" }` to wait for a short quiet window
 - Final-response guidance (direct markdown text, no JSON wrapper)
 
 #### Tool Definitions (Lines 130-191)
@@ -40,7 +40,7 @@ Three canonical tool definitions using standard JSON Schema format:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `terminal_send` | `text?`, `submit?`, `keys?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a default fast post-send delta |
+| `terminal_send` | `text?`, `submit?`, `keys?`, `observe?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input; omit `observe` for dispatch-only sends or include `observe: { ... }` for post-send evidence |
 | `terminal_observe` | `lines?`, `wait_for?`, `view?`, `timeout_ms?` | Observe terminal deltas by default, with explicit full-screen/history modes |
 | `terminal_interrupt` | none | Send Ctrl+C |
 
@@ -108,6 +108,7 @@ startUserMessage()
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent records fast post-send delta data and avoids claiming program progress when no visible delta appears.
+- `terminal.send` can now be intentionally dispatch-only when `observe` is omitted; in that case the follow-up guidance tells the model to verify state before assuming the foreground program accepted the input.
 - `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model, and replay normalization maps any older `screen_stable` tool payloads to `settled`.
 - `terminal.observe` now defaults to `view: "delta"` and exposes `view: "screen"` / `view: "history"` only when the model explicitly needs broader context.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
@@ -131,6 +132,7 @@ Standalone Node tests for Phase 6 send-result interpretation.
 - unchanged post-send deltas map to `acceptance.status = "no_visible_change"`
 - summaries remain conservative when no visible delta was observed
 - ambiguous sends recommend `terminal.observe` before the agent assumes the TUI accepted the input
+- dispatch-only sends now map to an explicit "observe before assuming acceptance" hint
 - settled REPL/TUI updates still map to `state.status = "waiting_for_input"`
 - send results that visibly return to shell map their next step back to another `terminal.send`
 

@@ -82,6 +82,12 @@ const TerminalResizeBodySchema = z.object({
 
 const BrowserTerminalInputSourceSchema = z.enum(["human", "emulator_protocol"]);
 
+const TerminalSendObserveBodySchema = z.object({
+  after_ms: z.number().int().min(0).optional(),
+  wait_for: z.enum(["none", "shell_ready", "changed", "settled"]).optional(),
+  timeout_ms: z.number().int().positive().optional(),
+});
+
 const TerminalInputBodySchema = z.object({
   input: z.string().min(1),
   source: BrowserTerminalInputSourceSchema.optional()
@@ -92,6 +98,7 @@ const TerminalSendBodySchema = z
     text: z.string().optional(),
     submit: z.boolean().optional(),
     keys: z.array(z.string().min(1)).max(32).optional(),
+    observe: TerminalSendObserveBodySchema.nullish(),
     source: BrowserTerminalInputSourceSchema.optional(),
     raw_input: z.string().optional()
   })
@@ -1340,6 +1347,13 @@ export async function registerThreadTerminalRoutes(
           text: body.data.text,
           submit: body.data.submit,
           keys: body.data.keys,
+          observe: body.data.observe
+            ? {
+                afterMs: body.data.observe.after_ms,
+                waitFor: body.data.observe.wait_for,
+                timeoutMs: body.data.observe.timeout_ms,
+              }
+            : null,
         },
         { timeoutMs: 5000, source },
       )

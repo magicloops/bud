@@ -1,6 +1,6 @@
 # thread-terminal-boundaries
 
-Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally.
+Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally, plus the follow-up shared-send refinement needed to remove browser typing latency without undoing the boundary work.
 
 ## Purpose
 
@@ -13,6 +13,7 @@ The current plan assumes:
 - replay-safe terminal bootstrap requires an explicit state route rather than raw historical parser replay
 - terminal-stream fresh attach should become live-only, with explicit durable offset-based catch-up when the client resumes
 - browser, service, and daemon semantics should distinguish `human` input from `emulator_protocol`
+- browser and agent callers should keep converging on one shared `terminal_send` path even when their observation needs differ
 - the current single-instance prototype architecture remains the deployment model for this work
 
 ## Files
@@ -73,6 +74,15 @@ Finalization phase covering:
 - compatibility cleanup
 - final validation work
 
+### `phase-6-optional-observation-send-adoption.md`
+
+Follow-up shared-send phase covering:
+
+- optional observation on the shared `terminal_send` contract
+- browser xterm/controller adoption of dispatch-only structured sends
+- explicit agent/tool observation usage on the same daemon/runtime path
+- the latency/robustness tradeoffs discovered during validation
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -84,6 +94,8 @@ Manual verification checklist for the plan.
 ## Dependencies
 
 - [../../design/terminal-human-input-boundaries-and-replay-semantics.md](../../design/terminal-human-input-boundaries-and-replay-semantics.md) - primary design review and recommended contract
+- [../../design/browser-terminal-typing-latency-and-send-modes.md](../../design/browser-terminal-typing-latency-and-send-modes.md) - browser/service design follow-up for restoring human typing latency without reverting to raw input
+- [../../design/daemon-terminal-send-ack-and-optional-observation.md](../../design/daemon-terminal-send-ack-and-optional-observation.md) - daemon-focused review of one shared send implementation with optional observation
 - [../../debug/thread-terminal-1-2c-da-replay.md](../../debug/thread-terminal-1-2c-da-replay.md) - current debug findings and challenged hypotheses
 - [../../reference/unknown-terminal-input.md](../../reference/unknown-terminal-input.md) - original note reviewed during the investigation
 - [../revised-terminal-contract/implementation-spec-follow-up.md](../revised-terminal-contract/implementation-spec-follow-up.md) - current terminal tool-contract follow-up work this plan builds alongside rather than replacing
