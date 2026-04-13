@@ -370,9 +370,6 @@ struct TerminalSendFrame {
     submit: Option<bool>,
     keys: Option<Vec<String>>,
     observe: Option<TerminalSendObserveFrame>,
-    observe_after_ms: Option<u64>,
-    wait_for: Option<String>,
-    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -992,7 +989,7 @@ fn parse_screen_wait_mode(wait_for: &str) -> Result<ScreenWaitMode> {
     match wait_for {
         "none" => Ok(ScreenWaitMode::None),
         "changed" => Ok(ScreenWaitMode::Changed),
-        "settled" | "screen_stable" => Ok(ScreenWaitMode::Settled),
+        "settled" => Ok(ScreenWaitMode::Settled),
         _ => bail!("unsupported wait_for mode: {wait_for}"),
     }
 }
@@ -1005,30 +1002,13 @@ struct ResolvedTerminalSendObserve {
 }
 
 fn resolve_terminal_send_observe(frame: &TerminalSendFrame) -> Option<ResolvedTerminalSendObserve> {
-    if let Some(observe) = &frame.observe {
-        return Some(ResolvedTerminalSendObserve {
-            after_ms: observe.after_ms.unwrap_or(1000),
-            wait_for: observe
-                .wait_for
-                .clone()
-                .unwrap_or_else(|| "none".to_string()),
-            timeout_ms: observe.timeout_ms.unwrap_or(5_000),
-        });
-    }
-
-    let legacy_observe_requested =
-        frame.observe_after_ms.is_some() || frame.wait_for.is_some() || frame.timeout_ms.is_some();
-    if !legacy_observe_requested {
-        return None;
-    }
-
-    Some(ResolvedTerminalSendObserve {
-        after_ms: frame.observe_after_ms.unwrap_or(1000),
-        wait_for: frame
+    frame.observe.as_ref().map(|observe| ResolvedTerminalSendObserve {
+        after_ms: observe.after_ms.unwrap_or(1000),
+        wait_for: observe
             .wait_for
             .clone()
             .unwrap_or_else(|| "none".to_string()),
-        timeout_ms: frame.timeout_ms.unwrap_or(5_000),
+        timeout_ms: observe.timeout_ms.unwrap_or(5_000),
     })
 }
 
@@ -1926,7 +1906,7 @@ impl TerminalManager {
                             }
                         }
                     }
-                    "changed" | "settled" | "screen_stable" => {
+                    "changed" | "settled" => {
                         let wait_result = self
                             .wait_for_screen_state(
                                 &handle,
@@ -1984,7 +1964,7 @@ impl TerminalManager {
             session_id = session_id,
             wait_for = wait_for,
             observe_enabled = observe.is_some(),
-            observe_after_ms = observe
+            observe_delay_ms = observe
                 .as_ref()
                 .map(|value| value.after_ms)
                 .unwrap_or(0),
@@ -2327,7 +2307,7 @@ impl TerminalManager {
                     .await?
                     .assessment
             }
-            "settled" | "screen_stable" => {
+            "settled" => {
                 let (assessment, _, _, _) = self
                     .wait_activity_and_capture(handle, request_id, timeout_ms)
                     .await?;
@@ -4546,14 +4526,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_screen_wait_mode_still_accepts_legacy_alias() {
-        assert_eq!(
-            parse_screen_wait_mode("screen_stable").unwrap(),
-            ScreenWaitMode::Settled
-        );
-    }
-
-    #[test]
     fn build_screen_wait_assessment_applies_phase_seven_overrides() {
         let assessment = build_screen_wait_assessment(
             "Claude is thinking...\n",
@@ -4685,9 +4657,6 @@ mod tests {
                 wait_for: None,
                 timeout_ms: None,
             }),
-            observe_after_ms: None,
-            wait_for: None,
-            timeout_ms: None,
         };
 
         let observe = resolve_terminal_send_observe(&frame).expect("observe config");
@@ -4712,9 +4681,6 @@ mod tests {
             submit: Some(false),
             keys: Some(vec![]),
             observe: None,
-            observe_after_ms: None,
-            wait_for: None,
-            timeout_ms: None,
         };
 
         assert!(resolve_terminal_send_observe(&frame).is_none());

@@ -86,12 +86,10 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 - `bootstrap.kind: "text"` for explicit degraded text restore
 - `bootstrap.kind: "unavailable"` when the backend cannot provide a safe bootstrap surface
 
-The transitional `snapshot` field may still be present for compatibility, but new clients SHOULD treat `bootstrap` as the source of truth.
-
 ### 2.3.1 Terminal Browser Write Surface
 
 - Structured path: `POST /api/threads/:thread_id/terminal/send`
-- Transitional raw fallback: `POST /api/threads/:thread_id/terminal/input`
+- Narrow raw fallback: `POST /api/threads/:thread_id/terminal/input`
 - Normal browser typing SHOULD use the structured send path with `text`, `submit`, and `keys`, and SHOULD omit `observe` (or send `observe: null`) so keystrokes stay fire-and-forget.
 - Agent/tooling callers that need proof of visible terminal reaction SHOULD use the same structured send path with an `observe` object.
 - Raw fallback exists for unsupported browser sequences and emulator protocol traffic that should not be conflated with human keystrokes.
@@ -413,7 +411,6 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"none"` when `observe` is present)
     * `timeout_ms`: max wait time for readiness (default: 5000 when `observe` is present)
   * If `observe` is omitted or `null`, Bud SHOULD return an immediate dispatch acknowledgement without waiting for a capture or readiness proof.
-  * Bud currently accepts the older flat `observe_after_ms` / `wait_for` / `timeout_ms` fields as a compatibility fallback during rollout.
 
 * `terminal_observe` — explicitly inspect rendered screen / scrollback
   ```json
@@ -558,10 +555,10 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
 * `POST /api/threads/:thread_id/terminal` — create or fetch the active thread-scoped terminal session row
 * `POST /api/threads/:thread_id/terminal/ensure` — ensure the thread-scoped terminal is running on Bud
 * `GET /api/threads/:thread_id/terminal` — get thread-scoped terminal session info
-* `GET /api/threads/:thread_id/terminal/state` — get `{ session_id, state, latest_byte_offset, readiness, bootstrap, updated_at }`, with transitional `snapshot` compatibility
+* `GET /api/threads/:thread_id/terminal/state` — get `{ session_id, state, latest_byte_offset, readiness, bootstrap, updated_at }`
 * `GET /api/threads/:thread_id/terminal/history?bytes=N&since_offset=M` — fetch thread-scoped output history
 * `POST /api/threads/:thread_id/terminal/send` — send structured input `{ text?, submit?, keys?, observe? }`
-* `POST /api/threads/:thread_id/terminal/input` — send raw fallback input `{ input: "..." }`
+* `POST /api/threads/:thread_id/terminal/input` — send narrow raw fallback input `{ input: "..." }`
 * `POST /api/threads/:thread_id/terminal/interrupt` — send Ctrl+C
 * `POST /api/threads/:thread_id/terminal/resize` — resize terminal `{ cols, rows }`
 

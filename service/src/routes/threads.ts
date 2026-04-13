@@ -337,96 +337,6 @@ function projectTerminalReplayChunk(chunk: DurableTerminalReplayChunk, afterOffs
   }
 }
 
-function truncateDebugText(value: string, maxLength = 160) {
-  const normalized = value.replace(/\s+/g, ' ').trim()
-  if (normalized.length <= maxLength) {
-    return normalized
-  }
-  return `${normalized.slice(0, maxLength - 3)}...`
-}
-
-function summarizeTerminalTextForDebug(text: string, visibleRows?: number | null) {
-  const normalized = text.replace(/\r\n/g, '\n')
-  const lines = normalized.length === 0 ? [] : normalized.split('\n')
-  let trailingBlankLines = 0
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if ((lines[index] ?? '').trim().length === 0) {
-      trailingBlankLines += 1
-      continue
-    }
-    break
-  }
-
-  let lastNonEmptyLine = ''
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if ((lines[index] ?? '').trim().length > 0) {
-      lastNonEmptyLine = lines[index] ?? ''
-      break
-    }
-  }
-
-  const lastLine = lines.length > 0 ? (lines[lines.length - 1] ?? '') : ''
-
-  return {
-    lineCount: lines.length,
-    trailingBlankLines,
-    endsWithNewline: normalized.endsWith('\n'),
-    visibleRows: visibleRows ?? null,
-    fillsVisibleRows: visibleRows ? lines.length >= visibleRows : null,
-    trailingBlankRowsVsViewport:
-      visibleRows && trailingBlankLines > 0 ? Math.min(trailingBlankLines, visibleRows) : 0,
-    lastLineLength: lastLine.length,
-    lastLine: truncateDebugText(lastLine),
-    lastNonEmptyLine: truncateDebugText(lastNonEmptyLine),
-  }
-}
-
-function getTerminalBootstrapText(bootstrap: BrowserTerminalBootstrap) {
-  switch (bootstrap.kind) {
-    case "grid":
-      return bootstrap.screen.lines.join("\n");
-    case "text":
-      return bootstrap.text;
-    case "unavailable":
-      return "";
-  }
-}
-
-function summarizeTerminalBootstrapForDebug(bootstrap: BrowserTerminalBootstrap) {
-  if (bootstrap.kind === "grid") {
-    return {
-      kind: bootstrap.kind,
-      source: bootstrap.source,
-      captureScope: bootstrap.capture_scope,
-      pane: bootstrap.pane,
-      cursor: bootstrap.cursor,
-      paneMode: bootstrap.pane_mode ?? null,
-      screen: summarizeTerminalTextForDebug(
-        bootstrap.screen.lines.join("\n"),
-        bootstrap.pane.rows,
-      ),
-      trailingSpacesPreserved: bootstrap.screen.trailing_spaces_preserved,
-      wraps: bootstrap.screen.wraps ?? null,
-    };
-  }
-
-  if (bootstrap.kind === "text") {
-    return {
-      kind: bootstrap.kind,
-      source: bootstrap.source,
-      pane: bootstrap.pane,
-      degradedReason: bootstrap.degraded_reason,
-      captureScope: bootstrap.capture_scope ?? null,
-      text: summarizeTerminalTextForDebug(bootstrap.text, bootstrap.pane?.rows ?? null),
-    };
-  }
-
-  return {
-    kind: bootstrap.kind,
-    reason: bootstrap.reason,
-  };
-}
-
 function serializeThread(row: typeof threadTable.$inferSelect) {
   return {
     thread_id: row.threadId,
@@ -1150,23 +1060,11 @@ export async function registerThreadTerminalRoutes(
       reason: isBudOnline(session.budId) ? "capture_unavailable" : "bud_offline",
     }
     let readiness = terminalSessionManager.getLatestReadiness(session.sessionId)
-    let bootstrapCaptureMeta: Record<string, unknown> | null = null
 
     if (isBudOnline(session.budId)) {
       try {
         const captured = await terminalSessionManager.captureBootstrap(session.sessionId, 2500)
         bootstrap = captured.bootstrap
-        const bootstrapText = getTerminalBootstrapText(bootstrap)
-        bootstrapCaptureMeta = {
-          kind: bootstrap.kind,
-          outputBytes: Buffer.byteLength(bootstrapText, "utf-8"),
-          linesCaptured:
-            bootstrap.kind === "grid"
-              ? bootstrap.screen.lines.length
-              : bootstrapText.length === 0
-                ? 0
-                : bootstrapText.split("\n").length,
-        }
         if (!readiness) {
           readiness = captured.readiness
         }
@@ -1182,42 +1080,12 @@ export async function registerThreadTerminalRoutes(
       }
     }
 
-    const snapshotText = getTerminalBootstrapText(bootstrap)
-    const snapshotSource =
-      bootstrap.kind === "unavailable" ? "unavailable" : "capture_pane"
-    const bootstrapSummary = summarizeTerminalBootstrapForDebug(bootstrap)
-    server.log.info(
-      {
-        threadId: params.threadId,
-        sessionId: session.sessionId,
-        budId: session.budId,
-        state: sessionRow?.state ?? session.state,
-        latestByteOffset: sessionRow?.latestByteOffset ?? 0,
-        bootstrapSummary,
-        bootstrapCaptureMeta,
-        readiness: readiness
-          ? {
-              ready: readiness.ready,
-              confidence: readiness.confidence,
-              trigger: readiness.trigger,
-              prompt_type: readiness.prompt_type ?? null,
-            }
-          : null,
-        component: 'terminal_state_debug',
-      },
-      'Terminal state bootstrap prepared',
-    )
-
     return {
       session_id: session.sessionId,
       state: sessionRow?.state ?? session.state,
       latest_byte_offset: sessionRow?.latestByteOffset ?? 0,
       readiness,
       bootstrap,
-      snapshot: {
-        text: snapshotText,
-        source: snapshotSource,
-      },
       updated_at: sessionRow?.lastActivityAt?.toISOString() ?? null,
     }
   })
@@ -1246,30 +1114,6 @@ export async function registerThreadTerminalRoutes(
       afterOffset === null
         ? { status: 'ok', latestByteOffset: 0, earliestByteOffset: null, chunks: [] } satisfies DurableTerminalReplayPlan
         : await buildTerminalReplayPlan(session.sessionId, afterOffset)
-
-    const firstReplayChunk = replayPlan.chunks[0]
-    const lastReplayChunk = replayPlan.chunks[replayPlan.chunks.length - 1]
-    server.log.info(
-      {
-        threadId: params.threadId,
-        sessionId: session.sessionId,
-        budId: session.budId,
-        requestedAfterOffset: afterOffset,
-        attachMode: afterOffset === null ? 'live_only' : 'durable_resume',
-        replayStatus: replayPlan.status,
-        latestByteOffset: replayPlan.latestByteOffset,
-        earliestByteOffset: replayPlan.earliestByteOffset,
-        resumeAtTip: afterOffset !== null ? afterOffset >= replayPlan.latestByteOffset : null,
-        chunkCount: replayPlan.chunks.length,
-        firstChunkByteOffset: firstReplayChunk?.byteOffset ?? null,
-        lastChunkByteOffset: lastReplayChunk?.byteOffset ?? null,
-        lastChunkEndOffset: lastReplayChunk
-          ? lastReplayChunk.byteOffset + lastReplayChunk.data.length
-          : null,
-        component: 'terminal_stream_debug',
-      },
-      'Terminal stream attach plan computed',
-    )
 
     if (replayPlan.status === 'resync_required' && afterOffset !== null) {
       reply.sse({

@@ -30,7 +30,7 @@ export const decodeTerminalData = (data: string) => string
 
 **Terminal-related API types**:
 - `BrowserTerminalInputSource` - Browser source taxonomy: `human` or `emulator_protocol`
-- `ApiTerminalState` - Safe terminal bootstrap response with `session_id`, `state`, `latest_byte_offset`, `readiness`, `bootstrap`, `updated_at`, plus transitional `snapshot`
+- `ApiTerminalState` - Safe terminal bootstrap response with `session_id`, `state`, `latest_byte_offset`, `readiness`, `bootstrap`, and `updated_at`
 - `ApiTerminalSendRequest` / `ApiTerminalSendResponse` - Structured browser terminal-send contract, including optional nested `observe`
 
 **Other important API types**:
@@ -64,6 +64,7 @@ Browser-side terminal transport controller.
 - Applies richer `/terminal/state` bootstrap payloads before live stream attach
 - Uses `bootstrap.kind: "grid"` as the preferred restore path, rendering exact visible rows plus explicit cursor placement through xterm's public write path
 - Explicitly degrades `grid` bootstrap to text when local xterm geometry does not match the captured pane geometry
+- Keeps the degraded trailing-blank trim only on degraded/text bootstrap paths, not on rich grid restore
 - Restricts trailing-blank trimming to degraded/text bootstrap paths instead of applying it to full-fidelity grid restores
 - Trims overlapping durable replay bytes before writing into xterm
 - Logs bootstrap-shape and xterm buffer metrics in dev so cursor/bootstrap regressions remain inspectable while the richer contract rolls out

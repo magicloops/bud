@@ -109,7 +109,7 @@ startUserMessage()
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent records fast post-send delta data and avoids claiming program progress when no visible delta appears.
 - `terminal.send` can now be intentionally dispatch-only when `observe` is omitted; in that case the follow-up guidance tells the model to verify state before assuming the foreground program accepted the input.
-- `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model, and replay normalization maps any older `screen_stable` tool payloads to `settled`.
+- `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model.
 - `terminal.observe` now defaults to `view: "delta"` and exposes `view: "screen"` / `view: "history"` only when the model explicitly needs broader context.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.

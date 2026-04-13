@@ -180,10 +180,6 @@ export type BrowserTerminalStateSnapshot = {
   latestByteOffset: number;
   readiness: ReadinessAssessment | null;
   bootstrap: BrowserTerminalBootstrap;
-  snapshot?: {
-    text: string;
-    source: "capture_pane" | "unavailable";
-  };
   updatedAt: string | null;
 };
 

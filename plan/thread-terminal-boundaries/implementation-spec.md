@@ -17,6 +17,7 @@
 **Phase 6**: [phase-6-optional-observation-send-adoption.md](./phase-6-optional-observation-send-adoption.md)
 **Phase 7**: [phase-7-rich-bootstrap-contract-and-capture-metadata.md](./phase-7-rich-bootstrap-contract-and-capture-metadata.md)
 **Phase 8**: [phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md](./phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md)
+**Phase 9**: [phase-9-rollout-cleanup-and-contract-tightening.md](./phase-9-rollout-cleanup-and-contract-tightening.md)
 
 ---
 
@@ -56,6 +57,7 @@ Implement a structural fix for thread-view terminal input and reconnect behavior
 7. preserving correct ownership and audit semantics so emulator protocol is not logged as human input
 8. refining the shared `terminal_send` contract so observation is optional and browser xterm.js usage does not inherit agent-oriented send latency
 9. evolving `terminal/state` into a richer bootstrap contract so shell and TUI reopen behavior can preserve cursor placement and visible-screen structure without replaying raw historical control bytes
+10. tightening the internal contract by removing temporary compatibility fields, validation-era debug scaffolding, and transitional fallback surfaces once the new contract is validated
 
 ## Why This Matters
 
@@ -87,12 +89,12 @@ These decisions are fixed for this plan:
 - Do not use sequence-specific blacklists as the primary fix.
 - Add a browser-side terminal transport/controller layer instead of leaving terminal transport logic in `web/src/routes/$budId/$threadId.tsx`.
 - Recover the xterm `wasUserInput` distinction in one isolated adapter module rather than spreading xterm-internal usage across the app.
-- Keep a temporary source-tagged raw-bytes escape hatch for unsupported browser input cases during rollout.
+- Keep a narrow source-tagged raw-bytes escape hatch for unsupported browser input cases.
 - Move normal browser typing and special-key submission toward a structured browser-facing `terminal/send` route backed by the existing `terminal_send` Bud/runtime path.
 - Reuse the existing `terminal_session_input_log.source` column rather than blocking the first pass on a database schema change; the new source taxonomy can be introduced with code and docs.
 - Add `GET /api/threads/:thread_id/terminal/state` as a safe bootstrap surface.
-- First-pass `terminal/state.snapshot` may be text-first rather than perfectly style-faithful; replay safety and state correctness matter more than perfect color/cursor fidelity in this pass.
-- Keep `/terminal/state` as the bootstrap route, but evolve it toward an explicit richer `bootstrap` union rather than treating text-only `snapshot` as the long-term contract.
+- Text bootstrap may remain degraded rather than perfectly style-faithful; replay safety and state correctness matter more than perfect color/cursor fidelity in the degraded path.
+- Keep `/terminal/state` as the bootstrap route, but evolve it toward an explicit richer `bootstrap` union rather than treating degraded text restore as the long-term contract.
 - Treat text-only bootstrap as an explicit degraded fallback, not as faithful terminal reconstruction.
 - Prefer tmux-backed visible-screen grid capture with cursor/geometry metadata over history-flavored joined text once the richer-bootstrap follow-up lands.
 - Change terminal stream attach semantics for thread-scoped terminal streams specifically:
@@ -105,6 +107,7 @@ These decisions are fixed for this plan:
 - Keep one shared structured send implementation for browser and agent callers; vary observation behavior, not the underlying tmux dispatch path.
 - Normal browser typing should not pay post-send observation latency when live terminal SSE already provides the display update path.
 - Agent/tool callers should request observation explicitly when they need delta/readiness rather than relying on browser defaults or a separate daemon send primitive.
+- Cleanup should remove temporary shims once validation proves the tightened contract is safe to keep.
 
 ## Success Criteria
 
@@ -113,13 +116,16 @@ These decisions are fixed for this plan:
 - [ ] Browser-originated terminal traffic is classified explicitly as `human` or `emulator_protocol`.
 - [ ] Emulator protocol traffic is no longer logged or handled as if the user typed it.
 - [ ] The browser has a structured `POST /api/threads/:thread_id/terminal/send` route for normal terminal interaction.
-- [ ] The browser keeps a narrow source-tagged raw-bytes fallback only for unsupported cases during rollout.
+- [ ] The browser keeps a narrow source-tagged raw-bytes fallback only for unsupported cases.
 - [ ] The shared `terminal_send` contract supports optional observation rather than forcing one observation policy on every caller.
 - [ ] Normal browser xterm interaction no longer waits on the agent-oriented observation window by default.
 - [ ] Agent/tool callers can still opt into observed-send delta/readiness when needed.
 - [ ] `GET /api/threads/:thread_id/terminal/state` exists and returns safe bootstrap state plus `latest_byte_offset`.
 - [ ] `/terminal/state` evolves toward a richer bootstrap contract with an explicit degraded fallback rather than remaining text-only by default forever.
 - [ ] The richer bootstrap contract can represent cursor position and pane geometry for faithful reopen.
+- [ ] Legacy flat terminal-send observation fields are removed.
+- [ ] Transitional `/terminal/state.snapshot` compatibility is removed.
+- [ ] Temporary validation logging/fallbacks are either removed or retained intentionally with docs that explain why.
 - [ ] The thread view no longer replays raw `/terminal/history` back through xterm during normal open/reconnect.
 - [ ] Terminal stream attach without `after_offset` is live-only.
 - [ ] Terminal stream attach with `after_offset` resumes from durable output strictly after that byte offset.
@@ -152,6 +158,7 @@ These decisions are fixed for this plan:
 | 6 | [phase-6-optional-observation-send-adoption.md](./phase-6-optional-observation-send-adoption.md) | Urgent | The shared `terminal_send` path gains optional observation so browser xterm typing becomes dispatch-fast again while agent/tool callers keep explicit observed-send behavior |
 | 7 | [phase-7-rich-bootstrap-contract-and-capture-metadata.md](./phase-7-rich-bootstrap-contract-and-capture-metadata.md) | High | `/terminal/state` evolves from a text-first safe snapshot into an explicit richer bootstrap contract with cursor, geometry, and screen-mode metadata plus degraded fallback modes |
 | 8 | [phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md](./phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md) | High | The reference web client adopts richer bootstrap kinds, restores cursor placement more faithfully on reopen, and removes or scopes the temporary blank-line trim workaround |
+| 9 | [phase-9-rollout-cleanup-and-contract-tightening.md](./phase-9-rollout-cleanup-and-contract-tightening.md) | High | Temporary compatibility fields, validation-era debug scaffolding, and transitional fallback surfaces are removed or narrowed so the shipped contract stays intentional |
 
 ## Sequencing Notes
 
@@ -166,6 +173,7 @@ These decisions are fixed for this plan:
 - Phase 7 is a follow-up to Phase 3, not a replacement for it. Keep the safe-bootstrap and durable-resume architecture; upgrade the bootstrap fidelity contract.
 - Phase 7 should land before Phase 8 so the browser does not invent its own richer bootstrap model ahead of the service/daemon contract.
 - Phase 8 should explicitly remove or scope the temporary trailing-blank-line trim so shell-oriented debugging logic does not remain active for richer bootstrap kinds.
+- Phase 9 should happen after the richer bootstrap/browser adoption work is validated; do not remove temporary shims before the reopened-thread flows are considered stable.
 
 ## Expected Files And Areas
 
@@ -222,6 +230,7 @@ These decisions are fixed for this plan:
 6. Refine the shared send contract so observation is optional and update browser xterm plus agent usage accordingly.
 7. Upgrade `/terminal/state` into a richer bootstrap contract with cursor/geometry/screen-mode metadata and explicit degraded fallback.
 8. Adopt the richer bootstrap contract in the browser and remove or scope the temporary cursor workaround.
+9. Tighten the shipped contract by removing temporary compatibility fields, transitional snapshot support, and temporary debug scaffolding that is no longer justified.
 
 ## Definition Of Done
 
@@ -234,5 +243,6 @@ These decisions are fixed for this plan:
 - [ ] Agent/tool callers can still opt into observed-send proof on that same shared path.
 - [ ] `/terminal/state` no longer treats text-only history-flavored capture as the long-term bootstrap contract.
 - [ ] The reference web client consumes richer bootstrap state and does not apply shell-oriented blank-line trimming to richer grid restores.
+- [ ] Temporary compatibility fields and transitional bootstrap surfaces are either removed or intentionally retained with explicit documentation.
 - [ ] Manual browser terminal interaction still works across the validated key/text cases.
 - [ ] The plan folder, touched specs, and protocol docs describe the shipped contract consistently.

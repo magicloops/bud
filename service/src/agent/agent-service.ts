@@ -630,11 +630,9 @@ export class AgentService {
             submit?: boolean;
             keys?: string[];
             observe?: Record<string, unknown> | null;
-            observe_after_ms?: number;
-            wait_for?: TerminalWaitFor;
-            timeout_ms?: number;
             lines?: number;
             view?: TerminalObservationView;
+            wait_for?: TerminalWaitFor;
           };
           const callId =
             typeof payload.call_id === "string" && payload.call_id
@@ -644,11 +642,7 @@ export class AgentService {
 
           let toolInput: Record<string, unknown> = {};
           if (toolName === "terminal.send") {
-            const observe = this.parseTerminalSendObserveArg(payload.observe, {
-              afterMs: payload.observe_after_ms,
-              waitFor: payload.wait_for,
-              timeoutMs: payload.timeout_ms,
-            });
+            const observe = this.parseTerminalSendObserveArg(payload.observe);
             toolInput = {
               ...(typeof payload.text === "string" ? { text: payload.text } : {}),
               ...(payload.submit === true ? { submit: true } : {}),
@@ -1002,11 +996,7 @@ export class AgentService {
           text: typeof args.text === "string" ? args.text : undefined,
           submit: args.submit === true,
           keys: keys?.length ? keys : undefined,
-          observe: this.parseTerminalSendObserveArg(args.observe, {
-            afterMs: args.observe_after_ms,
-            waitFor: args.wait_for,
-            timeoutMs: args.timeout_ms,
-          }),
+          observe: this.parseTerminalSendObserveArg(args.observe),
           callId
         };
       }
@@ -1470,19 +1460,11 @@ export class AgentService {
     ) {
       return value;
     }
-    if (value === "screen_stable") {
-      return "settled";
-    }
     return undefined;
   }
 
   private parseTerminalSendObserveArg(
     value: unknown,
-    legacy?: {
-      afterMs?: unknown;
-      waitFor?: unknown;
-      timeoutMs?: unknown;
-    },
   ): TerminalSendObserveDirective | null {
     if (value === null) {
       return null;
@@ -1498,14 +1480,7 @@ export class AgentService {
       };
     }
 
-    const waitFor = this.parseWaitForArg(legacy?.waitFor);
-    const fallback = {
-      ...(typeof legacy?.afterMs === "number" ? { afterMs: legacy.afterMs } : {}),
-      ...(waitFor ? { waitFor } : {}),
-      ...(typeof legacy?.timeoutMs === "number" ? { timeoutMs: legacy.timeoutMs } : {}),
-    };
-
-    return Object.keys(fallback).length > 0 ? fallback : null;
+    return null;
   }
 
   private serializeTerminalSendObserveArg(

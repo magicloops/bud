@@ -390,10 +390,6 @@ export type ApiTerminalState = {
   latest_byte_offset: number
   readiness: ApiTerminalReadiness | null
   bootstrap: ApiTerminalBootstrap
-  snapshot?: {
-    text: string
-    source: 'capture_pane' | 'unavailable'
-  }
   updated_at: string | null
 }
 

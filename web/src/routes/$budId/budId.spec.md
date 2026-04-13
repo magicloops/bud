@@ -76,7 +76,6 @@ loader: async ({ params }) => {
 - Keeps `POST /terminal/input` only as a narrow raw fallback for unsupported human sequences and emulator protocol traffic
 - Sends resize updates only when terminal dimensions actually change
 - Uses the existing interrupt route for Ctrl+C
-- Includes dev-only diagnostics around bootstrap application, fit timing, stream attach offsets, and tab visibility restore while the richer contract is being validated
 
 3. **Terminal stream semantics**
 - Connects to `GET /terminal/stream` in live-only mode when no durable cursor is available

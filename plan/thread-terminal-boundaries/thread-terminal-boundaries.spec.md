@@ -1,6 +1,6 @@
 # thread-terminal-boundaries
 
-Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally, plus the follow-up shared-send refinement needed to remove browser typing latency without undoing the boundary work and the richer-bootstrap follow-up needed to restore cursor/TUI fidelity on fresh page opens.
+Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally, plus the follow-up shared-send refinement needed to remove browser typing latency without undoing the boundary work, the richer-bootstrap follow-up needed to restore cursor/TUI fidelity on fresh page opens, and the final cleanup phase that tightens the internal contract once validation is complete.
 
 ## Purpose
 
@@ -15,6 +15,7 @@ The current plan assumes:
 - browser, service, and daemon semantics should distinguish `human` input from `emulator_protocol`
 - browser and agent callers should keep converging on one shared `terminal_send` path even when their observation needs differ
 - `/terminal/state` should keep the safe-bootstrap architecture while evolving from a text-only snapshot into a richer bootstrap contract
+- temporary compatibility fields and fallback/debug surfaces should be removed or narrowed once the new contract is validated
 - the current single-instance prototype architecture remains the deployment model for this work
 
 ## Files
@@ -53,7 +54,7 @@ Browser/service transport phase covering:
 Bootstrap phase covering:
 
 - `GET /terminal/state`
-- safe bootstrap snapshot generation
+- safe bootstrap state generation
 - reference web adoption
 - removal of normal `/terminal/history` replay as browser bootstrap
 
@@ -102,6 +103,16 @@ Follow-up browser bootstrap phase covering:
 - geometry mismatch handling
 - cleanup or scoping of the temporary blank-line trim workaround
 
+### `phase-9-rollout-cleanup-and-contract-tightening.md`
+
+Follow-up cleanup phase covering:
+
+- removal of legacy flat send-observe compatibility
+- removal of transitional `/terminal/state.snapshot` compatibility
+- reduction of temporary bootstrap/stream debug instrumentation
+- explicit retention of narrow raw `/terminal/input` fallback only for emulator protocol and unsupported browser sequences
+- explicit scoping of degraded text trimming to degraded bootstrap paths
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -127,6 +138,7 @@ Manual verification checklist for the plan.
 - The first-pass `terminal/state` bootstrap is intentionally allowed to be text-first rather than perfectly style-faithful.
 - The structured browser input route may keep a narrow raw fallback path until key/text coverage is fully validated across the supported browser flows.
 - The richer-bootstrap follow-up still needs to validate the exact tmux capture flags and browser hydration path for cursor/TUI fidelity.
+- Style-faithful TUI bootstrap still remains future work; rich bootstrap currently restores structure/cursor, not colors/styles.
 
 ---
 

@@ -148,7 +148,7 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `closeSession(sessionId, reason)` | Close session |
 | `observeTerminal(sessionId, options)` | Explicit delta/screen/history observation request-response |
 | `capturePane(sessionId, options)` | Compatibility wrapper used by context sync |
-| `captureBootstrap(sessionId)` | Build rich browser bootstrap data from `terminal_observe(view: "screen")` |
+| `captureBootstrap(sessionId)` | Build rich browser bootstrap data from `terminal_observe(view: "screen")` for `/terminal/state.bootstrap` |
 | `sendInteraction(sessionId, interaction, options)` | Request-response interactive input / keypress dispatch, including structured-source pending-command tracking |
 | `tailOutput(sessionId, bytes, options)` | Get recent output from DB |
 | `setPendingCommand(sessionId, command)` | Track REPL program execution |
@@ -198,7 +198,7 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 **Terminal SSE Payload Notes**:
 - `terminal.output` carries `seq`, `data`, and `byte_offset`
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
-- thread routes can now bootstrap from a richer `/terminal/state` `bootstrap` union (`grid` / `text` / `unavailable`), then resume with `after_offset=<last_rendered_byte_offset>` against durable output rather than generic event-bus replay
+- thread routes now bootstrap from a richer `/terminal/state.bootstrap` union (`grid` / `text` / `unavailable`) without a parallel legacy snapshot field, then resume with `after_offset=<last_rendered_byte_offset>` against durable output rather than generic event-bus replay
 - no-cursor terminal attaches are intentionally live-only; terminal routes opt out of generic buffered replay with `replayBuffered: false`
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
 - `sendInteraction()` now normalizes a nested optional `observe` object: browser typing uses `observe: null` for low-latency dispatch-only sends, while agent/tool callers can opt into `{}` or explicit wait parameters for post-send evidence

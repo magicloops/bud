@@ -134,10 +134,18 @@ This gives you context on:
 
 ### 3.2) Plan first for larger tasks
 
-Before writing significant code, create a markdown plan in `plan/`:
+Before writing significant code, create intent docs before touching code:
+- Start with a design doc in `design/` when the change needs design exploration, tradeoffs, or architecture decisions.
+- Create a markdown plan in `plan/` for the implementation work.
 - Link to the relevant spec files
 - Identify which specs will need updates
 - Keep scope traceable to project goals
+
+For multi-step features, prefer a phased plan structure:
+- `design/<topic>.md` captures the design decision
+- `plan/<topic>/implementation-spec.md` captures the rollout
+- `plan/<topic>/phase-0-*.md`, `phase-1-*.md`, `phase-2-*.md`, etc. capture staged execution
+- add `progress-checklist.md` and `validation-checklist.md` when the work needs explicit tracking
 
 ### 3.3) Write a debug note before fixing issues
 
@@ -292,6 +300,57 @@ Implementation guardrails:
 - Docs to update.
 ```
 
+### Phased `plan/` Layout
+
+```text
+design/
+└── <topic>.md
+
+plan/
+└── <topic>/
+    ├── implementation-spec.md
+    ├── phase-0-<preflight>.md
+    ├── phase-1-<initial-change>.md
+    ├── phase-2-<next-change>.md
+    ├── progress-checklist.md
+    └── validation-checklist.md
+```
+
+Use this when the change is large enough to need staged execution, multiple PRs, or explicit rollout checkpoints.
+
+### `design/` Template
+
+```markdown
+# Design: <short-title>
+
+## Context
+- Problem statement:
+- Constraints:
+- Related spec files:
+
+## Goals
+- Desired outcomes.
+
+## Non-Goals
+- Explicitly out of scope.
+
+## Options Considered
+- Option A:
+- Option B:
+
+## Decision
+- Chosen approach:
+- Why:
+
+## Risks
+- Risk:
+- Mitigation:
+
+## Follow-Up
+- Implementation plan:
+- Specs/docs to update:
+```
+
 ### `debug/` Template
 
 ```markdown
@@ -392,7 +451,7 @@ A task is complete when:
 - [ ] Protocol and schema docs updated (if touched)
 - [ ] Database schema changes applied via `drizzle-kit push` (if touched)
 - [ ] Tests added or updated
-- [ ] `plan/` or `debug/` doc exists and linked from PR
+- [ ] Relevant `design/`, `plan/`, or `debug/` doc exists and is linked from PR
 - [ ] No new `SPEC:TODO` markers without justification
 - [ ] Contracts preserved (multi-tenant fields, protocol versioned)
 
@@ -434,4 +493,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2026-03-27*
+*Last updated: 2026-04-13*

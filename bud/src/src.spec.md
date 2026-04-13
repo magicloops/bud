@@ -125,7 +125,7 @@ Hash-based deduplication for `capture-pane` output:
 - Default: 5s intervals, 2 stable checks required, 60s max wait
 
 **Phase 6 Note**:
-- The agent-facing `terminal.send` path no longer relies on activity stability by default; it now uses an immediate fast delta capture after send and reserves `screen_stable` for explicit wait requests.
+- The agent-facing `terminal.send` path no longer relies on activity stability by default; it now uses an immediate fast delta capture after send and reserves explicit waits for `changed` / `settled` requests.
 
 **Phase 7 Note**:
 - Agent-facing `terminal.send` / `terminal.observe` now share an immediate-start screen wait helper that:

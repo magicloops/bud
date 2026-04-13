@@ -29,7 +29,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 ## Phase 3: Terminal State Bootstrap
 
 - [ ] Add `GET /api/threads/:thread_id/terminal/state`.
-- [ ] Return `latest_byte_offset` plus safe bootstrap snapshot.
+- [ ] Return `latest_byte_offset` plus safe bootstrap state.
 - [ ] Update reference web open flow to use `terminal/state`.
 - [ ] Update reference web reconnect/bootstrap flow to stop using `/terminal/history` as the normal redraw path.
 
@@ -48,7 +48,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] Update touched web/service/bud specs.
 - [ ] Update `bud.spec.md`.
 - [ ] Run the manual validation checklist.
-- [ ] Minimize and document any retained compatibility/fallback paths.
+- [x] Minimize and document any retained compatibility/fallback paths.
 
 ## Phase 6: Optional Observation Send Adoption
 
@@ -76,3 +76,12 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [x] Add an explicit geometry mismatch policy for richer bootstrap.
 - [x] Remove or scope the temporary trailing-blank-line trim workaround.
 - [ ] Validate fresh-page reopen behavior for shell and TUI sessions.
+
+## Phase 9: Contract Tightening And Cleanup
+
+- [x] Remove flat legacy send-observe compatibility.
+- [x] Remove transitional `/terminal/state.snapshot` compatibility.
+- [x] Reduce or remove temporary bootstrap/stream debug instrumentation.
+- [x] Keep `/terminal/input` only as a documented narrow fallback for emulator protocol and unsupported browser sequences.
+- [x] Revisit the degraded text-trim fallback behavior and keep it only for degraded `text` bootstrap.
+- [ ] Clean up any low-signal markdown hygiene issues that would block merge-time checks.

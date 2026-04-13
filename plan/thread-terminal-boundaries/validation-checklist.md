@@ -138,6 +138,24 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] Opening the same thread on a new page restores validated TUI cases without obvious cursor misplacement caused by text-only bootstrap.
 - [ ] Geometry mismatch behavior is explicit and matches the documented first-pass policy.
 
+## Phase 9: Contract Tightening And Cleanup
+
+### Contract Tightening
+
+- [x] No active caller depends on flat `observe_after_ms` / `wait_for` / `timeout_ms` terminal-send fields.
+- [x] `/terminal/state` clients rely on `bootstrap` rather than transitional `snapshot`.
+- [x] Protocol/spec docs no longer describe removed compatibility fields as active contract surface.
+
+### Fallback And Logging
+
+- [x] Any retained raw `/terminal/input` usage is narrow, intentional, and documented.
+- [x] Temporary bootstrap/stream debug logging has been reduced to intended long-term observability.
+- [x] Degraded text-trim behavior is either removed or remains explicitly scoped to degraded `text` bootstrap only.
+
+### Hygiene
+
+- [ ] `git diff --check` passes for the kept cleanup scope.
+
 ## Notes
 
 - The first-pass bootstrap route may intentionally prioritize replay safety over perfect style fidelity.
