@@ -18,6 +18,7 @@
 **Phase 7**: [phase-7-rich-bootstrap-contract-and-capture-metadata.md](./phase-7-rich-bootstrap-contract-and-capture-metadata.md)
 **Phase 8**: [phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md](./phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md)
 **Phase 9**: [phase-9-rollout-cleanup-and-contract-tightening.md](./phase-9-rollout-cleanup-and-contract-tightening.md)
+**Phase 10**: [phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md](./phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md)
 
 ---
 
@@ -44,6 +45,8 @@ Follow-up validation after the first structured browser-send rollout exposed a s
 
 Follow-up validation after the safe bootstrap rollout also exposed a remaining fidelity gap: `/terminal/state` is already capture-pane-backed, but the current payload is still text-only, history-flavored, and missing cursor/geometry/screen-mode state. The richer-bootstrap follow-up design recommends evolving `/terminal/state` into an explicit bootstrap contract rather than returning to raw byte replay.
 
+Post-cleanup validation exposed one more live boundary bug class: Codex TUI startup and simple xterm refocus can leak apparent OSC `10` / `11` color-query replies into the foreground program. The follow-up debug note indicates that xterm-generated `emulator_protocol` is still being treated as a generic upstream raw-input lane, which is too broad for the tmux-backed browser stack.
+
 ## Objective
 
 Implement a structural fix for thread-view terminal input and reconnect behavior by:
@@ -58,6 +61,7 @@ Implement a structural fix for thread-view terminal input and reconnect behavior
 8. refining the shared `terminal_send` contract so observation is optional and browser xterm.js usage does not inherit agent-oriented send latency
 9. evolving `terminal/state` into a richer bootstrap contract so shell and TUI reopen behavior can preserve cursor placement and visible-screen structure without replaying raw historical control bytes
 10. tightening the internal contract by removing temporary compatibility fields, validation-era debug scaffolding, and transitional fallback surfaces once the new contract is validated
+11. revisiting the remaining raw-input surface so xterm-generated emulator replies are no longer forwarded upstream by default and `/terminal/input` narrows toward unsupported human-key fallback only
 
 ## Why This Matters
 
@@ -108,6 +112,8 @@ These decisions are fixed for this plan:
 - Normal browser typing should not pay post-send observation latency when live terminal SSE already provides the display update path.
 - Agent/tool callers should request observation explicitly when they need delta/readiness rather than relying on browser defaults or a separate daemon send primitive.
 - Cleanup should remove temporary shims once validation proves the tightened contract is safe to keep.
+- Xterm-generated emulator replies should not be forwarded upstream by default just because they are observable in the browser; treat them as unsupported unless explicitly validated.
+- `/terminal/input` should converge toward temporary unsupported-human fallback only, not remain a general-purpose sink for emulator replies.
 
 ## Success Criteria
 
@@ -117,6 +123,7 @@ These decisions are fixed for this plan:
 - [ ] Emulator protocol traffic is no longer logged or handled as if the user typed it.
 - [ ] The browser has a structured `POST /api/threads/:thread_id/terminal/send` route for normal terminal interaction.
 - [ ] The browser keeps a narrow source-tagged raw-bytes fallback only for unsupported cases.
+- [ ] The browser no longer forwards `emulator_protocol` upstream by default merely because xterm emitted it.
 - [ ] The shared `terminal_send` contract supports optional observation rather than forcing one observation policy on every caller.
 - [ ] Normal browser xterm interaction no longer waits on the agent-oriented observation window by default.
 - [ ] Agent/tool callers can still opt into observed-send delta/readiness when needed.
@@ -132,7 +139,9 @@ These decisions are fixed for this plan:
 - [ ] The reference web terminal tracks `last_rendered_byte_offset` and reconnects with explicit offset-based catch-up.
 - [ ] `/terminal/history` remains available for explicit history/scrollback access.
 - [ ] Manual browser typing, Enter, paste, arrow keys, and Ctrl+C still work.
+- [ ] Validated high-value shell/TUI shortcuts that previously required raw fallback can be expressed through structured browser send behavior.
 - [ ] The `1;2c` restore/replay bug class is eliminated without relying on hardcoded sequence filtering.
+- [ ] Live Codex TUI startup/refocus no longer leaks apparent OSC color-query payload into the foreground program.
 - [ ] Opening the same thread in a new page can restore validated shell/TUI cases without obvious cursor misplacement caused by text-only bootstrap.
 - [ ] Touched docs/specs/protocol notes all describe the same contract.
 
@@ -159,6 +168,7 @@ These decisions are fixed for this plan:
 | 7 | [phase-7-rich-bootstrap-contract-and-capture-metadata.md](./phase-7-rich-bootstrap-contract-and-capture-metadata.md) | High | `/terminal/state` evolves from a text-first safe snapshot into an explicit richer bootstrap contract with cursor, geometry, and screen-mode metadata plus degraded fallback modes |
 | 8 | [phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md](./phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md) | High | The reference web client adopts richer bootstrap kinds, restores cursor placement more faithfully on reopen, and removes or scopes the temporary blank-line trim workaround |
 | 9 | [phase-9-rollout-cleanup-and-contract-tightening.md](./phase-9-rollout-cleanup-and-contract-tightening.md) | High | Temporary compatibility fields, validation-era debug scaffolding, and transitional fallback surfaces are removed or narrowed so the shipped contract stays intentional |
+| 10 | [phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md](./phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md) | High | Live xterm-generated emulator replies stop using the browser raw-input lane by default, and `/terminal/input` narrows toward temporary unsupported-human fallback only |
 
 ## Sequencing Notes
 
@@ -174,6 +184,7 @@ These decisions are fixed for this plan:
 - Phase 7 should land before Phase 8 so the browser does not invent its own richer bootstrap model ahead of the service/daemon contract.
 - Phase 8 should explicitly remove or scope the temporary trailing-blank-line trim so shell-oriented debugging logic does not remain active for richer bootstrap kinds.
 - Phase 9 should happen after the richer bootstrap/browser adoption work is validated; do not remove temporary shims before the reopened-thread flows are considered stable.
+- Phase 10 intentionally revisits one Phase 9 retention decision. Do not assume that "narrow raw fallback for emulator protocol" remains valid after the Codex TUI OSC leak findings.
 
 ## Expected Files And Areas
 
@@ -231,6 +242,7 @@ These decisions are fixed for this plan:
 7. Upgrade `/terminal/state` into a richer bootstrap contract with cursor/geometry/screen-mode metadata and explicit degraded fallback.
 8. Adopt the richer bootstrap contract in the browser and remove or scope the temporary cursor workaround.
 9. Tighten the shipped contract by removing temporary compatibility fields, transitional snapshot support, and temporary debug scaffolding that is no longer justified.
+10. Narrow the remaining raw-input surface so emulator-protocol forwarding is suppressed or explicitly allowlisted, and expand structured key coverage for the remaining human fallback cases.
 
 ## Definition Of Done
 
@@ -244,5 +256,7 @@ These decisions are fixed for this plan:
 - [ ] `/terminal/state` no longer treats text-only history-flavored capture as the long-term bootstrap contract.
 - [ ] The reference web client consumes richer bootstrap state and does not apply shell-oriented blank-line trimming to richer grid restores.
 - [ ] Temporary compatibility fields and transitional bootstrap surfaces are either removed or intentionally retained with explicit documentation.
+- [ ] The reference web client does not treat xterm-generated emulator replies as a generic upstream raw-input category.
+- [ ] Any retained `/terminal/input` usage is clearly limited to unsupported human-key fallback.
 - [ ] Manual browser terminal interaction still works across the validated key/text cases.
 - [ ] The plan folder, touched specs, and protocol docs describe the shipped contract consistently.

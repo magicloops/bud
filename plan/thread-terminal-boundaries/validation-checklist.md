@@ -156,6 +156,26 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - [ ] `git diff --check` passes for the kept cleanup scope.
 
+## Phase 10: Emulator Protocol Suppression And Raw Input Narrowing
+
+### Live Emulator-Protocol Safety
+
+- [ ] Starting the Codex TUI no longer prints OSC color-reply payload into the input area.
+- [ ] Refocusing the xterm view no longer injects OSC color-reply payload into the foreground program.
+- [ ] The reference web client no longer forwards browser `emulator_protocol` upstream by default.
+- [ ] Any retained emulator-protocol forwarding is sequence-specific, intentional, and documented.
+
+### Human Fallback Scope
+
+- [ ] `/terminal/input` is no longer used for emulator-reply forwarding.
+- [ ] Any retained `/terminal/input` usage is limited to unsupported human-key paths.
+- [ ] The validated high-value shell/TUI shortcuts that previously required raw fallback now work through structured browser send behavior.
+
+### Contract Alignment
+
+- [ ] Docs/specs describe `emulator_protocol` suppression or allowlisting consistently.
+- [ ] Docs/specs describe `/terminal/input` as unsupported-human fallback only if it remains.
+
 ## Notes
 
 - The first-pass bootstrap route may intentionally prioritize replay safety over perfect style fidelity.

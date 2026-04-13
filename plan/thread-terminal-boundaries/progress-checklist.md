@@ -85,3 +85,11 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [x] Keep `/terminal/input` only as a documented narrow fallback for emulator protocol and unsupported browser sequences.
 - [x] Revisit the degraded text-trim fallback behavior and keep it only for degraded `text` bootstrap.
 - [ ] Clean up any low-signal markdown hygiene issues that would block merge-time checks.
+
+## Phase 10: Emulator Protocol Suppression And Raw Input Narrowing
+
+- [ ] Stop forwarding `emulator_protocol` upstream from the reference web client by default.
+- [ ] Decide whether any emulator-protocol forwarding remains as an explicit allowlist.
+- [ ] Narrow `/terminal/input` so it is no longer justified by emulator-reply forwarding.
+- [ ] Expand structured browser key coverage for the validated high-value human fallback cases.
+- [ ] Update docs/specs so `/terminal/input` is described as unsupported-human fallback only if retained.

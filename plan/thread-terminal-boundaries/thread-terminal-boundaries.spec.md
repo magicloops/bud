@@ -1,6 +1,6 @@
 # thread-terminal-boundaries
 
-Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally, plus the follow-up shared-send refinement needed to remove browser typing latency without undoing the boundary work, the richer-bootstrap follow-up needed to restore cursor/TUI fidelity on fresh page opens, and the final cleanup phase that tightens the internal contract once validation is complete.
+Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally, plus the follow-up shared-send refinement needed to remove browser typing latency without undoing the boundary work, the richer-bootstrap follow-up needed to restore cursor/TUI fidelity on fresh page opens, the cleanup phase that tightens the internal contract once validation is complete, and the final emulator-protocol follow-up prompted by live Codex TUI OSC reply leaks.
 
 ## Purpose
 
@@ -16,6 +16,7 @@ The current plan assumes:
 - browser and agent callers should keep converging on one shared `terminal_send` path even when their observation needs differ
 - `/terminal/state` should keep the safe-bootstrap architecture while evolving from a text-only snapshot into a richer bootstrap contract
 - temporary compatibility fields and fallback/debug surfaces should be removed or narrowed once the new contract is validated
+- xterm-generated `emulator_protocol` should not be treated as a valid generic upstream raw-input channel just because the browser can observe it
 - the current single-instance prototype architecture remains the deployment model for this work
 
 ## Files
@@ -113,6 +114,15 @@ Follow-up cleanup phase covering:
 - explicit retention of narrow raw `/terminal/input` fallback only for emulator protocol and unsupported browser sequences
 - explicit scoping of degraded text trimming to degraded bootstrap paths
 
+### `phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md`
+
+Follow-up live-input phase covering:
+
+- suppression or allowlisting of xterm-generated `emulator_protocol`
+- narrowing `/terminal/input` away from emulator-reply forwarding
+- expansion of structured browser key coverage for the remaining high-value human fallback cases
+- the Codex TUI OSC `10` / `11` leak discovered after the cleanup phase
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -128,6 +138,7 @@ Manual verification checklist for the plan.
 - [../../design/daemon-terminal-send-ack-and-optional-observation.md](../../design/daemon-terminal-send-ack-and-optional-observation.md) - daemon-focused review of one shared send implementation with optional observation
 - [../../design/terminal-rich-bootstrap-contract.md](../../design/terminal-rich-bootstrap-contract.md) - richer `/terminal/state` design follow-up for cursor/geometry-aware bootstrap and degraded fallback modes
 - [../../debug/thread-terminal-1-2c-da-replay.md](../../debug/thread-terminal-1-2c-da-replay.md) - current debug findings and challenged hypotheses
+- [../../debug/thread-terminal-codex-tui-osc-color-reply-leak.md](../../debug/thread-terminal-codex-tui-osc-color-reply-leak.md) - follow-up debug findings showing live OSC color-query reply leaks on Codex TUI startup/refocus and motivating the emulator-protocol narrowing phase
 - [../../reference/unknown-terminal-input.md](../../reference/unknown-terminal-input.md) - original note reviewed during the investigation
 - [../revised-terminal-contract/implementation-spec-follow-up.md](../revised-terminal-contract/implementation-spec-follow-up.md) - current terminal tool-contract follow-up work this plan builds alongside rather than replacing
 - [../../bud.spec.md](../../bud.spec.md) - root architecture and documentation catalog
@@ -136,7 +147,7 @@ Manual verification checklist for the plan.
 
 <!-- SPEC:TODO -->
 - The first-pass `terminal/state` bootstrap is intentionally allowed to be text-first rather than perfectly style-faithful.
-- The structured browser input route may keep a narrow raw fallback path until key/text coverage is fully validated across the supported browser flows.
+- The structured browser input route may keep a narrow raw fallback path until high-value human key coverage is fully validated across the supported browser flows, but emulator-protocol forwarding is now expected to narrow further or disappear.
 - The richer-bootstrap follow-up still needs to validate the exact tmux capture flags and browser hydration path for cursor/TUI fidelity.
 - Style-faithful TUI bootstrap still remains future work; rich bootstrap currently restores structure/cursor, not colors/styles.
 
