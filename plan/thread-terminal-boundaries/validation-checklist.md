@@ -105,6 +105,39 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] `terminal_send` optional observation is documented consistently across the daemon, service, and web notes.
 - [ ] Browser xterm and agent usage both rely on the same shared send primitive rather than separate core send implementations.
 
+## Phase 7: Rich Bootstrap Contract And Capture Metadata
+
+### Route Contract
+
+- [ ] `/terminal/state` can return an explicit richer bootstrap payload.
+- [ ] Rich bootstrap distinguishes `grid`, `text`, and `unavailable`.
+- [ ] `grid` bootstrap includes cursor position.
+- [ ] `grid` bootstrap includes pane geometry.
+- [ ] `grid` bootstrap includes enough mode metadata to identify alternate-screen or pane-mode captures.
+- [ ] `text` bootstrap is clearly documented as degraded.
+
+### Capture Fidelity
+
+- [ ] Rich bootstrap is no longer derived solely from joined history text.
+- [ ] Wrapped-row behavior is validated for the chosen tmux capture flags.
+- [ ] Alternate-screen and pane-mode behavior are either supported or degraded explicitly.
+
+## Phase 8: Browser Rich Bootstrap Adoption And Cursor Fidelity
+
+### Browser Hydration
+
+- [ ] The reference web client consumes `bootstrap` rather than relying on legacy text-only `snapshot`.
+- [ ] `grid` bootstrap restores the cursor near the intended input location on fresh page open.
+- [ ] `grid` bootstrap preserves blank trailing rows when they are part of the visible screen.
+- [ ] The temporary trailing-blank-line trim is not applied to `grid` bootstrap.
+- [ ] `text` bootstrap remains clearly degraded.
+
+### Geometry And TUI Reopen
+
+- [ ] Opening the same thread on a new page restores validated shell cases without cursor detachment.
+- [ ] Opening the same thread on a new page restores validated TUI cases without obvious cursor misplacement caused by text-only bootstrap.
+- [ ] Geometry mismatch behavior is explicit and matches the documented first-pass policy.
+
 ## Notes
 
 - The first-pass bootstrap route may intentionally prioritize replay safety over perfect style fidelity.

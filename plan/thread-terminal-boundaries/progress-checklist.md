@@ -58,3 +58,21 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] Expose explicit observation controls through the agent-facing terminal send path.
 - [ ] Document the intended default observation behavior for browser vs agent callers.
 - [ ] Validate that observed and unobserved sends still preserve source/audit semantics.
+
+## Phase 7: Rich Bootstrap Contract And Capture Metadata
+
+- [ ] Evolve `/terminal/state` from `snapshot` toward an explicit richer `bootstrap` union.
+- [ ] Add `grid`, `text`, and `unavailable` bootstrap modes.
+- [ ] Capture pane geometry and cursor position for richer bootstrap.
+- [ ] Capture enough tmux mode metadata to distinguish normal screen from alternate screen or pane mode.
+- [ ] Stop treating joined history text as the long-term primary bootstrap payload.
+- [ ] Document any temporary compatibility fields or degraded fallback behavior.
+
+## Phase 8: Browser Rich Bootstrap Adoption And Cursor Fidelity
+
+- [ ] Update the reference web client to consume richer `bootstrap` kinds.
+- [ ] Add cursor-aware `grid` hydration in the terminal controller.
+- [ ] Preserve blank rows for richer `grid` bootstrap.
+- [ ] Add an explicit geometry mismatch policy for richer bootstrap.
+- [ ] Remove or scope the temporary trailing-blank-line trim workaround.
+- [ ] Validate fresh-page reopen behavior for shell and TUI sessions.

@@ -1,6 +1,6 @@
 # thread-terminal-boundaries
 
-Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally, plus the follow-up shared-send refinement needed to remove browser typing latency without undoing the boundary work.
+Implementation planning documents for fixing the thread-view terminal `1;2c` class of bugs structurally, plus the follow-up shared-send refinement needed to remove browser typing latency without undoing the boundary work and the richer-bootstrap follow-up needed to restore cursor/TUI fidelity on fresh page opens.
 
 ## Purpose
 
@@ -14,6 +14,7 @@ The current plan assumes:
 - terminal-stream fresh attach should become live-only, with explicit durable offset-based catch-up when the client resumes
 - browser, service, and daemon semantics should distinguish `human` input from `emulator_protocol`
 - browser and agent callers should keep converging on one shared `terminal_send` path even when their observation needs differ
+- `/terminal/state` should keep the safe-bootstrap architecture while evolving from a text-only snapshot into a richer bootstrap contract
 - the current single-instance prototype architecture remains the deployment model for this work
 
 ## Files
@@ -83,6 +84,24 @@ Follow-up shared-send phase covering:
 - explicit agent/tool observation usage on the same daemon/runtime path
 - the latency/robustness tradeoffs discovered during validation
 
+### `phase-7-rich-bootstrap-contract-and-capture-metadata.md`
+
+Follow-up daemon/service bootstrap phase covering:
+
+- richer `/terminal/state` bootstrap kinds
+- cursor/geometry/screen-mode capture metadata
+- explicit degraded fallback behavior
+- migration away from joined history text as the long-term bootstrap payload
+
+### `phase-8-browser-rich-bootstrap-adoption-and-cursor-fidelity.md`
+
+Follow-up browser bootstrap phase covering:
+
+- richer bootstrap adoption in the reference web client
+- cursor-aware grid hydration
+- geometry mismatch handling
+- cleanup or scoping of the temporary blank-line trim workaround
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -96,6 +115,7 @@ Manual verification checklist for the plan.
 - [../../design/terminal-human-input-boundaries-and-replay-semantics.md](../../design/terminal-human-input-boundaries-and-replay-semantics.md) - primary design review and recommended contract
 - [../../design/browser-terminal-typing-latency-and-send-modes.md](../../design/browser-terminal-typing-latency-and-send-modes.md) - browser/service design follow-up for restoring human typing latency without reverting to raw input
 - [../../design/daemon-terminal-send-ack-and-optional-observation.md](../../design/daemon-terminal-send-ack-and-optional-observation.md) - daemon-focused review of one shared send implementation with optional observation
+- [../../design/terminal-rich-bootstrap-contract.md](../../design/terminal-rich-bootstrap-contract.md) - richer `/terminal/state` design follow-up for cursor/geometry-aware bootstrap and degraded fallback modes
 - [../../debug/thread-terminal-1-2c-da-replay.md](../../debug/thread-terminal-1-2c-da-replay.md) - current debug findings and challenged hypotheses
 - [../../reference/unknown-terminal-input.md](../../reference/unknown-terminal-input.md) - original note reviewed during the investigation
 - [../revised-terminal-contract/implementation-spec-follow-up.md](../revised-terminal-contract/implementation-spec-follow-up.md) - current terminal tool-contract follow-up work this plan builds alongside rather than replacing
@@ -106,6 +126,7 @@ Manual verification checklist for the plan.
 <!-- SPEC:TODO -->
 - The first-pass `terminal/state` bootstrap is intentionally allowed to be text-first rather than perfectly style-faithful.
 - The structured browser input route may keep a narrow raw fallback path until key/text coverage is fully validated across the supported browser flows.
+- The richer-bootstrap follow-up still needs to validate the exact tmux capture flags and browser hydration path for cursor/TUI fidelity.
 
 ---
 
