@@ -101,7 +101,7 @@ loader: async ({ params }) => {
 2. **Terminal Integration**
    - xterm.js instance with FitAddon
    - SSE connection to `/api/threads/:id/terminal/stream`
-   - Input forwarding to `/api/threads/:id/terminal/input`
+   - Explicit keyboard and paste intent translation via `@/lib/terminal-input`, then batching to `/api/threads/:id/terminal/input`
    - Resize handling via `/api/threads/:id/terminal/resize` (only when dimensions change)
    - Reconnection logic with exponential backoff
    - Idempotent recovery helper that re-runs `terminal/ensure`, reloads terminal state, and replays stored history after reconnects
@@ -139,8 +139,8 @@ loader: async ({ params }) => {
    - Disconnect overlay during prolonged outages
 
 6. **Terminal Features**
-   - Input buffering and batching
-   - Ctrl+C interrupt button
+   - Input buffering and batching for explicit browser-derived terminal bytes only
+   - Raw `Ctrl+C` over the normal terminal input path from both keyboard and the terminal menu
    - Clear terminal option
    - History backfill on connect
    - Scroll-to-top detection for more history loading
@@ -199,6 +199,7 @@ From `@/lib/api`:
 | `@/contexts/layout-context` | Thread panel toggle |
 | `@/contexts/bud-status-context` | Bud online status |
 | `@/lib/api` | API utilities |
+| `@/lib/terminal-input` | Browser terminal key/paste translation and dev-only unsupported logging |
 | `lucide-react` | Icons |
 
 ---

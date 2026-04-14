@@ -25,6 +25,9 @@
 ## Future / Long-Term
 - **Mobile logout + account switching**
   - Implement the Bud-owned hosted logout and explicit account-switch contract from [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) so mobile sign-out clears the hosted auth session and a follow-up sign-in can reliably choose a different account.
+- **Full PTY-backed browser terminal attach**
+  - If a real workflow proves the current browser escape hatch needs full terminal-emulator fidelity, design and implement a separate PTY-backed browser attach path instead of stretching the phase-1 intent-only model further.
+  - This follow-up should cover emulator-originated replies, broader modifier support, and any other terminal-protocol gaps intentionally left out of [plan/browser-terminal-input-contract/implementation-spec.md](./plan/browser-terminal-input-contract/implementation-spec.md).
 - **Session durability enhancements**
   - tmux is already the default terminal backend. Future work: reconnect to existing tmux sessions across Bud restarts, scrollback replay, multi-viewers.
 - **Session transcripts & exports**

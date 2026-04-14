@@ -30,6 +30,13 @@ import {
   type ApiMessagePage,
   type ApiThread,
 } from '@/lib/api'
+import {
+  createTerminalPasteIntent,
+  detectTerminalInputPlatform,
+  logUnsupportedTerminalComposition,
+  logUnsupportedTerminalKeydown,
+  translateTerminalKeydown,
+} from '@/lib/terminal-input'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
 import { useBudStatus } from '@/contexts/bud-status-context'
@@ -46,6 +53,7 @@ const toLoginRedirect = (pathname: string, search = '', hash = '') =>
   })
 
 const THREAD_MESSAGE_PAGE_LIMIT = 100
+type QueueTerminalInput = (text: string, options?: { flushImmediately?: boolean }) => void
 
 type AgentToolCallEvent = {
   turn_id: string
@@ -362,7 +370,7 @@ function ThreadView() {
   const terminalPaneRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const sendTerminalInputRef = useRef<(text: string) => void>(() => {})
+  const sendTerminalInputRef = useRef<QueueTerminalInput>(() => {})
   const sendTerminalResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
   const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const terminalReconnectAttemptRef = useRef(0)
@@ -373,6 +381,8 @@ function ThreadView() {
   const terminalReadyRef = useRef(false)
   const terminalInputBufferRef = useRef<string>('')
   const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const viewModeRef = useRef<'terminal' | 'web'>(viewMode)
+  const terminalPlatformRef = useRef(detectTerminalInputPlatform())
 
   // Agent stream state
   const agentEventSourceRef = useRef<EventSource | null>(null)
@@ -432,6 +442,10 @@ function ThreadView() {
   useEffect(() => {
     upsertThreadSummary(initialThread)
   }, [initialThread, upsertThreadSummary])
+
+  useEffect(() => {
+    viewModeRef.current = viewMode
+  }, [viewMode])
 
   const currentThread = useMemo(() => {
     return (
@@ -573,8 +587,10 @@ function ThreadView() {
     let term: Terminal | null = null
     let fitAddon: FitAddon | null = null
     let handleResize: (() => void) | null = null
-    let dataListener: { dispose: () => void } | null = null
     let scrollListener: { dispose: () => void } | null = null
+    let pasteTarget: HTMLDivElement | HTMLTextAreaElement | null = null
+    let handlePaste: EventListener | null = null
+    let handleCompositionEvent: ((event: CompositionEvent) => void) | null = null
 
     const initTerminal = async () => {
       const [{ Terminal }, { FitAddon }] = await Promise.all([
@@ -648,11 +664,67 @@ function ThreadView() {
       handleResize = () => fitTerminal()
       window.addEventListener('resize', handleResize)
 
-      dataListener = term.onData((data) => {
-        if (data.length > 0) {
-          sendTerminalInputRef.current(data)
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.type !== 'keydown') {
+          return true
         }
+
+        if (
+          viewModeRef.current !== 'terminal' ||
+          terminalConnectionRef.current !== 'connected'
+        ) {
+          return true
+        }
+
+        const intent = translateTerminalKeydown(event, {
+          hasSelection: term?.hasSelection() ?? false,
+          platform: terminalPlatformRef.current,
+        })
+
+        if (intent.kind === 'text' || intent.kind === 'bytes') {
+          sendTerminalInputRef.current(intent.text, {
+            flushImmediately: intent.kind === 'bytes' && intent.text === '\x03',
+          })
+          return false
+        }
+
+        if (intent.kind === 'unsupported') {
+          logUnsupportedTerminalKeydown(intent, event)
+        }
+
+        return true
       })
+
+      pasteTarget = term.textarea ?? container
+      handlePaste = (rawEvent) => {
+        const event = rawEvent as ClipboardEvent
+        if (
+          viewModeRef.current !== 'terminal' ||
+          terminalConnectionRef.current !== 'connected'
+        ) {
+          return
+        }
+
+        const text = event.clipboardData?.getData('text/plain') ?? ''
+        const intent = createTerminalPasteIntent(text)
+        if (intent.kind !== 'paste') {
+          return
+        }
+
+        event.preventDefault()
+        event.stopPropagation()
+        sendTerminalInputRef.current(intent.text)
+      }
+      pasteTarget.addEventListener('paste', handlePaste)
+
+      if (term.textarea) {
+        handleCompositionEvent = (event) => {
+          logUnsupportedTerminalComposition(event)
+        }
+        term.textarea.addEventListener('compositionstart', handleCompositionEvent)
+        term.textarea.addEventListener('compositionupdate', handleCompositionEvent)
+        term.textarea.addEventListener('compositionend', handleCompositionEvent)
+      }
 
       scrollListener = term.onScroll((scrollPosition) => {
         setTerminalScrolledToTop(scrollPosition === 0)
@@ -665,8 +737,15 @@ function ThreadView() {
       cancelled = true
       terminalReadyRef.current = false
       if (handleResize) window.removeEventListener('resize', handleResize)
-      dataListener?.dispose()
       scrollListener?.dispose()
+      if (pasteTarget && handlePaste) {
+        pasteTarget.removeEventListener('paste', handlePaste)
+      }
+      if (term?.textarea && handleCompositionEvent) {
+        term.textarea.removeEventListener('compositionstart', handleCompositionEvent)
+        term.textarea.removeEventListener('compositionupdate', handleCompositionEvent)
+        term.textarea.removeEventListener('compositionend', handleCompositionEvent)
+      }
       fitAddon?.dispose()
       term?.dispose()
       terminalRef.current = null
@@ -680,6 +759,11 @@ function ThreadView() {
 
   // Terminal input handling
   const flushTerminalInput = useCallback(async () => {
+    if (terminalInputFlushTimerRef.current) {
+      clearTimeout(terminalInputFlushTimerRef.current)
+      terminalInputFlushTimerRef.current = null
+    }
+
     const input = terminalInputBufferRef.current
     if (!input || !threadId) return
     terminalInputBufferRef.current = ''
@@ -721,15 +805,20 @@ function ThreadView() {
     }
   }, [shouldAbortForUnauthorized, threadId])
 
-  const sendTerminalInput = useCallback((text: string) => {
-    if (!threadId) return
+  const sendTerminalInput = useCallback<QueueTerminalInput>((text, options = {}) => {
+    if (!threadId || text.length === 0) return
     terminalInputBufferRef.current += text
     if (terminalInputFlushTimerRef.current) {
       clearTimeout(terminalInputFlushTimerRef.current)
+      terminalInputFlushTimerRef.current = null
+    }
+    if (options.flushImmediately) {
+      void flushTerminalInput()
+      return
     }
     terminalInputFlushTimerRef.current = setTimeout(() => {
       terminalInputFlushTimerRef.current = null
-      flushTerminalInput()
+      void flushTerminalInput()
     }, 20)
   }, [threadId, flushTerminalInput])
 
@@ -762,6 +851,11 @@ function ThreadView() {
   useEffect(() => {
     sendTerminalResizeRef.current = sendTerminalResize
   }, [sendTerminalResize])
+
+  const sendTerminalCtrlC = useCallback(() => {
+    sendTerminalInput('\x03', { flushImmediately: true })
+    terminalRef.current?.focus()
+  }, [sendTerminalInput])
 
   const refreshTerminalSnapshot = useCallback(async (targetThreadId: string) => {
     const statusResp = await apiFetch(`/api/threads/${targetThreadId}/terminal`)
@@ -1645,25 +1739,6 @@ function ThreadView() {
     }
   }, [shouldAbortForUnauthorized, threadId])
 
-  const sendTerminalInterrupt = useCallback(async () => {
-    if (!threadId) return
-    try {
-      const resp = await apiFetch(`/api/threads/${threadId}/terminal/interrupt`, { method: 'POST' })
-      if (shouldAbortForUnauthorized(resp)) {
-        return
-      }
-      if (!resp.ok) {
-        console.warn('[terminal] interrupt request failed', { status: resp.status })
-      }
-    } catch (err) {
-      if (isAuthRedirectPending()) {
-        return
-      }
-      console.error('Failed to send terminal interrupt', err)
-      setError(err instanceof Error ? err.message : 'Failed to interrupt')
-    }
-  }, [shouldAbortForUnauthorized, threadId])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!budId || !threadId) {
@@ -1946,10 +2021,10 @@ function ThreadView() {
                         <button
                           type="button"
                           onClick={() => {
-                            sendTerminalInterrupt()
+                            sendTerminalCtrlC()
                             setTerminalMenuOpen(false)
                           }}
-                          disabled={terminalConnection !== 'connected' || terminalReadiness?.ready !== false}
+                          disabled={terminalConnection !== 'connected'}
                           className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <span className="font-mono text-xs text-muted-foreground">Ctrl+C</span>
