@@ -73,7 +73,8 @@ loader: async ({ params }) => {
 - Degrades grid bootstrap to text when the local xterm geometry does not match the captured pane geometry
 - Restricts the trailing-blank trim workaround to degraded/text bootstrap paths instead of applying it to full-fidelity grid restores
 - Routes normal browser typing and modeled keys through `POST /terminal/send` with dispatch-only semantics (`observe: null`)
-- Keeps `POST /terminal/input` only as a narrow raw fallback for unsupported human sequences and emulator protocol traffic
+- Suppresses xterm-generated `emulator_protocol` instead of forwarding it upstream
+- Routes unsupported human control/escape sequences through structured `POST /terminal/send` as literal text bytes, so the reference web client no longer uses `POST /terminal/input` during normal interaction
 - Sends resize updates only when terminal dimensions actually change
 - Uses the existing interrupt route for Ctrl+C
 

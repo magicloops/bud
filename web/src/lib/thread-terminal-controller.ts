@@ -18,7 +18,6 @@ type StructuredHumanInputAction =
   | { kind: 'text'; text: string }
   | { kind: 'send'; request: Pick<ApiTerminalSendRequest, 'text' | 'submit' | 'keys'> }
   | { kind: 'interrupt' }
-  | { kind: 'raw'; input: string }
 
 type TerminalTransport = {
   send: (request: ApiTerminalSendRequest) => Promise<void>
@@ -50,6 +49,11 @@ const ESCAPE_SEQUENCE_TO_KEY = new Map<string, string>([
 ])
 
 const UNSUPPORTED_CONTROL_CHARACTER_PATTERN = /[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]/
+
+// Xterm-generated terminal replies are not a safe generic upstream channel in the tmux-backed stack.
+function isAllowlistedEmulatorProtocol(_data: string) {
+  return false
+}
 
 function trimTrailingBlankSnapshotLines(text: string) {
   const normalized = text.replace(/\r\n/g, '\n')
@@ -236,10 +240,12 @@ export class ThreadTerminalController {
     }
 
     if (source === 'emulator_protocol') {
-      void this.flushPendingText()
-      this.enqueue(async () => {
-        await this.transport.sendRaw(data, source)
-      })
+      if (isAllowlistedEmulatorProtocol(data)) {
+        void this.flushPendingText()
+        this.enqueue(async () => {
+          await this.transport.sendRaw(data, source)
+        })
+      }
       return
     }
 
@@ -268,12 +274,7 @@ export class ThreadTerminalController {
           raw_input: data,
         })
       })
-      return
     }
-
-    this.enqueue(async () => {
-      await this.transport.sendRaw(action.input, source)
-    })
   }
 
   private scheduleTextFlush() {
@@ -356,5 +357,5 @@ function parseHumanTerminalInput(data: string): StructuredHumanInputAction {
     return { kind: 'text', text: data }
   }
 
-  return { kind: 'raw', input: data }
+  return { kind: 'send', request: { text: data } }
 }

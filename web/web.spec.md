@@ -120,7 +120,9 @@ Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-
 - Safe bootstrap snapshots from `/api/threads/:id/terminal/state`
 - SSE streaming from `/api/threads/:id/terminal/stream`
 - Structured browser terminal send via `/api/threads/:id/terminal/send`
-- Narrow raw fallback via `/api/threads/:id/terminal/input`
+- Xterm-generated emulator replies suppressed in the browser instead of forwarded upstream
+- Structured browser send now also carries unsupported human control/escape sequences as literal text bytes
+- Low-level raw `/api/threads/:id/terminal/input` route retained, but no longer used by the reference web client for normal interaction
 - Automatic reconnection with exponential backoff
 - Durable catch-up via `after_offset=<last_rendered_byte_offset>` when available
 

@@ -111,7 +111,7 @@ Follow-up cleanup phase covering:
 - removal of legacy flat send-observe compatibility
 - removal of transitional `/terminal/state.snapshot` compatibility
 - reduction of temporary bootstrap/stream debug instrumentation
-- explicit retention of narrow raw `/terminal/input` fallback only for emulator protocol and unsupported browser sequences
+- initial retention of low-level raw `/terminal/input` fallback before the later emulator-protocol narrowing in Phase 10
 - explicit scoping of degraded text trimming to degraded bootstrap paths
 
 ### `phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md`

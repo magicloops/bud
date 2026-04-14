@@ -42,6 +42,7 @@ const PROTO_VERSION: &str = "0.1";
 const TERMINAL_PROTO_VERSION: &str = "0.2";
 const DEFAULT_HEARTBEAT_SEC: u64 = 30;
 const MAX_QUEUE_DEPTH: usize = 10;
+const TERMINAL_SEND_SUBMIT_AFTER_TEXT_DELAY_MS: u64 = 10;
 
 /// Bud (device agent) CLI arguments.
 #[derive(Debug, Parser, Clone)]
@@ -735,6 +736,161 @@ struct AdditiveDeltaPayload {
     strategy: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TmuxDispatchAction {
+    Literal { text: String, origin: &'static str },
+    Key { key: String, origin: &'static str },
+}
+
+fn build_terminal_send_dispatch_plan(
+    text: Option<&str>,
+    submit: bool,
+    keys: &[String],
+) -> Result<Vec<TmuxDispatchAction>> {
+    let mut actions = Vec::new();
+
+    if let Some(text) = text {
+        append_text_payload_dispatch_actions(&mut actions, text, submit);
+    } else if submit {
+        actions.push(TmuxDispatchAction::Key {
+            key: "Enter".to_string(),
+            origin: "submit_flag",
+        });
+    }
+
+    for key in keys {
+        if let Some(action) = resolve_interaction_key_dispatch_action(key)? {
+            actions.push(action);
+        }
+    }
+
+    Ok(actions)
+}
+
+fn append_text_payload_dispatch_actions(
+    actions: &mut Vec<TmuxDispatchAction>,
+    text: &str,
+    submit: bool,
+) {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let segments: Vec<&str> = normalized.split('\n').collect();
+
+    for (index, segment) in segments.iter().enumerate() {
+        if !segment.is_empty() {
+            actions.push(TmuxDispatchAction::Literal {
+                text: (*segment).to_string(),
+                origin: "text_segment",
+            });
+        }
+
+        let should_press_enter =
+            index + 1 < segments.len() || (submit && index + 1 == segments.len());
+        if should_press_enter {
+            actions.push(TmuxDispatchAction::Key {
+                key: "Enter".to_string(),
+                origin: if index + 1 < segments.len() {
+                    "text_newline"
+                } else {
+                    "submit_flag"
+                },
+            });
+        }
+    }
+
+    if normalized.is_empty() && submit {
+        actions.push(TmuxDispatchAction::Key {
+            key: "Enter".to_string(),
+            origin: "submit_flag",
+        });
+    }
+}
+
+fn resolve_interaction_key_dispatch_action(key: &str) -> Result<Option<TmuxDispatchAction>> {
+    let normalized = key.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    let action = match normalized.as_str() {
+        "enter" | "return" => TmuxDispatchAction::Key {
+            key: "Enter".to_string(),
+            origin: "explicit_key",
+        },
+        "space" | "spacebar" => TmuxDispatchAction::Literal {
+            text: " ".to_string(),
+            origin: "explicit_key",
+        },
+        "tab" => TmuxDispatchAction::Key {
+            key: "Tab".to_string(),
+            origin: "explicit_key",
+        },
+        "escape" | "esc" => TmuxDispatchAction::Key {
+            key: "Escape".to_string(),
+            origin: "explicit_key",
+        },
+        "up" | "arrowup" => TmuxDispatchAction::Key {
+            key: "Up".to_string(),
+            origin: "explicit_key",
+        },
+        "down" | "arrowdown" => TmuxDispatchAction::Key {
+            key: "Down".to_string(),
+            origin: "explicit_key",
+        },
+        "left" | "arrowleft" => TmuxDispatchAction::Key {
+            key: "Left".to_string(),
+            origin: "explicit_key",
+        },
+        "right" | "arrowright" => TmuxDispatchAction::Key {
+            key: "Right".to_string(),
+            origin: "explicit_key",
+        },
+        "backspace" => TmuxDispatchAction::Key {
+            key: "BSpace".to_string(),
+            origin: "explicit_key",
+        },
+        "delete" => TmuxDispatchAction::Key {
+            key: "DC".to_string(),
+            origin: "explicit_key",
+        },
+        "home" => TmuxDispatchAction::Key {
+            key: "Home".to_string(),
+            origin: "explicit_key",
+        },
+        "end" => TmuxDispatchAction::Key {
+            key: "End".to_string(),
+            origin: "explicit_key",
+        },
+        "pageup" => TmuxDispatchAction::Key {
+            key: "PageUp".to_string(),
+            origin: "explicit_key",
+        },
+        "pagedown" => TmuxDispatchAction::Key {
+            key: "PageDown".to_string(),
+            origin: "explicit_key",
+        },
+        _ if key.chars().count() == 1 => TmuxDispatchAction::Literal {
+            text: key.to_string(),
+            origin: "explicit_key",
+        },
+        _ => bail!("unsupported interaction key: {key}"),
+    };
+
+    Ok(Some(action))
+}
+
+fn should_delay_submit_after_action(
+    previous: Option<&TmuxDispatchAction>,
+    current: &TmuxDispatchAction,
+) -> bool {
+    matches!(
+        (previous, current),
+        (
+            Some(TmuxDispatchAction::Literal { .. }),
+            TmuxDispatchAction::Key { key, origin }
+        ) if key == "Enter" && *origin == "submit_flag"
+    )
+}
+
 fn summarize_capture_for_log(content: &str, include_preview: bool) -> CaptureLogSummary {
     let lines: Vec<&str> = content.lines().collect();
     let line_count = lines.len();
@@ -777,7 +933,10 @@ fn truncate_log_value(value: &str, max_chars: usize) -> String {
     if normalized.chars().count() <= max_chars {
         return normalized;
     }
-    let truncated: String = normalized.chars().take(max_chars.saturating_sub(3)).collect();
+    let truncated: String = normalized
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect();
     format!("{truncated}...")
 }
 
@@ -1002,14 +1161,17 @@ struct ResolvedTerminalSendObserve {
 }
 
 fn resolve_terminal_send_observe(frame: &TerminalSendFrame) -> Option<ResolvedTerminalSendObserve> {
-    frame.observe.as_ref().map(|observe| ResolvedTerminalSendObserve {
-        after_ms: observe.after_ms.unwrap_or(1000),
-        wait_for: observe
-            .wait_for
-            .clone()
-            .unwrap_or_else(|| "none".to_string()),
-        timeout_ms: observe.timeout_ms.unwrap_or(5_000),
-    })
+    frame
+        .observe
+        .as_ref()
+        .map(|observe| ResolvedTerminalSendObserve {
+            after_ms: observe.after_ms.unwrap_or(1000),
+            wait_for: observe
+                .wait_for
+                .clone()
+                .unwrap_or_else(|| "none".to_string()),
+            timeout_ms: observe.timeout_ms.unwrap_or(5_000),
+        })
 }
 
 fn dispatch_only_readiness() -> Value {
@@ -1076,10 +1238,7 @@ fn build_screen_wait_assessment(
 
         if let Some(processing) = may_still_be_processing {
             if let Some(hints) = map.get_mut("hints").and_then(|value| value.as_object_mut()) {
-                hints.insert(
-                    "may_still_be_processing".into(),
-                    Value::Bool(processing),
-                );
+                hints.insert("may_still_be_processing".into(), Value::Bool(processing));
             }
         }
     }
@@ -1119,7 +1278,8 @@ fn normalize_visible_screen_lines(capture: &str, expected_rows: u16) -> Vec<Stri
         .map(|line| line.to_string())
         .collect::<Vec<String>>();
 
-    if lines.len() == expected_rows as usize + 1 && lines.last().is_some_and(|line| line.is_empty()) {
+    if lines.len() == expected_rows as usize + 1 && lines.last().is_some_and(|line| line.is_empty())
+    {
         lines.pop();
     }
 
@@ -1511,7 +1671,9 @@ impl TerminalManager {
         let start_line = start_line_for_observe_view(view, lines);
 
         if view == "delta" && wait_for == "shell_ready" {
-            return self.send_observe_error(&frame, "unsupported_wait_for").await;
+            return self
+                .send_observe_error(&frame, "unsupported_wait_for")
+                .await;
         }
 
         let handle = self.ensure_handle_for_session(session_id, None).await?;
@@ -1593,8 +1755,7 @@ impl TerminalManager {
                     .run_capture_pane_with_lines(&handle.session_name, start_line)
                     .await?;
                 let capture_ms = capture_start.elapsed().as_millis() as u64;
-                let capture_summary =
-                    summarize_capture_for_log(&output, self.config.debug_enabled);
+                let capture_summary = summarize_capture_for_log(&output, self.config.debug_enabled);
                 (readiness, output, capture_ms, capture_summary, false)
             } else {
                 let wait_result = self
@@ -1603,9 +1764,7 @@ impl TerminalManager {
                         request_id,
                         wait_for,
                         timeout_ms,
-                        wait_baseline
-                            .as_deref()
-                            .or(delivered_baseline.as_deref()),
+                        wait_baseline.as_deref().or(delivered_baseline.as_deref()),
                         start_line,
                     )
                     .await?;
@@ -1619,20 +1778,18 @@ impl TerminalManager {
             };
         let readiness_wait_ms = readiness_wait_start.elapsed().as_millis() as u64;
         let mut screen_state: Option<TerminalScreenStateMessage> = None;
-        let (output, output_bytes, lines_captured, changed, truncated, output_summary) = match view {
+        let (output, output_bytes, lines_captured, changed, truncated, output_summary) = match view
+        {
             "delta" => {
-                let comparison_baseline = delivered_baseline
-                    .as_deref()
-                    .or(wait_baseline.as_deref());
+                let comparison_baseline =
+                    delivered_baseline.as_deref().or(wait_baseline.as_deref());
                 let delta = build_additive_delta_payload(comparison_baseline, &current_capture);
-                let fallback_delta = if delivered_baseline.is_none()
-                    && delta.text.is_empty()
-                    && !delta.changed
-                {
-                    Some(build_additive_delta_payload(None, &current_capture))
-                } else {
-                    None
-                };
+                let fallback_delta =
+                    if delivered_baseline.is_none() && delta.text.is_empty() && !delta.changed {
+                        Some(build_additive_delta_payload(None, &current_capture))
+                    } else {
+                        None
+                    };
                 let output = fallback_delta
                     .as_ref()
                     .map(|value| value.text.clone())
@@ -1824,7 +1981,9 @@ impl TerminalManager {
                         {
                             Ok(current) => {
                                 let delta = build_additive_delta_payload(
-                                    baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                                    baseline_capture
+                                        .as_ref()
+                                        .map(|state| state.capture.as_str()),
                                     &current.capture,
                                 );
                                 let readiness = assess_capture_readiness(&current.capture);
@@ -1883,7 +2042,9 @@ impl TerminalManager {
                         {
                             Ok(current) => {
                                 let delta = build_additive_delta_payload(
-                                    baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                                    baseline_capture
+                                        .as_ref()
+                                        .map(|state| state.capture.as_str()),
                                     &current.capture,
                                 );
                                 let captured_after_ms = current.captured_after_ms;
@@ -1913,12 +2074,16 @@ impl TerminalManager {
                                 request_id,
                                 observe.wait_for.as_str(),
                                 observe.timeout_ms,
-                                baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                                baseline_capture
+                                    .as_ref()
+                                    .map(|state| state.capture.as_str()),
                                 delta_start_line,
                             )
                             .await?;
                         let delta = build_additive_delta_payload(
-                            baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                            baseline_capture
+                                .as_ref()
+                                .map(|state| state.capture.as_str()),
                             &wait_result.capture,
                         );
 
@@ -2113,56 +2278,41 @@ impl TerminalManager {
         submit: bool,
         keys: &[String],
     ) -> Result<bool> {
-        let mut submitted = false;
+        let plan = build_terminal_send_dispatch_plan(text, submit, keys)?;
 
-        if let Some(text) = text {
-            submitted |= self
-                .send_text_payload_to_tmux(&handle.session_name, text, submit)
-                .await?;
-        } else if submit {
-            self.send_tmux_key(&handle.session_name, "Enter").await?;
-            submitted = true;
+        if plan.is_empty() {
+            return Ok(false);
         }
 
-        for key in keys {
-            submitted |= self
-                .send_interaction_key(&handle.session_name, key)
+        for (index, action) in plan.iter().enumerate() {
+            if should_delay_submit_after_action(
+                index.checked_sub(1).and_then(|i| plan.get(i)),
+                action,
+            ) {
+                time::sleep(Duration::from_millis(
+                    TERMINAL_SEND_SUBMIT_AFTER_TEXT_DELAY_MS,
+                ))
+                .await;
+            }
+
+            self.dispatch_tmux_action(&handle.session_name, action)
                 .await?;
         }
 
-        Ok(submitted)
+        Ok(true)
     }
 
-    async fn send_text_payload_to_tmux(
+    async fn dispatch_tmux_action(
         &self,
         session_name: &str,
-        text: &str,
-        submit: bool,
-    ) -> Result<bool> {
-        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-        let segments: Vec<&str> = normalized.split('\n').collect();
-        let mut submitted = false;
-
-        for (index, segment) in segments.iter().enumerate() {
-            if !segment.is_empty() {
-                self.send_literal_text(session_name, segment).await?;
-                submitted = true;
+        action: &TmuxDispatchAction,
+    ) -> Result<()> {
+        match action {
+            TmuxDispatchAction::Literal { text, .. } => {
+                self.send_literal_text(session_name, text).await
             }
-
-            let should_press_enter =
-                index + 1 < segments.len() || (submit && index + 1 == segments.len());
-            if should_press_enter {
-                self.send_tmux_key(session_name, "Enter").await?;
-                submitted = true;
-            }
+            TmuxDispatchAction::Key { key, .. } => self.send_tmux_key(session_name, key).await,
         }
-
-        if normalized.is_empty() && submit {
-            self.send_tmux_key(session_name, "Enter").await?;
-            submitted = true;
-        }
-
-        Ok(submitted)
     }
 
     async fn send_literal_text(&self, session_name: &str, text: &str) -> Result<()> {
@@ -2197,77 +2347,6 @@ impl TerminalManager {
         Ok(())
     }
 
-    async fn send_interaction_key(&self, session_name: &str, key: &str) -> Result<bool> {
-        let normalized = key.trim().to_ascii_lowercase();
-        if normalized.is_empty() {
-            return Ok(false);
-        }
-
-        match normalized.as_str() {
-            "enter" | "return" => {
-                self.send_tmux_key(session_name, "Enter").await?;
-                Ok(true)
-            }
-            "space" | "spacebar" => {
-                self.send_literal_text(session_name, " ").await?;
-                Ok(true)
-            }
-            "tab" => {
-                self.send_tmux_key(session_name, "Tab").await?;
-                Ok(true)
-            }
-            "escape" | "esc" => {
-                self.send_tmux_key(session_name, "Escape").await?;
-                Ok(true)
-            }
-            "up" | "arrowup" => {
-                self.send_tmux_key(session_name, "Up").await?;
-                Ok(true)
-            }
-            "down" | "arrowdown" => {
-                self.send_tmux_key(session_name, "Down").await?;
-                Ok(true)
-            }
-            "left" | "arrowleft" => {
-                self.send_tmux_key(session_name, "Left").await?;
-                Ok(true)
-            }
-            "right" | "arrowright" => {
-                self.send_tmux_key(session_name, "Right").await?;
-                Ok(true)
-            }
-            "backspace" => {
-                self.send_tmux_key(session_name, "BSpace").await?;
-                Ok(true)
-            }
-            "delete" => {
-                self.send_tmux_key(session_name, "DC").await?;
-                Ok(true)
-            }
-            "home" => {
-                self.send_tmux_key(session_name, "Home").await?;
-                Ok(true)
-            }
-            "end" => {
-                self.send_tmux_key(session_name, "End").await?;
-                Ok(true)
-            }
-            "pageup" => {
-                self.send_tmux_key(session_name, "PageUp").await?;
-                Ok(true)
-            }
-            "pagedown" => {
-                self.send_tmux_key(session_name, "PageDown").await?;
-                Ok(true)
-            }
-            _ if key.chars().count() == 1 => {
-                self.send_literal_text(session_name, key).await?;
-                Ok(true)
-            }
-            _ => bail!("unsupported interaction key: {key}"),
-        }
-    }
-
     async fn resolve_readiness_after_interaction(
         &self,
         handle: &Arc<TerminalHandle>,
@@ -2295,15 +2374,7 @@ impl TerminalManager {
                 assessment
             }
             "changed" => {
-                self
-                    .wait_for_screen_state(
-                        handle,
-                        request_id,
-                        wait_for,
-                        timeout_ms,
-                        None,
-                        None,
-                    )
+                self.wait_for_screen_state(handle, request_id, wait_for, timeout_ms, None, None)
                     .await?
                     .assessment
             }
@@ -2436,14 +2507,7 @@ impl TerminalManager {
         timeout_ms: u64,
     ) -> Result<(serde_json::Value, Vec<u8>, usize, bool)> {
         let wait_result = self
-            .wait_for_screen_state(
-                handle,
-                request_id,
-                "settled",
-                timeout_ms,
-                None,
-                None,
-            )
+            .wait_for_screen_state(handle, request_id, "settled", timeout_ms, None, None)
             .await?;
         let output = wait_result.capture.into_bytes();
         let output_bytes = output.len();
@@ -2498,7 +2562,9 @@ impl TerminalManager {
             );
         }
 
-        let text = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
+        let text = String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_string();
         let mut parts = text.split('\t');
 
         let cols = parse_tmux_u16(parts.next().unwrap_or_default(), "pane_width")?;
@@ -2570,7 +2636,9 @@ impl TerminalManager {
         captured_after_ms: u64,
     ) -> Result<VisibleScreenCaptureState> {
         let metadata = self.fetch_tmux_pane_metadata(session_name).await?;
-        let raw_capture = self.run_capture_visible_screen(session_name, &metadata).await?;
+        let raw_capture = self
+            .run_capture_visible_screen(session_name, &metadata)
+            .await?;
         let lines = normalize_visible_screen_lines(&raw_capture, metadata.rows);
         let capture = lines.join("\n");
         let summary = summarize_capture_for_log(&capture, self.config.debug_enabled);
@@ -2649,9 +2717,10 @@ impl TerminalManager {
                 summary: summarize_capture_for_log(existing, self.config.debug_enabled),
                 captured_after_ms: 0,
             },
-            None => self
-                .capture_screen_state(&handle.session_name, start_line, 0)
-                .await?,
+            None => {
+                self.capture_screen_state(&handle.session_name, start_line, 0)
+                    .await?
+            }
         };
 
         let started_at = Instant::now();
@@ -4520,9 +4589,18 @@ mod tests {
 
     #[test]
     fn parse_screen_wait_mode_supports_phase_seven_modes() {
-        assert_eq!(parse_screen_wait_mode("none").unwrap(), ScreenWaitMode::None);
-        assert_eq!(parse_screen_wait_mode("changed").unwrap(), ScreenWaitMode::Changed);
-        assert_eq!(parse_screen_wait_mode("settled").unwrap(), ScreenWaitMode::Settled);
+        assert_eq!(
+            parse_screen_wait_mode("none").unwrap(),
+            ScreenWaitMode::None
+        );
+        assert_eq!(
+            parse_screen_wait_mode("changed").unwrap(),
+            ScreenWaitMode::Changed
+        );
+        assert_eq!(
+            parse_screen_wait_mode("settled").unwrap(),
+            ScreenWaitMode::Settled
+        );
     }
 
     #[test]
@@ -4684,5 +4762,49 @@ mod tests {
         };
 
         assert!(resolve_terminal_send_observe(&frame).is_none());
+    }
+
+    #[test]
+    fn terminal_send_dispatch_plan_models_text_plus_submit() {
+        let plan =
+            build_terminal_send_dispatch_plan(Some("hello"), true, &[]).expect("dispatch plan");
+
+        assert_eq!(
+            plan,
+            vec![
+                TmuxDispatchAction::Literal {
+                    text: "hello".to_string(),
+                    origin: "text_segment",
+                },
+                TmuxDispatchAction::Key {
+                    key: "Enter".to_string(),
+                    origin: "submit_flag",
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_send_dispatch_plan_models_trailing_newline_plus_submit_as_double_enter() {
+        let plan =
+            build_terminal_send_dispatch_plan(Some("hello\n"), true, &[]).expect("dispatch plan");
+
+        assert_eq!(
+            plan,
+            vec![
+                TmuxDispatchAction::Literal {
+                    text: "hello".to_string(),
+                    origin: "text_segment",
+                },
+                TmuxDispatchAction::Key {
+                    key: "Enter".to_string(),
+                    origin: "text_newline",
+                },
+                TmuxDispatchAction::Key {
+                    key: "Enter".to_string(),
+                    origin: "submit_flag",
+                },
+            ]
+        );
     }
 }

@@ -33,7 +33,7 @@ export function attachClassifiedTerminalInput(
 
   if (!coreService?.onData || !coreService.onUserInput) {
     console.warn(
-      '[terminal-controller] xterm internal core service unavailable; falling back to public onData classification',
+      '[terminal-controller] xterm internal core service unavailable; falling back to public onData classification with reduced emulator-protocol suppression',
     )
     return terminal.onData((data) => {
       options.onData({ data, source: 'human' })

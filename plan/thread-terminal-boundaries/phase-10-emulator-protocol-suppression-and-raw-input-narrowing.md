@@ -106,9 +106,9 @@ Expected outcome:
 ## Deliverables
 
 - browser controller no longer forwards `emulator_protocol` upstream by default
-- any retained emulator-protocol forwarding is explicit and allowlisted
+- no emulator-protocol forwarding remains in the reference web client; future forwarding would require an explicit allowlist
 - `/terminal/input` no longer serves as the generic sink for xterm-generated terminal replies
-- structured browser key coverage expands for the highest-value TUI/shell shortcuts
+- structured browser key coverage expands for the highest-value TUI/shell shortcuts, including previously raw human control/escape sequences via literal `terminal_send.text`
 - updated docs/specs/plan notes that describe `/terminal/input` as human-fallback-only if it remains
 
 ## Success Criteria

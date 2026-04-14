@@ -193,6 +193,11 @@ When agent or browser structured send launches commands like `python`, `node`, o
 4. If `observe` requests a wait, Bud optionally waits for `shell_ready`, `changed`, or `settled`
 5. Bud sends `terminal_send_result` immediately for dispatch-only sends, or with additive delta/readiness when observation was requested
 
+Reference-web Phase 10 notes:
+- the browser now suppresses xterm-generated `emulator_protocol` instead of forwarding it as pane input
+- previously raw human control/escape sequences now stay on `sendInteraction()` through `terminal_send.text`
+- the low-level `sendInput()` path remains available, but it is no longer part of normal reference-web interaction
+
 These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. The active model-facing contract is now send-first: shell and interactive input both flow through `terminal.send`, while `terminal.observe` is the explicit inspection hatch.
 
 **Terminal SSE Payload Notes**:
@@ -212,6 +217,7 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `createSessionForThread()` stamps `terminal_session.created_by_user_id`
 - `sendInput(..., { userId })` writes the acting human id into `terminal_session_input_log.user_id`
 - browser structured send now passes explicit `source` through the runtime so pending-command inference no longer treats browser-emitted terminal protocol as human intent
+- `TerminalInputSource` still includes `emulator_protocol` for historical/runtime taxonomy, but the reference web client now suppresses xterm-generated emulator replies before they reach the runtime
 
 ## Dependencies
 

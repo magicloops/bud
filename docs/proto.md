@@ -89,10 +89,12 @@ Breaking changes will bump `proto` (e.g., `0.2`).
 ### 2.3.1 Terminal Browser Write Surface
 
 - Structured path: `POST /api/threads/:thread_id/terminal/send`
-- Narrow raw fallback: `POST /api/threads/:thread_id/terminal/input`
+- Low-level raw fallback: `POST /api/threads/:thread_id/terminal/input`
 - Normal browser typing SHOULD use the structured send path with `text`, `submit`, and `keys`, and SHOULD omit `observe` (or send `observe: null`) so keystrokes stay fire-and-forget.
+- Reference web clients SHOULD also route unsupported human control/escape sequences through the structured send path as literal `text` bytes instead of switching to raw input.
 - Agent/tooling callers that need proof of visible terminal reaction SHOULD use the same structured send path with an `observe` object.
-- Raw fallback exists for unsupported browser sequences and emulator protocol traffic that should not be conflated with human keystrokes.
+- Browser-generated terminal-emulator replies SHOULD NOT be forwarded upstream by default merely because xterm emitted them.
+- Raw fallback exists only as a low-level escape hatch and is not part of the normal reference-web interaction path.
 
 ### 2.4 Agent Event Stream (Browser)
 
@@ -558,7 +560,7 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
 * `GET /api/threads/:thread_id/terminal/state` — get `{ session_id, state, latest_byte_offset, readiness, bootstrap, updated_at }`
 * `GET /api/threads/:thread_id/terminal/history?bytes=N&since_offset=M` — fetch thread-scoped output history
 * `POST /api/threads/:thread_id/terminal/send` — send structured input `{ text?, submit?, keys?, observe? }`
-* `POST /api/threads/:thread_id/terminal/input` — send narrow raw fallback input `{ input: "..." }`
+* `POST /api/threads/:thread_id/terminal/input` — send low-level raw fallback input `{ input: "..." }`
 * `POST /api/threads/:thread_id/terminal/interrupt` — send Ctrl+C
 * `POST /api/threads/:thread_id/terminal/resize` — resize terminal `{ cols, rows }`
 

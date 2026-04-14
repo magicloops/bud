@@ -83,6 +83,7 @@ Hash-based deduplication for `capture-pane` output:
   - Can explicitly wait for `shell_ready`, `changed`, or `settled`
   - Reuses a pre-send baseline capture so waits can detect immediate redraws and echoed input
   - Strips low-signal separator-only lines from delta text when a line is a single repeated non-alphanumeric glyph run of 4+ characters
+  - Temporarily waits `10ms` before a `submit_flag` Enter that immediately follows literal text, to validate whether tight text-then-submit timing is the source of the Codex regression while minimizing added latency
   - Returns dispatch status plus additive `delta` and readiness in `terminal_send_result`
 - **`handle_observe`** - Explicit delta/screen/history observation for agent `terminal.observe`:
   - Defaults to `view: "delta"` and supports explicit `screen` / `history` modes

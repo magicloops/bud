@@ -160,6 +160,8 @@ await_ready: {
 - `terminal.send` now supports optional nested `observe`; when present it defaults to a fast post-send delta capture after `1000ms`
 - omitting `observe` produces a dispatch-only acknowledgement with no post-send delta capture
 - `terminal.send` is now the primary tool for both shell commands and interactive input, including normal browser typing through the service `/terminal/send` surface
+- the reference web client now also uses `terminal.send.text` for formerly-raw human control/escape sequences instead of depending on the browser `/terminal/input` route
+- xterm-generated emulator replies are now suppressed in the reference web client by default rather than forwarded upstream as pane input
 - agent-facing explicit waits are now `changed` and `settled`
 - `terminal.send` and `terminal.observe` share the same immediate-start screen wait engine for `changed` / `settled`
 - `settled` means "screen has been quiet for a short window", not the older blind `screen_stable` loop

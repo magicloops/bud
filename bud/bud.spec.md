@@ -163,6 +163,8 @@ terminal_input     →    tmux send-keys (text + Enter)
 
 terminal_send      →    tmux send-keys (structured text/keys)
                         Primary send-first path for shell commands and interactive input
+                        Deliberately waits 10ms before a submit-triggered Enter that immediately follows literal text
+                        This protects TUI submit semantics observed in Codex and Claude Code and should not be removed without revalidating combined text+submit sends
                         Optional: post-send observe { after_ms, wait_for, timeout_ms }
                         Omit observe for dispatch-only sends
                         Send terminal_send_result
@@ -207,6 +209,8 @@ For interactive programs like Claude Code:
 
 For the Phase 6/7 agent-facing send/observe path specifically:
 - Bud now keeps one shared `terminal_send` path and treats post-send observation as optional
+- Bud intentionally inserts a small `10ms` boundary between literal text injection and a trailing submit Enter when both are part of the same structured send
+- That boundary is a compatibility decision for tmux-backed TUIs, not an incidental artifact; removing it risks regressing Codex and Claude Code combined text+submit turns
 - `terminal_send_result` includes dispatch success, and only includes additive delta evidence when observation was requested
 - explicit agent-facing waits now use `changed` / `settled`, which start sampling immediately instead of waiting through the old blind `screen_stable` loop
 - the older activity-based detector remains for low-level `terminal_input` / `terminal_interrupt` readiness events

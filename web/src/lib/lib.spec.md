@@ -49,7 +49,7 @@ xterm-specific browser input classification.
 **Responsibilities**:
 - Hooks xterm internal `coreService.onUserInput` and `coreService.onData`
 - Distinguishes likely human keystrokes from xterm-emitted emulator protocol replies
-- Falls back to public `terminal.onData(...)` classification when the internal hooks are unavailable
+- Falls back to public `terminal.onData(...)` classification when the internal hooks are unavailable, with an explicit warning that emulator-protocol suppression is degraded in that mode
 - Exposes `{ data, source }` events for the terminal controller
 
 ### `thread-terminal-controller.ts`
@@ -59,7 +59,8 @@ Browser-side terminal transport controller.
 **Responsibilities**:
 - Attaches to xterm and consumes classified input from `terminal-xterm-input.ts`
 - Routes normal browser typing and modeled keys through structured `/terminal/send`, explicitly setting `observe: null` so typing is not gated on post-send observation
-- Keeps a narrow raw fallback for unsupported human sequences and emulator protocol traffic
+- Suppresses xterm-generated `emulator_protocol` by default instead of forwarding it upstream through raw input
+- Routes unsupported human control/escape sequences through structured `/terminal/send` as literal `text` bytes, so the reference web client no longer depends on `/terminal/input`
 - Tracks `lastRenderedByteOffset` so reconnects can resume with `after_offset=<n>`
 - Applies richer `/terminal/state` bootstrap payloads before live stream attach
 - Uses `bootstrap.kind: "grid"` as the preferred restore path, rendering exact visible rows plus explicit cursor placement through xterm's public write path
@@ -77,6 +78,7 @@ Browser-side terminal transport controller.
 - Escape
 - Arrow keys, Home/End, Delete, PageUp/PageDown
 - Ctrl+C through the existing interrupt route
+- Previously raw human fallback sequences such as Ctrl chords, Alt/Meta-prefixed input, function-key escape strings, and modified navigation now stay on structured `/terminal/send` via literal `text`
 
 ### `claim-mobile-handoff.ts`
 

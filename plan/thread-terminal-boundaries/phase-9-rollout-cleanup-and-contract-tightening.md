@@ -28,6 +28,8 @@ That work intentionally left a few temporary or transitional pieces in place whi
 
 The validation work is now good enough to stop treating those as provisional.
 
+Note: the raw-input retention decision in this phase was intentionally revisited later by [phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md](./phase-10-emulator-protocol-suppression-and-raw-input-narrowing.md), after live Codex TUI validation showed that xterm-generated emulator replies should not keep using the raw browser input lane.
+
 ## Preconditions
 
 Before this phase is considered complete:

@@ -90,7 +90,7 @@ Thread and message management, plus terminal operations (~1450 lines).
 | `GET` | `/api/threads/:thread_id/terminal/state` | Get a safe owned terminal bootstrap (`grid` / `text` / `unavailable`) plus `latest_byte_offset` |
 | `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session; live-only by default, durable catch-up with `after_offset` |
 | `POST` | `/api/threads/:thread_id/terminal/send` | Send structured browser terminal interaction (`text`, `submit`, `keys`) |
-| `POST` | `/api/threads/:thread_id/terminal/input` | Send source-tagged raw fallback input |
+| `POST` | `/api/threads/:thread_id/terminal/input` | Send low-level raw fallback input |
 | `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send Ctrl+C to an owned session |
 | `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |
 | `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
@@ -145,8 +145,9 @@ Thread and message management, plus terminal operations (~1450 lines).
 - `GET /api/threads/:thread_id/terminal/stream` with no `after_offset` is live-only; it does not replay buffered `terminal.output`
 - `GET /api/threads/:thread_id/terminal/stream?after_offset=<n>` replays only durable output strictly after that byte offset, then continues live
 - when durable output can no longer satisfy the requested offset, the route emits `terminal.resync_required` and closes so the browser can refetch `/terminal/state`
-- `POST /api/threads/:thread_id/terminal/send` routes normal browser typing and modeled keys through the structured Bud `terminal_send` path, with browser callers defaulting to `observe: null` and higher-level callers allowed to supply nested observation options
-- `POST /api/threads/:thread_id/terminal/input` remains a narrow, source-tagged raw fallback for unsupported browser cases and emulator protocol traffic
+- `POST /api/threads/:thread_id/terminal/send` routes normal browser typing, modeled keys, and the reference web client's formerly-raw human control/escape sequences through the structured Bud `terminal_send` path, with browser callers defaulting to `observe: null` and higher-level callers allowed to supply nested observation options
+- the reference web client now suppresses xterm-generated `emulator_protocol` instead of forwarding it through `/terminal/input`
+- `POST /api/threads/:thread_id/terminal/input` remains mounted as a low-level raw fallback route, but it is no longer part of the reference web client's normal interaction path
 
 **Message History Examples**:
 

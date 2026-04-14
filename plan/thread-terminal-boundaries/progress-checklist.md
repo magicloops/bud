@@ -88,8 +88,8 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ## Phase 10: Emulator Protocol Suppression And Raw Input Narrowing
 
-- [ ] Stop forwarding `emulator_protocol` upstream from the reference web client by default.
-- [ ] Decide whether any emulator-protocol forwarding remains as an explicit allowlist.
-- [ ] Narrow `/terminal/input` so it is no longer justified by emulator-reply forwarding.
-- [ ] Expand structured browser key coverage for the validated high-value human fallback cases.
-- [ ] Update docs/specs so `/terminal/input` is described as unsupported-human fallback only if retained.
+- [x] Stop forwarding `emulator_protocol` upstream from the reference web client by default.
+- [x] Decide whether any emulator-protocol forwarding remains as an explicit allowlist.
+- [x] Narrow `/terminal/input` so it is no longer justified by emulator-reply forwarding.
+- [x] Expand structured browser key coverage for the validated high-value human fallback cases.
+- [x] Update docs/specs so `/terminal/input` is described as unsupported-human fallback only if retained.

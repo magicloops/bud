@@ -128,7 +128,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `GET` | `/api/threads/:id/terminal/state` | Safe terminal bootstrap snapshot |
 | `GET` | `/api/threads/:id/terminal/stream` | SSE output stream |
 | `POST` | `/api/threads/:id/terminal/send` | Structured browser terminal input |
-| `POST` | `/api/threads/:id/terminal/input` | Source-tagged raw terminal input fallback |
+| `POST` | `/api/threads/:id/terminal/input` | Low-level raw terminal input fallback |
 | `GET/POST` | `/api/auth/*` | Better Auth session and OAuth handlers |
 | `GET` | `/.well-known/oauth-authorization-server/api/auth` | Root auth-server metadata for OAuth clients |
 | `GET` | `/healthz` | Lightweight liveness check |
@@ -156,7 +156,7 @@ The thread agent contract now splits into:
 
 Canonical persisted transcript rows now expose `client_id` on `/api/threads/:id/messages` and inside the nested `message` payloads carried by `agent.message` / `agent.tool_result`.
 `GET /api/threads/:id/terminal/state` now provides the safe browser bootstrap snapshot for xterm, while `GET /api/threads/:id/terminal/stream` is live-only unless the client supplies `after_offset=<n>` for durable catch-up.
-`POST /api/threads/:id/terminal/send` is now the normal browser typing path; `POST /api/threads/:id/terminal/input` remains the narrow raw fallback for unsupported sequences and emulator protocol traffic.
+`POST /api/threads/:id/terminal/send` is now the normal browser typing path for printable text, modeled keys, and the reference web client's formerly-raw human control/escape sequences. The reference web client now suppresses xterm-generated emulator replies instead of forwarding them upstream. `POST /api/threads/:id/terminal/input` remains mounted as a low-level fallback route, but it is no longer part of normal reference-web interaction.
 `POST /api/threads/:id/messages` now accepts optional `client_id`, returns `{ message_id, client_id }`, and suppresses duplicate same-thread user retries without starting a second agent turn.
 `GET /api/threads/:id/agent/state` and `GET /api/threads/:id/agent/stream` now also expose pre-persistence assistant/tool `client_id` values so runtime bootstrap, live streaming, and later transcript rows share one message identity.
 
