@@ -565,6 +565,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries and service env placeholders |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
+| [TEMP-terminal-minimal-fix-summary.md](./TEMP-terminal-minimal-fix-summary.md) | Temporary root-level note capturing the minimal browser-side fix: suppress xterm-generated `emulator_protocol` by default and keep unsupported human escape/control bytes on the structured `terminal.send` path |
 | [design/](./design/) | Design documents |
 
 ---
