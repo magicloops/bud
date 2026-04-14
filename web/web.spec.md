@@ -118,7 +118,7 @@ Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-
 
 - xterm.js terminal emulator
 - SSE streaming from `/api/threads/:id/terminal/stream`
-- Input forwarding to `/api/threads/:id/terminal/input`
+- Explicit browser keyboard/paste translation, then batching to `/api/threads/:id/terminal/input`
 - Automatic reconnection with exponential backoff
 - History backfill on connect
 

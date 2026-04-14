@@ -1,0 +1,23 @@
+# Progress Checklist: Browser Terminal Input Contract
+
+- [x] Create the folder plan set and replace the original single-file draft
+- [x] Lock the supported phase-1 key and paste catalog
+- [x] Lock browser-vs-terminal shortcut precedence
+- [x] Decide and document the translator helper/module boundary
+- [x] Add development-only logging for unsupported modifier/key combos
+- [x] Remove browser outbound dependence on `xterm.onData(...)`
+- [x] Add explicit keydown translation for supported phase-1 keys
+- [x] Add explicit paste handling
+- [x] Implement raw `Ctrl+C` as terminal input bytes
+- [x] Preserve copy behavior for selected terminal text
+- [x] Revalidate focus/refocus behavior
+- [x] Revalidate resize synchronization
+- [x] Revalidate reconnect and recovery
+- [x] Revalidate history backfill
+- [x] Revalidate common shell workflows
+- [x] Revalidate common pager workflows
+- [x] Revalidate Claude Code watch/interrupt/manual command flows
+- [x] Update web specs
+- [x] Update the root doc index in `bud.spec.md`
+- [ ] Record unsupported phase-1 limitations in final docs/PR summary
+- [ ] Decide whether any real workflow requires a separate PTY-backed browser attach follow-up

@@ -4,7 +4,7 @@ Utility functions and shared helpers.
 
 ## Purpose
 
-Provides common utilities for API communication, browser auth, theming, and class name management.
+Provides common utilities for API communication, browser auth, terminal input translation, theming, and class name management.
 
 ## Files
 
@@ -79,6 +79,31 @@ export function normalizeCapabilities(caps: unknown): {
 ```
 
 Safely extracts capability fields from API response.
+
+### `terminal-input.ts`
+
+Browser-terminal input translation helpers.
+
+**Responsibilities**:
+- Detect whether the browser is on a Mac-like platform for shortcut precedence
+- Translate supported keydown events into explicit terminal byte/text intents
+- Preserve browser-native copy/paste shortcuts instead of pretending to support full terminal modifier forwarding
+- Build explicit paste intents from clipboard text
+- Log unsupported modifier/composition cases in development so phase-1 omissions are visible
+
+**Supported terminal actions**:
+- Printable text
+- `Enter`, `Tab`, `Backspace`, `Escape`
+- Arrows, `Home`, `End`, `PageUp`, `PageDown`
+- Raw `Ctrl+A` through `Ctrl+Z`
+- Multiline paste text
+
+**Exports**:
+- `detectTerminalInputPlatform()` - `mac` vs `non-mac` shortcut precedence
+- `translateTerminalKeydown()` - keydown to terminal/browser/unsupported intent translation
+- `createTerminalPasteIntent()` - clipboard text to explicit paste intent
+- `logUnsupportedTerminalKeydown()` - dev-only unsupported key logging
+- `logUnsupportedTerminalComposition()` - dev-only IME/composition logging
 
 ### `claim-mobile-handoff.ts`
 
