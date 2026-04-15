@@ -344,6 +344,7 @@ const LOW_SIGNAL_SEPARATOR_MIN_RUN: usize = 4;
 const MAX_VISIBLE_DELTA_LINES: usize = 20;
 const MAX_CHANGED_WINDOW_LINES: usize = 20;
 const MAX_VISIBLE_DELTA_BYTES: usize = 4096;
+const TMUX_TEXT_TO_ENTER_DELAY_MS: u64 = 10;
 
 #[derive(Debug, Deserialize, Clone, Default)]
 struct AwaitReady {
@@ -1113,6 +1114,9 @@ impl TerminalManager {
         }
 
         // Send Enter key(s) for each newline
+        if !trimmed_end.is_empty() && newline_count > 0 {
+            time::sleep(Duration::from_millis(TMUX_TEXT_TO_ENTER_DELAY_MS)).await;
+        }
         for _ in 0..newline_count {
             let status = Command::new("tmux")
                 .args(["send-keys", "-t", &handle.session_name, "Enter"])
@@ -1951,16 +1955,22 @@ impl TerminalManager {
         let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
         let segments: Vec<&str> = normalized.split('\n').collect();
         let mut submitted = false;
+        let mut sent_literal_text = false;
 
         for (index, segment) in segments.iter().enumerate() {
             if !segment.is_empty() {
                 self.send_literal_text(session_name, segment).await?;
                 submitted = true;
+                sent_literal_text = true;
             }
 
             let should_press_enter =
                 index + 1 < segments.len() || (submit && index + 1 == segments.len());
             if should_press_enter {
+                if sent_literal_text {
+                    time::sleep(Duration::from_millis(TMUX_TEXT_TO_ENTER_DELAY_MS)).await;
+                    sent_literal_text = false;
+                }
                 self.send_tmux_key(session_name, "Enter").await?;
                 submitted = true;
             }

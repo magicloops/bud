@@ -70,12 +70,14 @@ Hash-based deduplication for `capture-pane` output:
 - **`handle_ensure`** - Create or verify tmux session exists
 - **`handle_input`** - Send input via `tmux send-keys`
   - Splits text and newlines for proper Enter key handling
+  - Inserts a short `10ms` pause between literal text and the first Enter when both are present, to reduce TUI submit/newline races
   - Supports `await_ready` for readiness detection
 - **`handle_resize`** - Resize via `tmux resize-window`
 - **`handle_interrupt`** - Send Ctrl+C via `tmux send-keys C-c`
 - **`handle_close`** - Kill session via `tmux kill-session`
 - **`handle_send`** - Structured interactive input path for agent `terminal.send`:
   - Sends literal text, optional submit, and special keys
+  - Inserts a short `10ms` pause before Enter when literal text is immediately followed by submit/newline dispatch
   - Serves as the primary input path for both shell commands and interactive programs
   - Captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
   - Defaults to `wait_for: "none"` and `timeout_ms: 5000`
