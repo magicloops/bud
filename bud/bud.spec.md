@@ -158,10 +158,10 @@ terminal_ensure    →    Check/create tmux session
                         Start pipe-pane logging
                         Send terminal_status(ready)
 
-terminal_input     →    tmux send-keys (text + Enter)
+terminal_input     →    tmux send-keys (text + Enter, with a short text→Enter pause)
                         Optional: spawn readiness detector
 
-terminal_send      →    tmux send-keys (structured text/keys)
+terminal_send      →    tmux send-keys (structured text/keys, with a short text→Enter pause)
                         Primary send-first path for shell commands and interactive input
                         Fast post-send delta capture after 1000ms by default
                         Optional: wait for shell_ready, changed, or settled

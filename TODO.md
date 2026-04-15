@@ -12,6 +12,9 @@
   - Implement the authenticated `+`-button install modal from [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md), including machine-wide vs local install commands, one-time install tokens, generic `install.sh`, and daemon fallback to the QR/browser claim flow.
 - **Bud terminal dependency preflight**
   - Show an actionable startup error, or fail fast, when Bud is launched with terminal support enabled but `tmux` is not installed, instead of allowing the claim/connect flow to proceed into handshake or runtime failures.
+- **TUI submit semantics beyond the 10ms tmux pause**
+  - The current Bud-side `text -> 10ms pause -> Enter` dispatch fixes Codex prompt submission, but it is still a timing-based workaround rather than a principled transport contract.
+  - Follow up on stronger options such as explicit pane targeting, alternate submit-key semantics for TUIs that do not use plain `Enter`, or a state-based post-text submit trigger instead of a fixed sleep.
 - **Session observability**
   - Expose per-session metrics (bytes in/out, writer rotations, truncate counts) via logs + `/metrics` to feed future dashboards.
   - Surface `last_activity_at` + idle TTLs in `/api/sessions` so the UI can flag stale sessions.
