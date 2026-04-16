@@ -121,6 +121,7 @@ export function buildTerminalSendSummary(
   input: SendDirectiveSummaryInput,
   delta?: TerminalDelta | null,
   state?: TerminalSendState | null,
+  readinessTrigger?: string | null,
   readinessHints?: Partial<ReadinessHints> | null,
 ): string {
   const fragments: string[] = [];
@@ -143,10 +144,16 @@ export function buildTerminalSendSummary(
       : "Attempted to send interactive input";
 
   if (!delta) {
+    if (readinessTrigger === "timeout") {
+      return `${action}; timed out waiting for settled output`;
+    }
     return action;
   }
 
   if (!delta.changed) {
+    if (readinessTrigger === "timeout") {
+      return `${action}; timed out waiting for settled output and no visible delta was observed`;
+    }
     return `${action}; no visible delta observed`;
   }
 
@@ -159,6 +166,9 @@ export function buildTerminalSendSummary(
   }
 
   if (readinessHints?.may_still_be_processing === true) {
+    if (readinessTrigger === "timeout") {
+      return `${action}; observed terminal activity before timing out`;
+    }
     return `${action}; observed new terminal activity`;
   }
 

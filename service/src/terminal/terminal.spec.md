@@ -47,7 +47,7 @@ export type TerminalWaitFor =
 | `TerminalStatusMessage` | ← Bud | Session state report |
 | `TerminalOutputMessage` | ← Bud | Output chunk with byte offset |
 | `TerminalReadyMessage` | ← Bud | Readiness assessment |
-| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Primary send-first terminal input with fast post-send delta |
+| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Primary send-first terminal input with settled-by-default output quiescence and additive delta evidence |
 | `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit delta/screen/history observation |
 | `TerminalDelta` / `TerminalDeltaMessage` | Internal / Wire | Minimal additive delta payload for send/observe |
 
@@ -147,13 +147,14 @@ await_ready: {
 ```
 
 **Phase 6/7 Interactive Wait Notes**:
-- `terminal.send` now defaults to a fast post-send delta capture after `1000ms`
-- `terminal.send` now defaults to `wait_for: "none"` and `timeout_ms: 5000`
+- `terminal.send` now defaults to `wait_for: "settled"` and `timeout_ms: 30000`
+- settled waits are now driven by `pipe-pane` output quiescence, not repeated `capture-pane` polling
+- `terminal.send` still supports the older fast path, but only when `wait_for: "none"` is requested explicitly
 - `terminal.send` is now the primary tool for both shell commands and interactive input
 - `terminal.send.keys` uses tmux `send-keys` notation for modifier chords, e.g. `C-c`
 - agent-facing explicit waits are now `changed` and `settled`
-- `terminal.send` and `terminal.observe` share the same immediate-start screen wait engine for `changed` / `settled`
-- `settled` means "screen has been quiet for a short window", not the older blind `screen_stable` loop
+- `terminal.send` and `terminal.observe` still share the same delta engine, but only `changed` stays on the immediate-start screen wait engine
+- `terminal.observe(wait_for: "settled")` is the explicit longer-wait escape hatch after a timeout or for advanced cases
 - `submitted` means Bud dispatched at least one text/key/Enter event to tmux
 - `delta.changed` is the main signal for whether the foreground program visibly reacted right away
 - default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested

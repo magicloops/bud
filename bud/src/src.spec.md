@@ -41,7 +41,7 @@ WebSocket message frame types matching the service protocol:
 | `RunFrame` | ← Service | Command execution request |
 | `TerminalEnsureFrame` | ← Service | Create/verify tmux session |
 | `TerminalInputFrame` | ← Service | Send input to terminal |
-| `TerminalSendFrame` | ← Service | Structured interactive input with optional fast post-send delta |
+| `TerminalSendFrame` | ← Service | Structured interactive input with settled-by-default waiting and optional explicit fast-path capture |
 | `TerminalObserveFrame` | ← Service | Explicit screen inspection |
 | `AwaitReady` | Config | Readiness detection options |
 
@@ -68,6 +68,7 @@ Hash-based deduplication for `capture-pane` output:
 **`TerminalManager`** - tmux-based terminal session management:
 
 - **`handle_ensure`** - Create or verify tmux session exists
+  - New sessions now seed tmux with deterministic terminal color env defaults (`COLORTERM=truecolor`, `COLORFGBG=15;0`) and honor any `terminal_ensure.config.env` overrides
 - **`handle_input`** - Send input via `tmux send-keys`
   - Splits text and newlines for proper Enter key handling
   - Inserts a short `10ms` pause between literal text and the first Enter when both are present, to reduce TUI submit/newline races
@@ -79,15 +80,16 @@ Hash-based deduplication for `capture-pane` output:
   - Accepts tmux `send-keys` notation for modifier chords, such as `C-c` for Ctrl+C, and normalizes common `ctrl+...` / `control-...` aliases into tmux form
   - Inserts a short `10ms` pause before Enter when literal text is immediately followed by submit/newline dispatch
   - Serves as the primary input path for both shell commands and interactive programs
-  - Captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
-  - Defaults to `wait_for: "none"` and `timeout_ms: 5000`
-  - Can explicitly wait for `shell_ready`, `changed`, or `settled`
+  - Captures a pre-send baseline, then defaults to `wait_for: "settled"` with `timeout_ms: 30000`
+  - Uses output quiescence from the shared `pipe-pane` watcher as the default settle detector
+  - Reserves `observe_after_ms` for explicit `wait_for: "none"` sends
+  - Can still explicitly wait for `shell_ready`, `changed`, or `settled`
   - Reuses a pre-send baseline capture so waits can detect immediate redraws and echoed input
   - Strips low-signal separator-only lines from delta text when a line is a single repeated non-alphanumeric glyph run of 4+ characters
-  - Returns dispatch status plus additive `delta` and readiness in `terminal_send_result`
+  - Returns dispatch status plus additive `delta`, timeout-aware readiness, and partial-progress semantics in `terminal_send_result`
 - **`handle_observe`** - Explicit delta/screen/history observation for agent `terminal.observe`:
   - Defaults to `view: "delta"` and supports explicit `screen` / `history` modes
-  - Optionally waits with the same immediate-start screen engine used by `terminal.send`
+  - Uses the screen-diff wait engine for `changed`, and the output-quiescence path for `settled`
   - Reuses the wait capture instead of always performing a second `capture-pane`
   - Tracks the last delivered capture per session so default observe suppresses repeated transcript content
   - Applies the same low-signal separator stripping to default delta output, while explicit `screen` / `history` remain raw
@@ -95,7 +97,7 @@ Hash-based deduplication for `capture-pane` output:
 
 **Output Streaming**:
 - Uses `tmux pipe-pane` to capture output to a session log under `BUD_TERMINAL_BASE_DIR/sessions/{session_id}/terminal.log`
-- `spawn_output_watcher()` polls log file for new bytes
+- `spawn_output_watcher()` polls log file for new bytes and maintains shared in-memory output-activity state (`offset`, `last_output_at`, `last_output_seq`)
 - Sends `terminal_output` frames with base64-encoded chunks
 
 #### Readiness Detection (Lines 1618-1865)
@@ -127,15 +129,17 @@ Hash-based deduplication for `capture-pane` output:
 - Emits `terminal_ready` with activity-based readiness assessment when low-level `terminal_input` waits need it
 
 **Phase 6 Note**:
-- The agent-facing `terminal.send` path no longer relies on activity stability by default; it now uses an immediate fast delta capture after send and reserves `screen_stable` for explicit wait requests.
+- The earlier fast-post-send delta path remains available for explicit `wait_for: "none"` sends, but it is no longer the default agent path.
 
 **Phase 7 Note**:
-- Agent-facing `terminal.send` / `terminal.observe` now share an immediate-start screen wait helper that:
-  - supports `changed` and `settled`
-  - polls every `100ms`
-  - treats `settled` as a short quiet window (`300ms`) instead of the older blind delay loop
-  - returns timeout assessments that stay conservative instead of treating a missed wait as positive readiness
-- the same Bud-side delta engine now powers both `terminal.send` and default `terminal.observe`
+- Agent-facing `terminal.send` now defaults to a settled-by-default flow:
+  - capture a pre-send baseline
+  - dispatch text / keys / submit
+  - wait for output quiescence using shared `pipe-pane` activity state
+  - perform one final `capture-pane` and compute the additive delta
+- `terminal.observe(wait_for: "settled")` uses the same quiescence path, while `changed` still uses the immediate-start screen wait helper
+- timeout assessments stay conservative instead of treating a missed wait as positive readiness
+- the same Bud-side delta engine still powers both `terminal.send` and default `terminal.observe`
 - The older `ActivityDetector` remains in place for low-level `terminal_input` readiness events.
 
 #### Main Application (Lines 2365-2875)

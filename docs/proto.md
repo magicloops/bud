@@ -371,9 +371,8 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "text": "pwd",
     "submit": true,
     "keys": [],
-    "observe_after_ms": 1000,
-    "wait_for": "none",
-    "timeout_ms": 5000,
+    "wait_for": "settled",
+    "timeout_ms": 30000,
     "ext": {} }
   ```
 
@@ -383,9 +382,9 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   * `text`: optional literal text to send; this is now the primary shell-command path as well as the interactive-input path
   * `submit`: when true, Bud MUST press Enter after sending text
   * `keys`: optional ordered list of special keys or tmux `send-keys` actions; use tmux notation for chords such as `C-c` for Ctrl+C
-  * `observe_after_ms`: optional delay before the default fast post-send screen capture (default: 1000)
-  * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"none"` for `terminal.send`)
-  * `timeout_ms`: max wait time for readiness (default: 5000 for `terminal.send`)
+  * `observe_after_ms`: optional delay before the first capture only when `wait_for: "none"` is requested explicitly (default: 1000 in that mode)
+  * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"settled"` for `terminal.send`)
+  * `timeout_ms`: max wait time for readiness (default: 30000 for `terminal.send`)
 
 * `terminal_observe` — explicitly inspect rendered screen / scrollback
   ```json
@@ -471,7 +470,8 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     * `truncated`: true when the delta fell back to a bounded excerpt
   * `readiness`: readiness assessment derived from the post-send state or explicit wait mode
     * `changed` returns on the first visible screen delta after the pre-send baseline
-    * `settled` starts sampling immediately and returns once the screen has been quiet for a short window
+    * `settled` waits for output quiescence derived from the existing `pipe-pane` watcher, then returns a final rendered delta/snapshot
+    * `timeout` returns the latest rendered delta plus conservative readiness hints instead of claiming successful completion
   * `error`: error string when dispatch or capture failed
 
 * `terminal_observe_result` — response to `terminal_observe`
@@ -498,7 +498,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     * for `history`, this is the requested scrollback/history window
   * `changed` / `truncated`: populated for `view: "delta"` and omitted otherwise
 
-`terminal.send` and `terminal.observe` now share the same delta engine and immediate-start screen wait engine for `changed` / `settled`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
+`terminal.send` and `terminal.observe` share the same delta engine, but they no longer use the same hot wait path for every mode. `changed` still uses immediate-start screen-diff waiting, while `settled` now waits on output quiescence derived from the existing `pipe-pane` watcher before performing one final `capture-pane`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
 
 #### 4.4.3 Terminal SSE Events (Backend → Browser)
 

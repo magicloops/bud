@@ -118,7 +118,8 @@ All terminal tools return a JSON result containing:
 - kind: "interaction_ack" | "observation"
 - readiness: { ready, confidence, trigger, hints }
 - context_after: { mode: "shell"|"repl"|"unknown", program?, hints?, source? }
-- terminal.send returns delta: { changed, text, truncated } when a post-send observation is available
+- terminal.send waits for a settled result by default and returns delta: { changed, text, truncated }
+- terminal.send timeout still returns the latest visible delta and readiness; treat trigger:"timeout" as partial progress, not proof of completion
 - terminal.observe defaults to view:"delta" and returns delta in output; use view:"screen" or view:"history" for broader context
 
 Guidelines:
@@ -127,11 +128,12 @@ Guidelines:
 - Multiline shell input is allowed when you intentionally need it (for example heredocs or pasted scripts).
 - terminal.send is also for interactive input, confirmations, single-key actions, and launching interactive programs from shell.
 - Use tmux send-keys notation in terminal.send.keys for modifier chords, for example "C-c" for Ctrl+C.
-- terminal.send includes a short post-send delta by default. If delta.changed is false or delta.text is empty, do not assume the program accepted the input.
-- terminal.observe is for explicit screen inspection or extra scrollback after interactive work.
+- Omit wait_for for ordinary terminal.send calls. The default behavior is to wait for the terminal to settle before returning.
+- If delta.changed is false or delta.text is empty, do not assume the program accepted the input.
+- terminal.observe is for explicit screen inspection, extra scrollback, or longer waits after timeout/ambiguity.
 - terminal.observe defaults to a delta view. Use view:"screen" for the full current screen and view:"history" for recent scrollback/history.
-- Use wait_for:"changed" when you only need to confirm that a TUI/REPL reacted.
-- Use wait_for:"settled" when you need the screen to go quiet before deciding the next step.
+- Use wait_for:"settled" with terminal.observe when you explicitly want to keep waiting longer after a timeout or ambiguous result.
+- Use wait_for:"changed" only when you specifically need a quick reaction proof instead of the normal settled result.
 - Check readiness from tool results to decide your next action:
   - confidence >= 0.8: Terminal is ready, send next command
   - confidence 0.5-0.8: Probably ready, verify output makes sense before proceeding
@@ -226,16 +228,18 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
         },
         observe_after_ms: {
           type: "integer",
-          description: "Optional delay before the default fast post-send observation (ms). Defaults to 1000ms."
+          description:
+            'Optional delay before the final capture when wait_for:"none" is used. Defaults to 1000ms for that explicit fast path.'
         },
         wait_for: {
           type: "string",
           enum: ["none", "shell_ready", "changed", "settled"],
-          description: "Optional wait mode after sending input."
+          description:
+            'Optional wait mode after sending input. Defaults to "settled" when omitted.'
         },
         timeout_ms: {
           type: "integer",
-          description: "Optional max wait time in ms. Defaults to 5000ms for terminal.send."
+          description: "Optional max wait time in ms. Defaults to 30000ms for terminal.send."
         }
       },
       required: [],
@@ -264,7 +268,7 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
         },
         timeout_ms: {
           type: "integer",
-          description: "Optional max wait time in ms."
+          description: "Optional max wait time in ms. Defaults to 30000ms when omitted."
         }
       },
       required: [],
@@ -1037,7 +1041,7 @@ export class AgentService {
         const capture = await this.terminalSessionManager.observeTerminal(
           sessionId,
           { lines, waitFor, view },
-          directive.timeoutMs ?? 5000
+          directive.timeoutMs ?? 30000
         );
         const readiness = this.normalizeReadiness(capture.readiness, {
           ready: waitFor === "none",
@@ -1126,13 +1130,13 @@ export class AgentService {
           observeAfterMs: directive.observeAfterMs,
           waitFor: directive.waitFor
         },
-        { timeoutMs: directive.timeoutMs ?? 5000 }
+        { timeoutMs: directive.timeoutMs ?? 30000 }
       );
 
       const finalReadiness = this.normalizeReadiness(result.readiness, {
         ready: true,
         confidence: 0.6,
-        trigger: directive.waitFor ?? "send",
+        trigger: directive.waitFor ?? "settled",
         hints: DEFAULT_READINESS_HINTS
       });
       this.logReadinessDecision(directive.tool, finalReadiness);
@@ -1347,6 +1351,7 @@ export class AgentService {
       },
       result.delta,
       null,
+      typeof result.readiness.trigger === "string" ? result.readiness.trigger : null,
       (result.readiness.hints as ReadinessHints | undefined) ?? DEFAULT_READINESS_HINTS,
     );
   }

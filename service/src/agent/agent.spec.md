@@ -31,7 +31,8 @@ Defines agent behavior as "Bud Agent" with:
 - Readiness confidence interpretation (≥0.8 ready, 0.5-0.8 probably ready, <0.5 still processing)
 - Hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (detecting when inside Python/Node/Claude Code vs shell)
-- Interactive wait guidance using `wait_for: "changed"` to confirm visible reaction and `wait_for: "settled"` to wait for a short quiet window
+- Guidance that ordinary `terminal.send` calls should omit `wait_for` and let the settled-by-default behavior run
+- Interactive wait guidance using `wait_for: "changed"` only for specialized first-visible-reaction cases and `terminal.observe(wait_for: "settled")` for explicit longer waits
 - Final-response guidance (direct markdown text, no JSON wrapper)
 
 #### Tool Definitions (Lines 130-191)
@@ -40,7 +41,7 @@ Two canonical tool definitions using standard JSON Schema format:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `terminal_send` | `text?`, `submit?`, `keys?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a default fast post-send delta |
+| `terminal_send` | `text?`, `submit?`, `keys?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a settled-by-default synchronous result |
 | `terminal_observe` | `lines?`, `wait_for?`, `view?`, `timeout_ms?` | Observe terminal deltas by default, with explicit full-screen/history modes |
 
 **Note**: Optional parameters (`?`) are simply omitted from the `required` array. The OpenAI provider transforms these to the null-union pattern required by OpenAI strict mode during tool transformation.
@@ -106,7 +107,7 @@ startUserMessage()
 - Reasoning blocks are preserved inside the in-memory conversation on tool-call loops so providers that require multi-turn reasoning context do not lose those items.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
-- `terminal.send` summaries are now evidence-based rather than optimistic: the agent records fast post-send delta data and avoids claiming program progress when no visible delta appears.
+- `terminal.send` summaries are now evidence-based rather than optimistic: the agent uses the settled/default result or timeout delta and avoids claiming program progress when no visible delta appears.
 - `terminal.send.keys` now uses tmux `send-keys` notation for modifier chords; the agent prompt explicitly calls out `keys: ["C-c"]` for Ctrl+C.
 - historical persisted `terminal.interrupt` tool rows are normalized during replay into `terminal_send` with `keys: ["C-c"]`, so old transcripts still round-trip through the current provider/tool format.
 - `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model, and replay normalization maps any older `screen_stable` tool payloads to `settled`.
@@ -119,7 +120,7 @@ startUserMessage()
 Small helper module for interpreting `terminal.send` evidence.
 
 **Responsibilities**:
-- derive send acceptance states from the fast post-send delta
+- derive send acceptance states from the settled/default send result delta
 - derive optional next-step state from acceptance, readiness, and observed/inferred context
 - build conservative tool summaries such as "Attempted to send ...; no visible delta observed"
 - keep the send-summary logic separate from the larger agent loop
@@ -131,6 +132,7 @@ Standalone Node tests for Phase 6 send-result interpretation.
 **Current Coverage**:
 - unchanged post-send deltas map to `acceptance.status = "no_visible_change"`
 - summaries remain conservative when no visible delta was observed
+- timeout summaries remain conservative when the settled wait expires before completion
 - ambiguous sends recommend `terminal.observe` before the agent assumes the TUI accepted the input
 - settled REPL/TUI updates still map to `state.status = "waiting_for_input"`
 - send results that visibly return to shell map their next step back to another `terminal.send`
@@ -142,6 +144,7 @@ Standalone Node tests for targeted `AgentService` terminal-tool regressions.
 **Current Coverage**:
 - `terminal.send` uses shared tmux `C-c` key notation for interrupt-style input
 - `terminal.send` summaries remain conservative when `C-c` produces no visible delta
+- `terminal.send` treats settled-wait timeout summaries as partial progress rather than success
 - `terminal.send` keeps REPL/TUI `context_after` inferred unless readiness explicitly proves shell
 - legacy provider responses that attempt `terminal_interrupt` are rejected by `extractFunctionCall()`
 

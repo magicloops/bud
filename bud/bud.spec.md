@@ -155,6 +155,7 @@ Running Bud from another shell directory does not relocate daemon state on its o
 Service Request              Daemon Action
 ────────────────              ─────────────
 terminal_ensure    →    Check/create tmux session
+                        Seed tmux shell env with deterministic terminal color defaults
                         Start pipe-pane logging
                         Send terminal_status(ready)
 
@@ -163,13 +164,13 @@ terminal_input     →    tmux send-keys (text + Enter, with a short text→Ente
 
 terminal_send      →    tmux send-keys (structured text/keys, with a short text→Enter pause)
                         Primary send-first path for shell commands and interactive input
-                        Fast post-send delta capture after 1000ms by default
-                        Optional: wait for shell_ready, changed, or settled
+                        Pre-send baseline + output-quiescence wait by default
+                        Optional: explicit changed / shell_ready / none variants
                         Send terminal_send_result
 
 terminal_observe   →    tmux capture-pane
                         Default: return delta; explicit screen/history available
-                        Optional: wait with the shared changed/settled engine before capture
+                        Optional: wait with changed or settled before capture
                         Send terminal_observe_result
 
 terminal_close     →    tmux kill-session
@@ -203,9 +204,10 @@ For interactive programs like Claude Code:
 - Handles apps with natural processing pauses
 
 For the Phase 6/7 agent-facing send/observe path specifically:
-- Bud now captures an immediate post-send screen by default after `1000ms`
-- `terminal_send_result` includes both dispatch success and additive delta evidence
-- explicit agent-facing waits now use `changed` / `settled`, which start sampling immediately instead of waiting through the old blind `screen_stable` loop
+- `terminal.send` now waits for output quiescence by default and only falls back early when the configured timeout expires
+- the existing `pipe-pane` watcher doubles as the settle detector via shared in-memory output-activity state
+- `terminal_send_result` includes dispatch success, additive delta evidence, and timeout-aware partial-progress readiness
+- explicit agent-facing waits still use `changed` / `settled`, but only `changed` stays on the immediate screen-diff loop
 - the older activity-based detector remains for low-level `terminal_input` readiness events
 - default `terminal.observe` now returns additive delta and only replays full screen/history when explicitly requested
 - delta text is lightly normalized for LLM consumption by stripping separator-only lines made from one repeated non-alphanumeric glyph run of 4+ characters; explicit `screen` / `history` output remains unchanged
