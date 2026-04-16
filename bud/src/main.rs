@@ -42,6 +42,8 @@ const PROTO_VERSION: &str = "0.1";
 const TERMINAL_PROTO_VERSION: &str = "0.2";
 const DEFAULT_HEARTBEAT_SEC: u64 = 30;
 const MAX_QUEUE_DEPTH: usize = 10;
+const DEFAULT_TERMINAL_COLORTERM: &str = "truecolor";
+const DEFAULT_TERMINAL_COLORFGBG: &str = "15;0";
 
 /// Bud (device agent) CLI arguments.
 #[derive(Debug, Parser, Clone)]
@@ -2845,7 +2847,7 @@ impl TerminalManager {
         let cfg = cfg.unwrap_or_default();
         let tmux_name = tmux_session_name(session_id);
         let log_path = session_log_path(&self.config.base_log_dir, session_id);
-        let _ = cfg.env; // env passthrough not yet implemented
+        let session_env = build_terminal_session_env(cfg.env);
         if let Some(parent) = log_path.parent() {
             fs::create_dir_all(parent).await.ok();
         }
@@ -2871,20 +2873,23 @@ impl TerminalManager {
                 tmux_name = %tmux_name,
                 "creating new tmux session"
             );
-            let status = Command::new("tmux")
-                .args([
-                    "new-session",
-                    "-d",
-                    "-s",
-                    &tmux_name,
-                    "-x",
-                    &cols.to_string(),
-                    "-y",
-                    &rows.to_string(),
-                    "-c",
-                    &cwd,
-                    &shell,
-                ])
+            let mut command = Command::new("tmux");
+            command
+                .arg("new-session")
+                .arg("-d")
+                .arg("-s")
+                .arg(&tmux_name)
+                .arg("-x")
+                .arg(cols.to_string())
+                .arg("-y")
+                .arg(rows.to_string())
+                .arg("-c")
+                .arg(&cwd);
+            for (key, value) in &session_env {
+                command.arg("-e").arg(format!("{key}={value}"));
+            }
+            let status = command
+                .arg(&shell)
                 .status()
                 .await
                 .with_context(|| "failed to create tmux session")?;
@@ -4372,6 +4377,29 @@ fn expand_path(path: &str) -> Option<PathBuf> {
     Some(PathBuf::from(shellexpand::tilde(path).into_owned()))
 }
 
+fn build_terminal_session_env(
+    env_overrides: Option<HashMap<String, String>>,
+) -> Vec<(String, String)> {
+    let mut env = HashMap::from([
+        (
+            "COLORTERM".to_string(),
+            DEFAULT_TERMINAL_COLORTERM.to_string(),
+        ),
+        (
+            "COLORFGBG".to_string(),
+            DEFAULT_TERMINAL_COLORFGBG.to_string(),
+        ),
+    ]);
+
+    if let Some(overrides) = env_overrides {
+        env.extend(overrides);
+    }
+
+    let mut entries = env.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries
+}
+
 fn installation_id_path(identity_path: &Path) -> PathBuf {
     match identity_path.parent() {
         Some(parent) => parent.join("installation-id"),
@@ -4608,5 +4636,39 @@ mod tests {
         assert!(delta.changed);
         assert_eq!(delta.text, "─\nnext");
         assert_eq!(delta.strategy, "novel_suffix");
+    }
+
+    #[test]
+    fn build_terminal_session_env_includes_dark_terminal_defaults() {
+        let env = build_terminal_session_env(None)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(
+            env.get("COLORTERM").map(String::as_str),
+            Some(DEFAULT_TERMINAL_COLORTERM)
+        );
+        assert_eq!(
+            env.get("COLORFGBG").map(String::as_str),
+            Some(DEFAULT_TERMINAL_COLORFGBG)
+        );
+    }
+
+    #[test]
+    fn build_terminal_session_env_allows_explicit_overrides() {
+        let env = build_terminal_session_env(Some(HashMap::from([
+            ("COLORTERM".to_string(), "24bit".to_string()),
+            ("COLORFGBG".to_string(), "0;15".to_string()),
+            ("TERM_PROGRAM".to_string(), "bud-test".to_string()),
+        ])))
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+        assert_eq!(env.get("COLORTERM").map(String::as_str), Some("24bit"));
+        assert_eq!(env.get("COLORFGBG").map(String::as_str), Some("0;15"));
+        assert_eq!(
+            env.get("TERM_PROGRAM").map(String::as_str),
+            Some("bud-test")
+        );
     }
 }

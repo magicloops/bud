@@ -155,6 +155,7 @@ Running Bud from another shell directory does not relocate daemon state on its o
 Service Request              Daemon Action
 ────────────────              ─────────────
 terminal_ensure    →    Check/create tmux session
+                        Seed tmux shell env with deterministic terminal color defaults
                         Start pipe-pane logging
                         Send terminal_status(ready)
 

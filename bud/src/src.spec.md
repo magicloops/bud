@@ -68,6 +68,7 @@ Hash-based deduplication for `capture-pane` output:
 **`TerminalManager`** - tmux-based terminal session management:
 
 - **`handle_ensure`** - Create or verify tmux session exists
+  - New sessions now seed tmux with deterministic terminal color env defaults (`COLORTERM=truecolor`, `COLORFGBG=15;0`) and honor any `terminal_ensure.config.env` overrides
 - **`handle_input`** - Send input via `tmux send-keys`
   - Splits text and newlines for proper Enter key handling
   - Inserts a short `10ms` pause between literal text and the first Enter when both are present, to reduce TUI submit/newline races
