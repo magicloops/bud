@@ -317,14 +317,6 @@ struct TerminalResizeFrame {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct TerminalInterruptFrame {
-    #[serde(flatten)]
-    envelope: Envelope,
-    session_id: String,
-    await_ready: Option<AwaitReady>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 struct TerminalCloseFrame {
     #[serde(flatten)]
     envelope: Envelope,
@@ -922,6 +914,36 @@ fn parse_screen_wait_mode(wait_for: &str) -> Result<ScreenWaitMode> {
     }
 }
 
+fn normalize_tmux_key_notation(key: &str) -> Option<String> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(rest) = lower
+        .strip_prefix("ctrl+")
+        .or_else(|| lower.strip_prefix("ctrl-"))
+        .or_else(|| lower.strip_prefix("control+"))
+        .or_else(|| lower.strip_prefix("control-"))
+    {
+        if !rest.is_empty() {
+            return Some(format!("C-{}", rest));
+        }
+    }
+
+    if let Some(rest) = trimmed
+        .strip_prefix("C-")
+        .or_else(|| trimmed.strip_prefix("c-"))
+    {
+        if !rest.is_empty() {
+            return Some(format!("C-{}", rest.to_ascii_lowercase()));
+        }
+    }
+
+    None
+}
+
 fn set_json_number(map: &mut Map<String, Value>, key: &str, value: u64) {
     map.insert(key.to_string(), Value::Number(Number::from(value)));
 }
@@ -1222,81 +1244,6 @@ impl TerminalManager {
             warn!(message_id = %frame.envelope.id, "tmux resize-window failed");
         }
 
-        Ok(())
-    }
-
-    async fn handle_interrupt(&self, frame: TerminalInterruptFrame) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-
-        let session_id = &frame.session_id;
-        let handle = self.ensure_handle_for_session(session_id, None).await?;
-        let Some(handle) = handle else {
-            warn!(
-                message_id = %frame.envelope.id,
-                session_id = session_id,
-                "terminal_interrupt dropped; no session"
-            );
-            return Ok(());
-        };
-
-        let start_offset = handle.offset.load(Ordering::SeqCst);
-        let status = Command::new("tmux")
-            .args(["send-keys", "-t", &handle.session_name, "C-c"])
-            .status()
-            .await
-            .with_context(|| "failed to send tmux interrupt")?;
-        if !status.success() {
-            warn!(message_id = %frame.envelope.id, "tmux interrupt failed");
-        }
-
-        if frame
-            .await_ready
-            .as_ref()
-            .map(|a| a.enabled)
-            .unwrap_or(false)
-        {
-            if let Some(sender) = self.inner.lock().await.sender.clone() {
-                let await_ready = frame.await_ready.clone().unwrap_or_default();
-                let session_id_owned = session_id.clone();
-
-                if await_ready.activity_based {
-                    // Use activity-based detection for TUI/REPL apps
-                    info!(
-                        message_id = %frame.envelope.id,
-                        session_id = session_id,
-                        session = %handle.session_name,
-                        "using activity-based readiness detection after interrupt"
-                    );
-                    let detector = ActivityDetector::new(
-                        session_id_owned,
-                        handle.clone(),
-                        sender,
-                        &await_ready,
-                    );
-                    tokio::spawn(async move {
-                        if let Err(err) = detector.run().await {
-                            warn!(error = %err, "activity detection failed");
-                        }
-                    });
-                } else {
-                    // Use quiescence-based detection for shell commands
-                    let detector = ReadinessDetector::new(
-                        session_id_owned,
-                        handle.clone(),
-                        sender,
-                        start_offset,
-                        frame.await_ready.clone(),
-                    );
-                    tokio::spawn(async move {
-                        if let Err(err) = detector.run().await {
-                            warn!(error = %err, "readiness detection failed");
-                        }
-                    });
-                }
-            }
-        }
         Ok(())
     }
 
@@ -2017,6 +1964,11 @@ impl TerminalManager {
     }
 
     async fn send_interaction_key(&self, session_name: &str, key: &str) -> Result<bool> {
+        if let Some(tmux_key) = normalize_tmux_key_notation(key) {
+            self.send_tmux_key(session_name, &tmux_key).await?;
+            return Ok(true);
+        }
+
         let normalized = key.trim().to_ascii_lowercase();
         if normalized.is_empty() {
             return Ok(false);
@@ -2885,7 +2837,7 @@ impl ReadinessDetector {
             Ok(meta) => meta.len(),
             Err(_) => last_size,
         };
-        let (output_bytes, output, last_line) = self.read_tail(end_size).await;
+        let (output, last_line) = self.read_tail(end_size).await;
         let quiet_for_ms = last_change.elapsed().as_millis() as u64;
         let assessment = Self::assess(
             &output,
@@ -2893,41 +2845,12 @@ impl ReadinessDetector {
             quiet_for_ms,
             start.elapsed().as_millis() as u64,
         );
-        let payload = json!({
-            "proto": TERMINAL_PROTO_VERSION,
-            "type": "terminal_ready",
-            "id": new_message_id(),
-            "ts": now_millis(),
-            "ext": {},
-            "session_id": self.session_id,
-            "assessment": assessment,
-            "output_since_input": BASE64_STANDARD.encode(output.as_bytes()),
-            "output_bytes": output_bytes,
-            "last_line": last_line,
-        });
-        send_ws_frame(&self.sender, payload)?;
+        self.send_ready(&assessment)?;
         Ok(())
     }
 
-    async fn read_tail(&self, end_size: u64) -> (usize, String, String) {
-        const MAX_READ: usize = 16 * 1024;
-        let start = self.start_offset;
-        if end_size <= start {
-            return (0, String::new(), String::new());
-        }
-        let to_read = std::cmp::min((end_size - start) as usize, MAX_READ);
-        let mut buf = vec![0u8; to_read];
-        if let Ok(mut file) = fs::File::open(&self.handle.log_path).await {
-            let _ = file.seek(SeekFrom::Start(end_size - to_read as u64)).await;
-            let _ = file.read_exact(&mut buf).await;
-        }
-        let text = String::from_utf8_lossy(&buf).to_string();
-        let last_line_owned = text
-            .lines()
-            .last()
-            .unwrap_or_else(|| text.trim_end_matches(&['\r', '\n'][..]))
-            .to_string();
-        (buf.len(), text, last_line_owned)
+    async fn read_tail(&self, end_size: u64) -> (String, String) {
+        read_log_tail(&self.handle.log_path, self.start_offset, end_size).await
     }
 
     fn assess(
@@ -3103,6 +3026,44 @@ impl ReadinessDetector {
             || lower.contains("progress")
             || lower.contains("completed")
     }
+
+    fn send_ready(&self, assessment: &Value) -> Result<()> {
+        let frame = json!({
+            "proto": TERMINAL_PROTO_VERSION,
+            "type": "terminal_ready",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "session_id": &self.session_id,
+            "assessment": assessment,
+        });
+        send_ws_frame(&self.sender, frame)?;
+        Ok(())
+    }
+}
+
+fn last_line_from_text(text: &str) -> String {
+    text.lines()
+        .last()
+        .unwrap_or_else(|| text.trim_end_matches(&['\r', '\n'][..]))
+        .to_string()
+}
+
+async fn read_log_tail(log_path: &Path, start_offset: u64, end_size: u64) -> (String, String) {
+    const MAX_READ: usize = 16 * 1024;
+    if end_size <= start_offset {
+        return (String::new(), String::new());
+    }
+    let available = (end_size - start_offset) as usize;
+    let to_read = std::cmp::min(available, MAX_READ);
+    let mut buf = vec![0u8; to_read];
+    if let Ok(mut file) = fs::File::open(log_path).await {
+        let _ = file.seek(SeekFrom::Start(end_size - to_read as u64)).await;
+        let _ = file.read_exact(&mut buf).await;
+    }
+    let text = String::from_utf8_lossy(&buf).to_string();
+    let last_line_owned = last_line_from_text(&text);
+    (text, last_line_owned)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3229,7 +3190,7 @@ impl ActivityDetector {
                             "activity detection: ready (screen stable)"
                         );
                         self.send_ready(0.9, "activity_stable", stable_count, check_count)
-                            .await?;
+                        .await?;
                         return Ok(());
                     }
                 }
@@ -3286,30 +3247,32 @@ impl ActivityDetector {
         stable_count: u32,
         check_count: u32,
     ) -> Result<()> {
+        let readiness = json!({
+            "ready": confidence >= 0.5,
+            "confidence": confidence,
+            "trigger": trigger,
+            "hints": {
+                "looks_like_prompt": false,
+                "looks_like_confirmation": false,
+                "looks_like_password": false,
+                "looks_like_pager": false,
+                "looks_like_error": false,
+                "may_still_be_processing": confidence < 0.7
+            },
+            "activity_checks": check_count,
+            "stable_checks": stable_count
+        });
         let payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
             "type": "terminal_ready",
             "id": new_message_id(),
             "ts": now_millis(),
             "ext": {},
-            "session_id": self.session_id,
-            "assessment": {
-                "ready": confidence >= 0.5,
-                "confidence": confidence,
-                "trigger": trigger,
-                "hints": {
-                    "looks_like_prompt": false,
-                    "looks_like_confirmation": false,
-                    "looks_like_password": false,
-                    "looks_like_pager": false,
-                    "looks_like_error": false,
-                    "may_still_be_processing": confidence < 0.7
-                },
-                "activity_checks": check_count,
-                "stable_checks": stable_count
-            }
+            "session_id": &self.session_id,
+            "assessment": &readiness,
         });
         send_ws_frame(&self.sender, payload)?;
+
         Ok(())
     }
 }
@@ -3742,10 +3705,6 @@ impl BudApp {
             "terminal_resize" => {
                 let frame: TerminalResizeFrame = serde_json::from_str(text)?;
                 self.terminal_manager.handle_resize(frame).await?;
-            }
-            "terminal_interrupt" => {
-                let frame: TerminalInterruptFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_interrupt(frame).await?;
             }
             "terminal_close" => {
                 let frame: TerminalCloseFrame = serde_json::from_str(text)?;
@@ -4231,6 +4190,30 @@ mod tests {
         assert_eq!(
             parse_screen_wait_mode("screen_stable").unwrap(),
             ScreenWaitMode::Settled
+        );
+    }
+
+    #[test]
+    fn normalize_tmux_key_notation_prefers_tmux_style_ctrl_chords() {
+        assert_eq!(
+            normalize_tmux_key_notation("C-c").as_deref(),
+            Some("C-c")
+        );
+        assert_eq!(
+            normalize_tmux_key_notation("c-D").as_deref(),
+            Some("C-d")
+        );
+    }
+
+    #[test]
+    fn normalize_tmux_key_notation_accepts_ctrl_aliases() {
+        assert_eq!(
+            normalize_tmux_key_notation("ctrl+c").as_deref(),
+            Some("C-c")
+        );
+        assert_eq!(
+            normalize_tmux_key_notation("control-d").as_deref(),
+            Some("C-d")
         );
     }
 

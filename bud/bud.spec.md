@@ -172,9 +172,6 @@ terminal_observe   →    tmux capture-pane
                         Optional: wait with the shared changed/settled engine before capture
                         Send terminal_observe_result
 
-terminal_interrupt →    tmux send-keys C-c
-                        Optional: spawn readiness detector
-
 terminal_close     →    tmux kill-session
                         Send terminal_status(closed)
 ```
@@ -209,7 +206,7 @@ For the Phase 6/7 agent-facing send/observe path specifically:
 - Bud now captures an immediate post-send screen by default after `1000ms`
 - `terminal_send_result` includes both dispatch success and additive delta evidence
 - explicit agent-facing waits now use `changed` / `settled`, which start sampling immediately instead of waiting through the old blind `screen_stable` loop
-- the older activity-based detector remains for low-level `terminal_input` / `terminal_interrupt` readiness events
+- the older activity-based detector remains for low-level `terminal_input` readiness events
 - default `terminal.observe` now returns additive delta and only replays full screen/history when explicitly requested
 - delta text is lightly normalized for LLM consumption by stripping separator-only lines made from one repeated non-alphanumeric glyph run of 4+ characters; explicit `screen` / `history` output remains unchanged
 

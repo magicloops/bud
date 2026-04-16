@@ -89,7 +89,6 @@ Thread and message management, plus terminal operations (~900 lines).
 | `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
 | `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session |
 | `POST` | `/api/threads/:thread_id/terminal/input` | Send input as the signed-in human user |
-| `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send Ctrl+C to an owned session |
 | `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |
 | `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
 

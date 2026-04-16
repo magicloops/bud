@@ -32,10 +32,9 @@ This document describes the test strategy for the persistent terminal feature (P
 |-----------|-----------|
 | TerminalManager | `ensureTerminal()` creates DB row and dispatches frame |
 | | `sendInput()` validates budId, creates frame, records input |
-| | `sendInterrupt()` sends Ctrl+C frame |
+| | `sendInteraction()` can dispatch tmux-style chords like `keys: ["C-c"]` |
 | | `handleTerminalOutput()` stores to DB, emits SSE |
 | | `handleTerminalReady()` caches assessment, emits SSE |
-| | `waitForReadiness()` polls cache with timeout |
 | | `tailOutput()` returns most recent bytes from DB |
 | Idle management | `markIdleTerminals()` transitions ready→idle after threshold |
 | | `closeStaleIdleTerminals()` sends close and updates DB |
@@ -46,12 +45,10 @@ This document describes the test strategy for the persistent terminal feature (P
 
 | Component | Test Cases |
 |-----------|-----------|
-| terminal.run | Sends input, waits for readiness, returns output |
-| terminal.observe | Waits for readiness without sending input |
-| terminal.interrupt | Sends interrupt, waits for readiness |
-| ANSI stripping | `stripAnsi()` removes CSI, OSC, simple escapes |
-| CRLF normalization | `normalizeCRLF()` converts to LF |
-| Binary detection | `decodeTail()` returns placeholder for binary |
+| terminal.send | Sends shell or interactive input and interprets fast post-send delta conservatively |
+| terminal.observe | Waits when requested and returns explicit delta/screen/history observations |
+| Ctrl+C via send | `keys: ["C-c"]` shares the same `terminal.send` contract as other keypresses |
+| Historical replay | Legacy `terminal.interrupt` tool rows replay as `terminal.send` with `keys: ["C-c"]` |
 | Fallback readiness | `normalizeReadiness()` provides defaults |
 
 ### 1.3 Frontend (React/TypeScript)
@@ -65,7 +62,7 @@ This document describes the test strategy for the persistent terminal feature (P
 | Readiness display | Shows correct indicator based on confidence |
 | Truncation warning | Shows banner when `bytes < total_bytes_available` |
 | Input box | Sends command on Enter, clears input |
-| Interrupt button | Calls POST /interrupt, disabled when disconnected |
+| Browser Ctrl+C escape hatch | Sends raw `Ctrl+C` / `\x03` over the normal terminal input path from the hidden terminal menu |
 
 ---
 
@@ -91,11 +88,11 @@ describe('Terminal E2E', () => {
     // 11. Verify output returned
   });
 
-  it('interrupt stops running command', async () => {
+  it('browser interrupt endpoint reuses terminal_send with C-c', async () => {
     // 1. Start long-running command
     // 2. Call POST /api/terminals/:budId/interrupt
-    // 3. Verify terminal_interrupt frame
-    // 4. Mock Bud sends terminal_ready with interrupt trigger
+    // 3. Verify terminal_send frame with keys:["C-c"]
+    // 4. Mock Bud sends terminal_send_result
   });
 
   it('idle terminals marked and closed', async () => {
@@ -122,9 +119,9 @@ describe('Terminal E2E', () => {
 
 ```typescript
 describe('Agent Terminal Integration', () => {
-  it('agent uses terminal.run for commands', async () => {
+  it('agent uses terminal.send for commands', async () => {
     // 1. Create thread, send user message
-    // 2. Agent should choose terminal.run
+    // 2. Agent should choose terminal.send
     // 3. Verify input sent to terminal
     // 4. Mock readiness response
     // 5. Agent receives output and continues
@@ -166,7 +163,7 @@ describe('Agent Terminal Integration', () => {
 
 1. Run `sleep 60` in terminal
 2. Verify readiness shows "Processing..."
-3. Click "Ctrl+C" button
+3. Use the hidden terminal menu's `Ctrl+C` action
 4. Verify process interrupted
 5. Verify readiness shows "Ready"
 

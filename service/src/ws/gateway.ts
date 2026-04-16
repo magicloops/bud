@@ -116,7 +116,7 @@ const TerminalOutputSchema = TerminalEnvelopeSchema.extend({
 const TerminalReadySchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_ready"),
   session_id: z.string(),
-  assessment: z.record(z.unknown())
+  assessment: z.record(z.unknown()),
 });
 
 const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
@@ -511,7 +511,9 @@ class BudConnection {
     }
 
     const sessionId = result.data.session_id;
-    await this.terminalSessionManager.handleTerminalReady(sessionId, result.data.assessment as unknown as import("../terminal/types.js").ReadinessAssessment);
+    await this.terminalSessionManager.handleTerminalReady(sessionId, {
+      assessment: result.data.assessment as unknown as import("../terminal/types.js").ReadinessAssessment,
+    });
   }
 
   private async handleTerminalObserveResult(raw: unknown) {

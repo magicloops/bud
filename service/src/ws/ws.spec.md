@@ -150,7 +150,7 @@ If a stored Bud already has an `installationId`, the gateway rejects a mismatche
 | `run_finished` | `runManager.handleRunFinished()` |
 | `terminal_status` | `terminalSessionManager.handleStatus()` |
 | `terminal_output` | `terminalSessionManager.handleOutput()` |
-| `terminal_ready` | `terminalSessionManager.handleTerminalReady()` |
+| `terminal_ready` | `terminalSessionManager.handleTerminalReady()` with the parsed readiness assessment |
 | `terminal_observe_result` | `terminalSessionManager.handleObserveResult()` |
 | `terminal_send_result` | `terminalSessionManager.handleSendResult()` with optional additive `delta` (`changed`, `text`, `truncated`) |
 

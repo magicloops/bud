@@ -65,7 +65,6 @@ export type ToolContentRenderer = ComponentType<ToolContentRendererProps>
 
 <!-- SPEC:TODO -->
 Potential tool renderers to add:
-- `terminal.interrupt` - Show Ctrl+C indicator
 - File operations (read, write, edit)
 
 ---

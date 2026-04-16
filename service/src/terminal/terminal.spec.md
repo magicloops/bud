@@ -28,7 +28,7 @@ export type TerminalPromptType =
   | "database" | "unknown";
 
 export type TerminalReadyTrigger =
-  | "prompt_detected" | "quiescence" | "timeout" | "activity_stable"
+  | "prompt_detected" | "quiescence" | "timeout" | "error" | "activity_stable"
   | "changed" | "settled";
 
 export type TerminalWaitFor =
@@ -42,7 +42,6 @@ export type TerminalWaitFor =
 | `TerminalEnvelope` | Base | Common fields: `type`, `proto`, `id`, `ts`, `ext` |
 | `TerminalEnsureMessage` | → Bud | Create/verify tmux session |
 | `TerminalInputMessage` | → Bud | Send input with await_ready options |
-| `TerminalInterruptMessage` | → Bud | Send Ctrl+C |
 | `TerminalResizeMessage` | → Bud | Resize terminal |
 | `TerminalCloseMessage` | → Bud | Close session |
 | `TerminalStatusMessage` | ← Bud | Session state report |
@@ -151,13 +150,15 @@ await_ready: {
 - `terminal.send` now defaults to a fast post-send delta capture after `1000ms`
 - `terminal.send` now defaults to `wait_for: "none"` and `timeout_ms: 5000`
 - `terminal.send` is now the primary tool for both shell commands and interactive input
+- `terminal.send.keys` uses tmux `send-keys` notation for modifier chords, e.g. `C-c`
 - agent-facing explicit waits are now `changed` and `settled`
 - `terminal.send` and `terminal.observe` share the same immediate-start screen wait engine for `changed` / `settled`
 - `settled` means "screen has been quiet for a short window", not the older blind `screen_stable` loop
 - `submitted` means Bud dispatched at least one text/key/Enter event to tmux
 - `delta.changed` is the main signal for whether the foreground program visibly reacted right away
 - default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested
-- low-level `terminal_input` / `terminal_interrupt` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
+- low-level `terminal_input` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
+- browser/server Ctrl+C escape hatches should route through `TerminalSendMessage.keys = ["C-c"]` rather than a dedicated interrupt message
 
 ### `known-programs.ts`
 

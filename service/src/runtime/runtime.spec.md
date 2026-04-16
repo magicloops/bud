@@ -92,6 +92,14 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 
 Standalone Node test coverage for the generic replay contract still used by run/terminal streams.
 
+### `terminal-session-manager.test.ts`
+
+Standalone Node tests for targeted terminal-session-manager context tracking regressions.
+
+**Current Coverage**:
+- non-shell readiness assessments do not clear pending REPL context
+- observed shell readiness still clears pending REPL context
+
 ### `run-manager.ts`
 
 Manages standalone command execution on buds.
@@ -142,7 +150,6 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `getSession(sessionId)` | Get by ID |
 | `ensureSession(sessionId)` | Send `terminal_ensure` to bud |
 | `sendInput(sessionId, data, options)` | Send input with optional readiness waiting and user audit metadata |
-| `sendInterrupt(sessionId)` | Send Ctrl+C |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
 | `closeSession(sessionId, reason)` | Close session |
 | `observeTerminal(sessionId, options)` | Explicit delta/screen/history observation request-response |
@@ -152,7 +159,7 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `setPendingCommand(sessionId, command)` | Track REPL program execution |
 | `handleTerminalStatus(sessionId, payload)` | Bud reports session state |
 | `handleTerminalOutput(sessionId, payload)` | Store and broadcast output |
-| `handleTerminalReady(sessionId, assessment)` | Readiness assessment received |
+| `handleTerminalReady(sessionId, payload)` | Readiness assessment received |
 | `handleObserveResult(sessionId, payload)` | Observe result received |
 | `handleSendResult(sessionId, payload)` | Send result received |
 | `startIdleChecks()` / `stopIdleChecks()` | Periodic idle-state management; destructive cleanup runs only when explicitly configured |
@@ -174,6 +181,10 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 1. Stores as `pendingCommand` with timestamp
 2. Provides `getContext(sessionId)` for agent to understand terminal state
 3. Uses `known-programs.ts` registry for program-specific hints
+
+Ctrl+C note:
+- server-side callers should reuse `sendInteraction(sessionId, { keys: ["C-c"] })` rather than adding a dedicated interrupt transport
+- pending REPL/TUI context is preserved until a later observed shell return clears it via readiness or context sync
 
 **Observe Protocol**:
 
@@ -197,10 +208,10 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
 - `sendInteraction()` now defaults to `waitFor: "none"`, `observeAfterMs: 1000`, and a `5000ms` timeout so the agent gets immediate delta evidence instead of blindly waiting for delayed screen stability
+- `sendInteraction()` accepts tmux-style modifier chords such as `C-c` through `interaction.keys`
 - `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, and readiness
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
 - `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests
-- `tailOutput(maxBytes)` underlies `terminal.interrupt` tool payloads, so interrupt truncation is a service backfill-window concern rather than a Bud runtime limit
 
 **Ownership Notes**:
 - `createRunRecord()` stamps `run.created_by_user_id` from the caller or owning thread
