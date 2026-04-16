@@ -36,6 +36,9 @@ test("terminal.send uses tmux C-c key notation for shared interrupt-style input"
         observeAfterMs?: number;
         waitFor?: string;
       },
+      options?: {
+        timeoutMs?: number;
+      },
     ) {
       assert.equal(sessionId, "sess_test");
       assert.deepEqual(interaction, {
@@ -45,6 +48,7 @@ test("terminal.send uses tmux C-c key notation for shared interrupt-style input"
         observeAfterMs: undefined,
         waitFor: undefined,
       });
+      assert.deepEqual(options, { timeoutMs: 30000 });
 
       return {
         submitted: true,
@@ -99,7 +103,10 @@ test("terminal.send uses tmux C-c key notation for shared interrupt-style input"
   assert.equal(result.contextAfter.mode, "repl");
   assert.equal(result.contextAfter.program, "python");
   assert.equal(result.contextAfter.source, "inferred");
-  assert.equal(summary, "Attempted to send keys C-c; no visible delta observed");
+  assert.equal(
+    summary,
+    "Attempted to send keys C-c; timed out waiting for settled output and no visible delta was observed",
+  );
 });
 
 test("agent no longer accepts terminal_interrupt tool calls", () => {

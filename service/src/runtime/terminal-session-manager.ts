@@ -915,7 +915,7 @@ export class TerminalSessionManager {
   async observeTerminal(
     sessionId: string,
     options: ObserveOptions = {},
-    timeoutMs = 5000
+    timeoutMs = 30000
   ): Promise<ObserveResult> {
     const session = await this.getSession(sessionId);
     if (!session) {
@@ -1060,9 +1060,10 @@ export class TerminalSessionManager {
     }
 
     const requestId = `send_${ulid()}`;
-    const timeoutMs = options.timeoutMs ?? 5000;
-    const waitFor = interaction.waitFor ?? "none";
-    const observeAfterMs = interaction.observeAfterMs ?? 1000;
+    const timeoutMs = options.timeoutMs ?? 30000;
+    const waitFor = interaction.waitFor ?? "settled";
+    const observeAfterMs =
+      waitFor === "none" ? (interaction.observeAfterMs ?? 1000) : interaction.observeAfterMs;
 
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
@@ -1094,6 +1095,7 @@ export class TerminalSessionManager {
         keyCount: interaction.keys?.length ?? 0,
         observeAfterMs,
         waitFor,
+        timeoutMs,
         component: "terminal_session_manager"
       },
       "Sending terminal_send request"

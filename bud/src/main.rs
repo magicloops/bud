@@ -269,6 +269,8 @@ struct TerminalHandle {
     seq: Arc<AtomicU64>,
     #[allow(dead_code)]
     offset: Arc<AtomicU64>,
+    last_output_at: Arc<AtomicU64>,
+    last_output_seq: Arc<AtomicU64>,
     cols: u16,
     rows: u16,
 }
@@ -329,6 +331,9 @@ const ACTIVITY_DEFAULT_INITIAL_DELAY_MS: u64 = 2000;
 const ACTIVITY_DEFAULT_INTERVAL_MS: u64 = 5000;
 const ACTIVITY_DEFAULT_STABLE_COUNT: u32 = 2;
 const ACTIVITY_DEFAULT_MAX_WAIT_MS: u64 = 60_000;
+const OUTPUT_QUIESCENCE_POLL_INTERVAL_MS: u64 = 50;
+const OUTPUT_QUIESCENCE_REQUIRED_STABLE_SAMPLES: u32 = 3;
+const OUTPUT_QUIESCENCE_QUIET_MS: u64 = 150;
 const SCREEN_WAIT_POLL_INTERVAL_MS: u64 = 100;
 const SCREEN_WAIT_SETTLED_QUIET_MS: u64 = 300;
 const DEFAULT_DELTA_CAPTURE_START_LINE: i32 = -50;
@@ -647,6 +652,18 @@ struct ScreenWaitResult {
     stable_checks: u32,
 }
 
+#[derive(Debug)]
+struct OutputQuiescenceWaitResult {
+    trigger: &'static str,
+    quiet_for_ms: u64,
+    elapsed_ms: u64,
+    check_count: u32,
+    stable_checks: u32,
+    output_seen: bool,
+    latest_offset: u64,
+    last_output_seq: u64,
+}
+
 #[derive(Debug, Clone)]
 struct AdditiveDeltaPayload {
     changed: bool,
@@ -697,7 +714,10 @@ fn truncate_log_value(value: &str, max_chars: usize) -> String {
     if normalized.chars().count() <= max_chars {
         return normalized;
     }
-    let truncated: String = normalized.chars().take(max_chars.saturating_sub(3)).collect();
+    let truncated: String = normalized
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect();
     format!("{truncated}...")
 }
 
@@ -992,10 +1012,7 @@ fn build_screen_wait_assessment(
 
         if let Some(processing) = may_still_be_processing {
             if let Some(hints) = map.get_mut("hints").and_then(|value| value.as_object_mut()) {
-                hints.insert(
-                    "may_still_be_processing".into(),
-                    Value::Bool(processing),
-                );
+                hints.insert("may_still_be_processing".into(), Value::Bool(processing));
             }
         }
     }
@@ -1308,7 +1325,9 @@ impl TerminalManager {
         let start_line = start_line_for_observe_view(view, lines);
 
         if view == "delta" && wait_for == "shell_ready" {
-            return self.send_observe_error(&frame, "unsupported_wait_for").await;
+            return self
+                .send_observe_error(&frame, "unsupported_wait_for")
+                .await;
         }
 
         let handle = self.ensure_handle_for_session(session_id, None).await?;
@@ -1390,9 +1409,30 @@ impl TerminalManager {
                     .run_capture_pane_with_lines(&handle.session_name, start_line)
                     .await?;
                 let capture_ms = capture_start.elapsed().as_millis() as u64;
-                let capture_summary =
-                    summarize_capture_for_log(&output, self.config.debug_enabled);
+                let capture_summary = summarize_capture_for_log(&output, self.config.debug_enabled);
                 (readiness, output, capture_ms, capture_summary, false)
+            } else if matches!(wait_for, "settled" | "screen_stable") {
+                let observe_started_at = now_millis();
+                let quiescence = self
+                    .wait_for_output_quiescence(
+                        &handle,
+                        request_id,
+                        timeout_ms,
+                        observe_started_at,
+                        start_offset,
+                    )
+                    .await?;
+                let current = self
+                    .capture_screen_state(&handle.session_name, start_line, quiescence.elapsed_ms)
+                    .await?;
+                let readiness = self.build_quiescence_assessment(&current.capture, &quiescence);
+                (
+                    readiness,
+                    current.capture,
+                    current.captured_after_ms,
+                    current.summary,
+                    false,
+                )
             } else {
                 let wait_result = self
                     .wait_for_screen_state(
@@ -1400,9 +1440,7 @@ impl TerminalManager {
                         request_id,
                         wait_for,
                         timeout_ms,
-                        wait_baseline
-                            .as_deref()
-                            .or(delivered_baseline.as_deref()),
+                        wait_baseline.as_deref().or(delivered_baseline.as_deref()),
                         start_line,
                     )
                     .await?;
@@ -1417,18 +1455,15 @@ impl TerminalManager {
         let readiness_wait_ms = readiness_wait_start.elapsed().as_millis() as u64;
         let (output, output_bytes, lines_captured, changed, truncated) = match view {
             "delta" => {
-                let comparison_baseline = delivered_baseline
-                    .as_deref()
-                    .or(wait_baseline.as_deref());
+                let comparison_baseline =
+                    delivered_baseline.as_deref().or(wait_baseline.as_deref());
                 let delta = build_additive_delta_payload(comparison_baseline, &current_capture);
-                let fallback_delta = if delivered_baseline.is_none()
-                    && delta.text.is_empty()
-                    && !delta.changed
-                {
-                    Some(build_additive_delta_payload(None, &current_capture))
-                } else {
-                    None
-                };
+                let fallback_delta =
+                    if delivered_baseline.is_none() && delta.text.is_empty() && !delta.changed {
+                        Some(build_additive_delta_payload(None, &current_capture))
+                    } else {
+                        None
+                    };
                 let output = fallback_delta
                     .as_ref()
                     .map(|value| value.text.clone())
@@ -1451,7 +1486,13 @@ impl TerminalManager {
             "screen" | "history" => {
                 let output_bytes = current_capture.as_bytes().len();
                 let lines_captured = current_capture.lines().count();
-                (current_capture.clone(), output_bytes, lines_captured, None, None)
+                (
+                    current_capture.clone(),
+                    output_bytes,
+                    lines_captured,
+                    None,
+                    None,
+                )
             }
             _ => unreachable!("unsupported observe view"),
         };
@@ -1512,8 +1553,8 @@ impl TerminalManager {
 
         let session_id = &frame.session_id;
         let request_id = &frame.request_id;
-        let wait_for = frame.wait_for.as_deref().unwrap_or("none");
-        let timeout_ms = frame.timeout_ms.unwrap_or(5_000);
+        let wait_for = frame.wait_for.as_deref().unwrap_or("settled");
+        let timeout_ms = frame.timeout_ms.unwrap_or(30_000);
         let observe_after_ms = frame.observe_after_ms.unwrap_or(1000);
         let submit = frame.submit.unwrap_or(false);
         let text = frame.text.as_deref();
@@ -1574,24 +1615,30 @@ impl TerminalManager {
                 return self.send_send_error(&frame, "send_keys_failed").await;
             }
         };
+        let dispatch_completed_at = now_millis();
 
-        let (delta, readiness, current_capture, current_summary, captured_after_ms) = match wait_for {
+        let (
+            delta,
+            readiness,
+            current_capture,
+            current_summary,
+            captured_after_ms,
+            quiescence_wait,
+        ) = match wait_for {
             "none" => {
                 if observe_after_ms > 0 {
                     time::sleep(Duration::from_millis(observe_after_ms)).await;
                 }
 
                 match self
-                    .capture_screen_state(
-                        &handle.session_name,
-                        delta_start_line,
-                        observe_after_ms,
-                    )
+                    .capture_screen_state(&handle.session_name, delta_start_line, observe_after_ms)
                     .await
                 {
                     Ok(current) => {
                         let delta = build_additive_delta_payload(
-                            baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                            baseline_capture
+                                .as_ref()
+                                .map(|state| state.capture.as_str()),
                             &current.capture,
                         );
                         let readiness = assess_capture_readiness(&current.capture);
@@ -1602,6 +1649,7 @@ impl TerminalManager {
                             Some(current.capture),
                             Some(current.summary),
                             Some(captured_after_ms),
+                            None,
                         )
                     }
                     Err(err) => {
@@ -1624,6 +1672,7 @@ impl TerminalManager {
                             None,
                             None,
                             None,
+                            None,
                         )
                     }
                 }
@@ -1641,16 +1690,14 @@ impl TerminalManager {
                     .await?;
                 let captured_after_ms = shell_wait_start.elapsed().as_millis() as u64;
                 match self
-                    .capture_screen_state(
-                        &handle.session_name,
-                        delta_start_line,
-                        captured_after_ms,
-                    )
+                    .capture_screen_state(&handle.session_name, delta_start_line, captured_after_ms)
                     .await
                 {
                     Ok(current) => {
                         let delta = build_additive_delta_payload(
-                            baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                            baseline_capture
+                                .as_ref()
+                                .map(|state| state.capture.as_str()),
                             &current.capture,
                         );
                         let captured_after_ms = current.captured_after_ms;
@@ -1660,6 +1707,7 @@ impl TerminalManager {
                             Some(current.capture),
                             Some(current.summary),
                             Some(captured_after_ms),
+                            None,
                         )
                     }
                     Err(err) => {
@@ -1669,23 +1717,27 @@ impl TerminalManager {
                             error = %err,
                             "terminal_send final capture after shell_ready failed"
                         );
-                        (None, readiness, None, None, None)
+                        (None, readiness, None, None, None, None)
                     }
                 }
             }
-            "changed" | "settled" | "screen_stable" => {
+            "changed" => {
                 let wait_result = self
                     .wait_for_screen_state(
                         &handle,
                         request_id,
                         wait_for,
                         timeout_ms,
-                        baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                        baseline_capture
+                            .as_ref()
+                            .map(|state| state.capture.as_str()),
                         delta_start_line,
                     )
                     .await?;
                 let delta = build_additive_delta_payload(
-                    baseline_capture.as_ref().map(|state| state.capture.as_str()),
+                    baseline_capture
+                        .as_ref()
+                        .map(|state| state.capture.as_str()),
                     &wait_result.capture,
                 );
 
@@ -1695,7 +1747,57 @@ impl TerminalManager {
                     Some(wait_result.capture),
                     Some(wait_result.summary),
                     Some(wait_result.captured_after_ms),
+                    None,
                 )
+            }
+            "settled" | "screen_stable" => {
+                let quiescence = self
+                    .wait_for_output_quiescence(
+                        &handle,
+                        request_id,
+                        timeout_ms,
+                        dispatch_completed_at,
+                        start_offset,
+                    )
+                    .await?;
+
+                match self
+                    .capture_screen_state(
+                        &handle.session_name,
+                        delta_start_line,
+                        quiescence.elapsed_ms,
+                    )
+                    .await
+                {
+                    Ok(current) => {
+                        let delta = build_additive_delta_payload(
+                            baseline_capture
+                                .as_ref()
+                                .map(|state| state.capture.as_str()),
+                            &current.capture,
+                        );
+                        let readiness =
+                            self.build_quiescence_assessment(&current.capture, &quiescence);
+                        (
+                            Some(delta),
+                            readiness,
+                            Some(current.capture),
+                            Some(current.summary),
+                            Some(current.captured_after_ms),
+                            Some(quiescence),
+                        )
+                    }
+                    Err(err) => {
+                        warn!(
+                            request_id = request_id,
+                            session_id = session_id,
+                            error = %err,
+                            "terminal_send final capture after output quiescence failed"
+                        );
+                        let readiness = self.build_quiescence_assessment("", &quiescence);
+                        (None, readiness, None, None, None, Some(quiescence))
+                    }
+                }
             }
             _ => return self.send_send_error(&frame, "unsupported_wait_for").await,
         };
@@ -1735,6 +1837,13 @@ impl TerminalManager {
             delta_truncated = ?delta.as_ref().map(|value| value.truncated),
             delta_text_bytes = ?delta.as_ref().map(|value| value.text.as_bytes().len()),
             captured_after_ms = ?captured_after_ms,
+            quiescence_trigger = ?quiescence_wait.as_ref().map(|value| value.trigger),
+            quiescence_output_seen = ?quiescence_wait.as_ref().map(|value| value.output_seen),
+            quiescence_checks = ?quiescence_wait.as_ref().map(|value| value.check_count),
+            quiescence_stable_checks = ?quiescence_wait.as_ref().map(|value| value.stable_checks),
+            quiescence_quiet_for_ms = ?quiescence_wait.as_ref().map(|value| value.quiet_for_ms),
+            quiescence_latest_offset = ?quiescence_wait.as_ref().map(|value| value.latest_offset),
+            quiescence_last_output_seq = ?quiescence_wait.as_ref().map(|value| value.last_output_seq),
             capture_hash = ?current_summary
                 .as_ref()
                 .map(|summary| format!("{:016x}", summary.hash)),
@@ -1885,9 +1994,7 @@ impl TerminalManager {
         }
 
         for key in keys {
-            submitted |= self
-                .send_interaction_key(&handle.session_name, key)
-                .await?;
+            submitted |= self.send_interaction_key(&handle.session_name, key).await?;
         }
 
         Ok(submitted)
@@ -2066,15 +2173,7 @@ impl TerminalManager {
                 assessment
             }
             "changed" => {
-                self
-                    .wait_for_screen_state(
-                        handle,
-                        request_id,
-                        wait_for,
-                        timeout_ms,
-                        None,
-                        None,
-                    )
+                self.wait_for_screen_state(handle, request_id, wait_for, timeout_ms, None, None)
                     .await?
                     .assessment
             }
@@ -2207,18 +2306,186 @@ impl TerminalManager {
         timeout_ms: u64,
     ) -> Result<(serde_json::Value, Vec<u8>, usize, bool)> {
         let wait_result = self
-            .wait_for_screen_state(
-                handle,
-                request_id,
-                "settled",
-                timeout_ms,
-                None,
-                None,
-            )
+            .wait_for_screen_state(handle, request_id, "settled", timeout_ms, None, None)
             .await?;
         let output = wait_result.capture.into_bytes();
         let output_bytes = output.len();
         Ok((wait_result.assessment, output, output_bytes, false))
+    }
+
+    async fn wait_for_output_quiescence(
+        &self,
+        handle: &Arc<TerminalHandle>,
+        request_id: &str,
+        timeout_ms: u64,
+        started_at_ms: u64,
+        start_offset: u64,
+    ) -> Result<OutputQuiescenceWaitResult> {
+        let started_at = Instant::now();
+        let mut previous_offset = handle.offset.load(Ordering::SeqCst);
+        let mut check_count: u32 = 0;
+        let mut stable_checks: u32 = 0;
+
+        if self.config.debug_enabled {
+            info!(
+                request_id = request_id,
+                session_id = %handle.session_id,
+                session = %handle.session_name,
+                timeout_ms = timeout_ms,
+                poll_interval_ms = OUTPUT_QUIESCENCE_POLL_INTERVAL_MS,
+                required_stable_samples = OUTPUT_QUIESCENCE_REQUIRED_STABLE_SAMPLES,
+                quiet_ms = OUTPUT_QUIESCENCE_QUIET_MS,
+                start_offset = start_offset,
+                "output quiescence wait started"
+            );
+        }
+
+        loop {
+            let elapsed_ms = started_at.elapsed().as_millis() as u64;
+            let current_offset = handle.offset.load(Ordering::SeqCst);
+            let output_seen = current_offset > start_offset;
+            let last_output_at = handle.last_output_at.load(Ordering::SeqCst);
+            let quiet_reference_ms = if output_seen || last_output_at > started_at_ms {
+                last_output_at.max(started_at_ms)
+            } else {
+                started_at_ms
+            };
+            let quiet_for_ms = now_millis().saturating_sub(quiet_reference_ms);
+            let last_output_seq = handle.last_output_seq.load(Ordering::SeqCst);
+
+            if elapsed_ms >= timeout_ms {
+                if self.config.debug_enabled {
+                    info!(
+                        request_id = request_id,
+                        session_id = %handle.session_id,
+                        session = %handle.session_name,
+                        elapsed_ms = elapsed_ms,
+                        quiet_for_ms = quiet_for_ms,
+                        check_count = check_count,
+                        stable_checks = stable_checks,
+                        output_seen = output_seen,
+                        latest_offset = current_offset,
+                        last_output_seq = last_output_seq,
+                        "output quiescence wait timed out"
+                    );
+                }
+
+                return Ok(OutputQuiescenceWaitResult {
+                    trigger: "timeout",
+                    quiet_for_ms,
+                    elapsed_ms,
+                    check_count,
+                    stable_checks,
+                    output_seen,
+                    latest_offset: current_offset,
+                    last_output_seq,
+                });
+            }
+
+            let sleep_ms =
+                OUTPUT_QUIESCENCE_POLL_INTERVAL_MS.min(timeout_ms.saturating_sub(elapsed_ms));
+            if sleep_ms > 0 {
+                time::sleep(Duration::from_millis(sleep_ms)).await;
+            }
+
+            let current_offset = handle.offset.load(Ordering::SeqCst);
+            check_count += 1;
+            if current_offset == previous_offset {
+                stable_checks += 1;
+            } else {
+                stable_checks = 0;
+                previous_offset = current_offset;
+            }
+
+            let output_seen = current_offset > start_offset;
+            let last_output_at = handle.last_output_at.load(Ordering::SeqCst);
+            let quiet_reference_ms = if output_seen || last_output_at > started_at_ms {
+                last_output_at.max(started_at_ms)
+            } else {
+                started_at_ms
+            };
+            let quiet_for_ms = now_millis().saturating_sub(quiet_reference_ms);
+            let last_output_seq = handle.last_output_seq.load(Ordering::SeqCst);
+            let elapsed_ms = started_at.elapsed().as_millis() as u64;
+
+            if self.config.debug_enabled {
+                info!(
+                    request_id = request_id,
+                    session_id = %handle.session_id,
+                    session = %handle.session_name,
+                    check_count = check_count,
+                    stable_checks = stable_checks,
+                    quiet_for_ms = quiet_for_ms,
+                    output_seen = output_seen,
+                    latest_offset = current_offset,
+                    last_output_seq = last_output_seq,
+                    "output quiescence wait check"
+                );
+            }
+
+            if stable_checks >= OUTPUT_QUIESCENCE_REQUIRED_STABLE_SAMPLES
+                && quiet_for_ms >= OUTPUT_QUIESCENCE_QUIET_MS
+            {
+                if self.config.debug_enabled {
+                    info!(
+                        request_id = request_id,
+                        session_id = %handle.session_id,
+                        session = %handle.session_name,
+                        elapsed_ms = elapsed_ms,
+                        quiet_for_ms = quiet_for_ms,
+                        check_count = check_count,
+                        stable_checks = stable_checks,
+                        output_seen = output_seen,
+                        latest_offset = current_offset,
+                        last_output_seq = last_output_seq,
+                        "output quiescence wait settled"
+                    );
+                }
+
+                return Ok(OutputQuiescenceWaitResult {
+                    trigger: "settled",
+                    quiet_for_ms,
+                    elapsed_ms,
+                    check_count,
+                    stable_checks,
+                    output_seen,
+                    latest_offset: current_offset,
+                    last_output_seq,
+                });
+            }
+        }
+    }
+
+    fn build_quiescence_assessment(
+        &self,
+        capture: &str,
+        quiescence: &OutputQuiescenceWaitResult,
+    ) -> Value {
+        match quiescence.trigger {
+            "settled" => build_screen_wait_assessment(
+                capture,
+                "settled",
+                quiescence.quiet_for_ms,
+                quiescence.check_count,
+                quiescence.stable_checks,
+                Some(false),
+                None,
+                Some(0.85),
+                Some(true),
+            ),
+            "timeout" => build_screen_wait_assessment(
+                capture,
+                "timeout",
+                quiescence.quiet_for_ms,
+                quiescence.check_count,
+                quiescence.stable_checks,
+                Some(true),
+                Some(0.4),
+                None,
+                Some(false),
+            ),
+            _ => assess_capture_readiness(capture),
+        }
     }
 
     /// Run tmux capture-pane and return the output.
@@ -2302,9 +2569,10 @@ impl TerminalManager {
                 summary: summarize_capture_for_log(existing, self.config.debug_enabled),
                 captured_after_ms: 0,
             },
-            None => self
-                .capture_screen_state(&handle.session_name, start_line, 0)
-                .await?,
+            None => {
+                self.capture_screen_state(&handle.session_name, start_line, 0)
+                    .await?
+            }
         };
 
         let started_at = Instant::now();
@@ -2677,6 +2945,8 @@ impl TerminalManager {
         };
         let seq = Arc::new(AtomicU64::new(0));
         let offset = Arc::new(AtomicU64::new(start_offset));
+        let last_output_at = Arc::new(AtomicU64::new(now_millis()));
+        let last_output_seq = Arc::new(AtomicU64::new(0));
         let sender_clone = sender.clone();
         let watcher = self.spawn_output_watcher(
             session_id.to_string(),
@@ -2685,6 +2955,8 @@ impl TerminalManager {
             sender_clone,
             seq.clone(),
             offset.clone(),
+            last_output_at.clone(),
+            last_output_seq.clone(),
         );
         let handle = Arc::new(TerminalHandle {
             session_id: session_id.to_string(),
@@ -2693,6 +2965,8 @@ impl TerminalManager {
             watcher,
             seq,
             offset,
+            last_output_at,
+            last_output_seq,
             cols,
             rows,
         });
@@ -2719,6 +2993,8 @@ impl TerminalManager {
         sender: OutboundSender,
         seq: Arc<AtomicU64>,
         offset: Arc<AtomicU64>,
+        last_output_at: Arc<AtomicU64>,
+        last_output_seq: Arc<AtomicU64>,
     ) -> tokio::task::JoinHandle<()> {
         info!(session_id = %session_id, session = %session_name, log_path = %log_path.display(), "spawning terminal output watcher");
         tokio::spawn(async move {
@@ -2741,6 +3017,9 @@ impl TerminalManager {
                                 let mut buf = vec![0u8; (size - current_offset) as usize];
                                 if file.read_exact(&mut buf).await.is_ok() {
                                     let seq_no = seq.fetch_add(1, Ordering::SeqCst);
+                                    offset.store(size, Ordering::SeqCst);
+                                    last_output_at.store(now_millis(), Ordering::SeqCst);
+                                    last_output_seq.store(seq_no, Ordering::SeqCst);
                                     let payload = json!({
                                         "proto": TERMINAL_PROTO_VERSION,
                                         "type": "terminal_output",
@@ -2757,7 +3036,6 @@ impl TerminalManager {
                                         warn!(session_id = %session_id, session = %session_name, error = %err, "failed to send terminal_output");
                                         break; // Exit loop if send fails - channel is dead
                                     }
-                                    offset.store(size, Ordering::SeqCst);
                                 } else {
                                     warn!(session_id = %session_id, session = %session_name, "failed to read log file");
                                 }
@@ -3190,7 +3468,7 @@ impl ActivityDetector {
                             "activity detection: ready (screen stable)"
                         );
                         self.send_ready(0.9, "activity_stable", stable_count, check_count)
-                        .await?;
+                            .await?;
                         return Ok(());
                     }
                 }
@@ -4180,9 +4458,18 @@ mod tests {
 
     #[test]
     fn parse_screen_wait_mode_supports_phase_seven_modes() {
-        assert_eq!(parse_screen_wait_mode("none").unwrap(), ScreenWaitMode::None);
-        assert_eq!(parse_screen_wait_mode("changed").unwrap(), ScreenWaitMode::Changed);
-        assert_eq!(parse_screen_wait_mode("settled").unwrap(), ScreenWaitMode::Settled);
+        assert_eq!(
+            parse_screen_wait_mode("none").unwrap(),
+            ScreenWaitMode::None
+        );
+        assert_eq!(
+            parse_screen_wait_mode("changed").unwrap(),
+            ScreenWaitMode::Changed
+        );
+        assert_eq!(
+            parse_screen_wait_mode("settled").unwrap(),
+            ScreenWaitMode::Settled
+        );
     }
 
     #[test]
@@ -4195,14 +4482,8 @@ mod tests {
 
     #[test]
     fn normalize_tmux_key_notation_prefers_tmux_style_ctrl_chords() {
-        assert_eq!(
-            normalize_tmux_key_notation("C-c").as_deref(),
-            Some("C-c")
-        );
-        assert_eq!(
-            normalize_tmux_key_notation("c-D").as_deref(),
-            Some("C-d")
-        );
+        assert_eq!(normalize_tmux_key_notation("C-c").as_deref(), Some("C-c"));
+        assert_eq!(normalize_tmux_key_notation("c-D").as_deref(), Some("C-d"));
     }
 
     #[test]

@@ -38,12 +38,35 @@ test("buildTerminalSendSummary describes unchanged screens conservatively", () =
       waitingForInput: false,
       mayStillBeProcessing: false,
     },
+    null,
     { may_still_be_processing: false },
   );
 
   assert.equal(
     summary,
     'Attempted to send "Please review src/main.rs" and press Enter; no visible delta observed',
+  );
+});
+
+test("buildTerminalSendSummary calls out timeout when settled wait expires", () => {
+  const summary = buildTerminalSendSummary(
+    {
+      text: "npm test",
+      submit: true,
+    },
+    {
+      changed: true,
+      text: "Running test suite...",
+      truncated: false,
+    },
+    null,
+    "timeout",
+    { may_still_be_processing: true },
+  );
+
+  assert.equal(
+    summary,
+    'Attempted to send "npm test" and press Enter; observed terminal activity before timing out',
   );
 });
 

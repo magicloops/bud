@@ -189,7 +189,7 @@ Ctrl+C note:
 **Observe Protocol**:
 
 1. Service sends `terminal_observe` with `request_id`
-2. Bud optionally waits using `shell_ready`, `changed`, or `settled`, then reuses that capture for the response when possible
+2. Bud optionally waits using `shell_ready`, `changed`, or `settled`; `changed` stays on the screen-diff path while `settled` waits on output quiescence before the final capture
 3. Bud sends `terminal_observe_result` with matching `request_id`
 4. Promise resolves with delta by default, or full screen/history when explicitly requested
 
@@ -197,9 +197,9 @@ Ctrl+C note:
 
 1. Service sends `terminal_send` with structured `text` / `submit` / `keys`
 2. Bud dispatches literal text and special keys to tmux
-3. Bud captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
-4. Bud optionally waits for `shell_ready`, `changed`, or `settled` when explicitly requested
-5. Bud sends `terminal_send_result` with dispatch status, additive delta, and readiness
+3. Bud captures a pre-send baseline and, by default, waits for output quiescence before doing one final `capture-pane`
+4. `observe_after_ms` is only relevant for explicit `wait_for: "none"` sends; `changed` remains available for first-visible-reaction waits
+5. Bud sends `terminal_send_result` with dispatch status, additive delta, and timeout-aware readiness / partial-progress semantics
 
 These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. The active model-facing contract is now send-first: shell and interactive input both flow through `terminal.send`, while `terminal.observe` is the explicit inspection hatch.
 
@@ -207,9 +207,10 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `terminal.output` carries `seq`, `data`, and `byte_offset`
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
-- `sendInteraction()` now defaults to `waitFor: "none"`, `observeAfterMs: 1000`, and a `5000ms` timeout so the agent gets immediate delta evidence instead of blindly waiting for delayed screen stability
+- `sendInteraction()` now defaults to `waitFor: "settled"` and a `30000ms` timeout so the common agent path waits locally for output quiescence before returning
+- `sendInteraction()` still accepts `observeAfterMs`, but only uses the default `1000ms` fast-capture behavior when `waitFor: "none"` is requested explicitly
 - `sendInteraction()` accepts tmux-style modifier chords such as `C-c` through `interaction.keys`
-- `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, and readiness
+- `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, readiness, and conservative timeout summaries
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
 - `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests
 
