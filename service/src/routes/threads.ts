@@ -891,27 +891,6 @@ export async function registerThreadTerminalRoutes(
     return { ok: true };
   });
 
-  // POST /api/threads/:threadId/terminal/interrupt - Send Ctrl+C
-  server.post("/api/threads/:threadId/terminal/interrupt", async (request, reply) => {
-    const params = ThreadParamsSchema.parse(request.params);
-    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
-    if (!access) {
-      return;
-    }
-
-    const session = await terminalSessionManager.getSessionForThread(params.threadId);
-    if (!session) {
-      return reply.code(404).send({ error: "no_terminal_session" });
-    }
-
-    const result = await terminalSessionManager.sendInterrupt(session.sessionId);
-    if (!result.ok) {
-      return reply.code(503).send({ error: result.error ?? "terminal_unavailable" });
-    }
-
-    return { ok: true };
-  });
-
   // POST /api/threads/:threadId/terminal/resize - Resize terminal
   server.post("/api/threads/:threadId/terminal/resize", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);

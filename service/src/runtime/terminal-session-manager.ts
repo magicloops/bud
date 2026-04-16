@@ -76,6 +76,15 @@ type TerminalOutputPayload = {
   byte_offset: number;
 };
 
+type TerminalReadyPayload = {
+  assessment: ReadinessAssessment;
+};
+
+type ReadinessSnapshot = {
+  assessment: ReadinessAssessment;
+  updatedAt: number;
+};
+
 export type ObserveOptions = {
   lines?: number;
   waitFor?: TerminalWaitFor;
@@ -162,7 +171,7 @@ export class TerminalSessionManager {
   private readonly events: TerminalEventBus;
 
   // In-memory state (keyed by sessionId)
-  private readonly readiness = new Map<string, { assessment: ReadinessAssessment; updatedAt: number }>();
+  private readonly readiness = new Map<string, ReadinessSnapshot>();
   private readonly lastOffsets = new Map<string, number>();
   private readonly pendingCommands = new Map<string, PendingCommand | null>();
   private readonly pendingObserves = new Map<
@@ -431,60 +440,6 @@ export class TerminalSessionManager {
     return { ok: true };
   }
 
-  async sendInterrupt(sessionId: string): Promise<{ ok: boolean; error?: string }> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
-      return { ok: false, error: "session_not_found" };
-    }
-
-    const context = this.getSessionContext(sessionId);
-    const useActivityBased = context.mode === "repl";
-
-    const payload = {
-      proto: TERMINAL_PROTO_VERSION,
-      type: "terminal_interrupt",
-      id: `msg_${ulid()}`,
-      ts: Date.now(),
-      ext: {},
-      session_id: sessionId,
-      await_ready: {
-        enabled: true,
-        activity_based: useActivityBased,
-        ...(useActivityBased
-          ? {
-              activity_interval_ms: 5000,
-              activity_stable_count: 2,
-              max_wait_ms: 60000
-            }
-          : {
-              max_wait_ms: 5000
-            })
-      }
-    };
-
-    this.debug("sendInterrupt with readiness config", {
-      sessionId,
-      mode: context.mode,
-      program: context.program,
-      useActivityBased
-    });
-
-    const sent = sendFrameToBud(session.budId, payload);
-    if (!sent) {
-      this.logger.warn({ sessionId }, "Failed to send terminal_interrupt (bud offline)");
-      return { ok: false, error: "bud_offline" };
-    }
-
-    // Clear pending command - interrupt usually exits REPLs
-    const pending = this.pendingCommands.get(sessionId);
-    if (pending) {
-      this.debug("clearing pending command due to interrupt", { sessionId, command: pending.command });
-      this.pendingCommands.set(sessionId, null);
-    }
-
-    return { ok: true };
-  }
-
   async sendResize(sessionId: string, cols: number, rows: number): Promise<{ ok: boolean; error?: string }> {
     const session = await this.getSession(sessionId);
     if (!session) {
@@ -639,12 +594,12 @@ export class TerminalSessionManager {
     });
   }
 
-  async handleTerminalReady(sessionId: string, assessment: ReadinessAssessment): Promise<void> {
-    this.storeReadinessAssessment(sessionId, assessment);
+  async handleTerminalReady(sessionId: string, payload: TerminalReadyPayload): Promise<void> {
+    this.storeReadinessAssessment(sessionId, payload.assessment);
 
     this.events.emit(sessionId, {
       event: "terminal.ready",
-      data: { assessment },
+      data: { assessment: payload.assessment },
       id: ulid()
     });
   }
@@ -843,21 +798,6 @@ export class TerminalSessionManager {
   }
 
   getLatestReadiness(sessionId: string): ReadinessAssessment | null {
-    return this.readiness.get(sessionId)?.assessment ?? null;
-  }
-
-  async waitForReadiness(sessionId: string, timeoutMs = 5000): Promise<ReadinessAssessment | null> {
-    const start = Date.now();
-    const initialUpdated = this.readiness.get(sessionId)?.updatedAt ?? 0;
-
-    while (Date.now() - start < timeoutMs) {
-      const latest = this.readiness.get(sessionId);
-      if (latest && latest.updatedAt > initialUpdated) {
-        return latest.assessment;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
     return this.readiness.get(sessionId)?.assessment ?? null;
   }
 
@@ -1568,8 +1508,15 @@ export class TerminalSessionManager {
     return basename.replace(/^\.\//, "");
   }
 
-  private storeReadinessAssessment(sessionId: string, assessment: ReadinessAssessment): void {
-    this.readiness.set(sessionId, { assessment, updatedAt: Date.now() });
+  private storeReadinessAssessment(
+    sessionId: string,
+    assessment: ReadinessAssessment,
+  ): ReadinessSnapshot {
+    const snapshot: ReadinessSnapshot = {
+      assessment,
+      updatedAt: Date.now(),
+    };
+    this.readiness.set(sessionId, snapshot);
 
     if (
       assessment.prompt_type === "shell" &&
@@ -1587,6 +1534,8 @@ export class TerminalSessionManager {
         this.pendingCommands.set(sessionId, null);
       }
     }
+
+    return snapshot;
   }
 
   private async recordInput(

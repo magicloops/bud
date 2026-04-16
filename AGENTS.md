@@ -200,9 +200,8 @@ The LLM agent has these tools (defined in `service/src/agent/`):
 
 | Tool | Purpose |
 |------|---------|
-| `terminal.run` | Send input to terminal (include `\n` for Enter) |
-| `terminal.capture` | Get current terminal screen content |
-| `terminal.interrupt` | Send SIGINT (Ctrl+C) |
+| `terminal.send` | Send shell commands, interactive input, confirmations, and keypresses (`submit:true` for Enter, `keys:["C-c"]` for Ctrl+C) |
+| `terminal.observe` | Inspect the rendered terminal screen or delta explicitly |
 
 **Deprecated**: `shell.run` (legacy single-command execution)
 

@@ -357,12 +357,6 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "rows": 40, "cols": 120, "ext": {} }
   ```
 
-* `terminal_interrupt` — send Ctrl+C (SIGINT)
-  ```json
-  { "proto": "0.2", "type": "terminal_interrupt", "id": "...", "ts": 1731,
-    "await_ready": { "enabled": true }, "ext": {} }
-  ```
-
 * `terminal_close` — close the terminal session
   ```json
   { "proto": "0.2", "type": "terminal_close", "id": "...", "ts": 1731,
@@ -388,7 +382,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   * `request_id`: unique ID for response correlation
   * `text`: optional literal text to send; this is now the primary shell-command path as well as the interactive-input path
   * `submit`: when true, Bud MUST press Enter after sending text
-  * `keys`: optional ordered list of special keys or single-key actions
+  * `keys`: optional ordered list of special keys or tmux `send-keys` actions; use tmux notation for chords such as `C-c` for Ctrl+C
   * `observe_after_ms`: optional delay before the default fast post-send screen capture (default: 1000)
   * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"none"` for `terminal.send`)
   * `timeout_ms`: max wait time for readiness (default: 5000 for `terminal.send`)
@@ -427,6 +421,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
 * `terminal_ready` — readiness assessment after input/command
   ```json
   { "proto": "0.2", "type": "terminal_ready", "id": "...", "ts": 1731,
+    "session_id": "sess_01...",
     "assessment": {
       "ready": true,
       "confidence": 0.95,
@@ -441,8 +436,6 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
         "may_still_be_processing": false
       }
     },
-    "output_bytes": 1234,
-    "last_line": "user@host:~$ ",
     "ext": {}
   }
   ```
@@ -450,7 +443,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   **Readiness Assessment Fields:**
   * `ready`: boolean — terminal is ready for next input
   * `confidence`: 0.0–1.0 — confidence level (≥0.8 high, 0.5–0.8 medium, <0.5 low)
-  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `interrupt` | `activity_stable` | `changed` | `settled`
+  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `error` | `activity_stable` | `changed` | `settled`
   * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
   * `hints`: object of boolean flags for agent decision-making
 
@@ -527,7 +520,6 @@ The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a 
 * `GET /api/threads/:thread_id/terminal` — get thread-scoped terminal session info
 * `GET /api/threads/:thread_id/terminal/history?bytes=N&since_offset=M` — fetch thread-scoped output history
 * `POST /api/threads/:thread_id/terminal/input` — send input `{ input: "..." }`
-* `POST /api/threads/:thread_id/terminal/interrupt` — send Ctrl+C
 * `POST /api/threads/:thread_id/terminal/resize` — resize terminal `{ cols, rows }`
 
 > Implementations MUST treat `ext` as reserved for forward compatibility; unknown fields MUST be ignored.

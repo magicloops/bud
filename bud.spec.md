@@ -252,9 +252,8 @@ User Message
 ```
 
 **Available Tools**:
-- `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and keypresses
+- `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and keypresses, including tmux-style chords like `keys:["C-c"]`
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
-- `terminal.interrupt` - Send SIGINT (Ctrl+C)
 
 ### 3. Terminal Readiness Detection
 
@@ -502,6 +501,11 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/deploy/cloudflare-front-door-runbook.md](./plan/deploy/cloudflare-front-door-runbook.md) | Operator runbook for the default Cloudflare-in-front-of-Render staging shape, including the route-scoped Worker used to proxy service-owned paths to Render, the forwarded-header/no-store expectations for auth/SSE/WebSocket traffic, deploy order, rollback entry points, and the note that production may still move to a cleaner edge-routing provider |
 | [plan/debug-503s/implementation-spec.md](./plan/debug-503s/implementation-spec.md) | Phased implementation plan for eliminating the staging false Bud-offline / repeated terminal `503` recovery issue, centered on backend session-ownership guardrails, frontend reconnect hardening, and real staging validation |
 | [plan/debug-503s/validation-checklist.md](./plan/debug-503s/validation-checklist.md) | Release-gate checklist for the false-offline stabilization pass, covering backend tracker ownership, browser multi-tab/refresh behavior, SSE and `/ws` reconnects, and post-fix observability review |
+| [plan/fix-interrupt/implementation-spec.md](./plan/fix-interrupt/implementation-spec.md) | Focused phased implementation plan for fixing `terminal.interrupt` context correctness, dispatch-failure semantics, and interrupt-local output handling across the service and bud daemon |
+| [plan/fix-interrupt/validation-checklist.md](./plan/fix-interrupt/validation-checklist.md) | Release-gate checklist for the interrupt-fix pass, covering service correctness, interrupt-result transport behavior, shell/REPL/TUI validation, and required doc/spec follow-up |
+| [plan/remove-terminal-interrupt/remove-terminal-interrupt.spec.md](./plan/remove-terminal-interrupt/remove-terminal-interrupt.spec.md) | Folder spec for the phased plan to remove the agent-facing `terminal.interrupt` tool while retaining the browser interrupt route as a thin wrapper over the general `terminal.send` path |
+| [plan/remove-terminal-interrupt/implementation-spec.md](./plan/remove-terminal-interrupt/implementation-spec.md) | Phased implementation plan for removing the agent-facing `terminal.interrupt` tool, teaching `terminal.send.keys` to use tmux-native chords like `C-c`, retaining the browser interrupt escape hatch as a wrapper, and deleting dedicated interrupt runtime/protocol dead code |
+| [plan/remove-terminal-interrupt/validation-checklist.md](./plan/remove-terminal-interrupt/validation-checklist.md) | Release-gate checklist for the interrupt-removal plan, covering send-key chord support, agent-tool removal, browser-wrapper retention, dedicated protocol cleanup, and the final active-reference sweep |
 | [plan/fix-session-per-thread/implementation-spec.md](./plan/fix-session-per-thread/implementation-spec.md) | Focused implementation plan for fixing terminal session lifecycle semantics, active-session uniqueness, and idle-close defaults |
 | [plan/revised-terminal-contract/implementation-spec.md](./plan/revised-terminal-contract/implementation-spec.md) | Breaking implementation plan for replacing the overloaded `terminal.run` / `terminal.capture` agent contract with separate shell execution, interactive input, and explicit observation tools |
 | [plan/revised-terminal-contract/implementation-spec-follow-up.md](./plan/revised-terminal-contract/implementation-spec-follow-up.md) | Follow-up implementation plan for stabilizing the revised terminal contract, first around TUI input parity and delta-first observation, and now around a potential send-first simplification that removes `terminal.exec` entirely |
@@ -522,6 +526,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/staging-false-bud-offline-terminal-503s.md](./debug/staging-false-bud-offline-terminal-503s.md) | Debug note documenting the current staging disconnect investigation, with the strongest hypothesis that stale WebSocket tracker cleanup in the service can make a still-connected Bud appear offline, plus the frontend/Cloudflare signals that amplify or accompany that state |
 | [debug/agent-stream-state-and-resume-implementation.md](./debug/agent-stream-state-and-resume-implementation.md) | Debug note documenting the stale attach replay problem, the split between durable transcript vs in-flight runtime state, and the implemented `/agent/state` plus bounded-resume fix direction |
 | [debug/browser-terminal-input-leak.md](./debug/browser-terminal-input-leak.md) | Debug note documenting why raw xterm `onData` submission lets emulator-generated protocol bytes leak into the shared tmux session, and why the phase-1 fix belongs at the browser boundary |
+| [debug/terminal-interrupt-correctness.md](./debug/terminal-interrupt-correctness.md) | Debug note documenting the current `terminal.interrupt` correctness gaps around premature REPL-context clearing, false-success dispatch reporting, and stale-history interrupt output reconstruction |
+| [debug/remove-terminal-interrupt-cutover.md](./debug/remove-terminal-interrupt-cutover.md) | Debug note capturing the cutover rationale for removing the agent-facing `terminal.interrupt` tool, keeping browser Ctrl+C as an escape hatch, and collapsing onto `terminal.send.keys` with tmux notation like `C-c` |
 | [debug/terminal-session-default-cwd.md](./debug/terminal-session-default-cwd.md) | Debug note tracing why tmux sessions currently start in `~` when `terminal_ensure` omits cwd for relocated Bud instances |
 | [debug/terminal-send-observe-context-quality.md](./debug/terminal-send-observe-context-quality.md) | Debug note documenting the now-working Claude Code flow under the revised terminal contract, plus the remaining inefficiencies: `terminal.observe` replaying stale pane history and `terminal.send` returning too little semantic post-send context to avoid extra observes |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
@@ -544,6 +550,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/terminal-send-confirmation-and-fast-observe.md](./design/terminal-send-confirmation-and-fast-observe.md) | Design for restoring send-plus-proof behavior to TUIs and REPLs by giving `terminal.send` a default fast post-send observation, replacing blind `screen_stable` waits with a `settled` model, and separating transport success from observed program response |
 | [design/terminal-delta-observation-and-minimal-tool-payloads.md](./design/terminal-delta-observation-and-minimal-tool-payloads.md) | Design for making `terminal.send` and default `terminal.observe` return additive deltas instead of replay-heavy snapshots, while keeping explicit full-screen/history modes and reducing the model-facing tool payload to success, readiness, and delta |
 | [design/reconsidering-terminal-exec-vs-terminal-send.md](./design/reconsidering-terminal-exec-vs-terminal-send.md) | Design review of whether `terminal.exec` still earns a place in the model-facing contract, given its newline restriction, lack of real exit-code authority, and overlap with the now-working `terminal.send` path |
+| [design/removing-terminal-interrupt-in-favor-of-terminal-send.md](./design/removing-terminal-interrupt-in-favor-of-terminal-send.md) | Design review of whether `terminal.interrupt` should be removed from the model-facing contract, arguing that `C-c` belongs on `terminal.send.keys` and that browser interrupt UX can survive as a thin wrapper over the same general send path |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries and service env placeholders |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
@@ -551,4 +558,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-14*
+*Last updated: 2026-04-15*

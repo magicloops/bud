@@ -36,13 +36,12 @@ Defines agent behavior as "Bud Agent" with:
 
 #### Tool Definitions (Lines 130-191)
 
-Three canonical tool definitions using standard JSON Schema format:
+Two canonical tool definitions using standard JSON Schema format:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `terminal_send` | `text?`, `submit?`, `keys?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a default fast post-send delta |
 | `terminal_observe` | `lines?`, `wait_for?`, `view?`, `timeout_ms?` | Observe terminal deltas by default, with explicit full-screen/history modes |
-| `terminal_interrupt` | none | Send Ctrl+C |
 
 **Note**: Optional parameters (`?`) are simply omitted from the `required` array. The OpenAI provider transforms these to the null-union pattern required by OpenAI strict mode during tool transformation.
 
@@ -108,6 +107,8 @@ startUserMessage()
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent records fast post-send delta data and avoids claiming program progress when no visible delta appears.
+- `terminal.send.keys` now uses tmux `send-keys` notation for modifier chords; the agent prompt explicitly calls out `keys: ["C-c"]` for Ctrl+C.
+- historical persisted `terminal.interrupt` tool rows are normalized during replay into `terminal_send` with `keys: ["C-c"]`, so old transcripts still round-trip through the current provider/tool format.
 - `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model, and replay normalization maps any older `screen_stable` tool payloads to `settled`.
 - `terminal.observe` now defaults to `view: "delta"` and exposes `view: "screen"` / `view: "history"` only when the model explicitly needs broader context.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
@@ -133,6 +134,16 @@ Standalone Node tests for Phase 6 send-result interpretation.
 - ambiguous sends recommend `terminal.observe` before the agent assumes the TUI accepted the input
 - settled REPL/TUI updates still map to `state.status = "waiting_for_input"`
 - send results that visibly return to shell map their next step back to another `terminal.send`
+
+### `agent-service.test.ts`
+
+Standalone Node tests for targeted `AgentService` terminal-tool regressions.
+
+**Current Coverage**:
+- `terminal.send` uses shared tmux `C-c` key notation for interrupt-style input
+- `terminal.send` summaries remain conservative when `C-c` produces no visible delta
+- `terminal.send` keeps REPL/TUI `context_after` inferred unless readiness explicitly proves shell
+- legacy provider responses that attempt `terminal_interrupt` are rejected by `extractFunctionCall()`
 
 **Reasoning Effort Support**:
 

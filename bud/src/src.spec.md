@@ -73,10 +73,10 @@ Hash-based deduplication for `capture-pane` output:
   - Inserts a short `10ms` pause between literal text and the first Enter when both are present, to reduce TUI submit/newline races
   - Supports `await_ready` for readiness detection
 - **`handle_resize`** - Resize via `tmux resize-window`
-- **`handle_interrupt`** - Send Ctrl+C via `tmux send-keys C-c`
 - **`handle_close`** - Kill session via `tmux kill-session`
 - **`handle_send`** - Structured interactive input path for agent `terminal.send`:
   - Sends literal text, optional submit, and special keys
+  - Accepts tmux `send-keys` notation for modifier chords, such as `C-c` for Ctrl+C, and normalizes common `ctrl+...` / `control-...` aliases into tmux form
   - Inserts a short `10ms` pause before Enter when literal text is immediately followed by submit/newline dispatch
   - Serves as the primary input path for both shell commands and interactive programs
   - Captures a fast post-send delta baseline after `observe_after_ms` (default `1000ms`)
@@ -105,7 +105,7 @@ Hash-based deduplication for `capture-pane` output:
 - Monitors log file for output quiescence
 - Configurable `quiescence_ms` (default: 1500ms) and `max_wait_ms` (default: 30s)
 - Analyzes output for prompt patterns
-- Sends `terminal_ready` frame with confidence assessment
+- Sends `terminal_ready` with readiness assessment only
 
 **`ReadinessDetector::detect_prompt()`** - Pattern matching for:
 - Shell prompts (`$`, `#`, `%`, `:~$`)
@@ -124,6 +124,7 @@ Hash-based deduplication for `capture-pane` output:
 - Declares ready when screen unchanged for N consecutive checks
 - Designed for apps like Claude Code that have natural processing pauses
 - Default: 5s intervals, 2 stable checks required, 60s max wait
+- Emits `terminal_ready` with activity-based readiness assessment when low-level `terminal_input` waits need it
 
 **Phase 6 Note**:
 - The agent-facing `terminal.send` path no longer relies on activity stability by default; it now uses an immediate fast delta capture after send and reserves `screen_stable` for explicit wait requests.
@@ -135,7 +136,7 @@ Hash-based deduplication for `capture-pane` output:
   - treats `settled` as a short quiet window (`300ms`) instead of the older blind delay loop
   - returns timeout assessments that stay conservative instead of treating a missed wait as positive readiness
 - the same Bud-side delta engine now powers both `terminal.send` and default `terminal.observe`
-- The older `ActivityDetector` remains in place for low-level `terminal_input` / `terminal_interrupt` readiness events.
+- The older `ActivityDetector` remains in place for low-level `terminal_input` readiness events.
 
 #### Main Application (Lines 2365-2875)
 

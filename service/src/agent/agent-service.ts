@@ -1,6 +1,5 @@
 import { ulid } from "ulid";
 import { asc, eq } from "drizzle-orm";
-import { Buffer } from "node:buffer";
 import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
@@ -46,12 +45,6 @@ type AgentDirective =
       lines?: number;
       view?: TerminalObservationView;
       waitFor?: TerminalWaitFor;
-      timeoutMs?: number;
-      callId: string;
-    }
-  | {
-      type: "tool_call";
-      tool: "terminal.interrupt";
       timeoutMs?: number;
       callId: string;
     }
@@ -117,8 +110,8 @@ Tools:
 - {"type":"tool_call","tool":"terminal.send","text":"pwd","submit":true}
 - {"type":"tool_call","tool":"terminal.send","text":"python","submit":true}
 - {"type":"tool_call","tool":"terminal.send","text":"q"}
+- {"type":"tool_call","tool":"terminal.send","keys":["C-c"]}
 - {"type":"tool_call","tool":"terminal.observe","lines":-50,"wait_for":"settled"}
-- {"type":"tool_call","tool":"terminal.interrupt"}
 
 Tool Responses:
 All terminal tools return a JSON result containing:
@@ -133,6 +126,7 @@ Guidelines:
 - For normal shell commands, send the command text with submit:true instead of adding a trailing \\n yourself.
 - Multiline shell input is allowed when you intentionally need it (for example heredocs or pasted scripts).
 - terminal.send is also for interactive input, confirmations, single-key actions, and launching interactive programs from shell.
+- Use tmux send-keys notation in terminal.send.keys for modifier chords, for example "C-c" for Ctrl+C.
 - terminal.send includes a short post-send delta by default. If delta.changed is false or delta.text is empty, do not assume the program accepted the input.
 - terminal.observe is for explicit screen inspection or extra scrollback after interactive work.
 - terminal.observe defaults to a delta view. Use view:"screen" for the full current screen and view:"history" for recent scrollback/history.
@@ -147,13 +141,13 @@ Guidelines:
   - If readiness hints suggest ongoing processing, use terminal.observe for progress
   - If context_after.mode is "repl" and the delta shows the UI is asking for more input, another terminal.send is reasonable
   - If context_after.mode is "shell", another terminal.send is the normal way to run the next shell command
+- If you need to interrupt the foreground program, use terminal.send with keys:["C-c"]. Send it again if the program or TUI still has not exited.
 - Use the hints object to understand terminal state:
   - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
   - looks_like_confirmation: Waiting for y/n or yes/no response
   - looks_like_password: Waiting for password input (won't echo)
   - looks_like_pager: In a pager like less/more (send 'q' to exit, space to continue)
   - may_still_be_processing: Output suggests command is still running
-- Use interrupt if a command hangs or you need to stop it.
 
 CONTEXT AWARENESS (CRITICAL):
 Tool results include a "context_after" field indicating what program is currently running in the terminal.
@@ -170,7 +164,7 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
   * Ask Claude to perform tasks: "Please review src/main.rs for bugs"
   * To run shell commands, ask Claude: "Run npm test"
   * Do NOT send raw shell syntax like "cat file.txt" - Claude will misinterpret it
-  * To exit, use terminal.send with text "exit" and submit true, or use terminal.interrupt
+  * To exit, use terminal.send with text "exit" and submit true, or use terminal.send with keys:["C-c"] if the TUI needs an interrupt
 - When context.program is "python" or "python3":
   * Send Python code, not shell commands
   * Use print() to display output
@@ -210,16 +204,6 @@ const DEFAULT_READINESS_HINTS: ReadinessHints = {
 // Optional fields are simply omitted from `required` - providers handle transformation
 const CANONICAL_TOOLS: CanonicalTool[] = [
   {
-    name: "terminal_interrupt",
-    description: "Send Ctrl+C to the terminal to interrupt the current process.",
-    parameters: {
-      type: "object",
-      properties: {},
-      required: [],
-      additionalProperties: false
-    }
-  },
-  {
     name: "terminal_send",
     description:
       "Send input to the current terminal program. Use for shell commands, multiline shell input, REPL/TUI input, confirmations, launching interactive programs, and single-key actions.",
@@ -237,7 +221,8 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
         keys: {
           type: "array",
           items: { type: "string" },
-          description: "Optional special keys or single-key actions, e.g. q, space, enter, tab, escape, up."
+          description:
+            'Optional special keys or single-key actions. Use tmux send-keys notation for chords, e.g. "C-c" for Ctrl+C.'
         },
         observe_after_ms: {
           type: "integer",
@@ -645,11 +630,18 @@ export class AgentService {
               ...(waitFor ? { wait_for: waitFor } : {})
             };
           } else if (toolName === "terminal.interrupt") {
-            toolInput = {};
+            toolInput = {
+              keys: ["C-c"],
+            };
           } else {
             // Skip unknown tools, including old local developer-only terminal rows.
             continue;
           }
+
+          const conversationToolName =
+            toolName === "terminal.interrupt"
+              ? "terminal_send"
+              : this.toolNameForConversation(toolName as "terminal.send" | "terminal.observe");
 
           // Add assistant message with tool_use
           messages.push({
@@ -657,9 +649,7 @@ export class AgentService {
             content: [{
               type: "tool_use",
               id: callId,
-              name: this.toolNameForConversation(
-                toolName as "terminal.send" | "terminal.observe" | "terminal.interrupt"
-              ),
+              name: conversationToolName,
               input: toolInput
             }]
           });
@@ -935,13 +925,11 @@ export class AgentService {
   }
 
   private toolNameForConversation(
-    tool: "terminal.send" | "terminal.observe" | "terminal.interrupt"
+    tool: "terminal.send" | "terminal.observe"
   ) {
     switch (tool) {
       case "terminal.send":
         return "terminal_send";
-      case "terminal.interrupt":
-        return "terminal_interrupt";
       case "terminal.observe":
         return "terminal_observe";
     }
@@ -990,13 +978,6 @@ export class AgentService {
           callId
         };
       }
-      case "terminal_interrupt":
-        return {
-          type: "tool_call",
-          tool: "terminal.interrupt",
-          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
-          callId
-        };
       case "terminal_observe":
         return {
           type: "tool_call",
@@ -1044,33 +1025,6 @@ export class AgentService {
         trigger,
         hints: DEFAULT_READINESS_HINTS
       });
-
-    if (directive.tool === "terminal.interrupt") {
-      await this.terminalSessionManager.sendInterrupt(sessionId);
-      const readiness = await this.terminalSessionManager.waitForReadiness(
-        sessionId,
-        directive.timeoutMs ?? 5000
-      );
-      const tail = await this.terminalSessionManager.tailOutput(sessionId, config.terminalOutputBackfillBytes);
-      const decoded = this.decodeTail(tail.data);
-      const finalReadiness: Record<string, unknown> = this.normalizeReadiness(readiness, {
-        ready: true,
-        confidence: 0.6,
-        trigger: "interrupt",
-        hints: DEFAULT_READINESS_HINTS
-      });
-      this.logReadinessDecision(directive.tool, finalReadiness);
-      return {
-        kind: "interaction_ack",
-        output: decoded,
-        outputBytes: tail.totalBytes,
-        readiness: finalReadiness,
-        truncated: tail.data.length < tail.totalBytes,
-        omittedLines: 0,
-        submitted: true,
-        contextAfter: buildContextAfter({ readiness: finalReadiness })
-      };
-    }
 
     if (directive.tool === "terminal.observe") {
       const lines = directive.lines ?? -50;
@@ -1378,8 +1332,6 @@ export class AgentService {
         }
         return `Observed terminal ${view}`;
       }
-      case "terminal.interrupt":
-        return "Sent Ctrl+C";
     }
   }
 
@@ -1410,8 +1362,6 @@ export class AgentService {
     switch (directive.tool) {
       case "terminal.send":
         return null;
-      case "terminal.interrupt":
-        return "service_backfill_limit";
       case "terminal.observe":
         return null;
     }
@@ -1437,8 +1387,6 @@ export class AgentService {
           ...(directive.view ? { view: directive.view } : {}),
           ...(directive.waitFor ? { wait_for: directive.waitFor } : {}),
         };
-      case "terminal.interrupt":
-        return {};
     }
   }
 
@@ -1481,57 +1429,6 @@ export class AgentService {
       metadata: message.metadata ?? {},
       created_at: message.createdAt.toISOString(),
     };
-  }
-
-  // TODO: capturePane (used for REPL mode) follows a different code path - it asks
-  // the bud daemon to strip escape sequences before returning. Consider unifying
-  // the output cleaning logic between tailOutput and capturePane paths.
-  private decodeTail(data: Buffer): string {
-    const text = data.toString("utf-8");
-
-    // Strip ANSI escape codes FIRST, before binary detection.
-    // Raw terminal output contains ESC (0x1b) characters which would otherwise
-    // trigger false positives in the binary check.
-    const stripped = this.stripAnsi(text);
-
-    // Check for binary content on the cleaned text.
-    // If more than 8 non-printable characters remain after ANSI stripping,
-    // this is likely actual binary data (e.g., cat /bin/ls).
-    const nonPrintable = [...stripped].filter((ch) => {
-      const code = ch.codePointAt(0) ?? 0;
-      return code < 0x09 || (code > 0x0d && code < 0x20);
-    }).length;
-    if (nonPrintable > 8) {
-      return "[binary output omitted]";
-    }
-
-    // Normalize CRLF to LF for consistent parsing
-    return this.normalizeCRLF(stripped);
-  }
-
-  /**
-   * Strip ANSI escape codes from terminal output.
-   * Handles:
-   * - CSI sequences: \x1b[...X (colors, cursor movement, etc.)
-   * - OSC sequences: \x1b]...(\x07|\x1b\\) (window titles, hyperlinks)
-   * - Simple escapes: \x1b[A-Z] (cursor keys, etc.)
-   */
-  private stripAnsi(text: string): string {
-    // CSI sequences: ESC [ followed by params and a final letter
-    // OSC sequences: ESC ] followed by text and terminated by BEL or ST
-    // Simple escapes: ESC followed by a single char
-    return text
-      .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")      // CSI sequences
-      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "") // OSC sequences
-      .replace(/\x1b[A-Z]/g, "");                   // Simple escapes
-  }
-
-  /**
-   * Normalize line endings to LF for consistent parsing.
-   * Handles CRLF (Windows) and standalone CR (old Mac).
-   */
-  private normalizeCRLF(text: string): string {
-    return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   }
 
   private async fetchBudForThread(threadId: string): Promise<{ budId: string }> {

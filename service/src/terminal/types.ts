@@ -18,6 +18,7 @@ export type TerminalReadyTrigger =
   | "prompt_detected"
   | "quiescence"
   | "timeout"
+  | "error"
   | "activity_stable"
   | "changed"
   | "settled";
@@ -71,18 +72,6 @@ export interface TerminalInputMessage extends TerminalEnvelope {
     activity_interval_ms?: number;      // Default: 5000ms between checks
     activity_stable_count?: number;     // Default: 2 consecutive stable checks
     activity_initial_delay_ms?: number; // Default: 2000ms before first check
-  };
-}
-
-export interface TerminalInterruptMessage extends TerminalEnvelope {
-  type: "terminal_interrupt";
-  await_ready?: {
-    enabled: boolean;
-    max_wait_ms?: number;
-    // Activity-based detection for TUI/REPL apps
-    activity_based?: boolean;
-    activity_interval_ms?: number;
-    activity_stable_count?: number;
   };
 }
 
@@ -144,9 +133,6 @@ export interface ReadinessAssessment {
 export interface TerminalReadyMessage extends TerminalEnvelope {
   type: "terminal_ready";
   assessment: ReadinessAssessment;
-  output_since_input: string; // base64
-  output_bytes: number;
-  last_line: string;
 }
 
 export interface TerminalSendMessage extends TerminalEnvelope {
