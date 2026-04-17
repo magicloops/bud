@@ -174,6 +174,7 @@ pending → creating → ready ↔ active ↔ idle → closed
 - Only one non-closed session may exist for a thread at once.
 - Explicit close produces a closed historical row; revisiting the thread creates a fresh session row.
 - Non-closed sessions persist across Bud/service reconnects.
+- The service no longer derives or persists tmux session names as first-class runtime state; only the Bud-owned `session_id` and backend-neutral status metadata survive in the normal contract.
 
 **REPL Context Tracking**:
 
@@ -183,7 +184,8 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 3. Uses `known-programs.ts` registry for program-specific hints
 
 Ctrl+C note:
-- server-side callers should reuse `sendInteraction(sessionId, { keys: ["C-c"] })` rather than adding a dedicated interrupt transport
+- server-side callers should reuse `sendInteraction(sessionId, { key: "ctrl+c" })` rather than adding a dedicated interrupt transport
+- `sendInteraction(...)` still tolerates the older `keys: ["C-c"]` shape as a compatibility alias during rollout, but the canonical runtime model is now a single semantic `key`
 - pending REPL/TUI context is preserved until a later observed shell return clears it via readiness or context sync
 
 **Observe Protocol**:
@@ -195,8 +197,8 @@ Ctrl+C note:
 
 **Send Protocol**:
 
-1. Service sends `terminal_send` with structured `text` / `submit` / `keys`
-2. Bud dispatches literal text and special keys to tmux
+1. Service sends `terminal_send` with one structured gesture: `text` with optional `submit`, or one semantic `key`
+2. Bud dispatches literal text and special keys through the current terminal backend adapter
 3. Bud captures a pre-send baseline and, by default, waits for output quiescence before doing one final `capture-pane`
 4. `observe_after_ms` is only relevant for explicit `wait_for: "none"` sends; `changed` remains available for first-visible-reaction waits
 5. Bud sends `terminal_send_result` with dispatch status, additive delta, and timeout-aware readiness / partial-progress semantics
@@ -209,7 +211,7 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
 - `sendInteraction()` now defaults to `waitFor: "settled"` and a `30000ms` timeout so the common agent path waits locally for output quiescence before returning
 - `sendInteraction()` still accepts `observeAfterMs`, but only uses the default `1000ms` fast-capture behavior when `waitFor: "none"` is requested explicitly
-- `sendInteraction()` accepts tmux-style modifier chords such as `C-c` through `interaction.keys`
+- `sendInteraction()` now treats interactive input as a single gesture and emits canonical `key` values such as `ctrl+c`; the older `interaction.keys` array is accepted only as a one-entry compatibility alias
 - `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, readiness, and conservative timeout summaries
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
 - `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests

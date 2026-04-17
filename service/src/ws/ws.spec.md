@@ -50,6 +50,8 @@ Browser/Client                 Service                      Bud Daemon
 | `TerminalObserveResultSchema` | Delta-first observe results with explicit screen/history modes |
 | `TerminalSendResultSchema` | Send-first acknowledgements with settled-by-default timing, additive delta, and timeout-aware readiness |
 
+`TerminalStatusSchema` still tolerates deprecated `info.tmux_session` from older daemons during rollout, but the gateway no longer treats tmux session identity as part of the normal terminal contract.
+
 **Connection States**:
 
 ```typescript
@@ -161,12 +163,13 @@ Bud's `hello` frame includes capabilities:
 {
   max_concurrency: number;
   shell_default?: string;
+  sessions: boolean;
   terminal: boolean;
   terminal_proto?: string;      // "0.2"
-  terminal_backends: string[];  // ["tmux"]
-  tmux_version?: string;
 }
 ```
+
+The gateway still tolerates deprecated tmux-shaped hello fields from older daemons during rollout, but it now strips those compatibility fields before persisting `bud.capabilities`.
 
 ## Configuration Used
 

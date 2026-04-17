@@ -26,7 +26,7 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
 Renders the revised terminal tool contract:
 
 **Props**:
-- `payload.text` / `payload.submit` / `payload.keys` - Send-first input summary for `terminal.send`
+- `payload.text` / `payload.submit` / `payload.key` - Send-first input summary for `terminal.send`
 - `payload.delta` / `payload.readiness` / `payload.context_after` - Delta-first send-result state for `terminal.send`
 - `payload.view` / `payload.lines` - Observation metadata for `terminal.observe`
 
@@ -40,7 +40,7 @@ $ ls -la
 ```
 ```text
 Submit: Enter
-Keys: q
+Key: ctrl+c
 ```
 
 ## Types

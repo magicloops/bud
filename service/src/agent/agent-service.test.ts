@@ -16,7 +16,7 @@ function createLogger() {
   };
 }
 
-test("terminal.send uses tmux C-c key notation for shared interrupt-style input", async () => {
+test("terminal.send uses a single semantic key gesture for interrupt-style input", async () => {
   const terminalSessionManager = {
     getSessionContext() {
       return {
@@ -32,7 +32,7 @@ test("terminal.send uses tmux C-c key notation for shared interrupt-style input"
       interaction: {
         text?: string;
         submit?: boolean;
-        keys?: string[];
+        key?: string;
         observeAfterMs?: number;
         waitFor?: string;
       },
@@ -44,7 +44,7 @@ test("terminal.send uses tmux C-c key notation for shared interrupt-style input"
       assert.deepEqual(interaction, {
         text: undefined,
         submit: undefined,
-        keys: ["C-c"],
+        key: "ctrl+c",
         observeAfterMs: undefined,
         waitFor: undefined,
       });
@@ -86,7 +86,7 @@ test("terminal.send uses tmux C-c key notation for shared interrupt-style input"
   const directive = {
     type: "tool_call",
     tool: "terminal.send",
-    keys: ["C-c"],
+    key: "ctrl+c",
     callId: "call_send_1",
   };
 
@@ -105,7 +105,7 @@ test("terminal.send uses tmux C-c key notation for shared interrupt-style input"
   assert.equal(result.contextAfter.source, "inferred");
   assert.equal(
     summary,
-    "Attempted to send keys C-c; timed out waiting for settled output and no visible delta was observed",
+    "Attempted to send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
   );
 });
 
@@ -136,4 +136,45 @@ test("agent no longer accepts terminal_interrupt tool calls", () => {
   });
 
   assert.equal(directive, null);
+});
+
+test("extractFunctionCall normalizes legacy keys arrays to canonical semantic key strings", () => {
+  const service = new AgentService(
+    {
+      getSessionContext() {
+        return { mode: "shell" };
+      },
+    } as never,
+    {} as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const directive = (service as any).extractFunctionCall({
+    id: "resp_legacy_key",
+    content: [],
+    stopReason: "tool_use",
+    toolCalls: [
+      {
+        id: "call_send_legacy",
+        name: "terminal_send",
+        input: {
+          keys: ["C-c"],
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(directive, {
+    type: "tool_call",
+    tool: "terminal.send",
+    text: undefined,
+    submit: false,
+    key: "ctrl+c",
+    observeAfterMs: undefined,
+    waitFor: undefined,
+    timeoutMs: undefined,
+    callId: "call_send_legacy",
+  });
 });

@@ -320,30 +320,14 @@ export type ApiAgentState = {
 // Normalize capabilities from API response
 export function normalizeCapabilities(caps: unknown): {
   sessions: boolean
-  sessions_backends: string[]
-  tmux_version?: string
   terminal: boolean
-  terminal_backends: string[]
 } | null {
   if (!caps || typeof caps !== 'object' || Array.isArray(caps)) {
     return null
   }
   const record = caps as Record<string, unknown>
-  const sessions = record.sessions === true
-  const tmuxVersion = typeof record.tmux_version === 'string' ? (record.tmux_version as string) : undefined
-  const backendsRaw = record.sessions_backends
-  const backends = Array.isArray(backendsRaw)
-    ? (backendsRaw as unknown[]).filter((entry): entry is string => typeof entry === 'string')
-    : []
-  const terminalBackendsRaw = record.terminal_backends
-  const terminalBackends = Array.isArray(terminalBackendsRaw)
-    ? (terminalBackendsRaw as unknown[]).filter((entry): entry is string => typeof entry === 'string')
-    : []
   return {
-    sessions,
-    sessions_backends: backends,
-    tmux_version: tmuxVersion,
-    terminal: record.terminal === true,
-    terminal_backends: terminalBackends
+    sessions: record.sessions === true,
+    terminal: record.terminal === true
   }
 }

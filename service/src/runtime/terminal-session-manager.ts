@@ -20,6 +20,7 @@ import type {
   TerminalWaitFor,
   TerminalObservationView,
 } from "../terminal/types.js";
+import { normalizeTerminalSendKeyName } from "../terminal/types.js";
 import { TerminalEventBus } from "./event-bus.js";
 import { isKnownReplProgram, getProgramInfo } from "../terminal/known-programs.js";
 
@@ -45,7 +46,6 @@ export interface TerminalSession {
   threadId: string | null;
   budId: string;
   instanceId: string | null;
-  tmuxSessionName: string | null;
   state: SessionState;
   cols: number;
   rows: number;
@@ -58,7 +58,6 @@ export interface TerminalSession {
 type TerminalStatusPayload = {
   state: string;
   info?: {
-    tmux_session?: string;
     pid?: number;
     shell?: string;
     cwd?: string;
@@ -143,6 +142,8 @@ type ObserveDebugState = {
 export type SendInteraction = {
   text?: string;
   submit?: boolean;
+  key?: string;
+  // Compatibility alias for older internal callers during rollout.
   keys?: string[];
   observeAfterMs?: number;
   waitFor?: TerminalWaitFor;
@@ -225,14 +226,12 @@ export class TerminalSessionManager {
 
     // Create new session
     const sessionId = `sess_${ulid()}`;
-    const tmuxSessionName = this.tmuxSessionName(sessionId);
 
     await db.insert(terminalSessionTable).values({
       sessionId,
       threadId,
       budId,
       instanceId: null,
-      tmuxSessionName,
       state: "pending",
       createdByUserId: createdByUserId ?? undefined,
     });
@@ -483,7 +482,6 @@ export class TerminalSessionManager {
       .update(terminalSessionTable)
       .set({
         state: payload.state,
-        tmuxSessionName: payload.info?.tmux_session ?? undefined,
         cols: payload.info?.cols ?? undefined,
         rows: payload.info?.rows ?? undefined,
         startedAt: payload.info?.started_at ? new Date(payload.info.started_at) : undefined,
@@ -1064,6 +1062,30 @@ export class TerminalSessionManager {
     const waitFor = interaction.waitFor ?? "settled";
     const observeAfterMs =
       waitFor === "none" ? (interaction.observeAfterMs ?? 1000) : interaction.observeAfterMs;
+    const legacyKeys = interaction.keys?.filter((value) => value.trim().length > 0) ?? [];
+    const key = interaction.key?.trim()
+      ? normalizeTerminalSendKeyName(interaction.key)
+      : legacyKeys.length === 1
+        ? normalizeTerminalSendKeyName(legacyKeys[0])
+        : undefined;
+    const hasTextField = typeof interaction.text === "string";
+    const hasTextPayload = typeof interaction.text === "string" && interaction.text.length > 0;
+
+    if (interaction.key && legacyKeys.length > 0) {
+      throw new Error("ambiguous_interaction");
+    }
+    if (legacyKeys.length > 1) {
+      throw new Error("multiple_keys_unsupported");
+    }
+    if (interaction.submit === true && !hasTextField) {
+      throw new Error("submit_requires_text");
+    }
+    if (key && (hasTextField || interaction.submit === true)) {
+      throw new Error("ambiguous_interaction");
+    }
+    if (!hasTextPayload && interaction.submit !== true && !key) {
+      throw new Error("empty_interaction");
+    }
 
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
@@ -1075,7 +1097,7 @@ export class TerminalSessionManager {
       request_id: requestId,
       text: interaction.text ?? null,
       submit: interaction.submit === true,
-      keys: interaction.keys ?? [],
+      key: key ?? null,
       observe_after_ms: observeAfterMs,
       wait_for: waitFor,
       timeout_ms: timeoutMs,
@@ -1090,9 +1112,9 @@ export class TerminalSessionManager {
       {
         sessionId,
         requestId,
-        hasText: Boolean(interaction.text),
+        hasText: hasTextField,
         submit: interaction.submit === true,
-        keyCount: interaction.keys?.length ?? 0,
+        hasKey: Boolean(key),
         observeAfterMs,
         waitFor,
         timeoutMs,
@@ -1138,7 +1160,6 @@ export class TerminalSessionManager {
     }
 
     const info: Record<string, unknown> = {
-      tmux_session: session.tmuxSessionName,
       cols: session.cols,
       rows: session.rows,
       started_at: session.startedAt?.toISOString(),
@@ -1316,7 +1337,6 @@ export class TerminalSessionManager {
     threadId: string | null;
     budId: string;
     instanceId: string | null;
-    tmuxSessionName: string | null;
     state: string;
     cols: number;
     rows: number;
@@ -1330,7 +1350,6 @@ export class TerminalSessionManager {
       threadId: row.threadId,
       budId: row.budId,
       instanceId: row.instanceId,
-      tmuxSessionName: row.tmuxSessionName,
       state: row.state as SessionState,
       cols: row.cols,
       rows: row.rows,
@@ -1339,12 +1358,6 @@ export class TerminalSessionManager {
       lastActivityAt: row.lastActivityAt,
       outputLogBytes: row.outputLogBytes
     };
-  }
-
-  private tmuxSessionName(sessionId: string): string {
-    const suffix = sessionId.replace("sess_", "");
-    const name = `s_${suffix}`;
-    return name.length > 32 ? name.slice(0, 32) : name;
   }
 
   private clearSessionCache(sessionId: string): void {

@@ -78,7 +78,7 @@ Drizzle schema definitions (~500 lines). Defines all tables:
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `terminalSessionTable` | Thread-scoped tmux sessions (historical rows allowed; one active row per thread) | `sessionId`, `threadId`, `budId`, `state`, `tmuxSessionName`, `stateSnapshot`, `createdByUserId`, `closedAt` |
+| `terminalSessionTable` | Thread-scoped terminal sessions (historical rows allowed; one active row per thread) | `sessionId`, `threadId`, `budId`, `state`, `stateSnapshot`, `createdByUserId`, `closedAt` |
 | `terminalSessionOutputTable` | Terminal output chunks | `sessionId`, `byteOffset`, `seq`, `data` (bytea) |
 | `terminalSessionInputLogTable` | Input audit log | `sessionId`, `source`, `userId`, `createdAt` |
 

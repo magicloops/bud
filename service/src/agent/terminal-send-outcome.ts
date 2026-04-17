@@ -3,7 +3,7 @@ import type { ReadinessHints, TerminalDelta } from "../terminal/types.js";
 type SendDirectiveSummaryInput = {
   text?: string;
   submit?: boolean;
-  keys?: string[];
+  key?: string;
 };
 
 type SendContextSummaryInput = {
@@ -134,8 +134,8 @@ export function buildTerminalSendSummary(
     fragments.push("press Enter");
   }
 
-  if (input.keys?.length) {
-    fragments.push(`send keys ${truncateSummary(input.keys.join(", "), 96)}`);
+  if (input.key) {
+    fragments.push(`send key ${truncateSummary(input.key, 96)}`);
   }
 
   const action =

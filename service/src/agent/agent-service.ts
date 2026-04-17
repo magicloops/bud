@@ -6,6 +6,7 @@ import { generateMessageClientId } from "../db/message-client-id.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import type { TerminalSessionManager, TerminalSession } from "../runtime/terminal-session-manager.js";
 import type { ReadinessHints, TerminalDelta, TerminalObservationView, TerminalWaitFor } from "../terminal/types.js";
+import { normalizeTerminalSendKeyName } from "../terminal/types.js";
 import { isKnownReplProgram } from "../terminal/known-programs.js";
 import type { FastifyBaseLogger } from "fastify";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
@@ -33,7 +34,7 @@ type AgentDirective =
       tool: "terminal.send";
       text?: string;
       submit?: boolean;
-      keys?: string[];
+      key?: string;
       observeAfterMs?: number;
       waitFor?: TerminalWaitFor;
       timeoutMs?: number;
@@ -110,7 +111,7 @@ Tools:
 - {"type":"tool_call","tool":"terminal.send","text":"pwd","submit":true}
 - {"type":"tool_call","tool":"terminal.send","text":"python","submit":true}
 - {"type":"tool_call","tool":"terminal.send","text":"q"}
-- {"type":"tool_call","tool":"terminal.send","keys":["C-c"]}
+- {"type":"tool_call","tool":"terminal.send","key":"ctrl+c"}
 - {"type":"tool_call","tool":"terminal.observe","lines":-50,"wait_for":"settled"}
 
 Tool Responses:
@@ -127,7 +128,8 @@ Guidelines:
 - For normal shell commands, send the command text with submit:true instead of adding a trailing \\n yourself.
 - Multiline shell input is allowed when you intentionally need it (for example heredocs or pasted scripts).
 - terminal.send is also for interactive input, confirmations, single-key actions, and launching interactive programs from shell.
-- Use tmux send-keys notation in terminal.send.keys for modifier chords, for example "C-c" for Ctrl+C.
+- terminal.send represents one gesture at a time: either text with optional submit, or one semantic key.
+- Use backend-neutral key names in terminal.send.key, for example "ctrl+c" for Ctrl+C.
 - Omit wait_for for ordinary terminal.send calls. The default behavior is to wait for the terminal to settle before returning.
 - If delta.changed is false or delta.text is empty, do not assume the program accepted the input.
 - terminal.observe is for explicit screen inspection, extra scrollback, or longer waits after timeout/ambiguity.
@@ -143,7 +145,7 @@ Guidelines:
   - If readiness hints suggest ongoing processing, use terminal.observe for progress
   - If context_after.mode is "repl" and the delta shows the UI is asking for more input, another terminal.send is reasonable
   - If context_after.mode is "shell", another terminal.send is the normal way to run the next shell command
-- If you need to interrupt the foreground program, use terminal.send with keys:["C-c"]. Send it again if the program or TUI still has not exited.
+- If you need to interrupt the foreground program, use terminal.send with key:"ctrl+c". Send it again if the program or TUI still has not exited.
 - Use the hints object to understand terminal state:
   - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
   - looks_like_confirmation: Waiting for y/n or yes/no response
@@ -166,7 +168,7 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
   * Ask Claude to perform tasks: "Please review src/main.rs for bugs"
   * To run shell commands, ask Claude: "Run npm test"
   * Do NOT send raw shell syntax like "cat file.txt" - Claude will misinterpret it
-  * To exit, use terminal.send with text "exit" and submit true, or use terminal.send with keys:["C-c"] if the TUI needs an interrupt
+  * To exit, use terminal.send with text "exit" and submit true, or use terminal.send with key:"ctrl+c" if the TUI needs an interrupt
 - When context.program is "python" or "python3":
   * Send Python code, not shell commands
   * Use print() to display output
@@ -220,11 +222,10 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
           type: "boolean",
           description: "When true, press Enter after sending the text."
         },
-        keys: {
-          type: "array",
-          items: { type: "string" },
+        key: {
+          type: "string",
           description:
-            'Optional special keys or single-key actions. Use tmux send-keys notation for chords, e.g. "C-c" for Ctrl+C.'
+            'Optional semantic key gesture. Use backend-neutral names such as "ctrl+c", "enter", or "escape".'
         },
         observe_after_ms: {
           type: "integer",
@@ -602,6 +603,7 @@ export class AgentService {
             tool?: string;
             text?: string;
             submit?: boolean;
+            key?: string;
             keys?: string[];
             observe_after_ms?: number;
             wait_for?: TerminalWaitFor;
@@ -617,10 +619,11 @@ export class AgentService {
           let toolInput: Record<string, unknown> = {};
           if (toolName === "terminal.send") {
             const waitFor = this.parseWaitForArg(payload.wait_for);
+            const key = this.normalizeToolKeyInput(payload.key, payload.keys);
             toolInput = {
               ...(typeof payload.text === "string" ? { text: payload.text } : {}),
               ...(payload.submit === true ? { submit: true } : {}),
-              ...(Array.isArray(payload.keys) ? { keys: payload.keys } : {}),
+              ...(key ? { key } : {}),
               ...(typeof payload.observe_after_ms === "number"
                 ? { observe_after_ms: payload.observe_after_ms }
                 : {}),
@@ -635,7 +638,7 @@ export class AgentService {
             };
           } else if (toolName === "terminal.interrupt") {
             toolInput = {
-              keys: ["C-c"],
+              key: "ctrl+c",
             };
           } else {
             // Skip unknown tools, including old local developer-only terminal rows.
@@ -967,15 +970,13 @@ export class AgentService {
 
     switch (toolCall.name) {
       case "terminal_send": {
-        const keys = Array.isArray(args.keys)
-          ? args.keys.filter((value): value is string => typeof value === "string")
-          : undefined;
+        const key = this.normalizeToolKeyInput(args.key, args.keys);
         return {
           type: "tool_call",
           tool: "terminal.send",
           text: typeof args.text === "string" ? args.text : undefined,
           submit: args.submit === true,
-          keys: keys?.length ? keys : undefined,
+          key,
           observeAfterMs: typeof args.observe_after_ms === "number" ? args.observe_after_ms : undefined,
           waitFor: this.parseWaitForArg(args.wait_for),
           timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
@@ -1085,17 +1086,22 @@ export class AgentService {
     }
 
     if (directive.tool === "terminal.send") {
+      const hasTextField = typeof directive.text === "string";
       const hasText = typeof directive.text === "string" && directive.text.length > 0;
-      const hasKeys = (directive.keys?.length ?? 0) > 0;
-      const hasAction = hasText || hasKeys || directive.submit === true;
+      const hasKey = typeof directive.key === "string" && directive.key.trim().length > 0;
+      const invalidSendError = this.validateTerminalSendDirective(directive, {
+        hasTextField,
+        hasText,
+        hasKey,
+      });
       const contextBefore = getInferredContext();
 
-      if (!hasAction) {
+      if (invalidSendError) {
         return {
           kind: "interaction_ack",
           readiness: latestReadiness("invalid_send", false, 0.2),
           submitted: false,
-          error: "empty_interaction",
+          error: invalidSendError,
           contextAfter: buildContextAfter()
         };
       }
@@ -1116,7 +1122,7 @@ export class AgentService {
         sessionId,
         hasText,
         submit: directive.submit === true,
-        keyCount: directive.keys?.length ?? 0,
+        hasKey,
         waitFor: directive.waitFor ?? null,
         program: contextBefore.program
       });
@@ -1126,7 +1132,7 @@ export class AgentService {
         {
           text: directive.text,
           submit: directive.submit,
-          keys: directive.keys,
+          key: directive.key,
           observeAfterMs: directive.observeAfterMs,
           waitFor: directive.waitFor
         },
@@ -1347,7 +1353,7 @@ export class AgentService {
       {
         text: directive.text,
         submit: directive.submit,
-        keys: directive.keys
+        key: directive.key
       },
       result.delta,
       null,
@@ -1380,7 +1386,7 @@ export class AgentService {
         return {
           ...(typeof directive.text === "string" ? { text: directive.text } : {}),
           ...(directive.submit === true ? { submit: true } : {}),
-          ...(directive.keys?.length ? { keys: directive.keys } : {}),
+          ...(directive.key ? { key: directive.key } : {}),
           ...(typeof directive.observeAfterMs === "number"
             ? { observe_after_ms: directive.observeAfterMs }
             : {}),
@@ -1408,6 +1414,50 @@ export class AgentService {
       return "settled";
     }
     return undefined;
+  }
+
+  private normalizeToolKeyInput(
+    keyValue: unknown,
+    keysValue: unknown,
+  ): string | undefined {
+    if (typeof keyValue === "string" && keyValue.trim().length > 0) {
+      return normalizeTerminalSendKeyName(keyValue);
+    }
+
+    if (!Array.isArray(keysValue)) {
+      return undefined;
+    }
+
+    const keys = keysValue.filter((value): value is string => typeof value === "string");
+    if (keys.length !== 1) {
+      return undefined;
+    }
+
+    const [key] = keys;
+    return key.trim().length > 0 ? normalizeTerminalSendKeyName(key) : undefined;
+  }
+
+  private validateTerminalSendDirective(
+    directive: Extract<AgentDirective, { type: "tool_call"; tool: "terminal.send" }>,
+    state: {
+      hasTextField: boolean;
+      hasText: boolean;
+      hasKey: boolean;
+    }
+  ): string | null {
+    if (state.hasKey && (state.hasTextField || directive.submit === true)) {
+      return "ambiguous_interaction";
+    }
+
+    if (directive.submit === true && !state.hasTextField) {
+      return "submit_requires_text";
+    }
+
+    if (!state.hasText && directive.submit !== true && !state.hasKey) {
+      return "empty_interaction";
+    }
+
+    return null;
   }
 
   private serializeTerminalDelta(

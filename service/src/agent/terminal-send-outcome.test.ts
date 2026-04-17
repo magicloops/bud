@@ -70,6 +70,27 @@ test("buildTerminalSendSummary calls out timeout when settled wait expires", () 
   );
 });
 
+test("buildTerminalSendSummary describes single semantic key gestures", () => {
+  const summary = buildTerminalSendSummary(
+    {
+      key: "ctrl+c",
+    },
+    {
+      changed: false,
+      text: "",
+      truncated: false,
+    },
+    null,
+    "timeout",
+    { may_still_be_processing: false },
+  );
+
+  assert.equal(
+    summary,
+    "Attempted to send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
+  );
+});
+
 test("buildTerminalSendFollowUpHint recommends observe when no visible change was seen", () => {
   const hint = buildTerminalSendFollowUpHint({
     acceptance: {

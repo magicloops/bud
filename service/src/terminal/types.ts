@@ -90,7 +90,6 @@ export interface TerminalStatusMessage extends TerminalEnvelope {
   type: "terminal_status";
   state: TerminalState | "none";
   info?: {
-    tmux_session?: string;
     pid?: number;
     shell?: string;
     cwd?: string;
@@ -141,6 +140,8 @@ export interface TerminalSendMessage extends TerminalEnvelope {
   request_id: string;
   text?: string;
   submit?: boolean;
+  key?: string;
+  // Compatibility alias for older callers during rollout.
   keys?: string[];
   observe_after_ms?: number;
   wait_for?: TerminalWaitFor;
@@ -227,4 +228,56 @@ export interface StateChangeDetails {
   currentCapture: string;
   currentLastLine: string;
   currentModeHint: string;
+}
+
+export function normalizeTerminalSendKeyName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const lower = trimmed.toLowerCase();
+  const ctrlSuffix =
+    lower.startsWith("ctrl+")
+      ? lower.slice("ctrl+".length)
+      : lower.startsWith("ctrl-")
+        ? lower.slice("ctrl-".length)
+        : lower.startsWith("control+")
+          ? lower.slice("control+".length)
+          : lower.startsWith("control-")
+            ? lower.slice("control-".length)
+            : lower.startsWith("c-")
+              ? lower.slice("c-".length)
+              : null;
+
+  if (ctrlSuffix && ctrlSuffix.length > 0) {
+    return `ctrl+${ctrlSuffix}`;
+  }
+
+  switch (lower) {
+    case "return":
+      return "enter";
+    case "esc":
+      return "escape";
+    case "arrow_up":
+    case "arrowup":
+      return "up";
+    case "arrow_down":
+    case "arrowdown":
+      return "down";
+    case "arrow_left":
+    case "arrowleft":
+      return "left";
+    case "arrow_right":
+    case "arrowright":
+      return "right";
+    case "spacebar":
+      return "space";
+    case "bspace":
+      return "backspace";
+    case "dc":
+      return "delete";
+    default:
+      return lower;
+  }
 }

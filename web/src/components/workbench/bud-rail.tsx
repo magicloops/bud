@@ -5,10 +5,7 @@ import { useBudStatus } from '@/contexts/bud-status-context'
 
 export type BudCapabilities = {
   sessions?: boolean
-  sessions_backends?: string[]
-  tmux_version?: string
   terminal?: boolean
-  terminal_backends?: string[]
 }
 
 export type BudProfile = {

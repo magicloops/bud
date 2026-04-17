@@ -24,7 +24,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 │                 │         │                                     │         │                 │
 └────────┬────────┘         └──────────────────┬──────────────────┘         └─────────────────┘
          │                                     │
-         │ PTY/tmux                            │ SQL
+         │ Terminal backend                    │ SQL
          ▼                                     ▼
 ┌─────────────────┐                  ┌─────────────────┐         ┌─────────────────┐
 │                 │                  │                 │         │                 │
@@ -101,7 +101,20 @@ bud/
 │
 ├── bud/                    # Rust device daemon
 │   ├── src/
-│   │   └── main.rs         # Monolithic daemon implementation
+│   │   ├── main.rs         # Thin entrypoint
+│   │   ├── lib.rs          # Crate wiring
+│   │   ├── app.rs          # Runtime orchestration
+│   │   ├── run.rs          # Legacy queued run path
+│   │   ├── terminal/
+│   │   │   ├── mod.rs      # Shared terminal runtime types
+│   │   │   ├── backend.rs  # Terminal backend trait
+│   │   │   ├── registry.rs # Session/status lifecycle
+│   │   │   ├── interaction.rs
+│   │   │   ├── observe.rs
+│   │   │   ├── readiness.rs
+│   │   │   ├── delta.rs
+│   │   │   └── tmux.rs     # tmux backend adapter
+│   │   └── ...             # Config, protocol, identity, claim, utilities
 │   └── Cargo.toml
 │
 ├── service/                # Node.js backend service
@@ -252,7 +265,7 @@ User Message
 ```
 
 **Available Tools**:
-- `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and keypresses, including tmux-style chords like `keys:["C-c"]`
+- `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and one semantic key gesture at a time (for example `key:"ctrl+c"`)
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
 
 ### 3. Terminal Readiness Detection
@@ -424,6 +437,8 @@ Thread-scoped sessions provide isolation and predictability.
 - Window/pane support for future features
 - Well-tested, reliable
 
+The daemon now keeps tmux behind an internal backend adapter so future PTY or mosh-like backends can reuse the same higher-level terminal runtime and readiness logic. The normal Bud↔service↔browser contract is now backend-neutral above that adapter, with only a temporary one-entry `keys` compatibility alias left in place during rollout.
+
 ### Why OpenAI Responses API?
 
 - Built-in tool calling with structured outputs
@@ -504,15 +519,34 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/fix-interrupt/implementation-spec.md](./plan/fix-interrupt/implementation-spec.md) | Focused phased implementation plan for fixing `terminal.interrupt` context correctness, dispatch-failure semantics, and interrupt-local output handling across the service and bud daemon |
 | [plan/fix-interrupt/validation-checklist.md](./plan/fix-interrupt/validation-checklist.md) | Release-gate checklist for the interrupt-fix pass, covering service correctness, interrupt-result transport behavior, shell/REPL/TUI validation, and required doc/spec follow-up |
 | [plan/remove-terminal-interrupt/remove-terminal-interrupt.spec.md](./plan/remove-terminal-interrupt/remove-terminal-interrupt.spec.md) | Folder spec for the phased plan to remove the agent-facing `terminal.interrupt` tool while retaining the browser interrupt route as a thin wrapper over the general `terminal.send` path |
-| [plan/remove-terminal-interrupt/implementation-spec.md](./plan/remove-terminal-interrupt/implementation-spec.md) | Phased implementation plan for removing the agent-facing `terminal.interrupt` tool, teaching `terminal.send.keys` to use tmux-native chords like `C-c`, retaining the browser interrupt escape hatch as a wrapper, and deleting dedicated interrupt runtime/protocol dead code |
+| [plan/remove-terminal-interrupt/implementation-spec.md](./plan/remove-terminal-interrupt/implementation-spec.md) | Phased implementation plan for removing the agent-facing `terminal.interrupt` tool, collapsing onto the general `terminal.send` path for interrupts, retaining the browser interrupt escape hatch as a wrapper, and deleting dedicated interrupt runtime/protocol dead code |
 | [plan/remove-terminal-interrupt/validation-checklist.md](./plan/remove-terminal-interrupt/validation-checklist.md) | Release-gate checklist for the interrupt-removal plan, covering send-key chord support, agent-tool removal, browser-wrapper retention, dedicated protocol cleanup, and the final active-reference sweep |
 | [plan/fix-session-per-thread/implementation-spec.md](./plan/fix-session-per-thread/implementation-spec.md) | Focused implementation plan for fixing terminal session lifecycle semantics, active-session uniqueness, and idle-close defaults |
+| [plan/refactor-daemon/refactor-daemon.spec.md](./plan/refactor-daemon/refactor-daemon.spec.md) | Folder spec for the phased Bud daemon modularization plan, centered on backend-neutral terminal abstractions, readiness simplification above the backend layer, retained legacy run isolation, and deferred post-refactor wire-level tmux cleanup |
+| [plan/refactor-daemon/implementation-spec.md](./plan/refactor-daemon/implementation-spec.md) | Parent implementation spec for refactoring the Rust Bud daemon out of `bud/src/main.rs` into smaller modules while preserving current service-visible behavior and isolating tmux behind an internal backend boundary |
+| [plan/refactor-daemon/phase-1-foundation-and-minimal-guard-tests.md](./plan/refactor-daemon/phase-1-foundation-and-minimal-guard-tests.md) | Initial daemon refactor phase covering low-risk module extraction, a minimal set of high-value pre-split regression tests, and explicit documentation of the retained legacy run path |
+| [plan/refactor-daemon/phase-2-backend-abstraction-and-tmux-adapter.md](./plan/refactor-daemon/phase-2-backend-abstraction-and-tmux-adapter.md) | Terminal backend phase covering introduction of a backend-neutral internal interface, a tmux adapter implementation, and explicit session/output ownership boundaries |
+| [plan/refactor-daemon/phase-3-terminal-runtime-split-and-readiness-unification.md](./plan/refactor-daemon/phase-3-terminal-runtime-split-and-readiness-unification.md) | Terminal runtime phase covering separate interaction/observe engines and unification of readiness and terminal-state reasoning above the backend layer |
+| [plan/refactor-daemon/phase-4-app-runtime-and-legacy-run-extraction.md](./plan/refactor-daemon/phase-4-app-runtime-and-legacy-run-extraction.md) | App/runtime phase covering `BudApp` decomposition, websocket and identity extraction, and isolation of the retained legacy run subsystem as explicit reference functionality |
+| [plan/refactor-daemon/phase-5-validation-specs-and-wire-cleanup-follow-up-prep.md](./plan/refactor-daemon/phase-5-validation-specs-and-wire-cleanup-follow-up-prep.md) | Final daemon refactor phase covering validation, Bud spec/doc updates, and preparation of the follow-up item to remove tmux leakage from the wire contract |
+| [plan/refactor-daemon/progress-checklist.md](./plan/refactor-daemon/progress-checklist.md) | Running implementation checklist for the Bud daemon modularization plan |
+| [plan/refactor-daemon/validation-checklist.md](./plan/refactor-daemon/validation-checklist.md) | Manual verification checklist for validating the refactored Bud daemon before starting the wire-level tmux cleanup follow-up |
+| [plan/neutral-terminal-wire-contract/neutral-terminal-wire-contract.spec.md](./plan/neutral-terminal-wire-contract/neutral-terminal-wire-contract.spec.md) | Folder spec for the phased cleanup of tmux-specific leakage from the normal terminal contract, centered on single-gesture `terminal.send`, neutral status/capability payloads, and removal of service-owned tmux session naming |
+| [plan/neutral-terminal-wire-contract/implementation-spec.md](./plan/neutral-terminal-wire-contract/implementation-spec.md) | Parent implementation spec for cleaning the Bud↔service and service↔browser terminal contract now that the daemon has an internal backend seam, including single-gesture input, status/capability cleanup, and service runtime/persistence cleanup |
+| [plan/neutral-terminal-wire-contract/phase-1-compatibility-foundation-and-contract-shape.md](./plan/neutral-terminal-wire-contract/phase-1-compatibility-foundation-and-contract-shape.md) | Foundation phase covering canonical neutral contract types, tolerant parsing for rollout safety, and compatibility-boundary regression coverage |
+| [plan/neutral-terminal-wire-contract/phase-2-single-gesture-terminal-send-cutover.md](./plan/neutral-terminal-wire-contract/phase-2-single-gesture-terminal-send-cutover.md) | Input-contract phase covering the single-gesture `terminal.send` model, canonical semantic `key`, and compatibility handling for legacy `keys` |
+| [plan/neutral-terminal-wire-contract/phase-3-terminal-status-and-hello-capability-cleanup.md](./plan/neutral-terminal-wire-contract/phase-3-terminal-status-and-hello-capability-cleanup.md) | Wire-cleanup phase covering removal of `tmux_session` from status payloads and removal of tmux identity/version fields from normal hello capabilities |
+| [plan/neutral-terminal-wire-contract/phase-4-service-runtime-and-persistence-cleanup.md](./plan/neutral-terminal-wire-contract/phase-4-service-runtime-and-persistence-cleanup.md) | Runtime/schema phase covering removal of service-owned tmux session naming, cleanup of `tmuxSessionName` runtime state, and schema cleanup if no real consumers remain |
+| [plan/neutral-terminal-wire-contract/phase-5-validation-specs-and-rollout-cleanup.md](./plan/neutral-terminal-wire-contract/phase-5-validation-specs-and-rollout-cleanup.md) | Finalization phase covering automated/manual validation, protocol/spec updates, compatibility-shim retention decisions, and explicit diagnostics follow-up capture |
+| [plan/neutral-terminal-wire-contract/progress-checklist.md](./plan/neutral-terminal-wire-contract/progress-checklist.md) | Running implementation checklist for the neutral terminal wire-contract cleanup |
+| [plan/neutral-terminal-wire-contract/validation-checklist.md](./plan/neutral-terminal-wire-contract/validation-checklist.md) | Manual verification checklist for the neutral terminal wire-contract cleanup |
 | [plan/revised-terminal-contract/implementation-spec.md](./plan/revised-terminal-contract/implementation-spec.md) | Breaking implementation plan for replacing the overloaded `terminal.run` / `terminal.capture` agent contract with separate shell execution, interactive input, and explicit observation tools |
 | [plan/revised-terminal-contract/implementation-spec-follow-up.md](./plan/revised-terminal-contract/implementation-spec-follow-up.md) | Follow-up implementation plan for stabilizing the revised terminal contract, first around TUI input parity and delta-first observation, and now around a potential send-first simplification that removes `terminal.exec` entirely |
 | [plan/terminal-send-refactor/terminal-send-refactor.spec.md](./plan/terminal-send-refactor/terminal-send-refactor.spec.md) | Folder spec for the phased `terminal.send` settled-by-default refactor, centered on output quiescence, partial-progress timeout results, and `terminal.observe(wait_for:"settled")` as the explicit longer-wait hatch |
 | [plan/terminal-send-refactor/implementation-spec.md](./plan/terminal-send-refactor/implementation-spec.md) | Phased implementation plan for making `terminal.send` wait for output quiescence by default, reusing the existing `pipe-pane` watcher, keeping `capture-pane` at the edges, and collapsing most immediate send-plus-observe chains into a single send |
 | [plan/client-id/implementation-spec.md](./plan/client-id/implementation-spec.md) | Phased implementation plan for adding stable UUIDv7 `client_id` values to messages, keeping `message_id` as the persisted row identifier, and threading the new identity through transcript reads, user writes, `/agent/state`, agent SSE, and first-party client reconciliation |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
+| [review/bud-daemon-modularization-review.md](./review/bud-daemon-modularization-review.md) | Full architecture review of the Rust Bud daemon, covering current correctness gaps, tmux coupling, backend-neutral terminal abstractions, and a staged refactor plan for splitting `bud/src/main.rs` without changing current behavior |
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
 | [debug/ios-local-oauth-client-provisioning-id-null.md](./debug/ios-local-oauth-client-provisioning-id-null.md) | Debug note documenting why the first run of `pnpm oauth:provision:ios-local` fails on a fresh database: the provisioning script omits the required `auth.oauthClient.id` primary key on insert |
@@ -530,12 +564,13 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/agent-stream-state-and-resume-implementation.md](./debug/agent-stream-state-and-resume-implementation.md) | Debug note documenting the stale attach replay problem, the split between durable transcript vs in-flight runtime state, and the implemented `/agent/state` plus bounded-resume fix direction |
 | [debug/browser-terminal-input-leak.md](./debug/browser-terminal-input-leak.md) | Debug note documenting why raw xterm `onData` submission lets emulator-generated protocol bytes leak into the shared tmux session, and why the phase-1 fix belongs at the browser boundary |
 | [debug/terminal-interrupt-correctness.md](./debug/terminal-interrupt-correctness.md) | Debug note documenting the current `terminal.interrupt` correctness gaps around premature REPL-context clearing, false-success dispatch reporting, and stale-history interrupt output reconstruction |
-| [debug/remove-terminal-interrupt-cutover.md](./debug/remove-terminal-interrupt-cutover.md) | Debug note capturing the cutover rationale for removing the agent-facing `terminal.interrupt` tool, keeping browser Ctrl+C as an escape hatch, and collapsing onto `terminal.send.keys` with tmux notation like `C-c` |
+| [debug/remove-terminal-interrupt-cutover.md](./debug/remove-terminal-interrupt-cutover.md) | Debug note capturing the cutover rationale for removing the agent-facing `terminal.interrupt` tool, keeping browser Ctrl+C as an escape hatch, and collapsing onto the general `terminal.send` path |
 | [debug/terminal-session-default-cwd.md](./debug/terminal-session-default-cwd.md) | Debug note tracing why tmux sessions currently start in `~` when `terminal_ensure` omits cwd for relocated Bud instances |
 | [debug/codex-startup-latency-in-tmux-vs-local.md](./debug/codex-startup-latency-in-tmux-vs-local.md) | Debug note investigating why `codex` behaves differently in Bud's tmux session than in the user's normal local shell, including shell-mode/env divergence, the tmux-specific blocking update prompt, and the remaining browser-stream latency hypotheses |
 | [debug/codex-two-second-delay-in-bud-daemon-path.md](./debug/codex-two-second-delay-in-bud-daemon-path.md) | Debug note focused on the exact Bud daemon/browser-terminal path behind the observed Codex startup gap, separating the REPL `terminal_ready` 2s timer from the raw `terminal.output` stream and narrowing the issue to a sparse, variable Codex-in-tmux startup path before the first substantial screen draw |
 | [debug/terminal-send-observe-context-quality.md](./debug/terminal-send-observe-context-quality.md) | Debug note documenting the now-working Claude Code flow under the revised terminal contract, plus the remaining inefficiencies: `terminal.observe` replaying stale pane history and `terminal.send` returning too little semantic post-send context to avoid extra observes |
 | [debug/terminal-send-settled-default-refactor.md](./debug/terminal-send-settled-default-refactor.md) | Debug note for the settled-by-default `terminal.send` implementation, covering the prior send-plus-observe inefficiency, the `pipe-pane`-backed quiescence approach, and the shipped timeout/partial-progress semantics |
+| [debug/neutral-terminal-wire-contract-gateway-transform-error.md](./debug/neutral-terminal-wire-contract-gateway-transform-error.md) | Debug note documenting the `tsx` transform failure introduced during the neutral terminal wire-contract rollout, where `service/src/ws/gateway.ts` left the `CapabilitiesSchema.transform(...)` call one `)` short and prevented `pnpm dev` from booting |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
 | [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
 | [design/authentication-and-user-ownership.md](./design/authentication-and-user-ownership.md) | Production auth, OAuth, and user-ownership design |
@@ -556,8 +591,9 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/terminal-send-confirmation-and-fast-observe.md](./design/terminal-send-confirmation-and-fast-observe.md) | Design for restoring send-plus-proof behavior to TUIs and REPLs by giving `terminal.send` a default fast post-send observation, replacing blind `screen_stable` waits with a `settled` model, and separating transport success from observed program response |
 | [design/terminal-send-settled-by-default.md](./design/terminal-send-settled-by-default.md) | Design for simplifying the common agent path by making `terminal.send` wait for output quiescence by default, using pipe-pane activity as the primary settle detector, keeping capture-pane for baseline/final delta only, and reserving `terminal.observe` for longer waits and advanced cases |
 | [design/terminal-delta-observation-and-minimal-tool-payloads.md](./design/terminal-delta-observation-and-minimal-tool-payloads.md) | Design for making `terminal.send` and default `terminal.observe` return additive deltas instead of replay-heavy snapshots, while keeping explicit full-screen/history modes and reducing the model-facing tool payload to success, readiness, and delta |
+| [design/backend-neutral-terminal-wire-contract.md](./design/backend-neutral-terminal-wire-contract.md) | Design for removing tmux-specific leakage from the Bud↔service and service↔browser terminal contract, including `tmux_session`, tmux-shaped hello capabilities, a single-gesture `terminal.send` model with semantic keys, and service-owned tmux session naming |
 | [design/reconsidering-terminal-exec-vs-terminal-send.md](./design/reconsidering-terminal-exec-vs-terminal-send.md) | Design review of whether `terminal.exec` still earns a place in the model-facing contract, given its newline restriction, lack of real exit-code authority, and overlap with the now-working `terminal.send` path |
-| [design/removing-terminal-interrupt-in-favor-of-terminal-send.md](./design/removing-terminal-interrupt-in-favor-of-terminal-send.md) | Design review of whether `terminal.interrupt` should be removed from the model-facing contract, arguing that `C-c` belongs on `terminal.send.keys` and that browser interrupt UX can survive as a thin wrapper over the same general send path |
+| [design/removing-terminal-interrupt-in-favor-of-terminal-send.md](./design/removing-terminal-interrupt-in-favor-of-terminal-send.md) | Design review of whether `terminal.interrupt` should be removed from the model-facing contract, arguing that interrupts belong on the general `terminal.send` path and that browser interrupt UX can survive as a thin wrapper over that same send surface |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries and service env placeholders |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |

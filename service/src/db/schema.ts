@@ -439,7 +439,6 @@ export const terminalSessionTable = pgTable(
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
     instanceId: text("instance_id"),
-    tmuxSessionName: text("tmux_session_name"),
     state: text("state").notNull().default("pending"),
     shell: text("shell"),
     cwd: text("cwd"),
