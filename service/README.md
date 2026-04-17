@@ -118,6 +118,7 @@ Auth and Bud claim testing do not require an LLM provider key. Chat/agent execut
 | `pnpm lint` | Run ESLint. |
 | `pnpm db:push` | Bootstrap Better Auth tables/schema and push Drizzle schema changes. |
 | `pnpm db:migrate` | Apply checked-in migrations for production-like environments. |
+| `pnpm db:migrate:staging` | Apply checked-in migrations using `.env.staging`. |
 | `pnpm db:studio` | Open Drizzle Studio. |
 | `pnpm db:seed` | Seed legacy/manual enrollment-token data for dev. |
 | `pnpm oauth:provision:ios-local` | Upsert the fixed local iOS OAuth client and print the exact local auth bundle. |

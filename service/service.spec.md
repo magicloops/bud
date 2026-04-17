@@ -93,6 +93,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `test` | `node --import tsx --test src/**/*.test.ts` | Run standalone service tests, including runtime and WebSocket gateway regressions |
 | `db:generate` | `drizzle-kit generate` | Checked-in migration generation helper |
 | `db:migrate` | `drizzle-kit migrate` | Checked-in migration apply helper for production-like environments |
+| `db:migrate:staging` | `DOTENV_CONFIG_PATH=.env.staging drizzle-kit migrate` | Apply the checked-in migration chain against the checked-in staging env without exporting `DOTENV_CONFIG_PATH` manually |
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
 | `db:backfill:message-client-ids` | `tsx src/scripts/backfill-message-client-ids.ts` | Backfill historical `message.client_id` rows before the final Stage B schema tightening |
 | `db:inspect:message-client-ids` | `tsx src/scripts/inspect-message-client-ids.ts` | Inspect the current `message.client_id` schema/data state in the targeted database before or after rollout/backfill |
