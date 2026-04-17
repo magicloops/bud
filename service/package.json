@@ -13,6 +13,7 @@
     "test": "node --import tsx --test src/**/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:staging": "DOTENV_CONFIG_PATH=.env.staging drizzle-kit migrate",
     "db:push": "tsx src/scripts/db-push.ts",
     "db:backfill:message-client-ids": "tsx src/scripts/backfill-message-client-ids.ts",
     "db:inspect:message-client-ids": "tsx src/scripts/inspect-message-client-ids.ts",

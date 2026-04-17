@@ -78,6 +78,15 @@ Placeholder to ensure the directory exists in git.
 - Adds `terminal_session_thread_active_unique_idx` so only non-closed rows must be unique per thread
 - Uses `IF EXISTS` guards for the prior constraint names and index replay safety
 
+### `0010_amazing_lightspeed.sql`
+
+**Schema catch-up for migration parity**:
+- Adds `message.client_id`
+- Backfills existing message rows before tightening the column to `NOT NULL`
+- Adds the final `message_client_id_idx` unique index
+- Drops `terminal_session.tmux_session_name` to match the neutral-terminal contract cleanup
+- Uses `IF EXISTS` / `IF NOT EXISTS` guards so the migration can be applied safely on environments that previously received part of this schema via `db:push`
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -133,6 +142,9 @@ v8: drop legacy session tables and thread session pointer
  │
  ▼
 v9: active-session uniqueness for terminal_session.thread_id
+ │
+ ▼
+v10: message client-id parity + terminal-session tmux-name cleanup
 ```
 
 ---

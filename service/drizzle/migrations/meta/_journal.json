@@ -71,6 +71,13 @@
       "when": 1773903501007,
       "tag": "0009_slim_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776405047951,
+      "tag": "0010_amazing_lightspeed",
+      "breakpoints": true
     }
   ]
 }
