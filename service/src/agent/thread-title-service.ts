@@ -215,10 +215,14 @@ export class ThreadTitleService {
           }
           break;
         case "text_delta":
-          if (activeTextIndex >= 0 && content[activeTextIndex]?.type === "text") {
+          {
+            const activeTextBlock = activeTextIndex >= 0 ? content[activeTextIndex] : undefined;
+            if (activeTextBlock?.type !== "text") {
+              break;
+            }
             content[activeTextIndex] = {
               type: "text",
-              text: `${content[activeTextIndex].text}${event.delta ?? ""}`,
+              text: `${activeTextBlock.text}${event.delta ?? ""}`,
             };
           }
           break;

@@ -1157,7 +1157,7 @@ export class AgentService {
       };
     }
 
-    throw new Error(`unsupported_terminal_tool:${directive.tool}`);
+    throw new Error("unsupported_terminal_tool");
   }
 
   private logReadinessDecision(tool: string, readiness: Record<string, unknown>): void {

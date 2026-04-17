@@ -114,6 +114,7 @@ startUserMessage()
 - `terminal.observe` now defaults to `view: "delta"` and exposes `view: "screen"` / `view: "history"` only when the model explicitly needs broader context.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
+- `executeTerminalCall(...)` now uses an explicit exhaustive fallback after the `terminal.send` and `terminal.observe` branches so TypeScript does not try to read properties from a fully narrowed `never`
 
 ### `terminal-send-outcome.ts`
 
@@ -182,10 +183,17 @@ Best-effort thread-title generation for the first durable user message.
 - if Anthropic is unavailable, the model times out, or another request wins the conditional update first, the thread simply keeps its existing title state
 - normalization now accepts any non-empty cleaned model title rather than rejecting 1-2 word outputs, so concise titles like `Bugfix` or `Assistant Introduction` persist as-is
 - the emitted payload is `{ thread_id, title, source, updated_at }`, where `source` is currently `generated_first_user_message`
+- streamed title reconstruction now updates the active text block through a locally narrowed `text` reference so canonical non-text blocks remain type-safe during `tsc`
 
 ### `thread-title-service.test.ts`
 
-Standalone Node tests for title normalization and prompt-output cleanup.
+Standalone Node tests for title normalization, prompt-output cleanup, and streamed title text accumulation.
+
+**Current Coverage**:
+- generated titles strip labels and trailing punctuation
+- longer descriptive titles remain intact
+- short 1-2 word titles remain valid
+- streamed title-response collection keeps accumulating `text_delta` chunks through a narrowed text block instead of widening back to the full canonical content union
 
 ## Events Emitted
 
