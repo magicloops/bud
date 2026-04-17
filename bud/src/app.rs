@@ -67,7 +67,7 @@ impl BudApp {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("."));
         let default_shell = default_shell().to_string();
-        let (tmux_available, tmux_version) = probe_tmux();
+        let tmux_available = probe_tmux();
         let debug_enabled = args.debug;
         let terminal_config = TerminalConfig {
             enabled: args.terminal_enabled,
@@ -77,7 +77,6 @@ impl BudApp {
             rows: args.terminal_rows,
             shell: default_shell.clone(),
             tmux_available,
-            tmux_version,
             debug_enabled,
         };
         Self {
@@ -559,18 +558,15 @@ impl BudApp {
     }
 
     fn device_capabilities(&self) -> Value {
+        let terminal_available =
+            self.args.terminal_enabled && self.terminal_manager.config.tmux_available;
+
         json!({
             "max_concurrency": 1,
-            "supports_pty": true,
-            "shell_default": "/bin/bash",
-            "sessions": true,
-            "sessions_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available {
-                json!(["pty","tmux"])
-            } else { json!(["pty"]) },
-            "terminal": self.args.terminal_enabled && self.terminal_manager.config.tmux_available,
+            "shell_default": self.terminal_manager.config.shell,
+            "sessions": terminal_available,
+            "terminal": terminal_available,
             "terminal_proto": TERMINAL_PROTO_VERSION,
-            "terminal_backends": if self.args.terminal_enabled && self.terminal_manager.config.tmux_available { json!(["tmux"]) } else { json!([]) },
-            "tmux_version": self.terminal_manager.config.tmux_version,
         })
     }
 }

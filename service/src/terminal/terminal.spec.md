@@ -51,6 +51,8 @@ export type TerminalWaitFor =
 | `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit delta/screen/history observation |
 | `TerminalDelta` / `TerminalDeltaMessage` | Internal / Wire | Minimal additive delta payload for send/observe |
 
+`TerminalStatusMessage.info` now carries backend-neutral runtime facts such as `pid`, `cwd`, `cols`, `rows`, and `output_log_bytes`; tmux session identity is no longer part of the normal service/browser contract.
+
 **Readiness Types**:
 
 ```typescript
@@ -83,7 +85,8 @@ export interface TerminalSendMessage extends TerminalEnvelope {
   request_id: string;
   text?: string;
   submit?: boolean;
-  keys?: string[];
+  key?: string;
+  keys?: string[];  // compatibility alias during rollout
   observe_after_ms?: number;
   wait_for?: TerminalWaitFor;
   timeout_ms?: number;
@@ -151,15 +154,17 @@ await_ready: {
 - settled waits are now driven by `pipe-pane` output quiescence, not repeated `capture-pane` polling
 - `terminal.send` still supports the older fast path, but only when `wait_for: "none"` is requested explicitly
 - `terminal.send` is now the primary tool for both shell commands and interactive input
-- `terminal.send.keys` uses tmux `send-keys` notation for modifier chords, e.g. `C-c`
+- `terminal.send` is now a single-gesture contract: either `text` with optional `submit`, or one semantic `key`
+- `terminal.send.key` uses backend-neutral key names such as `ctrl+c`, `enter`, and `escape`
+- `terminal.send.keys` remains a one-entry compatibility alias during rollout
 - agent-facing explicit waits are now `changed` and `settled`
 - `terminal.send` and `terminal.observe` still share the same delta engine, but only `changed` stays on the immediate-start screen wait engine
 - `terminal.observe(wait_for: "settled")` is the explicit longer-wait escape hatch after a timeout or for advanced cases
-- `submitted` means Bud dispatched at least one text/key/Enter event to tmux
+- `submitted` means Bud dispatched the requested gesture to the current terminal backend
 - `delta.changed` is the main signal for whether the foreground program visibly reacted right away
 - default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested
 - low-level `terminal_input` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
-- browser/server Ctrl+C escape hatches should route through `TerminalSendMessage.keys = ["C-c"]` rather than a dedicated interrupt message
+- browser/server Ctrl+C escape hatches should route through `TerminalSendMessage.key = "ctrl+c"` rather than a dedicated interrupt message
 
 ### `known-programs.ts`
 

@@ -38,8 +38,11 @@ Modular daemon implementation split across:
 - `config.rs`, `protocol.rs`, `util.rs` for shared types/helpers
 - `identity.rs` and `claim.rs` for device-auth bootstrap and persistence
 - `run.rs` for the retained reference run path
-- `terminal/mod.rs` for the service-facing terminal runtime
+- `terminal/mod.rs` for shared terminal runtime types and composition
+- `terminal/backend.rs` for the backend trait
+- `terminal/registry.rs`, `interaction.rs`, `observe.rs`, `readiness.rs`, and `delta.rs` for the split terminal runtime ownership
 - `terminal/tmux.rs` for the tmux backend adapter
+- `terminal/test_support.rs` for fake-backend terminal tests
 
 ### `target/` (git-ignored)
 
@@ -64,8 +67,9 @@ Cargo build artifacts. Not tracked in version control.
 Key boundary decisions:
 
 - `app.rs` owns connection lifecycle and frame dispatch.
-- `terminal/mod.rs` owns the service-facing terminal contract, session registry, readiness, and delta logic.
-- `terminal/tmux.rs` owns tmux command execution and log capture details.
+- `terminal/mod.rs` owns shared terminal runtime types while the split terminal modules own session registry, interaction, observation, readiness, and delta behavior.
+- `terminal/backend.rs` defines the backend-neutral seam the runtime works against.
+- `terminal/tmux.rs` owns tmux command execution and log capture details behind that seam.
 - `run.rs` stays isolated as legacy/reference functionality rather than shaping the main terminal runtime.
 
 ## Terminal Session Lifecycle
@@ -73,7 +77,7 @@ Key boundary decisions:
 ```text
 terminal_ensure  -> create or reattach session, wire log capture, send ready status
 terminal_input   -> low-level text/Enter dispatch, optional readiness wait
-terminal_send    -> structured interaction path with default settled wait and additive delta
+terminal_send    -> single-gesture interaction path (`text`+optional `submit` or one semantic `key`) with default settled wait and additive delta
 terminal_observe -> explicit delta/screen/history observation
 terminal_resize  -> backend resize
 terminal_close   -> backend close and status update
@@ -98,6 +102,8 @@ The terminal runtime currently supports several wait/assessment paths:
 - legacy activity-based readiness for low-level `terminal_input`
 
 These waits are owned above the backend layer so future PTY/mosh-like backends can reuse the same readiness and delta contract.
+
+The runtime is now validated with unit tests that exercise send/observe behavior through a fake backend, so most terminal logic can evolve without requiring real tmux in the test loop.
 
 ## Usage
 
@@ -159,7 +165,7 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 ## Known Issues
 
 <!-- SPEC:TODO -->
-- The service contract still carries tmux-shaped surface area (`tmux_session`, tmux backend capability names) for compatibility during the refactor; a follow-up should remove that leakage once the new module split is proven correct.
+- The daemon still accepts the legacy plural `keys` field as a one-entry compatibility alias during rollout; once all first-party callers have moved to canonical `key`, that shim can be removed.
 - Readiness/state handling is more centralized than before, but the runtime still contains multiple wait strategies that should continue converging as additional backends are introduced.
 - The daemon still assumes the claim-flow HTTP origin can be derived from the configured WebSocket URL.
 - The legacy queued `run` path remains by design with limited ownership; it is retained as reference functionality for future capability work rather than as a first-class runtime direction.

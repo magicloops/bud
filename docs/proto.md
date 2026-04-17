@@ -141,7 +141,7 @@ Bud connects in **one** of two modes:
   "proto":"0.1","type":"hello","id":"01...","ts":1731,
   "name":"raspi-4","os":"linux","arch":"arm64","version":"0.1.0",
   "token":"<opaque-enrollment-token>",
-  "capabilities":{"max_concurrency":1,"supports_pty":false,"shell_default":"/bin/sh"},
+  "capabilities":{"max_concurrency":1,"shell_default":"/bin/sh","sessions":true,"terminal":true,"terminal_proto":"0.2"},
   "ext":{}
 }
 ```
@@ -155,7 +155,7 @@ Bud connects in **one** of two modes:
   "proto":"0.1","type":"hello","id":"01...","ts":1731,
   "name":"workstation","os":"linux","arch":"x86_64","version":"0.1.0",
   "bud_id":"b_01H...",
-  "capabilities":{"max_concurrency":1,"supports_pty":false,"shell_default":"/bin/sh"},
+  "capabilities":{"max_concurrency":1,"shell_default":"/bin/sh","sessions":true,"terminal":true,"terminal_proto":"0.2"},
   "ext":{}
 }
 ```
@@ -370,7 +370,6 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
     "request_id": "send_01...",
     "text": "pwd",
     "submit": true,
-    "keys": [],
     "wait_for": "settled",
     "timeout_ms": 30000,
     "ext": {} }
@@ -381,7 +380,10 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   * `request_id`: unique ID for response correlation
   * `text`: optional literal text to send; this is now the primary shell-command path as well as the interactive-input path
   * `submit`: when true, Bud MUST press Enter after sending text
-  * `keys`: optional ordered list of special keys or tmux `send-keys` actions; use tmux notation for chords such as `C-c` for Ctrl+C
+  * `key`: optional semantic key gesture such as `ctrl+c`, `enter`, or `escape`
+  * `keys`: compatibility alias accepted during rollout only when it contains exactly one entry; new clients SHOULD use `key`
+  * `text` and `key` are mutually exclusive, and `submit` is only valid with `text`
+  * multiple gestures require multiple `terminal_send` calls; batching is intentionally not part of the canonical contract
   * `observe_after_ms`: optional delay before the first capture only when `wait_for: "none"` is requested explicitly (default: 1000 in that mode)
   * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"settled"` for `terminal.send`)
   * `timeout_ms`: max wait time for readiness (default: 30000 for `terminal.send`)
@@ -407,7 +409,10 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
 * `terminal_status` — current terminal state
   ```json
   { "proto": "0.2", "type": "terminal_status", "id": "...", "ts": 1731,
-    "state": "ready", "tmux_session": "bud_term_01H...", "ext": {} }
+    "session_id": "sess_01...",
+    "state": "ready",
+    "info": { "pid": 1234, "cwd": "/home/bud", "cols": 200, "rows": 50, "output_log_bytes": 12345 },
+    "ext": {} }
   ```
   States: `none`, `creating`, `ready`, `active`, `idle`, `closed`
 
@@ -463,7 +468,7 @@ Bud and the backend share a dedicated terminal protocol for the persistent tmux-
   ```
 
   **Fields:**
-  * `submitted`: true when Bud successfully dispatched at least one text/key/Enter event to tmux; this is transport success, not proof that the foreground program accepted or acted on the input
+  * `submitted`: true when Bud successfully dispatched the requested text+Enter gesture or semantic key gesture; this is transport success, not proof that the foreground program accepted or acted on the input
   * `delta`: optional additive post-send delta
     * `changed`: whether Bud observed a visible change relative to the pre-send baseline
     * `text`: additive-only visible content from the current screen
@@ -663,7 +668,9 @@ Sent in `hello.capabilities` to let the backend adapt:
 {
   "max_concurrency": 1,         // integer >= 1
   "shell_default": "/bin/sh",   // default shell path
-  "terminal": true,             // supports tmux-backed terminal (proto 0.2)
+  "sessions": true,             // supports persistent thread-scoped terminal sessions
+  "terminal": true,             // supports the terminal protocol (proto 0.2)
+  "terminal_proto": "0.2",      // optional explicit terminal protocol version
   "os_release": "Ubuntu 22.04", // optional
   "ext": {}
 }

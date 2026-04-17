@@ -71,14 +71,11 @@ export const decodeTerminalData = (data: string) => {
 ```typescript
 export function normalizeCapabilities(caps: unknown): {
   sessions: boolean
-  sessions_backends: string[]
-  tmux_version?: string
   terminal: boolean
-  terminal_backends: string[]
 } | null
 ```
 
-Safely extracts capability fields from API response.
+Safely extracts the behavior-oriented capability fields the browser actually cares about from the API response. tmux identity/version details are no longer surfaced in the normal browser contract.
 
 ### `terminal-input.ts`
 

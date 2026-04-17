@@ -3,7 +3,14 @@ import type { ToolContentRendererProps } from '../types'
 export function TerminalSendContent({ payload }: ToolContentRendererProps) {
   const text = payload.text as string | undefined
   const submit = payload.submit === true
-  const keys = Array.isArray(payload.keys) ? payload.keys.filter((value): value is string => typeof value === 'string') : []
+  const key =
+    typeof payload.key === 'string' && payload.key.length > 0
+      ? payload.key
+      : Array.isArray(payload.keys) &&
+          payload.keys.length === 1 &&
+          typeof payload.keys[0] === 'string'
+        ? payload.keys[0]
+        : null
   const delta = isRecord(payload.delta) ? payload.delta : null
   const readiness = isRecord(payload.readiness) ? payload.readiness : null
   const contextAfter = isRecord(payload.context_after) ? payload.context_after : null
@@ -24,7 +31,7 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
         : null
   const contextSource = typeof contextAfter?.source === 'string' ? contextAfter.source : null
 
-  if (!text && !submit && keys.length === 0) return null
+  if (!text && !submit && !key) return null
 
   return (
     <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed">
@@ -45,8 +52,8 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
       </div>
       {text ? <div className="font-mono text-foreground whitespace-pre-wrap">{text}</div> : null}
       {submit ? <div className="text-muted-foreground">Submit: Enter</div> : null}
-      {keys.length > 0 ? (
-        <div className="text-muted-foreground">Keys: {keys.join(', ')}</div>
+      {key ? (
+        <div className="text-muted-foreground">Key: {key}</div>
       ) : null}
       {submitted !== null ? (
         <div className="mt-1 text-muted-foreground">

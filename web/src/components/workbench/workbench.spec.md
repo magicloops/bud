@@ -13,7 +13,7 @@ Provides the main layout components for the Bud workbench: navigation rail, thre
 Left sidebar navigation showing connected buds.
 
 **Types**:
-- `BudCapabilities` - Device capabilities (sessions, tmux, terminal)
+- `BudCapabilities` - Device capabilities (sessions, terminal)
 - `BudProfile` - Bud data (id, label, color, status, lastRun)
 
 **Features**:

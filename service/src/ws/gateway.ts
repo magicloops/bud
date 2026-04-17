@@ -33,23 +33,23 @@ const TerminalEnvelopeSchema = z.object({
 const CapabilitiesSchema = z
   .object({
     max_concurrency: z.number().int().positive().default(1),
-    supports_pty: z.boolean().default(false),
     shell_default: z.string().optional(),
     sessions: z.boolean().default(false),
-    sessions_backends: z.array(z.string()).default([]),
-    tmux_version: z.string().optional(),
     terminal: z.boolean().optional().default(false),
     terminal_proto: z.string().optional(),
-    terminal_backends: z.array(z.string()).optional().default([])
+    // Deprecated compatibility fields accepted from older Bud daemons.
+    supports_pty: z.boolean().optional(),
+    sessions_backends: z.array(z.string()).optional(),
+    tmux_version: z.string().optional(),
+    terminal_backends: z.array(z.string()).optional()
   })
-  .default({
-    max_concurrency: 1,
-    supports_pty: false,
-    sessions: false,
-    sessions_backends: [],
-    terminal: false,
-    terminal_backends: []
-  });
+  .transform((capabilities) => ({
+    max_concurrency: capabilities.max_concurrency,
+    ...(capabilities.shell_default ? { shell_default: capabilities.shell_default } : {}),
+    sessions: capabilities.sessions,
+    terminal: capabilities.terminal,
+    ...(capabilities.terminal_proto ? { terminal_proto: capabilities.terminal_proto } : {}),
+  }));
 
 const HelloSchema = EnvelopeSchema.extend({
   type: z.literal("hello"),
@@ -92,7 +92,6 @@ const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
   state: z.string(),
   info: z
     .object({
-      tmux_session: z.string().optional(),
       pid: z.number().int().optional(),
       shell: z.string().optional(),
       cwd: z.string().optional(),
@@ -102,6 +101,7 @@ const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
       started_at: z.string().optional(),
       last_activity_at: z.string().optional()
     })
+    .passthrough()
     .optional()
 });
 

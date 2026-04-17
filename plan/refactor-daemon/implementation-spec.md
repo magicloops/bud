@@ -199,6 +199,15 @@ The following issues from the review should be treated as in-scope correctness f
 4. Decompose app/runtime/bootstrap concerns and isolate the legacy run subsystem.
 5. Validate behavior, update specs/docs, and capture the post-refactor wire-cleanup follow-up.
 
+## Recorded Next Planning Item
+
+After the internal daemon refactor is proven stable, the next planning item is the deferred wire-cleanup pass for tmux leakage. That follow-up should cover:
+
+- removing `tmux_session` from service-facing status payloads
+- revisiting tmux-oriented capability names and backend reporting
+- deciding whether tmux-specific key alias normalization remains Bud-owned or should become backend-neutral contract language
+- clarifying backend-neutral protocol terminology now that Bud has a real internal backend seam
+
 ## Definition Of Done
 
 - [ ] the daemon is split into smaller modules with clear ownership boundaries

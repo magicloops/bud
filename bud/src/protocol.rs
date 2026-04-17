@@ -124,6 +124,7 @@ pub struct TerminalSendFrame {
     pub request_id: String,
     pub text: Option<String>,
     pub submit: Option<bool>,
+    pub key: Option<String>,
     pub keys: Option<Vec<String>>,
     pub observe_after_ms: Option<u64>,
     pub wait_for: Option<String>,

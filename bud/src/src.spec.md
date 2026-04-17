@@ -39,7 +39,7 @@ Top-level daemon orchestrator.
 - handshake and challenge-response auth
 - heartbeat scheduling
 - routing inbound server frames to the run or terminal subsystems
-- capability advertisement in the `hello` frame
+- capability advertisement in the `hello` frame, now trimmed to behavior-oriented fields (`sessions`, `terminal`, `terminal_proto`, `shell_default`) instead of tmux identity/version details
 
 **Key types**:
 
@@ -52,6 +52,7 @@ Top-level daemon orchestrator.
 Bud <-> service frame definitions and protocol validation.
 
 - defines `Envelope`, handshake frames, `RunFrame`, and all `terminal_*` inbound frames
+- `TerminalSendFrame` now treats `key` as the canonical single-gesture non-text input field while still deserializing the old plural `keys` alias for rollout compatibility
 - keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
 - exposes `validate_inbound_envelope_proto(...)` so the app layer rejects mismatched inbound protocol versions before dispatch
 
@@ -93,37 +94,99 @@ Legacy queued command executor retained as reference functionality.
 
 ### `terminal/mod.rs`
 
-Service-facing terminal runtime and readiness layer.
+Terminal runtime composition root.
 
-This module owns the terminal contract above the backend boundary. It is responsible for:
+- defines shared terminal runtime types (`TerminalConfig`, `TerminalManager`, session/capture state)
+- makes `TerminalManager` generic over a `TerminalBackend`, with `TmuxBackend` as the default concrete backend
+- owns terminal-wide constants and the public `probe_tmux()` helper
+
+### `terminal/backend.rs`
+
+Backend abstraction for the terminal runtime.
+
+- defines `TerminalBackend`
+- describes the backend facts/operations the runtime needs:
+  - session naming and log paths
+  - session lifecycle control
+  - low-level text/key dispatch
+  - pane capture
+  - output watcher spawning
+
+This is the main seam that lets the runtime stay backend-neutral above tmux.
+
+### `terminal/registry.rs`
+
+Session registry and lifecycle ownership.
 
 - terminal session registry and sender lifecycle
-- `terminal_ensure`, `terminal_input`, `terminal_resize`, `terminal_close`, `terminal_send`, and `terminal_observe`
-- additive delta construction for `terminal.send` / default `terminal.observe`
-- output-quiescence waits, screen-stability waits, and readiness assessment
-- delivered-capture tracking and explicit observation semantics
-- terminal status payload construction
+- `terminal_ensure`, `terminal_resize`, and `terminal_close`
+- delivered-capture storage
+- status payload assembly
 - terminal session env defaults (`COLORTERM=truecolor`, `COLORFGBG=15;0`)
+- session creation/reattach orchestration over the backend trait
 
-**Important boundary**:
+### `terminal/interaction.rs`
 
-- `TerminalManager` owns the service-facing contract
-- `ReadinessDetector` and related helpers keep readiness logic above the backend layer
-- tmux remains the only backend today, but tmux command details are pushed down into `terminal/tmux.rs`
+Interactive send/input runtime.
+
+- `terminal_input`
+- `terminal_send`
+- low-level CRLF-aware input splitting
+- single-gesture structured submission: either `text` with optional `submit`, or one semantic `key`
+- compatibility normalization for legacy one-entry `keys`
+- send error payload assembly
+
+### `terminal/observe.rs`
+
+Explicit observation runtime.
+
+- `terminal_observe`
+- delta/screen/history view handling
+- delivered-capture baseline reuse
+- observe error payload assembly
+
+### `terminal/readiness.rs`
+
+Readiness and wait-policy ownership above the backend layer.
+
+- `ReadinessDetector`
+- `ActivityDetector`
+- output-quiescence waits
+- screen wait loops
+- readiness assessment generation
+- capture helpers shared by send/observe
+
+### `terminal/delta.rs`
+
+Additive delta ownership.
+
+- capture hashing/summarization
+- additive delta extraction
+- low-signal separator stripping
+- JSON delta payload assembly
 
 ### `terminal/tmux.rs`
 
-tmux backend adapter.
+tmux backend adapter and current concrete backend implementation.
 
+- implements `TerminalBackend` for `TmuxBackend`
 - creates/reattaches sessions
 - configures `pipe-pane`
 - captures panes
 - resizes / kills sessions
 - sends literal text and tmux key names
-- spawns the log-file watcher that emits `terminal_output`
-- probes tmux availability/version
+- owns the output watcher implementation that emits `terminal_output`
+- probes tmux availability
 
-The backend still intentionally supports the current tmux-shaped wire behavior for compatibility, but the service-facing orchestration now lives outside this adapter.
+The backend still intentionally accepts tmux-style key aliases for compatibility, but the normal service-facing contract above it is now backend-neutral.
+
+### `terminal/test_support.rs`
+
+Test-only terminal harness compiled under `#[cfg(test)]`.
+
+- provides a fake backend that implements `TerminalBackend`
+- exposes helpers for installing test sessions and receiving emitted WebSocket frames
+- supports abstraction-level tests for send/observe logic without requiring real tmux
 
 ## Architecture
 
@@ -142,8 +205,12 @@ app.rs::BudApp
   |
   +--> terminal/mod.rs
          |
-         +--> readiness + delta + session registry
-         |
+         +--> terminal/backend.rs
+         +--> terminal/registry.rs
+         +--> terminal/interaction.rs
+         +--> terminal/observe.rs
+         +--> terminal/readiness.rs
+         +--> terminal/delta.rs
          +--> terminal/tmux.rs
 ```
 
@@ -155,14 +222,14 @@ app.rs::BudApp
 - interpret inbound `terminal_*` frames
 - decide wait strategy (`none`, `changed`, `settled`, `shell_ready`)
 - build readiness assessments and additive delta payloads
-- preserve the existing service contract
+- expose the current backend-neutral service contract while keeping compatibility shims localized
 
 ### tmux-specific backend adapter
 
 - translate terminal actions into tmux commands
 - manage `pipe-pane` log capture
 - capture pane contents
-- report tmux availability/version
+- report tmux availability
 
 ## Tests
 
@@ -170,13 +237,20 @@ High-value local tests now live next to the extracted abstractions:
 
 - `protocol.rs`
   - inbound protocol validation
-- `terminal/mod.rs`
-  - wait-mode parsing
-  - ctrl-key normalization
-  - additive delta behavior
+- `terminal/registry.rs`
   - env defaults/overrides
-  - CRLF low-level input splitting
   - terminal-status info merge behavior
+- `terminal/interaction.rs`
+  - ctrl-key normalization
+  - CRLF low-level input splitting
+  - fake-backend `terminal_send` flow
+- `terminal/observe.rs`
+  - fake-backend `terminal_observe` delta flow
+- `terminal/readiness.rs`
+  - wait-mode parsing
+  - readiness assessment overrides
+- `terminal/delta.rs`
+  - additive delta behavior
 - `terminal/tmux.rs`
   - shell-safe `pipe-pane` command quoting
 
@@ -204,8 +278,8 @@ External crates (from `Cargo.toml`):
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- The wire contract still exposes tmux-shaped fields such as `tmux_session` and tmux backend capability names; this is intentionally preserved for now and should be cleaned up in a follow-up once the internal split is proven correct.
 - Readiness and status are now centralized above the backend layer, but the terminal runtime still contains multiple internal assessment paths (`shell_ready`, `changed`, `settled`, legacy activity-based waits) that should continue converging on shared readiness primitives as more backends arrive.
+- Key translation still retains tmux-oriented notation compatibility in the interaction layer; once the rollout shim is no longer needed, that normalization should move fully behind the backend boundary.
 - The legacy queued `run` path is intentionally retained as reference functionality, not as the primary runtime model, so ownership is deliberately light until a future capability expansion needs it.
 - Device-auth bootstrap still depends on outbound HTTPS from the daemon; there is no offline/local fallback beyond presenting the claim URL and QR code.
 

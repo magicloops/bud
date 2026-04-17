@@ -17,10 +17,11 @@ use tracing::{info, warn};
 use crate::protocol::TERMINAL_PROTO_VERSION;
 use crate::util::{new_message_id, now_millis, send_ws_frame, OutboundSender};
 
+use super::backend::{BackendResultFuture, TerminalBackend};
 use super::TerminalConfig;
 
 #[derive(Clone)]
-pub(crate) struct TmuxBackend {
+pub struct TmuxBackend {
     config: TerminalConfig,
 }
 
@@ -326,21 +327,125 @@ impl TmuxBackend {
     }
 }
 
-pub(crate) fn probe_tmux() -> (bool, Option<String>) {
+impl TerminalBackend for TmuxBackend {
+    fn session_name(&self, session_id: &str) -> String {
+        TmuxBackend::session_name(self, session_id)
+    }
+
+    fn log_path(&self, session_id: &str) -> PathBuf {
+        TmuxBackend::log_path(self, session_id)
+    }
+
+    fn session_exists<'a>(&'a self, session_name: &'a str) -> BackendResultFuture<'a, bool> {
+        Box::pin(async move { Ok(TmuxBackend::session_exists(self, session_name).await) })
+    }
+
+    fn create_session<'a>(
+        &'a self,
+        session_name: &'a str,
+        cols: u16,
+        rows: u16,
+        cwd: &'a str,
+        shell: &'a str,
+        session_env: &'a [(String, String)],
+    ) -> BackendResultFuture<'a, ()> {
+        Box::pin(async move {
+            TmuxBackend::create_session(self, session_name, cols, rows, cwd, shell, session_env)
+                .await
+        })
+    }
+
+    fn set_history_limit<'a>(
+        &'a self,
+        session_name: &'a str,
+        limit: u32,
+    ) -> BackendResultFuture<'a, ()> {
+        Box::pin(async move { TmuxBackend::set_history_limit(self, session_name, limit).await })
+    }
+
+    fn reset_pipe<'a>(
+        &'a self,
+        session_name: &'a str,
+        log_path: &'a Path,
+    ) -> BackendResultFuture<'a, bool> {
+        Box::pin(async move { TmuxBackend::reset_pipe(self, session_name, log_path).await })
+    }
+
+    fn pane_pid<'a>(&'a self, session_name: &'a str) -> BackendResultFuture<'a, i32> {
+        Box::pin(async move { TmuxBackend::pane_pid(self, session_name).await })
+    }
+
+    fn pane_cwd<'a>(&'a self, session_name: &'a str) -> BackendResultFuture<'a, String> {
+        Box::pin(async move { TmuxBackend::pane_cwd(self, session_name).await })
+    }
+
+    fn resize_window<'a>(
+        &'a self,
+        session_name: &'a str,
+        cols: u16,
+        rows: u16,
+    ) -> BackendResultFuture<'a, ()> {
+        Box::pin(async move { TmuxBackend::resize_window(self, session_name, cols, rows).await })
+    }
+
+    fn kill_session<'a>(&'a self, session_name: &'a str) -> BackendResultFuture<'a, ()> {
+        Box::pin(async move { TmuxBackend::kill_session(self, session_name).await })
+    }
+
+    fn send_literal_text<'a>(
+        &'a self,
+        session_name: &'a str,
+        text: &'a str,
+    ) -> BackendResultFuture<'a, ()> {
+        Box::pin(async move { TmuxBackend::send_literal_text(self, session_name, text).await })
+    }
+
+    fn send_key<'a>(&'a self, session_name: &'a str, key: &'a str) -> BackendResultFuture<'a, ()> {
+        Box::pin(async move { TmuxBackend::send_key(self, session_name, key).await })
+    }
+
+    fn capture_pane_with_lines<'a>(
+        &'a self,
+        session_name: &'a str,
+        start_line: Option<i32>,
+    ) -> BackendResultFuture<'a, String> {
+        Box::pin(async move {
+            TmuxBackend::capture_pane_with_lines(self, session_name, start_line).await
+        })
+    }
+
+    fn spawn_output_watcher(
+        &self,
+        session_id: String,
+        session_name: String,
+        log_path: PathBuf,
+        sender: OutboundSender,
+        seq: Arc<AtomicU64>,
+        offset: Arc<AtomicU64>,
+        last_output_at: Arc<AtomicU64>,
+        last_output_seq: Arc<AtomicU64>,
+    ) -> tokio::task::JoinHandle<()> {
+        TmuxBackend::spawn_output_watcher(
+            self,
+            session_id,
+            session_name,
+            log_path,
+            sender,
+            seq,
+            offset,
+            last_output_at,
+            last_output_seq,
+        )
+    }
+}
+
+pub(crate) fn probe_tmux() -> bool {
     use std::process::Command as StdCommand;
 
     let output = StdCommand::new("tmux").arg("-V").output();
     match output {
-        Ok(out) if out.status.success() => {
-            let text = String::from_utf8_lossy(&out.stdout);
-            let version = text
-                .split_whitespace()
-                .nth(1)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            (true, version)
-        }
-        _ => (false, None),
+        Ok(out) if out.status.success() => true,
+        _ => false,
     }
 }
 
