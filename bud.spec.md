@@ -24,7 +24,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 │                 │         │                                     │         │                 │
 └────────┬────────┘         └──────────────────┬──────────────────┘         └─────────────────┘
          │                                     │
-         │ PTY/tmux                            │ SQL
+         │ Terminal backend                    │ SQL
          ▼                                     ▼
 ┌─────────────────┐                  ┌─────────────────┐         ┌─────────────────┐
 │                 │                  │                 │         │                 │
@@ -101,7 +101,14 @@ bud/
 │
 ├── bud/                    # Rust device daemon
 │   ├── src/
-│   │   └── main.rs         # Monolithic daemon implementation
+│   │   ├── main.rs         # Thin entrypoint
+│   │   ├── lib.rs          # Crate wiring
+│   │   ├── app.rs          # Runtime orchestration
+│   │   ├── run.rs          # Legacy queued run path
+│   │   ├── terminal/
+│   │   │   ├── mod.rs      # Service-facing terminal runtime
+│   │   │   └── tmux.rs     # tmux backend adapter
+│   │   └── ...             # Config, protocol, identity, claim, utilities
 │   └── Cargo.toml
 │
 ├── service/                # Node.js backend service
@@ -424,6 +431,8 @@ Thread-scoped sessions provide isolation and predictability.
 - Window/pane support for future features
 - Well-tested, reliable
 
+The daemon now keeps tmux behind an internal backend adapter so future PTY or mosh-like backends can reuse the same higher-level terminal runtime and readiness logic. The wire contract still leaks some tmux details for compatibility and should be cleaned up in a follow-up once the refactor is proven correct.
+
 ### Why OpenAI Responses API?
 
 - Built-in tool calling with structured outputs
@@ -507,12 +516,22 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/remove-terminal-interrupt/implementation-spec.md](./plan/remove-terminal-interrupt/implementation-spec.md) | Phased implementation plan for removing the agent-facing `terminal.interrupt` tool, teaching `terminal.send.keys` to use tmux-native chords like `C-c`, retaining the browser interrupt escape hatch as a wrapper, and deleting dedicated interrupt runtime/protocol dead code |
 | [plan/remove-terminal-interrupt/validation-checklist.md](./plan/remove-terminal-interrupt/validation-checklist.md) | Release-gate checklist for the interrupt-removal plan, covering send-key chord support, agent-tool removal, browser-wrapper retention, dedicated protocol cleanup, and the final active-reference sweep |
 | [plan/fix-session-per-thread/implementation-spec.md](./plan/fix-session-per-thread/implementation-spec.md) | Focused implementation plan for fixing terminal session lifecycle semantics, active-session uniqueness, and idle-close defaults |
+| [plan/refactor-daemon/refactor-daemon.spec.md](./plan/refactor-daemon/refactor-daemon.spec.md) | Folder spec for the phased Bud daemon modularization plan, centered on backend-neutral terminal abstractions, readiness simplification above the backend layer, retained legacy run isolation, and deferred post-refactor wire-level tmux cleanup |
+| [plan/refactor-daemon/implementation-spec.md](./plan/refactor-daemon/implementation-spec.md) | Parent implementation spec for refactoring the Rust Bud daemon out of `bud/src/main.rs` into smaller modules while preserving current service-visible behavior and isolating tmux behind an internal backend boundary |
+| [plan/refactor-daemon/phase-1-foundation-and-minimal-guard-tests.md](./plan/refactor-daemon/phase-1-foundation-and-minimal-guard-tests.md) | Initial daemon refactor phase covering low-risk module extraction, a minimal set of high-value pre-split regression tests, and explicit documentation of the retained legacy run path |
+| [plan/refactor-daemon/phase-2-backend-abstraction-and-tmux-adapter.md](./plan/refactor-daemon/phase-2-backend-abstraction-and-tmux-adapter.md) | Terminal backend phase covering introduction of a backend-neutral internal interface, a tmux adapter implementation, and explicit session/output ownership boundaries |
+| [plan/refactor-daemon/phase-3-terminal-runtime-split-and-readiness-unification.md](./plan/refactor-daemon/phase-3-terminal-runtime-split-and-readiness-unification.md) | Terminal runtime phase covering separate interaction/observe engines and unification of readiness and terminal-state reasoning above the backend layer |
+| [plan/refactor-daemon/phase-4-app-runtime-and-legacy-run-extraction.md](./plan/refactor-daemon/phase-4-app-runtime-and-legacy-run-extraction.md) | App/runtime phase covering `BudApp` decomposition, websocket and identity extraction, and isolation of the retained legacy run subsystem as explicit reference functionality |
+| [plan/refactor-daemon/phase-5-validation-specs-and-wire-cleanup-follow-up-prep.md](./plan/refactor-daemon/phase-5-validation-specs-and-wire-cleanup-follow-up-prep.md) | Final daemon refactor phase covering validation, Bud spec/doc updates, and preparation of the follow-up item to remove tmux leakage from the wire contract |
+| [plan/refactor-daemon/progress-checklist.md](./plan/refactor-daemon/progress-checklist.md) | Running implementation checklist for the Bud daemon modularization plan |
+| [plan/refactor-daemon/validation-checklist.md](./plan/refactor-daemon/validation-checklist.md) | Manual verification checklist for validating the refactored Bud daemon before starting the wire-level tmux cleanup follow-up |
 | [plan/revised-terminal-contract/implementation-spec.md](./plan/revised-terminal-contract/implementation-spec.md) | Breaking implementation plan for replacing the overloaded `terminal.run` / `terminal.capture` agent contract with separate shell execution, interactive input, and explicit observation tools |
 | [plan/revised-terminal-contract/implementation-spec-follow-up.md](./plan/revised-terminal-contract/implementation-spec-follow-up.md) | Follow-up implementation plan for stabilizing the revised terminal contract, first around TUI input parity and delta-first observation, and now around a potential send-first simplification that removes `terminal.exec` entirely |
 | [plan/terminal-send-refactor/terminal-send-refactor.spec.md](./plan/terminal-send-refactor/terminal-send-refactor.spec.md) | Folder spec for the phased `terminal.send` settled-by-default refactor, centered on output quiescence, partial-progress timeout results, and `terminal.observe(wait_for:"settled")` as the explicit longer-wait hatch |
 | [plan/terminal-send-refactor/implementation-spec.md](./plan/terminal-send-refactor/implementation-spec.md) | Phased implementation plan for making `terminal.send` wait for output quiescence by default, reusing the existing `pipe-pane` watcher, keeping `capture-pane` at the edges, and collapsing most immediate send-plus-observe chains into a single send |
 | [plan/client-id/implementation-spec.md](./plan/client-id/implementation-spec.md) | Phased implementation plan for adding stable UUIDv7 `client_id` values to messages, keeping `message_id` as the persisted row identifier, and threading the new identity through transcript reads, user writes, `/agent/state`, agent SSE, and first-party client reconciliation |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
+| [review/bud-daemon-modularization-review.md](./review/bud-daemon-modularization-review.md) | Full architecture review of the Rust Bud daemon, covering current correctness gaps, tmux coupling, backend-neutral terminal abstractions, and a staged refactor plan for splitting `bud/src/main.rs` without changing current behavior |
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
 | [debug/ios-local-oauth-client-provisioning-id-null.md](./debug/ios-local-oauth-client-provisioning-id-null.md) | Debug note documenting why the first run of `pnpm oauth:provision:ios-local` fails on a fresh database: the provisioning script omits the required `auth.oauthClient.id` primary key on insert |

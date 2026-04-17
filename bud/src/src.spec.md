@@ -1,209 +1,184 @@
 # src
 
-Source code for the Bud device daemon - a Rust CLI that connects remote machines to the Bud service via WebSocket and, when needed, bootstraps device auth through a browser claim flow.
+Source code for the Bud device daemon. The daemon is now split into focused modules so the service-facing runtime contract, terminal orchestration, tmux adapter, device-auth bootstrap, and legacy run executor can evolve independently.
 
 ## Files
 
 ### `main.rs`
 
-Monolithic implementation (~2,900 lines) containing all daemon functionality. The code is organized into logical sections:
+Thin CLI entrypoint:
 
-#### CLI & Configuration (Lines 1-140)
+- parses `BudArgs` with `clap`
+- initializes tracing
+- runs the daemon inside a Tokio `LocalSet`
+- delegates all real runtime behavior to `bud::run(...)`
 
-- **`BudArgs`** - CLI arguments parsed via `clap`:
-  - `--server` / `BUD_SERVER_URL` - WebSocket endpoint (default: `wss://localhost:8443/ws`)
-  - `--token` / `BUD_ENROLLMENT_TOKEN` - Legacy/manual enrollment token fallback
-  - `--name` / `BUD_DEVICE_NAME` - Device display name
-  - `--cwd` / `BUD_DEFAULT_CWD` - Default working directory
-  - `--identity-file` / `BUD_IDENTITY_FILE` - Path to identity JSON (default: `~/.bud/identity.json`)
-  - `--terminal-base-dir` / `BUD_TERMINAL_BASE_DIR` - Base directory for terminal logs and session artifacts (default: `~/.bud`)
-  - `--terminal-enabled` / `BUD_TERMINAL_ENABLED` - Enable terminal features
-  - `--terminal-cols/rows` - Terminal dimensions (default: 200x50)
-  - `--debug` / `BUD_DEBUG` - Debug logging mode
+### `lib.rs`
 
-- **`DeviceIdentity`** - Persisted identity containing `bud_id`, `device_secret`, server URL; malformed or empty stored credentials are treated as missing at load time so reauth can proceed
-- **Installation identity** - Stable non-secret `installation_id` persisted in a sibling `installation-id` file next to the configured identity file
-- **Device auth bootstrap types** - HTTP start/poll payloads for `/api/device-auth/*`
-- **`HandshakeError`** - Distinguishes `AUTH_FAILED` reauth from other handshake failures
+Crate root for the daemon runtime.
 
-#### Protocol Types (Lines 120-430)
+- declares the internal modules
+- re-exports `BudArgs` and `setup_tracing()`
+- exposes `run(args)` as the single high-level entry used by `main.rs`
 
-WebSocket message frame types matching the service protocol:
+### `config.rs`
 
-| Type | Direction | Purpose |
-|------|-----------|---------|
-| `Envelope` | Both | Base frame with `type`, `proto`, `id`, `ts`, `ext` |
-| `HelloAckFrame` | ← Service | Auth success with `session_id`, `bud_id`, optional `device_secret` |
-| `HelloChallengeFrame` | ← Service | HMAC challenge with `nonce` |
-| `ErrorFrame` | ← Service | Error with `code` and `message` |
-| `DeviceAuthStartResponse` | ← Service | Claim URL + poll secret for browser-mediated bootstrap |
-| `DeviceAuthPollResponse` | ← Service | Pending/approved/rejected claim polling result |
-| `RunFrame` | ← Service | Command execution request |
-| `TerminalEnsureFrame` | ← Service | Create/verify tmux session |
-| `TerminalInputFrame` | ← Service | Send input to terminal |
-| `TerminalSendFrame` | ← Service | Structured interactive input with settled-by-default waiting and optional explicit fast-path capture |
-| `TerminalObserveFrame` | ← Service | Explicit screen inspection |
-| `AwaitReady` | Config | Readiness detection options |
+CLI and environment configuration.
 
-#### Run Executor (Lines 435-660)
+- defines `BudArgs`
+- owns daemon defaults for server URL, identity path, terminal base dir, terminal dimensions, reconnect timing, and debug mode
 
-**`RunExecutor`** - Queued command execution system:
+### `app.rs`
 
-- Maintains FIFO queue (max 10 commands)
-- Executes shell commands via PTY
-- Streams stdout/stderr back to service
-- Tracks current working directory across commands
-- Sends `run_finished` frame on completion
+Top-level daemon orchestrator.
 
-#### Capture Deduplication (Lines 660-715)
+**`BudApp`** coordinates:
 
-Hash-based deduplication for `capture-pane` output:
+- identity loading and device-claim bootstrap
+- WebSocket connect / reconnect behavior
+- handshake and challenge-response auth
+- heartbeat scheduling
+- routing inbound server frames to the run or terminal subsystems
+- capability advertisement in the `hello` frame
 
-- `simple_hash()` - Fast content hashing using `DefaultHasher`
-- `deduplicate_capture()` - Returns empty if hash matches previous capture
-- Prevents redundant data transfer for unchanged terminal screens
+**Key types**:
 
-#### Terminal Manager (Lines 715-1465)
+- `BudApp` - process-wide runtime owner
+- `SessionMeta` - server-issued session bookkeeping
+- `HandshakeError` - separates `AUTH_FAILED` reauth from transport/protocol failures
 
-**`TerminalManager`** - tmux-based terminal session management:
+### `protocol.rs`
 
-- **`handle_ensure`** - Create or verify tmux session exists
-  - New sessions now seed tmux with deterministic terminal color env defaults (`COLORTERM=truecolor`, `COLORFGBG=15;0`) and honor any `terminal_ensure.config.env` overrides
-- **`handle_input`** - Send input via `tmux send-keys`
-  - Splits text and newlines for proper Enter key handling
-  - Inserts a short `10ms` pause between literal text and the first Enter when both are present, to reduce TUI submit/newline races
-  - Supports `await_ready` for readiness detection
-- **`handle_resize`** - Resize via `tmux resize-window`
-- **`handle_close`** - Kill session via `tmux kill-session`
-- **`handle_send`** - Structured interactive input path for agent `terminal.send`:
-  - Sends literal text, optional submit, and special keys
-  - Accepts tmux `send-keys` notation for modifier chords, such as `C-c` for Ctrl+C, and normalizes common `ctrl+...` / `control-...` aliases into tmux form
-  - Inserts a short `10ms` pause before Enter when literal text is immediately followed by submit/newline dispatch
-  - Serves as the primary input path for both shell commands and interactive programs
-  - Captures a pre-send baseline, then defaults to `wait_for: "settled"` with `timeout_ms: 30000`
-  - Uses output quiescence from the shared `pipe-pane` watcher as the default settle detector
-  - Reserves `observe_after_ms` for explicit `wait_for: "none"` sends
-  - Can still explicitly wait for `shell_ready`, `changed`, or `settled`
-  - Reuses a pre-send baseline capture so waits can detect immediate redraws and echoed input
-  - Strips low-signal separator-only lines from delta text when a line is a single repeated non-alphanumeric glyph run of 4+ characters
-  - Returns dispatch status plus additive `delta`, timeout-aware readiness, and partial-progress semantics in `terminal_send_result`
-- **`handle_observe`** - Explicit delta/screen/history observation for agent `terminal.observe`:
-  - Defaults to `view: "delta"` and supports explicit `screen` / `history` modes
-  - Uses the screen-diff wait engine for `changed`, and the output-quiescence path for `settled`
-  - Reuses the wait capture instead of always performing a second `capture-pane`
-  - Tracks the last delivered capture per session so default observe suppresses repeated transcript content
-  - Applies the same low-signal separator stripping to default delta output, while explicit `screen` / `history` remain raw
-  - Returns `terminal_observe_result`
+Bud <-> service frame definitions and protocol validation.
 
-**Output Streaming**:
-- Uses `tmux pipe-pane` to capture output to a session log under `BUD_TERMINAL_BASE_DIR/sessions/{session_id}/terminal.log`
-- `spawn_output_watcher()` polls log file for new bytes and maintains shared in-memory output-activity state (`offset`, `last_output_at`, `last_output_seq`)
-- Sends `terminal_output` frames with base64-encoded chunks
+- defines `Envelope`, handshake frames, `RunFrame`, and all `terminal_*` inbound frames
+- keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
+- exposes `validate_inbound_envelope_proto(...)` so the app layer rejects mismatched inbound protocol versions before dispatch
 
-#### Readiness Detection (Lines 1618-1865)
+### `util.rs`
 
-**`ReadinessDetector`** - Quiescence-based detection for shell commands:
+Small shared helpers used across modules.
 
-- Monitors log file for output quiescence
-- Configurable `quiescence_ms` (default: 1500ms) and `max_wait_ms` (default: 30s)
-- Analyzes output for prompt patterns
-- Sends `terminal_ready` with readiness assessment only
+- WebSocket frame sending helpers
+- HMAC proof generation
+- ULID message ids and millisecond timestamps
+- shell/path helpers
+- tracing initialization
 
-**`ReadinessDetector::detect_prompt()`** - Pattern matching for:
-- Shell prompts (`$`, `#`, `%`, `:~$`)
-- Python REPL (`>>>`, `...`, `In [`)
-- Node REPL (`>`)
-- Database prompts (`mysql>`, `postgres=#`, `sqlite>`)
-- Confirmation prompts (`[y/n]`, `yes/no`)
-- Password prompts
-- Pager indicators (`:`, `(END)`, `--More--`)
+### `identity.rs`
 
-#### Activity Detector (Lines 1866-2075)
+Local device identity persistence.
 
-**`ActivityDetector`** - Screen stability detection for TUI/REPL apps:
+- loads/stores `DeviceIdentity`
+- keeps the stable sibling `installation-id` file separate from the secret-bearing identity file
+- clears invalid identity state when the backend rejects stored credentials
+- writes private files with `0600` permissions
 
-- Compares `capture-pane` hashes at intervals
-- Declares ready when screen unchanged for N consecutive checks
-- Designed for apps like Claude Code that have natural processing pauses
-- Default: 5s intervals, 2 stable checks required, 60s max wait
-- Emits `terminal_ready` with activity-based readiness assessment when low-level `terminal_input` waits need it
+### `claim.rs`
 
-**Phase 6 Note**:
-- The earlier fast-post-send delta path remains available for explicit `wait_for: "none"` sends, but it is no longer the default agent path.
+Browser-mediated device-claim bootstrap.
 
-**Phase 7 Note**:
-- Agent-facing `terminal.send` now defaults to a settled-by-default flow:
-  - capture a pre-send baseline
-  - dispatch text / keys / submit
-  - wait for output quiescence using shared `pipe-pane` activity state
-  - perform one final `capture-pane` and compute the additive delta
-- `terminal.observe(wait_for: "settled")` uses the same quiescence path, while `changed` still uses the immediate-start screen wait helper
-- timeout assessments stay conservative instead of treating a missed wait as positive readiness
-- the same Bud-side delta engine still powers both `terminal.send` and default `terminal.observe`
-- The older `ActivityDetector` remains in place for low-level `terminal_input` readiness events.
+- starts and polls `/api/device-auth/*`
+- renders human-readable terminal instructions
+- prints a terminal QR code for headless setups
+- derives the HTTP base URL from the configured WebSocket origin
 
-#### Main Application (Lines 2365-2875)
+### `run.rs`
 
-**`BudApp`** - Main daemon orchestrator:
+Legacy queued command executor retained as reference functionality.
 
-- **`new()`** - Expands CLI/env paths, derives `installation-id` from the identity file parent directory, and applies `BUD_TERMINAL_BASE_DIR` to terminal logging
-- **`connect_once()`** - Establish WebSocket connection
-- **`bootstrap_device_auth()`** - Start claim flow, print link + QR, poll for approval
-- **`perform_handshake()`** - Authentication flow:
-  1. Send `hello` with identity or enrollment token plus `installation_id`
-  2. If challenged, compute HMAC proof
-  3. Receive `hello_ack` with session info
-- **`run_session()`** - Main message loop:
-  - Periodic heartbeat sending
-  - Frame dispatch to appropriate manager
-- **`handle_server_frame()`** - Route frames by type
-- **`build_hello_frame()`** - Construct hello with capabilities
+- preserves the old one-shot `run` frame path
+- owns shell spawn, stdout/stderr chunking, and `run_finished`
+- remains intentionally isolated from the terminal runtime so future non-terminal capabilities still have a reference path
 
-**Identity Management**:
-- `load_identity()` - Read from identity file, treating malformed or incomplete stored credentials as missing so the daemon can fall back into browser-mediated reauth
-- `persist_identity()` - Save with 0600 permissions
-- `load_or_create_installation_id()` - Keep stable device install identity separate from the secret
-- `clear_identity()` - Remove invalid local device secret before re-claim
-- `start_device_auth_flow()` / `poll_device_auth_flow()` - HTTP bootstrap against `/api/device-auth/*`
-- `print_device_claim_instructions()` - Show claim URL and terminal QR code for headless setups
+### `terminal/mod.rs`
 
-#### Utilities (Lines 2800-2866)
+Service-facing terminal runtime and readiness layer.
 
-- `new_message_id()` - Generate ULID
-- `now_millis()` - Current timestamp in milliseconds
-- `default_shell()` - Detect user's shell (respects `$SHELL`)
-- `expand_path()` - Tilde expansion
-- `installation_id_path()` - Derive sidecar installation-id file path from identity path
-- `api_base_url_from_ws_url()` - Convert daemon WS URL to service HTTP base for device-auth routes
-- `probe_tmux()` - Check tmux availability and version
-- `compute_hmac()` - HMAC-SHA256 for authentication
-- `print_terminal_qr()` - Render Unicode block QR in terminal
-- `write_private_file()` - Shared 0600 write helper for device identity files
-- `setup_tracing()` - Initialize logging
+This module owns the terminal contract above the backend boundary. It is responsible for:
+
+- terminal session registry and sender lifecycle
+- `terminal_ensure`, `terminal_input`, `terminal_resize`, `terminal_close`, `terminal_send`, and `terminal_observe`
+- additive delta construction for `terminal.send` / default `terminal.observe`
+- output-quiescence waits, screen-stability waits, and readiness assessment
+- delivered-capture tracking and explicit observation semantics
+- terminal status payload construction
+- terminal session env defaults (`COLORTERM=truecolor`, `COLORFGBG=15;0`)
+
+**Important boundary**:
+
+- `TerminalManager` owns the service-facing contract
+- `ReadinessDetector` and related helpers keep readiness logic above the backend layer
+- tmux remains the only backend today, but tmux command details are pushed down into `terminal/tmux.rs`
+
+### `terminal/tmux.rs`
+
+tmux backend adapter.
+
+- creates/reattaches sessions
+- configures `pipe-pane`
+- captures panes
+- resizes / kills sessions
+- sends literal text and tmux key names
+- spawns the log-file watcher that emits `terminal_output`
+- probes tmux availability/version
+
+The backend still intentionally supports the current tmux-shaped wire behavior for compatibility, but the service-facing orchestration now lives outside this adapter.
 
 ## Architecture
 
+```text
+main.rs
+  |
+  v
+lib.rs::run(...)
+  |
+  v
+app.rs::BudApp
+  |
+  +--> identity.rs / claim.rs
+  |
+  +--> run.rs
+  |
+  +--> terminal/mod.rs
+         |
+         +--> readiness + delta + session registry
+         |
+         +--> terminal/tmux.rs
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                          BudApp                                  │
-│  ┌──────────────┐  ┌──────────────────────────────────────────┐ │
-│  │ RunExecutor  │  │           TerminalManager                │ │
-│  │  (commands)  │  │              (tmux)                      │ │
-│  └──────────────┘  └──────────────────┬───────────────────────┘ │
-│                                       │                         │
-│                           ┌───────────┴───────────┐             │
-│                           │  ReadinessDetector    │             │
-│                           │  ActivityDetector     │             │
-│                           └───────────────────────┘             │
-└─────────────────────────────────────────────────────────────────┘
-                            │
-                     WebSocket (TLS)
-                            │
-                            ▼
-                    ┌──────────────┐
-                    │   Service    │
-                    └──────────────┘
-```
+
+## Terminal Runtime Responsibilities
+
+### Above the backend boundary
+
+- maintain session handles and delivered-capture state
+- interpret inbound `terminal_*` frames
+- decide wait strategy (`none`, `changed`, `settled`, `shell_ready`)
+- build readiness assessments and additive delta payloads
+- preserve the existing service contract
+
+### tmux-specific backend adapter
+
+- translate terminal actions into tmux commands
+- manage `pipe-pane` log capture
+- capture pane contents
+- report tmux availability/version
+
+## Tests
+
+High-value local tests now live next to the extracted abstractions:
+
+- `protocol.rs`
+  - inbound protocol validation
+- `terminal/mod.rs`
+  - wait-mode parsing
+  - ctrl-key normalization
+  - additive delta behavior
+  - env defaults/overrides
+  - CRLF low-level input splitting
+  - terminal-status info merge behavior
+- `terminal/tmux.rs`
+  - shell-safe `pipe-pane` command quoting
 
 ## Dependencies
 
@@ -215,28 +190,24 @@ External crates (from `Cargo.toml`):
 | `tokio-tungstenite` | WebSocket client |
 | `clap` | CLI argument parsing |
 | `serde` / `serde_json` | JSON serialization |
-| `nix` | Unix utilities |
+| `nix` | Unix utilities for the legacy run executor |
 | `anyhow` | Error handling |
 | `base64` | Data encoding for frames |
 | `hmac` / `sha2` | Authentication |
-| `reqwest` | Device auth bootstrap HTTP client |
-| `qrcodegen` | ASCII/Unicode QR rendering in terminal |
+| `reqwest` | Device-auth bootstrap HTTP client |
+| `qrcodegen` | Terminal QR rendering |
 | `tracing` / `tracing-subscriber` | Logging |
 | `ulid` | Message ID generation |
 | `chrono` | Timestamp formatting |
 | `shellexpand` | Path tilde expansion |
 
-## Protocol Versions
-
-- `PROTO_VERSION = "0.1"` - Base protocol
-- `TERMINAL_PROTO_VERSION = "0.2"` - Terminal extensions
-
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Single-file architecture makes navigation difficult; consider splitting bootstrap/auth, terminal, and run execution into modules
-- `#[allow(dead_code)]` on several struct fields suggests unused protocol features
-- Device-auth bootstrap currently depends on outbound HTTPS from the daemon; no offline/local fallback exists beyond the claim URL itself
+- The wire contract still exposes tmux-shaped fields such as `tmux_session` and tmux backend capability names; this is intentionally preserved for now and should be cleaned up in a follow-up once the internal split is proven correct.
+- Readiness and status are now centralized above the backend layer, but the terminal runtime still contains multiple internal assessment paths (`shell_ready`, `changed`, `settled`, legacy activity-based waits) that should continue converging on shared readiness primitives as more backends arrive.
+- The legacy queued `run` path is intentionally retained as reference functionality, not as the primary runtime model, so ownership is deliberately light until a future capability expansion needs it.
+- Device-auth bootstrap still depends on outbound HTTPS from the daemon; there is no offline/local fallback beyond presenting the claim URL and QR code.
 
 ---
 

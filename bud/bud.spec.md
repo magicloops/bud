@@ -1,16 +1,16 @@
 # bud
 
-Rust device daemon that runs on user machines and connects to the Bud service via WebSocket. Provides terminal access and command execution capabilities.
+Rust device daemon that runs on user machines and connects to the Bud service via WebSocket. It bootstraps device auth, maintains the on-device runtime for cloud-hosted agents, and currently provides a tmux-backed terminal implementation behind a more modular internal runtime split.
 
 ## Purpose
 
-The bud daemon is the "agent" that runs on devices users want to control remotely. It:
+The Bud daemon:
 
-1. **Bootstraps auth** through a browser claim flow (or a legacy enrollment token fallback) and stores long-lived device credentials locally
-2. **Maintains** a persistent WebSocket connection with automatic reconnection
-3. **Executes** shell commands and streams output back to the service
-4. **Manages** tmux-based terminal sessions for interactive use
-5. **Detects** terminal readiness to coordinate with the AI agent
+1. bootstraps auth through a browser claim flow, with a legacy enrollment-token fallback
+2. maintains a persistent WebSocket connection with automatic reconnect and heartbeats
+3. executes the retained legacy queued `run` path for one-shot command work
+4. manages thread-scoped interactive terminal sessions
+5. detects readiness and screen stability so the service can drive terminal interactions safely
 
 ## Files
 
@@ -18,47 +18,86 @@ The bud daemon is the "agent" that runs on devices users want to control remotel
 
 Contributor-facing usage guide for the daemon.
 
-**Documents**:
-- local build and run flow
-- browser-mediated claim bootstrap
-- per-instance local multi-account testing via `--identity-file` and `--terminal-base-dir`
-- example helper scripts for copying the built binary into account-specific directories
-
 ### `.env.example`
 
 Shell-export template for local daemon development.
 
-**Important**:
-- Bud does not auto-load `.env`
-- developers should `source` the copied file before running `cargo run`
-- defaults point at local service development (`ws://localhost:3000/ws`)
-- includes both `BUD_IDENTITY_FILE` and `BUD_TERMINAL_BASE_DIR` so daemon state can be relocated away from `~/.bud`
-
 ### `Cargo.toml`
 
-Rust package manifest defining:
-
-- **Package**: `bud` v0.1.0 (Rust 2021 edition)
-- **Dependencies**: See [src/src.spec.md](./src/src.spec.md) for full list
-
-Key dependency categories:
-- Async runtime: `tokio`, `futures`
-- WebSocket: `tokio-tungstenite`, `rustls`
-- Device-auth bootstrap: `reqwest`, `qrcodegen`
-- CLI: `clap`
-- Serialization: `serde`, `serde_json`
-- PTY: `nix`, `libc`
-- Security: `hmac`, `sha2`, `base64`
+Rust package manifest for the daemon crate and its runtime dependencies.
 
 ## Subfolders
 
-### `src/` → [src.spec.md](./src/src.spec.md)
+### `src/` -> [src.spec.md](./src/src.spec.md)
 
-Contains the monolithic `main.rs` implementation (~2,900 lines) with all daemon functionality including WebSocket handling, authentication, command execution, and terminal management.
+Modular daemon implementation split across:
+
+- `main.rs` for the thin entrypoint
+- `lib.rs` for crate wiring
+- `app.rs` for top-level runtime orchestration
+- `config.rs`, `protocol.rs`, `util.rs` for shared types/helpers
+- `identity.rs` and `claim.rs` for device-auth bootstrap and persistence
+- `run.rs` for the retained reference run path
+- `terminal/mod.rs` for the service-facing terminal runtime
+- `terminal/tmux.rs` for the tmux backend adapter
 
 ### `target/` (git-ignored)
 
 Cargo build artifacts. Not tracked in version control.
+
+## Architecture
+
+```text
+                     BudApp
+                        |
+        +---------------+---------------+
+        |                               |
+   identity / claim                 run executor
+        |
+        +-------------------+
+                            |
+                      terminal runtime
+                            |
+                     tmux backend adapter
+```
+
+Key boundary decisions:
+
+- `app.rs` owns connection lifecycle and frame dispatch.
+- `terminal/mod.rs` owns the service-facing terminal contract, session registry, readiness, and delta logic.
+- `terminal/tmux.rs` owns tmux command execution and log capture details.
+- `run.rs` stays isolated as legacy/reference functionality rather than shaping the main terminal runtime.
+
+## Terminal Session Lifecycle
+
+```text
+terminal_ensure  -> create or reattach session, wire log capture, send ready status
+terminal_input   -> low-level text/Enter dispatch, optional readiness wait
+terminal_send    -> structured interaction path with default settled wait and additive delta
+terminal_observe -> explicit delta/screen/history observation
+terminal_resize  -> backend resize
+terminal_close   -> backend close and status update
+```
+
+## Output Streaming
+
+Terminal output still uses the tmux-compatible path:
+
+1. `pipe-pane` writes to `<terminal-base-dir>/sessions/{id}/terminal.log`
+2. a watcher tails new bytes from that log
+3. Bud emits `terminal_output` frames with base64-encoded chunks
+
+The internal split keeps this behavior intact while isolating tmux-specific command construction in the backend adapter.
+
+## Readiness
+
+The terminal runtime currently supports several wait/assessment paths:
+
+- output quiescence for the common settled shell path
+- screen-change / screen-settled waits for explicit observe/send flows
+- legacy activity-based readiness for low-level `terminal_input`
+
+These waits are owned above the backend layer so future PTY/mosh-like backends can reuse the same readiness and delta contract.
 
 ## Usage
 
@@ -69,11 +108,12 @@ cargo run -- --terminal-enabled
 ```
 
 On first run without a stored device secret, the daemon:
-1. Generates or loads a stable `installation_id`
-2. Calls `/api/device-auth/start`
-3. Prints a claim URL plus terminal QR code
-4. Polls `/api/device-auth/poll` until the browser approves the claim
-5. Persists the issued `bud_id` and `device_secret` to the configured identity path (default: `~/.bud/identity.json`)
+
+1. generates or loads a stable `installation_id`
+2. calls `/api/device-auth/start`
+3. prints a claim URL plus terminal QR code
+4. polls `/api/device-auth/poll` until approval
+5. persists `bud_id` and `device_secret` to the configured identity path
 
 ### Legacy Manual Enrollment
 
@@ -87,18 +127,9 @@ cargo run -- --token <enrollment-token> --terminal-enabled
 cargo run -- --terminal-enabled
 ```
 
-The daemon:
-1. Loads identity from the configured identity path (default: `~/.bud/identity.json`)
-2. Loads `installation_id` from a sibling `installation-id` file next to the identity file
-3. Sends `hello` frame with `bud_id`
-4. Responds to HMAC challenge with proof
-5. Receives `hello_ack` confirming session
+The daemon loads the stored identity plus sibling `installation-id`, sends `hello`, answers the HMAC challenge, and resumes the normal runtime loop.
 
-If the stored identity file is missing, malformed, or has an empty device secret, the daemon treats it as unusable and immediately re-enters the device-claim flow instead of crashing.
-
-Running Bud from another shell directory does not relocate daemon state on its own. For local multi-account testing, developers should point `--identity-file` and `--terminal-base-dir` at a per-instance directory, which also keeps the derived `installation-id` separate for each local Bud.
-
-### CLI Options
+## CLI Options
 
 | Option | Env Variable | Default | Description |
 |--------|--------------|---------|-------------|
@@ -113,124 +144,25 @@ Running Bud from another shell directory does not relocate daemon state on its o
 | `--terminal-rows` | `BUD_TERMINAL_ROWS` | `50` | Terminal height |
 | `--debug` | `BUD_DEBUG` | `false` | Debug logging |
 
-## Architecture
-
-```
-                    ┌─────────────────────────────────┐
-                    │           BudApp                │
-                    │                                 │
-                    │  ┌─────────────────────────┐   │
-                    │  │     WebSocket Layer     │   │
-                    │  │  (connect, reconnect,   │   │
-                    │  │   heartbeat, dispatch)  │   │
-                    │  └───────────┬─────────────┘   │
-                    │              │                  │
-                    │  ┌───────────┴───────────┐     │
-                    │  │                       │     │
-                    │  ▼                       ▼     │
-                    │ ┌────────────┐ ┌─────────────┐│
-                    │ │RunExecutor │ │TerminalMgr ││
-                    │ │ (one-shot  │ │  (tmux     ││
-                    │ │  commands) │ │  sessions) ││
-                    │ └────────────┘ └─────────────┘│
-                    │                       │        │
-                    │               ┌───────┴──────┐ │
-                    │               │  Readiness   │ │
-                    │               │  Detection   │ │
-                    │               └──────────────┘ │
-                    └─────────────────────────────────┘
-                                    │
-                             WebSocket (TLS)
-                                    │
-                                    ▼
-                            ┌──────────────┐
-                            │   Service    │
-                            │  (Node.js)   │
-                            └──────────────┘
-```
-
-## Terminal Session Lifecycle
-
-```
-Service Request              Daemon Action
-────────────────              ─────────────
-terminal_ensure    →    Check/create tmux session
-                        Seed tmux shell env with deterministic terminal color defaults
-                        Start pipe-pane logging
-                        Send terminal_status(ready)
-
-terminal_input     →    tmux send-keys (text + Enter, with a short text→Enter pause)
-                        Optional: spawn readiness detector
-
-terminal_send      →    tmux send-keys (structured text/keys, with a short text→Enter pause)
-                        Primary send-first path for shell commands and interactive input
-                        Pre-send baseline + output-quiescence wait by default
-                        Optional: explicit changed / shell_ready / none variants
-                        Send terminal_send_result
-
-terminal_observe   →    tmux capture-pane
-                        Default: return delta; explicit screen/history available
-                        Optional: wait with changed or settled before capture
-                        Send terminal_observe_result
-
-terminal_close     →    tmux kill-session
-                        Send terminal_status(closed)
-```
-
-## Output Streaming
-
-Terminal output flows through two mechanisms:
-
-1. **pipe-pane logging**: `tmux pipe-pane` writes to `<terminal-base-dir>/sessions/{id}/terminal.log` (default base dir: `~/.bud`)
-2. **File watcher**: Polls log file every 50ms for new bytes
-3. **WebSocket frames**: Sends `terminal_output` with base64-encoded chunks
-
-## Readiness Detection
-
-Two strategies based on terminal context:
-
-### Quiescence-Based (Shell Commands)
-
-For traditional shell commands, monitors output file for silence:
-- Waits for `quiescence_ms` (default 1500ms) of no new output
-- Analyzes last line for prompt patterns
-- Returns confidence score (0.0-1.0)
-
-### Activity-Based (TUI/REPL Apps)
-
-For interactive programs like Claude Code:
-- Compares `capture-pane` hashes at intervals
-- Waits for N consecutive identical screens
-- Handles apps with natural processing pauses
-
-For the Phase 6/7 agent-facing send/observe path specifically:
-- `terminal.send` now waits for output quiescence by default and only falls back early when the configured timeout expires
-- the existing `pipe-pane` watcher doubles as the settle detector via shared in-memory output-activity state
-- `terminal_send_result` includes dispatch success, additive delta evidence, and timeout-aware partial-progress readiness
-- explicit agent-facing waits still use `changed` / `settled`, but only `changed` stays on the immediate screen-diff loop
-- the older activity-based detector remains for low-level `terminal_input` readiness events
-- default `terminal.observe` now returns additive delta and only replays full screen/history when explicitly requested
-- delta text is lightly normalized for LLM consumption by stripping separator-only lines made from one repeated non-alphanumeric glyph run of 4+ characters; explicit `screen` / `history` output remains unchanged
-
 ## Dependencies
 
-### Runtime Requirements
+### Runtime requirements
 
-- **tmux** - Required for terminal features (optional feature)
-- **bash/sh** - For shell command execution
+- `tmux` for the current terminal backend
+- `bash` or `sh` for shell execution
 
-### Build Requirements
+### Build requirements
 
 - Rust stable toolchain
-- System libraries for TLS (via rustls-native-certs)
+- system trust store support for TLS
 
 ## Known Issues
 
 <!-- SPEC:TODO -->
-- Reconnection can leave orphaned tmux sessions if daemon crashes
-- No graceful shutdown handling for terminal sessions
-- Identity file permissions not verified on load (only set on create)
-- The device claim flow assumes the service HTTP origin is derivable from the configured WebSocket URL
+- The service contract still carries tmux-shaped surface area (`tmux_session`, tmux backend capability names) for compatibility during the refactor; a follow-up should remove that leakage once the new module split is proven correct.
+- Readiness/state handling is more centralized than before, but the runtime still contains multiple wait strategies that should continue converging as additional backends are introduced.
+- The daemon still assumes the claim-flow HTTP origin can be derived from the configured WebSocket URL.
+- The legacy queued `run` path remains by design with limited ownership; it is retained as reference functionality for future capability work rather than as a first-class runtime direction.
 
 ---
 
