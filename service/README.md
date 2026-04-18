@@ -93,13 +93,13 @@ Operational constraints for the prototype environment:
   - `https://bud.example.com/api/auth/callback/github`
   - `https://bud.example.com/api/auth/callback/google`
 - Bud daemons should target the same public origin via `BUD_SERVER_URL=wss://bud.example.com/ws`
-- do not use `pnpm db:push` in the deployed environment; use an explicit checked-in migration path instead
+- use `pnpm db:migrate` in staging or other deployed environments; keep `pnpm db:push` for local development only
 - publish the first-party mobile client ids in `OAUTH_TRUSTED_CLIENT_IDS`
 - run the environment-specific iOS provisioning script before handing the bundle to mobile
 
 ## Optional Env
 
-Auth and Bud claim testing do not require an LLM provider key. Chat/agent execution does.
+Auth and Bud claim testing do not require an LLM provider key, and the service now boots cleanly without one. Chat/agent execution still needs at least one configured provider.
 
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
@@ -120,11 +120,11 @@ Auth and Bud claim testing do not require an LLM provider key. Chat/agent execut
 | `pnpm db:migrate` | Apply checked-in migrations for production-like environments. |
 | `pnpm db:migrate:staging` | Apply checked-in migrations using `.env.staging`. |
 | `pnpm db:studio` | Open Drizzle Studio. |
-| `pnpm db:seed` | Seed legacy/manual enrollment-token data for dev. |
+| `pnpm db:seed` | Seed manual enrollment-token data for dev. |
 | `pnpm oauth:provision:ios-local` | Upsert the fixed local iOS OAuth client and print the exact local auth bundle. |
 | `pnpm oauth:provision:ios-staging` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using `.env.staging`. |
 
-Local development for this repo still uses `db:push`. The prototype deployment plan assumes deployed environments use the checked-in migration path instead of `db:push`.
+Local development for this repo uses `db:push`. Staging uses `db:migrate` against the checked-in migration chain.
 
 ## Local Test Flow
 
@@ -153,6 +153,8 @@ When creating a new non-local environment, make sure all of these are true toget
 - Better Auth is mounted at `/api/auth/*`.
 - Current-user normalization is served from `/api/me`.
 - Device-claim bootstrap lives at `/api/device-auth/*`.
+- Internal service ownership is now split so thread transport lives under `src/routes/threads/`, terminal runtime helpers live under `src/runtime/terminal/`, and the Bud WebSocket connection state machine lives in `src/ws/bud-connection.ts`.
+- Agent orchestration is now split so `src/agent/` has dedicated conversation-loader, model-runner, terminal-tool-executor, transcript-writer, and cancellation modules instead of one large runtime file owning every concern.
 - `/readyz` is the intended deploy/readiness check; `/healthz` is lightweight liveness.
 - Local iOS auth should target the public `http://localhost:5173` origin, not the private service port.
 - The prototype deployment keeps `APP_BASE_URL` and `BETTER_AUTH_URL` on the same public origin.

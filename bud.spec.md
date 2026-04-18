@@ -122,13 +122,13 @@ bud/
 ├── service/                # Node.js backend service
 │   ├── src/
 │   │   ├── auth/           # Better Auth bridge + session helpers
-│   │   ├── agent/          # LLM integration (OpenAI Responses API)
+│   │   ├── agent/          # LLM integration split across conversation/model/tool/transcript ownership helpers
 │   │   ├── db/             # Database layer (Drizzle ORM)
-│   │   ├── routes/         # HTTP API endpoints
-│   │   ├── runtime/        # Session & run management
+│   │   ├── routes/         # HTTP API endpoints, with split thread submodules under routes/threads/
+│   │   ├── runtime/        # Terminal-session and agent runtime state management, including runtime/terminal/ helpers
 │   │   ├── terminal/       # Terminal utilities (readiness detection)
-│   │   └── ws/             # WebSocket gateways
-│   ├── drizzle/            # Database migrations
+│   │   └── ws/             # WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
+│   ├── drizzle/            # Checked-in staging migration history
 │   └── scripts/            # Utility scripts
 │
 ├── web/                    # React frontend
@@ -243,7 +243,7 @@ User Message
          │
          ▼
 ┌─────────────────┐
-│  OpenAI Call    │ ← Responses API with tools
+│  Model Runner   │ ← Responses API with tools
 └────────┬────────┘
          │
     ┌────┴────┐
@@ -269,6 +269,12 @@ User Message
 **Available Tools**:
 - `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and one semantic key gesture at a time (for example `key:"ctrl+c"`)
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
+
+Current service ownership split:
+- `conversation-loader` builds canonical transcript context from persisted rows
+- `model-runner` owns provider resolution, reasoning normalization, draft streaming, and tool-call parsing
+- `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
+- `transcript-writer` owns durable assistant/tool writes plus runtime emission boundaries
 
 ### 3. Terminal Readiness Detection
 
@@ -357,7 +363,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 
 ## Database Schema
 
-Core tables (managed by Drizzle migrations):
+Core tables (schema-first locally via `db:push`, with checked-in migrations used for staging):
 
 | Table | Purpose |
 |-------|---------|
@@ -365,11 +371,9 @@ Core tables (managed by Drizzle migrations):
 | `enrollment_token` | One-time registration tokens |
 | `thread` | Conversation containers |
 | `message` | Chat messages |
-| `run` | Agent execution runs (legacy) |
-| `run_step` | Individual tool calls in runs |
-| `run_log` | Run output logs |
-| `session` | Legacy terminal sessions |
-| `session_log` | Legacy session output |
+| `run` | Legacy standalone run records retained in schema pending explicit schema cleanup after the service refactor |
+| `run_step` | Legacy standalone run steps retained in schema pending explicit schema cleanup after the service refactor |
+| `run_log` | Legacy standalone run output logs retained in schema during the service refactor |
 | `terminal_session` | Thread-scoped terminal sessions |
 | `terminal_session_output` | Terminal output chunks |
 | `terminal_session_input_log` | Input audit log |
@@ -394,7 +398,7 @@ Core tables (managed by Drizzle migrations):
 # Service
 cd service
 pnpm install
-pnpm db:migrate
+pnpm db:push
 pnpm dev
 
 # Web UI (separate terminal)
@@ -562,6 +566,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
 | [review/service-layer-implementation-review.md](./review/service-layer-implementation-review.md) | Full review of the current `service/` implementation, covering ownership-boundary regressions, provider/bootstrap gaps, terminal/runtime cancellation issues, legacy run overlap, and the recommended modularization sequence before a service refactor |
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
+| [debug/service-refactor-phase-1-contract-bugs.md](./debug/service-refactor-phase-1-contract-bugs.md) | Debug note for Phase 1 of the service refactor, covering provider-less boot, shared enrollment-token hashing, legacy run-surface removal, and the Node REPL prompt-classification fix |
+| [debug/service-refactor-phase-2-runtime-and-transport-split.md](./debug/service-refactor-phase-2-runtime-and-transport-split.md) | Debug note for the next service-refactor slice, covering terminal-runtime ownership extraction, pending terminal wait fast-fail behavior, and the route/gateway decomposition rationale |
 | [debug/ios-local-oauth-client-provisioning-id-null.md](./debug/ios-local-oauth-client-provisioning-id-null.md) | Debug note documenting why the first run of `pnpm oauth:provision:ios-local` fails on a fresh database: the provisioning script omits the required `auth.oauthClient.id` primary key on insert |
 | [debug/api-me-opaque-access-token.md](./debug/api-me-opaque-access-token.md) | Debug note documenting why `GET /api/me` returned `401 no token payload`: the token endpoint was allowed to mint opaque access tokens while Bud's bearer bootstrap path only accepted JWT API tokens |
 | [debug/api-me-issuer-mismatch.md](./debug/api-me-issuer-mismatch.md) | Debug note documenting why `GET /api/me` can still fail after JWT token minting succeeds: the bearer verifier defaulted to the bare Better Auth origin instead of the mounted `/api/auth` issuer |

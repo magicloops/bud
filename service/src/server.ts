@@ -6,9 +6,7 @@ import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
-import { RunEventBus, TerminalEventBus } from "./runtime/event-bus.js";
-import { RunManager } from "./runtime/run-manager.js";
-import { registerRunRoutes } from "./routes/runs.js";
+import { TerminalEventBus } from "./runtime/event-bus.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
 import { registerModelsRoutes } from "./routes/models.js";
 import { AgentService, ThreadTitleService } from "./agent/index.js";
@@ -47,9 +45,6 @@ export async function buildServer(): Promise<FastifyInstance> {
     },
   );
 
-  const eventBus = new RunEventBus();
-  const runLogger = server.log.child({ component: "run_manager" });
-  const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
   const terminalEvents = new TerminalEventBus();
   const agentRuntime = new AgentRuntimeStateManager();
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
@@ -96,16 +91,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerBudRoutes(server, terminalSessionManager);
   await registerThreadRoutes(
     server,
-    runManager,
     agentService,
     agentRuntime,
     contextSyncService,
     threadTitleService,
+    terminalSessionManager,
   );
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
-  await registerRunRoutes(server, runManager);
   await registerModelsRoutes(server);
-  await registerWsGateway(server, runManager, terminalSessionManager);
+  await registerWsGateway(server, terminalSessionManager);
 
   server.addHook("onClose", async () => {
     terminalSessionManager.stopIdleChecks();
@@ -145,33 +139,6 @@ export async function buildServer(): Promise<FastifyInstance> {
       version: SERVICE_VERSION,
       time: new Date().toISOString(),
       checks,
-    });
-  });
-
-  server.get("/api/runs/:runId/stream", (request, reply) => {
-    const runId = (request.params as { runId: string }).runId;
-    const detach = eventBus.attach(runId, reply);
-    reply.raw.on("close", detach);
-  });
-
-  server.get("/api/terminals/:budId/stream", (request, reply) => {
-    const budId = (request.params as { budId: string }).budId;
-    const detach = terminalEvents.attach(budId, reply);
-
-    // Send periodic heartbeat to detect stale connections
-    // 1s in dev for faster detection, 5s in production
-    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
-    const heartbeatInterval = setInterval(() => {
-      try {
-        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
-      } catch {
-        clearInterval(heartbeatInterval);
-      }
-    }, heartbeatMs);
-
-    reply.raw.on("close", () => {
-      clearInterval(heartbeatInterval);
-      detach();
     });
   });
 

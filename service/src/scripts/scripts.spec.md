@@ -4,7 +4,7 @@ Database utility scripts for development and operations.
 
 ## Purpose
 
-Standalone scripts for database management and auth/bootstrap tasks like seeding, migration verification, table inspection, and first-party iOS OAuth-client provisioning for local and staging environments.
+Standalone scripts for database management and auth/bootstrap tasks like local schema push, staging migration alignment, token seeding, table inspection, and first-party iOS OAuth-client provisioning.
 
 ## Files
 
@@ -27,7 +27,7 @@ pnpm db:push
 
 Custom env file example:
 ```bash
-DOTENV_CONFIG_PATH=.env.staging pnpm db:push
+DOTENV_CONFIG_PATH=.env.local-alt pnpm db:push
 ```
 
 **Why It Exists**:
@@ -133,8 +133,9 @@ pnpm oauth:provision:ios-staging
 Creates initial development data.
 
 **Creates**:
-- Sample enrollment token (valid for 24 hours)
-- Outputs token for use with bud daemon
+- Sample or overridden Bud row for local development
+- Sample enrollment token row (valid for 24 hours by default)
+- Uses the shared enrollment-token hash helper so seeded tokens match gateway validation exactly
 
 **Usage**:
 ```bash
@@ -142,10 +143,7 @@ npx tsx src/scripts/seed.ts
 ```
 
 **Output**:
-```
-Seeded token: tok_<hash>
-Use this token to enroll a new bud
-```
+- Prints the seeded bud id, plain enrollment token, hashed token, and expiration timestamp
 
 ### `check-tables.ts`
 

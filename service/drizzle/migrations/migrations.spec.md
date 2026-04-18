@@ -4,7 +4,7 @@ SQL migration files generated or maintained for schema evolution.
 
 ## Purpose
 
-Contains sequential SQL migrations that transform the database schema from one version to the next. Managed by Drizzle metadata under `meta/` and applied via `pnpm db:migrate`.
+Contains the checked-in SQL migration chain used to align staging with the schema-first local workflow. Managed by Drizzle metadata under `meta/` and applied via `pnpm db:migrate`.
 
 ## Files
 
@@ -104,13 +104,13 @@ Drizzle Kit metadata tracking migration state. Contains:
 ## Usage
 
 ```bash
-# Generate migration from schema changes
+# Generate migration when staging history must catch up with schema.ts
 pnpm db:generate
 
-# Apply pending migrations
+# Apply pending migrations in staging/deployed environments
 pnpm db:migrate
 
-# Push schema directly (dev only)
+# Push schema directly for local development
 pnpm db:push
 ```
 

@@ -7,14 +7,43 @@ WebSocket gateway for bud daemon connections.
 Handles real-time communication between the service and bud daemons via WebSocket:
 - Daemon connections and authentication
 - Device-secret reauth after browser-mediated claim bootstrap
-- Command dispatch and output streaming
 - Terminal session management (tmux-backed)
+- Terminal send/observe result routing plus Bud presence tracking
 
 ## Files
 
 ### `gateway.ts`
 
-Main bud daemon WebSocket gateway (~800 lines).
+Thin Bud WebSocket gateway entrypoint.
+
+Current responsibilities:
+- expose `/ws`
+- install the gateway-scoped debug logger
+- export public tracker/query helpers (`getActiveBudIds()`, `isBudOnline()`, `sendFrameToBud()`)
+- construct the extracted `BudConnection` runtime for each accepted socket
+
+### `bud-connection.ts`
+
+Primary Bud daemon connection state machine extracted from `gateway.ts`.
+
+Owns:
+- hello / hello_proof auth flow
+- heartbeat handling
+- terminal frame parsing and routing
+- active-session tracker registration and timeout scheduling
+- Bud offline transition side effects
+
+### `protocol.ts`
+
+Shared Zod schemas and type unions for `/ws` frames and connection states.
+
+### `session-trackers.ts`
+
+In-memory active-Bud tracker registry and helper functions used by both the gateway shell and the extracted Bud connection runtime.
+
+### `debug.ts`
+
+Small gateway logger helper used by both `gateway.ts` and `bud-connection.ts`.
 
 **Connection Lifecycle**:
 
@@ -25,7 +54,7 @@ Browser/Client                 Service                      Bud Daemon
      │                           │                              │
      │                           │◄───── hello ─────────────────│
      │                           │                              │
-     │                           │  (legacy token enrollment OR │
+     │                           │   (enrollment token or       │
      │                           │   challenge-response auth)   │
      │                           │                              │
      │                           │────── hello_ack ────────────►│
@@ -42,8 +71,6 @@ Browser/Client                 Service                      Bud Daemon
 | `TerminalEnvelopeSchema` | Terminal frame validation (proto v0.2) |
 | `HelloSchema` | Initial handshake from bud |
 | `HelloProofSchema` | HMAC challenge response |
-| `StreamSchema` | stdout/stderr chunks |
-| `RunFinishedSchema` | Command completion |
 | `TerminalStatusSchema` | Terminal state changes |
 | `TerminalOutputSchema` | Terminal output chunks |
 | `TerminalReadySchema` | Readiness assessments |
@@ -62,19 +89,7 @@ type ConnectionState =
   | { kind: "closed" };
 ```
 
-**Session Tracking**:
-
-```typescript
-const sessions = new Map<string, SessionTracker>();
-
-interface SessionTracker {
-  budId: string;
-  sessionId: string;
-  lastHeartbeat: number;
-  socket: WebSocket;
-  timeout?: TimeoutHandle;
-}
-```
+**Session Tracking** now lives in `session-trackers.ts` and remains the authoritative in-memory Bud routing table.
 
 **Active-Tracker Guardrails**:
 
@@ -86,18 +101,26 @@ interface SessionTracker {
 
 ### `gateway.test.ts`
 
-Standalone Node test coverage for the active-tracker helpers in `gateway.ts`.
+Standalone Node test coverage for the active-tracker helpers re-exported through `gateway.ts`.
 
 **Current Coverage**:
 - replacing the active tracker clears the previous timeout
 - stale cleanup from a superseded tracker is ignored
 - only the currently registered tracker is treated as authoritative
+- `sendFrameToBud(...)` only writes to the authoritative open socket and refuses missing/closed Bud sessions
+
+### `bud-connection.test.ts`
+
+Direct regression coverage for the extracted Bud connection runtime.
+
+**Current Coverage**:
+- offline transitions reject pending terminal waits before cache clearing, suspend, and offline emission side effects run
 
 **Exported Functions**:
 
 | Function | Purpose |
 |----------|---------|
-| `registerWsGateway(server, ...)` | Setup `/ws` route |
+| `registerWsGateway(server, ...)` | Setup `/ws` route and construct `BudConnection` instances |
 | `getActiveBudIds()` | List connected bud IDs |
 | `isBudOnline(budId)` | Check if bud is connected |
 | `sendFrameToBud(budId, frame)` | Send message to specific bud |
@@ -148,13 +171,13 @@ If a stored Bud already has an `installationId`, the gateway rejects a mismatche
 | `hello` | `handleHello()` - Start auth flow |
 | `hello_proof` | `handleHelloProof()` - Verify HMAC |
 | `heartbeat` | Update lastHeartbeat timestamp |
-| `stdout` / `stderr` | `runManager.handleStreamChunk()` |
-| `run_finished` | `runManager.handleRunFinished()` |
 | `terminal_status` | `terminalSessionManager.handleStatus()` |
 | `terminal_output` | `terminalSessionManager.handleOutput()` |
 | `terminal_ready` | `terminalSessionManager.handleTerminalReady()` with the parsed readiness assessment |
 | `terminal_observe_result` | `terminalSessionManager.handleObserveResult()` |
 | `terminal_send_result` | `terminalSessionManager.handleSendResult()` with optional additive `delta` (`changed`, `text`, `truncated`) plus settled/timeout readiness assessment |
+
+Enrollment-token validation now routes through the shared `auth/enrollment-token.ts` helper so seed/bootstrap writes and gateway checks use the same hash contract.
 
 **Capabilities Tracking**:
 
@@ -186,11 +209,12 @@ The gateway still tolerates deprecated tmux-shaped hello fields from older daemo
 | `fastify` | Server types |
 | `ws` | WebSocket types |
 | `zod` | Frame validation |
-| `crypto` | Token hashing, HMAC |
+| `crypto` | Challenge-response HMAC and nonce generation |
 | `../db/client.js` | Database access |
 | `../db/schema.js` | Bud/token tables |
 | `../config.js` | Configuration |
-| `../runtime/*.js` | Managers for event routing |
+| `../auth/enrollment-token.js` | Shared enrollment-token hashing |
+| `../runtime/*.js` | Terminal runtime and presence routing |
 
 ## TODOs / Technical Debt
 

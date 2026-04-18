@@ -1,109 +1,109 @@
-# Bud Protocol (v0.1)
+# Bud Protocol
 
-**Scope**  
-This document specifies the on‑wire protocols used by Bud:
+## Scope
 
-- **Device Control Channel (Bud ⇄ Backend)** over **WSS** with JSON frames.
-- **Browser Event Stream (Backend → Web UI)** over **SSE**.
-- Minimal data types, sequencing, state, and error codes for the PoC.
+This document specifies the active on-wire contracts used by Bud:
 
-> **Non‑goals (for v0.1):** file transfer, artifacts, multi‑concurrency per Bud, gRPC fallback.
+- Bud daemon ⇄ service over WebSocket JSON frames at `/ws`
+- Service → browser over SSE for thread-scoped agent and terminal streams
+- Browser → service thread message writes that participate in the live agent-stream contract
+
+The legacy standalone run transport (`run`, `stdout`, `stderr`, `cancel`, `run_finished`) and browser `/api/runs/*` stream are no longer part of the supported contract.
 
 ---
 
-## 0. Conventions & Terms
+## 1. Conventions
 
-- **Bud**: the Rust daemon running on a host.
-- **Backend**: the Node/TS service.
-- **Run**: one execution of a shell command requested by the backend.
-- **Frame**: a single JSON message over WSS.
-- **Event**: a single SSE event to the browser.
-
-Normative wording: **MUST/SHOULD/MAY** as defined by RFC‑2119.
+- **Bud**: the Rust daemon running on a device
+- **Service**: the Node/Fastify backend
+- **Browser client**: the web or native product surface consuming REST/SSE
+- **Thread**: the user-owned conversation that also owns the active terminal session
+- **Terminal session**: the thread-scoped persistent shell/REPL/TUI runtime on Bud
+- **Frame**: one JSON message on `/ws`
+- **Event**: one SSE frame
 
 Identifiers:
-- `ulid`: canonical string ULID.
-- `bud_id`, `session_id`, `run_id`, `event_id`: stable string IDs. `run_id` SHOULD be ULID‑like.
+- `bud_id`: stable device identifier
+- `thread_id`: stable conversation identifier
+- `session_id`: stable thread-terminal identifier
+- `message_id`: persisted transcript-row identifier
+- `client_id`: stable client-visible message identity used across optimistic UI, live runtime, and later persistence
+- `request_id`: per-request id for terminal request/response flows
 
 Timestamps:
-- `ts`: **milliseconds since UNIX epoch** (number).
+- `ts` is milliseconds since UNIX epoch on WebSocket frames
+- HTTP/SSE payloads use ISO-8601 strings unless noted otherwise
 
-Strings:
-- `data_b64` is **base64url** without padding.
-
----
-
-## 1. Versioning & Compatibility
-
-- All frames MUST include `proto`.
-- Current protocol version: **`"0.1"`**.
-- Unknown fields MUST be ignored.
-- A reserved `ext` object is present on all frames for forward extension.
-
-Breaking changes will bump `proto` (e.g., `0.2`).
+Wire-format rules:
+- Bud-owned request/response bodies, SSE payloads, and WebSocket payloads use `snake_case`
+- Unknown fields must be ignored
+- Every WebSocket frame includes a reserved `ext` object for forward compatibility
 
 ---
 
-## 2. Transport
+## 2. Versioning
 
-### 2.1 Bud ⇄ Backend (WSS)
+- Base WebSocket protocol version: `proto: "0.1"`
+- Terminal protocol extension version: `proto: "0.2"`
+- Unknown fields must be ignored by receivers
+- Breaking wire changes must bump the relevant `proto`
+
+---
+
+## 3. Transports
+
+### 3.1 Bud ⇄ Service WebSocket
 
 - URL: `wss://<host>/ws`
-- Encoding: **UTF‑8 JSON**.
-- Max frame size: **64 KiB** (server MAY close on larger).
-- Heartbeats:
-  - Bud SHOULD send `heartbeat` every **30 s**.
-  - Backend marks Bud **offline** after **90 s** inactivity.
-- Backpressure:
-  - Bud SHOULD limit in‑flight stream chunks (see §5.3).
-  - Server MAY send `log_ack` (optional) to advance Bud’s send window.
+- Encoding: UTF-8 JSON
+- Bud should send `heartbeat` every 30 seconds
+- Service marks a Bud offline after `offlineGraceSec` with no accepted heartbeat
+- Bud output chunks should stay at or below 16 KiB
 
-### 2.2 Backend → Browser (SSE)
+### 3.2 Agent Runtime Snapshot
 
-- URL: `GET /api/runs/:run_id/stream`
-- Headers:  
-  `Content-Type: text/event-stream`,  
-  `Cache-Control: no-cache, no-transform`,  
-  `Connection: keep-alive`
-- Keep‑alive comment every **15 s**.
-- Client MAY use `Last-Event-ID` or a route-specific resume query parameter when the endpoint supports replay.
+- URL: `GET /api/threads/:thread_id/agent/state`
+- Returns the current best-effort in-flight runtime snapshot for the authorized viewer
+- Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
 
-### 2.3 Terminal Event Stream (Browser)
+### 3.3 Agent SSE Stream
+
+- URL: `GET /api/threads/:thread_id/agent/stream`
+- Authorized, thread-scoped SSE stream
+- Fresh attach with no cursor is live-only
+- Resume uses `after=<cursor>` primarily; `Last-Event-ID` and `last_event_id` are compatibility inputs
+- SSE frame `id:` is the opaque bounded-resume cursor shared with `/agent/state.stream_cursor`
+
+### 3.4 Terminal SSE Stream
 
 - URL: `GET /api/threads/:thread_id/terminal/stream`
-- Same SSE headers + keep-alive semantics as runs.
-- Events: `terminal.output`, `terminal.status`, `terminal.ready`, `terminal.bud_offline`, `terminal.bud_online`.
-- Used by the workbench to receive terminal output.
+- Authorized, thread-scoped SSE stream
+- Carries live terminal output/status/readiness plus Bud online/offline notices for the owning thread
+- Historical backfill comes from `GET /api/threads/:thread_id/terminal/history`, not SSE replay
 
-### 2.4 Agent Event Stream (Browser)
-
-- Companion runtime snapshot route: `GET /api/threads/:thread_id/agent/state`
-- URL: `GET /api/threads/:thread_id/agent/stream`
-- Same SSE headers + keep-alive semantics as runs.
-- Events: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`, `heartbeat`.
-- Used by the workbench to receive agent conversation events.
-- Separate from terminal stream to support offline scenarios (conversation without terminal).
-- Draft assistant text is streamed before canonical persistence, then successful agent payloads carry a per-turn `turn_id`, stable tool `call_id`, and canonical persisted transcript rows under `message`.
-- `/api/threads/:thread_id/agent/state` exposes `pending_tool.client_id` and `draft_assistant.client_id` for in-flight bootstrap.
-- Canonical persisted `message` payloads now include both `message_id` and `client_id`, and the assistant/tool SSE payloads also expose top-level `client_id` before persistence completes.
-- `GET /api/threads/:thread_id/agent/state` is the authoritative best-effort in-flight snapshot for pending tool, draft assistant, and the current agent resume cursor, including idle snapshots.
-- Fresh no-cursor agent-stream attaches are live-only. Bounded catch-up requires an explicit resume cursor such as `after=<cursor>`.
-- `thread.title` is a thread-scoped metadata event, not an assistant transcript row, but it shares the same SSE frame-id cursor space so clients can resume it through the normal agent stream.
-
-### 2.5 Thread Message Write (Browser)
+### 3.5 Thread Message Write
 
 - URL: `POST /api/threads/:thread_id/messages`
-- Request body: `{ "text": "...", "client_id"?: "uuidv7", "cwd"?: "...", "model"?: "...", "reasoning_effort"?: "none|low|medium|high" }`
-- First-party clients SHOULD generate UUIDv7 `client_id` values before optimistic send so the same identity survives UI bootstrap, live streaming, and later transcript persistence
-- New user-message writes return `201` with `{ "message_id": "uuid", "client_id": "uuidv7" }`
-- Duplicate same-thread user retries using the same authenticated `client_id` return `200` with the existing `{ "message_id": "uuid", "client_id": "uuidv7" }`
-- This is first-pass duplicate suppression, not a full replay-safe idempotency protocol
+- Request body:
+
+```json
+{
+  "text": "string",
+  "client_id": "uuidv7 optional",
+  "cwd": "string optional",
+  "model": "string optional",
+  "reasoning_effort": "none|low|medium|high optional"
+}
+```
+
+- New writes return `201 { "message_id": "...", "client_id": "..." }`
+- Duplicate same-thread retries using the same authenticated `client_id` return `200` with the existing identifiers
 
 ---
 
-## 3. Frame Envelope (Bud ⇄ Backend)
+## 4. WebSocket Envelope
 
-Every frame MUST include:
+Every `/ws` frame must include:
 
 ```json
 {
@@ -113,702 +113,467 @@ Every frame MUST include:
   "ts": 1731300000000,
   "ext": {}
 }
-````
+```
 
-* `proto`: protocol version string.
-* `type`: message type (see §4).
-* `id`: unique message ULID (producer generated).
-* `ts`: send timestamp (ms).
-* `ext`: reserved object for extensions (MUST be an object).
-
----
-
-## 4. Message Types (Bud ⇄ Backend)
-
-### 4.1 Enrollment & Identity
-
-Bud connects in **one** of two modes:
-
-* **First‑time enrollment** (copy/paste token).
-* **Reconnection** (challenge‑response using `device_secret`).
-
-#### 4.1.1 `hello` (Bud → Backend)
-
-*First‑time enrollment:*
+Terminal-specific frames use the terminal protocol version:
 
 ```json
 {
-  "proto":"0.1","type":"hello","id":"01...","ts":1731,
-  "name":"raspi-4","os":"linux","arch":"arm64","version":"0.1.0",
-  "token":"<opaque-enrollment-token>",
-  "capabilities":{"max_concurrency":1,"shell_default":"/bin/sh","sessions":true,"terminal":true,"terminal_proto":"0.2"},
-  "ext":{}
-}
-```
-
-`cwd` is optional; when omitted Bud runs the command from its current working directory and reports the resulting path via `run_finished.cwd`.
-
-*Reconnection (no token):*
-
-```json
-{
-  "proto":"0.1","type":"hello","id":"01...","ts":1731,
-  "name":"workstation","os":"linux","arch":"x86_64","version":"0.1.0",
-  "bud_id":"b_01H...",
-  "capabilities":{"max_concurrency":1,"shell_default":"/bin/sh","sessions":true,"terminal":true,"terminal_proto":"0.2"},
-  "ext":{}
-}
-```
-
-* Fields:
-
-  * `token`: present **only** on first‑time enrollment.
-  * `bud_id`: present **only** on reconnection.
-  * `capabilities`: advertised host features (see §9).
-
-#### 4.1.2 `hello_challenge` (Backend → Bud)
-
-*Sent only in reconnection flow:*
-
-```json
-{
-  "proto":"0.1","type":"hello_challenge","id":"01...","ts":1731,
-  "nonce":"base64url-32bytes",
-  "ext":{}
-}
-```
-
-#### 4.1.3 `hello_proof` (Bud → Backend)
-
-*Response to challenge using HMAC(device_secret, nonce):*
-
-```json
-{
-  "proto":"0.1","type":"hello_proof","id":"01...","ts":1731,
-  "bud_id":"b_01H...",
-  "hmac":"base64url",
-  "ext":{}
-}
-```
-
-#### 4.1.4 `hello_ack` (Backend → Bud)
-
-*On enrollment, server **issues** identity; on reconnection, confirms session.*
-
-```json
-{
-  "proto":"0.1","type":"hello_ack","id":"01...","ts":1731,
-  "session_id":"s_01H...",
-  "bud_id":"b_01H...",
-  "device_secret":"base64url-32bytes",   // ONLY on first-time enrollment
-  "heartbeat_sec":30,
-  "ext":{}
-}
-```
-
-> **Errors:** If enrollment fails or proof invalid, server sends `error` with `code` (see §8) and closes.
-
----
-
-### 4.2 Execution
-
-#### 4.2.1 `run` (Backend → Bud)
-
-```json
-{
-  "proto":"0.1","type":"run","id":"01...","ts":1731,
-  "run_id":"run_01H...",
-  "cmd":"git clone https://github.com/foo/bar && cd bar && ./run.sh",
-  "cwd":"~",
-  "env":{"CI":"1","GIT_ASKPASS":"/bin/true","LANG":"C.UTF-8"},
-  "timeout_ms":1800000,
-  "use_pty":false,
-  "shell":"/bin/bash",                   // OPTIONAL (default: see capabilities)
-  "ext":{}
-}
-```
-
-**Rules**
-
-* Bud MUST queue if busy and queue size allows; otherwise respond with `error(code:"BUD_BUSY")`.
-* Bud MUST execute in a **new process group**.
-* On timeout, Bud MUST terminate as per §4.2.4.
-
-#### 4.2.2 `stdout` / `stderr` (Bud → Backend)
-
-```json
-{
-  "proto":"0.1","type":"stdout","id":"01...","ts":1731,
-  "run_id":"run_01H...","seq":42,"data_b64":"...","ext":{}
-}
-```
-
-* `seq`: 0‑based, MUST increase by 1 per stream.
-* `data_b64`: raw bytes (base64url). Bud SHOULD split into chunks ≤ **16 KiB**.
-
-#### 4.2.3 `log_ack` (Backend → Bud) — OPTIONAL
-
-Allows explicit backpressure by acknowledging receipt up to sequence `upto`.
-
-```json
-{
-  "proto":"0.1","type":"log_ack","id":"01...","ts":1731,
-  "run_id":"run_01H...","stream":"stdout","upto":84,"ext":{}
-}
-```
-
-Bud MAY drop buffered chunks with `seq ≤ upto`.
-
-#### 4.2.4 `cancel` (Backend → Bud)
-
-```json
-{ "proto":"0.1","type":"cancel","id":"01...","ts":1731,
-  "run_id":"run_01H...","reason":"user","ext":{} }
-```
-
-* On `cancel`, Bud MUST:
-
-  1. send **SIGTERM** to the **process group**,
-  2. wait **5 s**, then
-  3. send **SIGKILL**.
-* Bud MUST still emit `run_finished`.
-
-#### 4.2.5 `run_finished` (Bud → Backend)
-
-```json
-{
-  "proto":"0.1","type":"run_finished","id":"01...","ts":1731,
-  "run_id":"run_01H...",
-  "exit_code":137,
-  "canceled":true,
-  "signal":"SIGKILL",
-  "error":null,
-  "cwd":"/home/bud/projects/service",
-  "killed_after_ms":5000,
-  "duration_ms":123456,
-  "ext":{}
-}
-```
-
-* If normal exit: `canceled:false`, omit `signal/killed_after_ms`.
-* Bud MUST include its resulting working directory in `cwd`.
-* On failures (e.g., spawn errors), Bud SHOULD set `error` with a human-readable description and set `exit_code` to `null`.
-
----
-
-### 4.3 Liveness & Errors
-
-#### 4.3.1 `heartbeat` (Bud → Backend)
-
-```json
-{ "proto":"0.1","type":"heartbeat","id":"01...","ts":1731,"ext":{} }
-```
-
-#### 4.3.2 `ping` / `pong` (Backend ⇄ Bud) — OPTIONAL
-
-Used by either side for latency checks.
-
-```json
-{ "proto":"0.1","type":"ping","id":"01...","ts":1731,"ext":{} }
-{ "proto":"0.1","type":"pong","id":"01...","ts":1731,"ext":{} }
-```
-
-#### 4.3.3 `error` (Either direction)
-
-```json
-{
-  "proto":"0.1","type":"error","id":"01...","ts":1731,
-  "code":"EXEC_FAILED",
-  "run_id":"run_01H...",     // OPTIONAL
-  "message":"Process spawn failed",
-  "ext":{}
-}
-```
-
-**Codes**: see §8.
-
-### 4.4 Terminal (tmux-backed, proto `0.2`)
-
-Bud and the backend share a dedicated terminal protocol for the persistent tmux-backed terminal. It uses the same envelope keys as the primary protocol (`type`, `proto`, `id`, `ts`, `ext`), but with `proto: "0.2"` to track the terminal surface independently.
-
-*Envelope (terminal frames)*
-
-```json
-{ "proto": "0.2", "type": "terminal_…", "id": "msg_01H...", "ts": 1731, "ext": {} }
-```
-
-#### 4.4.1 Backend → Bud Messages
-
-* `terminal_ensure` — create/adopt the tmux session
-  ```json
-  { "proto": "0.2", "type": "terminal_ensure", "id": "...", "ts": 1731,
-    "config": { "shell": "/bin/bash", "cwd": "~", "cols": 200, "rows": 50 }, "ext": {} }
-  ```
-
-* `terminal_input` — send input bytes to terminal
-  ```json
-  { "proto": "0.2", "type": "terminal_input", "id": "...", "ts": 1731,
-    "data": "base64-input-bytes", "await_ready": { "enabled": true }, "ext": {} }
-  ```
-
-* `terminal_resize` — resize tmux pane
-  ```json
-  { "proto": "0.2", "type": "terminal_resize", "id": "...", "ts": 1731,
-    "rows": 40, "cols": 120, "ext": {} }
-  ```
-
-* `terminal_close` — close the terminal session
-  ```json
-  { "proto": "0.2", "type": "terminal_close", "id": "...", "ts": 1731,
-    "reason": "requested", "ext": {} }
-  ```
-
-* `terminal_send` — send structured interactive input to the current program
-  ```json
-  { "proto": "0.2", "type": "terminal_send", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "send_01...",
-    "text": "pwd",
-    "submit": true,
-    "wait_for": "settled",
-    "timeout_ms": 30000,
-    "ext": {} }
-  ```
-
-  **Fields:**
-  * `session_id`: target terminal session ID
-  * `request_id`: unique ID for response correlation
-  * `text`: optional literal text to send; this is now the primary shell-command path as well as the interactive-input path
-  * `submit`: when true, Bud MUST press Enter after sending text
-  * `key`: optional semantic key gesture such as `ctrl+c`, `enter`, or `escape`
-  * `keys`: compatibility alias accepted during rollout only when it contains exactly one entry; new clients SHOULD use `key`
-  * `text` and `key` are mutually exclusive, and `submit` is only valid with `text`
-  * multiple gestures require multiple `terminal_send` calls; batching is intentionally not part of the canonical contract
-  * `observe_after_ms`: optional delay before the first capture only when `wait_for: "none"` is requested explicitly (default: 1000 in that mode)
-  * `wait_for`: `"none"` | `"shell_ready"` | `"changed"` | `"settled"` (default: `"settled"` for `terminal.send`)
-  * `timeout_ms`: max wait time for readiness (default: 30000 for `terminal.send`)
-
-* `terminal_observe` — explicitly inspect rendered screen / scrollback
-  ```json
-  { "proto": "0.2", "type": "terminal_observe", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "obs_01...",
-    "view": "delta",
-    "lines": -50,
-    "wait_for": "settled",
-    "timeout_ms": 30000,
-    "ext": {} }
-  ```
-
-  **Fields:**
-  * `view`: `"delta"` | `"screen"` | `"history"` (default: `"delta"`)
-  * `lines`: for `delta` / `history`, negative values mean recent scrollback lines
-
-#### 4.4.2 Bud → Backend Messages
-
-* `terminal_status` — current terminal state
-  ```json
-  { "proto": "0.2", "type": "terminal_status", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "state": "ready",
-    "info": { "pid": 1234, "cwd": "/home/bud", "cols": 200, "rows": 50, "output_log_bytes": 12345 },
-    "ext": {} }
-  ```
-  States: `none`, `creating`, `ready`, `active`, `idle`, `closed`
-
-* `terminal_output` — streamed output bytes
-  ```json
-  { "proto": "0.2", "type": "terminal_output", "id": "...", "ts": 1731,
-    "seq": 42, "data": "base64-output-bytes", "byte_offset": 12345, "ext": {} }
-  ```
-
-* `terminal_ready` — readiness assessment after input/command
-  ```json
-  { "proto": "0.2", "type": "terminal_ready", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "assessment": {
-      "ready": true,
-      "confidence": 0.95,
-      "trigger": "prompt_detected",
-      "prompt_type": "shell",
-      "hints": {
-        "looks_like_prompt": true,
-        "looks_like_confirmation": false,
-        "looks_like_password": false,
-        "looks_like_pager": false,
-        "looks_like_error": false,
-        "may_still_be_processing": false
-      }
-    },
-    "ext": {}
-  }
-  ```
-
-  **Readiness Assessment Fields:**
-  * `ready`: boolean — terminal is ready for next input
-  * `confidence`: 0.0–1.0 — confidence level (≥0.8 high, 0.5–0.8 medium, <0.5 low)
-  * `trigger`: `prompt_detected` | `quiescence` | `timeout` | `error` | `activity_stable` | `changed` | `settled`
-  * `prompt_type`: `shell` | `python` | `node` | `confirmation` | `password` | `pager` | `unknown`
-  * `hints`: object of boolean flags for agent decision-making
-
-* `terminal_send_result` — acknowledgement for `terminal_send`
-  ```json
-  { "proto": "0.2", "type": "terminal_send_result", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "send_01...",
-    "submitted": true,
-    "delta": {
-      "changed": true,
-      "text": "Do you want to proceed?\n1. Yes\n2. No",
-      "truncated": false
-    },
-    "readiness": { "ready": true, "confidence": 0.85, "trigger": "settled", "hints": { "looks_like_prompt": false, "looks_like_confirmation": false, "looks_like_password": false, "looks_like_pager": false, "looks_like_error": false, "may_still_be_processing": false }, "quiet_for_ms": 320, "activity_checks": 3, "stable_checks": 2 },
-    "error": null,
-    "ext": {} }
-  ```
-
-  **Fields:**
-  * `submitted`: true when Bud successfully dispatched the requested text+Enter gesture or semantic key gesture; this is transport success, not proof that the foreground program accepted or acted on the input
-  * `delta`: optional additive post-send delta
-    * `changed`: whether Bud observed a visible change relative to the pre-send baseline
-    * `text`: additive-only visible content from the current screen
-    * `truncated`: true when the delta fell back to a bounded excerpt
-  * `readiness`: readiness assessment derived from the post-send state or explicit wait mode
-    * `changed` returns on the first visible screen delta after the pre-send baseline
-    * `settled` waits for output quiescence derived from the existing `pipe-pane` watcher, then returns a final rendered delta/snapshot
-    * `timeout` returns the latest rendered delta plus conservative readiness hints instead of claiming successful completion
-  * `error`: error string when dispatch or capture failed
-
-* `terminal_observe_result` — response to `terminal_observe`
-  ```json
-  { "proto": "0.2", "type": "terminal_observe_result", "id": "...", "ts": 1731,
-    "session_id": "sess_01...",
-    "request_id": "obs_01...",
-    "view": "delta",
-    "output": "base64-encoded-delta-or-capture",
-    "output_bytes": 512,
-    "lines_captured": 8,
-    "changed": true,
-    "truncated": false,
-    "readiness": { "ready": true, "confidence": 0.85, "trigger": "settled", "hints": { "looks_like_prompt": false, "looks_like_confirmation": false, "looks_like_password": false, "looks_like_pager": false, "looks_like_error": false, "may_still_be_processing": false }, "quiet_for_ms": 330, "activity_checks": 4, "stable_checks": 3 },
-    "error": null,
-    "ext": {} }
-  ```
-
-  **Fields:**
-  * `view`: `"delta"` | `"screen"` | `"history"`
-  * `output`: base64-encoded payload for the selected view
-    * for `delta`, this is additive-only new/changed visible content
-    * for `screen`, this is the current full rendered screen
-    * for `history`, this is the requested scrollback/history window
-  * `changed` / `truncated`: populated for `view: "delta"` and omitted otherwise
-
-`terminal.send` and `terminal.observe` share the same delta engine, but they no longer use the same hot wait path for every mode. `changed` still uses immediate-start screen-diff waiting, while `settled` now waits on output quiescence derived from the existing `pipe-pane` watcher before performing one final `capture-pane`. The daemon also tracks the last delivered delta baseline per session so a default observe after send does not replay the same recently delivered transcript block.
-
-#### 4.4.3 Terminal SSE Events (Backend → Browser)
-
-The active browser client receives terminal events via SSE at `/api/threads/:thread_id/terminal/stream`:
-
-* `terminal.output` — base64 output bytes for xterm.js
-* `terminal.status` — terminal state changes
-* `terminal.ready` — readiness assessments for UI display
-* `terminal.bud_offline` — Bud disconnect signal with `{ bud_id, reason }`
-* `terminal.bud_online` — Bud reconnect signal with `{ bud_id }`
-* `heartbeat` — keep-alive (1s dev, 5s prod)
-
-The older bud-scoped `/api/terminals/:bud_id/stream` route remains mounted as a legacy surface and should not be used by new clients.
-
-#### 4.4.4 Terminal REST Endpoints
-
-* `POST /api/threads/:thread_id/terminal` — create or fetch the active thread-scoped terminal session row
-* `POST /api/threads/:thread_id/terminal/ensure` — ensure the thread-scoped terminal is running on Bud
-* `GET /api/threads/:thread_id/terminal` — get thread-scoped terminal session info
-* `GET /api/threads/:thread_id/terminal/history?bytes=N&since_offset=M` — fetch thread-scoped output history
-* `POST /api/threads/:thread_id/terminal/input` — send input `{ input: "..." }`
-* `POST /api/threads/:thread_id/terminal/resize` — resize terminal `{ cols, rows }`
-
-> Implementations MUST treat `ext` as reserved for forward compatibility; unknown fields MUST be ignored.
-
----
-
-## 5. Ordering, Delivery, and Limits
-
-* **Per‑run stream ordering**: Bud MUST preserve intra‑stream order (`stdout`, `stderr` each maintain `seq`).
-* **At‑least‑once** delivery: Backend MUST de‑dupe on `(run_id, stream, seq)`.
-* **Chunk sizes**: Bud SHOULD keep chunks ≤ **16 KiB**.
-* **In‑flight window**: Bud SHOULD keep ≤ **128** unsent or un‑acked chunks per stream to avoid memory blowups.
-* **Timeouts**:
-
-  * Default per‑run timeout is given by `timeout_ms`.
-  * Backend MAY impose a wall‑clock limit server‑side (out of scope for protocol).
-* **Queue**: Bud SHOULD cap incoming `run` queue at **10**; when full, return `error(code:"BUD_BUSY")`.
-
----
-
-## 6. Execution Semantics on Bud
-
-* Shell: Use `shell` if set; otherwise `capabilities.shell_default`.
-* Command wrapper: **`<shell> -lc "<cmd>"`**.
-* Environment: Merge of Bud default env and provided `env`.
-
-  * The following SHOULD be set by default:
-    `CI=1`, `LANG=C.UTF-8`, `GIT_ASKPASS=/bin/true`, `GIT_TERMINAL_PROMPT=0`
-* Process group: Each `run` MUST start a new process **group** to allow group signals on cancel.
-
----
-
-## 7. Browser Event Protocol (SSE)
-
-**Event names** and **payloads**. Every event includes:
-
-Current thread-scoped SSE payloads are route-specific. For `GET /api/threads/:thread_id/agent/stream`, the SSE frame `id:` is an opaque runtime cursor that can be used for bounded resume; the JSON payload does not embed a second `event_id`.
-
-### 7.1 Events
-
-* `status`
-  `{ "event_id":"...", "ts":1731, "phase":"queued|planning|running|canceling|succeeded|failed|canceled" }`
-
-* `agent.message_start`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7" }`
-
-* `agent.message_delta`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "delta":"Cloning " }`
-
-* `agent.message_done`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "text":"Cloning repository..." }`
-
-* `agent.message`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "message_id":"uuid", "text":"Cloning repository...", "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"assistant", "display_role":"Bud Agent", "content":"Cloning repository...", "metadata":{"status":"succeeded"}, "created_at":"2026-03-22T22:10:00.000Z" } }`
-
-* `agent.tool_call`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "name":"terminal.send", "args":{"text":"git status","submit":true} }`
-
-* `agent.tool_result`
-  `{ "turn_id":"01TURN...", "client_id":"uuidv7", "call_id":"call_123", "message_id":"uuid", "name":"terminal.send", "summary":"Attempted to send \"git status\" and press Enter; observed new terminal content", "readiness":{"ready":true,"confidence":0.84,"trigger":"settled"}, "message": { "message_id":"uuid", "client_id":"uuidv7", "role":"tool", "display_role":"Tool", "content":"{\"tool\":\"terminal.send\",...}", "metadata":{"tool":"terminal.send","call_id":"call_123","summary":"Attempted to send \\\"git status\\\" and press Enter; observed new terminal content"}, "created_at":"2026-03-22T22:09:58.000Z" } }`
-
-* `agent.resync_required`
-  `{ "error":"resync_required", "provided_cursor":"01CUR..." }`
-
-* `terminal.output`
-  `{ "event_id":"...", "ts":1731, "data":"base64url" }`
-
-* `terminal.status`
-  `{ "event_id":"...", "ts":1731, "state":"ready|active|idle|closed" }`
-
-* `terminal.ready`
-  `{ "event_id":"...", "ts":1731, "ready":true, "confidence":0.95 }`
-
-* `terminal.bud_offline`
-  `{ "event_id":"...", "ts":1731, "bud_id":"b_01H...", "reason":"disconnected" }`
-
-* `terminal.bud_online`
-  `{ "event_id":"...", "ts":1731, "bud_id":"b_01H..." }`
-
-* `final`
-  `{ "turn_id":"01TURN...", "status":"succeeded|failed|canceled", "message_id":"uuid?", "text":"Done.", "error":"..." }`
-
-
-### 7.2 SSE framing
-
-Server MUST emit in this format:
-
-```
-id: 01E...
-event: agent.message
-data: {"turn_id":"01TURN...","client_id":"uuidv7","message_id":"uuid","text":"...","message":{"message_id":"uuid","client_id":"uuidv7","role":"assistant","display_role":"Bud Agent","content":"...","metadata":{"status":"succeeded"},"created_at":"2026-03-22T22:10:00.000Z"}}
-
-\n
-```
-
-* Keep‑alive: `: heartbeat\n\n`
-* Assistant draft semantics: clients may build a temporary assistant row from `agent.message_start` / `agent.message_delta` / `agent.message_done`, but the persisted transcript row still arrives later as `agent.message`
-* Assistant/tool identity semantics: `/agent/state`, the draft/tool SSE events, and the later persisted transcript rows now share the same `client_id`
-* First-party reconciliation semantics: clients SHOULD key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`, while retaining `message_id` on persisted rows for cursors and debugging
-* Tool-result semantics: `summary` is the compact server-owned label for collapsed UI, while `truncated` / `output_truncation_reason` describe whether the raw tool output itself was partial
-* Agent runtime bootstrap: clients SHOULD fetch `GET /api/threads/:thread_id/agent/state` and treat its `stream_cursor` as the baseline resume token for the current in-flight snapshot.
-* Agent cursor semantics: for `GET /api/threads/:thread_id/agent/stream`, the SSE frame `id:` is the same opaque cursor space exposed as `/agent/state.stream_cursor`; after incorporating an event with `id: C_next`, the client SHOULD store `C_next` as the next resume cursor.
-* Fresh agent-stream attach: `GET /api/threads/:thread_id/agent/stream` with no cursor is live-only and MUST NOT replay old buffered `agent.*` or `final` events.
-* Thread metadata updates: `thread.title` events MAY appear on the same stream as agent events and MUST participate in the same resume semantics as any other SSE frame on that channel.
-* Resume: client SHOULD send `after=<cursor>` as the primary explicit resume form. The service also accepts header `Last-Event-ID: 01CUR...` or query param `last_event_id=01CUR...` for compatibility; native clients SHOULD NOT mix multiple client-managed resume carriers.
-* Replay miss: if the requested resume cursor is no longer buffered, the server emits `agent.resync_required` and the client SHOULD refetch `/messages` plus `/agent/state` before reattaching.
-* Resume scope: the current implementation keeps a bounded same-instance in-memory window for reconnect convenience; transcript correctness still comes from `/messages` plus `/agent/state`.
-* Runtime overlay semantics: `starting` / `thinking` indicate an active turn but do not themselves create transcript rows; synthetic overlay rows come from `pending_tool` and `draft_assistant`.
-
----
-
-## 8. Error Codes
-
-**Enrollment & Identity**
-
-* `AUTH_FAILED` — invalid token or token expired/consumed.
-* `PROTO_VERSION_MISMATCH` — incompatible `proto`.
-* `PROOF_INVALID` — bad HMAC in `hello_proof`.
-
-**Execution**
-
-* `BUD_BUSY` — queue full or active run prevents another.
-* `EXEC_FAILED` — spawn error or non‑recoverable failure.
-* `TIMEOUT` — `timeout_ms` exceeded.
-* `CANCELED` — user/system initiated cancellation.
-* `BUD_DISCONNECTED` — WS dropped during run.
-* `SERVER_RESTARTED` — backend restarted during run.
-
-**Transport**
-
-* `FLOW_CONTROL` — sender violated in‑flight/size limits.
-* `MALFORMED_FRAME` — invalid JSON or missing required fields.
-
----
-
-## 9. Capabilities (Bud → Backend)
-
-Sent in `hello.capabilities` to let the backend adapt:
-
-```json
-{
-  "max_concurrency": 1,         // integer >= 1
-  "shell_default": "/bin/sh",   // default shell path
-  "sessions": true,             // supports persistent thread-scoped terminal sessions
-  "terminal": true,             // supports the terminal protocol (proto 0.2)
-  "terminal_proto": "0.2",      // optional explicit terminal protocol version
-  "os_release": "Ubuntu 22.04", // optional
+  "proto": "0.2",
+  "type": "terminal_*",
+  "id": "01HZX...ULID",
+  "ts": 1731300000000,
   "ext": {}
 }
 ```
 
-Backends MUST NOT rely on unsupported features without checking.
+---
+
+## 5. Bud Identity and Authentication
+
+Bud connects in one of two modes:
+
+1. **Enrollment**: Bud sends `hello` with a one-time enrollment token
+2. **Reconnect**: Bud sends `hello` with `bud_id`, then proves possession of `device_secret`
+
+### 5.1 `hello` (Bud → Service)
+
+Enrollment example:
+
+```json
+{
+  "proto": "0.1",
+  "type": "hello",
+  "id": "01...",
+  "ts": 1731,
+  "name": "raspi-4",
+  "os": "linux",
+  "arch": "arm64",
+  "version": "0.1.0",
+  "installation_id": "inst_123",
+  "token": "<opaque-enrollment-token>",
+  "capabilities": {
+    "max_concurrency": 1,
+    "shell_default": "/bin/sh",
+    "sessions": true,
+    "terminal": true,
+    "terminal_proto": "0.2"
+  },
+  "ext": {}
+}
+```
+
+Reconnect example:
+
+```json
+{
+  "proto": "0.1",
+  "type": "hello",
+  "id": "01...",
+  "ts": 1731,
+  "name": "workstation",
+  "os": "linux",
+  "arch": "x86_64",
+  "version": "0.1.0",
+  "installation_id": "inst_123",
+  "bud_id": "b_01H...",
+  "capabilities": {
+    "max_concurrency": 1,
+    "shell_default": "/bin/zsh",
+    "sessions": true,
+    "terminal": true,
+    "terminal_proto": "0.2"
+  },
+  "ext": {}
+}
+```
+
+Rules:
+- `token` is only present on first-time enrollment
+- `bud_id` is only present on reconnect
+- `installation_id` is optional but, when present, must remain consistent for an already-known Bud
+- enrollment tokens are validated by the service against the shared HMAC hash contract
+
+### 5.2 `hello_challenge` (Service → Bud)
+
+```json
+{
+  "proto": "0.1",
+  "type": "hello_challenge",
+  "id": "01...",
+  "ts": 1731,
+  "nonce": "base64url-32bytes",
+  "ext": {}
+}
+```
+
+### 5.3 `hello_proof` (Bud → Service)
+
+```json
+{
+  "proto": "0.1",
+  "type": "hello_proof",
+  "id": "01...",
+  "ts": 1731,
+  "bud_id": "b_01H...",
+  "hmac": "base64url",
+  "ext": {}
+}
+```
+
+The HMAC is computed from the nonce using the persisted `device_secret`.
+
+### 5.4 `hello_ack` (Service → Bud)
+
+```json
+{
+  "proto": "0.1",
+  "type": "hello_ack",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "s_01H...",
+  "bud_id": "b_01H...",
+  "device_secret": "base64url-32bytes",
+  "heartbeat_sec": 30,
+  "ext": {}
+}
+```
+
+Notes:
+- `device_secret` is only sent on first-time enrollment
+- service emits Bud-online notifications only after the Bud is registered in the active in-memory session map
+
+### 5.5 `heartbeat` (Bud → Service)
+
+```json
+{
+  "proto": "0.1",
+  "type": "heartbeat",
+  "id": "01...",
+  "ts": 1731,
+  "ext": {}
+}
+```
+
+The service only accepts heartbeats from the currently authoritative socket for that Bud.
 
 ---
 
-## 10. Flows (Illustrative)
+## 6. Terminal Protocol (Bud ⇄ Service)
 
-### 10.1 First‑time Enrollment
+The active execution contract is thread-scoped terminals. The service sends structured terminal requests; Bud responds with status/output/readiness and request-scoped results.
+
+### 6.1 Service → Bud Terminal Requests
+
+Supported request families:
+
+- `terminal_ensure`: create or verify the thread terminal session
+- `terminal_resize`: resize the active terminal session
+- `terminal_send`: send one structured gesture
+- `terminal_observe`: explicitly inspect the terminal
+- `terminal_close`: close the session
+
+`terminal_send` uses a single gesture model:
+
+```json
+{
+  "proto": "0.2",
+  "type": "terminal_send",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "bud-b_123-thread-456",
+  "request_id": "req_01H...",
+  "text": "git status",
+  "submit": true,
+  "wait_for": "settled",
+  "timeout_ms": 30000,
+  "ext": {}
+}
+```
+
+Rules:
+- the request is either `text` with optional `submit`, or one semantic `key`
+- canonical keys are backend-neutral names such as `ctrl+c`, `enter`, and `escape`
+- `wait_for: "settled"` is the default agent path
+- `terminal.observe` is the explicit inspection hatch for `delta`, `screen`, or `history`
+
+### 6.2 `terminal_status` (Bud → Service)
+
+```json
+{
+  "proto": "0.2",
+  "type": "terminal_status",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "bud-b_123-thread-456",
+  "state": "creating",
+  "info": {
+    "pid": 12345,
+    "cwd": "/Users/adam/bud",
+    "cols": 120,
+    "rows": 40,
+    "output_log_bytes": 4096
+  },
+  "ext": {}
+}
+```
+
+### 6.3 `terminal_output` (Bud → Service)
+
+```json
+{
+  "proto": "0.2",
+  "type": "terminal_output",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "bud-b_123-thread-456",
+  "seq": 42,
+  "data": "base64 payload",
+  "byte_offset": 16384,
+  "ext": {}
+}
+```
+
+Rules:
+- `seq` is monotonic per session output stream
+- `byte_offset` is monotonic and is the durable ordering/backfill coordinate stored by the service
+- Bud output chunks should remain at or below 16 KiB
+
+### 6.4 `terminal_ready` (Bud → Service)
+
+```json
+{
+  "proto": "0.2",
+  "type": "terminal_ready",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "bud-b_123-thread-456",
+  "assessment": {
+    "ready": true,
+    "confidence": 0.93,
+    "trigger": "settled",
+    "prompt_type": "shell",
+    "hints": {
+      "looks_like_prompt": true,
+      "looks_like_confirmation": false,
+      "looks_like_password": false,
+      "looks_like_pager": false,
+      "may_still_be_processing": false
+    }
+  },
+  "ext": {}
+}
+```
+
+### 6.5 `terminal_send_result` (Bud → Service)
+
+```json
+{
+  "proto": "0.2",
+  "type": "terminal_send_result",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "bud-b_123-thread-456",
+  "request_id": "req_01H...",
+  "submitted": true,
+  "delta": {
+    "changed": true,
+    "text": "On branch main",
+    "truncated": false
+  },
+  "readiness": {
+    "ready": true,
+    "confidence": 0.84,
+    "trigger": "settled"
+  },
+  "error": null,
+  "ext": {}
+}
+```
+
+### 6.6 `terminal_observe_result` (Bud → Service)
+
+```json
+{
+  "proto": "0.2",
+  "type": "terminal_observe_result",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "bud-b_123-thread-456",
+  "request_id": "req_01H...",
+  "view": "delta",
+  "output": "base64 payload",
+  "output_bytes": 1024,
+  "lines_captured": 18,
+  "changed": true,
+  "truncated": false,
+  "readiness": {
+    "ready": true,
+    "confidence": 0.91,
+    "trigger": "changed"
+  },
+  "error": null,
+  "ext": {}
+}
+```
+
+---
+
+## 7. Browser SSE Contracts
+
+All browser-facing streams must authorize the viewer before attaching listeners or replaying buffered data.
+
+### 7.1 Agent Stream Events
+
+`GET /api/threads/:thread_id/agent/stream` may emit:
+
+- `agent.message_start`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7" }`
+- `agent.message_delta`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "delta": "Cloning " }`
+- `agent.message_done`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository..." }`
+- `agent.tool_call`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... } }`
+- `agent.tool_result`
+  - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, and the persisted canonical `message`
+- `agent.message`
+  - includes `turn_id`, `client_id`, and the persisted canonical assistant `message`
+- `thread.title`
+  - `{ "thread_id": "uuid", "title": "Short Title", "source": "generated_first_user_message", "updated_at": "..." }`
+- `agent.resync_required`
+  - `{ "error": "resync_required", "provided_cursor": "01CUR..." }`
+- `final`
+  - `{ "turn_id": "01TURN...", "status": "succeeded|failed|canceled", "message_id"?: "uuid", "text"?: "...", "error"?: "..." }`
+- `heartbeat`
+
+Resume rules:
+- no-cursor attach is live-only
+- bounded replay only replays events after a known cursor
+- if the cursor is too old or unknown, the route emits `agent.resync_required`
+- clients recover from replay misses by refetching `/messages` and `/agent/state`
+
+### 7.2 Terminal Stream Events
+
+`GET /api/threads/:thread_id/terminal/stream` may emit:
+
+- `terminal.output`
+  - `{ "session_id": "bud-b_123-thread-456", "seq": 42, "data": "base64 payload", "byte_offset": 16384 }`
+- `terminal.status`
+  - `{ "session_id": "bud-b_123-thread-456", "state": "ready|active|idle|closed", "info"?: { ... } }`
+- `terminal.ready`
+  - `{ "session_id": "bud-b_123-thread-456", "assessment": { ... } }`
+- `terminal.bud_offline`
+  - `{ "bud_id": "b_01H...", "reason": "disconnected" }`
+- `terminal.bud_online`
+  - `{ "bud_id": "b_01H..." }`
+- `heartbeat`
+
+The old Bud-scoped `/api/terminals/:bud_id/stream` route is not part of the supported contract.
+
+### 7.3 SSE Framing
+
+Example:
+
+```text
+id: 01CUR...
+event: agent.message
+data: {"turn_id":"01TURN...","client_id":"uuidv7","message":{"message_id":"uuid","client_id":"uuidv7","role":"assistant","content":"...","created_at":"2026-03-22T22:10:00.000Z"}}
 
 ```
-Bud                  Backend
+
+Rules:
+- `id:` on the agent stream is the opaque resume cursor
+- keep-alive heartbeats are valid SSE events even when no replayable data exists
+- first-party clients should key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`
+
+---
+
+## 8. Ordering and Delivery
+
+- Bud must preserve terminal-output order within a session
+- `terminal_output.seq` and `terminal_output.byte_offset` are monotonic per session
+- terminal history correctness comes from durable storage keyed by `(session_id, byte_offset)`
+- agent-stream replay is intentionally bounded and process-local; transcript correctness comes from `/messages` plus `/agent/state`
+- service may ignore heartbeats, closes, or timeouts from superseded Bud sockets after a reconnect replaces the active tracker
+
+---
+
+## 9. Error Codes
+
+Common service/Bud codes:
+
+- `AUTH_FAILED` — invalid enrollment token, bad device proof, or installation mismatch
+- `PROTO_VERSION_MISMATCH` — invalid envelope or incompatible `proto`
+- `BUD_BUSY` — Bud cannot accept the requested work right now
+- `EXEC_FAILED` — terminal/session operation failed before completion
+- `TIMEOUT` — terminal wait/observe/send operation timed out
+- `CANCELED` — user or system canceled the active work
+- `BUD_DISCONNECTED` — Bud disconnected during active work
+- `SERVER_RESTARTED` — service restarted and lost ephemeral runtime state
+
+HTTP auth rules:
+- `401` is for unauthenticated browser requests
+- `404` is for authenticated users requesting someone else’s owned resource
+
+---
+
+## 10. Illustrative Flows
+
+### 10.1 Enrollment
+
+```text
+Bud                  Service
 ---                  -------
-hello(token)   ─────▶ validate token; mint bud_id + device_secret
-hello_ack(bud_id, device_secret, session_id) ◀────
-(connected)
+hello(token)   ─────▶ validate token; create bud + device_secret
+hello_ack      ◀──── session_id + bud_id + device_secret
 ```
 
-### 10.2 Reconnection (Challenge/Response)
+### 10.2 Reconnect
 
-```
-Bud                  Backend
+```text
+Bud                  Service
 ---                  -------
 hello(bud_id)  ─────▶ issue nonce
-hello_challenge(nonce) ◀────
-hello_proof(hmac(nonce, device_secret)) ─────▶ verify proof
-hello_ack(session_id) ◀────
-(connected)
+hello_challenge ◀────
+hello_proof    ─────▶ verify HMAC(device_secret, nonce)
+hello_ack      ◀──── session_id
 ```
 
-### 10.3 Run + Streaming + Finish
+### 10.3 Terminal Send
 
-```
-Backend → Bud: run{run_id, cmd, ...}
-Bud → Backend: stdout/stderr(seq=0..N)
-Bud → Backend: run_finished{exit_code,...}
-```
-
-### 10.4 Cancel
-
-```
-Browser: POST /api/runs/:id/cancel
-Backend → Bud: cancel{run_id}
-Bud: SIGTERM group → wait 5s → SIGKILL group
-Bud → Backend: run_finished{canceled:true, signal:"SIGKILL"}
-Backend → Browser SSE: status=canceling → final=canceled
+```text
+Service → Bud: terminal_send{text|key, submit?, wait_for, timeout_ms}
+Bud → Service: terminal_output(seq, byte_offset, data)*
+Bud → Service: terminal_send_result{submitted, delta, readiness, error}
+Service → Browser SSE: terminal.output* and terminal.ready/status as applicable
 ```
 
----
+### 10.4 Agent Resume
 
-## 11. Validation (JSON Schema, excerpts)
-
-> The spec uses JSON for transport. Below are simplified JSON Schemas for key frames. Full schemas can live under `/docs/schema/`.
-
-### 11.1 Envelope (subschema)
-
-```json
-{
-  "$id": "https://bud.dev/schema/envelope-0.1.json",
-  "type": "object",
-  "properties": {
-    "proto": { "const": "0.1" },
-    "type": { "type": "string" },
-    "id":   { "type": "string" },
-    "ts":   { "type": "number" },
-    "ext":  { "type": "object" }
-  },
-  "required": ["proto","type","id","ts","ext"],
-  "additionalProperties": true
-}
-```
-
-### 11.2 `run`
-
-```json
-{
-  "$id": "https://bud.dev/schema/run-0.1.json",
-  "allOf": [{ "$ref": "envelope-0.1.json" }],
-  "properties": {
-    "type": { "const": "run" },
-    "run_id": { "type": "string" },
-    "cmd": { "type": "string", "minLength": 1 },
-    "cwd": { "type": "string" },
-    "env": { "type": "object", "additionalProperties": { "type": "string" } },
-    "timeout_ms": { "type": "integer", "minimum": 1000 },
-    "use_pty": { "type": "boolean" },
-    "shell": { "type": "string" }
-  },
-  "required": ["run_id","cmd","timeout_ms"]
-}
-```
-
-### 11.3 `stdout`/`stderr`
-
-```json
-{
-  "$id": "https://bud.dev/schema/stream-0.1.json",
-  "allOf": [{ "$ref": "envelope-0.1.json" }],
-  "properties": {
-    "type": { "enum": ["stdout","stderr"] },
-    "run_id": { "type": "string" },
-    "seq": { "type": "integer", "minimum": 0 },
-    "data_b64": { "type": "string" }
-  },
-  "required": ["run_id","seq","data_b64"]
-}
+```text
+Browser: GET /api/threads/:thread_id/agent/state
+Browser: GET /api/threads/:thread_id/agent/stream?after=<stream_cursor>
+Service: replay newer buffered events if cursor is known
+Service: otherwise emit agent.resync_required
 ```
 
 ---
 
-## 12. Security Considerations
+## 11. Security
 
-* **Enrollment tokens** MUST be time‑limited, single‑use, and hashed at rest.
-* **Device secrets** MUST be stored server‑side and on Bud with restrictive perms (0600). Never log secrets.
-* **Reconnections** SHOULD use challenge‑response (`hello_challenge`/`hello_proof`).
-* **Process execution** MUST run as a non‑privileged user; server SHOULD apply deny‑list on commands.
-* **TLS** MUST be used for WSS.
-* **SSE** responses MUST disable proxy buffering to avoid head‑of‑line blocking.
-
----
-
-## 13. Error Handling & Close
-
-* On fatal errors, sender SHOULD send an `error` frame then close the socket.
-* Receivers SHOULD tolerate transient duplicates and out‑of‑order frames (use `(run_id, stream, seq)`).
-* The server MAY close with WebSocket close code 1008 (policy violation) for size/window abuse.
+- enrollment tokens must be time-limited, single-use, and hashed at rest
+- service and bootstrap tooling must share the same enrollment-token hash contract
+- device secrets must never be logged and should be stored with restrictive local permissions
+- reconnect auth should always use challenge-response, not reusable bearer secrets on the wire
+- TLS is required for deployed WebSocket traffic
+- browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
 
 ---
 
-## 14. Changelog
+## 12. Changelog
 
-* **0.1**
-
-  * Initial PoC spec.
-  * Enrollment & challenge/response handshake.
-  * Single `run` execution model, streaming, and cancel.
-  * SSE event catalog and resume semantics.
-  * Reserved `ext` on all frames; capability advertisement.
+- **Current**
+  - thread-scoped terminal protocol is the active execution surface
+  - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
+  - legacy standalone run transport and browser `/api/runs/*` streaming are removed from the supported protocol
