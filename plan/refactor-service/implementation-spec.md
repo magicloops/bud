@@ -13,6 +13,7 @@
 **Phase 6**: [phase-6-service-lint-recovery.md](./phase-6-service-lint-recovery.md)
 **Phase 7**: [phase-7-final-build-lint-and-closeout.md](./phase-7-final-build-lint-and-closeout.md)
 **Phase 8**: [phase-8-web-lint-recovery-and-final-closeout.md](./phase-8-web-lint-recovery-and-final-closeout.md)
+**Phase 9**: [phase-9-web-regression-validation-before-structural-fixes.md](./phase-9-web-regression-validation-before-structural-fixes.md)
 
 ---
 
@@ -34,7 +35,9 @@ The service should be refactored now, while:
 - there is no production rollout constraint yet
 - the current thread-scoped terminal architecture is already coherent enough to preserve as the long-lived execution model
 
-The initial five phases carried the functional/runtime refactor through validation and legacy cleanup, and the closure pass then exposed package-quality tail work: first a failing `service` lint step, and then a final `web` lint blocker after the `service` package was brought back to green. Those closure tasks were completed in follow-on Phases 6-8, and the refactor is now closed.
+The initial five phases carried the functional/runtime refactor through validation and legacy cleanup, and the closure pass then exposed package-quality tail work: first a failing `service` lint step, and then a final `web` lint blocker after the `service` package was brought back to green. Those closure tasks were completed in follow-on Phases 6-8, and the refactor was marked closed.
+
+After closeout, a new web regression surfaced in the latest local bundle: existing threads can remain visually stuck on `Bud offline`, and switching threads can update the URL without updating the rendered thread. Phase 9 scopes a validation-only follow-on so the team can prove whether this is a real route-state bug, a parent-match bug, or a dev-bundle/Fast Refresh exposure before taking on more structural changes.
 
 ## Objective
 
@@ -154,6 +157,7 @@ This exact layout is not mandatory, but the outcome must achieve these separatio
 | 6 | [phase-6-service-lint-recovery.md](./phase-6-service-lint-recovery.md) | High | Restore a passing `service` lint baseline by fixing the TypeScript ESLint rule ownership gap and clearing error-level refactor fallout |
 | 7 | [phase-7-final-build-lint-and-closeout.md](./phase-7-final-build-lint-and-closeout.md) | High | Resolve or explicitly disposition warning-only lint debt, rerun the final `service`/`web` checks, and close the refactor docs |
 | 8 | [phase-8-web-lint-recovery-and-final-closeout.md](./phase-8-web-lint-recovery-and-final-closeout.md) | High | Fix the last `web` lint blockers, rerun the full final matrix, and explicitly close the refactor |
+| 9 | [phase-9-web-regression-validation-before-structural-fixes.md](./phase-9-web-regression-validation-before-structural-fixes.md) | High | Validate the reported post-closeout web regression before choosing any structural fix direction |
 
 ## Expected Files And Areas
 
@@ -230,6 +234,7 @@ The intended execution order is:
 6. restore a passing `service` lint baseline
 7. clear the warning-only `service` closure debt and rerun the first final cross-package pass
 8. fix the remaining `web` lint blockers and then mark the refactor closed
+9. if post-closeout regressions surface, validate them explicitly before reopening structural route/provider work
 
 If schema changes are required during the refactor:
 

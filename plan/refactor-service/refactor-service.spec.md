@@ -21,6 +21,7 @@ The plan assumes:
 - spec and operator docs should be updated as part of the refactor so the current local/staging DB workflow is described accurately
 - the post-refactor closure pass may need explicit follow-on cleanup work if final build/lint verification exposes latent package debt
 - frontend/package-specific closure debt should be split into its own phase when the final verification pass reveals it, rather than being buried under a generic "closeout" label
+- any post-closeout regression that appears after the refactor is marked done should be validated explicitly before the plan reopens structural changes
 
 ## Files
 
@@ -103,6 +104,14 @@ Frontend closeout phase covering:
 - context-module Fast Refresh cleanup
 - route unused-vars / hook-dependency cleanup
 - the successful final refactor closure rerun
+
+### `phase-9-web-regression-validation-before-structural-fixes.md`
+
+Post-closeout validation phase covering:
+
+- the reported thread-navigation / terminal-offline regression in the latest web bundle
+- targeted route-state instrumentation before any new structural work
+- validation of stale-route-state vs parent-match vs Fast Refresh exposure hypotheses
 
 ### `progress-checklist.md`
 

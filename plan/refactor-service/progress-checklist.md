@@ -1,6 +1,6 @@
 # Progress Checklist: Service Layer Refactor
 
-**Overall Status**: Closed
+**Overall Status**: Closed; Post-Closeout Regression Validation Pending
 
 ## Phase 1: Contract Bugs And Legacy Runtime Removal
 
@@ -78,3 +78,12 @@
 - [x] Pass final `pnpm --dir /Users/adam/bud/web lint`
 - [x] Reconfirm the full final `service` / `web` build-lint matrix after the web fixes
 - [x] Mark the service refactor closed in the docs/checklists
+
+## Phase 9: Web Regression Validation Before Structural Fixes
+
+- [ ] Log `threadId`, `initialThread.thread_id`, and `currentThread.thread_id` during thread navigation
+- [ ] Log terminal state/connection before and after the thread-change reset branch in `/$budId/$threadId`
+- [ ] Log `recoverTerminalSession(...)` calls and confirm they target the newly selected thread/session
+- [ ] Log parent-route `matches` and resolved `activeThreadId` in `/$budId`
+- [ ] Reproduce after a hard refresh / dev-server restart to distinguish route-state vs Fast Refresh exposure
+- [ ] Update the debug note with the validation outcome and recommended fix direction

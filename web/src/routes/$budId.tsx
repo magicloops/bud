@@ -16,6 +16,15 @@ import {
 } from '@/lib/api'
 import { useLayout } from '@/contexts/layout-context'
 
+const PHASE_9_ROUTE_DEBUG = import.meta.env.DEV
+
+const logBudRouteDebug = (message: string, payload: Record<string, unknown>) => {
+  if (!PHASE_9_ROUTE_DEBUG) {
+    return
+  }
+  console.log(`[phase-9][bud-route] ${message}`, payload)
+}
+
 const toLoginRedirect = (pathname: string, search = '', hash = '') =>
   redirect({
     to: '/login',
@@ -109,6 +118,17 @@ function BudLayout() {
     return (threadMatch?.params as { threadId?: string })?.threadId ?? null
   }, [matches])
 
+  useEffect(() => {
+    logBudRouteDebug('matches resolved', {
+      budId,
+      activeThreadId,
+      matchSummary: matches.map((match) => ({
+        routeId: match.routeId,
+        params: match.params,
+      })),
+    })
+  }, [activeThreadId, budId, matches])
+
   // Convert API buds to BudProfile format
   const buds: BudProfile[] = useMemo(() => {
     return rawBuds.map((apiBud, index) => {
@@ -158,12 +178,17 @@ function BudLayout() {
   }, [navigate])
 
   const handleSelectThread = useCallback((threadId: string | null) => {
+    logBudRouteDebug('select thread', {
+      budId,
+      targetThreadId: threadId,
+      activeThreadId,
+    })
     if (threadId) {
       navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
     } else {
       navigate({ to: '/$budId/new', params: { budId } })
     }
-  }, [navigate, budId])
+  }, [activeThreadId, navigate, budId])
 
   const removeThreadSummary = useCallback((threadId: string) => {
     setThreads((prev) => prev.filter((thread) => thread.thread_id !== threadId))
