@@ -37,7 +37,7 @@ The service should be refactored now, while:
 
 The initial five phases carried the functional/runtime refactor through validation and legacy cleanup, and the closure pass then exposed package-quality tail work: first a failing `service` lint step, and then a final `web` lint blocker after the `service` package was brought back to green. Those closure tasks were completed in follow-on Phases 6-8, and the refactor was marked closed.
 
-After closeout, a new web regression surfaced in the latest local bundle: existing threads can remain visually stuck on `Bud offline`, and switching threads can update the URL without updating the rendered thread. Phase 9 scopes a validation-only follow-on so the team can prove whether this is a real route-state bug, a parent-match bug, or a dev-bundle/Fast Refresh exposure before taking on more structural changes.
+After closeout, a new web regression surfaced in the latest local bundle: existing threads could remain visually stuck on `Bud offline`, and switching threads could update the URL without updating the rendered thread. Phase 9 validated that the primary root cause was local same-browser transport pressure through the Vite proxy path, not a structural route/provider regression. The resulting doc follow-up now prefers direct local browser API/SSE traffic via `VITE_API_BASE_URL=http://localhost:3000`, backed by service CORS for `http://localhost:5173`.
 
 ## Objective
 

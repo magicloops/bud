@@ -112,6 +112,7 @@ Post-closeout validation phase covering:
 - the reported thread-navigation / terminal-offline regression in the latest web bundle
 - targeted route-state instrumentation before any new structural work
 - validation of stale-route-state vs parent-match vs Fast Refresh exposure hypotheses
+- the documented conclusion that same-browser Vite-proxy transport pressure was the primary root cause, leading to a direct-backend-origin local dev preference
 
 ### `progress-checklist.md`
 

@@ -30,6 +30,14 @@
 - A fresh viewer attach should reflect the current terminal state, not transient stale lifecycle events.
 - One tab opening a thread should not destabilize another tab that is already attached to the same thread.
 
+## Validated Outcome
+
+- This note captured a real secondary risk in the terminal attach/recovery contract, but it was not the primary cause of the broader regression.
+- The validated primary root cause was same-browser, same-origin dev transport pressure: each thread tab opens both agent SSE and terminal SSE, and proxying all API/SSE traffic through the Vite origin could stall the short-lived fetches needed for navigation and terminal interaction.
+- That is why the problem generalized beyond one shared thread/session and reproduced across different Buds and threads inside the same browser profile.
+- Direct local browser traffic via `VITE_API_BASE_URL=http://localhost:3000` resolved the breakage.
+- The terminal replay/recovery behavior described below remains worth keeping in mind as follow-up product/runtime debt, especially because stale disconnected UI can still be amplified once a tab gets wedged.
+
 ## Why This Changes The Read
 
 The earlier leading hypothesis was a pure route/render-state bug in `ThreadView`.

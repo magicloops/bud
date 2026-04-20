@@ -63,10 +63,10 @@ The package manifest pins the Node runtime expected by the Vite 7 toolchain: Nod
 Checked-in template for local frontend setup.
 
 Recommended local development:
-- leave `VITE_API_BASE_URL` unset
-- set `VITE_API_PROXY_TARGET=http://localhost:3000`
-- use the Vite proxy for the simplest local auth/cookie flow, including `/.well-known/*` metadata routes needed by OAuth discovery
-- local iOS auth also treats `http://localhost:5173` as the public auth origin, with the proxy forwarding browser/mobile-visible `/api/*` and `/.well-known/*` requests to the Fastify process on `3000`
+- set `VITE_API_BASE_URL=http://localhost:3000`
+- optionally keep `VITE_API_PROXY_TARGET=http://localhost:3000` if you still want proxied `/.well-known/*` / `/api/*` routes available through the Vite origin for targeted auth-topology checks
+- prefer direct backend-origin API/SSE traffic locally because each open thread view holds both agent and terminal SSE streams, and proxy-mode same-browser multi-tab testing can starve short-lived fetches
+- local iOS auth still treats `http://localhost:5173` as the public auth origin; use the proxy path only when you explicitly need browser/mobile-visible `5173` routing parity for auth and discovery flows
 - the prototype deployment recommendation is to keep `VITE_API_BASE_URL` unset there as well and rely on one public origin that routes `/api/*`, `/.well-known/*`, and `/ws` to the service
 
 ### `vite.config.ts`
@@ -105,12 +105,12 @@ Static assets served without processing.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `VITE_API_BASE_URL` | API server URL for cross-origin | (same origin) |
+| `VITE_API_BASE_URL` | API server URL for cross-origin | unset (`same origin` when omitted) |
 | `VITE_API_PROXY_TARGET` | Dev proxy target for `/api/*` and `/.well-known/*` | `http://localhost:3000` |
 | `VITE_MOBILE_CLAIM_CALLBACK_ALLOWED_PREFIXES` | Comma-separated allowlist of hosted mobile-claim callback prefixes | `chat.bud.app://claim/` |
 | `VITE_ROUTER_DEVTOOLS` | Enable TanStack Router devtools | `false` |
 
-Current deployment guidance favors leaving `VITE_API_BASE_URL` unset in browser-facing deployed environments so auth and API traffic remain same-origin.
+Current deployment guidance still favors leaving `VITE_API_BASE_URL` unset in browser-facing deployed environments so auth and API traffic remain same-origin. The direct backend-origin recommendation applies to local browser development only.
 
 ## Key Features
 

@@ -1,6 +1,6 @@
 # Progress Checklist: Service Layer Refactor
 
-**Overall Status**: Closed; Post-Closeout Regression Validation Pending
+**Overall Status**: Closed; Post-Closeout Regression Validated And Documented
 
 ## Phase 1: Contract Bugs And Legacy Runtime Removal
 
@@ -81,9 +81,9 @@
 
 ## Phase 9: Web Regression Validation Before Structural Fixes
 
-- [ ] Log `threadId`, `initialThread.thread_id`, and `currentThread.thread_id` during thread navigation
-- [ ] Log terminal state/connection before and after the thread-change reset branch in `/$budId/$threadId`
-- [ ] Log `recoverTerminalSession(...)` calls and confirm they target the newly selected thread/session
-- [ ] Log parent-route `matches` and resolved `activeThreadId` in `/$budId`
-- [ ] Reproduce after a hard refresh / dev-server restart to distinguish route-state vs Fast Refresh exposure
-- [ ] Update the debug note with the validation outcome and recommended fix direction
+- [x] Log `threadId`, `initialThread.thread_id`, and `currentThread.thread_id` during thread navigation
+- [x] Log terminal state/connection before and after the thread-change reset branch in `/$budId/$threadId`
+- [x] Log `recoverTerminalSession(...)` calls and confirm they target the newly selected thread/session
+- [x] Log parent-route `matches` and resolved `activeThreadId` in `/$budId`
+- [x] Reproduce after a hard refresh / dev-server restart to distinguish route-state vs Fast Refresh exposure
+- [x] Update the debug note with the validation outcome and recommended fix direction

@@ -44,15 +44,6 @@ import type { Terminal } from 'xterm'
 import type { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
 
-const PHASE_9_THREAD_DEBUG = import.meta.env.DEV
-
-const logThreadViewDebug = (message: string, payload: Record<string, unknown>) => {
-  if (!PHASE_9_THREAD_DEBUG) {
-    return
-  }
-  console.log(`[phase-9][thread-view] ${message}`, payload)
-}
-
 const toLoginRedirect = (pathname: string, search = '', hash = '') =>
   redirect({
     to: '/login',
@@ -384,12 +375,10 @@ function ThreadView() {
   const terminalReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const terminalReconnectAttemptRef = useRef(0)
   const lastSseEventTimeRef = useRef<number>(Date.now())
-  const latestThreadIdRef = useRef<string | null>(threadId)
   const lastConnectedThreadIdRef = useRef<string | null>(null)
   const currentSessionIdRef = useRef<string | null>(null)
   const terminalRecoveryInFlightRef = useRef(false)
   const terminalReadyRef = useRef(false)
-  const terminalStateRef = useRef<string>(terminalState)
   const terminalInputBufferRef = useRef<string>('')
   const terminalInputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const viewModeRef = useRef<'terminal' | 'web'>(viewMode)
@@ -458,14 +447,6 @@ function ThreadView() {
   }, [initialThread, upsertThreadSummary])
 
   useEffect(() => {
-    latestThreadIdRef.current = threadId
-  }, [threadId])
-
-  useEffect(() => {
-    terminalStateRef.current = terminalState
-  }, [terminalState])
-
-  useEffect(() => {
     viewModeRef.current = viewMode
   }, [viewMode])
 
@@ -484,17 +465,6 @@ function ThreadView() {
       }
     )
   }, [initialThread, threadId, threads])
-
-  useEffect(() => {
-    logThreadViewDebug('thread identity snapshot', {
-      threadId,
-      latestThreadId: latestThreadIdRef.current,
-      initialThreadId: initialThread.thread_id,
-      currentThreadId: currentThread.thread_id,
-      lastConnectedThreadId: lastConnectedThreadIdRef.current,
-      currentSessionId: currentSessionIdRef.current,
-    })
-  }, [currentThread.thread_id, initialThread.thread_id, threadId])
 
   useEffect(() => {
     const pendingAdjustment = pendingPrependAdjustmentRef.current
@@ -947,23 +917,7 @@ function ThreadView() {
       return false
     }
 
-    logThreadViewDebug('recoverTerminalSession start', {
-      reason,
-      targetThreadId: threadId,
-      latestThreadId: latestThreadIdRef.current,
-      usesLatestThread: threadId === latestThreadIdRef.current,
-      lastConnectedThreadId: lastConnectedThreadIdRef.current,
-      currentSessionId: currentSessionIdRef.current,
-      terminalState: terminalStateRef.current,
-      terminalConnection: terminalConnectionRef.current,
-    })
-
     if (terminalRecoveryInFlightRef.current) {
-      logThreadViewDebug('recoverTerminalSession skipped - already in flight', {
-        reason,
-        targetThreadId: threadId,
-        latestThreadId: latestThreadIdRef.current,
-      })
       return false
     }
 
@@ -983,17 +937,6 @@ function ThreadView() {
           status: resp.status,
           error: body.error,
         })
-        logThreadViewDebug('recoverTerminalSession response not ok', {
-          reason,
-          targetThreadId: threadId,
-          latestThreadId: latestThreadIdRef.current,
-          usesLatestThread: threadId === latestThreadIdRef.current,
-          status: resp.status,
-          error: body.error,
-          currentSessionId: currentSessionIdRef.current,
-          terminalState: terminalStateRef.current,
-          terminalConnection: terminalConnectionRef.current,
-        })
 
         if (body.error === 'bud_offline') {
           setTerminalConnection('reconnecting')
@@ -1010,13 +953,6 @@ function ThreadView() {
         threadId,
         sessionId: currentSessionIdRef.current,
         reason,
-      })
-      logThreadViewDebug('recoverTerminalSession success', {
-        reason,
-        targetThreadId: threadId,
-        latestThreadId: latestThreadIdRef.current,
-        usesLatestThread: threadId === latestThreadIdRef.current,
-        currentSessionId: currentSessionIdRef.current,
       })
 
       setTerminalConnection('connected')
@@ -1045,15 +981,6 @@ function ThreadView() {
         sessionId: currentSessionIdRef.current,
         reason,
         err,
-      })
-      logThreadViewDebug('recoverTerminalSession request threw', {
-        reason,
-        targetThreadId: threadId,
-        latestThreadId: latestThreadIdRef.current,
-        usesLatestThread: threadId === latestThreadIdRef.current,
-        currentSessionId: currentSessionIdRef.current,
-        terminalState: terminalStateRef.current,
-        terminalConnection: terminalConnectionRef.current,
       })
       return false
     } finally {
@@ -1467,33 +1394,12 @@ function ThreadView() {
     cleanupTimers()
     closeSource()
 
-    const previousThreadId = lastConnectedThreadIdRef.current
-    const threadIdChanged = threadId !== previousThreadId
-    logThreadViewDebug('terminal effect before thread-change branch', {
-      threadId,
-      latestThreadId: latestThreadIdRef.current,
-      previousThreadId,
-      threadIdChanged,
-      terminalState: terminalStateRef.current,
-      terminalConnection: terminalConnectionRef.current,
-      currentSessionId: currentSessionIdRef.current,
-    })
-
-    if (threadIdChanged) {
+    if (threadId !== lastConnectedThreadIdRef.current) {
       resetTerminal()
       setTerminalOutputTruncated(false)
       setTerminalReadiness(null)
       currentSessionIdRef.current = null
       lastConnectedThreadIdRef.current = threadId
-      logThreadViewDebug('terminal effect after thread-change branch', {
-        threadId,
-        latestThreadId: latestThreadIdRef.current,
-        previousThreadId,
-        lastConnectedThreadId: lastConnectedThreadIdRef.current,
-        terminalState: terminalStateRef.current,
-        terminalConnection: terminalConnectionRef.current,
-        currentSessionId: currentSessionIdRef.current,
-      })
     }
 
     terminalReconnectAttemptRef.current = 0
@@ -1642,14 +1548,7 @@ function ThreadView() {
             // This prevents stale buffered events from showing terminal as ready
             if (terminalConnectionRef.current === 'reconnecting' ||
                 terminalConnectionRef.current === 'offline') {
-              console.log('[terminal] Ignoring status event while disconnected', {
-                state: payload.state,
-                connection: terminalConnectionRef.current,
-                threadId,
-                latestThreadId: latestThreadIdRef.current,
-                currentSessionId: currentSessionIdRef.current,
-                terminalState: terminalStateRef.current,
-              })
+              console.log('[terminal] Ignoring status event while disconnected', { state: payload.state, connection: terminalConnectionRef.current })
               return
             }
 

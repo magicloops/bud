@@ -54,7 +54,8 @@ Local topology for hosted iOS auth:
 
 - public app/auth origin: `http://localhost:5173`
 - Fastify service process: `http://localhost:3000`
-- Vite proxies `/api/*` and `/.well-known/*` to the service so discovery, token exchange, revoke, and `/api/me` are all consumable from the public `5173` origin
+- for day-to-day local browser/workbench development, prefer `VITE_API_BASE_URL=http://localhost:3000` so API and SSE traffic bypass the Vite-origin connection pool
+- the Vite proxy for `/api/*` and `/.well-known/*` remains available when you explicitly want public-origin/auth-topology parity on `5173`
 - `BETTER_AUTH_TRUSTED_ORIGINS` also acts as the service CORS allowlist, so direct local testing with `VITE_API_BASE_URL=http://localhost:3000` works as long as the web origin is included there
 
 If you are testing from another machine or phone, replace `localhost` with your LAN host in:

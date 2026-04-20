@@ -38,6 +38,15 @@
 - Navigating to another thread should update the rendered thread view, not just the URL.
 - The newest web bundle should match the older tab's behavior against the same local backend.
 
+## Validated Outcome
+
+- The primary root cause was not the context split or a true route-param/render-state regression.
+- In local dev, the browser was sending both short-lived fetches and the thread's two long-lived SSE streams through the Vite origin.
+- With multiple same-browser tabs open, that same-origin proxy topology could starve loader, `terminal/ensure`, and `terminal/input` fetches even while the existing SSE streams stayed alive.
+- That is why URLs changed while the visible thread stayed stale, and why one tab could still receive streamed output while showing a disconnected overlay.
+- Switching local browser workbench traffic to `VITE_API_BASE_URL=http://localhost:3000` and enabling service CORS for `http://localhost:5173` resolved the issue.
+- A secondary frontend amplifier still exists in the terminal UI: once a tab enters `reconnecting`, it can keep suppressing `terminal.status` updates and leave a stale `Bud offline` overlay in place even though the stream is live underneath.
+
 ## Static Review Scope
 
 Reviewed specs:

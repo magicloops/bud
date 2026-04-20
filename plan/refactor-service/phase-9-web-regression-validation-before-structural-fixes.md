@@ -1,6 +1,6 @@
 # Phase 9: Web Regression Validation Before Structural Fixes
 
-**Status**: Planned
+**Status**: Completed
 
 ## Objective
 
@@ -12,23 +12,31 @@ The current symptoms are:
 - switching threads updates the URL but the visible UI stays on the first thread
 - the failing bundle still shows terminal SSE connectivity and heartbeats
 
-This phase exists to prove whether the issue is:
+This phase existed to prove whether the issue was:
 
 - a real stale-route / stale-state bug in `ThreadView`
 - a parent-route match/selection bug
 - or a dev-bundle / Fast Refresh exposure effect from the latest module split
 
-before the codebase takes on another structural refactor.
+before the codebase took on another structural refactor.
 
 ## Outcome
 
-Not started.
+Completed.
 
-The expected output of this phase is:
+This phase produced:
 
 - a small, explicit instrumentation pass
 - a validated root-cause category with evidence
 - a recommendation for the narrowest safe fix direction
+
+Validated result:
+
+- the primary issue was not a true route-param/state regression and not the context split itself
+- in local dev, the browser was sending both short-lived fetches and each thread tab's two long-lived SSE streams through the Vite origin
+- same-browser multi-tab usage could therefore stall loader and terminal mutation requests while the existing SSE streams stayed alive
+- moving local browser API/SSE traffic to `VITE_API_BASE_URL=http://localhost:3000` and allowing `http://localhost:5173` via service CORS resolved the breakage
+- the stale `Bud offline` overlay behavior remains a secondary frontend/runtime follow-up, but it was not the primary root cause of the reproduced regression
 
 ## Scope
 
@@ -38,7 +46,7 @@ The expected output of this phase is:
 - targeted manual reproduction in the current local dev bundle
 - comparison of route params, loader data, derived thread state, and terminal state-machine transitions
 - validation of whether a hard refresh / dev-server restart changes the outcome
-- updating the existing debug note with concrete findings
+- updating the existing debug notes with concrete findings and the validated fix direction
 
 ### Out of scope
 
@@ -49,19 +57,15 @@ The expected output of this phase is:
 
 ## Current Findings
 
-From the current debug review:
+From the completed validation pass:
 
-- the regression window is only one commit: `cd267c4`
-- the browser is still receiving:
-  - agent SSE connection
-  - terminal SSE connection
-  - `terminal.bud_offline`
-  - `terminal.bud_online`
-  - repeated `terminal.status` events with `state: 'ready'`
-- the thread route is currently logging that it is ignoring those status events because local connection state remains `reconnecting`
-- the latest diff did not change the terminal reconnect/offline state machine directly
+- the regression window was only one commit: `cd267c4`
+- same-browser multi-tab repro broke even across different Buds and different threads
+- a different browser profile against the same backend continued to work
+- the Network tab showed stalled `terminal/ensure` / `terminal/input` style fetches while the existing SSE streams remained connected
+- switching local browser traffic to `VITE_API_BASE_URL=http://localhost:3000` resolved the issue
 
-That makes a local React route-state stall the leading hypothesis, but it is not proven yet.
+That validated local same-origin proxy transport pressure as the primary cause, not a structural route/provider regression.
 
 ## Validation Work
 

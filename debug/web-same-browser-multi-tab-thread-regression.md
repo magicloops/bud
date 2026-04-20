@@ -37,6 +37,16 @@
 - Changing the URL to a new thread should also update the rendered thread view.
 - Terminal input in one tab should continue to work even if another tab is open.
 
+## Validated Outcome
+
+- This became the correct root-cause direction.
+- The context refactor did not introduce meaningful new cross-tab localStorage behavior.
+- The primary issue was local dev topology: by default, the browser sent both fetches and the thread's two long-lived SSE streams through the Vite origin.
+- In the same browser, multiple tabs could therefore starve short-lived loader and terminal mutation requests while the existing SSE streams stayed connected.
+- A different browser worked because it had a separate per-origin connection pool.
+- Switching local browser traffic to `VITE_API_BASE_URL=http://localhost:3000` and allowing `http://localhost:5173` via service CORS resolved the issue.
+- Proxy-mode local dev remains available for specific auth/public-origin checks, but it is no longer the preferred local browser/workbench setup.
+
 ## Static Review Scope
 
 Reviewed specs:
