@@ -1,4 +1,4 @@
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import fastifySseV2 from "fastify-sse-v2";
 import { authPool, registerAuthRoutes } from "./auth/auth.js";
@@ -18,6 +18,28 @@ import { registerMeRoutes } from "./routes/me.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 
 const SERVICE_VERSION = "0.0.1";
+const CORS_METHODS = "GET,HEAD,POST,OPTIONS";
+const DEFAULT_CORS_HEADERS = "Authorization, Content-Type, Last-Event-ID";
+
+function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean {
+  const origin = request.headers.origin;
+  if (!origin || !config.betterAuthTrustedOrigins.includes(origin)) {
+    return false;
+  }
+
+  const requestedHeaders = request.headers["access-control-request-headers"];
+  reply.header("Access-Control-Allow-Origin", origin);
+  reply.header("Access-Control-Allow-Credentials", "true");
+  reply.header("Access-Control-Allow-Methods", CORS_METHODS);
+  reply.header(
+    "Access-Control-Allow-Headers",
+    typeof requestedHeaders === "string" && requestedHeaders.trim().length > 0
+      ? requestedHeaders
+      : DEFAULT_CORS_HEADERS,
+  );
+  reply.header("Vary", "Origin, Access-Control-Request-Headers");
+  return true;
+}
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -44,6 +66,28 @@ export async function buildServer(): Promise<FastifyInstance> {
       done(null, body);
     },
   );
+
+  server.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin;
+    const isPreflight =
+      request.method === "OPTIONS" &&
+      (typeof origin === "string" || typeof request.headers["access-control-request-method"] === "string");
+
+    const corsAllowed = applyCorsHeaders(request, reply);
+    if (!isPreflight) {
+      return;
+    }
+
+    if (typeof origin === "string" && !corsAllowed) {
+      reply.code(403).send({
+        error: "CORS_ORIGIN_DENIED",
+        message: `Origin ${origin} is not allowed`,
+      });
+      return;
+    }
+
+    reply.code(204).send();
+  });
 
   const terminalEvents = new TerminalEventBus();
   const agentRuntime = new AgentRuntimeStateManager();

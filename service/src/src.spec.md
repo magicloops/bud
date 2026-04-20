@@ -19,6 +19,7 @@ Application entry point and thin Fastify composition root.
 **Key Responsibilities**:
 - Initialize Fastify with WebSocket and SSE plugins
 - Register the raw form-urlencoded parser needed for OAuth token/revoke requests before auth routes mount
+- Apply service-level CORS for direct browser-to-service local development, using the trusted-origin allowlist from `config.betterAuthTrustedOrigins`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
@@ -65,7 +66,7 @@ Environment-based configuration with defaults.
 | `betterAuthSecret` | `BETTER_AUTH_SECRET` | dev-better-auth-secret-change-me | Better Auth signing/encryption secret |
 | `apiAudience` | `API_AUDIENCE` | `APP_BASE_URL` + `/api` | Audience/resource for JWT access tokens |
 | `oauthTrustedClientIds` | `OAUTH_TRUSTED_CLIENT_IDS` | - | Trusted OAuth client ids cached by Better Auth |
-| `betterAuthTrustedOrigins` | `BETTER_AUTH_TRUSTED_ORIGINS` | http://localhost:5173 | Allowed browser origins for auth |
+| `betterAuthTrustedOrigins` | `BETTER_AUTH_TRUSTED_ORIGINS` | http://localhost:5173 | Allowed browser origins for Better Auth and direct service CORS |
 | `githubClientId` | `GITHUB_CLIENT_ID` | - | GitHub OAuth client id |
 | `githubClientSecret` | `GITHUB_CLIENT_SECRET` | - | GitHub OAuth client secret |
 | `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |

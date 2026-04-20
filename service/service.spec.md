@@ -211,7 +211,7 @@ pnpm dev
 Provider keys are optional for service boot and auth/device-claim flows. Chat/agent execution still needs at least one configured provider.
 
 **Optional**:
-- `BETTER_AUTH_TRUSTED_ORIGINS` - Allowed browser origins for auth cookies/callbacks
+- `BETTER_AUTH_TRUSTED_ORIGINS` - Allowed browser origins for auth cookies/callbacks and the service-level CORS allowlist for direct browser-to-service local dev traffic
 - `OAUTH_TRUSTED_CLIENT_IDS` - Trusted first-party OAuth client ids
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth
