@@ -69,7 +69,6 @@ type BufferEntry = {
   recordedAt: number;
 };
 
-// eslint-disable-next-line no-unused-vars
 type Listener = (event: SseEvent) => void;
 
 type AttachOptions = {

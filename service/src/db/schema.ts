@@ -17,9 +17,7 @@ import { sql } from "drizzle-orm";
 
 const authSchema = pgSchema("auth");
 
-const runStatusValues = ["queued", "planning", "running", "canceling", "succeeded", "failed", "canceled"] as const;
 const messageRoleValues = ["user", "assistant", "tool", "system"] as const;
-const streamValues = ["stdout", "stderr"] as const;
 
 const byteaColumn = customType<{ data: Buffer }>({
   dataType() {
@@ -334,97 +332,6 @@ export const messageTable = pgTable(
   })
 );
 
-export const runTable = pgTable(
-  "run",
-  {
-    runId: text("run_id").primaryKey(),
-    threadId: uuid("thread_id")
-      .notNull()
-      .references(() => threadTable.threadId, { onDelete: "cascade" }),
-    status: text("status", { enum: runStatusValues }).notNull(),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    finishedAt: timestamp("finished_at", { withTimezone: true }),
-    error: text("error"),
-    stepCount: integer("step_count").notNull().default(0),
-    logsBytes: bigint("logs_bytes", { mode: "number" }).notNull().default(0),
-    logTruncated: boolean("log_truncated").notNull().default(false),
-    logsBlobUrl: text("logs_blob_url"),
-    workspacePath: text("workspace_path"),
-    canceled: boolean("canceled").notNull().default(false),
-    canceledAt: timestamp("canceled_at", { withTimezone: true }),
-    canceledByUserId: text("canceled_by_user_id"),
-    tenantId: text("tenant_id"),
-    createdByUserId: text("created_by_user_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
-  },
-  (table) => ({
-    threadIdx: index("run_thread_idx").on(table.threadId, table.startedAt)
-  })
-);
-
-export const runStepTable = pgTable(
-  "run_step",
-  {
-    stepId: uuid("step_id").primaryKey().defaultRandom(),
-    runId: text("run_id")
-      .notNull()
-      .references(() => runTable.runId, { onDelete: "cascade" }),
-    idx: integer("idx").notNull(),
-    tool: text("tool").notNull(),
-    argsJson: jsonb("args_json").notNull(),
-    toolMetaJson: jsonb("tool_meta_json"),
-    exitCode: integer("exit_code"),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    finishedAt: timestamp("finished_at", { withTimezone: true })
-  },
-  (table) => ({
-    runIdx: index("run_step_run_idx").on(table.runId, table.idx)
-  })
-);
-
-export const runLogTable = pgTable(
-  "run_log",
-  {
-    runId: text("run_id")
-      .notNull()
-      .references(() => runTable.runId, { onDelete: "cascade" }),
-    seq: bigint("seq", { mode: "number" }).notNull(),
-    stream: text("stream", { enum: streamValues }).notNull(),
-    data: byteaColumn("data").notNull(),
-    tenantId: text("tenant_id"),
-    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.runId, table.seq], name: "run_log_pkey" }),
-    streamIdx: index("run_log_stream_idx").on(table.runId, table.stream, table.seq)
-  })
-);
-
-export const runSummaryTable = pgTable(
-  "run_summary",
-  {
-    runId: text("run_id")
-      .primaryKey()
-      .references(() => runTable.runId, { onDelete: "cascade" }),
-    threadId: uuid("thread_id")
-      .notNull()
-      .references(() => threadTable.threadId, { onDelete: "cascade" }),
-    budId: text("bud_id")
-      .notNull()
-      .references(() => budTable.budId, { onDelete: "cascade" }),
-    status: text("status", { enum: runStatusValues }).notNull(),
-    exitCode: integer("exit_code"),
-    stdoutBytes: bigint("stdout_bytes", { mode: "number" }).notNull().default(0),
-    stderrBytes: bigint("stderr_bytes", { mode: "number" }).notNull().default(0),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    finishedAt: timestamp("finished_at", { withTimezone: true })
-  },
-  (table) => ({
-    budIdx: index("run_summary_bud_idx").on(table.budId, table.startedAt),
-    threadIdx: index("run_summary_thread_idx").on(table.threadId, table.startedAt)
-  })
-);
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Terminal Sessions (thread-scoped)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -501,7 +408,6 @@ export const terminalSessionInputLogTable = pgTable(
       .references(() => terminalSessionTable.sessionId, { onDelete: "cascade" }),
     data: byteaColumn("data").notNull(),
     source: text("source").notNull(),
-    runId: text("run_id"),
     userId: text("user_id"),
     tenantId: text("tenant_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()

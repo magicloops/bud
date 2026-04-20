@@ -86,7 +86,7 @@ test("sendFrameToBud serializes frames onto the authoritative active socket", ()
   const sent = sendFrameToBud("bud-1", { type: "terminal_ensure", session_id: "sess-1" });
 
   assert.equal(sent, true);
-  assert.deepEqual((tracker.socket as any).sentFrames, [
+  assert.deepEqual((tracker.socket as unknown as { sentFrames: string[] }).sentFrames, [
     JSON.stringify({ type: "terminal_ensure", session_id: "sess-1" }),
   ]);
 
@@ -103,7 +103,7 @@ test("sendFrameToBud refuses closed sockets and unknown buds", () => {
   sessions.set("bud-1", tracker);
 
   assert.equal(sendFrameToBud("bud-1", { type: "noop" }), false);
-  assert.deepEqual((tracker.socket as any).sentFrames, []);
+  assert.deepEqual((tracker.socket as unknown as { sentFrames: string[] }).sentFrames, []);
 
   sessions.clear();
 });

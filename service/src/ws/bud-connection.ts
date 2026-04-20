@@ -11,7 +11,12 @@ import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable, enrollmentTokenTable } from "../db/schema.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
-import type { ReadinessAssessment } from "../terminal/types.js";
+import type {
+  ReadinessAssessment,
+  ReadinessHints,
+  TerminalPromptType,
+  TerminalReadyTrigger,
+} from "../terminal/types.js";
 import { logGatewayDebug } from "./debug.js";
 import {
   EnvelopeSchema,
@@ -192,8 +197,14 @@ export class BudConnection {
       return;
     }
 
+    const assessment = normalizeReadinessAssessment(result.data.assessment);
+    if (!assessment) {
+      logGatewayDebug({}, "Invalid terminal_ready readiness assessment");
+      return;
+    }
+
     await this.terminalSessionManager.handleTerminalReady(result.data.session_id, {
-      assessment: result.data.assessment as ReadinessAssessment,
+      assessment,
     });
   }
 
@@ -207,6 +218,12 @@ export class BudConnection {
       return;
     }
 
+    const readiness = normalizeReadinessAssessment(result.data.readiness);
+    if (!readiness) {
+      logGatewayDebug({}, "Invalid terminal_observe_result readiness assessment");
+      return;
+    }
+
     this.terminalSessionManager.handleObserveResult(result.data.session_id, {
       requestId: result.data.request_id,
       view: result.data.view,
@@ -215,7 +232,7 @@ export class BudConnection {
       linesCaptured: result.data.lines_captured,
       changed: result.data.changed ?? undefined,
       truncated: result.data.truncated ?? undefined,
-      readiness: result.data.readiness as ReadinessAssessment,
+      readiness,
       error: result.data.error
     });
   }
@@ -230,11 +247,17 @@ export class BudConnection {
       return;
     }
 
+    const readiness = normalizeReadinessAssessment(result.data.readiness);
+    if (!readiness) {
+      logGatewayDebug({}, "Invalid terminal_send_result readiness assessment");
+      return;
+    }
+
     this.terminalSessionManager.handleSendResult(result.data.session_id, {
       requestId: result.data.request_id,
       submitted: result.data.submitted,
       delta: result.data.delta ?? null,
-      readiness: result.data.readiness as ReadinessAssessment,
+      readiness,
       error: result.data.error
     });
   }
@@ -602,4 +625,93 @@ async function markBudOffline(budId: string, server: FastifyInstance) {
     .set({ status: "offline", lastSeenAt: new Date() })
     .where(eq(budTable.budId, budId));
   server.log.info({ budId }, "Bud marked offline");
+}
+
+const READINESS_TRIGGER_VALUES = [
+  "prompt_detected",
+  "quiescence",
+  "timeout",
+  "error",
+  "activity_stable",
+  "changed",
+  "settled",
+] as const satisfies readonly TerminalReadyTrigger[];
+
+const PROMPT_TYPE_VALUES = [
+  "shell",
+  "python",
+  "node",
+  "ruby",
+  "confirmation",
+  "password",
+  "pager",
+  "database",
+  "unknown",
+] as const satisfies readonly TerminalPromptType[];
+
+const DEFAULT_READINESS_HINTS: ReadinessHints = {
+  looks_like_prompt: false,
+  looks_like_confirmation: false,
+  looks_like_password: false,
+  looks_like_pager: false,
+  looks_like_error: false,
+  may_still_be_processing: false,
+};
+
+function normalizeReadinessAssessment(value: unknown): ReadinessAssessment | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (
+    typeof value.ready !== "boolean" ||
+    typeof value.confidence !== "number" ||
+    !Number.isFinite(value.confidence) ||
+    !isReadinessTrigger(value.trigger)
+  ) {
+    return null;
+  }
+
+  return {
+    ready: value.ready,
+    confidence: value.confidence,
+    trigger: value.trigger,
+    ...(isPromptType(value.prompt_type) ? { prompt_type: value.prompt_type } : {}),
+    hints: normalizeReadinessHints(value.hints),
+    ...(typeof value.quiet_for_ms === "number" && Number.isFinite(value.quiet_for_ms)
+      ? { quiet_for_ms: value.quiet_for_ms }
+      : {}),
+    ...(typeof value.activity_checks === "number" && Number.isFinite(value.activity_checks)
+      ? { activity_checks: value.activity_checks }
+      : {}),
+    ...(typeof value.stable_checks === "number" && Number.isFinite(value.stable_checks)
+      ? { stable_checks: value.stable_checks }
+      : {}),
+  };
+}
+
+function normalizeReadinessHints(value: unknown): ReadinessHints {
+  if (!isRecord(value)) {
+    return DEFAULT_READINESS_HINTS;
+  }
+
+  return {
+    looks_like_prompt: value.looks_like_prompt === true,
+    looks_like_confirmation: value.looks_like_confirmation === true,
+    looks_like_password: value.looks_like_password === true,
+    looks_like_pager: value.looks_like_pager === true,
+    looks_like_error: value.looks_like_error === true,
+    may_still_be_processing: value.may_still_be_processing === true,
+  };
+}
+
+function isReadinessTrigger(value: unknown): value is TerminalReadyTrigger {
+  return typeof value === "string" && READINESS_TRIGGER_VALUES.includes(value as TerminalReadyTrigger);
+}
+
+function isPromptType(value: unknown): value is TerminalPromptType {
+  return typeof value === "string" && PROMPT_TYPE_VALUES.includes(value as TerminalPromptType);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

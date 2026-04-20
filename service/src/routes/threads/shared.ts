@@ -6,6 +6,33 @@ import { db } from "../../db/client.js";
 import { messageTable, threadTable } from "../../db/schema.js";
 import { getAuthorizedThread, requireViewer } from "../../auth/session.js";
 
+type AuthorizedThreadAccess = {
+  viewer: NonNullable<Awaited<ReturnType<typeof requireViewer>>>;
+  thread: NonNullable<Awaited<ReturnType<typeof getAuthorizedThread>>>;
+};
+
+type SerializedThread = {
+  thread_id: string;
+  bud_id: string;
+  title: string | null;
+  created_at: Date;
+  last_activity_at: Date;
+  last_message_preview: string | null;
+  message_count: number;
+  pinned: boolean;
+  archived: boolean;
+};
+
+type SerializedMessage = {
+  message_id: string;
+  client_id: string;
+  role: string;
+  display_role: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  created_at: Date;
+};
+
 export const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),
   title: z.string().optional()
@@ -60,7 +87,7 @@ export const TerminalInputBodySchema = z.object({
   input: z.string().min(1)
 });
 
-export function serializeThread(row: typeof threadTable.$inferSelect) {
+export function serializeThread(row: typeof threadTable.$inferSelect): SerializedThread {
   return {
     thread_id: row.threadId,
     bud_id: row.budId,
@@ -74,7 +101,7 @@ export function serializeThread(row: typeof threadTable.$inferSelect) {
   };
 }
 
-export function serializeMessage(row: typeof messageTable.$inferSelect) {
+export function serializeMessage(row: typeof messageTable.$inferSelect): SerializedMessage {
   return {
     message_id: row.messageId,
     client_id: row.clientId,
@@ -96,7 +123,9 @@ export type MessageCursor = {
   messageId: string;
 };
 
-export function encodeMessageCursor(row: Pick<typeof messageTable.$inferSelect, "createdAt" | "messageId">) {
+export function encodeMessageCursor(
+  row: Pick<typeof messageTable.$inferSelect, "createdAt" | "messageId">,
+): string {
   return Buffer.from(
     JSON.stringify({
       created_at: row.createdAt.toISOString(),
@@ -124,14 +153,14 @@ export function decodeMessageCursor(value: string): MessageCursor | null {
   }
 }
 
-export function olderThanMessageCursor(cursor: MessageCursor) {
+export function olderThanMessageCursor(cursor: MessageCursor): ReturnType<typeof or> {
   return or(
     lt(messageTable.createdAt, cursor.createdAt),
     and(eq(messageTable.createdAt, cursor.createdAt), lt(messageTable.messageId, cursor.messageId)),
   );
 }
 
-export function newerThanMessageCursor(cursor: MessageCursor) {
+export function newerThanMessageCursor(cursor: MessageCursor): ReturnType<typeof or> {
   return or(
     gt(messageTable.createdAt, cursor.createdAt),
     and(eq(messageTable.createdAt, cursor.createdAt), gt(messageTable.messageId, cursor.messageId)),
@@ -142,7 +171,7 @@ export async function requireAuthorizedThreadAccess(
   request: FastifyRequest,
   reply: FastifyReply,
   threadId: string,
-) {
+): Promise<AuthorizedThreadAccess | null> {
   const viewer = await requireViewer(request, reply);
   if (!viewer) {
     return null;
@@ -157,7 +186,7 @@ export async function requireAuthorizedThreadAccess(
   return { viewer, thread };
 }
 
-export function readLastEventId(request: FastifyRequest, queryValue?: string) {
+export function readLastEventId(request: FastifyRequest, queryValue?: string): string | null {
   if (queryValue) {
     return queryValue;
   }
@@ -199,4 +228,3 @@ export function isUniqueViolation(error: unknown): error is { code: string } {
     (error as { code?: unknown }).code === "23505"
   );
 }
-

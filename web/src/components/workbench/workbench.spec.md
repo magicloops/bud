@@ -14,7 +14,7 @@ Left sidebar navigation showing connected buds.
 
 **Types**:
 - `BudCapabilities` - Device capabilities (sessions, terminal)
-- `BudProfile` - Bud data (id, label, color, status, lastRun)
+- `BudProfile` - Bud data (id, label, color, status)
 
 **Features**:
 - Numbered bud buttons with accent colors

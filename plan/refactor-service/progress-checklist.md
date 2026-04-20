@@ -1,5 +1,7 @@
 # Progress Checklist: Service Layer Refactor
 
+**Overall Status**: Closed
+
 ## Phase 1: Contract Bugs And Legacy Runtime Removal
 
 - [x] Remove the standalone `/api/runs` route and its bootstrap wiring
@@ -42,7 +44,7 @@
 
 ## Phase 5: Validation, Specs, And Final Cleanup
 
-- [ ] Run the manual validation matrix
+- [x] Run the manual validation matrix
 - [x] Update `service/service.spec.md`
 - [x] Update `service/src/src.spec.md`
 - [x] Update affected `service/src/*/*.spec.md` files
@@ -51,3 +53,28 @@
 - [x] Update `AGENTS.md` if the DB workflow note is corrected there
 - [x] Update `bud.spec.md`
 - [x] Remove or explicitly document any remaining legacy runtime/schema remnants
+
+## Phase 6: Service Lint Recovery
+
+- [x] Normalize TypeScript ESLint rule ownership in `service/eslint.config.js`
+- [x] Resolve contract-surface `no-unused-vars` errors without broad suppressions
+- [x] Resolve Better Auth bridge lint/type-global errors in `service/src/auth/auth.ts`
+- [x] Resolve real unused-value fallout in refactor-touched service modules
+- [x] Pass `pnpm --dir /Users/adam/bud/service lint`
+
+## Phase 7: Final Build, Lint, And Closeout
+
+- [x] Resolve or explicitly document the remaining warning-only `service` lint debt
+- [x] Pass final `pnpm --dir /Users/adam/bud/service build`
+- [x] Pass final `pnpm --dir /Users/adam/bud/service lint`
+- [x] Pass final `pnpm --dir /Users/adam/bud/web build`
+- [x] Scope the remaining `web` lint fallout as an explicit Phase 8 follow-on
+
+## Phase 8: Web Lint Recovery And Final Closeout
+
+- [x] Resolve the React Fast Refresh context-module lint errors
+- [x] Resolve the remaining route-level unused-vars findings
+- [x] Resolve the remaining route hook-dependency warnings intentionally
+- [x] Pass final `pnpm --dir /Users/adam/bud/web lint`
+- [x] Reconfirm the full final `service` / `web` build-lint matrix after the web fixes
+- [x] Mark the service refactor closed in the docs/checklists

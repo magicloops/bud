@@ -116,14 +116,16 @@ export const auth = betterAuth(createAuthOptions(authPool));
 const oauthResourceActions = oauthProviderResourceClient(auth).getActions();
 const authWithOAuthMetadataApi = auth as typeof auth & {
   api: {
-    getOAuthServerConfig: (...args: any[]) => Promise<unknown>;
-    getOpenIdConfig: (...args: any[]) => Promise<unknown>;
+    getOAuthServerConfig: (...args: unknown[]) => Promise<unknown>;
+    getOpenIdConfig: (...args: unknown[]) => Promise<unknown>;
   };
 };
 const oauthServerMetadataHandler = oauthProviderAuthServerMetadata(authWithOAuthMetadataApi);
 const openIdConfigMetadataHandler = oauthProviderOpenIdConfigMetadata(authWithOAuthMetadataApi);
 
-export async function verifyOAuthAccessToken(token: string | undefined) {
+export async function verifyOAuthAccessToken(
+  token: string | undefined,
+): ReturnType<typeof oauthResourceActions.verifyAccessToken> {
   return oauthResourceActions.verifyAccessToken(token, {
     verifyOptions: {
       audience: config.apiAudience,

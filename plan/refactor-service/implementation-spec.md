@@ -1,6 +1,6 @@
 # Implementation Spec: Service Layer Refactor
 
-**Status**: Draft
+**Status**: Closed
 **Created**: 2026-04-17
 **Review Doc**: [../../review/service-layer-implementation-review.md](../../review/service-layer-implementation-review.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
@@ -10,6 +10,9 @@
 **Phase 3**: [phase-3-agent-runtime-ownership-split.md](./phase-3-agent-runtime-ownership-split.md)
 **Phase 4**: [phase-4-route-and-gateway-decomposition.md](./phase-4-route-and-gateway-decomposition.md)
 **Phase 5**: [phase-5-validation-specs-and-final-cleanup.md](./phase-5-validation-specs-and-final-cleanup.md)
+**Phase 6**: [phase-6-service-lint-recovery.md](./phase-6-service-lint-recovery.md)
+**Phase 7**: [phase-7-final-build-lint-and-closeout.md](./phase-7-final-build-lint-and-closeout.md)
+**Phase 8**: [phase-8-web-lint-recovery-and-final-closeout.md](./phase-8-web-lint-recovery-and-final-closeout.md)
 
 ---
 
@@ -30,6 +33,8 @@ The service should be refactored now, while:
 - breaking changes are acceptable inside the active branch
 - there is no production rollout constraint yet
 - the current thread-scoped terminal architecture is already coherent enough to preserve as the long-lived execution model
+
+The initial five phases carried the functional/runtime refactor through validation and legacy cleanup, and the closure pass then exposed package-quality tail work: first a failing `service` lint step, and then a final `web` lint blocker after the `service` package was brought back to green. Those closure tasks were completed in follow-on Phases 6-8, and the refactor is now closed.
 
 ## Objective
 
@@ -59,14 +64,17 @@ These decisions are fixed for this plan:
 
 ## Success Criteria
 
-- [ ] the standalone legacy run runtime is removed from service bootstrap, routes, and normal browser-visible flows
-- [ ] no browser-facing stream path bypasses viewer authorization or ownership resolution
-- [ ] service boot works without LLM keys for auth/device-claim/local setup flows
-- [ ] terminal send/observe waits fail fast on cancel and Bud disconnect
-- [ ] first-use session creation is concurrency-safe and centrally owned
-- [ ] `service/src/agent/agent-service.ts`, `service/src/runtime/terminal-session-manager.ts`, `service/src/routes/threads.ts`, and `service/src/ws/gateway.ts` are materially smaller and clearer
-- [ ] specs and operator docs describe the current local/staging DB workflow accurately
-- [ ] any schema cleanup needed for legacy runtime removal is applied locally with `db:push` and validated in staging with `db:migrate`
+- [x] the standalone legacy run runtime is removed from service bootstrap, routes, and normal browser-visible flows
+- [x] no browser-facing stream path bypasses viewer authorization or ownership resolution
+- [x] service boot works without LLM keys for auth/device-claim/local setup flows
+- [x] terminal send/observe waits fail fast on cancel and Bud disconnect
+- [x] first-use session creation is concurrency-safe and centrally owned
+- [x] `service/src/agent/agent-service.ts`, `service/src/runtime/terminal-session-manager.ts`, `service/src/routes/threads.ts`, and `service/src/ws/gateway.ts` are materially smaller and clearer
+- [x] specs and operator docs describe the current local/staging DB workflow accurately
+- [x] any schema cleanup needed for legacy runtime removal is applied locally with `db:push` and validated in staging with `db:migrate`
+- [x] `pnpm --dir /Users/adam/bud/service lint` passes without broad suppressions
+- [x] `pnpm --dir /Users/adam/bud/web lint` passes without broad suppressions or ambiguous hook-rule deferrals
+- [x] the final `service` and `web` build/lint pass completes before the refactor is marked closed
 
 ## Non-Goals
 
@@ -143,6 +151,9 @@ This exact layout is not mandatory, but the outcome must achieve these separatio
 | 3 | [phase-3-agent-runtime-ownership-split.md](./phase-3-agent-runtime-ownership-split.md) | High | Split `AgentService` into conversation, model, tool, transcript, and cancellation ownership units |
 | 4 | [phase-4-route-and-gateway-decomposition.md](./phase-4-route-and-gateway-decomposition.md) | High | Decompose the thread routes and websocket gateway while keeping ownership boundaries explicit |
 | 5 | [phase-5-validation-specs-and-final-cleanup.md](./phase-5-validation-specs-and-final-cleanup.md) | High | Validate behavior, update specs/docs, and remove any dead legacy schema/runtime remnants |
+| 6 | [phase-6-service-lint-recovery.md](./phase-6-service-lint-recovery.md) | High | Restore a passing `service` lint baseline by fixing the TypeScript ESLint rule ownership gap and clearing error-level refactor fallout |
+| 7 | [phase-7-final-build-lint-and-closeout.md](./phase-7-final-build-lint-and-closeout.md) | High | Resolve or explicitly disposition warning-only lint debt, rerun the final `service`/`web` checks, and close the refactor docs |
+| 8 | [phase-8-web-lint-recovery-and-final-closeout.md](./phase-8-web-lint-recovery-and-final-closeout.md) | High | Fix the last `web` lint blockers, rerun the full final matrix, and explicitly close the refactor |
 
 ## Expected Files And Areas
 
@@ -216,6 +227,9 @@ The intended execution order is:
 3. split terminal runtime ownership
 4. split agent/runtime transport ownership
 5. validate behavior, clean up schema/docs/specs, and finish any dead-code removal
+6. restore a passing `service` lint baseline
+7. clear the warning-only `service` closure debt and rerun the first final cross-package pass
+8. fix the remaining `web` lint blockers and then mark the refactor closed
 
 If schema changes are required during the refactor:
 
@@ -224,10 +238,13 @@ If schema changes are required during the refactor:
 
 ## Definition Of Done
 
-- [ ] the legacy standalone run/runtime surface is removed
-- [ ] ownership enforcement is consistent across all browser-visible reads and streams
-- [ ] provider-less boot works for non-agent flows
-- [ ] terminal cancellation and offline behavior are fast-fail and tested
-- [ ] the main service hotspots are split into smaller ownership units
-- [ ] service specs, root spec index, and operator docs are updated
-- [ ] any legacy schema/runtime leftovers are either removed or explicitly documented as temporary
+- [x] the legacy standalone run/runtime surface is removed
+- [x] ownership enforcement is consistent across all browser-visible reads and streams
+- [x] provider-less boot works for non-agent flows
+- [x] terminal cancellation and offline behavior are fast-fail and tested
+- [x] the main service hotspots are split into smaller ownership units
+- [x] service specs, root spec index, and operator docs are updated
+- [x] any legacy schema/runtime leftovers are either removed or explicitly documented as temporary
+- [x] `service` lint is restored to green without broad suppressions
+- [x] `web` lint is restored to green without broad suppressions
+- [x] the final `service` and `web` build/lint pass is green before closure

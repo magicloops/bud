@@ -105,11 +105,14 @@ function NewThreadView() {
           const displayModels = aliasModels.length > 0 ? aliasModels : data.models
           setModels(displayModels)
           // Set default model from server config, or first available
-          if (!selectedModel) {
+          setSelectedModel((currentModel) => {
+            if (currentModel) {
+              return currentModel
+            }
             const serverDefault = data.default_model
             const hasDefault = serverDefault && displayModels.some((m) => m.id === serverDefault)
-            setSelectedModel(hasDefault ? serverDefault : displayModels[0]?.id ?? '')
-          }
+            return hasDefault ? serverDefault : displayModels[0]?.id ?? ''
+          })
         }
       })
       .catch((err) => console.error('Failed to fetch models', err))

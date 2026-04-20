@@ -1,39 +1,13 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext } from 'react'
 import type { ApiCurrentUser } from '@/lib/api'
 
-type AuthSessionContextValue = {
+export type AuthSessionContextValue = {
   currentUser: ApiCurrentUser | null
   isAuthenticated: boolean
   setCurrentUser: (user: ApiCurrentUser | null) => void
 }
 
-const AuthSessionContext = createContext<AuthSessionContextValue | null>(null)
-
-export function AuthSessionProvider({
-  children,
-  initialCurrentUser,
-}: {
-  children: ReactNode
-  initialCurrentUser: ApiCurrentUser | null
-}) {
-  const [currentUser, setCurrentUser] = useState<ApiCurrentUser | null>(initialCurrentUser)
-
-  useEffect(() => {
-    setCurrentUser(initialCurrentUser)
-  }, [initialCurrentUser])
-
-  return (
-    <AuthSessionContext.Provider
-      value={{
-        currentUser,
-        isAuthenticated: currentUser !== null,
-        setCurrentUser,
-      }}
-    >
-      {children}
-    </AuthSessionContext.Provider>
-  )
-}
+export const AuthSessionContext = createContext<AuthSessionContextValue | null>(null)
 
 export function useAuthSession() {
   const context = useContext(AuthSessionContext)

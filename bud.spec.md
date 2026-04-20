@@ -219,7 +219,7 @@ The web app now consumes that foundation through:
 - credential-aware API and SSE helpers so cookie auth works consistently across loaders and live streams
 - an OAuth Provider client plugin that preserves Better Auth's signed mobile resume state through hosted auth pages
 - auth-expiry-aware reconnect guards so live thread views stop polling once browser auth is gone
-- per-user route filtering so browser users only receive their own Buds, threads, runs, sessions, and messages
+- per-user route filtering so browser users only receive their own Buds, threads, sessions, and messages
 
 Bud device onboarding is now browser-mediated:
 1. The daemon starts a claim with `/api/device-auth/start`
@@ -371,12 +371,11 @@ Core tables (schema-first locally via `db:push`, with checked-in migrations used
 | `enrollment_token` | One-time registration tokens |
 | `thread` | Conversation containers |
 | `message` | Chat messages |
-| `run` | Legacy standalone run records retained in schema pending explicit schema cleanup after the service refactor |
-| `run_step` | Legacy standalone run steps retained in schema pending explicit schema cleanup after the service refactor |
-| `run_log` | Legacy standalone run output logs retained in schema during the service refactor |
 | `terminal_session` | Thread-scoped terminal sessions |
 | `terminal_session_output` | Terminal output chunks |
 | `terminal_session_input_log` | Input audit log |
+
+The service refactor's final cleanup removes the old standalone `run` / `run_step` / `run_log` / `run_summary` schema from the active service model. Historical references remain only in older plans, reviews, and migration history.
 
 ---
 
@@ -538,12 +537,15 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/refactor-daemon/progress-checklist.md](./plan/refactor-daemon/progress-checklist.md) | Running implementation checklist for the Bud daemon modularization plan |
 | [plan/refactor-daemon/validation-checklist.md](./plan/refactor-daemon/validation-checklist.md) | Manual verification checklist for validating the refactored Bud daemon before starting the wire-level tmux cleanup follow-up |
 | [plan/refactor-service/refactor-service.spec.md](./plan/refactor-service/refactor-service.spec.md) | Folder spec for the phased service refactor plan, centered on removing the standalone legacy run surface, fixing boundary/bootstrap bugs first, and then splitting terminal, agent, route, and gateway ownership in the current internal-only branch |
-| [plan/refactor-service/implementation-spec.md](./plan/refactor-service/implementation-spec.md) | Parent implementation spec for refactoring `service/` into smaller ownership-driven modules while removing the legacy standalone run runtime, keeping thread-scoped terminals as the primary execution model, and aligning docs with the current `db:push` local / `db:migrate` staging workflow |
+| [plan/refactor-service/implementation-spec.md](./plan/refactor-service/implementation-spec.md) | Closed parent implementation spec for the `service/` refactor, covering legacy standalone run removal, terminal/agent/route/gateway ownership splits, lint/build closure, and the aligned `db:push` local / `db:migrate` staging workflow |
 | [plan/refactor-service/phase-1-contract-bugs-and-legacy-runtime-removal.md](./plan/refactor-service/phase-1-contract-bugs-and-legacy-runtime-removal.md) | Initial service refactor phase covering removal of the legacy standalone run surface, cleanup of unauthenticated legacy stream routes, provider/bootstrap fixes, enrollment-token hash unification, and DB workflow doc alignment |
 | [plan/refactor-service/phase-2-terminal-runtime-ownership-split.md](./plan/refactor-service/phase-2-terminal-runtime-ownership-split.md) | Terminal runtime phase covering extraction of session-record lifecycle, request dispatch, output persistence, readiness/context/idle ownership, and fast-fail cancel/offline behavior |
 | [plan/refactor-service/phase-3-agent-runtime-ownership-split.md](./plan/refactor-service/phase-3-agent-runtime-ownership-split.md) | Agent runtime phase covering extraction of conversation loading, model running, terminal tool execution, transcript persistence/runtime emission, and cancellation coordination out of `AgentService` |
 | [plan/refactor-service/phase-4-route-and-gateway-decomposition.md](./plan/refactor-service/phase-4-route-and-gateway-decomposition.md) | Transport phase covering decomposition of the thread route family, websocket gateway decomposition, and reduction of `server.ts` to a thinner composition root with no lingering legacy runtime bootstrap |
 | [plan/refactor-service/phase-5-validation-specs-and-final-cleanup.md](./plan/refactor-service/phase-5-validation-specs-and-final-cleanup.md) | Final service refactor phase covering manual validation, spec/doc updates, and removal or explicit documentation of any remaining dead legacy runtime/schema remnants |
+| [plan/refactor-service/phase-6-service-lint-recovery.md](./plan/refactor-service/phase-6-service-lint-recovery.md) | Follow-on service refactor phase covering restoration of a passing `service` lint baseline, the TypeScript ESLint rule-ownership fix, and cleanup of error-level lint fallout exposed during the final closure pass |
+| [plan/refactor-service/phase-7-final-build-lint-and-closeout.md](./plan/refactor-service/phase-7-final-build-lint-and-closeout.md) | Final service refactor sign-off phase covering warning-only lint disposition, final `service`/`web` build-lint verification, and explicit closeout of the refactor docs/checklists |
+| [plan/refactor-service/phase-8-web-lint-recovery-and-final-closeout.md](./plan/refactor-service/phase-8-web-lint-recovery-and-final-closeout.md) | Completed frontend follow-on phase for the service refactor, covering the Fast Refresh context split, route lint cleanup, and the final full verification rerun that closed the refactor |
 | [plan/refactor-service/progress-checklist.md](./plan/refactor-service/progress-checklist.md) | Running implementation checklist for the service refactor plan |
 | [plan/refactor-service/validation-checklist.md](./plan/refactor-service/validation-checklist.md) | Manual verification checklist for the service refactor, including provider-less boot, ownership-aware streams, terminal cancel/offline behavior, legacy runtime removal, and DB workflow validation |
 | [plan/neutral-terminal-wire-contract/neutral-terminal-wire-contract.spec.md](./plan/neutral-terminal-wire-contract/neutral-terminal-wire-contract.spec.md) | Folder spec for the phased cleanup of tmux-specific leakage from the normal terminal contract, centered on single-gesture `terminal.send`, neutral status/capability payloads, and removal of service-owned tmux session naming |
@@ -568,6 +570,9 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
 | [debug/service-refactor-phase-1-contract-bugs.md](./debug/service-refactor-phase-1-contract-bugs.md) | Debug note for Phase 1 of the service refactor, covering provider-less boot, shared enrollment-token hashing, legacy run-surface removal, and the Node REPL prompt-classification fix |
 | [debug/service-refactor-phase-2-runtime-and-transport-split.md](./debug/service-refactor-phase-2-runtime-and-transport-split.md) | Debug note for the next service-refactor slice, covering terminal-runtime ownership extraction, pending terminal wait fast-fail behavior, and the route/gateway decomposition rationale |
+| [debug/service-refactor-final-build-fixes.md](./debug/service-refactor-final-build-fixes.md) | Debug note capturing the final closure-pass `service` build failure, including the broken `TerminalObservationView` import and the unsafe websocket-readiness casts that had to be normalized at the gateway boundary before continuing to lint/build sign-off |
+| [debug/service-refactor-phase-6-service-lint-recovery.md](./debug/service-refactor-phase-6-service-lint-recovery.md) | Debug note for the Phase 6 lint recovery pass, covering the TypeScript ESLint rule-ownership gap in `service/eslint.config.js`, the resulting false-positive `no-unused-vars` / `no-undef` failures on typed contract surfaces, and the narrow config fix used to restore a passing `service` lint baseline |
+| [debug/service-refactor-phase-8-web-lint-recovery.md](./debug/service-refactor-phase-8-web-lint-recovery.md) | Debug note for the final frontend closure pass, covering the React Fast Refresh context-module violations, the small route-hook lint findings in `web`, and the structural split used to restore a clean `web` lint baseline before refactor closeout |
 | [debug/ios-local-oauth-client-provisioning-id-null.md](./debug/ios-local-oauth-client-provisioning-id-null.md) | Debug note documenting why the first run of `pnpm oauth:provision:ios-local` fails on a fresh database: the provisioning script omits the required `auth.oauthClient.id` primary key on insert |
 | [debug/api-me-opaque-access-token.md](./debug/api-me-opaque-access-token.md) | Debug note documenting why `GET /api/me` returned `401 no token payload`: the token endpoint was allowed to mint opaque access tokens while Bud's bearer bootstrap path only accepted JWT API tokens |
 | [debug/api-me-issuer-mismatch.md](./debug/api-me-issuer-mismatch.md) | Debug note documenting why `GET /api/me` can still fail after JWT token minting succeeds: the bearer verifier defaulted to the bare Better Auth origin instead of the mounted `/api/auth` issuer |
@@ -621,4 +626,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-17*
+*Last updated: 2026-04-20*

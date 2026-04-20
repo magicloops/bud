@@ -168,7 +168,7 @@ export class TerminalSessionManager {
   async sendInput(
     sessionId: string,
     data: Buffer,
-    options: { source?: "agent" | "user" | "system"; runId?: string; userId?: string } = {}
+    options: { source?: "agent" | "user" | "system"; userId?: string } = {}
   ): Promise<{ ok: boolean; error?: string }> {
     const session = await this.sessionStore.getSession(sessionId);
     if (!session) {
@@ -321,7 +321,7 @@ export class TerminalSessionManager {
     this.requestDispatcher.handleSendResult(sessionId, payload);
   }
 
-  getSessionContext(sessionId: string) {
+  getSessionContext(sessionId: string): ReturnType<TerminalRuntimeState["getSessionContext"]> {
     return this.runtimeState.getSessionContext(sessionId);
   }
 
@@ -573,14 +573,13 @@ export class TerminalSessionManager {
   private async recordInput(
     sessionId: string,
     data: Buffer,
-    options: { source?: "agent" | "user" | "system"; runId?: string; userId?: string }
+    options: { source?: "agent" | "user" | "system"; userId?: string }
   ) {
     try {
       await db.insert(terminalSessionInputLogTable).values({
         sessionId,
         data,
         source: options.source ?? "agent",
-        runId: options.runId,
         userId: options.userId
       });
     } catch (err) {

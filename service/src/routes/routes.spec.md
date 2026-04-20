@@ -37,7 +37,7 @@ Bud management and session listing.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/buds` | List the signed-in user's buds with last run info |
+| `GET` | `/api/buds` | List the signed-in user's buds |
 | `GET` | `/api/buds/:bud_id/sessions` | List active terminal sessions for an owned bud |
 | `DELETE` | `/api/buds/:bud_id/sessions/:session_id` | Close a specific session on an owned bud |
 
@@ -50,6 +50,13 @@ Bud management and session listing.
 - Bud-scoped routes resolve ownership through `getAuthorizedBud(...)`
 - Session inventory is filtered to `terminal_session.created_by_user_id = viewer.userId`
 - Closing a session marks that specific row closed; revisiting the thread later creates a new active session row
+
+### `buds.test.ts`
+
+Direct registration coverage for the Bud route family.
+
+**Current Coverage**:
+- the Bud inventory and Bud-session routes still register after the legacy `last_run` dependency removal
 
 ### `threads.ts`
 

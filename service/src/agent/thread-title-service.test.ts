@@ -8,6 +8,10 @@ import {
   resolveThreadTitleModel,
 } from "./thread-title-service.js";
 
+type TextContentResponse = {
+  content: Array<{ type: string; text?: string }>;
+};
+
 function makeLogger() {
   return {
     info() {
@@ -72,6 +76,9 @@ test("normalizeGeneratedThreadTitle accepts short titles", () => {
 
 test("collectResponse accumulates streamed title text deltas", async () => {
   const service = new ThreadTitleService({} as never, makeLogger());
+  const collectResponse = Reflect.get(service, "collectResponse") as (
+    stream: AsyncIterable<unknown>,
+  ) => Promise<TextContentResponse>;
 
   async function* stream() {
     yield { type: "message_start", id: "resp_title_1" } as const;
@@ -82,7 +89,7 @@ test("collectResponse accumulates streamed title text deltas", async () => {
     yield { type: "message_done", stop_reason: "end_turn" } as const;
   }
 
-  const response = await (service as any).collectResponse(stream());
+  const response = await collectResponse(stream());
   assert.deepEqual(response.content, [{ type: "text", text: "Fix deploy" }]);
 });
 
@@ -117,6 +124,9 @@ test("generateTitle returns null when no providers are registered", async () => 
   providerRegistry.unregister("anthropic");
 
   const service = new ThreadTitleService({} as never, makeLogger());
+  const generateTitle = Reflect.get(service, "generateTitle") as (
+    firstUserMessage: string,
+  ) => Promise<string | null>;
 
-  assert.equal(await (service as any).generateTitle("Fix the broken deploy script"), null);
+  assert.equal(await generateTitle("Fix the broken deploy script"), null);
 });

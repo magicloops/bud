@@ -2,7 +2,8 @@ import { ulid } from "ulid";
 import { asc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messageTable } from "../db/schema.js";
-import type { CanonicalMessage, TerminalObservationView } from "../llm/index.js";
+import type { CanonicalMessage } from "../llm/index.js";
+import type { TerminalObservationView } from "../terminal/types.js";
 import {
   buildToolArgs,
   normalizeToolKeyInput,

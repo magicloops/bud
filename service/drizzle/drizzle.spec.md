@@ -4,7 +4,7 @@ Database migration infrastructure using Drizzle Kit.
 
 ## Purpose
 
-Contains Drizzle Kit config plus the checked-in migration history used for staging. Local development remains schema-first off `src/db/schema.ts` via `db:push`.
+Contains Drizzle Kit config plus the checked-in migration history used for staging. Local development remains schema-first off `src/db/schema.ts` via `db:push`, while the staged chain now also carries the legacy-run schema removal.
 
 ## Subfolders
 

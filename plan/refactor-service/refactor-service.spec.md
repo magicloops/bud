@@ -1,6 +1,6 @@
 # refactor-service
 
-Implementation planning documents for refactoring the Node.js service into smaller, ownership-driven modules after the 2026-04-17 service review.
+Implementation planning and closeout documents for refactoring the Node.js service into smaller, ownership-driven modules after the 2026-04-17 service review.
 
 ## Purpose
 
@@ -19,6 +19,8 @@ The plan assumes:
 - the thread-scoped terminal runtime remains the primary execution architecture for service-side agent work
 - compatibility shims should only be kept when they materially reduce implementation risk inside the branch
 - spec and operator docs should be updated as part of the refactor so the current local/staging DB workflow is described accurately
+- the post-refactor closure pass may need explicit follow-on cleanup work if final build/lint verification exposes latent package debt
+- frontend/package-specific closure debt should be split into its own phase when the final verification pass reveals it, rather than being buried under a generic "closeout" label
 
 ## Files
 
@@ -77,6 +79,31 @@ Finalization phase covering:
 - schema/docs/spec cleanup
 - removal of now-dead schema/runtime remnants if confirmed unused
 
+### `phase-6-service-lint-recovery.md`
+
+Follow-on closure phase covering:
+
+- restoration of a passing `service` lint baseline
+- correction of the TypeScript ESLint rule-ownership gap in `service/eslint.config.js`
+- cleanup of error-level lint fallout left behind by the service refactor
+
+### `phase-7-final-build-lint-and-closeout.md`
+
+Final sign-off phase covering:
+
+- warning-only lint disposition
+- final `service` and `web` build/lint verification
+- marking the refactor docs/checklists closed
+
+### `phase-8-web-lint-recovery-and-final-closeout.md`
+
+Frontend closeout phase covering:
+
+- the remaining `web` lint blockers surfaced by the final verification pass
+- context-module Fast Refresh cleanup
+- route unused-vars / hook-dependency cleanup
+- the successful final refactor closure rerun
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the refactor plan.
@@ -91,11 +118,6 @@ Manual verification checklist for the refactor.
 - [../../service/service.spec.md](../../service/service.spec.md) - service package overview
 - [../../service/src/src.spec.md](../../service/src/src.spec.md) - current service source documentation
 - [../../bud.spec.md](../../bud.spec.md) - root architecture and documentation catalog
-
-## TODOs / Technical Debt
-
-<!-- SPEC:TODO -->
-- If schema cleanup for the removed standalone run surface is deferred until the final phase, the service specs and root docs should explicitly record that the runtime removal is complete before the table cleanup lands.
 
 ---
 

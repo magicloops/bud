@@ -354,7 +354,7 @@ function ThreadView() {
   } | null>(null)
   const [terminalOutputTruncated, setTerminalOutputTruncated] = useState(false)
   const [terminalScrolledToTop, setTerminalScrolledToTop] = useState(false)
-  const [_terminalDisconnectTime, setTerminalDisconnectTime] = useState<number | null>(null)
+  const [, setTerminalDisconnectTime] = useState<number | null>(null)
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
   const [showDisconnectOverlay, setShowDisconnectOverlay] = useState(false)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
@@ -419,11 +419,14 @@ function ThreadView() {
           const displayModels = aliasModels.length > 0 ? aliasModels : data.models
           setModels(displayModels)
           // Set default model from server config, or first available
-          if (!selectedModel) {
+          setSelectedModel((currentModel) => {
+            if (currentModel) {
+              return currentModel
+            }
             const serverDefault = data.default_model
             const hasDefault = serverDefault && displayModels.some((m) => m.id === serverDefault)
-            setSelectedModel(hasDefault ? serverDefault : displayModels[0]?.id ?? '')
-          }
+            return hasDefault ? serverDefault : displayModels[0]?.id ?? ''
+          })
         }
       })
       .catch((err) => console.error('Failed to fetch models', err))
@@ -1033,6 +1036,10 @@ function ThreadView() {
     threadId,
   ])
 
+  const handleThreadTitleUpdate = useCallback((title: string) => {
+    upsertThreadSummary({ ...initialThread, title })
+  }, [initialThread, upsertThreadSummary])
+
   // Agent SSE stream with reconnection support
   const connectAgentStream = useCallback((agentThreadId: string) => {
     agentThreadIdRef.current = agentThreadId
@@ -1254,7 +1261,7 @@ function ThreadView() {
       agentCursorRef.current = evt.lastEventId || agentCursorRef.current
       try {
         const data = JSON.parse(evt.data) as ThreadTitleEvent
-        upsertThreadSummary({ ...initialThread, title: data.title })
+        handleThreadTitleUpdate(data.title)
       } catch (e) {
         console.warn('[agent-sse] failed to parse thread.title', e)
       }
@@ -1345,7 +1352,7 @@ function ThreadView() {
     })
 
     return cleanupAgent
-  }, [refreshAgentBootstrap])
+  }, [handleThreadTitleUpdate, refreshAgentBootstrap])
 
   // Auto-connect agent SSE on mount to catch in-progress agent runs
   // This handles the case where we navigate from /new after posting a message

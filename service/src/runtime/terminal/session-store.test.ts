@@ -51,7 +51,7 @@ test("ensureSessionRecordForThread returns the concurrent winner after an active
   const store = new TerminalSessionStore(createLogger());
   let lookupCount = 0;
 
-  (store as any).getSessionForThread = async () => {
+  Reflect.set(store, "getSessionForThread", async () => {
     lookupCount += 1;
     return lookupCount === 1
       ? null
@@ -68,7 +68,7 @@ test("ensureSessionRecordForThread returns the concurrent winner after an active
           lastActivityAt: null,
           outputLogBytes: 0,
         };
-  };
+  });
 
   mock.method(db, "insert", () => ({
     values() {
@@ -96,7 +96,7 @@ test("ensureSessionRecordForThread returns a created session when the insert win
   });
 
   const store = new TerminalSessionStore(createLogger());
-  (store as any).getSessionForThread = async () => null;
+  Reflect.set(store, "getSessionForThread", async () => null);
 
   mock.method(db, "insert", () => ({
     values() {

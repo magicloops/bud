@@ -31,7 +31,8 @@ test("cancelThread aborts the active turn and rejects pending terminal waits", a
   );
 
   const controller = new AbortController();
-  (service as any).cancellations.set("thread-1", controller);
+  const cancellations = Reflect.get(service, "cancellations") as Map<string, AbortController>;
+  cancellations.set("thread-1", controller);
 
   await service.cancelThread("thread-1");
 

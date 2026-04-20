@@ -4,7 +4,7 @@ Database layer using Drizzle ORM with PostgreSQL.
 
 ## Purpose
 
-Provides type-safe database access for all persistent data: buds, threads, messages, runs, sessions, terminal output, browser-auth user/profile records, and device-claim bootstrap state.
+Provides type-safe database access for all persistent data: buds, threads, messages, terminal sessions/output, browser-auth user/profile records, and device-claim bootstrap state.
 
 ## Files
 
@@ -65,15 +65,6 @@ Drizzle schema definitions (~500 lines). Defines all tables:
 |-------|---------|-------------|
 | `userProfileTable` | Bud-owned profile metadata layered on auth users | `userId`, `username`, `createdAt`, `updatedAt` |
 
-#### Run Tables (Legacy/Command Execution)
-
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `runTable` | Command execution records | `runId`, `threadId`, `status`, `stepCount`, `logsBytes`, `createdByUserId`, `canceledByUserId` |
-| `runStepTable` | Individual tool calls | `stepId`, `runId`, `tool`, `argsJson`, `exitCode` |
-| `runLogTable` | Stdout/stderr chunks | `runId`, `seq`, `stream`, `data` (bytea) |
-| `runSummaryTable` | Denormalized run summaries | `runId`, `budId`, `status`, `exitCode`, `stdoutBytes` |
-
 #### Terminal Session Tables (Thread-Scoped)
 
 | Table | Purpose | Key Columns |
@@ -97,9 +88,7 @@ Drizzle schema definitions (~500 lines). Defines all tables:
 
 | Enum | Values |
 |------|--------|
-| `runStatusValues` | `queued`, `planning`, `running`, `canceling`, `succeeded`, `failed`, `canceled` |
 | `messageRoleValues` | `user`, `assistant`, `tool`, `system` |
-| `streamValues` | `stdout`, `stderr` |
 
 **Note**: The `system` role is used for context sync messages injected before user messages to inform the agent about terminal state changes.
 
@@ -150,23 +139,6 @@ Used by the current user/assistant/tool/system message insert paths and the hist
 
 Unit test that verifies `generateMessageClientId()` returns a valid UUIDv7.
 
-### `run-summary.ts`
-
-Maintains denormalized run summary table for efficient bud listing:
-
-```typescript
-export async function upsertRunSummary({
-  runId,
-  status,
-  exitCode,
-  stdoutBytes,
-  stderrBytes,
-  finishedAt
-}: RunSummaryInput): Promise<void>
-```
-
-Uses `onConflictDoUpdate` for upsert semantics.
-
 ### `thread-metadata.ts`
 
 Updates thread activity metadata after messages:
@@ -198,8 +170,6 @@ budTable
     │              │
     │              ├── 1:N ──► messageTable
     │              │
-    │              ├── 1:N ──► runTable ──► runStepTable, runLogTable
-    │              │
     │              └── 1:N ──► terminalSessionTable ──► terminalSessionOutputTable
     │                                                   terminalSessionInputLogTable
     │
@@ -211,13 +181,13 @@ budTable
 
 ## Auth Bootstrap Note
 
-`drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/code/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
+`drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0010`, including the catch-up migration that adds `message.client_id`, backfills existing rows, and drops the removed `terminal_session.tmux_session_name` column so migration-driven environments can reach the same schema shape as `schema.ts`.
+Checked-in migrations now run cleanly through `0011`, including the catch-up migration that adds `message.client_id`, backfills existing rows, drops the removed `terminal_session.tmux_session_name` column, and removes the dead standalone-run tables plus `terminal_session_input_log.run_id` so migration-driven environments can reach the same schema shape as `schema.ts`.
 
 ## Ownership And Multi-Tenancy Support
 
-Browser-facing ownership is now enforced through `createdByUserId` across the Bud/thread/message/run/terminal-session surfaces, with human terminal input additionally recorded in `terminalSessionInputLog.userId`.
+Browser-facing ownership is now enforced through `createdByUserId` across the Bud/thread/message/terminal-session surfaces, with human terminal input additionally recorded in `terminalSessionInputLog.userId`.
 
 `tenantId` columns remain nullable and unused in this tranche.
 
