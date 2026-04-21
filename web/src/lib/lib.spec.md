@@ -87,6 +87,9 @@ export function normalizeCapabilities(caps: unknown): {
 
 Safely extracts the behavior-oriented capability fields the browser actually cares about from the API response. tmux identity/version details are no longer surfaced in the normal browser contract.
 
+Tool transcript note:
+- tool rows still expose generic `metadata: Record<string, unknown>`, and completed canonical tool rows may now include additive timing fields such as `started_at`, `finished_at`, and `duration_ms` inside that metadata object
+
 ### `route-auth.ts`
 
 Route-level auth helpers shared across loaders and authenticated screens.

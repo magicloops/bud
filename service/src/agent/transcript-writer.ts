@@ -6,6 +6,8 @@ import {
   buildToolArgs,
   type AgentToolCallDirective,
   type ExecutedTerminalTool,
+  type ToolExecutionTiming,
+  serializeToolExecutionTiming,
 } from "./contracts.js";
 
 type PersistedAgentMessage = {
@@ -40,6 +42,7 @@ export class AgentTranscriptWriter {
     turnId: string,
     directive: AgentToolCallDirective,
     clientId: string,
+    startedAt: Date,
   ): { args: Record<string, unknown>; cursor: string } {
     const args = buildToolArgs(directive);
     const cursor = this.runtime.emit(threadId, {
@@ -50,6 +53,7 @@ export class AgentTranscriptWriter {
         call_id: directive.callId,
         name: directive.tool,
         args,
+        started_at: startedAt.toISOString(),
       },
     });
 
@@ -72,9 +76,15 @@ export class AgentTranscriptWriter {
     turnId: string;
     execution: ExecutedTerminalTool;
     clientId: string;
+    timing: ToolExecutionTiming;
     ownerUserId?: string | null;
   }): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage; cursor: string }> {
-    const { threadId, turnId, execution, clientId, ownerUserId } = args;
+    const { threadId, turnId, execution, clientId, timing, ownerUserId } = args;
+    const serializedTiming = serializeToolExecutionTiming(timing);
+    const persistedMetadata = {
+      ...execution.payload,
+      ...serializedTiming,
+    };
     const [toolMessage] = await db
       .insert(messageTable)
       .values({
@@ -84,7 +94,7 @@ export class AgentTranscriptWriter {
         displayRole: "Tool",
         content: JSON.stringify(execution.payload),
         createdByUserId: ownerUserId ?? undefined,
-        metadata: execution.payload,
+        metadata: persistedMetadata,
       })
       .returning({
         messageId: messageTable.messageId,
@@ -114,6 +124,7 @@ export class AgentTranscriptWriter {
         truncated: execution.result.truncated,
         output_truncation_reason: execution.outputTruncationReason,
         omitted_lines: execution.result.omittedLines,
+        ...serializedTiming,
         message: serializedMessage,
       },
     });

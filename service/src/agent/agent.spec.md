@@ -225,6 +225,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 **Responsibilities**:
 - emit `agent.tool_call` and synchronize `/agent/state.pending_tool`
 - persist assistant/tool transcript rows with stable `client_id`
+- add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
 - advance runtime cursors only after the durable transcript boundary is visible
 
@@ -240,6 +241,14 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - `startUserMessage(..., { ownerUserId })` threads the resolved thread owner through the agent loop
 - assistant final messages and tool-result messages are written with `message.created_by_user_id`
 - lazily created terminal sessions inherit the same owner via `ensureSessionRecordForThread(..., ownerUserId)`
+
+### `transcript-writer.test.ts`
+
+Direct tests for transcript-writer persistence and stream emission boundaries.
+
+**Current Coverage**:
+- tool timing is emitted on `agent.tool_call` / `agent.tool_result`
+- canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
 
 ### `thread-title-service.ts`
 
@@ -280,8 +289,8 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 | `agent.message_start` | `{ turn_id, client_id }` | First visible assistant-text chunk for a turn |
 | `agent.message_delta` | `{ turn_id, client_id, delta }` | Incremental assistant-text append |
 | `agent.message_done` | `{ turn_id, client_id, text }` | Draft assistant text complete, before canonical persistence |
-| `agent.tool_call` | `{ turn_id, client_id, call_id, name, args }` | Before executing tool |
-| `agent.tool_result` | `{ turn_id, client_id, call_id, message_id, name, summary, output, output_truncation_reason, ..., message }` | After tool execution, including the persisted canonical tool row |
+| `agent.tool_call` | `{ turn_id, client_id, call_id, name, args, started_at }` | Before executing tool |
+| `agent.tool_result` | `{ turn_id, client_id, call_id, message_id, name, summary, output, output_truncation_reason, started_at, finished_at, duration_ms, ..., message }` | After tool execution, including the persisted canonical tool row |
 | `agent.message` | `{ turn_id, client_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
 | `thread.title` | `{ thread_id, title, source, updated_at }` | Best-effort first-message thread title became durable |
 | `agent.resync_required` | `{ error, provided_cursor }` | Resume cursor was too old or unknown; client must refetch `/messages` plus `/agent/state` |
@@ -295,7 +304,10 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `client_id` on `agent.message_start` / `agent.message_delta` / `agent.message_done` matches `/agent/state.draft_assistant.client_id` and the later persisted assistant row
 - `call_id` on `agent.tool_call` / `agent.tool_result` matches the persisted tool row `metadata.call_id`
 - `client_id` on `agent.tool_call` / `agent.tool_result` matches `/agent/state.pending_tool.client_id` and the later persisted tool row
+- `started_at` on `agent.tool_call` is the service-side tool-start timestamp captured immediately before execution begins
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
+- tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop
+- canonical persisted tool rows expose the same timing fields under `message.metadata`, while `message.content` remains the replay payload and intentionally does not gain timing-only fields
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
 - `message.client_id` is the same stable public identity already exposed on the top-level assistant/tool runtime and stream payloads
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
