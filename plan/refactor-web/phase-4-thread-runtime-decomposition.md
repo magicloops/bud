@@ -42,6 +42,19 @@ Possible ownership shapes:
 
 The key requirement is that message behavior becomes testable without mounting the full thread page.
 
+**Status**: In progress.
+
+Completed first slice:
+
+- transcript/message ownership now lives in `web/src/features/threads/use-thread-messages.ts`
+- the route composes that hook for transcript bootstrap, optimistic user sends, pagination, and draft/pending overlay reconciliation
+- `web/src/features/threads/threads.spec.md` documents the new ownership seam
+
+Remaining in this area:
+
+- add automated coverage for message reconciliation
+- decide whether the message hook should stay hook-based or gain a smaller pure reducer/test seam
+
 ### 2. Extract agent stream ownership
 
 Create a dedicated unit for:
@@ -58,6 +71,17 @@ Possible ownership shape:
 - `useAgentStream(...)`
 
 It should depend on a narrow message/update interface rather than mutating route-local state ad hoc.
+
+Completed first slice:
+
+- agent SSE ownership now lives in `web/src/features/threads/use-agent-stream.ts`
+- the route composes that hook for stream cursor resume, heartbeat/reconnect handling, explicit resync, and event parsing
+- `web/src/features/threads/threads.spec.md` and `web/src/routes/$budId/budId.spec.md` document the stream boundary
+
+Remaining in this area:
+
+- add automated coverage for reconnect and explicit resync behavior
+- decide whether stream event parsing needs an additional pure helper seam for easier tests
 
 ### 3. Extract terminal session ownership
 
@@ -78,6 +102,16 @@ Possible ownership split:
 
 This is the place to separate pure state transitions from xterm imperative lifecycle concerns where practical.
 
+Completed first slice:
+
+- terminal session/xterm ownership now lives in `web/src/features/threads/use-terminal-session.ts`
+- the route composes that hook for xterm lifecycle, terminal SSE attach/reconnect, terminal history replay, and browser input translation
+- terminal presentation now lives in `web/src/components/workbench/thread-terminal-pane.tsx`, leaving the route to pass narrow state/actions into a presentation-only component
+
+Remaining in this area:
+
+- add automated coverage for terminal reconnect/recovery behavior
+
 ### 4. Extract presentation-only pieces from runtime code
 
 After the runtime logic is split, the remaining route/component layer should mostly render:
@@ -89,6 +123,11 @@ After the runtime logic is split, the remaining route/component layer should mos
 - menus/overlays
 
 Presentation components should not own reconnect policy or transcript reconciliation.
+
+Completed first slice:
+
+- `web/src/components/workbench/thread-terminal-pane.tsx` now owns the terminal placeholder/overlay/status/menu JSX
+- `web/src/routes/$budId/$threadId.tsx` is reduced to route loading, feature-hook composition, and top-level send/cancel handlers
 
 ### 5. Keep ownership seams explicit
 

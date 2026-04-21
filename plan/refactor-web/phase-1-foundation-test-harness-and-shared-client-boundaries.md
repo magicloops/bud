@@ -47,6 +47,17 @@ The exact tool choice can be settled during implementation, but the outcome need
 - package-local test execution from `web/`
 - lightweight DOM-capable coverage for React hooks/components where needed
 
+Completed first slice:
+
+- `web/package.json` now exposes a runnable `test` / `test:watch` command using Node's built-in test runner with `--experimental-strip-types`
+- the initial harness intentionally targets pure helper seams so coverage can run without adding a blocked browser-test dependency mid-refactor
+- colocated tests now cover auth redirect normalization plus extracted transcript/message reconciliation and shared stream-timing helpers
+
+Remaining in this area:
+
+- add a DOM-capable browser test dependency when the repo is ready for hook/component-level coverage
+- extend beyond pure-helper tests into the extracted thread runtime hooks and UI surfaces
+
 ### 2. Split low-risk helpers out of `web/src/lib/api.ts`
 
 Initial extractions should focus on clean ownership, not transport redesign.

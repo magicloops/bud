@@ -7,7 +7,7 @@ import {
   type SocialAuthProvider,
 } from '@/components/auth-page-shell'
 import { authClient } from '@/lib/auth-client'
-import { normalizeAppRedirectPath } from '@/lib/api'
+import { normalizeAppRedirectPath } from '@/lib/auth-redirect'
 import { useAuthSession } from '@/contexts/auth-session-context'
 
 type LoginSearch = {

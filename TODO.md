@@ -1,6 +1,9 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **Streaming JSON renderer replacement**
+  - Replace the current web JSON inspection/viewer path with a streaming JSON library so large tool payloads can render incrementally instead of relying on the current heavyweight viewer.
+  - Treat this as the point where web code-block rendering/highlighting gets revisited as well, since the renderer boundary will likely change and we still want broad language support up front rather than prematurely narrowing the syntax-highlighter footprint.
 - **Schema deploy parity (`db:migrate` vs `db:push`)**
   - Align staging/production schema rollout with the actual repo workflow: either generate and commit Drizzle SQL migrations for deploy-time `pnpm db:migrate`, or intentionally switch deploys to the audited `pnpm db:push` wrapper.
   - Capture the current `message.client_id` staging gap as the concrete example: predeploy `pnpm db:migrate` ran, but no generated migration existed, so staging never received the new column before the backfill script ran.

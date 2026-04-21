@@ -31,15 +31,33 @@ export function ThemeProvider({
 
   useEffect(() => {
     const root = document.documentElement
-    root.classList.remove('light', 'dark')
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
-    if (theme === 'system') {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-      root.classList.add(prefersDark ? 'dark' : 'light')
+    const applyThemeClass = (nextTheme: Theme) => {
+      root.classList.remove('light', 'dark')
+
+      if (nextTheme === 'system') {
+        root.classList.add(mediaQuery.matches ? 'dark' : 'light')
+        return
+      }
+
+      root.classList.add(nextTheme)
+    }
+
+    applyThemeClass(theme)
+
+    if (theme !== 'system') {
       return
     }
 
-    root.classList.add(theme)
+    const handleChange = () => {
+      applyThemeClass('system')
+    }
+
+    mediaQuery.addEventListener('change', handleChange)
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange)
+    }
   }, [theme])
 
   const value = useMemo(

@@ -1,6 +1,6 @@
 import { Home, LockKeyhole, SearchX, TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { isApiError } from '@/lib/api'
+import { isApiError } from '@/lib/transport'
 
 type RouteErrorScreenProps = {
   error: unknown

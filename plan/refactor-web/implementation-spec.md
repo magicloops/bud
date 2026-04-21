@@ -1,6 +1,6 @@
 # Implementation Spec: Web Architecture Refactor
 
-**Status**: Draft
+**Status**: In Progress
 **Created**: 2026-04-20
 **Review Doc**: [../../review/web-architecture-review-2026-04-20.md](../../review/web-architecture-review-2026-04-20.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
@@ -79,13 +79,42 @@ These decisions are fixed for this plan:
 ## Success Criteria
 
 - [ ] `web/src/routes/$budId/$threadId.tsx` is reduced from a mixed-runtime god file into a thin route and composed feature modules
-- [ ] `web/src/routes/$budId/new.tsx` and `web/src/routes/$budId/$threadId.tsx` share a real workspace shell and shared model-loading/composer infrastructure
-- [ ] `web/src/lib/api.ts` is split into smaller, ownership-oriented modules
-- [ ] duplicated auth gating is removed from child routes in favor of a protected-shell approach
-- [ ] destructive/mutating UI flows follow a consistent error and pending-state pattern
+- [x] `web/src/routes/$budId/new.tsx` and `web/src/routes/$budId/$threadId.tsx` share a real workspace shell and shared model-loading/composer infrastructure
+- [x] `web/src/lib/api.ts` is split into smaller, ownership-oriented modules
+- [x] duplicated auth gating is removed from child routes in favor of a protected-shell approach
+- [x] destructive/mutating UI flows follow a consistent error and pending-state pattern
 - [ ] the app has automated coverage for message reconciliation, stream/reconnect logic, and route auth behavior
-- [ ] the current known correctness issues are fixed
-- [ ] web specs describe the resulting module layout accurately
+- [x] the current known correctness issues are fixed
+- [x] web specs describe the resulting module layout accurately
+
+## Current Progress
+
+The refactor is now past the foundation/auth/workspace phases and through the main runtime-ownership slices of Phase 4.
+
+Completed so far:
+
+- `web/src/lib/api.ts` has been split into narrower transport/auth/type/helper modules while preserving a compatibility re-export surface
+- root-auth/session loading is centralized and child-route auth fetch duplication has been removed
+- the shared workspace shell is used by both `/$budId/new` and `/$budId/$threadId`
+- Bud-scoped thread summary ownership lives in the Bud route context rather than being treated as immutable loader output
+- the `system` theme live-update bug and invisible thread-delete failures are fixed
+- the web package now has a runnable `test` / `test:watch` command using Node's built-in test runner with TypeScript stripping
+- initial pure-helper coverage now exists for auth redirect normalization, transcript/message reconciliation, and shared stream timing policy
+- transcript/message ownership has been extracted from `/$budId/$threadId` into `web/src/features/threads/use-thread-messages.ts`
+- agent SSE ownership has been extracted from `/$budId/$threadId` into `web/src/features/threads/use-agent-stream.ts`
+- terminal session/xterm ownership has been extracted from `/$budId/$threadId` into `web/src/features/threads/use-terminal-session.ts`
+- terminal presentation has been extracted into `web/src/components/workbench/thread-terminal-pane.tsx`, reducing `/$budId/$threadId` to route-level composition
+- Phase 5 has started: the heavy tool-payload JSON viewer and fenced-code syntax highlighter now load on demand instead of living on the initial thread-route path
+
+Immediate next target:
+
+- normalize the remaining user-facing mutation UX and finish the remaining Phase 5 cleanup/docs work
+
+Deferred follow-up note:
+
+- further async viewer/highlighter chunk reduction is intentionally deferred for now
+- we want to preserve broad language support up front rather than trimming syntax coverage just to shrink the current async chunk
+- the heavier viewer/code-block path should be revisited when the current JSON inspector is replaced with a streaming JSON library, because that change is expected to reshape both tool-payload rendering and code-block/highlighter boundaries
 
 ## Non-Goals
 

@@ -50,7 +50,7 @@ Shared markdown renderer using `react-markdown` with:
 
 **Performance**:
 - Memoized with `React.memo`
-- Synchronous rendering (no lazy loading) to ensure consistent scroll behavior
+- Markdown still renders synchronously, but heavy fenced-code highlighting is now lazy-loaded inside `CodeBlock` so plain prose stays on the initial thread-route path
 
 ## Dependencies
 

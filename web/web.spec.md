@@ -52,6 +52,8 @@ web/
 | `dev` | `vite` | Start development server |
 | `build` | `tsc -b && vite build` | Type check & production build |
 | `lint` | `eslint .` | Run ESLint |
+| `test` | `node --experimental-strip-types --test 'src/**/*.test.ts'` | Run the current pure-helper web test suite without extra browser test dependencies |
+| `test:watch` | `node --watch --experimental-strip-types --test 'src/**/*.test.ts'` | Re-run the current pure-helper suite while editing |
 | `preview` | `vite preview` | Preview production build |
 
 The package manifest pins the Node runtime expected by the Vite 7 toolchain: Node `20.19+` or `22.12+`.
@@ -142,6 +144,7 @@ Current deployment guidance still favors leaving `VITE_API_BASE_URL` unset in br
 - Better Auth OAuth Provider client plugin preserves signed `oauth_query` state when hosted auth pages start social sign-in
 - Session-expiry redirects now stop background reconnect/poll loops once auth has expired
 - Hosted Bud claim pages can optionally hand control back into the native app when allowlisted mobile callback params are present
+- The web package now includes an initial Node-runner test harness for pure browser helpers such as auth redirect normalization and transcript reconciliation utilities; DOM-capable hook/component coverage is still future work
 
 ### Theming
 

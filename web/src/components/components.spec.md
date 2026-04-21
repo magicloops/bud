@@ -33,6 +33,7 @@ Theme context provider for light/dark/system mode.
 - Persists to localStorage (`bud-ui-theme`)
 - Applies CSS class to `<html>` element
 - Respects `prefers-color-scheme` for system mode
+- While `theme === 'system'`, listens for `prefers-color-scheme` changes so the UI updates live when the OS theme flips
 
 **Hook**: `useTheme()` - Returns `{ theme, setTheme }`
 

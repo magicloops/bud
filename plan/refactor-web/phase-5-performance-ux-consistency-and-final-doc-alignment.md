@@ -36,6 +36,23 @@ Recommended order:
 2. simplify or isolate measurement work
 3. decide whether virtualization is needed now or document it as explicit follow-up once the new boundaries are in place
 
+Completed first slice:
+
+- tool-payload JSON inspection now lazy-loads `@microlink/react-json-view` only when a payload is expanded
+- fenced-code highlighting now lazy-loads `react-syntax-highlighter` inside `CodeBlock`
+- the hot `/$budId/$threadId` route bundle dropped substantially after those changes, moving the viewer/highlighter cost behind interaction-driven async chunks
+
+Remaining in this area:
+
+- reduce repeated ordering/measurement work in `chat-timeline.tsx`
+- decide whether longer transcripts need virtualization now or an explicit documented follow-up
+
+Deferred note:
+
+- do not spend more refactor time right now trying to trim the remaining async syntax/viewer chunk by cutting language support or heavily reshaping the current renderer path
+- broad language support is the preferred near-term default
+- revisit this area when the current JSON inspector is replaced with a streaming JSON library, because that work is expected to change both tool-payload rendering and adjacent code-block/highlighter boundaries
+
 ### 2. Normalize mutation UX
 
 Bring thread deletion, session closing, profile updates, and similar actions onto a consistent pattern:

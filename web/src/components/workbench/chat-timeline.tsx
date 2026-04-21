@@ -1,4 +1,3 @@
-import ReactJsonView from '@microlink/react-json-view'
 import { memo, type MutableRefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -7,6 +6,7 @@ import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 
 const MAX_MESSAGE_HEIGHT = 500
+type JsonViewComponent = typeof import('@microlink/react-json-view').default
 
 export type ChatMessage = {
   id: string
@@ -41,6 +41,7 @@ const ChatTimelineComponent = ({
   const [expandedMessages, setExpandedMessages] = useState<Record<string, boolean>>({})
   const [overflowingMessages, setOverflowingMessages] = useState<Record<string, boolean>>({})
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [JsonView, setJsonView] = useState<JsonViewComponent | null>(null)
   const contentRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const handleCopyMessage = useCallback(async (messageId: string, content: string) => {
@@ -57,6 +58,29 @@ const ChatTimelineComponent = ({
     const resolved = resolveCssVar(accentColor || 'var(--avatar-3)')
     setSystemColor(getMutedColor(resolved, 0.4))
   }, [accentColor])
+
+  useEffect(() => {
+    if (JsonView || !Object.values(expandedPayloads).some(Boolean)) {
+      return
+    }
+
+    let cancelled = false
+    void import('@microlink/react-json-view')
+      .then((module) => {
+        if (!cancelled) {
+          setJsonView(() => module.default)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error('Failed to load JSON payload viewer', error)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [JsonView, expandedPayloads])
 
   const setScrollNode = useCallback(
     (node: HTMLDivElement | null) => {
@@ -211,32 +235,38 @@ const ChatTimelineComponent = ({
               </button>
               {isPayloadExpanded && (
                 <div className="rounded-lg border border-border bg-card/70 p-2 text-foreground shadow-sm">
-                  <ReactJsonView
-                    src={payload ?? { content: message.content }}
-                    name={false}
-                    collapsed={1}
-                    enableClipboard={false}
-                    displayDataTypes={false}
-                    displayObjectSize={false}
-                    theme={{
-                      base00: 'var(--chat-message)',
-                      base01: 'var(--chat-message)',
-                      base02: 'var(--chat-bg)',
-                      base03: 'var(--muted-foreground)',
-                      base04: 'var(--foreground)',
-                      base05: 'var(--foreground)',
-                      base06: 'var(--foreground)',
-                      base07: 'var(--foreground)',
-                      base08: '#a6ff4d',
-                      base09: '#ffb347',
-                      base0A: '#ffb347',
-                      base0B: '#a6ff4d',
-                      base0C: '#7dd3fc',
-                      base0D: '#7dd3fc',
-                      base0E: '#f472b6',
-                      base0F: '#f472b6'
-                    }}
-                  />
+                  {JsonView ? (
+                    <JsonView
+                      src={payload ?? { content: message.content }}
+                      name={false}
+                      collapsed={1}
+                      enableClipboard={false}
+                      displayDataTypes={false}
+                      displayObjectSize={false}
+                      theme={{
+                        base00: 'var(--chat-message)',
+                        base01: 'var(--chat-message)',
+                        base02: 'var(--chat-bg)',
+                        base03: 'var(--muted-foreground)',
+                        base04: 'var(--foreground)',
+                        base05: 'var(--foreground)',
+                        base06: 'var(--foreground)',
+                        base07: 'var(--foreground)',
+                        base08: '#a6ff4d',
+                        base09: '#ffb347',
+                        base0A: '#ffb347',
+                        base0B: '#a6ff4d',
+                        base0C: '#7dd3fc',
+                        base0D: '#7dd3fc',
+                        base0E: '#f472b6',
+                        base0F: '#f472b6'
+                      }}
+                    />
+                  ) : (
+                    <pre className="overflow-x-auto rounded-md bg-background/80 p-2 text-[11px] text-muted-foreground">
+                      <code>{JSON.stringify(payload ?? { content: message.content }, null, 2)}</code>
+                    </pre>
+                  )}
                 </div>
               )}
             </div>

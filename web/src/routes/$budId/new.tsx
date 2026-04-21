@@ -9,12 +9,14 @@
  */
 
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useState, useRef, useEffect } from 'react'
-import { WorkspaceTopBar } from '@/components/workbench/workspace-top-bar'
-import { CommandComposer, type ModelInfo } from '@/components/workbench/command-composer'
-import { apiFetch, generateMessageClientId } from '@/lib/api'
+import { useState, useRef, useEffect, type FormEvent } from 'react'
+import { WorkspaceShell } from '@/components/workbench/workspace-shell'
+import { CommandComposer } from '@/components/workbench/command-composer'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
+import { useAvailableModels } from '@/lib/models'
+import { generateMessageClientId } from '@/lib/messages'
+import { apiFetch } from '@/lib/transport'
 import type { Terminal } from 'xterm'
 import type { FitAddon } from 'xterm-addon-fit'
 import 'xterm/css/xterm.css'
@@ -33,10 +35,9 @@ function NewThreadView() {
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [selectedModel, setSelectedModel] = useState<string>('')
   const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
+  const { models, selectedModel, setSelectedModel } = useAvailableModels()
 
   // Terminal state (no connection in "new thread" mode)
   const [terminalState] = useState<string>('idle')
@@ -93,32 +94,7 @@ function NewThreadView() {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  // Fetch available models on mount
-  useEffect(() => {
-    apiFetch('/api/models')
-      .then(async (resp) => {
-        if (resp.ok) {
-          const data = (await resp.json()) as { models: ModelInfo[]; default_model?: string }
-          // Filter to only show aliases for cleaner UI
-          const aliasModels = data.models.filter((m) => m.is_alias)
-          // If no aliases, show all models
-          const displayModels = aliasModels.length > 0 ? aliasModels : data.models
-          setModels(displayModels)
-          // Set default model from server config, or first available
-          setSelectedModel((currentModel) => {
-            if (currentModel) {
-              return currentModel
-            }
-            const serverDefault = data.default_model
-            const hasDefault = serverDefault && displayModels.some((m) => m.id === serverDefault)
-            return hasDefault ? serverDefault : displayModels[0]?.id ?? ''
-          })
-        }
-      })
-      .catch((err) => console.error('Failed to fetch models', err))
-  }, [])
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!budId) {
       setError('No Bud selected')
@@ -175,28 +151,24 @@ function NewThreadView() {
   const terminalOverlayMessage = 'Terminal session will be created when you start a conversation.'
 
   return (
-    <>
-      <WorkspaceTopBar
-        title="New Thread"
-        view={viewMode}
-        onViewChange={setViewMode}
-        onToggleThreads={toggleThreadPanel}
-        status={status}
-      />
-      <div className="flex flex-1 overflow-hidden">
-        {/* Empty chat area - fixed width like ChatTimeline */}
+    <WorkspaceShell
+      title="New Thread"
+      view={viewMode}
+      onViewChange={setViewMode}
+      onToggleThreads={toggleThreadPanel}
+      status={status}
+      leftPane={(
         <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
-          <div className="flex-1 flex items-center justify-center p-4">
+          <div className="flex flex-1 items-center justify-center p-4">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">Start a new conversation</p>
-              <p className="text-sm mt-1">Send a message to create a thread and terminal session</p>
+              <p className="mt-1 text-sm">Send a message to create a thread and terminal session</p>
             </div>
           </div>
         </div>
-
-        {/* Terminal pane - takes remaining space with flex-1 */}
+      )}
+      rightPane={(
         <div className="relative flex flex-1 flex-col overflow-hidden border-l-4 border-black bg-black">
-          {/* Web view placeholder - shown when viewMode is 'web' */}
           {viewMode === 'web' && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-muted/30 p-8 text-center">
               <div className="rounded-2xl border-4 border-black bg-card px-10 py-8 shadow-[6px_6px_0px_rgba(0,0,0,1)]">
@@ -205,44 +177,39 @@ function NewThreadView() {
               </div>
             </div>
           )}
-          {/* Terminal pane - always mounted */}
-          <div className={`flex-1 relative min-h-0 overflow-hidden ${viewMode === 'web' ? 'invisible' : ''}`}>
-            <div
-              ref={terminalPaneRef}
-              className="h-full w-full overflow-hidden font-mono text-sm"
-            />
-            {/* Overlay for "no terminal" state */}
+          <div className={`relative flex-1 min-h-0 overflow-hidden ${viewMode === 'web' ? 'invisible' : ''}`}>
+            <div ref={terminalPaneRef} className="h-full w-full overflow-hidden font-mono text-sm" />
             {viewMode === 'terminal' && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/60">
-                <p className="text-sm text-muted-foreground px-4 text-center">
+                <p className="px-4 text-center text-sm text-muted-foreground">
                   {terminalOverlayMessage}
                 </p>
               </div>
             )}
           </div>
         </div>
-      </div>
-
-      {/* CommandComposer - outside the chat/terminal row, anchored at bottom */}
-      <CommandComposer
-        messageText={messageText}
-        onMessageChange={setMessageText}
-        status={status}
-        onSubmit={handleSubmit}
-        error={error}
-        models={models}
-        selectedModel={selectedModel}
-        onModelChange={setSelectedModel}
-        reasoningEffort={reasoningEffort}
-        onReasoningChange={setReasoningEffort}
-      />
-
-      {/* Debug panel (dev only) */}
-      <DebugPanel
-        sessionId={null}
-        terminalState={terminalState}
-        terminalConnection={terminalConnection}
-      />
-    </>
+      )}
+      composer={(
+        <CommandComposer
+          messageText={messageText}
+          onMessageChange={setMessageText}
+          status={status}
+          onSubmit={handleSubmit}
+          error={error}
+          models={models}
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
+          reasoningEffort={reasoningEffort}
+          onReasoningChange={setReasoningEffort}
+        />
+      )}
+      debugPanel={(
+        <DebugPanel
+          sessionId={null}
+          terminalState={terminalState}
+          terminalConnection={terminalConnection}
+        />
+      )}
+    />
   )
 }

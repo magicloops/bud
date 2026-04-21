@@ -1,8 +1,6 @@
-import { memo, useState, useCallback } from "react"
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { Check, Copy } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { memo, useState, useCallback, useEffect, type CSSProperties } from 'react'
+import { Check, Copy } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 type CodeBlockProps = {
   code: string
@@ -10,12 +8,22 @@ type CodeBlockProps = {
   className?: string
 }
 
+type SyntaxTheme = {
+  [key: string]: CSSProperties
+}
+
+type SyntaxRendererState = {
+  SyntaxHighlighter: typeof import('react-syntax-highlighter').Prism
+  style: SyntaxTheme
+} | null
+
 /**
  * Code block component with syntax highlighting and click-to-copy.
  * Shows a copy button on hover.
  */
 export const CodeBlock = memo(function CodeBlock({ code, language, className }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
+  const [renderer, setRenderer] = useState<SyntaxRendererState>(null)
 
   const handleCopy = useCallback(async () => {
     try {
@@ -27,16 +35,70 @@ export const CodeBlock = memo(function CodeBlock({ code, language, className }: 
     }
   }, [code])
 
+  useEffect(() => {
+    let cancelled = false
+
+    void Promise.all([
+      import('react-syntax-highlighter'),
+      import('react-syntax-highlighter/dist/esm/styles/prism'),
+    ]).then(([syntaxModule, styleModule]) => {
+      if (cancelled) {
+        return
+      }
+
+      setRenderer({
+        SyntaxHighlighter: syntaxModule.Prism,
+        style: styleModule.oneDark,
+      })
+    }).catch((error) => {
+      if (cancelled) {
+        return
+      }
+      console.error('Failed to load syntax highlighter', error)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const codePre = renderer ? (
+    <renderer.SyntaxHighlighter
+      language={language}
+      style={renderer.style}
+      PreTag={({ children: preChildren, style }) => (
+        <pre
+          style={{
+            ...style,
+            margin: 0,
+            borderRadius: '0.5rem',
+            fontSize: '0.85em',
+            background: '#282c34',
+          }}
+        >
+          {preChildren}
+        </pre>
+      )}
+    >
+      {code}
+    </renderer.SyntaxHighlighter>
+  ) : (
+    <pre className="overflow-x-auto rounded-lg bg-[#282c34] p-4 text-[0.85em] text-white">
+      <code>{code}</code>
+    </pre>
+  )
+
   return (
-    <div className={cn("group/code relative", className)}>
+    <div className={cn('group/code relative', className)}>
       {/* Copy button */}
       <button
+        type="button"
         onClick={handleCopy}
         className={cn(
-          "absolute right-2 top-2 z-10 p-1.5 rounded-md transition-all",
-          "opacity-0 group-hover/code:opacity-100",
-          "bg-white/10 hover:bg-white/20 text-white/70 hover:text-white",
-          copied && "opacity-100 bg-green-500/20 text-green-400"
+          'absolute right-2 top-2 z-10 rounded-md p-1.5 transition-all',
+          'opacity-0 group-hover/code:opacity-100',
+          'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white',
+          copied && 'bg-green-500/20 text-green-400 opacity-100'
         )}
         title="Copy code"
       >
@@ -47,25 +109,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, className }: 
         )}
       </button>
 
-      <SyntaxHighlighter
-        language={language}
-        style={oneDark}
-        PreTag={({ children: preChildren, style }) => (
-          <pre
-            style={{
-              ...style,
-              margin: 0,
-              borderRadius: '0.5rem',
-              fontSize: '0.85em',
-              background: '#282c34',
-            }}
-          >
-            {preChildren}
-          </pre>
-        )}
-      >
-        {code}
-      </SyntaxHighlighter>
+      {codePre}
     </div>
   )
 })

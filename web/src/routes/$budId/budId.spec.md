@@ -49,7 +49,8 @@ New thread creation view - allows users to start a new conversation.
 **Features**:
 - Empty terminal display with placeholder message
 - Message composer for initial message
-- Loads `/api/models` using the normalized snake_case contract (`default_model`, model `display_name`, optional `is_alias`)
+- Reuses `WorkspaceShell` so the top bar / split panes / composer frame stay aligned with the existing-thread route
+- Loads `/api/models` through the shared `useAvailableModels()` hook using the normalized snake_case contract (`default_model`, model `display_name`, optional `is_alias`)
 - Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
   1. POST `/api/threads` to create thread and read `{ thread_id }`
@@ -70,7 +71,7 @@ New thread creation view - allows users to start a new conversation.
 
 **Route**: `/$budId/$threadId`
 
-Main thread view with full chat and terminal functionality (~1000 lines).
+Main thread view with chat, terminal, and workspace composition behavior (~375 lines after the runtime/presentation split).
 
 **IMPORTANT**: See bidirectional comment in file header linking to `new.tsx`. These routes share layout structure and must be updated together.
 
@@ -92,6 +93,7 @@ loader: async ({ params }) => {
    - Loads the latest paged transcript window from loader data
    - Loads `/agent/state` in parallel for the current in-flight bootstrap snapshot
    - Loads canonical thread detail in parallel so the Bud-level thread list can converge even if the title event was missed before attach
+   - Delegates transcript/message-state ownership to `useThreadMessages(...)` in `web/src/features/threads/`
    - Updates via SSE agent stream
    - Role-based rendering (user, assistant, tool)
    - Consumes the paged `{ messages, page }` API contract
@@ -99,31 +101,16 @@ loader: async ({ params }) => {
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
 
 2. **Terminal Integration**
-   - xterm.js instance with FitAddon
-   - SSE connection to `/api/threads/:id/terminal/stream`
-   - Explicit keyboard and paste intent translation via `@/lib/terminal-input`, then batching to `/api/threads/:id/terminal/input`
-   - Resize handling via `/api/threads/:id/terminal/resize` (only when dimensions change)
-   - Reconnection logic with exponential backoff
-   - Idempotent recovery helper that re-runs `terminal/ensure`, reloads terminal state, and replays stored history after reconnects
-   - Shared auth-aware EventSource creation before reconnect logic takes over
-   - Stops reconnect and polling loops once the browser has already redirected for expired auth
-   - Failed session-record fetches now re-enter the same reconnect backoff path instead of falling into a separate `/api/threads/:id/terminal` polling loop
+   - Delegates xterm/session/reconnect ownership to `useTerminalSession(...)` in `web/src/features/threads/`
+   - The hook owns xterm.js + `FitAddon`, terminal SSE attach/reconnect/recovery, keyboard/paste translation, and terminal history replay
+   - Delegates terminal overlays, the status bar, and terminal menu rendering to `ThreadTerminalPane` in `web/src/components/workbench/`
 
 3. **Agent Stream**
    - Runtime bootstrap from `/api/threads/:id/agent/state`
-   - SSE connection to `/api/threads/:id/agent/stream?after=<stream_cursor>`
-   - Event handling: `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`
-   - Builds one per-turn draft assistant row from `agent.message_start` / `agent.message_delta`
-   - Treats `agent.message_done` as the final draft snapshot before canonical persistence
-   - Uses backend-provided `client_id` as the primary message identity for optimistic users, draft assistants, pending tools, and canonical transcript rows
-   - Uses `call_id` for tool semantics and `turn_id` for turn-level cleanup, but not as the rendered message key
-   - Replaces draft assistant rows and pending tool rows by stable `client_id` when canonical persisted rows arrive
-   - Reconnects resume from the latest known runtime cursor, using `after=<cursor>` and compatible `Last-Event-ID` handling
-   - Handles explicit `agent.resync_required` by refetching `/messages` plus `/agent/state` and reattaching
+   - Delegates SSE attach/resume/reconnect/resync ownership to `useAgentStream(...)` in `web/src/features/threads/`
+   - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, and `final`
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
-   - Keeps optimistic user identity stable by attaching the persisted `message_id` returned by `POST /messages` onto the existing `client_id`-keyed row
-   - Healthy successful turns no longer require a mandatory `final` refetch just to learn assistant/tool message ids
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
 
 4. **Bud-Level Thread State**
@@ -141,9 +128,13 @@ loader: async ({ params }) => {
 6. **Terminal Features**
    - Input buffering and batching for explicit browser-derived terminal bytes only
    - Raw `Ctrl+C` over the normal terminal input path from both keyboard and the terminal menu
-   - Clear terminal option
    - History backfill on connect
-   - Scroll-to-top detection for more history loading
+   - Scroll-to-top detection for truncated-history affordances
+
+7. **Shared Workspace Frame**
+   - Reuses `WorkspaceShell` with the same top bar, left/right pane contract, composer slot, and debug-panel slot as `/$budId/new`
+   - Reuses `useAvailableModels()` so model fetching/default selection matches the new-thread flow
+   - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, and `ThreadTerminalPane`
 
 **State**:
 ```typescript
@@ -152,8 +143,9 @@ status: 'idle' | 'dispatching' | 'streaming'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
 viewMode: 'terminal' | 'web'
+terminalMenuOpen: boolean
 
-// Terminal state
+// Feature-hook state exposed to the route
 terminalState: string
 terminalConnection: 'connected' | 'reconnecting' | 'offline' | 'disconnected'
 terminalReadiness: { ready, confidence, trigger, hints }
@@ -178,11 +170,11 @@ terminalOutputTruncated: boolean
 - SSE close → Start reconnect timer
 - Exponential backoff: 1s, 2s, 4s, ... up to 30s
 - On reconnect: rerun `terminal/ensure`, fetch authoritative session state, backfill history, and only then return to `connected`
-- If the SSE stream remains open but the Bud is offline, the route keeps polling `terminal/ensure`; if the stream itself closes, reconnect attempts are driven only by the backoff timer
+- If the SSE stream remains open but the Bud is offline, the terminal hook keeps polling `terminal/ensure`; if the stream itself closes, reconnect attempts are driven only by the backoff timer
 
 ## Types
 
-From `@/lib/api`:
+From `@/lib/api-types` / `@/lib/terminal-data`:
 - `ApiMessage` - Message from API (`message_id`, `client_id`, role, content)
 - `ApiMessagePage` - Paged transcript window with opaque cursors
 - `decodeTerminalData()` - Base64 decode helper
@@ -192,14 +184,12 @@ From `@/lib/api`:
 | Import | Purpose |
 |--------|---------|
 | `@tanstack/react-router` | Route definition, navigation |
-| `xterm` | Terminal emulator |
-| `xterm-addon-fit` | Auto-fit terminal size |
 | `@/components/workbench/*` | UI components |
 | `@/components/debug-panel` | Dev-only debug info |
 | `@/contexts/layout-context` | Thread panel toggle |
 | `@/contexts/bud-status-context` | Bud online status |
-| `@/lib/api` | API utilities |
-| `@/lib/terminal-input` | Browser terminal key/paste translation and dev-only unsupported logging |
+| `@/features/threads/*` | Extracted transcript, agent-stream, and terminal session hooks |
+| `@/lib/transport`, `@/lib/api-types`, `@/lib/messages`, `@/lib/models`, `@/lib/auth-redirect` | Split API/runtime helpers |
 | `lucide-react` | Icons |
 
 ---

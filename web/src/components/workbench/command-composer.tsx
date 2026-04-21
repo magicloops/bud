@@ -1,21 +1,7 @@
 import type { FormEvent, KeyboardEvent } from 'react'
 import { LoaderCircle, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-
-export type ModelInfo = {
-  id: string
-  provider: string
-  display_name: string
-  capabilities: {
-    vision: boolean
-    tools: boolean
-    streaming: boolean
-    reasoning: boolean
-    thinking: boolean
-  }
-  is_alias?: boolean
-  alias_target?: string
-}
+import type { ModelInfo } from '@/lib/models'
 
 type CommandComposerProps = {
   messageText: string

@@ -66,6 +66,11 @@ Core runtime phase covering:
 - terminal session/xterm ownership extraction
 - reduction of `/$budId/$threadId` to a composition layer
 
+Current state:
+
+- transcript/message ownership has started and now exists in `web/src/features/threads/use-thread-messages.ts`
+- agent-stream and terminal runtime extraction remain pending
+
 ### `phase-5-performance-ux-consistency-and-final-doc-alignment.md`
 
 Finalization phase covering:

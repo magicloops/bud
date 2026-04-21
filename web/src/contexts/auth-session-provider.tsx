@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { ApiCurrentUser } from '@/lib/api'
+import type { ApiCurrentUser } from '@/lib/api-types'
 import { AuthSessionContext } from '@/contexts/auth-session-context'
 
 export function AuthSessionProvider({

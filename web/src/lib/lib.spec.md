@@ -4,58 +4,66 @@ Utility functions and shared helpers.
 
 ## Purpose
 
-Provides common utilities for API communication, browser auth, terminal input translation, theming, and class name management.
+Provides common utilities for API communication, browser auth, route auth redirects, model loading, terminal input/data handling, theming, and class name management.
 
 ## Files
 
 ### `api.ts`
 
-API utilities and type definitions.
+Compatibility re-export surface for older imports.
 
-**URL Building**:
-```typescript
-export const buildApiUrl = (path: string) => {
-  if (apiBaseUrl) return new URL(path, apiBaseUrl).toString()
-  return path
-}
+**Purpose**:
+- Re-exports auth redirect helpers, transport helpers, auth API helpers, API types, terminal decoding, and message-id generation from the new split modules below
+- Lets existing routes continue importing from `@/lib/api` while the web refactor migrates call sites toward narrower modules
 
-export const buildAbsoluteApiUrl = (path: string) => {
-  if (apiBaseUrl) return new URL(path, apiBaseUrl).toString()
-  return new URL(path, window.location.origin).toString()
-}
+### `transport.ts`
 
-export const apiFetch = (path: string, init?: ApiRequestInit) =>
-  fetch(buildApiUrl(path), {
-    ...init,
-    credentials: init?.credentials ?? 'include',
-  })
-```
+Low-level auth-aware browser transport helpers.
 
-**Auth-Aware Transport**:
-- `apiFetch()` always includes credentials
-- runtime `401` responses redirect the browser back to `/login`
-- login redirects are deduplicated in-module so long-lived reconnect loops can detect an in-flight auth redirect
-- `fetchCurrentUser()` normalizes `/api/me`
-- `updateCurrentUserProfile()` writes Bud-owned profile updates back to `/api/me/profile`
-- `createAuthEventSource()` centralizes credentialed SSE setup plus auth-expiry checks
-- `buildAbsoluteApiUrl()` exists specifically for clients like Better Auth that require a fully-qualified base URL even in same-origin/proxy dev mode
+**Responsibilities**:
+- `buildApiUrl()` / `buildAbsoluteApiUrl()` for same-origin and cross-origin API calls
+- `apiFetch()` with `credentials: 'include'`
+- `apiFetchJson()` with structured `ApiError`
+- `createAuthEventSource()` for SSE plus post-close unauthorized checks
+- Redirect-on-`401` behavior unless callers explicitly pass `redirectOnUnauthorized: false`
 
-Uses `VITE_API_BASE_URL` env var if set.
+**Types**:
+- `ApiRequestInit`
+- `ApiError`
 
-**Auth Utilities**:
-- `normalizeAppRedirectPath()` - sanitizes internal return targets
-- `buildLoginUrl()` / `redirectToLogin()` - browser login redirects
-- `ApiError` / `isApiError()` - typed error handling for loaders/runtime calls
-- `generateMessageClientId()` - browser UUIDv7 generator for optimistic/new-thread sends
+### `auth-redirect.ts`
 
-**Terminal Data Decoding**:
-```typescript
-export const decodeTerminalData = (data: string) => {
-  // Decode base64 → binary → UTF-8 text
-}
-```
+Browser login redirect helpers.
 
-**API Types**:
+**Responsibilities**:
+- Normalize safe same-origin in-app redirect targets
+- Preserve current pathname/search/hash when bouncing to `/login`
+- Deduplicate browser redirects so reconnect loops can detect an in-flight auth redirect
+- Accept either app-relative paths or same-origin absolute URLs and collapse everything else to `/`
+
+### `auth-redirect.test.ts`
+
+Node-runner coverage for the lowest-risk browser auth redirect helpers.
+
+**Coverage**:
+- internal relative path preservation
+- protocol-relative and cross-origin redirect rejection
+- same-origin absolute redirect normalization
+- login URL construction with encoded redirect targets
+
+### `auth-api.ts`
+
+Authenticated browser session/profile calls.
+
+**Exports**:
+- `fetchCurrentUser()` - normalized `/api/me` loader helper returning `ApiCurrentUser | null`
+- `updateCurrentUserProfile()` - `PATCH /api/me/profile`
+
+### `api-types.ts`
+
+Shared browser API types plus narrow response normalization helpers.
+
+**Types**:
 
 | Type | Description |
 |------|-------------|
@@ -66,6 +74,7 @@ export const decodeTerminalData = (data: string) => {
 | `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, and `draft_assistant.client_id` |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
+| `ApiDeviceAuthFlow` / `ApiDeviceAuthApproval` | Device-claim browser contracts |
 
 **Capability Normalization**:
 ```typescript
@@ -76,6 +85,42 @@ export function normalizeCapabilities(caps: unknown): {
 ```
 
 Safely extracts the behavior-oriented capability fields the browser actually cares about from the API response. tmux identity/version details are no longer surfaced in the normal browser contract.
+
+### `route-auth.ts`
+
+Route-level auth helpers shared across loaders and authenticated screens.
+
+**Exports**:
+- `toLoginRedirect(pathname, search?, hash?)` - TanStack Router redirect object targeting `/login`
+- `useRequireAuthenticatedUser(currentUser)` - runtime browser redirect helper for routes like `/settings`
+
+### `models.ts`
+
+Shared model-list loading for workbench routes.
+
+**Exports**:
+- `ModelInfo`
+- `useAvailableModels()`
+
+**Behavior**:
+- Loads `/api/models`
+- Prefers alias models when the API exposes aliases
+- Preserves an existing selection when possible
+- Falls back to `default_model` or the first available model
+
+### `messages.ts`
+
+Small message helper module.
+
+**Exports**:
+- `generateMessageClientId()` - browser UUIDv7 generator for optimistic/new-thread sends
+
+### `terminal-data.ts`
+
+Terminal-history/output decode helper.
+
+**Exports**:
+- `decodeTerminalData(data)` - base64 → binary → UTF-8 text
 
 ### `terminal-input.ts`
 

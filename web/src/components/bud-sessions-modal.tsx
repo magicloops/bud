@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Terminal, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { apiFetch } from '@/lib/api'
+import { apiFetch } from '@/lib/transport'
 
 type SessionInfo = {
   session_id: string

@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type MouseEvent } from 'react'
 import { Trash2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { Button } from '@/components/ui/button'
-import { apiFetch } from '@/lib/api'
+import { apiFetch } from '@/lib/transport'
 
 export type ThreadSummary = {
   thread_id: string
@@ -30,6 +30,7 @@ type ThreadPanelProps = {
   accentColor: string
   budLabel: string
   budId?: string
+  onError?: (message: string | null) => void
 }
 
 function relativeTime(iso: string) {
@@ -85,6 +86,7 @@ export function ThreadPanel({
   accentColor,
   budLabel,
   budId,
+  onError,
 }: ThreadPanelProps) {
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ThreadSummary | null>(null)
@@ -104,7 +106,7 @@ export function ThreadPanel({
     [threads]
   )
 
-  const handleDeleteClick = (e: React.MouseEvent, thread: ThreadSummary) => {
+  const handleDeleteClick = (e: MouseEvent, thread: ThreadSummary) => {
     e.stopPropagation()
     if (!budId || deletingThreadId) return
     setConfirmDelete(thread)
@@ -119,12 +121,14 @@ export function ThreadPanel({
       const resp = await apiFetch(`/api/threads/${threadId}`, { method: 'DELETE' })
       if (resp.ok) {
         setConfirmDelete(null)
+        onError?.(null)
         onThreadDeleted?.(threadId)
       } else {
-        console.error('Failed to delete thread', await resp.text())
+        const text = await resp.text().catch(() => '')
+        onError?.(text || 'Failed to delete thread')
       }
     } catch (err) {
-      console.error('Failed to delete thread', err)
+      onError?.(err instanceof Error ? err.message : 'Failed to delete thread')
     } finally {
       setDeletingThreadId(null)
     }

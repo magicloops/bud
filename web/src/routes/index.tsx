@@ -2,27 +2,12 @@ import { Link, createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import {
   apiFetchJson,
-  fetchCurrentUser,
-  getLoginRedirectValue,
   isApiError,
-  type ApiBud,
-} from '@/lib/api'
-
-const toLoginRedirect = (pathname: string, search = '', hash = '') =>
-  redirect({
-    to: '/login',
-    search: {
-      redirect: getLoginRedirectValue(pathname, search, hash),
-    },
-  })
+} from '@/lib/transport'
+import type { ApiBud } from '@/lib/api-types'
+import { toLoginRedirect } from '@/lib/route-auth'
 
 export const Route = createFileRoute('/')({
-  beforeLoad: async ({ location }) => {
-    const currentUser = await fetchCurrentUser()
-    if (!currentUser) {
-      throw toLoginRedirect(location.href)
-    }
-  },
   loader: async ({ location }) => {
     try {
       const buds = await apiFetchJson<ApiBud[]>('/api/buds', { redirectOnUnauthorized: false })

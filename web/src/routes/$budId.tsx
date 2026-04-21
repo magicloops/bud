@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, redirect, useNavigate, useMatches } from '@tanstack/react-router'
+import { createFileRoute, Outlet, useNavigate, useMatches } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
@@ -7,22 +7,11 @@ import { DEFAULT_AVATAR_COLORS, deriveBudPalette } from '@/lib/theme-colors'
 import { BudRouteContext, type BudRouteContextValue } from '@/contexts/bud-route-context'
 import {
   apiFetchJson,
-  fetchCurrentUser,
-  getLoginRedirectValue,
   isApiError,
-  normalizeCapabilities,
-  type ApiBud,
-  type ApiThread,
-} from '@/lib/api'
+} from '@/lib/transport'
+import { normalizeCapabilities, type ApiBud, type ApiThread } from '@/lib/api-types'
+import { toLoginRedirect } from '@/lib/route-auth'
 import { useLayout } from '@/contexts/layout-context'
-
-const toLoginRedirect = (pathname: string, search = '', hash = '') =>
-  redirect({
-    to: '/login',
-    search: {
-      redirect: getLoginRedirectValue(pathname, search, hash),
-    },
-  })
 
 const toThreadSummary = (thread: ApiThread): ThreadSummary => ({
   thread_id: thread.thread_id,
@@ -61,12 +50,6 @@ const mergeThreadSummary = (
 }
 
 export const Route = createFileRoute('/$budId')({
-  beforeLoad: async ({ location }) => {
-    const currentUser = await fetchCurrentUser()
-    if (!currentUser) {
-      throw toLoginRedirect(location.href)
-    }
-  },
   loader: async ({ params, location }) => {
     try {
       const [buds, threads] = await Promise.all([
@@ -100,6 +83,7 @@ function BudLayout() {
 
   // Sessions modal state
   const [sessionsModalOpen, setSessionsModalOpen] = useState(false)
+  const [threadPanelError, setThreadPanelError] = useState<string | null>(null)
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads.map(toThreadSummary))
 
   // Get threadId from child route match (if we're on /$budId/$threadId)
@@ -158,6 +142,7 @@ function BudLayout() {
   }, [navigate])
 
   const handleSelectThread = useCallback((threadId: string | null) => {
+    setThreadPanelError(null)
     if (threadId) {
       navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
     } else {
@@ -190,6 +175,7 @@ function BudLayout() {
 
   const handleThreadDeleted = useCallback((deletedThreadId: string) => {
     removeThreadSummary(deletedThreadId)
+    setThreadPanelError(null)
     navigate({ to: '/$budId', params: { budId } })
   }, [budId, navigate, removeThreadSummary])
 
@@ -216,6 +202,7 @@ function BudLayout() {
           onSelectThread={handleSelectThread}
           onThreadDeleted={handleThreadDeleted}
           onOpenSessions={handleOpenSessions}
+          onError={setThreadPanelError}
           accentColor={palette.vibrant}
           budLabel={activeBudProfile.label}
           budId={budId}
@@ -233,6 +220,11 @@ function BudLayout() {
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">
+        {threadPanelError && (
+          <div className="border-b-4 border-black bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground">
+            {threadPanelError}
+          </div>
+        )}
         <BudRouteContext.Provider
           value={{
             threads,

@@ -118,6 +118,7 @@ Syntax-highlighted code block with copy button.
 - Syntax highlighting via `react-syntax-highlighter` with `oneDark` theme
 - Copy button appears on hover (top-right)
 - Visual feedback on copy (checkmark icon, green tint)
+- Lazy-loads the syntax highlighter bundle on first rendered code block and falls back to a plain `<pre><code>` block until that chunk arrives
 
 **Usage**:
 ```tsx

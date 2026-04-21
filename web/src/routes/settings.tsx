@@ -1,32 +1,15 @@
 import { ArrowLeft, Chrome, Github, Loader2, LogOut, Save } from 'lucide-react'
-import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import { authClient } from '@/lib/auth-client'
-import {
-  fetchCurrentUser,
-  getLoginRedirectValue,
-  isApiError,
-  type ApiCurrentUser,
-  updateCurrentUserProfile,
-} from '@/lib/api'
-
-const toLoginRedirect = (pathname: string, search = '', hash = '') =>
-  redirect({
-    to: '/login',
-    search: {
-      redirect: getLoginRedirectValue(pathname, search, hash),
-    },
-  })
+import type { ApiCurrentUser } from '@/lib/api-types'
+import { updateCurrentUserProfile } from '@/lib/auth-api'
+import { isApiError } from '@/lib/transport'
+import { useRequireAuthenticatedUser } from '@/lib/route-auth'
 
 export const Route = createFileRoute('/settings')({
-  beforeLoad: async ({ location }) => {
-    const currentUser = await fetchCurrentUser()
-    if (!currentUser) {
-      throw toLoginRedirect(location.href)
-    }
-  },
   component: SettingsView,
 })
 
@@ -52,7 +35,8 @@ function providerStatusLabel(linked: boolean) {
 
 function SettingsView() {
   const navigate = useNavigate()
-  const { currentUser, setCurrentUser } = useAuthSession()
+  const { currentUser: sessionUser, setCurrentUser } = useAuthSession()
+  const currentUser = useRequireAuthenticatedUser(sessionUser)
   const [usernameDraft, setUsernameDraft] = useState(currentUser?.profile.username ?? '')
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null)

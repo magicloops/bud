@@ -4,7 +4,7 @@ Main application components - the core workspace UI.
 
 ## Purpose
 
-Provides the main layout components for the Bud workbench: navigation rail, thread panel, chat timeline, command composer, and terminal/run views.
+Provides the main layout components for the Bud workbench: navigation rail, thread panel, workspace shell, chat timeline, command composer, and terminal/run views.
 
 ## Files
 
@@ -44,6 +44,7 @@ Thread list sidebar for conversation navigation.
 - Terminal-sessions action in the header
 - Account settings are intentionally not shown here because this header is Bud-scoped
 - Delete button with confirmation dialog
+- Delete failures bubble up through `onError(...)` so the parent Bud layout can show a visible inline error instead of silently logging to the console
 - Terminal session indicators (state dot + icon)
 - Message count badges
 - Relative timestamps ("just now", "5m ago")
@@ -75,7 +76,7 @@ Message list with auto-scroll and collapsible messages.
 - Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
 - Collapsible long messages (>500px) with "Show more/less"
 - Copy message button (appears on hover, bottom-right)
-- JSON payload viewer for tool messages
+- Tool payload viewer now lazy-loads `@microlink/react-json-view` only when a payload is expanded, with a plain JSON fallback while the viewer chunk loads
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
@@ -118,15 +119,45 @@ Message input form with options.
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
 
-**Exported Types**:
-- `ModelInfo` - Model metadata (id, provider, `display_name`, capabilities, optional `is_alias` / `alias_target`)
-
 **Features**:
 - Multi-line textarea
 - Enter to submit (Shift+Enter for newline)
 - Model selector dropdown (grouped by provider)
 - Reasoning effort dropdown (Fast/Think/Deep/Max)
 - Submit button with loading state
+- Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
+
+### `workspace-shell.tsx`
+
+Shared frame for the two workbench routes.
+
+**Props**:
+- `title`
+- `view` / `onViewChange`
+- `onToggleThreads`
+- `status`
+- `leftPane`
+- `rightPane`
+- `composer`
+- optional `debugPanel`
+
+**Purpose**:
+- Keeps `/$budId/new` and `/$budId/$threadId` on the same top-bar / split-pane / composer structure
+- Reduces divergence between the new-thread workspace and existing-thread workspace while larger runtime decomposition is still pending
+
+### `thread-terminal-pane.tsx`
+
+Terminal presentation component for the existing-thread workspace.
+
+**Props**:
+- terminal UI/runtime state from `useTerminalSession(...)`
+- agent turn status/error state from the route
+- callbacks for focus, agent cancel, and terminal interrupt actions
+
+**Purpose**:
+- renders the terminal pane wrapper, web-view placeholder, disconnect overlays, truncated-history badge, terminal status bar, and terminal options menu
+- keeps terminal menu/open state and terminal-specific JSX out of `/$budId/$threadId`
+- stays presentation-only: terminal reconnect policy, xterm lifecycle, and transport remain in `web/src/features/threads/use-terminal-session.ts`
 
 ### `workspace-top-bar.tsx`
 
@@ -141,6 +172,7 @@ Header bar with workspace title and view toggle.
 - Title display (`New Thread` for compose mode, otherwise the current thread title or `Untitled thread`)
 - Status indicator (Idle/Dispatching/Streaming)
 - View mode toggle buttons
+- Exports the shared `ViewMode` union used by `workspace-shell.tsx`
 
 ## Dependencies
 
