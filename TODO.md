@@ -1,6 +1,9 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **Assistant timing / non-tool timing follow-up**
+  - The tool-timing rollout now provides authoritative per-tool `started_at`, `finished_at`, and `duration_ms`, but exact assistant-response timing is still missing.
+  - Follow up with a separate design/implementation pass if product needs authoritative non-tool timing, for example by timestamping assistant draft events or introducing an explicit turn-summary contract, rather than overloading the new tool-timing fields.
 - **Web refactor test hardening**
   - Add the deeper automated browser/runtime coverage outlined in [design/web-refactor-test-hardening.md](./design/web-refactor-test-hardening.md), with priority on transcript hook behavior, agent stream reconnect/resync, terminal reconnect/recovery, and a small route-composition smoke layer.
 - **Streaming JSON renderer replacement**
