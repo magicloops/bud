@@ -15,13 +15,6 @@ export type BudProfile = {
   status: string
   tags?: string[]
   capabilities?: BudCapabilities | null
-  lastRun?: {
-    run_id: string
-    status: string
-    exit_code: number | null
-    started_at: string | null
-    finished_at: string | null
-  } | null
 }
 
 type BudRailProps = {

@@ -1,15 +1,15 @@
 # service
 
-Node.js backend service providing REST API, WebSocket gateway, and AI agent orchestration.
+Node.js backend service providing REST API, SSE streams, WebSocket daemon connectivity, and AI agent orchestration.
 
 ## Purpose
 
 The service is the central hub of the Bud system:
-- **REST API** - CRUD for buds, threads, messages, runs, and terminal sessions
+- **REST API** - CRUD for buds, threads, messages, and terminal sessions
 - **Auth Server** - Better Auth-backed browser sessions plus OAuth/JWT provider endpoints for native clients
 - **WebSocket Gateway** - Persistent connections with bud daemons
 - **SSE Streaming** - Real-time events to web clients
-- **Agent Service** - LLM-powered tool calling via OpenAI
+- **Agent Service** - LLM-powered tool calling via configured providers, with split ownership for conversation loading, model invocation, terminal tool execution, transcript writing, and cancellation
 - **Database** - PostgreSQL with Drizzle ORM
 
 ## Files
@@ -52,6 +52,7 @@ Checked-in template for local service setup. Includes:
 - DB/runtime defaults
 - the reminder that hosted Postgres providers may require `sslmode=require` in `DATABASE_URL`
 - the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
+- the local browser-workbench recommendation that the web app sets `VITE_API_BASE_URL=http://localhost:3000` so API/SSE traffic bypasses the Vite-origin proxy path during multi-tab terminal work
 - the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin, `API_AUDIENCE` points at that origin's `/api` path, and `OAUTH_TRUSTED_CLIENT_IDS` includes the published first-party mobile client ids for that environment
 - optional LLM provider settings
 
@@ -67,16 +68,16 @@ Main source code:
 - `server.ts` - Entry point
 - `config.ts` - Environment configuration
 - `auth/` - Better Auth integration and session helpers
-- `agent/` - LLM integration
+- `agent/` - LLM integration with extracted conversation/model/tool/transcript ownership seams
 - `db/` - Database layer
-- `routes/` - HTTP endpoints
-- `runtime/` - Session managers
+- `routes/` - HTTP endpoints, with split thread submodules under `routes/threads/`
+- `runtime/` - Session managers, with terminal-runtime ownership split into `runtime/terminal/`
 - `terminal/` - Terminal types
-- `ws/` - WebSocket gateways
+- `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 
 ### `drizzle/` → [drizzle/drizzle.spec.md](./drizzle/drizzle.spec.md)
 
-Database migrations managed by Drizzle Kit.
+Database schema tooling and checked-in migration history managed by Drizzle Kit.
 
 ### `scripts/` → [scripts/scripts.spec.md](./scripts/scripts.spec.md)
 
@@ -90,8 +91,8 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `build` | `tsc` | Compile TypeScript |
 | `start` | `node dist/server.js` | Run compiled build |
 | `lint` | `eslint "src/**/*.ts"` | Lint source files |
-| `test` | `node --import tsx --test src/**/*.test.ts` | Run standalone service tests, including runtime and WebSocket gateway regressions |
-| `db:generate` | `drizzle-kit generate` | Checked-in migration generation helper |
+| `test` | `node --import tsx --test src/**/*.test.ts` | Run standalone service tests, including extracted agent seam coverage plus route/WebSocket gateway regressions |
+| `db:generate` | `drizzle-kit generate` | Checked-in migration generation helper used when staging history must catch up with `schema.ts` |
 | `db:migrate` | `drizzle-kit migrate` | Checked-in migration apply helper for production-like environments |
 | `db:migrate:staging` | `DOTENV_CONFIG_PATH=.env.staging drizzle-kit migrate` | Apply the checked-in migration chain against the checked-in staging env without exporting `DOTENV_CONFIG_PATH` manually |
 | `db:push` | `tsx src/scripts/db-push.ts` | Bootstrap auth schema, then run Drizzle push |
@@ -138,16 +139,13 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | Path | Purpose |
 |------|---------|
 | `/ws` | Bud daemon connections |
-| `/term` | Legacy PTY browser access |
 
 ### SSE Endpoints
 
 | Path | Events |
 |------|--------|
-| `/api/runs/:id/stream` | `status`, `exec.stdout`, `exec.stderr`, `final` |
-| `/api/sessions/:id/stream` | `output`, `status` |
-| `/api/threads/:id/agent/stream` | `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.resync_required`, `final`, `heartbeat` |
-| `/api/threads/:id/terminal/stream` | `output`, `ready`, `status`, `heartbeat` |
+| `/api/threads/:id/agent/stream` | `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`, `heartbeat` |
+| `/api/threads/:id/terminal/stream` | `terminal.output`, `terminal.ready`, `terminal.status`, `terminal.bud_offline`, `terminal.bud_online`, `heartbeat` |
 
 The thread agent contract now splits into:
 - `GET /api/threads/:id/agent/state` for authoritative best-effort in-flight state
@@ -176,7 +174,7 @@ Canonical persisted transcript rows now expose `client_id` on `/api/threads/:id/
 │  ┌─────────────┐          ┌─────────────┐                      │
 │  │   Agent     │          │   Runtime   │                      │
 │  │  Service    │◄────────►│  Managers   │                      │
-│  │  (OpenAI)   │          │             │                      │
+│  │ (Providers) │          │             │                      │
 │  └─────────────┘          └─────────────┘                      │
 │                                  │                              │
 │                                  ▼                              │
@@ -201,7 +199,7 @@ pnpm db:push
 pnpm dev
 ```
 
-`pnpm db:seed` is optional and only needed for legacy/manual enrollment-token testing.
+`pnpm db:seed` is optional and only needed for manual enrollment-token testing.
 
 ## Environment Variables
 
@@ -210,10 +208,11 @@ pnpm dev
 - `BETTER_AUTH_SECRET` - Better Auth signing/encryption secret
 - `BETTER_AUTH_URL` - Public auth base URL
 - `API_AUDIENCE` - Public API audience/resource for JWT access tokens
-- `OPENAI_API_KEY` - OpenAI API key
+
+Provider keys are optional for service boot and auth/device-claim flows. Chat/agent execution still needs at least one configured provider.
 
 **Optional**:
-- `BETTER_AUTH_TRUSTED_ORIGINS` - Allowed browser origins for auth cookies/callbacks
+- `BETTER_AUTH_TRUSTED_ORIGINS` - Allowed browser origins for auth cookies/callbacks and the service-level CORS allowlist for direct browser-to-service local dev traffic
 - `OAUTH_TRUSTED_CLIENT_IDS` - Trusted first-party OAuth client ids
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth

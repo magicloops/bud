@@ -239,15 +239,19 @@ async checkAndSync(sessionId: string, threadId: string, ownerUserId?: string | n
 **Mode Detection Heuristics**:
 | Pattern | Detected Mode |
 |---------|---------------|
+| Bare `>` without Claude UI markers | repl (Node.js REPL) |
 | Line ends with `$`, `#`, `%`, `❯`, `➜`, `>` | shell |
 | Line starts with `>>>`, `...`, `In [N]:` | repl (Python/IPython) |
 | Screen contains box drawing chars (`╭╰`) + "Claude" | tui (Claude Code) |
 | Screen has vim-style line numbers | tui |
 
+The Node.js REPL check runs before the generic shell `>` matcher so plain `>` prompts are not misclassified as shell.
+
 **Integration Points**:
 - Clears `pendingCommands` when shell detected so inferred send-context stays aligned after REPL exit
 - `refreshSnapshot(...)` now also clears `pendingCommands` when the captured state already looks like shell, so inferred context is less likely to outlive an observed REPL exit
 - Uses `claude-haiku-4-5` for fast, cheap LLM summaries
+- Falls back to deterministic local summaries when no provider is available or summary generation fails
 - Injects messages with `role: "system"` (transformed in provider layer for Anthropic)
 - Stamps injected system messages with the owning user's `created_by_user_id`
 - Stamps injected system messages with a generated UUIDv7 `message.client_id` so context-sync rows share the same public-identity model as user/assistant/tool messages

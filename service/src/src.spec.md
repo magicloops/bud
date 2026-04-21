@@ -14,35 +14,32 @@ The service acts as the central hub:
 
 ### `server.ts`
 
-Application entry point and Fastify server setup.
+Application entry point and thin Fastify composition root.
 
 **Key Responsibilities**:
 - Initialize Fastify with WebSocket and SSE plugins
 - Register the raw form-urlencoded parser needed for OAuth token/revoke requests before auth routes mount
+- Apply service-level CORS for direct browser-to-service local development, using the trusted-origin allowlist from `config.betterAuthTrustedOrigins`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
-- Create manager instances (Run, Session, TerminalSession)
-- Register all route handlers
-- Set up SSE streaming endpoints
+- Create manager instances for terminal sessions, agent runtime state, and thread-title generation
+- Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
+- Compose the current thread-scoped streaming/runtime surface without the removed standalone run manager
 - Expose `/healthz` as lightweight liveness and `/readyz` as deploy/readiness verification for the primary DB plus auth schema
 - Configure graceful shutdown for both app and auth pools
 
 **Manager Instantiation**:
 ```typescript
-const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
 const terminalSessionManager = new TerminalSessionManager(terminalSessionLogger, terminalEvents);
 const agentRuntime = new AgentRuntimeStateManager();
 
-// Initialize LLM providers (OpenAI, Anthropic based on config)
+// Initialize configured LLM providers; provider-less startup is valid
 initializeProviders();
 
 const agentService = new AgentService(terminalSessionManager, agentRuntime, ...);
 const threadTitleService = new ThreadTitleService(agentRuntime, ...);
 ```
 
-**SSE Streaming Routes** (defined inline):
-- `GET /api/runs/:run_id/stream` - Run execution events
-- `GET /api/sessions/:session_id/stream` - Legacy session events
-- `GET /api/terminals/:bud_id/stream` - Terminal events (legacy bud-scoped)
+Thread-scoped SSE is mounted in route modules (`/api/threads/:thread_id/agent/stream` and `/api/threads/:thread_id/terminal/stream`). `server.ts` no longer exposes the removed run stream or the legacy bud-scoped terminal stream inline.
 
 **Exports**:
 - `buildServer()` - Create configured Fastify instance
@@ -69,7 +66,7 @@ Environment-based configuration with defaults.
 | `betterAuthSecret` | `BETTER_AUTH_SECRET` | dev-better-auth-secret-change-me | Better Auth signing/encryption secret |
 | `apiAudience` | `API_AUDIENCE` | `APP_BASE_URL` + `/api` | Audience/resource for JWT access tokens |
 | `oauthTrustedClientIds` | `OAUTH_TRUSTED_CLIENT_IDS` | - | Trusted OAuth client ids cached by Better Auth |
-| `betterAuthTrustedOrigins` | `BETTER_AUTH_TRUSTED_ORIGINS` | http://localhost:5173 | Allowed browser origins for auth |
+| `betterAuthTrustedOrigins` | `BETTER_AUTH_TRUSTED_ORIGINS` | http://localhost:5173 | Allowed browser origins for Better Auth and direct service CORS |
 | `githubClientId` | `GITHUB_CLIENT_ID` | - | GitHub OAuth client id |
 | `githubClientSecret` | `GITHUB_CLIENT_SECRET` | - | GitHub OAuth client secret |
 | `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |
@@ -98,7 +95,7 @@ Better Auth runtime integration plus session/profile/ownership helpers used by a
 
 ### `agent/` → [agent.spec.md](./agent/agent.spec.md)
 
-Agent orchestration for tool-calling loops using the LLM provider abstraction.
+Agent orchestration for tool-calling loops using the LLM provider abstraction, now split into conversation-loading, model-running, terminal-tool execution, transcript-writing, and cancellation ownership units.
 
 ### `llm/` → [llm.spec.md](./llm/llm.spec.md)
 
@@ -110,11 +107,11 @@ Database layer with Drizzle ORM - connection, schema definitions, and helper fun
 
 ### `routes/` → [routes.spec.md](./routes/routes.spec.md)
 
-REST API route handlers for buds, threads, messages, runs, and terminal operations, now enforcing per-user ownership across browser-facing resources.
+REST API route handlers for buds, current-user auth surfaces, device claims, and split thread/message/agent/terminal modules, all enforcing per-user ownership across browser-facing resources.
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 
-Runtime managers for runs, sessions, terminal sessions, generic event buses, and the dedicated agent runtime snapshot/resume store.
+Runtime managers for terminal sessions, extracted terminal-runtime ownership units, generic event buses, and the dedicated agent runtime snapshot/resume store.
 
 ### `terminal/` → [terminal.spec.md](./terminal/terminal.spec.md)
 
@@ -122,7 +119,7 @@ Terminal protocol types and known REPL program registry.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 
-WebSocket gateways for bud daemon connections and browser terminal access.
+WebSocket gateway composition plus extracted Bud connection, tracker, protocol, and debug helpers.
 
 ### `scripts/` → [scripts.spec.md](./scripts/scripts.spec.md)
 
@@ -162,7 +159,7 @@ Database utility scripts for development and auth/bootstrap operations (seeding,
 POST /api/threads/:id/messages
          │
          ▼
-    routes/threads.ts
+    routes/threads/messages.ts
          │
          ├─► Insert message to DB
          │
@@ -173,21 +170,21 @@ POST /api/threads/:id/messages
                   ▼
              agent/agent-service.ts
                   │
-                  ├─► Build conversation (canonical format)
+                  ├─► conversation-loader.ts
                   │
-                  ├─► providerRegistry.getProviderForModel()
+                  ├─► model-runner.ts
                   │         │
                   │         ▼
-                  ├─► provider.invokeSync() ─► llm/providers/openai.ts
+                  ├─► provider.invoke() ───────────────► llm/providers/*
                   │                                    │
                   │                                    ▼
                   │                            OpenAI Responses API
                   │
                   ├─► Extract tool_call or final
                   │
-                  ├─► Execute via terminalSessionManager
+                  ├─► terminal-tool-executor.ts
                   │
-                  └─► Emit SSE events
+                  └─► transcript-writer.ts / agent runtime
 ```
 
 ### Bud Daemon Connects
@@ -196,11 +193,11 @@ POST /api/threads/:id/messages
 WS /ws
    │
    ▼
-ws/gateway.ts
+ws/bud-connection.ts
    │
    ├─► Parse hello frame
    │
-   ├─► Legacy token enrollment OR challenge-response
+   ├─► Enrollment token OR challenge-response
    │
    ├─► Create/update bud record
    │

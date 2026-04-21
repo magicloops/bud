@@ -1,14 +1,14 @@
 import "dotenv/config";
-import { createHash } from "node:crypto";
 import { db, pool } from "../db/client.js";
 import { budTable, enrollmentTokenTable } from "../db/schema.js";
+import { hashEnrollmentToken } from "../auth/enrollment-token.js";
 
 const HOURS = 60 * 60 * 1000;
 
 async function main() {
   const tokenValue = process.env.SEED_ENROLLMENT_TOKEN ?? "DEV-ENROLL-0001";
   const hashSecret = process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret";
-  const tokenHash = createHash("sha256").update(`${hashSecret}:${tokenValue}`).digest("hex");
+  const tokenHash = hashEnrollmentToken(tokenValue, hashSecret);
   const ttlHours = Number(process.env.SEED_TOKEN_TTL_HOURS ?? 24);
 
   const budId = process.env.SEED_BUD_ID ?? "b_dev_seed";

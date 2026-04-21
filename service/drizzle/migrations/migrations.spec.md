@@ -4,7 +4,7 @@ SQL migration files generated or maintained for schema evolution.
 
 ## Purpose
 
-Contains sequential SQL migrations that transform the database schema from one version to the next. Managed by Drizzle metadata under `meta/` and applied via `pnpm db:migrate`.
+Contains the checked-in SQL migration chain used to align staging with the schema-first local workflow. Managed by Drizzle metadata under `meta/` and applied via `pnpm db:migrate`.
 
 ## Files
 
@@ -87,6 +87,13 @@ Placeholder to ensure the directory exists in git.
 - Drops `terminal_session.tmux_session_name` to match the neutral-terminal contract cleanup
 - Uses `IF EXISTS` / `IF NOT EXISTS` guards so the migration can be applied safely on environments that previously received part of this schema via `db:push`
 
+### `0011_shallow_stellaris.sql`
+
+**Final legacy standalone-run schema cleanup**:
+- Drops `run`, `run_step`, `run_log`, and `run_summary`
+- Drops `terminal_session_input_log.run_id`
+- Aligns staging/deployed schemas with the service refactor’s removed standalone run/runtime surface
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -97,20 +104,20 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0008` currently)
+- Snapshot files for each migration (`0000` through `0011` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
 ## Usage
 
 ```bash
-# Generate migration from schema changes
+# Generate migration when staging history must catch up with schema.ts
 pnpm db:generate
 
-# Apply pending migrations
+# Apply pending migrations in staging/deployed environments
 pnpm db:migrate
 
-# Push schema directly (dev only)
+# Push schema directly for local development
 pnpm db:push
 ```
 
@@ -145,6 +152,9 @@ v9: active-session uniqueness for terminal_session.thread_id
  │
  ▼
 v10: message client-id parity + terminal-session tmux-name cleanup
+ │
+ ▼
+v11: drop dead standalone-run schema remnants
 ```
 
 ---

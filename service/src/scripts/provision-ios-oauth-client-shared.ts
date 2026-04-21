@@ -195,7 +195,9 @@ function printWarnings(bundle: IosAuthBundle, provisionConfig: IosOAuthProvision
   }
 }
 
-export async function runIosOAuthProvisioning(provisionConfig: IosOAuthProvisionConfig) {
+export async function runIosOAuthProvisioning(
+  provisionConfig: IosOAuthProvisionConfig,
+): Promise<void> {
   try {
     const result = await upsertIosClient(provisionConfig);
     const bundle = buildIosAuthBundle(provisionConfig);

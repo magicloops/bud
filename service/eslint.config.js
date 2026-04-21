@@ -21,8 +21,18 @@ export default [
       "@typescript-eslint": tseslint
     },
     rules: {
+      "no-undef": "off",
+      "no-unused-vars": "off",
       "@typescript-eslint/explicit-module-boundary-types": "warn",
-      "@typescript-eslint/no-explicit-any": "warn"
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          varsIgnorePattern: "^_"
+        }
+      ]
     }
   }
 ];

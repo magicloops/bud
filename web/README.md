@@ -17,17 +17,15 @@ Use [web/.env.example](./.env.example).
 
 Recommended local setup:
 
-- Leave `VITE_API_BASE_URL` unset
-- Set `VITE_API_PROXY_TARGET=http://localhost:3000`
+- Set `VITE_API_BASE_URL=http://localhost:3000`
+- Optionally keep `VITE_API_PROXY_TARGET=http://localhost:3000` if you still want proxied `/.well-known/*` / `/api/*` routes available through the Vite origin for specific auth-topology checks
 
-That keeps browser requests same-origin from the web app’s perspective while proxying `/api/*` and `/.well-known/*` to the service, which is the simplest local auth setup.
+This is now the preferred local browser/workbench setup. It keeps API and SSE traffic off the Vite origin, which avoids the same-browser multi-tab connection starvation we validated when each thread view holds both agent and terminal SSE streams open.
 
-For the local iOS auth flow, `http://localhost:5173` is also the public auth origin. The service still listens on `http://localhost:3000`, but OAuth discovery, authorize, token, revoke, and `/api/me` should all be consumed through the proxied `5173` origin.
+For the local iOS auth flow, `http://localhost:5173` is still the public auth origin. The service still listens on `http://localhost:3000`, and the Vite proxy remains available when you explicitly want same-origin/public-auth parity on `5173`.
 
 Optional:
 
-- `VITE_API_BASE_URL=http://localhost:3000`
-  Use this only if you want direct cross-origin API calls instead of the Vite proxy. It is not the recommended browser deployment shape today.
 - `VITE_ROUTER_DEVTOOLS=true`
 - `VITE_SHOW_SYSTEM_MESSAGES=false`
 

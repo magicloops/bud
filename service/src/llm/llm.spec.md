@@ -128,6 +128,9 @@ Barrel exports and provider initialization.
 
 **`initializeProviders()`**: Called at startup to register providers based on config:
 ```typescript
+providerRegistry.unregister("openai");
+providerRegistry.unregister("anthropic");
+
 if (config.openaiApiKey) {
   providerRegistry.register(new OpenAIProvider(config.openaiApiKey, { ... }));
 }
@@ -135,6 +138,10 @@ if (config.anthropicApiKey) {
   providerRegistry.register(new AnthropicProvider(config.anthropicApiKey, { ... }));
 }
 ```
+
+- provider-less startup is valid for local development and auth/device-claim flows
+- provider-backed features degrade at call sites instead of crashing service boot
+- re-running initialization refreshes the built-in provider registrations instead of accumulating stale entries
 
 ## Subfolders
 

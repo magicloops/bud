@@ -78,6 +78,13 @@
       "when": 1776405047951,
       "tag": "0010_amazing_lightspeed",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776480997156,
+      "tag": "0011_shallow_stellaris",
+      "breakpoints": true
     }
   ]
 }

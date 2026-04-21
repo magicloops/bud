@@ -1,4 +1,4 @@
-import Fastify, { FastifyInstance } from "fastify";
+import Fastify, { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import fastifySseV2 from "fastify-sse-v2";
 import { authPool, registerAuthRoutes } from "./auth/auth.js";
@@ -6,9 +6,7 @@ import { registerBudRoutes } from "./routes/buds.js";
 import { pool } from "./db/client.js";
 import { config } from "./config.js";
 import { registerWsGateway } from "./ws/gateway.js";
-import { RunEventBus, TerminalEventBus } from "./runtime/event-bus.js";
-import { RunManager } from "./runtime/run-manager.js";
-import { registerRunRoutes } from "./routes/runs.js";
+import { TerminalEventBus } from "./runtime/event-bus.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
 import { registerModelsRoutes } from "./routes/models.js";
 import { AgentService, ThreadTitleService } from "./agent/index.js";
@@ -20,6 +18,28 @@ import { registerMeRoutes } from "./routes/me.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 
 const SERVICE_VERSION = "0.0.1";
+const CORS_METHODS = "GET,HEAD,POST,OPTIONS";
+const DEFAULT_CORS_HEADERS = "Authorization, Content-Type, Last-Event-ID";
+
+function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean {
+  const origin = request.headers.origin;
+  if (!origin || !config.betterAuthTrustedOrigins.includes(origin)) {
+    return false;
+  }
+
+  const requestedHeaders = request.headers["access-control-request-headers"];
+  reply.header("Access-Control-Allow-Origin", origin);
+  reply.header("Access-Control-Allow-Credentials", "true");
+  reply.header("Access-Control-Allow-Methods", CORS_METHODS);
+  reply.header(
+    "Access-Control-Allow-Headers",
+    typeof requestedHeaders === "string" && requestedHeaders.trim().length > 0
+      ? requestedHeaders
+      : DEFAULT_CORS_HEADERS,
+  );
+  reply.header("Vary", "Origin, Access-Control-Request-Headers");
+  return true;
+}
 
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
@@ -47,9 +67,28 @@ export async function buildServer(): Promise<FastifyInstance> {
     },
   );
 
-  const eventBus = new RunEventBus();
-  const runLogger = server.log.child({ component: "run_manager" });
-  const runManager = new RunManager(eventBus, runLogger, config.agentDebug);
+  server.addHook("onRequest", async (request, reply) => {
+    const origin = request.headers.origin;
+    const isPreflight =
+      request.method === "OPTIONS" &&
+      (typeof origin === "string" || typeof request.headers["access-control-request-method"] === "string");
+
+    const corsAllowed = applyCorsHeaders(request, reply);
+    if (!isPreflight) {
+      return;
+    }
+
+    if (typeof origin === "string" && !corsAllowed) {
+      reply.code(403).send({
+        error: "CORS_ORIGIN_DENIED",
+        message: `Origin ${origin} is not allowed`,
+      });
+      return;
+    }
+
+    reply.code(204).send();
+  });
+
   const terminalEvents = new TerminalEventBus();
   const agentRuntime = new AgentRuntimeStateManager();
   const terminalSessionLogger = server.log.child({ component: "terminal_session_manager" });
@@ -96,16 +135,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerBudRoutes(server, terminalSessionManager);
   await registerThreadRoutes(
     server,
-    runManager,
     agentService,
     agentRuntime,
     contextSyncService,
     threadTitleService,
+    terminalSessionManager,
   );
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
-  await registerRunRoutes(server, runManager);
   await registerModelsRoutes(server);
-  await registerWsGateway(server, runManager, terminalSessionManager);
+  await registerWsGateway(server, terminalSessionManager);
 
   server.addHook("onClose", async () => {
     terminalSessionManager.stopIdleChecks();
@@ -145,33 +183,6 @@ export async function buildServer(): Promise<FastifyInstance> {
       version: SERVICE_VERSION,
       time: new Date().toISOString(),
       checks,
-    });
-  });
-
-  server.get("/api/runs/:runId/stream", (request, reply) => {
-    const runId = (request.params as { runId: string }).runId;
-    const detach = eventBus.attach(runId, reply);
-    reply.raw.on("close", detach);
-  });
-
-  server.get("/api/terminals/:budId/stream", (request, reply) => {
-    const budId = (request.params as { budId: string }).budId;
-    const detach = terminalEvents.attach(budId, reply);
-
-    // Send periodic heartbeat to detect stale connections
-    // 1s in dev for faster detection, 5s in production
-    const heartbeatMs = process.env.NODE_ENV === "production" ? 5000 : 1000;
-    const heartbeatInterval = setInterval(() => {
-      try {
-        reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now() }) });
-      } catch {
-        clearInterval(heartbeatInterval);
-      }
-    }, heartbeatMs);
-
-    reply.raw.on("close", () => {
-      clearInterval(heartbeatInterval);
-      detach();
     });
   });
 

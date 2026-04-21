@@ -1,13 +1,12 @@
 # runtime
 
-Runtime managers for runs and terminal sessions, plus event bus infrastructure.
+Runtime managers for thread terminals and agent-stream state, plus shared SSE event buses.
 
 ## Purpose
 
-Orchestrates execution of commands and terminal sessions across connected bud daemons. Handles:
-- Command dispatch and result tracking
+Orchestrates terminal sessions and agent-stream state across connected bud daemons. Handles:
 - Thread-scoped terminal sessions (tmux-backed)
-- Generic SSE event broadcasting for run/terminal streams
+- Generic SSE event broadcasting for terminal streams
 - Agent-thread runtime snapshots plus bounded resume state
 
 ## Files
@@ -54,7 +53,6 @@ Generic SSE event bus with buffering for replay.
 
 **Classes**:
 - `SseEventBus` - Base class with channel-keyed listeners and buffers
-- `RunEventBus` - For run execution events
 - `TerminalEventBus` - For terminal session events
 - `AgentEventBus` - Legacy generic agent bus export retained for compatibility/tests; production agent-thread streaming now uses `agent-runtime-state.ts`
 
@@ -90,7 +88,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 
 ### `event-bus.test.ts`
 
-Standalone Node test coverage for the generic replay contract still used by run/terminal streams.
+Standalone Node test coverage for the generic replay contract still used by terminal streams and shared runtime listeners.
 
 ### `terminal-session-manager.test.ts`
 
@@ -100,52 +98,20 @@ Standalone Node tests for targeted terminal-session-manager context tracking reg
 - non-shell readiness assessments do not clear pending REPL context
 - observed shell readiness still clears pending REPL context
 
-### `run-manager.ts`
-
-Manages standalone command execution on buds.
-
-**RunManager Class**:
-
-**State**:
-- `activeRuns` - Map of runId → RunContext (in-flight runs)
-
-**Key Methods**:
-
-| Method | Description |
-|--------|-------------|
-| `createRun(request)` | Create an owned run record and dispatch to bud |
-| `createRunRecord(threadId, options)` | DB record creation only, inheriting thread ownership when needed |
-| `dispatchShellCommand(params)` | Send run frame to bud, return deferred promise |
-| `handleStreamChunk(runId, stream, dataB64, seq)` | Process stdout/stderr chunks |
-| `handleRunFinished(runId, payload)` | Complete run, resolve promise |
-
-**Events Emitted**:
-- `status` - Phase changes (`planning`, `running`)
-- `exec.stdout` / `exec.stderr` - Output chunks
-- `final` - Completion with status and exit code
-
-**Tail Tracking**:
-- Keeps last 4KB of stdout/stderr in memory for quick access
-- Full logs stored in `run_log` table up to `config.runLogMaxBytes`
-
 ### `terminal-session-manager.ts`
 
-Thread-scoped terminal session management using tmux (~800 lines).
+Thread-scoped terminal session composition root.
 
 **TerminalSessionManager Class**:
 
-**State**:
-- `readiness` - Map of sessionId → { assessment, updatedAt }
-- `lastOffsets` - Map of sessionId → last known byte offset
-- `pendingCommands` - Map of sessionId → PendingCommand (for REPL context)
-- `pendingObserves` - Map of requestId → { resolve, reject, timeout }
-- `pendingSends` - Map of requestId → { resolve, reject, timeout }
+`TerminalSessionManager` now composes the extracted `runtime/terminal/*` helpers instead of directly owning every terminal concern.
 
 **Key Methods**:
 
 | Method | Description |
 |--------|-------------|
-| `createSessionForThread(threadId, budId, createdByUserId?)` | Create a fresh session row when the thread has no active session, with thread-owner stamping |
+| `ensureSessionRecordForThread(threadId, budId, createdByUserId?)` | Single concurrency-safe first-use session boundary shared by route and agent callers |
+| `createSessionForThread(threadId, budId, createdByUserId?)` | Compatibility wrapper over `ensureSessionRecordForThread(...)` |
 | `getSessionForThread(threadId)` | Get the active (non-closed) session |
 | `getSession(sessionId)` | Get by ID |
 | `ensureSession(sessionId)` | Send `terminal_ensure` to bud |
@@ -163,6 +129,8 @@ Thread-scoped terminal session management using tmux (~800 lines).
 | `handleObserveResult(sessionId, payload)` | Observe result received |
 | `handleSendResult(sessionId, payload)` | Send result received |
 | `startIdleChecks()` / `stopIdleChecks()` | Periodic idle-state management; destructive cleanup runs only when explicitly configured |
+| `rejectPendingRequestsForThread(threadId, errorMessage)` | Reject in-flight terminal waits for the active thread session |
+| `rejectPendingRequestsForBud(budId, errorMessage)` | Reject in-flight terminal waits for all active sessions on an offline Bud |
 
 **Session States**:
 ```
@@ -216,9 +184,12 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
 - `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests
 
+### `terminal/` → [terminal/terminal.spec.md](./terminal/terminal.spec.md)
+
+Internal terminal-runtime ownership helpers extracted from the old monolithic manager.
+
 **Ownership Notes**:
-- `createRunRecord()` stamps `run.created_by_user_id` from the caller or owning thread
-- `createSessionForThread()` stamps `terminal_session.created_by_user_id`
+- `ensureSessionRecordForThread()` stamps `terminal_session.created_by_user_id`
 - `sendInput(..., { userId })` writes the acting human id into `terminal_session_input_log.user_id`
 
 ## Dependencies
@@ -234,10 +205,10 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 | `../ws/gateway.js` | `sendFrameToBud()`, `isBudOnline()` |
 | `../terminal/types.js` | Type definitions |
 | `../terminal/known-programs.js` | REPL detection |
+| `./terminal/*` | Extracted lifecycle/dispatch/output/runtime/idle helpers |
 
 ## Configuration Used
 
-- `config.runLogMaxBytes` - Max bytes to store per run
 - `config.terminalIdleTimeoutMinutes` - Mark idle after (default: 30)
 - `config.terminalIdleCleanupHours` - Close after idle only when explicitly enabled (default: 0 / disabled)
 - `config.terminalIdleCheckIntervalMinutes` - Check frequency (default: 5)

@@ -345,27 +345,29 @@ Full setup in each subproject's README or spec file.
 
 ### 6.1) Database Schema Changes (Drizzle)
 
-This project uses **`drizzle-kit push`** (schema-first approach), NOT migration files.
+This project uses a mixed Drizzle workflow:
+- local development uses **`drizzle-kit push`** (`pnpm db:push`)
+- staging uses **`drizzle-kit migrate`** (`pnpm db:migrate`)
 
 **Workflow for schema changes:**
 
 1. Edit `service/src/db/schema.ts` (source of truth)
-2. Run `npx drizzle-kit push` from `service/` directory
-3. Review the changes drizzle proposes (it will show SQL statements)
-4. Confirm to apply changes to database
+2. Run `pnpm db:push` from `service/` for local development
+3. Review the SQL Drizzle proposes and apply it locally
+4. If staging needs the same change through checked-in history, generate or update the migration chain and use `pnpm db:migrate`
 5. Update `service/src/db/db.spec.md` if needed
 
 **Commands (run from `service/`):**
 
 ```bash
-npx drizzle-kit push      # Apply schema.ts changes to database
-npx drizzle-kit studio    # Open Drizzle Studio (database browser)
+pnpm db:push             # Apply schema.ts changes locally
+pnpm db:migrate          # Apply checked-in migrations in staging/deployed envs
+pnpm db:studio           # Open Drizzle Studio (database browser)
 ```
 
 **Do NOT:**
-- Manually create migration files in `drizzle/migrations/`
 - Manually edit `drizzle/migrations/meta/_journal.json`
-- Use `drizzle-kit migrate` (we don't use migration-file workflow)
+- Assume staging can use `db:push`
 
 See `debug/drizzle-migration-not-applied.md` for context on this decision.
 

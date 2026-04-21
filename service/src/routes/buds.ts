@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { desc, inArray, eq, isNull, and } from "drizzle-orm";
+import { desc, eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { budTable, runSummaryTable, terminalSessionTable, threadTable } from "../db/schema.js";
+import { budTable, terminalSessionTable, threadTable } from "../db/schema.js";
 import { isBudOnline } from "../ws/gateway.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import { getAuthorizedBud, requireViewer } from "../auth/session.js";
@@ -50,48 +50,8 @@ export async function registerBudRoutes(
       .from(budTable)
       .where(eq(budTable.createdByUserId, viewer.userId))
       .orderBy(desc(budTable.lastSeenAt));
-    const budIds = buds.map((bud) => bud.budId);
-    const lastRuns = new Map<
-      string,
-      {
-        run_id: string;
-        status: string;
-        exit_code: number | null;
-        started_at: Date | null;
-        finished_at: Date | null;
-      }
-    >();
-    if (budIds.length > 0) {
-      const summaries = await db
-        .select({
-          budId: runSummaryTable.budId,
-          runId: runSummaryTable.runId,
-          status: runSummaryTable.status,
-          exitCode: runSummaryTable.exitCode,
-          startedAt: runSummaryTable.startedAt,
-          finishedAt: runSummaryTable.finishedAt
-        })
-        .from(runSummaryTable)
-        .where(inArray(runSummaryTable.budId, budIds))
-        .orderBy(runSummaryTable.budId, desc(runSummaryTable.startedAt));
-      for (const summary of summaries) {
-        if (lastRuns.has(summary.budId)) {
-          continue;
-        }
-        lastRuns.set(summary.budId, {
-          run_id: summary.runId,
-          status: summary.status,
-          exit_code: summary.exitCode ?? null,
-          started_at: summary.startedAt ?? null,
-          finished_at: summary.finishedAt ?? null
-        });
-      }
-    }
 
-    return buds.map((bud) => ({
-      ...serializeBud(bud),
-      last_run: lastRuns.get(bud.budId) ?? null
-    }));
+    return buds.map(serializeBud);
   });
 
   // GET /api/buds/:budId/sessions - List active terminal sessions on Bud with thread info

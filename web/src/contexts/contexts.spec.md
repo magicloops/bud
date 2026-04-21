@@ -35,7 +35,16 @@ Route-scoped shared state for the `/$budId` workbench layout.
 
 ### `auth-session-context.tsx`
 
-Authenticated browser-session state seeded from the root route loader.
+Authenticated browser-session context object and consumer hook.
+
+**Exports**:
+- `AuthSessionContext`
+- `useAuthSession()`
+- `AuthSessionContextValue` type
+
+### `auth-session-provider.tsx`
+
+Authenticated browser-session provider seeded from the root route loader.
 
 **Context Value**:
 ```typescript
@@ -56,6 +65,15 @@ Authenticated browser-session state seeded from the root route loader.
 - Powers the authenticated empty-state and login-route bounce behavior
 
 ### `bud-status-context.tsx`
+
+Bud-status context object and consumer hook.
+
+**Exports**:
+- `BudStatusContext`
+- `useBudStatus()`
+- `BudStatus` / `BudStatusContextValue` types
+
+### `bud-status-provider.tsx`
 
 Real-time bud online/offline status tracking.
 
@@ -85,6 +103,15 @@ const isOnline = statuses[bud.id] === 'online'
 ```
 
 ### `layout-context.tsx`
+
+Layout context object and consumer hook.
+
+**Exports**:
+- `LayoutContext`
+- `useLayout()`
+- `LayoutContextValue` type
+
+### `layout-provider.tsx`
 
 Layout UI preferences with persistence.
 

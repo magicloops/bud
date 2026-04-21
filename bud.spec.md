@@ -98,6 +98,8 @@ pending → creating → ready ↔ active → idle → closed
 ```
 bud/
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
+├── git_loc_breakdown.py    # Repo-wide LOC analyzer that buckets code, config, markdown, and other tracked text while honoring Git ignore rules
+├── test_git_loc_breakdown.py # Regression tests for the LOC analyzer's category and summary accounting
 │
 ├── bud/                    # Rust device daemon
 │   ├── src/
@@ -120,13 +122,13 @@ bud/
 ├── service/                # Node.js backend service
 │   ├── src/
 │   │   ├── auth/           # Better Auth bridge + session helpers
-│   │   ├── agent/          # LLM integration (OpenAI Responses API)
+│   │   ├── agent/          # LLM integration split across conversation/model/tool/transcript ownership helpers
 │   │   ├── db/             # Database layer (Drizzle ORM)
-│   │   ├── routes/         # HTTP API endpoints
-│   │   ├── runtime/        # Session & run management
+│   │   ├── routes/         # HTTP API endpoints, with split thread submodules under routes/threads/
+│   │   ├── runtime/        # Terminal-session and agent runtime state management, including runtime/terminal/ helpers
 │   │   ├── terminal/       # Terminal utilities (readiness detection)
-│   │   └── ws/             # WebSocket gateways
-│   ├── drizzle/            # Database migrations
+│   │   └── ws/             # WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
+│   ├── drizzle/            # Checked-in staging migration history
 │   └── scripts/            # Utility scripts
 │
 ├── web/                    # React frontend
@@ -217,7 +219,7 @@ The web app now consumes that foundation through:
 - credential-aware API and SSE helpers so cookie auth works consistently across loaders and live streams
 - an OAuth Provider client plugin that preserves Better Auth's signed mobile resume state through hosted auth pages
 - auth-expiry-aware reconnect guards so live thread views stop polling once browser auth is gone
-- per-user route filtering so browser users only receive their own Buds, threads, runs, sessions, and messages
+- per-user route filtering so browser users only receive their own Buds, threads, sessions, and messages
 
 Bud device onboarding is now browser-mediated:
 1. The daemon starts a claim with `/api/device-auth/start`
@@ -241,7 +243,7 @@ User Message
          │
          ▼
 ┌─────────────────┐
-│  OpenAI Call    │ ← Responses API with tools
+│  Model Runner   │ ← Responses API with tools
 └────────┬────────┘
          │
     ┌────┴────┐
@@ -267,6 +269,12 @@ User Message
 **Available Tools**:
 - `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and one semantic key gesture at a time (for example `key:"ctrl+c"`)
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
+
+Current service ownership split:
+- `conversation-loader` builds canonical transcript context from persisted rows
+- `model-runner` owns provider resolution, reasoning normalization, draft streaming, and tool-call parsing
+- `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
+- `transcript-writer` owns durable assistant/tool writes plus runtime emission boundaries
 
 ### 3. Terminal Readiness Detection
 
@@ -355,7 +363,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 
 ## Database Schema
 
-Core tables (managed by Drizzle migrations):
+Core tables (schema-first locally via `db:push`, with checked-in migrations used for staging):
 
 | Table | Purpose |
 |-------|---------|
@@ -363,14 +371,11 @@ Core tables (managed by Drizzle migrations):
 | `enrollment_token` | One-time registration tokens |
 | `thread` | Conversation containers |
 | `message` | Chat messages |
-| `run` | Agent execution runs (legacy) |
-| `run_step` | Individual tool calls in runs |
-| `run_log` | Run output logs |
-| `session` | Legacy terminal sessions |
-| `session_log` | Legacy session output |
 | `terminal_session` | Thread-scoped terminal sessions |
 | `terminal_session_output` | Terminal output chunks |
 | `terminal_session_input_log` | Input audit log |
+
+The service refactor's final cleanup removes the old standalone `run` / `run_step` / `run_log` / `run_summary` schema from the active service model. Historical references remain only in older plans, reviews, and migration history.
 
 ---
 
@@ -392,7 +397,7 @@ Core tables (managed by Drizzle migrations):
 # Service
 cd service
 pnpm install
-pnpm db:migrate
+pnpm db:push
 pnpm dev
 
 # Web UI (separate terminal)
@@ -531,6 +536,19 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/refactor-daemon/phase-5-validation-specs-and-wire-cleanup-follow-up-prep.md](./plan/refactor-daemon/phase-5-validation-specs-and-wire-cleanup-follow-up-prep.md) | Final daemon refactor phase covering validation, Bud spec/doc updates, and preparation of the follow-up item to remove tmux leakage from the wire contract |
 | [plan/refactor-daemon/progress-checklist.md](./plan/refactor-daemon/progress-checklist.md) | Running implementation checklist for the Bud daemon modularization plan |
 | [plan/refactor-daemon/validation-checklist.md](./plan/refactor-daemon/validation-checklist.md) | Manual verification checklist for validating the refactored Bud daemon before starting the wire-level tmux cleanup follow-up |
+| [plan/refactor-service/refactor-service.spec.md](./plan/refactor-service/refactor-service.spec.md) | Folder spec for the phased service refactor plan, centered on removing the standalone legacy run surface, fixing boundary/bootstrap bugs first, and then splitting terminal, agent, route, and gateway ownership in the current internal-only branch |
+| [plan/refactor-service/implementation-spec.md](./plan/refactor-service/implementation-spec.md) | Closed parent implementation spec for the `service/` refactor, covering legacy standalone run removal, terminal/agent/route/gateway ownership splits, lint/build closure, and the aligned `db:push` local / `db:migrate` staging workflow |
+| [plan/refactor-service/phase-1-contract-bugs-and-legacy-runtime-removal.md](./plan/refactor-service/phase-1-contract-bugs-and-legacy-runtime-removal.md) | Initial service refactor phase covering removal of the legacy standalone run surface, cleanup of unauthenticated legacy stream routes, provider/bootstrap fixes, enrollment-token hash unification, and DB workflow doc alignment |
+| [plan/refactor-service/phase-2-terminal-runtime-ownership-split.md](./plan/refactor-service/phase-2-terminal-runtime-ownership-split.md) | Terminal runtime phase covering extraction of session-record lifecycle, request dispatch, output persistence, readiness/context/idle ownership, and fast-fail cancel/offline behavior |
+| [plan/refactor-service/phase-3-agent-runtime-ownership-split.md](./plan/refactor-service/phase-3-agent-runtime-ownership-split.md) | Agent runtime phase covering extraction of conversation loading, model running, terminal tool execution, transcript persistence/runtime emission, and cancellation coordination out of `AgentService` |
+| [plan/refactor-service/phase-4-route-and-gateway-decomposition.md](./plan/refactor-service/phase-4-route-and-gateway-decomposition.md) | Transport phase covering decomposition of the thread route family, websocket gateway decomposition, and reduction of `server.ts` to a thinner composition root with no lingering legacy runtime bootstrap |
+| [plan/refactor-service/phase-5-validation-specs-and-final-cleanup.md](./plan/refactor-service/phase-5-validation-specs-and-final-cleanup.md) | Final service refactor phase covering manual validation, spec/doc updates, and removal or explicit documentation of any remaining dead legacy runtime/schema remnants |
+| [plan/refactor-service/phase-6-service-lint-recovery.md](./plan/refactor-service/phase-6-service-lint-recovery.md) | Follow-on service refactor phase covering restoration of a passing `service` lint baseline, the TypeScript ESLint rule-ownership fix, and cleanup of error-level lint fallout exposed during the final closure pass |
+| [plan/refactor-service/phase-7-final-build-lint-and-closeout.md](./plan/refactor-service/phase-7-final-build-lint-and-closeout.md) | Final service refactor sign-off phase covering warning-only lint disposition, final `service`/`web` build-lint verification, and explicit closeout of the refactor docs/checklists |
+| [plan/refactor-service/phase-8-web-lint-recovery-and-final-closeout.md](./plan/refactor-service/phase-8-web-lint-recovery-and-final-closeout.md) | Completed frontend follow-on phase for the service refactor, covering the Fast Refresh context split, route lint cleanup, and the final full verification rerun that closed the refactor |
+| [plan/refactor-service/phase-9-web-regression-validation-before-structural-fixes.md](./plan/refactor-service/phase-9-web-regression-validation-before-structural-fixes.md) | Completed post-closeout validation phase for the service refactor, documenting that same-browser Vite-proxy transport pressure, not a structural route/provider regression, caused the thread-navigation / terminal-offline web issue and led to a direct-backend-origin local dev preference |
+| [plan/refactor-service/progress-checklist.md](./plan/refactor-service/progress-checklist.md) | Running implementation checklist for the service refactor plan |
+| [plan/refactor-service/validation-checklist.md](./plan/refactor-service/validation-checklist.md) | Manual verification checklist for the service refactor, including provider-less boot, ownership-aware streams, terminal cancel/offline behavior, legacy runtime removal, and DB workflow validation |
 | [plan/neutral-terminal-wire-contract/neutral-terminal-wire-contract.spec.md](./plan/neutral-terminal-wire-contract/neutral-terminal-wire-contract.spec.md) | Folder spec for the phased cleanup of tmux-specific leakage from the normal terminal contract, centered on single-gesture `terminal.send`, neutral status/capability payloads, and removal of service-owned tmux session naming |
 | [plan/neutral-terminal-wire-contract/implementation-spec.md](./plan/neutral-terminal-wire-contract/implementation-spec.md) | Parent implementation spec for cleaning the Bud↔service and service↔browser terminal contract now that the daemon has an internal backend seam, including single-gesture input, status/capability cleanup, and service runtime/persistence cleanup |
 | [plan/neutral-terminal-wire-contract/phase-1-compatibility-foundation-and-contract-shape.md](./plan/neutral-terminal-wire-contract/phase-1-compatibility-foundation-and-contract-shape.md) | Foundation phase covering canonical neutral contract types, tolerant parsing for rollout safety, and compatibility-boundary regression coverage |
@@ -542,13 +560,22 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/neutral-terminal-wire-contract/validation-checklist.md](./plan/neutral-terminal-wire-contract/validation-checklist.md) | Manual verification checklist for the neutral terminal wire-contract cleanup |
 | [plan/revised-terminal-contract/implementation-spec.md](./plan/revised-terminal-contract/implementation-spec.md) | Breaking implementation plan for replacing the overloaded `terminal.run` / `terminal.capture` agent contract with separate shell execution, interactive input, and explicit observation tools |
 | [plan/revised-terminal-contract/implementation-spec-follow-up.md](./plan/revised-terminal-contract/implementation-spec-follow-up.md) | Follow-up implementation plan for stabilizing the revised terminal contract, first around TUI input parity and delta-first observation, and now around a potential send-first simplification that removes `terminal.exec` entirely |
+| [plan/service-layer-review-follow-up.md](./plan/service-layer-review-follow-up.md) | Initial summary follow-up captured immediately after the 2026-04-17 service review; superseded by the detailed phased plan under `plan/refactor-service/` |
 | [plan/terminal-send-refactor/terminal-send-refactor.spec.md](./plan/terminal-send-refactor/terminal-send-refactor.spec.md) | Folder spec for the phased `terminal.send` settled-by-default refactor, centered on output quiescence, partial-progress timeout results, and `terminal.observe(wait_for:"settled")` as the explicit longer-wait hatch |
 | [plan/terminal-send-refactor/implementation-spec.md](./plan/terminal-send-refactor/implementation-spec.md) | Phased implementation plan for making `terminal.send` wait for output quiescence by default, reusing the existing `pipe-pane` watcher, keeping `capture-pane` at the edges, and collapsing most immediate send-plus-observe chains into a single send |
 | [plan/client-id/implementation-spec.md](./plan/client-id/implementation-spec.md) | Phased implementation plan for adding stable UUIDv7 `client_id` values to messages, keeping `message_id` as the persisted row identifier, and threading the new identity through transcript reads, user writes, `/agent/state`, agent SSE, and first-party client reconciliation |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [review/bud-daemon-modularization-review.md](./review/bud-daemon-modularization-review.md) | Full architecture review of the Rust Bud daemon, covering current correctness gaps, tmux coupling, backend-neutral terminal abstractions, and a staged refactor plan for splitting `bud/src/main.rs` without changing current behavior |
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
+| [review/service-layer-implementation-review.md](./review/service-layer-implementation-review.md) | Full review of the current `service/` implementation, covering ownership-boundary regressions, provider/bootstrap gaps, terminal/runtime cancellation issues, legacy run overlap, and the recommended modularization sequence before a service refactor |
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
+| [debug/service-refactor-phase-1-contract-bugs.md](./debug/service-refactor-phase-1-contract-bugs.md) | Debug note for Phase 1 of the service refactor, covering provider-less boot, shared enrollment-token hashing, legacy run-surface removal, and the Node REPL prompt-classification fix |
+| [debug/service-refactor-phase-2-runtime-and-transport-split.md](./debug/service-refactor-phase-2-runtime-and-transport-split.md) | Debug note for the next service-refactor slice, covering terminal-runtime ownership extraction, pending terminal wait fast-fail behavior, and the route/gateway decomposition rationale |
+| [debug/service-refactor-final-build-fixes.md](./debug/service-refactor-final-build-fixes.md) | Debug note capturing the final closure-pass `service` build failure, including the broken `TerminalObservationView` import and the unsafe websocket-readiness casts that had to be normalized at the gateway boundary before continuing to lint/build sign-off |
+| [debug/service-refactor-phase-6-service-lint-recovery.md](./debug/service-refactor-phase-6-service-lint-recovery.md) | Debug note for the Phase 6 lint recovery pass, covering the TypeScript ESLint rule-ownership gap in `service/eslint.config.js`, the resulting false-positive `no-unused-vars` / `no-undef` failures on typed contract surfaces, and the narrow config fix used to restore a passing `service` lint baseline |
+| [debug/service-refactor-phase-8-web-lint-recovery.md](./debug/service-refactor-phase-8-web-lint-recovery.md) | Debug note for the final frontend closure pass, covering the React Fast Refresh context-module violations, the small route-hook lint findings in `web`, and the structural split used to restore a clean `web` lint baseline before refactor closeout |
+| [debug/web-thread-terminal-multi-tab-regression.md](./debug/web-thread-terminal-multi-tab-regression.md) | Debug note capturing the multi-tab trigger investigation, including the secondary shared terminal replay/recovery risk and why it was eventually demoted behind the broader same-origin transport explanation |
+| [debug/web-same-browser-multi-tab-thread-regression.md](./debug/web-same-browser-multi-tab-thread-regression.md) | Debug note documenting the validated root cause for the post-closeout web regression: same-browser Vite-proxied fetch/SSE pressure under multi-tab load, not the context refactor or localStorage behavior |
 | [debug/ios-local-oauth-client-provisioning-id-null.md](./debug/ios-local-oauth-client-provisioning-id-null.md) | Debug note documenting why the first run of `pnpm oauth:provision:ios-local` fails on a fresh database: the provisioning script omits the required `auth.oauthClient.id` primary key on insert |
 | [debug/api-me-opaque-access-token.md](./debug/api-me-opaque-access-token.md) | Debug note documenting why `GET /api/me` returned `401 no token payload`: the token endpoint was allowed to mint opaque access tokens while Bud's bearer bootstrap path only accepted JWT API tokens |
 | [debug/api-me-issuer-mismatch.md](./debug/api-me-issuer-mismatch.md) | Debug note documenting why `GET /api/me` can still fail after JWT token minting succeeds: the bearer verifier defaulted to the bare Better Auth origin instead of the mounted `/api/auth` issuer |
@@ -602,4 +629,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-16*
+*Last updated: 2026-04-20*

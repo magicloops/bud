@@ -4,11 +4,14 @@ import {
   deleteSessionTrackerIfCurrent,
   getActiveSessionTracker,
   registerActiveSessionTracker,
+  sendFrameToBud,
   type SessionTracker,
 } from "./gateway.js";
+import { sessions } from "./session-trackers.js";
 
 function makeSocket() {
   let readyState = 1;
+  const sentFrames: string[] = [];
   const socket = {
     OPEN: 1,
     get readyState() {
@@ -17,9 +20,10 @@ function makeSocket() {
     close() {
       readyState = 3;
     },
-    send() {
-      // noop
+    send(payload: string) {
+      sentFrames.push(payload);
     },
+    sentFrames,
   };
 
   return socket as unknown as SessionTracker["socket"];
@@ -72,4 +76,34 @@ test("getActiveSessionTracker only returns the currently registered tracker", ()
 
   assert.equal(getActiveSessionTracker(activeSessions, "bud-1", stale), null);
   assert.equal(getActiveSessionTracker(activeSessions, "bud-1", current), current);
+});
+
+test("sendFrameToBud serializes frames onto the authoritative active socket", () => {
+  sessions.clear();
+  const tracker = makeTracker("bud-1", "session-current");
+  sessions.set("bud-1", tracker);
+
+  const sent = sendFrameToBud("bud-1", { type: "terminal_ensure", session_id: "sess-1" });
+
+  assert.equal(sent, true);
+  assert.deepEqual((tracker.socket as unknown as { sentFrames: string[] }).sentFrames, [
+    JSON.stringify({ type: "terminal_ensure", session_id: "sess-1" }),
+  ]);
+
+  sessions.clear();
+});
+
+test("sendFrameToBud refuses closed sockets and unknown buds", () => {
+  sessions.clear();
+
+  assert.equal(sendFrameToBud("bud-missing", { type: "noop" }), false);
+
+  const tracker = makeTracker("bud-1", "session-current");
+  tracker.socket.close();
+  sessions.set("bud-1", tracker);
+
+  assert.equal(sendFrameToBud("bud-1", { type: "noop" }), false);
+  assert.deepEqual((tracker.socket as unknown as { sentFrames: string[] }).sentFrames, []);
+
+  sessions.clear();
 });

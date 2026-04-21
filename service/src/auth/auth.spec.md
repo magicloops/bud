@@ -82,6 +82,18 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 - `updateUserProfileUsername(user, input)`
 - `getNormalizedCurrentUser(request)`
 
+### `enrollment-token.ts`
+
+Shared enrollment-token hashing helper.
+
+**Responsibilities**:
+- Defines the canonical HMAC-SHA256 enrollment-token hash used by service bootstrap and gateway validation
+- Defaults to `config.enrollmentHashSecret`
+- Keeps seeding/manual token creation aligned with runtime token verification
+
+**Exports**:
+- `hashEnrollmentToken(token, secret?)`
+
 ## Dependencies
 
 | Import | Purpose |
@@ -91,6 +103,7 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 | `@better-auth/oauth-provider` | OAuth Provider metadata and endpoints |
 | `@better-auth/oauth-provider/resource-client` | Protected-resource metadata + local token verification |
 | `better-auth/node` | Header adapter for Fastify requests |
+| `node:crypto` | Enrollment-token HMAC hashing |
 | `pg` | Dedicated auth pool |
 | `../config.js` | Better Auth env config |
 | `../db/client.js` | Main Drizzle database instance |

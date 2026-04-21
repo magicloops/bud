@@ -4,9 +4,9 @@ HTTP API route handlers using Fastify.
 
 ## Purpose
 
-Defines REST API endpoints for managing buds, threads, messages, runs, terminal sessions, the authenticated current-user surface, and browser-mediated Bud device claims. All routes are prefixed with `/api/`.
+Defines REST API endpoints for managing buds, threads, messages, terminal sessions, the authenticated current-user surface, and browser-mediated Bud device claims. All routes are prefixed with `/api/`.
 
-All browser-facing Bud/thread/run/terminal routes now require an authenticated viewer and resolve resources through ownership checks. Cross-user resource access returns `404`, while `401` is reserved for missing browser auth.
+All browser-facing Bud/thread/message/terminal routes now require an authenticated viewer and resolve resources through ownership checks. Cross-user resource access returns `404`, while `401` is reserved for missing browser auth.
 
 ## Files
 
@@ -37,7 +37,7 @@ Bud management and session listing.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/buds` | List the signed-in user's buds with last run info |
+| `GET` | `/api/buds` | List the signed-in user's buds |
 | `GET` | `/api/buds/:bud_id/sessions` | List active terminal sessions for an owned bud |
 | `DELETE` | `/api/buds/:bud_id/sessions/:session_id` | Close a specific session on an owned bud |
 
@@ -51,9 +51,26 @@ Bud management and session listing.
 - Session inventory is filtered to `terminal_session.created_by_user_id = viewer.userId`
 - Closing a session marks that specific row closed; revisiting the thread later creates a new active session row
 
+### `buds.test.ts`
+
+Direct registration coverage for the Bud route family.
+
+**Current Coverage**:
+- the Bud inventory and Bud-session routes still register after the legacy `last_run` dependency removal
+
 ### `threads.ts`
 
-Thread and message management, plus terminal operations (~900 lines).
+Thin composition root for the split thread-route family.
+
+Registers the route groups now implemented under [threads/threads.spec.md](./threads/threads.spec.md).
+
+### `threads/` → [threads/threads.spec.md](./threads/threads.spec.md)
+
+Ownership-focused thread submodules:
+- core thread CRUD
+- message history/create
+- agent state/stream/cancel
+- terminal create/ensure/input/history/stream
 
 **Thread Endpoints**:
 
@@ -73,12 +90,6 @@ Thread and message management, plus terminal operations (~900 lines).
 | `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
-
-**Run Endpoints**:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/threads/:thread_id/runs` | Get owned run history with cursor pagination |
 
 **Terminal Endpoints** (Thread-Scoped):
 
@@ -220,9 +231,9 @@ Before creating user message, checks for terminal state changes:
 - successful title writes emit `thread.title` on the same `/agent/stream` channel and use the same bounded replay cursor space as the agent events
 
 **Ownership Enforcement**:
-- `requireAuthorizedThreadAccess(...)` gates thread/message/run/terminal routes
+- `requireAuthorizedThreadAccess(...)` gates thread/message/terminal routes
 - thread lists filter to `thread.created_by_user_id = viewer.userId`
-- message and run reads also filter by their row-level owner columns
+- message reads also filter by their row-level owner columns
 - new thread/message/session rows are stamped with the acting or owning user id
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
@@ -232,30 +243,6 @@ Before creating user message, checks for terminal state changes:
 - duplicate user-message retries with the same owned-thread `client_id` short-circuit with `200 { message_id, client_id }` and do not launch a second agent turn
 - fresh user-message writes return `201 { message_id, client_id }`
 - `GET /api/threads/:thread_id/agent/stream` may also emit `thread.title { thread_id, title, source, updated_at }`
-
-### `runs.ts`
-
-Standalone command execution (separate from agent flow).
-
-**Endpoints**:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/runs` | Execute a command on an owned bud or owned thread |
-
-**Request Body** (`RunRequestSchema`):
-```typescript
-{
-  bud_id: string,
-  cmd: string,
-  cwd?: string,
-  thread_id?: string,  // Use existing thread or create new
-  title?: string       // Title for auto-created thread
-}
-```
-
-**Response Shape**:
-- returns snake_case write identifiers: `{ run_id, thread_id }`
 
 ### `me.ts`
 

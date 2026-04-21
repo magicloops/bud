@@ -91,7 +91,7 @@ export const Route = createFileRoute('/$budId')({
 })
 
 function BudLayout() {
-  const { buds: rawBuds, bud: _bud, threads: initialThreads } = Route.useLoaderData()
+  const { buds: rawBuds, threads: initialThreads } = Route.useLoaderData()
   const { budId } = Route.useParams()
   const navigate = useNavigate()
 

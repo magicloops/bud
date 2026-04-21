@@ -155,6 +155,11 @@ export class ContextSyncService {
   ): "shell" | "repl" | "tui" | "unknown" {
     const trimmed = lastLine.trim();
 
+    // Node REPL (but not Claude Code)
+    if (trimmed === ">" && !capture.includes("Claude")) {
+      return "repl";
+    }
+
     // Shell prompt indicators
     if (trimmed.endsWith("$") || trimmed.endsWith("#") || trimmed.endsWith("%")) {
       return "shell";
@@ -170,11 +175,6 @@ export class ContextSyncService {
 
     // IPython
     if (/^In \[\d+\]:/.test(trimmed)) {
-      return "repl";
-    }
-
-    // Node REPL (but not Claude Code)
-    if (trimmed === ">" && !capture.includes("Claude")) {
       return "repl";
     }
 

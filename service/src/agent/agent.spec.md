@@ -17,82 +17,119 @@ The agent service coordinates AI-assisted terminal interactions. When a user sen
 Simple barrel export:
 ```typescript
 export { AgentService } from "./agent-service.js";
-export { ThreadTitleService, normalizeGeneratedThreadTitle } from "./thread-title-service.js";
+export { ThreadTitleService, normalizeGeneratedThreadTitle, resolveThreadTitleModel } from "./thread-title-service.js";
 ```
+
+### `cancellation-registry.ts`
+
+Small ownership unit for per-thread cancellation controllers.
+
+**Responsibilities**:
+- register active `AbortController`s by thread id
+- abort and remove the controller during explicit cancel
+- clear finished controllers after success/failure/cancel paths
+
+### `cancellation-registry.test.ts`
+
+Direct tests for cancel-vs-clear behavior in the extracted cancellation registry.
+
+### `contracts.ts`
+
+Shared agent-facing tool/result contracts.
+
+**Responsibilities**:
+- define the normalized `terminal.send` / `terminal.observe` directive unions used across the split agent seams
+- centralize readiness defaults plus tool-argument serialization
+- normalize legacy wait/key inputs reused during transcript replay and model-tool parsing
+
+### `conversation-loader.ts`
+
+Conversation-building ownership extracted from `AgentService`.
+
+**Responsibilities**:
+- seed the canonical system prompt
+- load persisted thread messages into canonical provider input order
+- normalize historical tool rows, including legacy `terminal.interrupt` replay and `screen_stable` wait values
+- preserve user preferred-cwd hints during replay
+
+### `conversation-loader.test.ts`
+
+Direct tests for transcript normalization in the extracted conversation loader.
+
+**Current Coverage**:
+- preferred-cwd metadata is appended to user messages
+- persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`
+- stored `screen_stable` waits replay as canonical `settled`
 
 ### `agent-service.ts`
 
-Main agent implementation (~1,400 lines).
+Thin agent orchestrator over the extracted conversation/model/tool/transcript ownership units.
 
-#### System Prompt (Lines 64-127)
+The prompt/tool-definition ownership now lives in the extracted modules:
+- `conversation-loader.ts` owns the canonical Bud Agent system prompt used for every turn
+- `model-runner.ts` owns the canonical `terminal_send` / `terminal_observe` JSON Schema definitions passed to providers
 
-Defines agent behavior as "Bud Agent" with:
-- Tool calling guidelines (when to use each tool)
-- Readiness confidence interpretation (≥0.8 ready, 0.5-0.8 probably ready, <0.5 still processing)
-- Hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
-- REPL context awareness (detecting when inside Python/Node/Claude Code vs shell)
-- Guidance that ordinary `terminal.send` calls should omit `wait_for` and let the settled-by-default behavior run
-- Interactive wait guidance using `wait_for: "changed"` only for specialized first-visible-reaction cases and `terminal.observe(wait_for: "settled")` for explicit longer waits
-- Final-response guidance (direct markdown text, no JSON wrapper)
+**System Prompt Highlights**:
+- tool-calling guidance for `terminal.send` and `terminal.observe`
+- readiness confidence interpretation (`>= 0.8` ready, `0.5-0.8` probably ready, `< 0.5` still processing)
+- hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
+- REPL context awareness (Python/Node/Claude Code vs shell)
+- settled-by-default `terminal.send` guidance plus explicit `wait_for` usage rules
+- direct markdown final-response guidance (no JSON wrapper)
 
-#### Tool Definitions (Lines 130-191)
-
-Two canonical tool definitions using standard JSON Schema format:
+**Canonical Tool Definitions**:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `terminal_send` | `text?`, `submit?`, `key?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a settled-by-default synchronous result |
 | `terminal_observe` | `lines?`, `wait_for?`, `view?`, `timeout_ms?` | Observe terminal deltas by default, with explicit full-screen/history modes |
 
-**Note**: Optional parameters (`?`) are simply omitted from the `required` array. The OpenAI provider transforms these to the null-union pattern required by OpenAI strict mode during tool transformation.
-
 #### AgentService Class
 
 **Constructor dependencies**:
 - `TerminalSessionManager` (thread-scoped tmux sessions)
 - `AgentRuntimeStateManager` (authoritative `/agent/state` snapshots plus bounded agent-stream resume)
-- Logger and debug flags
+- optional `ContextSyncService` for post-send refresh after state-changing tool calls
+- logger and debug flags
 
-**LLM Provider**: Uses `providerRegistry.getProviderForModel()` to get the appropriate provider based on configured model.
+**Internal collaborators**:
+- `AgentConversationLoader`
+- `AgentModelRunner`
+- `TerminalToolExecutor`
+- `AgentTranscriptWriter`
+- `AgentCancellationRegistry`
 
 **Key methods**:
 
 | Method | Purpose |
 |--------|---------|
 | `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, then spawns async agent flow and carries thread-owner stamping |
-| `runAgentFlow(...)` | Main loop - invoke model, handle tools, emit events |
-| `buildConversation(threadId)` | Load message history into canonical `CanonicalMessage[]` format |
-| `invokeModel(threadId, turnId, messages, reasoningEffort, signal)` | Consume provider `invoke()` streams, emit draft assistant SSE, and reconstruct a canonical response |
-| `parseResponse(response)` | Extract final assistant text from `CanonicalResponse` |
-| `extractFunctionCall(response)` | Extract tool calls from `response.toolCalls` |
-| `executeTerminalCall(threadId, toolCall)` | Run terminal tools via TerminalSessionManager and enforce shell-vs-interactive behavior |
+| `runAgentFlow(...)` | Main loop - delegate conversation/model/tool/transcript work across the extracted ownership seams |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 | `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
-| `parseCommandFromText(input)` | Extract command name from shell-entered text |
 
 **Agent Loop Flow**:
 ```
 startUserMessage()
     └─► runAgentFlow() [async]
            │
-           ├─► buildConversation()
+           ├─► conversationLoader.load()
            │
            └─► LOOP (max steps):
                   │
-                  ├─► invokeModel()
+                  ├─► modelRunner.invokeModel()
                   │
                   ├─► emit agent.message_start / delta / done (text responses only)
                   ├─► update `/agent/state` cursor + draft snapshot in lockstep
                   │
-                  ├─► extractFunctionCall()
+                  ├─► modelRunner.extractToolCall()
                   │      │
-                  │      ├─► tool_call found → executeTerminalCall()
-                  │      │                      └─► emit agent.tool_result
-                  │      │                      └─► update `/agent/state` pending tool / phase
+                  │      ├─► tool_call found → transcriptWriter.emitToolCall()
+                  │      │                  └─► toolExecutor.execute()
+                  │      │                  └─► transcriptWriter.recordToolResult()
                   │      │
-                  │      └─► no tool → parseResponse()
-                  │                    └─► persist assistant row
-                  │                    └─► emit agent.message + final
+                  │      └─► no tool → modelRunner.parseFinalResponse()
+                  │                    └─► transcriptWriter.recordFinalAssistant()
                   │                    └─► reset `/agent/state` to idle after final durable state
                   │
                   └─► continue or return
@@ -114,7 +151,7 @@ startUserMessage()
 - `terminal.observe` now defaults to `view: "delta"` and exposes `view: "screen"` / `view: "history"` only when the model explicitly needs broader context.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
-- `executeTerminalCall(...)` now uses an explicit exhaustive fallback after the `terminal.send` and `terminal.observe` branches so TypeScript does not try to read properties from a fully narrowed `never`
+- the main `AgentService` file now delegates conversation loading, model invocation, terminal tool execution, and transcript persistence/runtime emission to dedicated modules instead of bundling those concerns inline
 
 ### `terminal-send-outcome.ts`
 
@@ -140,32 +177,69 @@ Standalone Node tests for Phase 6 send-result interpretation.
 
 ### `agent-service.test.ts`
 
-Standalone Node tests for targeted `AgentService` terminal-tool regressions.
+Standalone Node tests for `AgentService` orchestration behavior.
 
 **Current Coverage**:
-- `terminal.send` uses a single semantic `key: "ctrl+c"` gesture for interrupt-style input
-- `terminal.send` summaries remain conservative when `ctrl+c` produces no visible delta
-- `terminal.send` treats settled-wait timeout summaries as partial progress rather than success
-- `terminal.send` keeps REPL/TUI `context_after` inferred unless readiness explicitly proves shell
-- legacy provider responses that attempt `terminal_interrupt` are rejected by `extractFunctionCall()`
+- `cancelThread()` aborts the active turn and rejects any pending terminal waits for that thread
+
+### `model-runner.ts`
+
+Model invocation ownership extracted from `AgentService`.
+
+**Responsibilities**:
+- resolve provider/model aliases for the selected request model
+- normalize reasoning effort against the actual selected model rather than a startup-time default-model snapshot
+- consume provider `invoke()` streams and emit draft assistant runtime events
+- reconstruct canonical responses and normalize provider tool-call payloads
+
+### `model-runner.test.ts`
+
+Direct tests for the extracted model runner.
+
+**Current Coverage**:
+- reasoning-effort normalization follows the selected model (`none` downgraded for `o3`-style models)
+- legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
+
+### `terminal-tool-executor.ts`
+
+Terminal tool execution ownership extracted from `AgentService`.
+
+**Responsibilities**:
+- resolve/ensure the thread terminal session before tool execution
+- run `terminal.observe` and `terminal.send`
+- derive readiness/context-after snapshots from runtime state plus observed shell evidence
+- shape conservative tool summaries and persisted tool payloads
+
+### `terminal-tool-executor.test.ts`
+
+Direct tests for the extracted terminal tool executor.
+
+**Current Coverage**:
+- interrupt-style `terminal.send` remains conservative when no visible delta is observed
+- ambiguous mixed text+key terminal sends fail before touching the terminal runtime
+
+### `transcript-writer.ts`
+
+Transcript persistence and runtime-emission ownership extracted from `AgentService`.
+
+**Responsibilities**:
+- emit `agent.tool_call` and synchronize `/agent/state.pending_tool`
+- persist assistant/tool transcript rows with stable `client_id`
+- emit `agent.tool_result`, `agent.message`, and `final` after durable writes
+- advance runtime cursors only after the durable transcript boundary is visible
 
 **Reasoning Effort Support**:
 
-Supports OpenAI reasoning effort levels: `none`, `low`, `medium`, `high`.
-- `normalizeReasoningEffort()` - Validates and normalizes
-- `detectReasoningNoneSupport()` - Checks model compatibility (gpt-5.1/o1/o3 don't support "none")
+`AgentModelRunner` supports OpenAI reasoning effort levels: `none`, `low`, `medium`, `high`, and now resolves compatibility against the actual selected model id/alias.
 
 **Cancellation**:
 
-Uses `AbortController` per thread to support mid-flow cancellation:
-```typescript
-private readonly cancellations = new Map<string, AbortController>();
-```
+`AgentService` now delegates per-thread `AbortController` ownership to `AgentCancellationRegistry`, and explicit cancel also rejects any pending terminal wait through `TerminalSessionManager.rejectPendingRequestsForThread(...)`.
 
 **Ownership Notes**:
 - `startUserMessage(..., { ownerUserId })` threads the resolved thread owner through the agent loop
 - assistant final messages and tool-result messages are written with `message.created_by_user_id`
-- lazily created terminal sessions inherit the same owner via `createSessionForThread(..., ownerUserId)`
+- lazily created terminal sessions inherit the same owner via `ensureSessionRecordForThread(..., ownerUserId)`
 
 ### `thread-title-service.ts`
 
@@ -173,26 +247,28 @@ Best-effort thread-title generation for the first durable user message.
 
 **Responsibilities**:
 - confirm the just-written user row is still the canonical first user message on the thread
-- call Anthropic `claude-haiku-4-5` with a short 3-5 word title prompt
+- choose a usable title model from the configured default, the preferred fast title model, or any other registered provider model
 - sanitize the model output into a plain-text title
 - persist the title with a conditional `thread.title IS NULL` update
 - emit `thread.title` on the existing agent SSE channel and advance the shared runtime cursor
 
 **Notes**:
 - runs fire-and-forget after `AgentService.startUserMessage(...)` succeeds, so the assistant turn is never blocked on title generation
-- if Anthropic is unavailable, the model times out, or another request wins the conditional update first, the thread simply keeps its existing title state
+- if no provider is configured, the chosen model is unavailable, the model times out, or another request wins the conditional update first, the thread simply keeps its existing title state
 - normalization now accepts any non-empty cleaned model title rather than rejecting 1-2 word outputs, so concise titles like `Bugfix` or `Assistant Introduction` persist as-is
 - the emitted payload is `{ thread_id, title, source, updated_at }`, where `source` is currently `generated_first_user_message`
 - streamed title reconstruction now updates the active text block through a locally narrowed `text` reference so canonical non-text blocks remain type-safe during `tsc`
 
 ### `thread-title-service.test.ts`
 
-Standalone Node tests for title normalization, prompt-output cleanup, and streamed title text accumulation.
+Standalone Node tests for title normalization, model fallback selection, provider-less handling, and streamed title text accumulation.
 
 **Current Coverage**:
 - generated titles strip labels and trailing punctuation
 - longer descriptive titles remain intact
 - short 1-2 word titles remain valid
+- configured-default and fallback title-model selection behave as expected
+- provider-less title generation returns `null` instead of throwing
 - streamed title-response collection keeps accumulating `text_delta` chunks through a narrowed text block instead of widening back to the full canonical content union
 
 ## Events Emitted
@@ -242,6 +318,10 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../runtime/terminal-session-manager.js` | Thread-scoped terminal sessions |
 | `../runtime/agent-runtime-state.js` | Agent runtime snapshot + bounded-resume emission |
 | `../terminal/types.js` | Readiness hints types |
+| `./conversation-loader.js` | Canonical transcript/context assembly |
+| `./model-runner.js` | Provider invocation + draft assistant streaming |
+| `./terminal-tool-executor.js` | Terminal tool orchestration |
+| `./transcript-writer.js` | Durable assistant/tool persistence + runtime emission |
 | `./terminal-send-outcome.js` | Send-result delta interpretation for conservative summaries |
 | `../db/thread-metadata.js` | Thread activity tracking |
 

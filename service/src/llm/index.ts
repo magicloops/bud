@@ -43,6 +43,9 @@ export { AnthropicProvider } from "./providers/anthropic.js";
  * Called once at application startup.
  */
 export function initializeProviders(): void {
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+
   // Register OpenAI provider if API key is configured
   if (config.openaiApiKey) {
     const openai = new OpenAIProvider(config.openaiApiKey, {
@@ -59,10 +62,5 @@ export function initializeProviders(): void {
     providerRegistry.register(anthropic);
   }
 
-  // Validate at least one provider is available
-  if (!providerRegistry.hasProviders()) {
-    throw new Error(
-      "No LLM providers configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY environment variable."
-    );
-  }
+  // Provider-less startup is valid for local development and non-LLM flows.
 }

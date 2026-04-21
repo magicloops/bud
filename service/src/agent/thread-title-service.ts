@@ -1,5 +1,6 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
+import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import {
@@ -45,6 +46,30 @@ function extractResponseText(response: CanonicalResponse): string {
       .flatMap((block) => (block.type === "text" ? [block.text] : []))
       .join(" "),
   );
+}
+
+export function resolveThreadTitleModel(): string | null {
+  const candidates = [
+    config.defaultModel,
+    THREAD_TITLE_MODEL,
+    ...providerRegistry.listModels(),
+  ];
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+    try {
+      providerRegistry.getProviderForModel(candidate);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 export function normalizeGeneratedThreadTitle(candidate: string): string | null {
@@ -157,8 +182,13 @@ export class ThreadTitleService {
   }
 
   private async generateTitle(userMessageText: string): Promise<string | null> {
-    const provider = providerRegistry.getProviderForModel(THREAD_TITLE_MODEL);
-    const resolvedModel = providerRegistry.resolveModelAlias(THREAD_TITLE_MODEL);
+    const model = resolveThreadTitleModel();
+    if (!model) {
+      return null;
+    }
+
+    const provider = providerRegistry.getProviderForModel(model);
+    const resolvedModel = providerRegistry.resolveModelAlias(model);
     const modelConfig: ModelConfig = {
       model: resolvedModel,
       maxOutputTokens: THREAD_TITLE_MAX_OUTPUT_TOKENS,
