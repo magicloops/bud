@@ -75,6 +75,7 @@ Agent SSE ownership for the existing-thread route.
 - attach to `/api/threads/:threadId/agent/stream`
 - resume from the latest known stream cursor
 - monitor heartbeats and reconnect stale/closed streams
+- dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events

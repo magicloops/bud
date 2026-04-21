@@ -155,6 +155,10 @@ export function useAgentStream({
         cleanupAgent()
         return
       }
+      if (reconnectTimerRef.current) {
+        return
+      }
+
       cleanupAgent()
       const nextAttempt = reconnectAttemptRef.current + 1
       reconnectAttemptRef.current = nextAttempt
@@ -164,6 +168,7 @@ export function useAgentStream({
         clearTimeout(reconnectTimerRef.current)
       }
       reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null
         if (threadIdRef.current && !isAuthRedirectPending()) {
           connectAgentStream(threadIdRef.current)
         }
@@ -171,12 +176,25 @@ export function useAgentStream({
     }
 
     source.addEventListener('open', () => {
+      if (heartbeatCheckInterval) {
+        clearInterval(heartbeatCheckInterval)
+        heartbeatCheckInterval = null
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+
       reconnectAttemptRef.current = 0
       lastEventTimeRef.current = Date.now()
       console.log('[agent-sse] connected', { threadId: agentThreadId, after: cursorRef.current })
 
       const { heartbeatTimeoutMs, checkIntervalMs } = getThreadStreamHeartbeatConfig(import.meta.env.DEV)
       heartbeatCheckInterval = setInterval(() => {
+        if (source.readyState !== EventSource.OPEN) {
+          return
+        }
+
         if (hasMissedThreadStreamHeartbeat(lastEventTimeRef.current, Date.now(), heartbeatTimeoutMs)) {
           console.warn(`[agent-sse] no heartbeat for ${heartbeatTimeoutMs / 1000}s, connection stale`)
           scheduleReconnect('heartbeat_timeout')

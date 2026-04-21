@@ -2,11 +2,28 @@
 
 _Created: 2025-12-05_
 
+_Status: Resolved (2026-04-21)_
+
 ## Overview
 
 Add reconnection logic to the agent/session SSE stream, mirroring the terminal stream's implementation. This will prevent loss of agent events (tool calls, messages) during long-running tasks when the connection breaks.
 
 **Debug doc**: `debug/sse-stream-premature-close.md`
+
+## Resolution Summary
+
+The reconnect work is now considered complete in the extracted thread hook at `web/src/features/threads/use-agent-stream.ts`.
+
+Final resolved behavior includes:
+
+- heartbeat-based stale detection
+- exponential-backoff reconnect scheduling
+- reconnect-timer dedupe so one hook instance cannot queue overlapping manual reconnects
+- clearing any pending manual reconnect timer once the stream reopens successfully
+- replacing the heartbeat watchdog on repeated `open` events from the same `EventSource`
+- suppressing stale-heartbeat escalation while the browser is already in the native `EventSource.CONNECTING` state
+
+The final April 21, 2026 follow-up matters because the original reconnect implementation still allowed noisy dev-only loops after HMR/service restarts. The root issue was not multiple leaked hook instances in the validated repro; it was the interaction between Bud's manual stale-heartbeat reconnect logic and the browser's own `EventSource` reconnect behavior on a single live stream.
 
 ## Problem
 
@@ -333,6 +350,8 @@ emit(channelId: string, event: SseEvent): void {
 - [x] Add try-catch wrapper around listener calls in `emit()`
 
 **Status: ✅ IMPLEMENTED (2025-12-07)**
+
+**Follow-up status: ✅ stale reconnect loop resolved (2026-04-21)**
 
 ---
 
