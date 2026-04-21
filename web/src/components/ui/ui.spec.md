@@ -118,11 +118,30 @@ Syntax-highlighted code block with copy button.
 - Syntax highlighting via `react-syntax-highlighter` with `oneDark` theme
 - Copy button appears on hover (top-right)
 - Visual feedback on copy (checkmark icon, green tint)
+- Lazy-loads the syntax highlighter bundle on first rendered code block and falls back to a plain `<pre><code>` block until that chunk arrives
 
 **Usage**:
 ```tsx
 <CodeBlock code="const x = 1" language="javascript" />
 ```
+
+### `mutation-status.tsx`
+
+Shared inline status/banner component for user-initiated mutations.
+
+**Props**:
+- `tone` - `pending | success | error | info`
+- `message` - main status content
+- `title` - optional short uppercase label
+- `action` - optional trailing action element (for example Retry)
+- `onDismiss` - optional dismiss button
+- `className` - optional layout/style overrides
+
+**Features**:
+- centralizes the neobrutalist success/error/pending banner treatment used by settings, Bud layout, and the sessions modal
+- maps tones to consistent icons (`Loader2`, `CheckCircle2`, `AlertCircle`, `Info`)
+- uses `role="alert"` for error states and `role="status"` for non-error states
+- supports inline retry/dismiss affordances without each screen duplicating the surrounding card markup
 
 ## Dependencies
 
@@ -131,7 +150,7 @@ Syntax-highlighted code block with copy button.
 | `@radix-ui/react-slot` | Polymorphic `asChild` support |
 | `@radix-ui/react-tooltip` | Tooltip primitives |
 | `class-variance-authority` | Variant-based class management |
-| `lucide-react` | Icons (Copy, Check) |
+| `lucide-react` | Icons (Copy, Check, status indicators) |
 | `react-syntax-highlighter` | Code syntax highlighting |
 | `@/lib/utils` | `cn()` class name utility |
 

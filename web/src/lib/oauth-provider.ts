@@ -1,4 +1,4 @@
-import { buildAbsoluteApiUrl } from './api'
+import { buildAbsoluteApiUrl } from './transport'
 
 const OAUTH_EXPIRATION_PARAM = 'exp'
 const OAUTH_SIGNATURE_PARAM = 'sig'

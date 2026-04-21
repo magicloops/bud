@@ -33,6 +33,7 @@ Theme context provider for light/dark/system mode.
 - Persists to localStorage (`bud-ui-theme`)
 - Applies CSS class to `<html>` element
 - Respects `prefers-color-scheme` for system mode
+- While `theme === 'system'`, listens for `prefers-color-scheme` changes so the UI updates live when the OS theme flips
 
 **Hook**: `useTheme()` - Returns `{ theme, setTheme }`
 
@@ -51,6 +52,7 @@ Modal dialog for viewing and managing terminal sessions on a bud.
 - Delete session with confirmation
 - Bud online/offline indicator
 - Auto-refresh on open
+- Uses the shared mutation-status banner for visible close-session success/failure feedback and retryable load failures instead of collapsing every action error into a blank/error-only modal body
 
 **Session Info Displayed**:
 - Session ID (truncated)

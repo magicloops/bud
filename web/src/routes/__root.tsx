@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { AuthSessionProvider } from '@/contexts/auth-session-provider'
 import { LayoutProvider } from '@/contexts/layout-provider'
 import { BudStatusProvider } from '@/contexts/bud-status-provider'
-import { fetchCurrentUser } from '@/lib/api'
+import { fetchCurrentUser } from '@/lib/auth-api'
 import { config } from '@/lib/config'
 
 export const Route = createRootRoute({

@@ -20,6 +20,7 @@ Application entry point and thin Fastify composition root.
 - Initialize Fastify with WebSocket and SSE plugins
 - Register the raw form-urlencoded parser needed for OAuth token/revoke requests before auth routes mount
 - Apply service-level CORS for direct browser-to-service local development, using the trusted-origin allowlist from `config.betterAuthTrustedOrigins`
+- Advertise the current direct-browser method set (`GET, HEAD, POST, PATCH, DELETE, OPTIONS`) during trusted-origin preflight handling so local web workbench calls can use profile updates, thread deletion, and session closure against `http://localhost:3000`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
@@ -44,6 +45,13 @@ Thread-scoped SSE is mounted in route modules (`/api/threads/:thread_id/agent/st
 **Exports**:
 - `buildServer()` - Create configured Fastify instance
 - `start()` - Entry point when run directly
+
+### `server.test.ts`
+
+Focused regression coverage for service composition behavior that is easiest to validate end-to-end through Fastify injection.
+
+**Current Coverage**:
+- trusted-origin `OPTIONS` preflight responses include the full direct-browser API method set needed by the current web app, including `PATCH` and `DELETE`
 
 ### `config.ts`
 

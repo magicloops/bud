@@ -18,7 +18,7 @@ import { registerMeRoutes } from "./routes/me.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 
 const SERVICE_VERSION = "0.0.1";
-const CORS_METHODS = "GET,HEAD,POST,OPTIONS";
+const CORS_METHODS = "GET,HEAD,POST,PATCH,DELETE,OPTIONS";
 const DEFAULT_CORS_HEADERS = "Authorization, Content-Type, Last-Event-ID";
 
 function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean {

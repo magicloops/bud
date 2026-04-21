@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { AuthDetailPanel, AuthPageShell } from '@/components/auth-page-shell'
 import { useAuthSession } from '@/contexts/auth-session-context'
-import { buildAbsoluteApiUrl } from '@/lib/api'
+import { buildAbsoluteApiUrl } from '@/lib/transport'
 import {
   formatOAuthScopeLabel,
   getOAuthRequestDetails,

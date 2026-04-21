@@ -1,32 +1,16 @@
 import { ArrowLeft, Chrome, Github, Loader2, LogOut, Save } from 'lucide-react'
-import { Link, createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useAuthSession } from '@/contexts/auth-session-context'
 import { authClient } from '@/lib/auth-client'
-import {
-  fetchCurrentUser,
-  getLoginRedirectValue,
-  isApiError,
-  type ApiCurrentUser,
-  updateCurrentUserProfile,
-} from '@/lib/api'
-
-const toLoginRedirect = (pathname: string, search = '', hash = '') =>
-  redirect({
-    to: '/login',
-    search: {
-      redirect: getLoginRedirectValue(pathname, search, hash),
-    },
-  })
+import type { ApiCurrentUser } from '@/lib/api-types'
+import { updateCurrentUserProfile } from '@/lib/auth-api'
+import { isApiError } from '@/lib/transport'
+import { useRequireAuthenticatedUser } from '@/lib/route-auth'
+import { MutationStatus } from '@/components/ui/mutation-status'
 
 export const Route = createFileRoute('/settings')({
-  beforeLoad: async ({ location }) => {
-    const currentUser = await fetchCurrentUser()
-    if (!currentUser) {
-      throw toLoginRedirect(location.href)
-    }
-  },
   component: SettingsView,
 })
 
@@ -52,15 +36,24 @@ function providerStatusLabel(linked: boolean) {
 
 function SettingsView() {
   const navigate = useNavigate()
-  const { currentUser, setCurrentUser } = useAuthSession()
+  const { currentUser: sessionUser, setCurrentUser } = useAuthSession()
+  const currentUser = useRequireAuthenticatedUser(sessionUser)
   const [usernameDraft, setUsernameDraft] = useState(currentUser?.profile.username ?? '')
-  const [profileError, setProfileError] = useState<string | null>(null)
-  const [profileSuccess, setProfileSuccess] = useState<string | null>(null)
+  const [profileStatus, setProfileStatus] = useState<{
+    tone: 'success' | 'error'
+    message: string
+  } | null>(null)
   const [savingProfile, setSavingProfile] = useState(false)
   const [linkingProvider, setLinkingProvider] = useState<'github' | 'google' | null>(null)
-  const [linkError, setLinkError] = useState<string | null>(null)
+  const [linkStatus, setLinkStatus] = useState<{
+    tone: 'pending' | 'error'
+    message: string
+  } | null>(null)
   const [signingOut, setSigningOut] = useState(false)
-  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [sessionStatus, setSessionStatus] = useState<{
+    tone: 'error'
+    message: string
+  } | null>(null)
 
   useEffect(() => {
     setUsernameDraft(currentUser?.profile.username ?? '')
@@ -79,8 +72,7 @@ function SettingsView() {
 
   const handleSaveProfile = async () => {
     setSavingProfile(true)
-    setProfileError(null)
-    setProfileSuccess(null)
+    setProfileStatus(null)
 
     try {
       const updatedUser = await updateCurrentUserProfile({
@@ -88,14 +80,17 @@ function SettingsView() {
       })
       setCurrentUser(updatedUser)
       setUsernameDraft(updatedUser.profile.username)
-      setProfileSuccess('Username updated.')
+      setProfileStatus({ tone: 'success', message: 'Username updated.' })
     } catch (error) {
       if (isApiError(error, 409)) {
-        setProfileError('That username is already taken.')
+        setProfileStatus({ tone: 'error', message: 'That username is already taken.' })
       } else if (isApiError(error, 400)) {
-        setProfileError('Username must normalize to at least 3 characters.')
+        setProfileStatus({ tone: 'error', message: 'Username must normalize to at least 3 characters.' })
       } else {
-        setProfileError(error instanceof Error ? error.message : 'Failed to update username.')
+        setProfileStatus({
+          tone: 'error',
+          message: error instanceof Error ? error.message : 'Failed to update username.',
+        })
       }
     } finally {
       setSavingProfile(false)
@@ -104,7 +99,10 @@ function SettingsView() {
 
   const handleLinkProvider = async (provider: 'github' | 'google') => {
     setLinkingProvider(provider)
-    setLinkError(null)
+    setLinkStatus({
+      tone: 'pending',
+      message: `Redirecting to ${provider === 'github' ? 'GitHub' : 'Google'} to link your account...`,
+    })
 
     try {
       const callbackURL = new URL('/settings', window.location.origin).toString()
@@ -113,14 +111,17 @@ function SettingsView() {
         callbackURL,
       })
     } catch (error) {
-      setLinkError(error instanceof Error ? error.message : `Failed to link ${provider}.`)
+      setLinkStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : `Failed to link ${provider}.`,
+      })
       setLinkingProvider(null)
     }
   }
 
   const handleSignOut = async () => {
     setSigningOut(true)
-    setSessionError(null)
+    setSessionStatus(null)
 
     try {
       await authClient.signOut()
@@ -133,7 +134,10 @@ function SettingsView() {
         replace: true,
       })
     } catch (error) {
-      setSessionError(error instanceof Error ? error.message : 'Failed to sign out.')
+      setSessionStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Failed to sign out.',
+      })
       setSigningOut(false)
     }
   }
@@ -204,7 +208,10 @@ function SettingsView() {
                       <span className="font-mono text-sm text-muted-foreground">@</span>
                       <input
                         value={usernameDraft}
-                        onChange={(event) => setUsernameDraft(event.target.value)}
+                        onChange={(event) => {
+                          setUsernameDraft(event.target.value)
+                          setProfileStatus(null)
+                        }}
                         className="h-12 w-full bg-transparent px-2 text-base outline-none"
                         autoCapitalize="none"
                         autoCorrect="off"
@@ -224,17 +231,14 @@ function SettingsView() {
                   </Button>
                 </div>
 
-                {profileError && (
-                  <div className="mt-4 rounded-xl border-3 border-black bg-destructive px-4 py-3 text-sm font-semibold text-destructive-foreground shadow-[4px_4px_0px_rgba(0,0,0,1)]">
-                    {profileError}
-                  </div>
-                )}
-
-                {profileSuccess && (
-                  <div className="mt-4 rounded-xl border-3 border-black bg-[var(--bud-accent-soft)] px-4 py-3 text-sm font-semibold text-black shadow-[4px_4px_0px_rgba(0,0,0,1)]">
-                    {profileSuccess}
-                  </div>
-                )}
+                {profileStatus ? (
+                  <MutationStatus
+                    className="mt-4"
+                    tone={profileStatus.tone}
+                    message={profileStatus.message}
+                    onDismiss={() => setProfileStatus(null)}
+                  />
+                ) : null}
               </div>
             </div>
           </section>
@@ -271,11 +275,14 @@ function SettingsView() {
                 Same verified email addresses auto-link into the same Bud account. Manual linking here remains available for existing sessions.
               </p>
 
-              {linkError && (
-                <div className="mt-4 rounded-xl border-3 border-black bg-destructive px-4 py-3 text-sm font-semibold text-destructive-foreground shadow-[4px_4px_0px_rgba(0,0,0,1)]">
-                  {linkError}
-                </div>
-              )}
+              {linkStatus ? (
+                <MutationStatus
+                  className="mt-4"
+                  tone={linkStatus.tone}
+                  message={linkStatus.message}
+                  onDismiss={linkStatus.tone === 'error' ? () => setLinkStatus(null) : undefined}
+                />
+              ) : null}
             </section>
 
             <section className="rounded-[2rem] border-4 border-black bg-[var(--bud-accent-soft)] p-6 shadow-[10px_10px_0px_rgba(0,0,0,1)]">
@@ -299,11 +306,14 @@ function SettingsView() {
                 Sign out
               </Button>
 
-              {sessionError && (
-                <div className="mt-4 rounded-xl border-3 border-black bg-destructive px-4 py-3 text-sm font-semibold text-destructive-foreground shadow-[4px_4px_0px_rgba(0,0,0,1)]">
-                  {sessionError}
-                </div>
-              )}
+              {sessionStatus ? (
+                <MutationStatus
+                  className="mt-4"
+                  tone={sessionStatus.tone}
+                  message={sessionStatus.message}
+                  onDismiss={() => setSessionStatus(null)}
+                />
+              ) : null}
             </section>
           </div>
         </div>

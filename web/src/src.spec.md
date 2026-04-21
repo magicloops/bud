@@ -93,9 +93,13 @@ React components: UI primitives, workbench layouts, message renderers.
 
 React context providers for global state plus the Bud-route shared thread-summary context.
 
+### `features/` → [features/features.spec.md](./features/features.spec.md)
+
+Feature-owned runtime modules extracted from large routes.
+
 ### `lib/` → [lib/lib.spec.md](./lib/lib.spec.md)
 
-Utility functions: API helpers, theme colors, class name utilities.
+Utility functions: split API/auth helpers, model loading, terminal helpers, theme colors, class name utilities.
 
 ### `routes/` → [routes/routes.spec.md](./routes/routes.spec.md)
 
@@ -115,7 +119,7 @@ main.tsx
             └── __root.tsx (providers)
                     │
                     ├── ThemeProvider
-                    ├── AuthSessionProvider
+                    ├── AuthSessionProvider (seeded from root `/api/me` loader)
                     ├── LayoutProvider
                     └── BudStatusProvider
                             │
@@ -127,7 +131,8 @@ main.tsx
                                 ├── /devices/claim/$flowId
                                 ├── / (auth-aware entry)
                                 └── /$budId (layout)
-                                    ├── index (new thread)
+                                    ├── index (redirect to most recent thread or `/new`)
+                                    ├── new (new thread workspace)
                                     └── $threadId (thread view)
 ```
 

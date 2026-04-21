@@ -6,9 +6,8 @@ import {
   buildLoginUrl,
   getCurrentAppPath,
   isApiError,
-  type ApiDeviceAuthApproval,
-  type ApiDeviceAuthFlow,
 } from '@/lib/api'
+import type { ApiDeviceAuthApproval, ApiDeviceAuthFlow } from '@/lib/api-types'
 import {
   buildClaimErrorCallbackUrl,
   buildClaimSuccessCallbackUrl,

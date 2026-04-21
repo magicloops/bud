@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { ThreadSummary } from '@/components/workbench/thread-panel'
-import type { ApiThread } from '@/lib/api'
+import type { ApiThread } from '@/lib/api-types'
 
 export type BudRouteContextValue = {
   threads: ThreadSummary[]

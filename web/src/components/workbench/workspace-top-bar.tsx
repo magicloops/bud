@@ -1,8 +1,9 @@
+import type { ReactNode } from 'react'
 import { Menu, Monitor, TerminalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-type ViewMode = 'terminal' | 'web'
+export type ViewMode = 'terminal' | 'web'
 
 type WorkspaceTopBarProps = {
   title: string
@@ -53,9 +54,9 @@ export function WorkspaceTopBar({
 
 type ViewToggleButtonProps = {
   active: boolean
-  children: React.ReactNode
+  children: ReactNode
   onClick: () => void
-  icon: React.ReactNode
+  icon: ReactNode
 }
 
 function ViewToggleButton({ active, children, onClick, icon }: ViewToggleButtonProps) {

@@ -10,15 +10,8 @@
  */
 
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { apiFetchJson, getLoginRedirectValue, isApiError } from '@/lib/api'
-
-const toLoginRedirect = (pathname: string, search = '', hash = '') =>
-  redirect({
-    to: '/login',
-    search: {
-      redirect: getLoginRedirectValue(pathname, search, hash),
-    },
-  })
+import { apiFetchJson, isApiError } from '@/lib/transport'
+import { toLoginRedirect } from '@/lib/route-auth'
 
 export const Route = createFileRoute('/$budId/')({
   loader: async ({ params, location }) => {

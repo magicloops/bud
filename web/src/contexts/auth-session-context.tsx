@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { ApiCurrentUser } from '@/lib/api'
+import type { ApiCurrentUser } from '@/lib/api-types'
 
 export type AuthSessionContextValue = {
   currentUser: ApiCurrentUser | null
