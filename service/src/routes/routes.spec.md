@@ -131,9 +131,12 @@ Ownership-focused thread submodules:
 - assistant draft events now include top-level `client_id`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
 - tool events expose the real `call_id` plus top-level `client_id`
+- `agent.tool_call` now includes service-side `started_at`
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
+- `agent.tool_result` now also exposes `started_at`, `finished_at`, and `duration_ms`
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
 - those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
+- embedded canonical tool rows now expose the same timing fields under `message.metadata`, while tool `message.content` remains the replay payload without timing-only fields
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
 - no-cursor attaches are live-only; they do not replay buffered `agent.*` or `final`

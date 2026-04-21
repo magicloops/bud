@@ -77,6 +77,7 @@ Agent SSE ownership for the existing-thread route.
 - monitor heartbeats and reconnect stale/closed streams
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
+- tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly
 
 **Exports**:

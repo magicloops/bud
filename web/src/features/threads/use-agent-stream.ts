@@ -14,6 +14,7 @@ type AgentToolCallEvent = {
   call_id: string
   name: string
   args?: Record<string, unknown>
+  started_at?: string
 }
 
 type AgentToolResultEvent = {
@@ -22,6 +23,9 @@ type AgentToolResultEvent = {
   call_id: string
   message_id?: string
   name: string
+  started_at?: string
+  finished_at?: string
+  duration_ms?: number
   message?: ApiMessage
 }
 

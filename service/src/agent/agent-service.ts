@@ -12,7 +12,7 @@ import type { CanonicalReasoningBlock } from "../llm/index.js";
 import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner } from "./model-runner.js";
-import { toolNameForConversation } from "./contracts.js";
+import { buildToolExecutionTiming, toolNameForConversation } from "./contracts.js";
 import { TerminalToolExecutor } from "./terminal-tool-executor.js";
 import { AgentTranscriptWriter } from "./transcript-writer.js";
 
@@ -142,11 +142,13 @@ export class AgentService {
         const toolCall = this.modelRunner.extractToolCall(response);
         if (toolCall) {
           const toolClientId = generateMessageClientId();
+          const startedAt = new Date();
           const { args: toolArgs } = this.transcriptWriter.emitToolCall(
             threadId,
             turnId,
             toolCall,
             toolClientId,
+            startedAt,
           );
 
           this.debug("Dispatching tool call", {
@@ -178,11 +180,14 @@ export class AgentService {
           });
 
           const execution = await this.toolExecutor.execute(threadId, toolCall);
+          const finishedAt = new Date();
+          const timing = buildToolExecutionTiming(startedAt, finishedAt);
           const { payload } = await this.transcriptWriter.recordToolResult({
             threadId,
             turnId,
             execution,
             clientId: toolClientId,
+            timing,
             ownerUserId,
           });
 

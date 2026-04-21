@@ -434,9 +434,9 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.message_done`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository..." }`
 - `agent.tool_call`
-  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... } }`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
 - `agent.tool_result`
-  - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, and the persisted canonical `message`
+  - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
 - `agent.message`
   - includes `turn_id`, `client_id`, and the persisted canonical assistant `message`
 - `thread.title`
@@ -486,6 +486,8 @@ Rules:
 - `id:` on the agent stream is the opaque resume cursor
 - keep-alive heartbeats are valid SSE events even when no replayable data exists
 - first-party clients should key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`
+- completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
+- tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
 
 ---
 

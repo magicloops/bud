@@ -66,6 +66,12 @@ export type ExecutedTerminalTool = {
   payload: Record<string, unknown>;
 };
 
+export type ToolExecutionTiming = {
+  startedAt: Date;
+  finishedAt: Date;
+  durationMs: number;
+};
+
 export const DEFAULT_READINESS_HINTS: ReadinessHints = {
   looks_like_prompt: false,
   looks_like_confirmation: false,
@@ -156,5 +162,30 @@ export function serializeTerminalDelta(
     changed: delta.changed,
     text: delta.text,
     truncated: delta.truncated,
+  };
+}
+
+export function buildToolExecutionTiming(
+  startedAt: Date,
+  finishedAt: Date,
+): ToolExecutionTiming {
+  return {
+    startedAt,
+    finishedAt,
+    durationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
+  };
+}
+
+export function serializeToolExecutionTiming(
+  timing: ToolExecutionTiming,
+): {
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+} {
+  return {
+    started_at: timing.startedAt.toISOString(),
+    finished_at: timing.finishedAt.toISOString(),
+    duration_ms: timing.durationMs,
   };
 }
