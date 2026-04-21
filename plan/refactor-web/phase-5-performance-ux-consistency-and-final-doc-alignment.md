@@ -42,9 +42,14 @@ Completed first slice:
 - fenced-code highlighting now lazy-loads `react-syntax-highlighter` inside `CodeBlock`
 - the hot `/$budId/$threadId` route bundle dropped substantially after those changes, moving the viewer/highlighter cost behind interaction-driven async chunks
 
+Completed second slice:
+
+- `ChatTimeline` now consumes the chronological message list from `useThreadMessages(...)` directly instead of re-sorting a route-mapped copy on every render
+- message expand/copy/payload state moved into memoized per-message rows so one row interaction does not churn list-wide UI maps
+- overflow detection now happens per message row instead of rescanning every rendered transcript item after each transcript change
+
 Remaining in this area:
 
-- reduce repeated ordering/measurement work in `chat-timeline.tsx`
 - decide whether longer transcripts need virtualization now or an explicit documented follow-up
 
 Deferred note:
@@ -62,12 +67,25 @@ Bring thread deletion, session closing, profile updates, and similar actions ont
 - visible failure state
 - no console-only error path for user-initiated actions
 
+Completed slice:
+
+- added a shared `MutationStatus` UI primitive so settings, the Bud layout banner, and the sessions modal use the same success/error/pending treatment
+- thread deletion now surfaces visible success/failure at the Bud-layout level instead of only clearing rows or relying on one-off error markup
+- session closing now keeps the modal body intact, shows close success/failure inline, and fixes the old double-JSON-parse fetch path
+- settings mutations now use the same status treatment for username updates, provider-link redirect/error state, and sign-out failures
+
 ### 3. Remove or gate unfinished product UI
 
 At minimum:
 
 - wire up or hide the Bud-rail add button
 - gate or hide the placeholder web-view toggle until there is a real feature behind it
+
+Closeout decision:
+
+- these controls are intentionally deferred to future feature PRs rather than being treated as refactor blockers
+- the current web refactor should not spend additional scope on product-level decisions for the Bud-rail add flow or the future web-view mode
+- keep this deferral documented clearly so the refactor can close on architecture/testing/validation work without pretending those features are complete
 
 ### 4. Final spec/documentation alignment
 
@@ -115,6 +133,6 @@ Expected minimum docs/spec updates:
 
 - heavy renderers are no longer on the hottest initial path unnecessarily
 - destructive and long-running mutations use a consistent UX pattern
-- unfinished placeholder UI is gated or removed
+- unfinished placeholder UI is either gated/removed or explicitly documented as deferred future feature work outside this refactor
 - web specs/docs reflect the new architecture accurately
 - the full web refactor validation checklist passes

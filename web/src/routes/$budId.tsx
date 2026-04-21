@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, useNavigate, useMatches } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { MutationStatus, type MutationStatusTone } from '@/components/ui/mutation-status'
 import { BudRail, type BudProfile, type BudCapabilities } from '@/components/workbench/bud-rail'
 import { ThreadPanel, type ThreadSummary } from '@/components/workbench/thread-panel'
 import { BudSessionsModal } from '@/components/bud-sessions-modal'
@@ -83,7 +84,7 @@ function BudLayout() {
 
   // Sessions modal state
   const [sessionsModalOpen, setSessionsModalOpen] = useState(false)
-  const [threadPanelError, setThreadPanelError] = useState<string | null>(null)
+  const [threadPanelStatus, setThreadPanelStatus] = useState<{ tone: MutationStatusTone; message: string } | null>(null)
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads.map(toThreadSummary))
 
   // Get threadId from child route match (if we're on /$budId/$threadId)
@@ -142,7 +143,7 @@ function BudLayout() {
   }, [navigate])
 
   const handleSelectThread = useCallback((threadId: string | null) => {
-    setThreadPanelError(null)
+    setThreadPanelStatus(null)
     if (threadId) {
       navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
     } else {
@@ -175,7 +176,6 @@ function BudLayout() {
 
   const handleThreadDeleted = useCallback((deletedThreadId: string) => {
     removeThreadSummary(deletedThreadId)
-    setThreadPanelError(null)
     navigate({ to: '/$budId', params: { budId } })
   }, [budId, navigate, removeThreadSummary])
 
@@ -202,7 +202,7 @@ function BudLayout() {
           onSelectThread={handleSelectThread}
           onThreadDeleted={handleThreadDeleted}
           onOpenSessions={handleOpenSessions}
-          onError={setThreadPanelError}
+          onStatusChange={setThreadPanelStatus}
           accentColor={palette.vibrant}
           budLabel={activeBudProfile.label}
           budId={budId}
@@ -220,10 +220,13 @@ function BudLayout() {
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {threadPanelError && (
-          <div className="border-b-4 border-black bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground">
-            {threadPanelError}
-          </div>
+        {threadPanelStatus && (
+          <MutationStatus
+            tone={threadPanelStatus.tone}
+            message={threadPanelStatus.message}
+            className="rounded-none border-x-0 border-t-0 shadow-none"
+            onDismiss={() => setThreadPanelStatus(null)}
+          />
         )}
         <BudRouteContext.Provider
           value={{

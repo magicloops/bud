@@ -48,6 +48,7 @@ export function CommandComposer({
     <form onSubmit={onSubmit} className="relative border-t-4 border-black bg-background">
       {error && <div className="px-4 pt-3 text-xs text-destructive">{error}</div>}
       <textarea
+        name="message"
         value={messageText}
         onChange={(e) => onMessageChange(e.target.value)}
         onKeyDown={handleKeyDown}

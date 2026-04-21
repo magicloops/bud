@@ -233,7 +233,9 @@ function ThreadView() {
       setError('No thread selected')
       return
     }
-    const trimmedMessage = messageText.trim()
+    const formData = new FormData(e.currentTarget)
+    const submittedMessage = String(formData.get('message') ?? '')
+    const trimmedMessage = submittedMessage.trim()
     if (!trimmedMessage) {
       setError('Message cannot be empty')
       return
@@ -291,6 +293,7 @@ function ThreadView() {
     addOptimisticUserMessage,
     budId,
     ensureAgentStreamConnected,
+    messageText,
     reasoningEffort,
     reconcilePersistedUserMessage,
     refreshAgentState,
@@ -299,17 +302,6 @@ function ThreadView() {
     shouldAbortForUnauthorized,
     threadId,
   ])
-
-  const chatMessages = useMemo(() =>
-    messages.map((msg) => ({
-      id: msg.client_id,
-      role: msg.role,
-      displayRole: msg.display_role,
-      content: msg.content,
-      createdAt: msg.created_at,
-      metadata: msg.metadata ?? null
-    })),
-  [messages])
 
   return (
     <WorkspaceShell
@@ -321,7 +313,7 @@ function ThreadView() {
       leftPane={(
         <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
           <ChatTimeline
-            messages={chatMessages}
+            messages={messages}
             accentColor="var(--bud-accent-vibrant)"
             hasOlderMessages={messagePage.has_more_before}
             isLoadingOlderMessages={isLoadingOlderMessages}

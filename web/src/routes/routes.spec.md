@@ -107,6 +107,7 @@ Authenticated account settings route.
 - Shows provider-backed avatar with initials fallback
 - Shows linked-account state for GitHub and Google
 - Starts explicit provider linking through Better Auth client actions
+- Uses the shared mutation-status component for username save feedback, provider-link redirect/error state, and sign-out failure display
 - Signs the browser session out through Better Auth and returns to `/login`
 
 ### `devices.claim.$flowId.tsx`
@@ -156,12 +157,13 @@ loader: async ({ params }) => {
 - Manages sessions modal state
 - Routes the Bud rail account-settings button into `/settings`
 - Keeps terminal sessions as a separate modal action
-- Surfaces thread-panel delete failures as a visible inline error banner above the Bud outlet
+- Surfaces thread-panel delete success/failure as a visible shared mutation-status banner above the Bud outlet
 - Renders `BudRail`, `ThreadPanel`, and child routes via `<Outlet />` wrapped in a Bud-route React context provider for thread-summary mutations
 
 **State**:
 - `sessionsModalOpen` - Modal visibility
 - `threads` - Mutable thread summaries seeded from loader data
+- `threadPanelStatus` - Shared delete-thread success/error banner state
 - Derived: `activeThreadId` from child route match
 
 **Navigation Handlers**:

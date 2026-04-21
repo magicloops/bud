@@ -3,7 +3,8 @@ import { Trash2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { Button } from '@/components/ui/button'
-import { apiFetch } from '@/lib/transport'
+import type { MutationStatusTone } from '@/components/ui/mutation-status'
+import { apiFetch, readResponseErrorMessage } from '@/lib/transport'
 
 export type ThreadSummary = {
   thread_id: string
@@ -30,7 +31,7 @@ type ThreadPanelProps = {
   accentColor: string
   budLabel: string
   budId?: string
-  onError?: (message: string | null) => void
+  onStatusChange?: (status: { tone: MutationStatusTone; message: string } | null) => void
 }
 
 function relativeTime(iso: string) {
@@ -86,7 +87,7 @@ export function ThreadPanel({
   accentColor,
   budLabel,
   budId,
-  onError,
+  onStatusChange,
 }: ThreadPanelProps) {
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ThreadSummary | null>(null)
@@ -121,14 +122,19 @@ export function ThreadPanel({
       const resp = await apiFetch(`/api/threads/${threadId}`, { method: 'DELETE' })
       if (resp.ok) {
         setConfirmDelete(null)
-        onError?.(null)
+        onStatusChange?.({ tone: 'success', message: 'Thread deleted.' })
         onThreadDeleted?.(threadId)
       } else {
-        const text = await resp.text().catch(() => '')
-        onError?.(text || 'Failed to delete thread')
+        onStatusChange?.({
+          tone: 'error',
+          message: await readResponseErrorMessage(resp, 'Failed to delete thread'),
+        })
       }
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : 'Failed to delete thread')
+      onStatusChange?.({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Failed to delete thread',
+      })
     } finally {
       setDeletingThreadId(null)
     }

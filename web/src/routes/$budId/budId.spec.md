@@ -94,11 +94,13 @@ loader: async ({ params }) => {
    - Loads `/agent/state` in parallel for the current in-flight bootstrap snapshot
    - Loads canonical thread detail in parallel so the Bud-level thread list can converge even if the title event was missed before attach
    - Delegates transcript/message-state ownership to `useThreadMessages(...)` in `web/src/features/threads/`
+   - Passes the hook-owned chronological `ApiMessage[]` directly into `ChatTimeline` instead of creating an extra route-local mapped/sorted copy
    - Updates via SSE agent stream
    - Role-based rendering (user, assistant, tool)
    - Consumes the paged `{ messages, page }` API contract
    - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
+   - Timeline row UI state (expand/copy/payload/overflow) is now message-local and memoized inside `ChatTimeline`, reducing whole-list churn during streaming and interaction
 
 2. **Terminal Integration**
    - Delegates xterm/session/reconnect ownership to `useTerminalSession(...)` in `web/src/features/threads/`

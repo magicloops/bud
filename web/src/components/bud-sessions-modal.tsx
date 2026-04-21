@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Terminal, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { apiFetch } from '@/lib/transport'
+import { MutationStatus } from '@/components/ui/mutation-status'
+import { apiFetch, readResponseErrorMessage } from '@/lib/transport'
 
 type SessionInfo = {
   session_id: string
@@ -74,7 +75,8 @@ export function BudSessionsModal({
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [budOnline, setBudOnline] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<SessionInfo | null>(null)
 
@@ -82,17 +84,16 @@ export function BudSessionsModal({
     if (!budId) return
     try {
       setLoading(true)
-      setError(null)
+      setLoadError(null)
       const resp = await apiFetch(`/api/buds/${budId}/sessions`)
       if (!resp.ok) {
-        const data = await resp.json()
-        throw new Error(data.error || 'Failed to fetch sessions')
+        throw new Error(await readResponseErrorMessage(resp, 'Failed to fetch sessions'))
       }
-      const data = await resp.json()
+      const data = (await resp.json()) as { sessions: SessionInfo[]; bud_online: boolean }
       setSessions(data.sessions)
       setBudOnline(data.bud_online)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      setLoadError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setLoading(false)
     }
@@ -100,25 +101,27 @@ export function BudSessionsModal({
 
   useEffect(() => {
     if (isOpen) {
+      setStatus(null)
+      setConfirmDelete(null)
       fetchSessions()
     }
   }, [isOpen, fetchSessions])
 
   const handleDeleteSession = async (session: SessionInfo) => {
     setDeletingSessionId(session.session_id)
+    setStatus(null)
     try {
       const resp = await apiFetch(`/api/buds/${budId}/sessions/${session.session_id}`, {
         method: 'DELETE'
       })
       if (!resp.ok) {
-        const data = await resp.json()
-        throw new Error(data.error || 'Failed to close session')
+        throw new Error(await readResponseErrorMessage(resp, 'Failed to close session'))
       }
-      // Remove from list
       setSessions(prev => prev.filter(s => s.session_id !== session.session_id))
       setConfirmDelete(null)
+      setStatus({ tone: 'success', message: 'Session closed.' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      setStatus({ tone: 'error', message: err instanceof Error ? err.message : 'Unknown error' })
     } finally {
       setDeletingSessionId(null)
     }
@@ -181,93 +184,112 @@ export function BudSessionsModal({
               <div className="flex items-center justify-center py-12">
                 <p className="font-mono text-sm text-muted-foreground">Loading...</p>
               </div>
-            ) : error ? (
+            ) : loadError ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <p className="font-mono text-sm text-destructive">{error}</p>
-                <button
-                  onClick={fetchSessions}
-                  className="mt-4 rounded-md border-2 border-black px-3 py-1.5 font-mono text-[11px] font-bold uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-0.5"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : sessions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Terminal className="h-12 w-12 text-muted-foreground/50" />
-                <p className="mt-4 font-mono text-sm font-semibold uppercase">
-                  No active sessions
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Sessions are created when you visit a thread.
-                </p>
+                <MutationStatus
+                  tone="error"
+                  title="Sessions unavailable"
+                  message={loadError}
+                  action={
+                    <button
+                      type="button"
+                      onClick={fetchSessions}
+                      className="rounded-md border-2 border-black bg-background px-3 py-1.5 font-mono text-[11px] font-bold uppercase text-foreground shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-0.5"
+                    >
+                      Retry
+                    </button>
+                  }
+                />
               </div>
             ) : (
               <div className="space-y-3">
-                <p className="font-mono text-xs text-muted-foreground">
-                  {sessions.length} active session{sessions.length !== 1 ? 's' : ''}
-                </p>
+                {status ? (
+                  <MutationStatus
+                    tone={status.tone}
+                    message={status.message}
+                    onDismiss={() => setStatus(null)}
+                  />
+                ) : null}
 
-                {sessions.map(session => (
-                  <div
-                    key={session.session_id}
-                    className="rounded-xl border-3 border-black bg-card px-3 py-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
-                  >
-                    {/* State and ID */}
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn('h-2 w-2 rounded-full', getSessionStateColor(session.state))}
-                      />
-                      <span className="font-mono text-[10px] font-bold uppercase">
-                        {session.state}
-                      </span>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {truncateSessionId(session.session_id)}
-                      </span>
-                    </div>
-
-                    {/* Thread title */}
-                    <div className="mt-1 flex items-center gap-1">
-                      {session.thread_id && !session.thread_deleted ? (
-                        <button
-                          onClick={() => handleThreadClick(session.thread_id)}
-                          className="flex items-center gap-1 text-sm font-semibold text-accent hover:underline"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          <span className="line-clamp-1">
-                            {session.thread_title ?? 'Untitled thread'}
-                          </span>
-                        </button>
-                      ) : session.thread_deleted ? (
-                        <span className="flex items-center gap-1 text-sm text-muted-foreground">
-                          <span className="text-yellow-500">!</span>
-                          <span className="italic">(deleted thread)</span>
-                        </span>
-                      ) : (
-                        <span className="text-sm text-muted-foreground italic">No thread</span>
-                      )}
-                    </div>
-
-                    {/* Timestamps and actions */}
-                    <div className="mt-1 flex items-center justify-between">
-                      <span className="font-mono text-[11px] text-muted-foreground uppercase">
-                        {relativeTime(session.created_at)} • Active{' '}
-                        {relativeTime(session.last_activity_at)} •{' '}
-                        {formatBytes(session.output_bytes)}
-                      </span>
-                      <button
-                        onClick={() => setConfirmDelete(session)}
-                        disabled={!budOnline || deletingSessionId === session.session_id}
-                        className={cn(
-                          'rounded-md border-2 border-black bg-destructive px-2 py-1 font-mono text-[10px] font-bold uppercase text-destructive-foreground shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-0.5',
-                          'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0'
-                        )}
-                        title={!budOnline ? 'Cannot close while Bud offline' : 'Close session'}
-                      >
-                        {deletingSessionId === session.session_id ? '...' : 'Close'}
-                      </button>
-                    </div>
+                {sessions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <Terminal className="h-12 w-12 text-muted-foreground/50" />
+                    <p className="mt-4 font-mono text-sm font-semibold uppercase">
+                      No active sessions
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Sessions are created when you visit a thread.
+                    </p>
                   </div>
-                ))}
+                ) : (
+                  <>
+                    <p className="font-mono text-xs text-muted-foreground">
+                      {sessions.length} active session{sessions.length !== 1 ? 's' : ''}
+                    </p>
+
+                    {sessions.map(session => (
+                      <div
+                        key={session.session_id}
+                        className="rounded-xl border-3 border-black bg-card px-3 py-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
+                      >
+                        {/* State and ID */}
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn('h-2 w-2 rounded-full', getSessionStateColor(session.state))}
+                          />
+                          <span className="font-mono text-[10px] font-bold uppercase">
+                            {session.state}
+                          </span>
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {truncateSessionId(session.session_id)}
+                          </span>
+                        </div>
+
+                        {/* Thread title */}
+                        <div className="mt-1 flex items-center gap-1">
+                          {session.thread_id && !session.thread_deleted ? (
+                            <button
+                              onClick={() => handleThreadClick(session.thread_id)}
+                              className="flex items-center gap-1 text-sm font-semibold text-accent hover:underline"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              <span className="line-clamp-1">
+                                {session.thread_title ?? 'Untitled thread'}
+                              </span>
+                            </button>
+                          ) : session.thread_deleted ? (
+                            <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                              <span className="text-yellow-500">!</span>
+                              <span className="italic">(deleted thread)</span>
+                            </span>
+                          ) : (
+                            <span className="text-sm text-muted-foreground italic">No thread</span>
+                          )}
+                        </div>
+
+                        {/* Timestamps and actions */}
+                        <div className="mt-1 flex items-center justify-between">
+                          <span className="font-mono text-[11px] text-muted-foreground uppercase">
+                            {relativeTime(session.created_at)} • Active{' '}
+                            {relativeTime(session.last_activity_at)} •{' '}
+                            {formatBytes(session.output_bytes)}
+                          </span>
+                          <button
+                            onClick={() => setConfirmDelete(session)}
+                            disabled={!budOnline || deletingSessionId === session.session_id}
+                            className={cn(
+                              'rounded-md border-2 border-black bg-destructive px-2 py-1 font-mono text-[10px] font-bold uppercase text-destructive-foreground shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-transform hover:-translate-y-0.5',
+                              'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0'
+                            )}
+                            title={!budOnline ? 'Cannot close while Bud offline' : 'Close session'}
+                          >
+                            {deletingSessionId === session.session_id ? '...' : 'Close'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>

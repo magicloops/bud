@@ -100,7 +100,9 @@ function NewThreadView() {
       setError('No Bud selected')
       return
     }
-    const trimmedMessage = messageText.trim()
+    const formData = new FormData(e.currentTarget)
+    const submittedMessage = String(formData.get('message') ?? '')
+    const trimmedMessage = submittedMessage.trim()
     if (!trimmedMessage) {
       setError('Message cannot be empty')
       return

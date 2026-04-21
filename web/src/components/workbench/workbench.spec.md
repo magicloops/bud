@@ -44,7 +44,7 @@ Thread list sidebar for conversation navigation.
 - Terminal-sessions action in the header
 - Account settings are intentionally not shown here because this header is Bud-scoped
 - Delete button with confirmation dialog
-- Delete failures bubble up through `onError(...)` so the parent Bud layout can show a visible inline error instead of silently logging to the console
+- Delete success/failure now bubble up through `onStatusChange(...)` so the parent Bud layout can show a visible shared mutation-status banner instead of silently logging or only updating local button state
 - Terminal session indicators (state dot + icon)
 - Message count badges
 - Relative timestamps ("just now", "5m ago")
@@ -62,7 +62,7 @@ Thread list sidebar for conversation navigation.
 
 Message list with auto-scroll and collapsible messages.
 
-**Type**: `ChatMessage` - Message data (stable render `id`, role, displayRole, content, metadata)
+**Type**: `ChatMessage` - Thread message data keyed by stable `client_id` identity
 
 **Props**:
 - `messages` - Array of ChatMessage
@@ -70,6 +70,7 @@ Message list with auto-scroll and collapsible messages.
 - optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
 **Features**:
+- Consumes chronologically ordered thread messages directly from `useThreadMessages(...)` instead of re-sorting the full list locally on every render
 - Auto-scroll to bottom when new messages arrive or when the last visible message grows during assistant streaming
 - "Stick to bottom" behavior with manual scroll override
 - Top-of-timeline "Load older messages" control when older history exists
@@ -77,10 +78,12 @@ Message list with auto-scroll and collapsible messages.
 - Collapsible long messages (>500px) with "Show more/less"
 - Copy message button (appears on hover, bottom-right)
 - Tool payload viewer now lazy-loads `@microlink/react-json-view` only when a payload is expanded, with a plain JSON fallback while the viewer chunk loads
+- Per-message expand/copy/payload state now lives inside memoized message rows, so toggling one message does not force the full timeline to churn through list-wide UI state maps
+- Overflow detection now measures each message row independently via its own DOM observer/update path instead of rescanning every rendered message after each transcript change
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
-- The parent thread route now supplies `id` from stable message `client_id` identity rather than temp/synthetic placeholders
+- The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
 
 **Note**: Renders only the scrollable message area. Parent component provides the container wrapper.
 
@@ -122,6 +125,7 @@ Message input form with options.
 **Features**:
 - Multi-line textarea
 - Enter to submit (Shift+Enter for newline)
+- The textarea submits with a named form field so route handlers can read the live form payload during submit instead of relying only on possibly stale controlled state
 - Model selector dropdown (grouped by provider)
 - Reasoning effort dropdown (Fast/Think/Deep/Max)
 - Submit button with loading state

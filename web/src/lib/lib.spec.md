@@ -24,6 +24,7 @@ Low-level auth-aware browser transport helpers.
 - `buildApiUrl()` / `buildAbsoluteApiUrl()` for same-origin and cross-origin API calls
 - `apiFetch()` with `credentials: 'include'`
 - `apiFetchJson()` with structured `ApiError`
+- `readResponseErrorMessage()` for consistent browser mutation/load error extraction from JSON or text responses
 - `createAuthEventSource()` for SSE plus post-close unauthorized checks
 - Redirect-on-`401` behavior unless callers explicitly pass `redirectOnUnauthorized: false`
 

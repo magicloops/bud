@@ -48,6 +48,23 @@ const readErrorBody = async (response: Response) => {
   return text || null
 }
 
+const getErrorMessageFromBody = (body: unknown, fallback: string) => {
+  if (typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string') {
+    return body.error
+  }
+
+  if (typeof body === 'string' && body.trim().length > 0) {
+    return body
+  }
+
+  return fallback
+}
+
+export const readResponseErrorMessage = async (response: Response, fallback: string) => {
+  const body = await readErrorBody(response.clone())
+  return getErrorMessageFromBody(body, fallback)
+}
+
 const shouldUseEventSourceCredentials = () => {
   if (!apiBaseUrl || typeof window === 'undefined') {
     return false
@@ -79,10 +96,7 @@ export const apiFetchJson = async <T>(path: string, init: ApiRequestInit = {}) =
   const response = await apiFetch(path, init)
   if (!response.ok) {
     const body = await readErrorBody(response.clone())
-    const message =
-      typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
-        ? body.error
-        : `HTTP ${response.status}`
+    const message = getErrorMessageFromBody(body, `HTTP ${response.status}`)
     throw new ApiError(message, response.status, body)
   }
 

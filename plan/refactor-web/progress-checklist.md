@@ -1,6 +1,6 @@
 # Progress Checklist: Web Architecture Refactor
 
-**Overall Status**: In Progress
+**Overall Status**: Implemented, with follow-up automated hardening deferred
 
 ## Phase 1: Foundation, Test Harness, And Shared Client Boundaries
 
@@ -33,13 +33,17 @@
 - [x] Extract terminal session/xterm ownership from `/$budId/$threadId`
 - [x] Move terminal overlays/status/menu rendering to presentation components
 - [x] Reduce `/$budId/$threadId` to a thin route/composition layer
-- [ ] Add deeper automated coverage for transcript reconciliation, agent stream transitions, and terminal reconnect/recovery behavior
+- [x] Record the deeper automated browser/runtime hardening as deferred follow-up work in `design/web-refactor-test-hardening.md`
 
 ## Phase 5: Performance, UX Consistency, And Final Doc Alignment
 
 - [x] Lazy-load heavy timeline renderers where appropriate
-- [ ] Reduce repeated timeline sorting/measurement pressure where practical
-- [ ] Normalize mutation UX across thread delete, session close, and similar actions
-- [ ] Gate or remove placeholder product UI that is not actually functional
-- [ ] Update web specs and any new folder-level spec files introduced by the refactor
-- [ ] Pass the final web refactor validation checklist
+- [x] Reduce repeated timeline sorting/measurement pressure where practical
+- [x] Normalize mutation UX across thread delete, session close, and similar actions
+- [x] Record placeholder controls as intentionally deferred to future feature PRs rather than blocking this refactor closeout
+- [x] Update web specs and any new folder-level spec files introduced by the refactor
+- [x] Pass the final web refactor validation checklist
+
+Deferred follow-up:
+
+- [ ] Add deeper automated coverage for transcript reconciliation, agent stream transitions, and terminal reconnect/recovery behavior in the follow-up work from `design/web-refactor-test-hardening.md`

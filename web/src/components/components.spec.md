@@ -52,6 +52,7 @@ Modal dialog for viewing and managing terminal sessions on a bud.
 - Delete session with confirmation
 - Bud online/offline indicator
 - Auto-refresh on open
+- Uses the shared mutation-status banner for visible close-session success/failure feedback and retryable load failures instead of collapsing every action error into a blank/error-only modal body
 
 **Session Info Displayed**:
 - Session ID (truncated)

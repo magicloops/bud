@@ -1,6 +1,6 @@
 # Implementation Spec: Web Architecture Refactor
 
-**Status**: In Progress
+**Status**: Implemented, with follow-up automated hardening deferred
 **Created**: 2026-04-20
 **Review Doc**: [../../review/web-architecture-review-2026-04-20.md](../../review/web-architecture-review-2026-04-20.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
@@ -105,10 +105,13 @@ Completed so far:
 - terminal session/xterm ownership has been extracted from `/$budId/$threadId` into `web/src/features/threads/use-terminal-session.ts`
 - terminal presentation has been extracted into `web/src/components/workbench/thread-terminal-pane.tsx`, reducing `/$budId/$threadId` to route-level composition
 - Phase 5 has started: the heavy tool-payload JSON viewer and fenced-code syntax highlighter now load on demand instead of living on the initial thread-route path
+- `ChatTimeline` now consumes the hook-owned chronological transcript directly, and message-local overflow/expand/copy state no longer forces whole-list sorting/measurement passes during interaction
 
-Immediate next target:
+Closeout state:
 
-- normalize the remaining user-facing mutation UX and finish the remaining Phase 5 cleanup/docs work
+- the manual validation pass is complete
+- the web refactor validation checklist is now closed
+- deeper automated browser/runtime hardening is intentionally deferred to the follow-up design in `../../design/web-refactor-test-hardening.md`
 
 Deferred follow-up note:
 
@@ -124,6 +127,7 @@ Deferred follow-up note:
 - redesigning the auth product
 - introducing multi-user collaboration semantics beyond the existing ownership constraints
 - implementing the placeholder web-view feature
+- implementing the Bud-rail add-button feature in this refactor
 - adding new product capabilities unrelated to the refactor
 
 ## Planned Module Shape
