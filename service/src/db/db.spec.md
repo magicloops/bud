@@ -204,7 +204,7 @@ budTable
 
 `drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0011`, including the catch-up migration that adds `message.client_id`, backfills existing rows, drops the removed `terminal_session.tmux_session_name` column, and removes the dead standalone-run tables plus `terminal_session_input_log.run_id` so migration-driven environments can reach the same schema shape as `schema.ts`.
+Checked-in migrations now run cleanly through `0012`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, and add the push-notification read-state, endpoint, outbox, and thread-attention schema so migration-driven environments can reach the same schema shape as `schema.ts`.
 
 ## Ownership And Multi-Tenancy Support
 

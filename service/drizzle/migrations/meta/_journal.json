@@ -85,6 +85,13 @@
       "when": 1776480997156,
       "tag": "0011_shallow_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776928070363,
+      "tag": "0012_plain_vulcan",
+      "breakpoints": true
     }
   ]
 }
