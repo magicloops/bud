@@ -16,9 +16,10 @@ import { ContextSyncService } from "./terminal/context-sync-service.js";
 import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
 import { registerMeRoutes } from "./routes/me.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
+import { PushNotificationWorker } from "./notifications/index.js";
 
 const SERVICE_VERSION = "0.0.1";
-const CORS_METHODS = "GET,HEAD,POST,PATCH,DELETE,OPTIONS";
+const CORS_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
 const DEFAULT_CORS_HEADERS = "Authorization, Content-Type, Last-Event-ID";
 
 function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean {
@@ -118,6 +119,10 @@ export async function buildServer(): Promise<FastifyInstance> {
     agentRuntime,
     server.log.child({ component: "thread_title" }),
   );
+  const pushNotificationWorker = new PushNotificationWorker(
+    server.log.child({ component: "push_worker" }),
+  );
+  pushNotificationWorker.start();
 
   await server.register(websocketPlugin, {
     options: {
@@ -146,6 +151,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerWsGateway(server, terminalSessionManager);
 
   server.addHook("onClose", async () => {
+    pushNotificationWorker.stop();
     terminalSessionManager.stopIdleChecks();
     await authPool.end();
     await pool.end();

@@ -46,6 +46,10 @@ export const CreateMessageSchema = z.object({
   reasoning_effort: z.enum(["none", "low", "medium", "high"]).optional()
 });
 
+export const MarkThreadReadSchema = z.object({
+  last_seen_message_id: z.string().uuid(),
+});
+
 export const ThreadParamsSchema = z.object({
   threadId: z.string().uuid()
 });

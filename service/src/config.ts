@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { readFileSync } from "node:fs";
 
 export const PROTO_VERSION = "0.1";
 export const TERMINAL_PROTO_VERSION = "0.2";
@@ -10,6 +11,32 @@ const toNumber = (value: string | undefined, fallback: number) => {
 };
 
 const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+const toNullable = (value: string | undefined) => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+};
+const normalizeMultiline = (value: string | undefined) =>
+  value ? value.replace(/\\n/g, "\n") : null;
+export function resolveApnsPrivateKey(
+  keyFile: string | undefined,
+  inlineKey: string | undefined,
+  shouldResolveFile = true,
+): string | null {
+  const trimmedKeyFile = keyFile?.trim();
+  if (trimmedKeyFile && !shouldResolveFile) {
+    return normalizeMultiline(inlineKey);
+  }
+
+  if (trimmedKeyFile) {
+    try {
+      return readFileSync(trimmedKeyFile, "utf8");
+    } catch (err) {
+      throw new Error(`Failed to read APNS_KEY_FILE at ${trimmedKeyFile}`, { cause: err });
+    }
+  }
+
+  return normalizeMultiline(inlineKey);
+}
 const defaultPort = toNumber(process.env.PORT, 3000);
 const defaultServiceUrl = `http://localhost:${defaultPort}`;
 
@@ -33,6 +60,7 @@ const toList = (value: string | undefined) =>
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+const DEFAULT_APNS_ALLOWED_TOPICS = "chat.bud.app,chat.bud.app.staging";
 const toOrigin = (value: string) => {
   try {
     return new URL(value).origin;
@@ -53,6 +81,10 @@ const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortS
     ? (normalized as ReasoningEffortSetting)
     : fallback;
 };
+
+const apnsKeyId = toNullable(process.env.APNS_KEY_ID);
+const apnsTeamId = toNullable(process.env.APNS_TEAM_ID);
+const apnsKeyFile = toNullable(process.env.APNS_KEY_FILE);
 
 export const config = {
   port: defaultPort,
@@ -113,5 +145,17 @@ export const config = {
   terminalIdleTimeoutMinutes: toNumber(process.env.TERMINAL_IDLE_TIMEOUT_MINUTES, 30),
   terminalIdleCleanupHours: toNumber(process.env.TERMINAL_IDLE_CLEANUP_HOURS, 0),
   // How often to run idle checks (default: every 5 minutes)
-  terminalIdleCheckIntervalMinutes: toNumber(process.env.TERMINAL_IDLE_CHECK_INTERVAL_MINUTES, 5)
+  terminalIdleCheckIntervalMinutes: toNumber(process.env.TERMINAL_IDLE_CHECK_INTERVAL_MINUTES, 5),
+  pushWorkerPollMs: toNumber(process.env.PUSH_WORKER_POLL_MS, 5000),
+  pushWorkerBatchSize: toNumber(process.env.PUSH_WORKER_BATCH_SIZE, 10),
+  apnsKeyId,
+  apnsTeamId,
+  apnsKeyFile,
+  apnsPrivateKey: resolveApnsPrivateKey(
+    process.env.APNS_KEY_FILE,
+    process.env.APNS_PRIVATE_KEY,
+    Boolean(apnsKeyId && apnsTeamId),
+  ),
+  apnsDefaultTopic: toNullable(process.env.APNS_DEFAULT_TOPIC),
+  apnsAllowedTopics: toList(process.env.APNS_ALLOWED_TOPICS ?? DEFAULT_APNS_ALLOWED_TOPICS),
 };

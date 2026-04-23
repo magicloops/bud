@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { terminalSessionTable, threadTable } from "../../db/schema.js";
+import { terminalSessionTable, threadReadStateTable, threadTable } from "../../db/schema.js";
 import { getAuthorizedBud, requireViewer } from "../../auth/session.js";
 import { getActiveBudIds } from "../../ws/gateway.js";
 import type { TerminalSessionManager } from "../../runtime/terminal-session-manager.js";
+import { hasUnseenAttention } from "../../notifications/index.js";
 import {
   CreateThreadSchema,
   ThreadListQuerySchema,
@@ -42,10 +43,22 @@ export async function registerThreadCoreRoutes(
         messageCount: threadTable.messageCount,
         pinned: threadTable.pinned,
         archived: threadTable.archived,
+        lastAttentionMessageId: threadTable.lastAttentionMessageId,
+        lastAttentionMessageCreatedAt: threadTable.lastAttentionMessageCreatedAt,
+        lastAttentionKind: threadTable.lastAttentionKind,
+        lastSeenMessageId: threadReadStateTable.lastSeenMessageId,
+        lastSeenMessageCreatedAt: threadReadStateTable.lastSeenMessageCreatedAt,
         sessionId: terminalSessionTable.sessionId,
         sessionState: terminalSessionTable.state
       })
       .from(threadTable)
+      .leftJoin(
+        threadReadStateTable,
+        and(
+          eq(threadReadStateTable.threadId, threadTable.threadId),
+          eq(threadReadStateTable.userId, viewer.userId),
+        ),
+      )
       .leftJoin(
         terminalSessionTable,
         and(
@@ -73,6 +86,13 @@ export async function registerThreadCoreRoutes(
       message_count: row.messageCount,
       pinned: row.pinned,
       archived: row.archived,
+      has_unseen_attention: hasUnseenAttention({
+        lastAttentionMessageId: row.lastAttentionMessageId,
+        lastAttentionMessageCreatedAt: row.lastAttentionMessageCreatedAt,
+        lastSeenMessageId: row.lastSeenMessageId,
+        lastSeenMessageCreatedAt: row.lastSeenMessageCreatedAt,
+      }),
+      last_attention_kind: row.lastAttentionKind,
       has_terminal_session: row.sessionId !== null,
       session_state: row.sessionState,
       session_id: row.sessionId
@@ -143,4 +163,3 @@ export async function registerThreadCoreRoutes(
     return { ok: true, deleted_at: new Date().toISOString() };
   });
 }
-

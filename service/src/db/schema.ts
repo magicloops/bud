@@ -297,6 +297,11 @@ export const threadTable = pgTable(
     pinned: boolean("pinned").notNull().default(false),
     archived: boolean("archived").notNull().default(false),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    lastAttentionMessageId: uuid("last_attention_message_id"),
+    lastAttentionMessageCreatedAt: timestamp("last_attention_message_created_at", {
+      withTimezone: true,
+    }),
+    lastAttentionKind: text("last_attention_kind"),
     tenantId: text("tenant_id"),
     createdByUserId: text("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
@@ -305,6 +310,67 @@ export const threadTable = pgTable(
     budIdx: index("thread_bud_idx").on(table.budId),
     deletedIdx: index("thread_deleted_idx").on(table.deletedAt)
   })
+);
+
+export const threadReadStateTable = pgTable(
+  "thread_read_state",
+  {
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threadTable.threadId, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    lastSeenMessageId: uuid("last_seen_message_id"),
+    lastSeenMessageCreatedAt: timestamp("last_seen_message_created_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.threadId, table.userId], name: "thread_read_state_pkey" }),
+    userIdx: index("thread_read_state_user_idx").on(table.userId, table.lastSeenAt),
+  }),
+);
+
+export const pushEndpointTable = pgTable(
+  "push_endpoint",
+  {
+    endpointId: uuid("endpoint_id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    installationId: text("installation_id").notNull(),
+    platform: text("platform").notNull(),
+    provider: text("provider").notNull(),
+    providerEnvironment: text("provider_environment"),
+    appId: text("app_id").notNull(),
+    token: text("token").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    alertsAgentCompleted: boolean("alerts_agent_completed").notNull().default(true),
+    alertsHumanInputRequested: boolean("alerts_human_input_requested").notNull().default(true),
+    includeMessagePreview: boolean("include_message_preview").notNull().default(true),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    lastRegisteredAt: timestamp("last_registered_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    userInstallationIdx: uniqueIndex("push_endpoint_user_installation_idx").on(
+      table.userId,
+      table.installationId,
+    ),
+    userIdx: index("push_endpoint_user_idx").on(table.userId, table.updatedAt),
+    providerTokenIdx: uniqueIndex("push_endpoint_provider_token_idx").on(table.provider, table.token),
+  }),
 );
 
 export const messageTable = pgTable(
@@ -330,6 +396,47 @@ export const messageTable = pgTable(
     threadIdx: index("message_thread_idx").on(table.threadId),
     clientIdUniqueIdx: uniqueIndex("message_client_id_idx").on(table.clientId)
   })
+);
+
+export const pushNotificationOutboxTable = pgTable(
+  "push_notification_outbox",
+  {
+    notificationId: text("notification_id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threadTable.threadId, { onDelete: "cascade" }),
+    messageId: uuid("message_id").references(() => messageTable.messageId, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    status: text("status").notNull().default("pending"),
+    dedupeKey: text("dedupe_key").notNull(),
+    collapseKey: text("collapse_key").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    payload: jsonb("payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    suppressedReason: text("suppressed_reason"),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    dedupeIdx: uniqueIndex("push_notification_outbox_dedupe_idx").on(table.dedupeKey),
+    statusIdx: index("push_notification_outbox_status_idx").on(table.status, table.nextAttemptAt),
+    userIdx: index("push_notification_outbox_user_idx").on(table.userId, table.createdAt),
+    threadIdx: index("push_notification_outbox_thread_idx").on(table.threadId, table.createdAt),
+  }),
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

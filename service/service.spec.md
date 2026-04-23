@@ -54,6 +54,7 @@ Checked-in template for local service setup. Includes:
 - the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
 - the local browser-workbench recommendation that the web app sets `VITE_API_BASE_URL=http://localhost:3000` so API/SSE traffic bypasses the Vite-origin proxy path during multi-tab terminal work
 - the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin, `API_AUDIENCE` points at that origin's `/api` path, and `OAUTH_TRUSTED_CLIENT_IDS` includes the published first-party mobile client ids for that environment
+- optional APNs push-notification settings (`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_FILE`, `APNS_PRIVATE_KEY`, `APNS_DEFAULT_TOPIC`, `APNS_ALLOWED_TOPICS`)
 - optional LLM provider settings
 
 ### `.env` (not committed)
@@ -70,6 +71,7 @@ Main source code:
 - `auth/` - Better Auth integration and session helpers
 - `agent/` - LLM integration with extracted conversation/model/tool/transcript ownership seams
 - `db/` - Database layer
+- `notifications/` - Push notification helpers, APNs provider, and async outbox worker
 - `routes/` - HTTP endpoints, with split thread submodules under `routes/threads/`
 - `runtime/` - Session managers, with terminal-runtime ownership split into `runtime/terminal/`
 - `terminal/` - Terminal types
@@ -112,6 +114,9 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 |--------|------|-------------|
 | `GET` | `/api/me` | Current authenticated user/profile via cookie or bearer auth |
 | `GET` | `/api/me/accounts` | Linked-provider account inventory for the current user |
+| `GET` | `/api/me/notifications/summary` | Current unseen-thread badge summary for the signed-in user |
+| `PUT` | `/api/me/push/endpoints/:installation_id` | Create or update a push endpoint registration for the signed-in user |
+| `DELETE` | `/api/me/push/endpoints/:installation_id` | Delete an owned push endpoint registration |
 | `GET` | `/api/me/sessions` | Better Auth browser-session inventory for the current user |
 | `POST` | `/api/me/account-links/:provider/start` | Start a GitHub/Google link flow for cookie or bearer auth |
 | `POST` | `/api/me/logout` | Sign out the current Better Auth browser session |
@@ -123,6 +128,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `POST` | `/api/threads` | Create thread |
 | `GET` | `/api/threads/:id/messages` | Get messages |
 | `POST` | `/api/threads/:id/messages` | Send message (triggers agent) |
+| `POST` | `/api/threads/:id/read` | Advance the viewer's thread-read watermark to a specific owned message |
 | `GET` | `/api/threads/:id/agent/state` | Get current in-flight agent snapshot plus resume cursor |
 | `POST` | `/api/threads/:id/cancel` | Cancel running agent |
 | `POST` | `/api/threads/:id/terminal` | Create/get terminal session |
@@ -154,6 +160,7 @@ The thread agent contract now splits into:
 Canonical persisted transcript rows now expose `client_id` on `/api/threads/:id/messages` and inside the nested `message` payloads carried by `agent.message` / `agent.tool_result`.
 `POST /api/threads/:id/messages` now accepts optional `client_id`, returns `{ message_id, client_id }`, and suppresses duplicate same-thread user retries without starting a second agent turn.
 `GET /api/threads/:id/agent/state` and `GET /api/threads/:id/agent/stream` now also expose pre-persistence assistant/tool `client_id` values so runtime bootstrap, live streaming, and later transcript rows share one message identity.
+`GET /api/me/notifications/summary` and the thread-list `has_unseen_attention` flag now use the same server-owned rule: the badge count is the number of owned threads whose latest attention-worthy output is newer than the viewer's per-thread read watermark.
 
 ## Architecture
 
@@ -220,6 +227,8 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `OPENAI_MODEL` - Model (default: gpt-4.1-mini)
 - `AGENT_MAX_STEPS` - Max tool calls (default: 30)
 - `AGENT_DEBUG` - Enable debug logging
+- `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
+- `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_FILE` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` / `APNS_ALLOWED_TOPICS` - APNs provider credentials, fallback topic, and accepted Bud app topics
 
 See [src/config.ts](./src/src.spec.md) for complete list.
 

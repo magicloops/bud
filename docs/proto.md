@@ -99,6 +99,60 @@ Wire-format rules:
 - New writes return `201 { "message_id": "...", "client_id": "..." }`
 - Duplicate same-thread retries using the same authenticated `client_id` return `200` with the existing identifiers
 
+### 3.6 Thread Read Watermark Write
+
+- URL: `POST /api/threads/:thread_id/read`
+- Request body:
+
+```json
+{
+  "last_seen_message_id": "uuid"
+}
+```
+
+- Advances the viewer's per-thread read watermark only if the referenced owned message is newer than the currently stored watermark
+- Success response:
+
+```json
+{
+  "ok": true,
+  "updated": true,
+  "last_seen_message_id": "uuid"
+}
+```
+
+### 3.7 Notification Summary And Push Registration
+
+- `GET /api/me/notifications/summary`
+  - returns `{ "unseen_thread_count": 3, "updated_at": "..." }`
+  - `unseen_thread_count` is the number of owned threads whose latest attention-worthy output is newer than the viewer's read watermark
+- `PUT /api/me/push/endpoints/:installation_id`
+  - creates or updates one owned push registration
+- `DELETE /api/me/push/endpoints/:installation_id`
+  - deletes one owned push registration
+
+Registration request body:
+
+```json
+{
+  "platform": "ios",
+  "provider": "apns",
+  "provider_environment": "sandbox",
+  "app_id": "chat.bud.app.staging",
+  "token": "<provider-device-token>",
+  "enabled": true,
+  "alerts_agent_completed": true,
+  "alerts_human_input_requested": true,
+  "include_message_preview": true
+}
+```
+
+APNs registration rules:
+- accepted Bud APNs topics default to `chat.bud.app` and `chat.bud.app.staging`
+- unknown APNs `app_id` values return `400 { "error": "invalid_app_id", "allowed_app_ids": [...] }`
+- `provider_environment: "sandbox"` and `"development"` target APNs sandbox delivery; `"production"` targets production APNs delivery
+- registering the same APNs provider token or reused installation id under a different authenticated user removes stale prior endpoint ownership before the new registration is stored
+
 ---
 
 ## 4. WebSocket Envelope
@@ -497,6 +551,7 @@ Rules:
 - `terminal_output.seq` and `terminal_output.byte_offset` are monotonic per session
 - terminal history correctness comes from durable storage keyed by `(session_id, byte_offset)`
 - agent-stream replay is intentionally bounded and process-local; transcript correctness comes from `/messages` plus `/agent/state`
+- push delivery correctness comes from the durable `push_notification_outbox` plus per-thread read-watermark suppression rules rather than any in-memory stream state
 - service may ignore heartbeats, closes, or timeouts from superseded Bud sockets after a reconnect replaces the active tracker
 
 ---
@@ -570,6 +625,8 @@ Service: otherwise emit agent.resync_required
 - reconnect auth should always use challenge-response, not reusable bearer secrets on the wire
 - TLS is required for deployed WebSocket traffic
 - browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
+- push endpoint registrations and unread/read watermarks are user-owned resources; normal client-directed reads and deletes are scoped to the authenticated owner
+- the push registration route may additionally server-side reclaim the same provider token or reused installation id from stale prior ownership so a logged-out account cannot keep receiving notifications for a device now registered by another user
 
 ---
 

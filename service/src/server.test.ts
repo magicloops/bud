@@ -26,6 +26,6 @@ test("trusted-origin preflight advertises the full browser API method set", asyn
   assert.equal(response.headers["access-control-allow-origin"], origin);
   assert.equal(
     response.headers["access-control-allow-methods"],
-    "GET,HEAD,POST,PATCH,DELETE,OPTIONS",
+    "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
   );
 });

@@ -1,5 +1,7 @@
 import { sql } from "drizzle-orm";
-import { db } from "./client.js";
+import { db, type Database } from "./client.js";
+
+type SqlExecutor = Pick<Database, "execute">;
 
 const MESSAGE_PREVIEW_LIMIT = 360;
 
@@ -14,11 +16,15 @@ function createPreview(text?: string | null): string | null {
   return `${trimmed.slice(0, MESSAGE_PREVIEW_LIMIT - 3)}...`;
 }
 
-export async function recordThreadMessageMetadata(threadId: string, preview?: string | null): Promise<void> {
+export async function recordThreadMessageMetadata(
+  threadId: string,
+  preview?: string | null,
+  executor: SqlExecutor = db,
+): Promise<void> {
   const now = new Date();
   const sanitized = createPreview(preview);
   if (sanitized) {
-    await db.execute(sql`
+    await executor.execute(sql`
       UPDATE "thread"
       SET
         last_activity_at = ${now},
@@ -29,11 +35,30 @@ export async function recordThreadMessageMetadata(threadId: string, preview?: st
     return;
   }
 
-  await db.execute(sql`
+  await executor.execute(sql`
     UPDATE "thread"
     SET
       last_activity_at = ${now},
       message_count = COALESCE(message_count, 0) + 1
     WHERE thread_id = ${threadId}
+  `);
+}
+
+export async function recordThreadAttentionMetadata(
+  args: {
+    threadId: string;
+    messageId: string;
+    messageCreatedAt: Date;
+    kind: string;
+  },
+  executor: SqlExecutor = db,
+): Promise<void> {
+  await executor.execute(sql`
+    UPDATE "thread"
+    SET
+      last_attention_message_id = ${args.messageId}::uuid,
+      last_attention_message_created_at = ${args.messageCreatedAt},
+      last_attention_kind = ${args.kind}
+    WHERE thread_id = ${args.threadId}::uuid
   `);
 }
