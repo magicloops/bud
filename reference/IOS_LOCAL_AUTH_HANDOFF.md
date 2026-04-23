@@ -2,7 +2,7 @@
 
 **Status:** Local bundle ready; end-to-end simulator validation still pending  
 **Audience:** iOS team, backend, web platform  
-**Last updated:** 2026-03-20
+**Last updated:** 2026-04-23
 
 ## Purpose
 
@@ -27,7 +27,7 @@ environment: local
 app_origin: http://localhost:5173
 issuer: http://localhost:5173/api/auth
 client_id: bud-ios-dev-local
-redirect_uri: chat.bud.app://oauth/callback
+redirect_uri: chat.bud.app.staging://oauth/callback
 authorization_endpoint: http://localhost:5173/api/auth/oauth2/authorize
 token_endpoint: http://localhost:5173/api/auth/oauth2/token
 userinfo_endpoint: http://localhost:5173/api/auth/oauth2/userinfo
@@ -49,7 +49,7 @@ logout_notes: Send client_id on POST /api/me/oauth/revoke. Local sign-out uses t
 ## Confirmed Backend Values
 
 - `client_id`: `bud-ios-dev-local`
-- registered redirect URI: `chat.bud.app://oauth/callback`
+- registered redirect URI: `chat.bud.app.staging://oauth/callback`
 - client type: public native OAuth client
 - PKCE: required
 - grant types: `authorization_code`, `refresh_token`
@@ -65,7 +65,7 @@ BUD_ENVIRONMENT=local
 BUD_APP_ORIGIN=http://localhost:5173
 BUD_AUTH_ISSUER=http://localhost:5173/api/auth
 BUD_OAUTH_CLIENT_ID=bud-ios-dev-local
-BUD_OAUTH_REDIRECT_URI=chat.bud.app://oauth/callback
+BUD_OAUTH_REDIRECT_URI=chat.bud.app.staging://oauth/callback
 BUD_OAUTH_SCOPES=openid profile email offline_access api
 ```
 
@@ -88,7 +88,7 @@ Use Authorization Code + PKCE with:
 
 - `response_type=code`
 - `client_id=bud-ios-dev-local`
-- `redirect_uri=chat.bud.app://oauth/callback`
+- `redirect_uri=chat.bud.app.staging://oauth/callback`
 - `scope=openid profile email offline_access api`
 - `code_challenge_method=S256`
 - `code_challenge=<client-generated>`
@@ -169,7 +169,7 @@ Confirmed in the backend repo:
 Not yet jointly validated in this repo session:
 
 - full hosted Google/GitHub login through `/auth/mobile`
-- callback round-trip into `chat.bud.app://oauth/callback`
+- callback round-trip into `chat.bud.app.staging://oauth/callback`
 - real code exchange + refresh from the iOS app
 - bearer `/api/me` and revoke calls from the iOS app
 
@@ -178,7 +178,7 @@ Not yet jointly validated in this repo session:
 Please report:
 
 1. whether authorize reaches `/auth/mobile`
-2. whether the callback returns to `chat.bud.app://oauth/callback`
+2. whether the callback returns to `chat.bud.app.staging://oauth/callback`
 3. whether token exchange succeeds
 4. whether a refresh token is returned
 5. whether `GET /api/me` succeeds with the access token

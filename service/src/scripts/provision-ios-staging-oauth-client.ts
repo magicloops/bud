@@ -1,3 +1,4 @@
+import { getIosOAuthRedirectUri } from "./ios-oauth-contract.js";
 import { runIosOAuthProvisioning } from "./provision-ios-oauth-client-shared.js";
 
 async function main() {
@@ -6,7 +7,7 @@ async function main() {
     clientId: "bud-ios-staging",
     clientRowId: "oauth_client_bud_ios_staging",
     clientName: "Bud iOS (staging)",
-    redirectUri: "chat.bud.app://oauth/callback",
+    redirectUri: getIosOAuthRedirectUri("staging"),
     expectedAppOrigin: "https://staging.bud.dev",
     expectedIssuer: "https://staging.bud.dev/api/auth",
     expectedAudience: "https://staging.bud.dev/api",

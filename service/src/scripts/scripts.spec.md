@@ -92,6 +92,25 @@ Shared helper for first-party iOS OAuth-client provisioning scripts.
 - Print environment-specific warnings when the running config does not match the expected public origin
 - Share one bundle/output shape across local and staging provisioning entrypoints
 
+### `ios-oauth-contract.ts`
+
+Pure callback-contract constants for first-party iOS OAuth.
+
+**Responsibilities**:
+- Define the canonical environment-to-callback map for Bud iOS OAuth
+- Keep local and staging on `chat.bud.app.staging://oauth/callback`
+- Keep production on `chat.bud.app://oauth/callback`
+- Give provisioning scripts and tests one shared source of truth for the native callback URI
+
+### `provision-ios-oauth-client-shared.test.ts`
+
+Regression coverage for the canonical iOS OAuth callback map.
+
+**Responsibilities**:
+- Assert that local and staging provisioning both use `chat.bud.app.staging://oauth/callback`
+- Assert that production keeps `chat.bud.app://oauth/callback`
+- Catch accidental drift back to the production callback URI for non-production environments before provisioning scripts are run
+
 ### `provision-ios-local-oauth-client.ts`
 
 Creates or updates the fixed first-party local iOS OAuth client and prints the exact local auth bundle to hand to the mobile team.
@@ -99,7 +118,7 @@ Creates or updates the fixed first-party local iOS OAuth client and prints the e
 **Responsibilities**:
 - Upsert `auth.oauthClient` row `bud-ios-dev-local`
 - Supply the Better Auth table's required internal primary key when creating the row
-- Enforce the expected local redirect URI (`chat.bud.app://oauth/callback`)
+- Enforce the expected local redirect URI (`chat.bud.app.staging://oauth/callback`)
 - Mark the client as a public native PKCE client with refresh-token support
 - Print the current local auth bundle derived from `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
 - Warn when the local env is not aligned with the expected public `http://localhost:5173` topology
@@ -115,7 +134,7 @@ Creates or updates the fixed first-party staging iOS OAuth client and prints the
 
 **Responsibilities**:
 - Upsert `auth.oauthClient` row `bud-ios-staging`
-- Enforce the staging redirect URI (`chat.bud.app://oauth/callback`)
+- Enforce the staging redirect URI (`chat.bud.app.staging://oauth/callback`)
 - Mark the client as a public native PKCE client with refresh-token support
 - Print the current staging auth bundle derived from `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
 - Warn when the staging env is not aligned with the expected public `https://staging.bud.dev` topology

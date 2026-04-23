@@ -4,8 +4,7 @@ import { AUTH_BASE_PATH, OAUTH_PROVIDER_SCOPES, authPool } from "../auth/auth.js
 import { config } from "../config.js";
 import { db, pool } from "../db/client.js";
 import { authOAuthClientTable } from "../db/schema.js";
-
-export type IosOAuthProvisionEnvironment = "local" | "staging";
+import type { IosOAuthProvisionEnvironment } from "./ios-oauth-contract.js";
 
 export type IosOAuthProvisionConfig = {
   environment: IosOAuthProvisionEnvironment;

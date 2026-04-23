@@ -2,7 +2,7 @@
 
 **Status:** Ready for backend action  
 **Audience:** Backend, web platform, iOS  
-**Last updated:** 2026-03-20
+**Last updated:** 2026-04-23
 
 ## Purpose
 
@@ -39,8 +39,8 @@ Implemented on iOS:
 
 Local iOS assumptions already coded:
 
-- callback URI: `chat.bud.app://oauth/callback`
-- callback scheme registered in app: `chat.bud.app`
+- callback URI: `chat.bud.app.staging://oauth/callback`
+- callback scheme registered in app: `chat.bud.app.staging`
 - local auth/app origin default: `http://localhost:5173`
 - local auth issuer default: `http://localhost:5173/api/auth`
 - default scopes: `openid profile email offline_access api`
@@ -72,7 +72,7 @@ Recommended registration shape:
 {
   "client_name": "Bud iOS (dev)",
   "redirect_uris": [
-    "chat.bud.app://oauth/callback"
+    "chat.bud.app.staging://oauth/callback"
   ],
   "token_endpoint_auth_method": "none",
   "grant_types": [
@@ -91,7 +91,7 @@ Recommended registration shape:
 Requirements:
 
 - this must be a **public** client
-- the redirect URI must exactly match `chat.bud.app://oauth/callback`
+- the redirect URI must exactly match `chat.bud.app.staging://oauth/callback`
 - PKCE must be supported
 - refresh tokens must be issued when `offline_access` is requested
 - the resulting `client_id` must be added to the trusted client list if consent skipping depends on that
@@ -105,7 +105,7 @@ environment: local
 app_origin: http://localhost:5173
 issuer: http://localhost:5173/api/auth
 client_id: <real-ios-dev-client-id>
-redirect_uri: chat.bud.app://oauth/callback
+redirect_uri: chat.bud.app.staging://oauth/callback
 authorization_endpoint: http://localhost:5173/api/auth/oauth2/authorize
 token_endpoint: http://localhost:5173/api/auth/oauth2/token
 userinfo_endpoint: http://localhost:5173/api/auth/oauth2/userinfo
@@ -134,7 +134,7 @@ Please confirm these runtime expectations:
 - the hosted login page presents the Google and GitHub choices
 - provider selection happens entirely inside the hosted page
 - the hosted login/consent flow preserves OAuth resume state correctly
-- the final redirect returns the app to `chat.bud.app://oauth/callback` with a valid `code` and `state`
+- the final redirect returns the app to `chat.bud.app.staging://oauth/callback` with a valid `code` and `state`
 
 ## Expected Local Topology
 
@@ -161,7 +161,7 @@ iOS will build an Authorization Code + PKCE request with:
 
 - `response_type=code`
 - `client_id=<real-ios-dev-client-id>`
-- `redirect_uri=chat.bud.app://oauth/callback`
+- `redirect_uri=chat.bud.app.staging://oauth/callback`
 - `scope=openid profile email offline_access api`
 - `code_challenge_method=S256`
 - `code_challenge=<pkce challenge>`
@@ -248,7 +248,7 @@ BUD_ENVIRONMENT=local
 BUD_APP_ORIGIN=http://localhost:5173
 BUD_AUTH_ISSUER=http://localhost:5173/api/auth
 BUD_OAUTH_CLIENT_ID=<real-ios-dev-client-id>
-BUD_OAUTH_REDIRECT_URI=chat.bud.app://oauth/callback
+BUD_OAUTH_REDIRECT_URI=chat.bud.app.staging://oauth/callback
 BUD_OAUTH_SCOPES=openid profile email offline_access api
 ```
 
@@ -261,7 +261,7 @@ Please validate these before handing the client id to iOS:
 ### Client registration
 
 - [ ] local iOS public client exists
-- [ ] redirect URI is exactly `chat.bud.app://oauth/callback`
+- [ ] redirect URI is exactly `chat.bud.app.staging://oauth/callback`
 - [ ] client is public (`token_endpoint_auth_method = none`)
 - [ ] grant types include `authorization_code` and `refresh_token`
 - [ ] client is trusted or consent behavior is explicitly documented
@@ -310,7 +310,7 @@ This is the agreed direction after local development:
 - separate staging `client_id`
 - separate staging auth bundle
 - separate issuer/app origin
-- if side-by-side installs matter, use a separate staging callback such as `chat.bud.app.staging://oauth/callback`
+- use the non-production callback `chat.bud.app.staging://oauth/callback`
 
 ### Production
 
@@ -325,7 +325,7 @@ Please respond with:
 
 1. the real local iOS `client_id`
 2. the full local auth bundle
-3. confirmation that `chat.bud.app://oauth/callback` is registered
+3. confirmation that `chat.bud.app.staging://oauth/callback` is registered
 4. confirmation that hosted auth resumes correctly through Google and GitHub
 5. any logout or revoke caveats iOS should handle in local development
 
