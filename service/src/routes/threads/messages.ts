@@ -4,10 +4,12 @@ import { AgentService, ThreadTitleService } from "../../agent/index.js";
 import { db } from "../../db/client.js";
 import { generateMessageClientId } from "../../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../../db/thread-metadata.js";
-import { messageTable, terminalSessionTable } from "../../db/schema.js";
+import { messageTable, terminalSessionTable, threadReadStateTable } from "../../db/schema.js";
 import type { ContextSyncService } from "../../terminal/context-sync-service.js";
+import { isMessageNewerThanWatermark } from "../../notifications/index.js";
 import {
   CreateMessageSchema,
+  MarkThreadReadSchema,
   MessagesQuerySchema,
   ThreadParamsSchema,
   decodeMessageCursor,
@@ -26,6 +28,84 @@ export async function registerThreadMessageRoutes(
   contextSyncService: ContextSyncService,
   threadTitleService: ThreadTitleService,
 ): Promise<void> {
+  server.post("/api/threads/:threadId/read", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const body = MarkThreadReadSchema.parse(request.body ?? {});
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
+    const { thread, viewer } = access;
+    const [message] = await db
+      .select({
+        messageId: messageTable.messageId,
+        createdAt: messageTable.createdAt,
+      })
+      .from(messageTable)
+      .where(
+        and(
+          eq(messageTable.threadId, thread.threadId),
+          eq(messageTable.createdByUserId, viewer.userId),
+          eq(messageTable.messageId, body.last_seen_message_id),
+        ),
+      )
+      .limit(1);
+
+    if (!message) {
+      reply.code(404).send({ error: "message_not_found" });
+      return;
+    }
+
+    const existing = await db.query.threadReadStateTable.findFirst({
+      where: and(
+        eq(threadReadStateTable.threadId, thread.threadId),
+        eq(threadReadStateTable.userId, viewer.userId),
+      ),
+    });
+
+    if (
+      existing &&
+      !isMessageNewerThanWatermark(message.createdAt, message.messageId, {
+        createdAt: existing.lastSeenMessageCreatedAt,
+        messageId: existing.lastSeenMessageId,
+      })
+    ) {
+      reply.send({
+        ok: true,
+        updated: false,
+        last_seen_message_id: existing.lastSeenMessageId,
+      });
+      return;
+    }
+
+    await db
+      .insert(threadReadStateTable)
+      .values({
+        threadId: thread.threadId,
+        userId: viewer.userId,
+        lastSeenMessageId: message.messageId,
+        lastSeenMessageCreatedAt: message.createdAt,
+        lastSeenAt: new Date(),
+        createdByUserId: viewer.userId,
+      })
+      .onConflictDoUpdate({
+        target: [threadReadStateTable.threadId, threadReadStateTable.userId],
+        set: {
+          lastSeenMessageId: message.messageId,
+          lastSeenMessageCreatedAt: message.createdAt,
+          lastSeenAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+
+    reply.send({
+      ok: true,
+      updated: true,
+      last_seen_message_id: message.messageId,
+    });
+  });
+
   server.get("/api/threads/:threadId/messages", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const parsedQuery = MessagesQuerySchema.safeParse(request.query ?? {});

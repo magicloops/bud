@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { fromNodeHeaders } from "better-auth/node";
 import { z } from "zod";
 import {
@@ -14,8 +14,15 @@ import {
   UserProfileUpdateError,
   updateUserProfileUsername,
 } from "../auth/session.js";
+import { countUnseenThreads } from "../notifications/index.js";
 import { db } from "../db/client.js";
-import { authAccountTable, authSessionTable } from "../db/schema.js";
+import {
+  authAccountTable,
+  authSessionTable,
+  pushEndpointTable,
+  threadReadStateTable,
+  threadTable,
+} from "../db/schema.js";
 
 function serializeCurrentUser(currentUser: NormalizedCurrentUser) {
   const { user, session, profile, linkedProviders, viewer } = currentUser;
@@ -65,6 +72,20 @@ const oauthRevokeBodySchema = z.object({
   token_type_hint: z.enum(["access_token", "refresh_token"]).optional(),
   client_id: z.string().trim().min(1),
   client_secret: z.string().trim().min(1).optional(),
+});
+const pushEndpointParamsSchema = z.object({
+  installation_id: z.string().trim().min(1),
+});
+const pushEndpointBodySchema = z.object({
+  platform: z.enum(["ios", "android"]),
+  provider: z.enum(["apns", "fcm"]),
+  provider_environment: z.enum(["sandbox", "production", "development"]).optional(),
+  app_id: z.string().trim().min(1),
+  token: z.string().trim().min(1),
+  enabled: z.boolean().optional(),
+  alerts_agent_completed: z.boolean().optional(),
+  alerts_human_input_requested: z.boolean().optional(),
+  include_message_preview: z.boolean().optional(),
 });
 
 function splitAccountScopes(scope: string | null): string[] {
@@ -152,6 +173,139 @@ export async function registerMeRoutes(server: FastifyInstance): Promise<void> {
     return {
       auth_type: currentUser.viewer.authType,
       accounts: accounts.map(serializeLinkedAccount),
+    };
+  });
+
+  server.get("/api/me/notifications/summary", async (request, reply) => {
+    const currentUser = await getNormalizedCurrentUser(request);
+    if (!currentUser) {
+      return reply.status(401).send({
+        error: "unauthorized",
+      });
+    }
+
+    const rows = await db
+      .select({
+        lastAttentionMessageId: threadTable.lastAttentionMessageId,
+        lastAttentionMessageCreatedAt: threadTable.lastAttentionMessageCreatedAt,
+        lastSeenMessageId: threadReadStateTable.lastSeenMessageId,
+        lastSeenMessageCreatedAt: threadReadStateTable.lastSeenMessageCreatedAt,
+      })
+      .from(threadTable)
+      .leftJoin(
+        threadReadStateTable,
+        and(
+          eq(threadReadStateTable.threadId, threadTable.threadId),
+          eq(threadReadStateTable.userId, currentUser.user.id),
+        ),
+      )
+      .where(
+        and(
+          eq(threadTable.createdByUserId, currentUser.user.id),
+          isNull(threadTable.deletedAt),
+        ),
+      );
+
+    return {
+      unseen_thread_count: countUnseenThreads(rows),
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  server.put("/api/me/push/endpoints/:installation_id", async (request, reply) => {
+    const currentUser = await getNormalizedCurrentUser(request);
+    if (!currentUser) {
+      return reply.status(401).send({
+        error: "unauthorized",
+      });
+    }
+
+    const paramsResult = pushEndpointParamsSchema.safeParse(request.params);
+    if (!paramsResult.success) {
+      return reply.status(400).send({ error: "invalid_installation_id" });
+    }
+
+    const bodyResult = pushEndpointBodySchema.safeParse(request.body);
+    if (!bodyResult.success) {
+      return reply.status(400).send({ error: "invalid_body" });
+    }
+
+    const now = new Date();
+    const body = bodyResult.data;
+
+    await db
+      .insert(pushEndpointTable)
+      .values({
+        userId: currentUser.user.id,
+        installationId: paramsResult.data.installation_id,
+        platform: body.platform,
+        provider: body.provider,
+        providerEnvironment: body.provider_environment ?? null,
+        appId: body.app_id,
+        token: body.token,
+        enabled: body.enabled ?? true,
+        alertsAgentCompleted: body.alerts_agent_completed ?? true,
+        alertsHumanInputRequested: body.alerts_human_input_requested ?? true,
+        includeMessagePreview: body.include_message_preview ?? true,
+        lastRegisteredAt: now,
+        lastSeenAt: now,
+        createdByUserId: currentUser.user.id,
+      })
+      .onConflictDoUpdate({
+        target: [pushEndpointTable.userId, pushEndpointTable.installationId],
+        set: {
+          platform: body.platform,
+          provider: body.provider,
+          providerEnvironment: body.provider_environment ?? null,
+          appId: body.app_id,
+          token: body.token,
+          enabled: body.enabled ?? true,
+          alertsAgentCompleted: body.alerts_agent_completed ?? true,
+          alertsHumanInputRequested: body.alerts_human_input_requested ?? true,
+          includeMessagePreview: body.include_message_preview ?? true,
+          invalidatedAt: null,
+          lastRegisteredAt: now,
+          lastSeenAt: now,
+          updatedAt: now,
+        },
+      });
+
+    return {
+      installation_id: paramsResult.data.installation_id,
+      status: "registered",
+    };
+  });
+
+  server.delete("/api/me/push/endpoints/:installation_id", async (request, reply) => {
+    const currentUser = await getNormalizedCurrentUser(request);
+    if (!currentUser) {
+      return reply.status(401).send({
+        error: "unauthorized",
+      });
+    }
+
+    const paramsResult = pushEndpointParamsSchema.safeParse(request.params);
+    if (!paramsResult.success) {
+      return reply.status(400).send({ error: "invalid_installation_id" });
+    }
+
+    const [deleted] = await db
+      .delete(pushEndpointTable)
+      .where(
+        and(
+          eq(pushEndpointTable.userId, currentUser.user.id),
+          eq(pushEndpointTable.installationId, paramsResult.data.installation_id),
+        ),
+      )
+      .returning({ installationId: pushEndpointTable.installationId });
+
+    if (!deleted) {
+      return reply.status(404).send({ error: "push_endpoint_not_found" });
+    }
+
+    return {
+      installation_id: deleted.installationId,
+      status: "deleted",
     };
   });
 

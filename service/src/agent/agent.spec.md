@@ -225,6 +225,8 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 **Responsibilities**:
 - emit `agent.tool_call` and synchronize `/agent/state.pending_tool`
 - persist assistant/tool transcript rows with stable `client_id`
+- stamp thread attention metadata for final attention-worthy assistant output
+- enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
 - add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
 - advance runtime cursors only after the durable transcript boundary is visible
@@ -351,6 +353,9 @@ From `../config.js`:
 
 <!-- SPEC:TODO -->
 - Consider: Move tool definitions to a shared location if multiple agents need them
+
+<!-- SPEC:TODO -->
+- `human_input_requested` attention is designed into the notification schema/routes but is not emitted yet because the corresponding tool-driven prompt flow has not been implemented.
 
 ---
 

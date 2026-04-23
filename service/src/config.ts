@@ -10,6 +10,12 @@ const toNumber = (value: string | undefined, fallback: number) => {
 };
 
 const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+const toNullable = (value: string | undefined) => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+};
+const normalizeMultiline = (value: string | undefined) =>
+  value ? value.replace(/\\n/g, "\n") : null;
 const defaultPort = toNumber(process.env.PORT, 3000);
 const defaultServiceUrl = `http://localhost:${defaultPort}`;
 
@@ -113,5 +119,11 @@ export const config = {
   terminalIdleTimeoutMinutes: toNumber(process.env.TERMINAL_IDLE_TIMEOUT_MINUTES, 30),
   terminalIdleCleanupHours: toNumber(process.env.TERMINAL_IDLE_CLEANUP_HOURS, 0),
   // How often to run idle checks (default: every 5 minutes)
-  terminalIdleCheckIntervalMinutes: toNumber(process.env.TERMINAL_IDLE_CHECK_INTERVAL_MINUTES, 5)
+  terminalIdleCheckIntervalMinutes: toNumber(process.env.TERMINAL_IDLE_CHECK_INTERVAL_MINUTES, 5),
+  pushWorkerPollMs: toNumber(process.env.PUSH_WORKER_POLL_MS, 5000),
+  pushWorkerBatchSize: toNumber(process.env.PUSH_WORKER_BATCH_SIZE, 10),
+  apnsKeyId: toNullable(process.env.APNS_KEY_ID),
+  apnsTeamId: toNullable(process.env.APNS_TEAM_ID),
+  apnsPrivateKey: normalizeMultiline(process.env.APNS_PRIVATE_KEY),
+  apnsDefaultTopic: toNullable(process.env.APNS_DEFAULT_TOPIC),
 };

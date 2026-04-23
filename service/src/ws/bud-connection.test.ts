@@ -76,7 +76,7 @@ test("handleOfflineTransition rejects pending waits before suspending Bud-owned 
     budId: string,
   ) => Promise<void>;
 
-  await handleOfflineTransition("bud-1");
+  await handleOfflineTransition.call(connection, "bud-1");
 
   assert.deepEqual(calls, [
     "rejectPendingRequestsForBud",

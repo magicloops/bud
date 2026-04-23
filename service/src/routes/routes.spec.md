@@ -64,11 +64,21 @@ Thin composition root for the split thread-route family.
 
 Registers the route groups now implemented under [threads/threads.spec.md](./threads/threads.spec.md).
 
+### `me.test.ts`
+
+Focused route-handler coverage for the current-user notification and push-endpoint routes.
+
+**Current Coverage**:
+- notifications summary returns badge-ready unseen-thread counts
+- push endpoint upsert writes owned defaults and returns the normalized registration payload
+- deleting an unknown owned push endpoint returns the expected `404 push_endpoint_not_found`
+
 ### `threads/` → [threads/threads.spec.md](./threads/threads.spec.md)
 
 Ownership-focused thread submodules:
 - core thread CRUD
 - message history/create
+- read-watermark updates for unread-attention state
 - agent state/stream/cancel
 - terminal create/ensure/input/history/stream
 
@@ -87,6 +97,7 @@ Ownership-focused thread submodules:
 |--------|------|-------------|
 | `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
 | `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync), triggers agent |
+| `POST` | `/api/threads/:thread_id/read` | Advance the viewer's read watermark to a specific owned transcript row |
 | `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
@@ -106,6 +117,7 @@ Ownership-focused thread submodules:
 **Validation Schemas** (Zod):
 - `CreateThreadSchema` - `bud_id` required, `title` optional
 - `CreateMessageSchema` - `text` required, `client_id` optional UUID, `cwd` and `reasoning_effort` optional
+- `MarkThreadReadSchema` - `last_seen_message_id` required UUID
 - `ThreadParamsSchema` - UUID validation
 - `MessagesQuerySchema` - `limit` plus exclusive `before` / `after` opaque cursors
 - `TerminalEnsureBodySchema` - Optional `shell`, `cwd`, `cols`, `rows`
@@ -245,6 +257,7 @@ Before creating user message, checks for terminal state changes:
 - `POST /api/threads/:thread_id/messages` now accepts optional `client_id`
 - duplicate user-message retries with the same owned-thread `client_id` short-circuit with `200 { message_id, client_id }` and do not launch a second agent turn
 - fresh user-message writes return `201 { message_id, client_id }`
+- `POST /api/threads/:thread_id/read` only advances the watermark forward and ignores stale or duplicate rewinds
 - `GET /api/threads/:thread_id/agent/stream` may also emit `thread.title { thread_id, title, source, updated_at }`
 
 ### `me.ts`
@@ -256,6 +269,9 @@ Authenticated current-user endpoint backed by shared cookie-or-token auth helper
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/me` | Return normalized user/session/profile/account-linking state for either cookie or bearer auth |
+| `GET` | `/api/me/notifications/summary` | Return the current unseen-thread badge count for the signed-in user |
+| `PUT` | `/api/me/push/endpoints/:installation_id` | Upsert an owned push endpoint registration |
+| `DELETE` | `/api/me/push/endpoints/:installation_id` | Delete an owned push endpoint registration |
 | `PATCH` | `/api/me/profile` | Update the signed-in user's Bud-owned profile fields for either cookie or bearer auth |
 | `GET` | `/api/me/accounts` | Return linked-provider account inventory for either cookie or bearer auth |
 | `GET` | `/api/me/sessions` | Return Better Auth browser-session inventory for the current user |
@@ -278,6 +294,9 @@ Authenticated current-user endpoint backed by shared cookie-or-token auth helper
 
 **Native Account Surface**:
 - `GET /api/me/accounts` returns linked account rows from `auth.account` with snake_case metadata, scopes, and token-presence flags
+- `GET /api/me/notifications/summary` returns `{ unseen_thread_count, updated_at }`, where the count is the number of owned threads whose latest attention-worthy output is newer than the viewer's read watermark
+- `PUT /api/me/push/endpoints/:installation_id` upserts one owned device-install registration with provider metadata, endpoint token, and per-kind delivery preferences
+- `DELETE /api/me/push/endpoints/:installation_id` removes one owned device-install registration and returns `404` for unknown install ids owned by the signed-in user
 - `GET /api/me/sessions` returns the user's Better Auth browser sessions with `is_current` and `is_active` markers
 - `POST /api/me/account-links/:provider/start` returns a snake_case Bud-owned payload:
   - cookie auth uses Better Auth `linkSocialAccount` (`strategy: "session_link"`)
@@ -321,6 +340,8 @@ Available LLM model listing for authenticated product clients.
   "message_count": 0,
   "pinned": false,
   "archived": false,
+  "has_unseen_attention": true,
+  "last_attention_kind": "assistant_completed | human_input_requested | null",
   "has_terminal_session": true,
   "session_state": "ready",
   "session_id": "string | null"

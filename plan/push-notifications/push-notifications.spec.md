@@ -68,6 +68,14 @@ Follow-on phase covering:
 - reuse of the same attention summary and outbox pipeline
 - explicit `askUserQuestion` notification behavior
 
+### `phase-6-apns-smoke-test-and-observability.md`
+
+Validation and operational follow-up phase covering:
+
+- real-device APNs smoke testing
+- outbox/worker inspection and logging
+- lightweight operational visibility for send, suppress, retry, and dead-letter states
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -75,6 +83,17 @@ Running implementation checklist for the plan.
 ### `validation-checklist.md`
 
 Manual and contract validation checklist for the plan.
+
+### `mobile-handoff.md`
+
+Concrete handoff document for the mobile repo.
+
+Documents:
+
+- the current backend implementation status
+- the shipping route contract for iOS/APNs
+- recommended mobile adoption flow for registration, badges, and read acknowledgments
+- known gaps that remain backend-side
 
 ## Dependencies
 

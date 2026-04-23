@@ -12,6 +12,7 @@
 **Phase 3**: [phase-3-apns-delivery-worker.md](./phase-3-apns-delivery-worker.md)
 **Phase 4**: [phase-4-client-read-state-and-badge-adoption.md](./phase-4-client-read-state-and-badge-adoption.md)
 **Phase 5**: [phase-5-human-input-attention-trigger.md](./phase-5-human-input-attention-trigger.md)
+**Phase 6**: [phase-6-apns-smoke-test-and-observability.md](./phase-6-apns-smoke-test-and-observability.md)
 
 ---
 
@@ -237,6 +238,7 @@ These fields should be derived server-side from `thread` summary columns plus `t
 | 3 | [phase-3-apns-delivery-worker.md](./phase-3-apns-delivery-worker.md) | Urgent | APNs delivery, retry, invalidation, and observability are live behind a generic provider seam |
 | 4 | [phase-4-client-read-state-and-badge-adoption.md](./phase-4-client-read-state-and-badge-adoption.md) | High | Mobile uses registration, read acknowledgments, thread unread indicators, and aggregate badge count cleanly |
 | 5 | [phase-5-human-input-attention-trigger.md](./phase-5-human-input-attention-trigger.md) | High | Durable human-input prompts reuse the same attention and notification pipeline |
+| 6 | [phase-6-apns-smoke-test-and-observability.md](./phase-6-apns-smoke-test-and-observability.md) | High | Real-device APNs validation and backend inspection tooling make the shipped push path operable |
 
 ## Expected Files And Areas
 
@@ -294,7 +296,8 @@ These fields should be derived server-side from `thread` summary columns plus `t
 2. Ship assistant-completion attention-summary updates plus atomic outbox enqueue.
 3. Add the APNs worker and endpoint invalidation behavior.
 4. Adopt read-state and badge-summary flows in mobile.
-5. Extend the same pipeline to durable human-input prompts once they exist.
+5. Validate the APNs path end-to-end and add operational observability.
+6. Extend the same pipeline to durable human-input prompts once they exist.
 
 ## Definition Of Done
 

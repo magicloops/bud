@@ -42,8 +42,11 @@ Drizzle schema definitions (~500 lines). Defines all tables:
 | `budTable` | Registered devices | `budId`, `installationId`, `name`, `os`, `arch`, `capabilities`, `status`, `deviceSecret`, `createdByUserId` |
 | `enrollmentTokenTable` | One-time registration tokens | `tokenHash`, `expiresAt`, `consumedAt` |
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
-| `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `deletedAt`, `createdByUserId` |
+| `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `lastAttentionMessageId`, `lastAttentionMessageCreatedAt`, `lastAttentionKind`, `deletedAt`, `createdByUserId` |
 | `messageTable` | Chat messages | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
+| `threadReadStateTable` | Per-user thread read watermarks for unread/badge math | `threadId`, `userId`, `lastSeenMessageId`, `lastSeenMessageCreatedAt`, `lastSeenAt` |
+| `pushEndpointTable` | Owned mobile push endpoint registrations | `endpointId`, `userId`, `installationId`, `platform`, `provider`, `appId`, `token`, `enabled`, `invalidatedAt` |
+| `pushNotificationOutboxTable` | Durable push delivery queue | `notificationId`, `userId`, `threadId`, `messageId`, `kind`, `status`, `dedupeKey`, `collapseKey`, `attemptCount`, `nextAttemptAt` |
 
 #### Auth Tables (`auth` schema)
 
@@ -155,6 +158,21 @@ Updates:
 - `last_message_preview` - Truncated preview (360 chars max)
 - `message_count` - Increment
 
+Also exposes:
+
+```typescript
+export async function recordThreadAttentionMetadata(
+  args: {
+    threadId: string;
+    messageId: string;
+    messageCreatedAt: Date;
+    kind: string;
+  }
+): Promise<void>
+```
+
+Used to stamp the latest attention-worthy transcript boundary on the owning thread row.
+
 ## Schema Relationships
 
 ```
@@ -169,10 +187,13 @@ budTable
     ├── 1:N ──► threadTable
     │              │
     │              ├── 1:N ──► messageTable
+    │              ├── 1:N ──► threadReadStateTable
+    │              ├── 1:N ──► pushNotificationOutboxTable
     │              │
     │              └── 1:N ──► terminalSessionTable ──► terminalSessionOutputTable
     │                                                   terminalSessionInputLogTable
     │
+    ├── 1:N ──► pushEndpointTable
     ├── enrollmentTokenTable (no FK)
     └── deviceAuthFlowTable
             ├── N:1 ──► authUserTable (approvedByUserId)
@@ -188,6 +209,11 @@ Checked-in migrations now run cleanly through `0011`, including the catch-up mig
 ## Ownership And Multi-Tenancy Support
 
 Browser-facing ownership is now enforced through `createdByUserId` across the Bud/thread/message/terminal-session surfaces, with human terminal input additionally recorded in `terminalSessionInputLog.userId`.
+
+Push-specific ownership follows the same rule:
+- `thread_read_state.user_id` is the viewer whose badge/read state is being tracked
+- `push_endpoint.user_id` owns the registration and prevents cross-user token mutation
+- `push_notification_outbox.user_id` scopes queued deliveries to the intended viewer
 
 `tenantId` columns remain nullable and unused in this tranche.
 

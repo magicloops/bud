@@ -7,6 +7,7 @@ Thread-route submodules split out of the top-level `routes/threads.ts` compositi
 Keeps browser-visible thread ownership checks explicit while splitting the old monolithic thread transport file into smaller route groups:
 - core thread CRUD
 - message history/create flows
+- read-watermark updates for unread-attention state
 - agent state/stream/cancel
 - terminal create/ensure/input/history/stream
 
@@ -20,9 +21,24 @@ Shared Zod schemas, cursor helpers, serialization helpers, and ownership-aware t
 
 Thread list/create/read/delete routes.
 
+### `core.test.ts`
+
+Focused route-handler coverage for thread-list serialization.
+
+**Current Coverage**:
+- `GET /api/threads` maps unread-attention state into `has_unseen_attention` and `last_attention_kind`
+
 ### `messages.ts`
 
-Thread message history and create/send routes, including pre-flight context sync and first-message title kickoff.
+Thread message history, read-watermark, and create/send routes, including pre-flight context sync and first-message title kickoff.
+
+### `messages.test.ts`
+
+Focused route-handler coverage for the thread read-watermark route.
+
+**Current Coverage**:
+- `POST /api/threads/:threadId/read` upserts the watermark when the seen message is newer
+- stale read-watermark updates return `updated: false` and do not rewrite the row
 
 ### `agent.ts`
 
