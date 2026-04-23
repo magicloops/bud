@@ -94,8 +94,10 @@ Environment-based configuration with defaults.
 | `pushWorkerBatchSize` | `PUSH_WORKER_BATCH_SIZE` | 10 | Max outbox rows to claim per worker batch |
 | `apnsKeyId` | `APNS_KEY_ID` | - | APNs signing key id |
 | `apnsTeamId` | `APNS_TEAM_ID` | - | Apple developer team id |
-| `apnsPrivateKey` | `APNS_PRIVATE_KEY` | - | Multiline APNs private key (supports `\n` escaped env storage) |
+| `apnsKeyFile` | `APNS_KEY_FILE` | - | Optional path to the APNs `.p8` private key secret file; read only when `APNS_KEY_ID` and `APNS_TEAM_ID` are both set and takes precedence over `APNS_PRIVATE_KEY` |
+| `apnsPrivateKey` | `APNS_KEY_FILE` or `APNS_PRIVATE_KEY` | - | Resolved APNs private key contents from a secret file or multiline inline env value |
 | `apnsDefaultTopic` | `APNS_DEFAULT_TOPIC` | - | Optional fallback APNs topic when an endpoint omits `app_id` |
+| `apnsAllowedTopics` | `APNS_ALLOWED_TOPICS` | chat.bud.app,chat.bud.app.staging | Comma-separated APNs topic allowlist accepted by push endpoint registration |
 
 **Protocol Constants**:
 - `PROTO_VERSION = "0.1"` - Base WebSocket protocol

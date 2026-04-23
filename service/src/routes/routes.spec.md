@@ -71,6 +71,7 @@ Focused route-handler coverage for the current-user notification and push-endpoi
 **Current Coverage**:
 - notifications summary returns badge-ready unseen-thread counts
 - push endpoint upsert writes owned defaults and returns the normalized registration payload
+- push endpoint upsert accepts the production and staging Bud APNs topics and rejects unknown APNs topics
 - deleting an unknown owned push endpoint returns the expected `404 push_endpoint_not_found`
 
 ### `threads/` → [threads/threads.spec.md](./threads/threads.spec.md)
@@ -296,6 +297,8 @@ Authenticated current-user endpoint backed by shared cookie-or-token auth helper
 - `GET /api/me/accounts` returns linked account rows from `auth.account` with snake_case metadata, scopes, and token-presence flags
 - `GET /api/me/notifications/summary` returns `{ unseen_thread_count, updated_at }`, where the count is the number of owned threads whose latest attention-worthy output is newer than the viewer's read watermark
 - `PUT /api/me/push/endpoints/:installation_id` upserts one owned device-install registration with provider metadata, endpoint token, and per-kind delivery preferences
+- APNs endpoint registration only accepts configured Bud topics, defaulting to `chat.bud.app` and `chat.bud.app.staging`; unknown APNs `app_id` values return `400 invalid_app_id`
+- push endpoint registration removes stale rows for the same provider token or installation id when they belong to another user, so account switches cannot leave the prior account with a deliverable endpoint
 - `DELETE /api/me/push/endpoints/:installation_id` removes one owned device-install registration and returns `404` for unknown install ids owned by the signed-in user
 - `GET /api/me/sessions` returns the user's Better Auth browser sessions with `is_current` and `is_active` markers
 - `POST /api/me/account-links/:provider/start` returns a snake_case Bud-owned payload:

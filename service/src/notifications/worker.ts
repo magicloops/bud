@@ -6,7 +6,7 @@ import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { pushEndpointTable, pushNotificationOutboxTable, threadReadStateTable, threadTable } from "../db/schema.js";
 import { isMessageNewerThanWatermark } from "./attention.js";
-import { ApnsPushProvider, type PushProviderSendResult } from "./apns.js";
+import { ApnsPushProvider, resolveApnsAuthority, type PushProviderSendResult } from "./apns.js";
 import { buildGenericNotificationBody } from "./payload.js";
 
 type OutboxRow = typeof pushNotificationOutboxTable.$inferSelect;
@@ -182,10 +182,46 @@ export class PushNotificationWorker {
     for (const endpoint of eligibleEndpoints) {
       const providerResult = await this.sendToEndpoint(row, endpoint);
       if (providerResult.status === "sent") {
+        this.logger.info(
+          {
+            component: "push_worker",
+            notificationId: row.notificationId,
+            userId: row.userId,
+            threadId: row.threadId,
+            messageId: row.messageId,
+            kind: row.kind,
+            endpointId: endpoint.endpointId,
+            provider: endpoint.provider,
+            appId: endpoint.appId,
+            providerEnvironment: endpoint.providerEnvironment,
+            apnsTopic: endpoint.appId,
+            apnsAuthority: resolveApnsAuthority(endpoint.providerEnvironment),
+          },
+          "Push notification sent",
+        );
         sent = true;
         continue;
       }
       if (providerResult.status === "invalid_endpoint") {
+        this.logger.warn(
+          {
+            component: "push_worker",
+            notificationId: row.notificationId,
+            userId: row.userId,
+            threadId: row.threadId,
+            messageId: row.messageId,
+            kind: row.kind,
+            endpointId: endpoint.endpointId,
+            provider: endpoint.provider,
+            appId: endpoint.appId,
+            providerEnvironment: endpoint.providerEnvironment,
+            apnsTopic: endpoint.appId,
+            apnsAuthority: resolveApnsAuthority(endpoint.providerEnvironment),
+            code: providerResult.code,
+            message: providerResult.message,
+          },
+          "Push endpoint invalidated by provider",
+        );
         await db
           .update(pushEndpointTable)
           .set({
@@ -198,10 +234,49 @@ export class PushNotificationWorker {
           .where(eq(pushEndpointTable.endpointId, endpoint.endpointId));
       }
       if (providerResult.status === "retryable") {
+        this.logger.warn(
+          {
+            component: "push_worker",
+            notificationId: row.notificationId,
+            userId: row.userId,
+            threadId: row.threadId,
+            messageId: row.messageId,
+            kind: row.kind,
+            endpointId: endpoint.endpointId,
+            provider: endpoint.provider,
+            appId: endpoint.appId,
+            providerEnvironment: endpoint.providerEnvironment,
+            apnsTopic: endpoint.appId,
+            apnsAuthority: resolveApnsAuthority(endpoint.providerEnvironment),
+            code: providerResult.code,
+            message: providerResult.message,
+            attemptCount: row.attemptCount,
+          },
+          "Push notification delivery will retry",
+        );
         await this.markRetry(row, providerResult);
         return;
       }
       if (providerResult.status === "failed") {
+        this.logger.error(
+          {
+            component: "push_worker",
+            notificationId: row.notificationId,
+            userId: row.userId,
+            threadId: row.threadId,
+            messageId: row.messageId,
+            kind: row.kind,
+            endpointId: endpoint.endpointId,
+            provider: endpoint.provider,
+            appId: endpoint.appId,
+            providerEnvironment: endpoint.providerEnvironment,
+            apnsTopic: endpoint.appId,
+            apnsAuthority: resolveApnsAuthority(endpoint.providerEnvironment),
+            code: providerResult.code,
+            message: providerResult.message,
+          },
+          "Push notification delivery failed permanently",
+        );
         await this.markDead(row, providerResult);
         return;
       }

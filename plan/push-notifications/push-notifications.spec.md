@@ -76,6 +76,18 @@ Validation and operational follow-up phase covering:
 - outbox/worker inspection and logging
 - lightweight operational visibility for send, suppress, retry, and dead-letter states
 
+### `phase-7-staging-apns-topic-and-account-switch-hardening.md`
+
+Staging-readiness phase based on the iOS backend handoff in [../../reference/IOS_PUSH_NOTIFICATIONS_BACKEND_HANDOFF.md](../../reference/IOS_PUSH_NOTIFICATIONS_BACKEND_HANDOFF.md).
+
+Covers:
+
+- split APNs topics for production and staging/debug apps
+- APNs topic allowlisting
+- staging `chat.bud.app.staging` validation
+- APNs topic/environment error hardening
+- same-install account-switch ownership safety
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.

@@ -29,16 +29,36 @@ function base64UrlEncode(input: string): string {
   return Buffer.from(input, "utf8").toString("base64url");
 }
 
+const INVALID_ENDPOINT_REASONS = [
+  "BadDeviceToken",
+  "DeviceTokenNotForTopic",
+  "Unregistered",
+];
+
+const NON_RETRYABLE_PROVIDER_REASONS = [
+  "BadCertificateEnvironment",
+  "BadTopic",
+  "MissingTopic",
+  "TopicDisallowed",
+];
+
+export function resolveApnsAuthority(environment: string | null): string {
+  return environment === "sandbox" || environment === "development"
+    ? "https://api.sandbox.push.apple.com"
+    : "https://api.push.apple.com";
+}
+
 export function classifyApnsFailure(status: number, reason: string | null): PushProviderSendResult {
   if (status >= 200 && status < 300) {
     return { status: "sent" };
   }
 
-  if (
-    reason &&
-    ["BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered"].includes(reason)
-  ) {
+  if (reason && INVALID_ENDPOINT_REASONS.includes(reason)) {
     return { status: "invalid_endpoint", code: reason, message: reason };
+  }
+
+  if (reason && NON_RETRYABLE_PROVIDER_REASONS.includes(reason)) {
+    return { status: "failed", code: reason, message: reason };
   }
 
   if (status === 429 || status >= 500) {
@@ -73,7 +93,7 @@ export class ApnsPushProvider {
     endpoint: ApnsPushEndpoint,
   ): Promise<PushProviderSendResult> {
     const jwt = this.buildJwt();
-    const authority = this.resolveAuthority(endpoint.providerEnvironment);
+    const authority = resolveApnsAuthority(endpoint.providerEnvironment);
     const topic = endpoint.appId || this.defaultTopic;
     if (!topic) {
       return { status: "failed", code: "MissingTopic", message: "apns_topic_missing" };
@@ -152,11 +172,5 @@ export class ApnsPushProvider {
     signer.end();
     const signature = signer.sign(key).toString("base64url");
     return `${unsignedToken}.${signature}`;
-  }
-
-  private resolveAuthority(environment: string | null): string {
-    return environment === "sandbox" || environment === "development"
-      ? "https://api.sandbox.push.apple.com"
-      : "https://api.push.apple.com";
   }
 }

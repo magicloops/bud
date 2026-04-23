@@ -54,6 +54,7 @@ Checked-in template for local service setup. Includes:
 - the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
 - the local browser-workbench recommendation that the web app sets `VITE_API_BASE_URL=http://localhost:3000` so API/SSE traffic bypasses the Vite-origin proxy path during multi-tab terminal work
 - the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin, `API_AUDIENCE` points at that origin's `/api` path, and `OAUTH_TRUSTED_CLIENT_IDS` includes the published first-party mobile client ids for that environment
+- optional APNs push-notification settings (`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_FILE`, `APNS_PRIVATE_KEY`, `APNS_DEFAULT_TOPIC`, `APNS_ALLOWED_TOPICS`)
 - optional LLM provider settings
 
 ### `.env` (not committed)
@@ -227,7 +228,7 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `AGENT_MAX_STEPS` - Max tool calls (default: 30)
 - `AGENT_DEBUG` - Enable debug logging
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
-- `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` - APNs provider credentials and fallback topic
+- `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_FILE` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` / `APNS_ALLOWED_TOPICS` - APNs provider credentials, fallback topic, and accepted Bud app topics
 
 See [src/config.ts](./src/src.spec.md) for complete list.
 

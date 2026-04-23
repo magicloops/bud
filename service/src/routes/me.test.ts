@@ -10,11 +10,27 @@ type InsertedPushEndpoint = {
   userId?: string;
   installationId?: string;
   provider?: string;
+  providerEnvironment?: string | null;
+  appId?: string;
+  token?: string;
   enabled?: boolean;
   alertsAgentCompleted?: boolean;
   alertsHumanInputRequested?: boolean;
   includeMessagePreview?: boolean;
 };
+type MockPushEndpointTransaction = {
+  delete(): {
+    where(): Promise<void>;
+  };
+  insert(): {
+    values(values?: InsertedPushEndpoint): {
+      onConflictDoUpdate(config?: Record<string, unknown>): Promise<void>;
+    };
+  };
+};
+type MockPushEndpointTransactionCallback = (
+  tx: MockPushEndpointTransaction,
+) => Promise<unknown> | unknown;
 
 class TestReply {
   statusCode = 200;
@@ -191,28 +207,43 @@ test("PUT /api/me/push/endpoints/:installation_id upserts the owned push endpoin
     },
   }) as never);
 
+  let deletedStaleAssociations = false;
   let insertedValues: InsertedPushEndpoint | null = null;
   let conflictConfig: Record<string, unknown> | null = null;
 
-  mock.method(db, "insert", () => ({
-    values(values: InsertedPushEndpoint) {
-      insertedValues = values;
-      return {
-        onConflictDoUpdate(config: Record<string, unknown>) {
-          conflictConfig = config;
-          return Promise.resolve(undefined);
-        },
-      };
-    },
-  }) as never);
+  mock.method(db, "transaction", async (callback: MockPushEndpointTransactionCallback) =>
+    callback({
+      delete() {
+        deletedStaleAssociations = true;
+        return {
+          where() {
+            return Promise.resolve(undefined);
+          },
+        };
+      },
+      insert() {
+        return {
+          values(values: InsertedPushEndpoint) {
+            insertedValues = values;
+            return {
+              onConflictDoUpdate(config: Record<string, unknown>) {
+                conflictConfig = config;
+                return Promise.resolve(undefined);
+              },
+            };
+          },
+        };
+      },
+    } as never),
+  );
 
   const response = await invokeRoute(handler, {
     params: { installation_id: "ios-install-1" },
     body: {
       platform: "ios",
       provider: "apns",
-      provider_environment: "sandbox",
-      app_id: "com.example.bud",
+      provider_environment: "production",
+      app_id: "chat.bud.app.staging",
       token: "apns-token-1",
     },
     headers: {},
@@ -223,15 +254,130 @@ test("PUT /api/me/push/endpoints/:installation_id upserts the owned push endpoin
     installation_id: "ios-install-1",
     status: "registered",
   });
+  assert.equal(deletedStaleAssociations, true);
   const capturedInsert = insertedValues as InsertedPushEndpoint | null;
   assert.equal(capturedInsert?.userId, "user-1");
   assert.equal(capturedInsert?.installationId, "ios-install-1");
   assert.equal(capturedInsert?.provider, "apns");
+  assert.equal(capturedInsert?.providerEnvironment, "production");
+  assert.equal(capturedInsert?.appId, "chat.bud.app.staging");
   assert.equal(capturedInsert?.enabled, true);
   assert.equal(capturedInsert?.alertsAgentCompleted, true);
   assert.equal(capturedInsert?.alertsHumanInputRequested, true);
   assert.equal(capturedInsert?.includeMessagePreview, true);
   assert.ok(conflictConfig, "expected onConflictDoUpdate to be configured");
+});
+
+test("PUT /api/me/push/endpoints/:installation_id accepts the production APNs topic", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const server = createServer();
+  await registerMeRoutes(server);
+
+  const handler = server.routes.get("PUT /api/me/push/endpoints/:installation_id");
+  assert.ok(handler, "expected push endpoint route to register");
+
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.userProfileTable, "findFirst", async () => CURRENT_USER.profile as never);
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return Promise.resolve([{ providerId: "github" }]);
+        },
+      };
+    },
+  }) as never);
+  mock.method(db, "transaction", async (callback: MockPushEndpointTransactionCallback) =>
+    callback({
+      delete() {
+        return {
+          where() {
+            return Promise.resolve(undefined);
+          },
+        };
+      },
+      insert() {
+        return {
+          values() {
+            return {
+              onConflictDoUpdate() {
+                return Promise.resolve(undefined);
+              },
+            };
+          },
+        };
+      },
+    } as never),
+  );
+
+  const response = await invokeRoute(handler, {
+    params: { installation_id: "ios-install-1" },
+    body: {
+      platform: "ios",
+      provider: "apns",
+      provider_environment: "production",
+      app_id: "chat.bud.app",
+      token: "apns-token-1",
+    },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.payload, {
+    installation_id: "ios-install-1",
+    status: "registered",
+  });
+});
+
+test("PUT /api/me/push/endpoints/:installation_id rejects unknown APNs topics", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const server = createServer();
+  await registerMeRoutes(server);
+
+  const handler = server.routes.get("PUT /api/me/push/endpoints/:installation_id");
+  assert.ok(handler, "expected push endpoint route to register");
+
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.userProfileTable, "findFirst", async () => CURRENT_USER.profile as never);
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return Promise.resolve([{ providerId: "github" }]);
+        },
+      };
+    },
+  }) as never);
+
+  let transactionCalled = false;
+  mock.method(db, "transaction", async () => {
+    transactionCalled = true;
+  });
+
+  const response = await invokeRoute(handler, {
+    params: { installation_id: "ios-install-1" },
+    body: {
+      platform: "ios",
+      provider: "apns",
+      provider_environment: "production",
+      app_id: "com.example.invalid",
+      token: "apns-token-1",
+    },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.payload, {
+    error: "invalid_app_id",
+    allowed_app_ids: ["chat.bud.app", "chat.bud.app.staging"],
+  });
+  assert.equal(transactionCalled, false);
 });
 
 test("DELETE /api/me/push/endpoints/:installation_id returns 404 for unknown owned endpoints", async (t) => {

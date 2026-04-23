@@ -11,6 +11,8 @@ Implemented server behavior:
 - thread list unread indicators
 - durable outbox enqueue on final assistant completion
 - APNs delivery worker for iOS
+- staging/production APNs topic allowlisting for `chat.bud.app.staging` and `chat.bud.app`
+- account-switch hardening for reused push provider tokens or install IDs
 
 Not yet implemented:
 
@@ -51,7 +53,7 @@ Request body:
   "platform": "ios",
   "provider": "apns",
   "provider_environment": "sandbox",
-  "app_id": "com.example.bud",
+  "app_id": "chat.bud.app.staging",
   "token": "<apns-device-token>",
   "enabled": true,
   "alerts_agent_completed": true,
@@ -73,7 +75,11 @@ Notes:
 
 - `installation_id` should be stable for one app install
 - re-register on token refresh, app reinstall, or login change
+- accepted APNs `app_id` values are `chat.bud.app.staging` and `chat.bud.app`
+- unknown APNs app IDs return `400 invalid_app_id` with `allowed_app_ids`
 - use `provider_environment: "sandbox"` for local/dev APNs sandbox builds and `production` for App Store/TestFlight-style production APNs
+- staging distributed builds should register `app_id: "chat.bud.app.staging"` with `provider_environment: "production"`
+- if the same APNs token or reused install ID is registered by another authenticated account, backend registration removes stale prior endpoint ownership before storing the new endpoint
 
 ### Delete push endpoint
 
@@ -223,7 +229,7 @@ Current APNs request body shape is:
 Current APNs headers include:
 
 - `apns-push-type: alert`
-- `apns-topic: <app_id or APNS_DEFAULT_TOPIC>`
+- `apns-topic: <registered app_id>`
 - `apns-collapse-id: thread:<thread_id>`
 
 Current backend behavior does **not** set `aps.thread-id`.
@@ -289,6 +295,12 @@ The backend is comfortable with mobile reusing the existing TimelineCore app ins
 - not tied to a specific signed-in account
 
 That shape is a good fit for the current `(user_id, installation_id)` ownership model.
+
+Backend account-switch behavior:
+
+- registration treats the APNs provider token as globally unique
+- when a token or reused installation ID appears under a different authenticated user, stale prior endpoint rows are removed before the new registration is stored
+- after a login change, mobile should re-register the endpoint so future notifications target the current account only
 
 ### Tap behavior for deleted, archived, or inaccessible threads
 

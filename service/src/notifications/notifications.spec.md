@@ -47,11 +47,13 @@ Native Node APNs provider implementation using:
 
 - JWT generation from configured APNs credentials
 - HTTP/2 request dispatch
+- provider-environment routing where `sandbox` / `development` use `api.sandbox.push.apple.com` and `production` / unset use `api.push.apple.com`
 - APNs error classification into sent, retryable, invalid-endpoint, and failed buckets
+- non-retryable handling for topic/environment mismatch responses such as `BadTopic`, `MissingTopic`, `TopicDisallowed`, and `BadCertificateEnvironment`
 
 ### `apns.test.ts`
 
-Focused tests for APNs failure classification.
+Focused tests for APNs failure classification, provider-environment authority routing, and APNs private-key config source resolution.
 
 ### `worker.ts`
 
@@ -64,6 +66,7 @@ Responsibilities:
 - fan out to enabled endpoints
 - retry transient failures
 - invalidate dead tokens
+- log delivery outcomes with endpoint id, registered app id, provider environment, APNs topic, resolved APNs authority, and provider error reason
 
 ## Dependencies
 

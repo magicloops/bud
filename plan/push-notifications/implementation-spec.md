@@ -13,6 +13,7 @@
 **Phase 4**: [phase-4-client-read-state-and-badge-adoption.md](./phase-4-client-read-state-and-badge-adoption.md)
 **Phase 5**: [phase-5-human-input-attention-trigger.md](./phase-5-human-input-attention-trigger.md)
 **Phase 6**: [phase-6-apns-smoke-test-and-observability.md](./phase-6-apns-smoke-test-and-observability.md)
+**Phase 7**: [phase-7-staging-apns-topic-and-account-switch-hardening.md](./phase-7-staging-apns-topic-and-account-switch-hardening.md)
 
 ---
 
@@ -239,6 +240,7 @@ These fields should be derived server-side from `thread` summary columns plus `t
 | 4 | [phase-4-client-read-state-and-badge-adoption.md](./phase-4-client-read-state-and-badge-adoption.md) | High | Mobile uses registration, read acknowledgments, thread unread indicators, and aggregate badge count cleanly |
 | 5 | [phase-5-human-input-attention-trigger.md](./phase-5-human-input-attention-trigger.md) | High | Durable human-input prompts reuse the same attention and notification pipeline |
 | 6 | [phase-6-apns-smoke-test-and-observability.md](./phase-6-apns-smoke-test-and-observability.md) | High | Real-device APNs validation and backend inspection tooling make the shipped push path operable |
+| 7 | [phase-7-staging-apns-topic-and-account-switch-hardening.md](./phase-7-staging-apns-topic-and-account-switch-hardening.md) | High | Staging split-topic APNs validation, topic allowlisting, and account-switch endpoint safety |
 
 ## Expected Files And Areas
 
@@ -297,7 +299,8 @@ These fields should be derived server-side from `thread` summary columns plus `t
 3. Add the APNs worker and endpoint invalidation behavior.
 4. Adopt read-state and badge-summary flows in mobile.
 5. Validate the APNs path end-to-end and add operational observability.
-6. Extend the same pipeline to durable human-input prompts once they exist.
+6. Harden staging APNs topic handling and same-install account-switch safety.
+7. Extend the same pipeline to durable human-input prompts once they exist.
 
 ## Definition Of Done
 

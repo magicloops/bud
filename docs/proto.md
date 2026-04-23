@@ -138,7 +138,7 @@ Registration request body:
   "platform": "ios",
   "provider": "apns",
   "provider_environment": "sandbox",
-  "app_id": "com.example.bud",
+  "app_id": "chat.bud.app.staging",
   "token": "<provider-device-token>",
   "enabled": true,
   "alerts_agent_completed": true,
@@ -146,6 +146,12 @@ Registration request body:
   "include_message_preview": true
 }
 ```
+
+APNs registration rules:
+- accepted Bud APNs topics default to `chat.bud.app` and `chat.bud.app.staging`
+- unknown APNs `app_id` values return `400 { "error": "invalid_app_id", "allowed_app_ids": [...] }`
+- `provider_environment: "sandbox"` and `"development"` target APNs sandbox delivery; `"production"` targets production APNs delivery
+- registering the same APNs provider token or reused installation id under a different authenticated user removes stale prior endpoint ownership before the new registration is stored
 
 ---
 
@@ -619,7 +625,8 @@ Service: otherwise emit agent.resync_required
 - reconnect auth should always use challenge-response, not reusable bearer secrets on the wire
 - TLS is required for deployed WebSocket traffic
 - browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
-- push endpoint registrations and unread/read watermarks are user-owned resources and must never be mutated across user boundaries
+- push endpoint registrations and unread/read watermarks are user-owned resources; normal client-directed reads and deletes are scoped to the authenticated owner
+- the push registration route may additionally server-side reclaim the same provider token or reused installation id from stale prior ownership so a logged-out account cannot keep receiving notifications for a device now registered by another user
 
 ---
 

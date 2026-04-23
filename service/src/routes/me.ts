@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { fromNodeHeaders } from "better-auth/node";
 import { z } from "zod";
+import { config } from "../config.js";
 import {
   AUTH_BASE_PATH,
   applyAuthResponseHeaders,
@@ -87,6 +88,10 @@ const pushEndpointBodySchema = z.object({
   alerts_human_input_requested: z.boolean().optional(),
   include_message_preview: z.boolean().optional(),
 });
+
+function isAllowedApnsTopic(appId: string): boolean {
+  return config.apnsAllowedTopics.includes(appId);
+}
 
 function splitAccountScopes(scope: string | null): string[] {
   return (scope ?? "")
@@ -233,27 +238,38 @@ export async function registerMeRoutes(server: FastifyInstance): Promise<void> {
     const now = new Date();
     const body = bodyResult.data;
 
-    await db
-      .insert(pushEndpointTable)
-      .values({
-        userId: currentUser.user.id,
-        installationId: paramsResult.data.installation_id,
-        platform: body.platform,
-        provider: body.provider,
-        providerEnvironment: body.provider_environment ?? null,
-        appId: body.app_id,
-        token: body.token,
-        enabled: body.enabled ?? true,
-        alertsAgentCompleted: body.alerts_agent_completed ?? true,
-        alertsHumanInputRequested: body.alerts_human_input_requested ?? true,
-        includeMessagePreview: body.include_message_preview ?? true,
-        lastRegisteredAt: now,
-        lastSeenAt: now,
-        createdByUserId: currentUser.user.id,
-      })
-      .onConflictDoUpdate({
-        target: [pushEndpointTable.userId, pushEndpointTable.installationId],
-        set: {
+    if (body.provider === "apns" && !isAllowedApnsTopic(body.app_id)) {
+      return reply.status(400).send({
+        error: "invalid_app_id",
+        allowed_app_ids: config.apnsAllowedTopics,
+      });
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(pushEndpointTable)
+        .where(
+          or(
+            and(
+              eq(pushEndpointTable.provider, body.provider),
+              eq(pushEndpointTable.token, body.token),
+              or(
+                ne(pushEndpointTable.userId, currentUser.user.id),
+                ne(pushEndpointTable.installationId, paramsResult.data.installation_id),
+              ),
+            ),
+            and(
+              eq(pushEndpointTable.installationId, paramsResult.data.installation_id),
+              ne(pushEndpointTable.userId, currentUser.user.id),
+            ),
+          ),
+        );
+
+      await tx
+        .insert(pushEndpointTable)
+        .values({
+          userId: currentUser.user.id,
+          installationId: paramsResult.data.installation_id,
           platform: body.platform,
           provider: body.provider,
           providerEnvironment: body.provider_environment ?? null,
@@ -263,12 +279,29 @@ export async function registerMeRoutes(server: FastifyInstance): Promise<void> {
           alertsAgentCompleted: body.alerts_agent_completed ?? true,
           alertsHumanInputRequested: body.alerts_human_input_requested ?? true,
           includeMessagePreview: body.include_message_preview ?? true,
-          invalidatedAt: null,
           lastRegisteredAt: now,
           lastSeenAt: now,
-          updatedAt: now,
-        },
-      });
+          createdByUserId: currentUser.user.id,
+        })
+        .onConflictDoUpdate({
+          target: [pushEndpointTable.userId, pushEndpointTable.installationId],
+          set: {
+            platform: body.platform,
+            provider: body.provider,
+            providerEnvironment: body.provider_environment ?? null,
+            appId: body.app_id,
+            token: body.token,
+            enabled: body.enabled ?? true,
+            alertsAgentCompleted: body.alerts_agent_completed ?? true,
+            alertsHumanInputRequested: body.alerts_human_input_requested ?? true,
+            includeMessagePreview: body.include_message_preview ?? true,
+            invalidatedAt: null,
+            lastRegisteredAt: now,
+            lastSeenAt: now,
+            updatedAt: now,
+          },
+        });
+    });
 
     return {
       installation_id: paramsResult.data.installation_id,
