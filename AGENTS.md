@@ -159,7 +159,7 @@ Provide the exact command and error output, **then stop**. Do not try multiple a
 If you change:
 - Bud↔Service WebSocket messages: Update `/docs/proto.md`
 - SSE event shapes: Update `/docs/proto.md`
-- Database schema: Update `schema.ts`, run `drizzle-kit push`, update `db.spec.md`
+- Database schema: Update `service/src/db/schema.ts`, run `pnpm db:push`, generate checked-in Drizzle migrations for deployable changes via `pnpm db:generate`, update `service/src/db/db.spec.md`, and update `service/drizzle/migrations/migrations.spec.md`
 
 ### 3.7) Define ownership before adding browser-facing features
 
@@ -279,7 +279,7 @@ Implementation guardrails:
 ## Impacted Contracts
 - [ ] WSS protocol
 - [ ] SSE events
-- [ ] DB schema (drizzle-kit push)
+- [ ] DB schema (`pnpm db:push` + checked-in migration if deployable)
 - [ ] Agent tools
 - [ ] Web UI
 
@@ -349,24 +349,31 @@ This project uses a mixed Drizzle workflow:
 - local development uses **`drizzle-kit push`** (`pnpm db:push`)
 - staging uses **`drizzle-kit migrate`** (`pnpm db:migrate`)
 
+For any branch intended for staging or deploy, **`db:push` is not enough**.
+
 **Workflow for schema changes:**
 
 1. Edit `service/src/db/schema.ts` (source of truth)
 2. Run `pnpm db:push` from `service/` for local development
 3. Review the SQL Drizzle proposes and apply it locally
-4. If staging needs the same change through checked-in history, generate or update the migration chain and use `pnpm db:migrate`
-5. Update `service/src/db/db.spec.md` if needed
+4. Run `pnpm db:generate` from `service/` unless the schema change is explicitly SQL-no-op
+5. Review the generated migration SQL and metadata in `service/drizzle/migrations/`
+6. Verify the migration covers every new or changed table, column, index, constraint, and foreign key
+7. Update `service/src/db/db.spec.md` and `service/drizzle/migrations/migrations.spec.md` if needed
+8. Mention the migration filename in PR and deploy handoff docs
 
 **Commands (run from `service/`):**
 
 ```bash
 pnpm db:push             # Apply schema.ts changes locally
+pnpm db:generate         # Generate checked-in migration files from schema.ts changes
 pnpm db:migrate          # Apply checked-in migrations in staging/deployed envs
 pnpm db:studio           # Open Drizzle Studio (database browser)
 ```
 
 **Do NOT:**
 - Manually edit `drizzle/migrations/meta/_journal.json`
+- Treat checked-in migrations as optional for deployable schema changes
 - Assume staging can use `db:push`
 
 See `debug/drizzle-migration-not-applied.md` for context on this decision.
@@ -391,7 +398,7 @@ A task is complete when:
 - [ ] Code compiles and runs locally
 - [ ] **Spec files updated** for any changed folders/files
 - [ ] Protocol and schema docs updated (if touched)
-- [ ] Database schema changes applied via `drizzle-kit push` (if touched)
+- [ ] Database schema changes applied locally via `pnpm db:push` and represented in checked-in Drizzle migrations for staging/deployed environments
 - [ ] Tests added or updated
 - [ ] `plan/` or `debug/` doc exists and linked from PR
 - [ ] No new `SPEC:TODO` markers without justification
@@ -435,4 +442,4 @@ cat bud.spec.md
 
 ---
 
-*Last updated: 2026-03-27*
+*Last updated: 2026-04-23*
