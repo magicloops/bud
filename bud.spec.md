@@ -4,7 +4,7 @@
 
 ## Overview
 
-Bud is a three-tier system that connects AI agents to physical devices through persistent terminal sessions. Users interact through a chat-based web interface, where an LLM (via OpenAI's Responses API) can execute commands on remote "buds" (device agents) in real-time.
+Bud is a three-tier system that connects AI agents to physical devices through persistent terminal sessions. Users interact through a chat-based web interface, where an LLM (via the configured OpenAI or Anthropic provider) can execute commands on remote "buds" (device agents) in real-time.
 
 ### Core Value Proposition
 
@@ -28,8 +28,8 @@ Bud is a three-tier system that connects AI agents to physical devices through p
          ▼                                     ▼
 ┌─────────────────┐                  ┌─────────────────┐         ┌─────────────────┐
 │                 │                  │                 │         │                 │
-│  Local Shell    │                  │   PostgreSQL    │         │   OpenAI API    │
-│   (bash/zsh)    │                  │   (Drizzle)     │         │  (Responses)    │
+│  Local Shell    │                  │   PostgreSQL    │         │ Provider APIs   │
+│   (bash/zsh)    │                  │   (Drizzle)     │         │ HTTP APIs       │
 │                 │                  │                 │         │                 │
 └─────────────────┘                  └─────────────────┘         └─────────────────┘
 ```
@@ -42,7 +42,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |
-| Service → OpenAI | HTTP | LLM inference via Responses API |
+| Service → LLM Provider | HTTP | LLM inference via OpenAI Responses API or Anthropic Messages API |
 
 ---
 
@@ -172,7 +172,8 @@ bud/
 | **Better Auth** | Browser authentication + OAuth |
 | **Drizzle ORM** | Type-safe database access |
 | **PostgreSQL** | Primary database |
-| **OpenAI SDK** | LLM integration |
+| **OpenAI SDK** | OpenAI LLM integration |
+| **Anthropic SDK** | Anthropic LLM integration |
 | **Zod** | Runtime validation |
 | **Pino** | Structured logging |
 
@@ -312,12 +313,12 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 ```
 1. Web UI POST /api/threads/:id/messages { content: "list files" }
 2. Service creates message record, starts agent loop
-3. Service calls OpenAI with thread context
-4. OpenAI returns tool_call: terminal.send({ text: "ls -la", submit: true })
+3. Service calls the selected LLM provider with thread context
+4. Model returns tool_call: terminal.send({ text: "ls -la", submit: true })
 5. Service sends `terminal_send` to the daemon
 6. Daemon submits the input in tmux and returns `terminal_send_result` with readiness and delta
-7. Service decides whether follow-up observation is needed, then calls OpenAI with result
-8. OpenAI returns final response
+7. Service decides whether follow-up observation is needed, then calls the selected provider with result
+8. Model returns final response
 9. Service stores assistant message, emits SSE events
 10. Web UI renders response in chat timeline
 ```
@@ -344,7 +345,8 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 | `PORT` | 3000 | HTTP server port |
 | `DATABASE_URL` | - | PostgreSQL connection string |
 | `OPENAI_API_KEY` | - | OpenAI API key |
-| `OPENAI_MODEL` | gpt-4.1-mini | Model for agent |
+| `ANTHROPIC_API_KEY` | - | Anthropic API key |
+| `DEFAULT_MODEL` | claude-opus-4-6 | Product model for agent requests that omit `model` |
 | `AGENT_MAX_STEPS` | 30 | Max tool calls per request |
 | `AGENT_DEBUG` | false | Enable agent debug logging |
 | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle after |
@@ -444,12 +446,12 @@ Thread-scoped sessions provide isolation and predictability.
 
 The daemon now keeps tmux behind an internal backend adapter so future PTY or mosh-like backends can reuse the same higher-level terminal runtime and readiness logic. The normal Bud↔service↔browser contract is now backend-neutral above that adapter, with only a temporary one-entry `keys` compatibility alias left in place during rollout.
 
-### Why OpenAI Responses API?
+### Why Provider APIs?
 
-- Built-in tool calling with structured outputs
+- Built-in tool calling
 - Streaming support
-- Reasoning effort control
-- Simpler than raw chat completions for agent loops
+- Provider/model-specific reasoning controls
+- OpenAI Responses API and Anthropic Messages API both map into Bud's canonical provider interface
 
 ---
 
@@ -509,6 +511,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/mobile-api-simplify/implementation-spec.md](./plan/mobile-api-simplify/implementation-spec.md) | Phased implementation plan for simplifying Bud’s transcript history and agent-stream contracts so both web and mobile can consume a cleaner, more durable thread API |
 | [plan/mobile-api-simplify/progress-checklist.md](./plan/mobile-api-simplify/progress-checklist.md) | Running checklist for the transcript-history and agent-stream simplification work, tracking paging, stream semantics, reference-web adoption, true assistant streaming, and handoff validation |
 | [plan/mobile-agent-stream-attach-semantics/implementation-spec.md](./plan/mobile-agent-stream-attach-semantics/implementation-spec.md) | Phased implementation plan for separating active-turn bootstrap from agent-stream replay, adding an explicit `/agent/state` runtime snapshot with opaque resume cursors, and keeping agent-stream replay to a bounded catch-up window with explicit resync |
+| [plan/llm-models/implementation-spec.md](./plan/llm-models/implementation-spec.md) | Phased implementation plan for centralizing Bud's model catalog, adding the Opus 4.6/4.7 and GPT-5.4/GPT-5.5 model set, and making reasoning controls provider/model-specific |
 | [plan/thread-title-generation/implementation-spec.md](./plan/thread-title-generation/implementation-spec.md) | Phased implementation plan for generating short thread titles from first user messages, persisting `thread.title`, streaming `thread.title` updates, and adopting the contract in the reference web client |
 | [plan/mobile-agent-stream-attach-semantics/validation-checklist.md](./plan/mobile-agent-stream-attach-semantics/validation-checklist.md) | Validation checklist for the agent-stream attach-semantics work, covering runtime-state route behavior, completed-thread reopen, active-turn open, reconnect replay, and docs/spec alignment |
 | [plan/ios-local-auth/implementation-spec.md](./plan/ios-local-auth/implementation-spec.md) | Focused implementation plan for the local iOS auth handoff, covering public-origin alignment, deterministic client provisioning, revoke cleanup, and bundle publication |
@@ -619,6 +622,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/mobile-agent-stream-attach-semantics.md](./design/mobile-agent-stream-attach-semantics.md) | Design for separating passive thread-open semantics from reconnect replay, adding an explicit current-turn runtime bootstrap surface with opaque resume cursors, making cursorless agent-stream attach live-only, and constraining replay to bounded catch-up with explicit resync |
 | [design/mobile-tool-call-timing-and-compaction.md](./design/mobile-tool-call-timing-and-compaction.md) | Design for keeping grouped mobile tool-summary rows client-side while adding authoritative tool timing to canonical message metadata and optional server-clock timestamps to live tool SSE events |
 | [design/mobile-chat-thread-first-backend-contract.md](./design/mobile-chat-thread-first-backend-contract.md) | Design for the first-pass mobile chat backend contract, keeping the existing Bud/thread/message route family while adopting a thread-first mobile list and documenting the required payload/stream cleanup |
+| [design/llm-model-catalog-and-reasoning-controls.md](./design/llm-model-catalog-and-reasoning-controls.md) | Design sketch for centralizing Bud's LLM model catalog, making reasoning controls provider/model-specific, and planning the Opus 4.6/4.7 plus GPT-5.4/GPT-5.5 rollout |
 | [design/message-client-id-and-stable-message-identity.md](./design/message-client-id-and-stable-message-identity.md) | Design for adding a UUIDv7 `client_id` to messages as a stable public/UI identity while retaining `message_id` as the persisted row identifier, and threading that new identity through `/messages`, `/agent/state`, and agent SSE payloads |
 | [design/thread-title-generation-and-streaming.md](./design/thread-title-generation-and-streaming.md) | Design for generating a short thread title from the first user message, persisting it onto `thread.title`, and streaming title updates over the existing thread agent stream |
 | [design/mobile-thread-title-stream-handoff.md](./design/mobile-thread-title-stream-handoff.md) | Mobile handoff for the new streamed thread-title update contract, covering the `thread.title` event, client reducer expectations, and recovery rules |
@@ -641,4 +645,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-21*
+*Last updated: 2026-04-23*

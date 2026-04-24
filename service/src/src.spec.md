@@ -83,10 +83,10 @@ Environment-based configuration with defaults.
 | `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |
 | `googleClientSecret` | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
 | `openaiApiKey` | `OPENAI_API_KEY` | - | OpenAI API key |
-| `openaiModel` | `OPENAI_MODEL` | gpt-4.1-mini | Model for agent |
+| `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | claude-opus-4-6 | Product model for agent requests that omit `model` |
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 30 | Max tool calls per request |
 | `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Max tokens per response |
-| `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | none | Default reasoning effort |
+| `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | none | Compatibility fallback for non-catalog model overrides |
 | `runLogMaxBytes` | `RUN_LOG_MAX_BYTES` | 100MB | Max stored run logs |
 | `terminalIdleTimeoutMinutes` | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle |
 | `terminalIdleCleanupHours` | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions (`0` disables destructive cleanup) |
@@ -104,7 +104,7 @@ Environment-based configuration with defaults.
 - `TERMINAL_PROTO_VERSION = "0.2"` - Terminal extensions
 
 **Type Export**:
-- `ReasoningEffortSetting` - "none" | "low" | "medium" | "high"
+- `ReasoningEffortSetting` - catalog `ReasoningLevel` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`)
 
 ## Subfolders
 
@@ -257,6 +257,7 @@ POST /api/device-auth/flows/:flowId/approve
 | `fastify-sse-v2` | Server-Sent Events |
 | `better-auth` | Browser authentication and OAuth |
 | `openai` | OpenAI SDK |
+| `@anthropic-ai/sdk` | Anthropic SDK |
 | `drizzle-orm` | Database ORM |
 | `pg` | PostgreSQL client |
 | `zod` | Request validation |

@@ -29,7 +29,7 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
 ┌─────────────────────┐         ┌─────────────────────┐
 │   OpenAIProvider    │         │  AnthropicProvider  │
 │                     │         │                     │
-│ - GPT-4o, GPT-5     │         │ - Claude 3.5, 4     │
+│ - GPT-5.4, GPT-5.5  │         │ - Claude 4.6, 4.7   │
 │ - Reasoning support │         │ - Extended thinking │
 └─────────────────────┘         └─────────────────────┘
 ```
@@ -90,6 +90,48 @@ interface LLMProvider {
 }
 ```
 
+### `model-catalog.ts`
+
+Central product model catalog and reasoning-control metadata.
+
+**Responsibilities**:
+- own the first-party product IDs exposed through `/api/models`
+- map product IDs to provider API model strings
+- keep provider/model-specific reasoning levels, defaults, labels, and capability metadata in one place
+- define the global default model (`claude-opus-4-6`)
+
+**Current Product Models**:
+
+| Product ID | Provider Model | Reasoning |
+|------------|----------------|-----------|
+| `claude-opus-4-6` | `claude-opus-4-6` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `max`; default `high` |
+| `claude-sonnet-4-6` | `claude-sonnet-4-6` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `max`; default `medium` |
+| `claude-haiku-4-5` | `claude-haiku-4-5-20251001` | Manual thinking budgets: `none`, `low`, `medium`, `high`; default `none` |
+| `claude-opus-4-7` | `claude-opus-4-7` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`; default `xhigh` |
+| `gpt-5.4` | `gpt-5.4-2026-03-05` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
+| `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
+| `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
+| `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
+
+### `reasoning-policy.ts`
+
+Model-specific reasoning validation and lowering.
+
+**Responsibilities**:
+- resolve the selected model through the catalog/registry
+- use the catalog default when a request omits `reasoning_effort`
+- reject unsupported model/reasoning combinations with `InvalidReasoningEffortError`
+- build the canonical `ReasoningConfig` consumed by providers
+
+### `model-catalog.test.ts`
+
+Standalone Node tests for catalog invariants and reasoning option labels.
+
+**Current Coverage**:
+- current product model order and global default
+- provider-specific reasoning levels for GPT-5.4, Claude Opus 4.6, Claude Opus 4.7, and Claude Haiku 4.5
+- stable reasoning labels exposed to API clients
+
 ### `registry.ts`
 
 `ProviderRegistry` singleton for model-to-provider resolution (~130 lines).
@@ -99,17 +141,20 @@ interface LLMProvider {
 - No hardcoded model→provider mapping required
 - Fallback: Query each provider's `supportsModel()` method
 
-**Aliases** (map friendly names to dated model versions):
+**Aliases** (map legacy/friendly names to dated model versions):
 | Alias | Resolves To |
 |-------|-------------|
 | `gpt-5.2` | `gpt-5.2-2025-12-11` |
 | `gpt-5-mini` | `gpt-5-mini-2025-08-07` |
 | `gpt-5-nano` | `gpt-5-nano-2025-08-07` |
+| `gpt-5.4` | `gpt-5.4-2026-03-05` |
+| `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` |
+| `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` |
 | `claude-opus-4-5` | `claude-opus-4-5-20251101` |
 | `claude-sonnet-4-5` | `claude-sonnet-4-5-20250929` |
 | `claude-haiku-4-5` | `claude-haiku-4-5-20251001` |
 
-Note: Provider `supportedModels` use dated versions, not aliases. The models API adds aliases pointing to those dated versions. Frontend filters to show only alias models for cleaner UI.
+Catalog entries are preferred for product IDs. Legacy aliases remain as hidden compatibility for env overrides and older explicit model references; `/api/models` exposes catalog product IDs only.
 
 **Key Methods**:
 | Method | Description |
@@ -118,13 +163,14 @@ Note: Provider `supportedModels` use dated versions, not aliases. The models API
 | `unregister(name)` | Remove provider and its model mappings |
 | `getProviderForModel(model)` | Resolve model to provider (resolves aliases first) |
 | `resolveModelAlias(model)` | Expand alias to full model ID |
+| `hasProvider(name)` | Check whether a provider is configured |
 | `listModels()` | Get all models from registered providers |
 
 ### `index.ts`
 
 Barrel exports and provider initialization.
 
-**Exports**: All types, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`
+**Exports**: All canonical types, catalog helpers, reasoning policy helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`
 
 **`initializeProviders()`**: Called at startup to register providers based on config:
 ```typescript
@@ -158,11 +204,11 @@ import { providerRegistry, initializeProviders, type CanonicalMessage } from "./
 initializeProviders();
 
 // In agent service
-const provider = providerRegistry.getProviderForModel("gpt-5.2");
+const provider = providerRegistry.getProviderForModel("gpt-5.4");
 for await (const event of provider.invoke(messages, tools, {
-  model: "gpt-5.2",
+  model: "gpt-5.4-2026-03-05",
   maxOutputTokens: 4096,
-  reasoning: { enabled: true, effort: "medium" },
+  reasoning: { enabled: true, effort: "xhigh" },
   responseFormat: "text",
 })) {
   // Handle canonical stream events
@@ -210,7 +256,7 @@ Each provider transforms canonical schemas to their specific requirements:
 |---------|---------|
 | `openai` | OpenAI SDK for Responses API |
 | `@types/json-schema` | JSONSchema7 type definitions |
-| `@anthropic-ai/sdk` | Anthropic SDK for Messages API |
+| `@anthropic-ai/sdk` | Anthropic SDK for Messages API, including adaptive-thinking request passthrough |
 
 ## TODOs / Technical Debt
 

@@ -1,24 +1,71 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/transport'
 
+export type ReasoningLevel = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export type ReasoningOption = {
+  value: ReasoningLevel
+  label: string
+}
+
 export type ModelInfo = {
   id: string
   provider: string
+  provider_model: string
   display_name: string
+  is_default: boolean
   capabilities: {
     vision: boolean
     tools: boolean
     streaming: boolean
-    reasoning: boolean
-    thinking: boolean
+    structured_outputs: boolean
+    context_window_tokens: number
+    max_output_tokens: number
   }
-  is_alias?: boolean
-  alias_target?: string
+  reasoning: {
+    kind:
+      | 'openai_reasoning_effort'
+      | 'anthropic_output_effort'
+      | 'anthropic_thinking_budget'
+      | 'none'
+    levels: ReasoningOption[]
+    default_level: ReasoningLevel
+  }
 }
 
 type ModelsResponse = {
   models: ModelInfo[]
-  default_model?: string
+  default_model?: string | null
+}
+
+export function getSelectedModelInfo(models: ModelInfo[], selectedModel: string): ModelInfo | null {
+  return models.find((model) => model.id === selectedModel) ?? null
+}
+
+export function getReasoningOptionsForModel(
+  models: ModelInfo[],
+  selectedModel: string
+): ReasoningOption[] {
+  return getSelectedModelInfo(models, selectedModel)?.reasoning.levels ?? [{ value: 'none', label: 'Fast' }]
+}
+
+export function getDefaultReasoningForModel(
+  models: ModelInfo[],
+  selectedModel: string
+): ReasoningLevel {
+  return getSelectedModelInfo(models, selectedModel)?.reasoning.default_level ?? 'none'
+}
+
+export function normalizeReasoningForModel(
+  models: ModelInfo[],
+  selectedModel: string,
+  currentReasoning: ReasoningLevel
+): ReasoningLevel {
+  const options = getReasoningOptionsForModel(models, selectedModel)
+  if (options.some((option) => option.value === currentReasoning)) {
+    return currentReasoning
+  }
+  return getDefaultReasoningForModel(models, selectedModel)
 }
 
 export function useAvailableModels() {
@@ -35,22 +82,20 @@ export function useAvailableModels() {
         }
 
         const data = (await response.json()) as ModelsResponse
-        const aliasModels = data.models.filter((model) => model.is_alias)
-        const displayModels = aliasModels.length > 0 ? aliasModels : data.models
 
         if (cancelled) {
           return
         }
 
-        setModels(displayModels)
+        setModels(data.models)
         setSelectedModel((currentModel) => {
-          if (currentModel) {
+          if (currentModel && data.models.some((model) => model.id === currentModel)) {
             return currentModel
           }
 
           const serverDefault = data.default_model
-          const hasDefault = serverDefault && displayModels.some((model) => model.id === serverDefault)
-          return hasDefault ? serverDefault : displayModels[0]?.id ?? ''
+          const hasDefault = serverDefault && data.models.some((model) => model.id === serverDefault)
+          return hasDefault ? serverDefault : data.models[0]?.id ?? ''
         })
       })
       .catch((error) => {

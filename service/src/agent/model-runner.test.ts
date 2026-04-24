@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import {
+  providerRegistry,
+  type CanonicalStreamEvent,
+  type LLMProvider,
+  type ModelCapabilities,
+} from "../llm/index.js";
 import { AgentModelRunner } from "./model-runner.js";
 
 function createRuntime() {
@@ -27,7 +33,71 @@ function createLogger() {
   };
 }
 
-test("resolveReasoningEffort follows the selected model instead of the default-model snapshot", () => {
+function createProvider(name: "anthropic" | "openai", supportedModels: string[]): LLMProvider {
+  const capabilities: ModelCapabilities = {
+    supportsVision: true,
+    supportsTools: true,
+    supportsStreaming: true,
+    supportsJsonMode: name === "openai",
+    maxContextTokens: 128000,
+    maxOutputTokens: 32000,
+    supportsReasoning: name === "openai",
+    supportsThinking: name === "anthropic",
+    supportsInterleavedThinking: name === "anthropic",
+  };
+
+  return {
+    name,
+    supportedModels,
+    async *invoke(): AsyncIterable<CanonicalStreamEvent> {
+      // noop
+    },
+    supportsModel(model: string) {
+      return name === "openai" ? model.startsWith("gpt-") : model.startsWith("claude-");
+    },
+    getModelCapabilities() {
+      return capabilities;
+    },
+  };
+}
+
+function registerTestProviders(t: TestContext) {
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register(
+    createProvider("openai", [
+      "gpt-5.4-2026-03-05",
+      "gpt-5.4-mini-2026-03-17",
+      "gpt-5.4-nano-2026-03-17",
+      "gpt-5.5",
+    ]),
+  );
+  providerRegistry.register(
+    createProvider("anthropic", [
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-opus-4-7",
+      "claude-haiku-4-5-20251001",
+    ]),
+  );
+
+  t.after(() => {
+    providerRegistry.unregister("openai");
+    providerRegistry.unregister("anthropic");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+}
+
+test("resolveReasoningEffort follows model-specific reasoning policies", (t) => {
+  registerTestProviders(t);
   const runner = new AgentModelRunner(
     createRuntime() as never,
     createLogger() as never,
@@ -36,8 +106,13 @@ test("resolveReasoningEffort follows the selected model instead of the default-m
     "none",
   );
 
-  assert.equal(runner.resolveReasoningEffort("gpt-4.1-mini", "none"), "none");
-  assert.equal(runner.resolveReasoningEffort("o3-mini", "none"), "low");
+  assert.equal(runner.resolveReasoningEffort("gpt-5.4", "xhigh"), "xhigh");
+  assert.equal(runner.resolveReasoningEffort("claude-opus-4-6"), "high");
+  assert.equal(runner.resolveReasoningEffort("claude-opus-4-7"), "xhigh");
+  assert.throws(
+    () => runner.resolveReasoningEffort("claude-sonnet-4-6", "xhigh"),
+    /Reasoning effort xhigh is not supported/,
+  );
 });
 
 test("extractToolCall normalizes legacy keys arrays to canonical semantic key strings", () => {

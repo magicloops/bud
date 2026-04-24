@@ -14,7 +14,11 @@ import { WorkspaceShell } from '@/components/workbench/workspace-shell'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { DebugPanel } from '@/components/debug-panel'
 import { useLayout } from '@/contexts/layout-context'
-import { useAvailableModels } from '@/lib/models'
+import {
+  normalizeReasoningForModel,
+  useAvailableModels,
+  type ReasoningLevel,
+} from '@/lib/models'
 import { generateMessageClientId } from '@/lib/messages'
 import { apiFetch } from '@/lib/transport'
 import type { Terminal } from 'xterm'
@@ -35,7 +39,7 @@ function NewThreadView() {
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('none')
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
   const { models, selectedModel, setSelectedModel } = useAvailableModels()
 
@@ -45,6 +49,15 @@ function NewThreadView() {
   const terminalPaneRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+
+  const handleModelChange = (nextModel: string) => {
+    setSelectedModel(nextModel)
+    setReasoningEffort((current) => normalizeReasoningForModel(models, nextModel, current))
+  }
+
+  useEffect(() => {
+    setReasoningEffort((current) => normalizeReasoningForModel(models, selectedModel, current))
+  }, [models, selectedModel])
 
   // Initialize xterm
   useEffect(() => {
@@ -134,7 +147,7 @@ function NewThreadView() {
           text: trimmedMessage,
           client_id: clientId,
           model: selectedModel || undefined,
-          reasoning_effort: reasoningEffort
+          reasoning_effort: selectedModel ? reasoningEffort : undefined
         })
       })
       if (!messageResp.ok) {
@@ -200,7 +213,7 @@ function NewThreadView() {
           error={error}
           models={models}
           selectedModel={selectedModel}
-          onModelChange={setSelectedModel}
+          onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={setReasoningEffort}
         />

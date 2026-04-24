@@ -28,6 +28,32 @@ export type {
   CanonicalResponse,
 } from "./types.js";
 
+export type {
+  ModelCatalogEntry,
+  ProviderId,
+  ReasoningControl,
+  ReasoningLevel,
+  ReasoningLevelOption,
+} from "./model-catalog.js";
+export {
+  MODEL_CATALOG,
+  formatReasoningLevel,
+  getCatalogEntry,
+  getDefaultModelEntryForProviders,
+  getGlobalDefaultModelEntry,
+  getReasoningLevelOptions,
+  listCatalogEntries,
+  listCatalogEntriesForProviders,
+  resolveProviderModel,
+} from "./model-catalog.js";
+export {
+  InvalidModelSelectionError,
+  InvalidReasoningEffortError,
+  isModelSelectionError,
+  resolveModelReasoning,
+  type ResolvedModelReasoning,
+} from "./reasoning-policy.js";
+
 // Provider interface
 export type { LLMProvider } from "./provider.js";
 

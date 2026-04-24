@@ -6,6 +6,7 @@
  */
 
 import type { LLMProvider } from "./provider.js";
+import { getCatalogEntry, resolveProviderModel, type ProviderId } from "./model-catalog.js";
 
 /**
  * Model alias resolution.
@@ -16,6 +17,11 @@ const MODEL_ALIASES: Record<string, string> = {
   "gpt-5.2": "gpt-5.2-2025-12-11",
   "gpt-5-mini": "gpt-5-mini-2025-08-07",
   "gpt-5-nano": "gpt-5-nano-2025-08-07",
+
+  // Current OpenAI product aliases
+  "gpt-5.4": "gpt-5.4-2026-03-05",
+  "gpt-5.4-mini": "gpt-5.4-mini-2026-03-17",
+  "gpt-5.4-nano": "gpt-5.4-nano-2026-03-17",
 
   // Anthropic official aliases (point to latest dated version)
   "claude-opus-4-5": "claude-opus-4-5-20251101",
@@ -60,8 +66,17 @@ export class ProviderRegistry {
    * Handles alias resolution and falls back to supportsModel() check.
    */
   getProviderForModel(model: string): LLMProvider {
-    // Resolve aliases first
-    const resolvedModel = MODEL_ALIASES[model] ?? model;
+    const catalogEntry = getCatalogEntry(model);
+    if (catalogEntry) {
+      const provider = this.providers.get(catalogEntry.provider);
+      if (provider) {
+        return provider;
+      }
+      throw new Error(`Provider ${catalogEntry.provider} is not configured for model: ${model}`);
+    }
+
+    // Resolve aliases for legacy/explicit override models
+    const resolvedModel = MODEL_ALIASES[model] ?? resolveProviderModel(model);
 
     // Check exact match from registered providers' supportedModels
     const providerName = this.modelToProvider.get(resolvedModel);
@@ -84,7 +99,14 @@ export class ProviderRegistry {
    * Resolve a model alias to its full identifier.
    */
   resolveModelAlias(model: string): string {
-    return MODEL_ALIASES[model] ?? model;
+    return MODEL_ALIASES[model] ?? resolveProviderModel(model);
+  }
+
+  /**
+   * Check whether a provider has been registered.
+   */
+  hasProvider(name: ProviderId | string): boolean {
+    return this.providers.has(name);
   }
 
   /**

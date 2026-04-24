@@ -5,6 +5,17 @@ import { z } from "zod";
 import { db } from "../../db/client.js";
 import { messageTable, threadTable } from "../../db/schema.js";
 import { getAuthorizedThread, requireViewer } from "../../auth/session.js";
+import { type ReasoningLevel } from "../../llm/index.js";
+
+const REASONING_LEVELS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies [ReasoningLevel, ...ReasoningLevel[]];
 
 type AuthorizedThreadAccess = {
   viewer: NonNullable<Awaited<ReturnType<typeof requireViewer>>>;
@@ -43,7 +54,7 @@ export const CreateMessageSchema = z.object({
   client_id: z.string().uuid().optional(),
   cwd: z.string().optional(),
   model: z.string().optional(),
-  reasoning_effort: z.enum(["none", "low", "medium", "high"]).optional()
+  reasoning_effort: z.enum(REASONING_LEVELS).optional()
 });
 
 export const MarkThreadReadSchema = z.object({

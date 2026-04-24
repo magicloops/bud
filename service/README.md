@@ -105,10 +105,12 @@ Auth and Bud claim testing do not require an LLM provider key, and the service n
 
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
-- `DEFAULT_MODEL`
+- `DEFAULT_MODEL` (defaults to `claude-opus-4-6`)
 - `OPENAI_MODEL`
 - `AGENT_MAX_STEPS`
 - `AGENT_DEBUG`
+
+`/api/models` is the source of truth for first-party model IDs and valid `reasoning_effort` values. Current product IDs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, and `gpt-5.5`.
 
 ## Scripts
 

@@ -7,6 +7,7 @@
 
 import OpenAI from "openai";
 import type { LLMProvider } from "../provider.js";
+import { getCatalogEntry } from "../model-catalog.js";
 import type {
   CanonicalMessage,
   CanonicalTool,
@@ -28,6 +29,12 @@ type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai";
   readonly supportedModels = [
+    // GPT-5.5
+    "gpt-5.5",
+    // GPT-5.4 series
+    "gpt-5.4-2026-03-05",
+    "gpt-5.4-mini-2026-03-17",
+    "gpt-5.4-nano-2026-03-17",
     // GPT-5 series (with reasoning) - dated versions
     "gpt-5.2-2025-12-11",
     "gpt-5-mini-2025-08-07",
@@ -56,18 +63,58 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   getModelCapabilities(model: string): ModelCapabilities {
+    const catalogEntry = getCatalogEntry(model);
+    if (catalogEntry?.provider === "openai") {
+      return {
+        supportsVision: catalogEntry.capabilities.vision,
+        supportsTools: catalogEntry.capabilities.tools,
+        supportsStreaming: catalogEntry.capabilities.streaming,
+        supportsJsonMode: catalogEntry.capabilities.structuredOutputs,
+        maxContextTokens: catalogEntry.capabilities.contextWindowTokens,
+        maxOutputTokens: catalogEntry.capabilities.maxOutputTokens,
+        supportsReasoning: catalogEntry.reasoning.kind === "openai_reasoning_effort",
+        supportsThinking: false,
+        supportsInterleavedThinking: false,
+      };
+    }
+
     const isReasoning = this.isReasoningModel(model);
-    // All GPT-5 series models support vision
+    const limits = this.getFallbackModelLimits(model);
     return {
       supportsVision: true,
       supportsTools: true,
       supportsStreaming: true,
       supportsJsonMode: true,
-      maxContextTokens: 256000,
-      maxOutputTokens: 32768,
+      maxContextTokens: limits.contextTokens,
+      maxOutputTokens: limits.outputTokens,
       supportsReasoning: isReasoning,
       supportsThinking: false,
       supportsInterleavedThinking: false,
+    };
+  }
+
+  private getFallbackModelLimits(model: string): { contextTokens: number; outputTokens: number } {
+    if (model.includes("gpt-5.5") || model.includes("gpt-5.4-2026")) {
+      return { contextTokens: 1_050_000, outputTokens: 128_000 };
+    }
+    if (model.includes("gpt-5.4-mini") || model.includes("gpt-5.4-nano")) {
+      return { contextTokens: 400_000, outputTokens: 128_000 };
+    }
+    return { contextTokens: 256_000, outputTokens: 32_768 };
+  }
+
+  private applyReasoningConfig(
+    params: OpenAI.Responses.ResponseCreateParams,
+    config: ModelConfig,
+    isReasoningModel: boolean,
+  ): void {
+    if (!isReasoningModel || !config.reasoning?.enabled) {
+      return;
+    }
+
+    (params as unknown as Record<string, unknown>).reasoning = {
+      effort: config.reasoning.effort ?? "medium",
+      summary: config.reasoning.summaryLevel ?? "auto",
     };
   }
 
@@ -96,13 +143,8 @@ export class OpenAIProvider implements LLMProvider {
       stream: true,
     };
 
-    // Add reasoning configuration for GPT-5 series
-    if (isReasoning && config.reasoning?.enabled) {
-      params.reasoning = {
-        effort: config.reasoning.effort ?? "medium",
-        summary: config.reasoning.summaryLevel ?? "auto",
-      };
-    }
+    // Add reasoning configuration for GPT-5 series.
+    this.applyReasoningConfig(params, config, isReasoning);
 
     // Add JSON response format if requested
     if (config.responseFormat === "json") {
@@ -142,12 +184,7 @@ export class OpenAIProvider implements LLMProvider {
       stream: false,
     };
 
-    if (isReasoning && config.reasoning?.enabled) {
-      params.reasoning = {
-        effort: config.reasoning.effort ?? "medium",
-        summary: config.reasoning.summaryLevel ?? "auto",
-      };
-    }
+    this.applyReasoningConfig(params, config, isReasoning);
 
     if (config.responseFormat === "json") {
       params.text = { format: { type: "json_object" } };

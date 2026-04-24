@@ -8,6 +8,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
 import type { LLMProvider } from "../provider.js";
+import { getCatalogEntry, type ReasoningLevel } from "../model-catalog.js";
 import type {
   CanonicalMessage,
   CanonicalTool,
@@ -24,10 +25,18 @@ import type {
 type AnthropicMessage = Anthropic.MessageParam;
 type AnthropicTool = Anthropic.Tool;
 type AnthropicContentBlock = Anthropic.ContentBlockParam;
+type AnthropicRequestParams =
+  | Anthropic.MessageCreateParams
+  | Anthropic.MessageCreateParamsStreaming;
 
 export class AnthropicProvider implements LLMProvider {
   readonly name = "anthropic";
   readonly supportedModels = [
+    // Claude 4.7
+    "claude-opus-4-7",
+    // Claude 4.6
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
     // Claude 3.5
     "claude-3-5-sonnet-20241022",
     "claude-3-5-haiku-20241022",
@@ -54,14 +63,30 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   private isClaude4(model: string): boolean {
-    return model.includes("4-5") || model.includes("4.5");
+    return model.includes("-4-") || model.includes("4.");
   }
 
   /**
    * Get the maximum output tokens allowed for a specific model.
    */
   private getMaxOutputTokensForModel(model: string): number {
-    // Claude 4.5 models have higher limits
+    const catalogEntry = getCatalogEntry(model);
+    if (catalogEntry?.provider === "anthropic") {
+      return catalogEntry.capabilities.maxOutputTokens;
+    }
+
+    // Claude 4.6 and 4.7 models have higher limits.
+    if (
+      model.includes("opus-4-7") ||
+      model.includes("opus-4.7") ||
+      model.includes("opus-4-6") ||
+      model.includes("opus-4.6") ||
+      model.includes("sonnet-4-6") ||
+      model.includes("sonnet-4.6")
+    ) {
+      return 128000;
+    }
+    // Claude 4.5 models have higher limits.
     if (model.includes("opus-4-5") || model.includes("opus-4.5")) {
       return 64000;
     }
@@ -80,6 +105,21 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   getModelCapabilities(model: string): ModelCapabilities {
+    const catalogEntry = getCatalogEntry(model);
+    if (catalogEntry?.provider === "anthropic") {
+      return {
+        supportsVision: catalogEntry.capabilities.vision,
+        supportsTools: catalogEntry.capabilities.tools,
+        supportsStreaming: catalogEntry.capabilities.streaming,
+        supportsJsonMode: catalogEntry.capabilities.structuredOutputs,
+        maxContextTokens: catalogEntry.capabilities.contextWindowTokens,
+        maxOutputTokens: catalogEntry.capabilities.maxOutputTokens,
+        supportsReasoning: false,
+        supportsThinking: catalogEntry.reasoning.kind !== "none",
+        supportsInterleavedThinking: this.isClaude4(model),
+      };
+    }
+
     const isClaude4 = this.isClaude4(model);
 
     return {
@@ -98,13 +138,71 @@ export class AnthropicProvider implements LLMProvider {
   /**
    * Calculate thinking budget from effort level.
    */
-  private calculateThinkingBudget(effort?: "low" | "medium" | "high"): number {
+  private calculateThinkingBudget(effort?: Exclude<ReasoningLevel, "none">): number {
     switch (effort) {
+      case "minimal":
       case "low": return 1024;
       case "medium": return 4096;
       case "high": return 16384;
+      case "xhigh":
+      case "max": return 32768;
       default: return 4096;
     }
+  }
+
+  private usesAdaptiveThinking(config: ModelConfig): boolean {
+    if (!config.reasoning?.enabled) {
+      return false;
+    }
+    const catalogEntry = getCatalogEntry(config.model);
+    return catalogEntry?.provider === "anthropic" &&
+      catalogEntry.reasoning.kind === "anthropic_output_effort";
+  }
+
+  private applyReasoningConfig(params: AnthropicRequestParams, config: ModelConfig): void {
+    if (!config.reasoning?.enabled) {
+      return;
+    }
+
+    const typedParams = params as unknown as Record<string, unknown>;
+    const catalogEntry = getCatalogEntry(config.model);
+    const reasoning = catalogEntry?.provider === "anthropic" ? catalogEntry.reasoning : null;
+
+    if (reasoning?.kind === "anthropic_output_effort") {
+      typedParams.output_config = {
+        effort: config.reasoning.effort ?? reasoning.defaultLevel,
+      };
+      typedParams.thinking = {
+        type: reasoning.thinking,
+        display: reasoning.thinkingDisplay,
+      };
+      return;
+    }
+
+    if (reasoning?.kind === "anthropic_thinking_budget") {
+      const effort = config.reasoning.effort;
+      const budgetTokens = effort ? reasoning.budgets[effort] : undefined;
+      if (budgetTokens) {
+        typedParams.thinking = {
+          type: "enabled",
+          budget_tokens: budgetTokens,
+        };
+      }
+      return;
+    }
+
+    typedParams.thinking = {
+      type: "enabled",
+      budget_tokens: this.calculateThinkingBudget(config.reasoning.effort),
+    };
+  }
+
+  private buildHeaders(config: ModelConfig): Record<string, string> | undefined {
+    const headers: Record<string, string> = {};
+    if (config.reasoning?.interleaved && this.isClaude4(config.model)) {
+      headers["anthropic-beta"] = "interleaved-thinking-2025-05-14";
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -119,6 +217,7 @@ export class AnthropicProvider implements LLMProvider {
   ): AsyncIterable<CanonicalStreamEvent> {
     const { systemPrompt, anthropicMessages } = this.transformMessages(messages);
     const anthropicTools = this.transformTools(tools);
+    const usesAdaptiveThinking = this.usesAdaptiveThinking(config);
 
     // Cap max_tokens to model's limit
     const modelMaxTokens = this.getMaxOutputTokensForModel(config.model);
@@ -133,29 +232,16 @@ export class AnthropicProvider implements LLMProvider {
       tools: anthropicTools.length > 0 ? anthropicTools : undefined,
       tool_choice: this.transformToolChoice(config.toolChoice),
       max_tokens: maxTokens,
-      temperature: config.temperature,
-      top_p: config.topP,
+      temperature: usesAdaptiveThinking ? undefined : config.temperature,
+      top_p: usesAdaptiveThinking ? undefined : config.topP,
       stream: true,
     };
 
-    // Extended thinking configuration
-    if (config.reasoning?.enabled) {
-      const budgetTokens = this.calculateThinkingBudget(config.reasoning.effort);
-      (params as unknown as Record<string, unknown>).thinking = {
-        type: "enabled",
-        budget_tokens: budgetTokens,
-      };
-    }
-
-    // Beta headers for interleaved thinking (Claude 4)
-    const headers: Record<string, string> = {};
-    if (config.reasoning?.interleaved && this.isClaude4(config.model)) {
-      headers["anthropic-beta"] = "interleaved-thinking-2025-05-14";
-    }
+    this.applyReasoningConfig(params, config);
 
     const stream = this.client.messages.stream(params, {
       signal,
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
+      headers: this.buildHeaders(config),
     });
 
     yield* this.transformStream(stream);
@@ -169,6 +255,7 @@ export class AnthropicProvider implements LLMProvider {
   ): Promise<CanonicalResponse> {
     const { systemPrompt, anthropicMessages } = this.transformMessages(messages);
     const anthropicTools = this.transformTools(tools);
+    const usesAdaptiveThinking = this.usesAdaptiveThinking(config);
 
     // Cap max_tokens to model's limit
     const modelMaxTokens = this.getMaxOutputTokensForModel(config.model);
@@ -184,22 +271,18 @@ export class AnthropicProvider implements LLMProvider {
       tools: anthropicTools.length > 0 ? anthropicTools : undefined,
       tool_choice: this.transformToolChoice(config.toolChoice),
       max_tokens: maxTokens,
-      temperature: config.temperature,
-      top_p: config.topP,
+      temperature: usesAdaptiveThinking ? undefined : config.temperature,
+      top_p: usesAdaptiveThinking ? undefined : config.topP,
       stream: true,
     };
 
-    // Extended thinking configuration
-    if (config.reasoning?.enabled) {
-      const budgetTokens = this.calculateThinkingBudget(config.reasoning.effort);
-      (params as unknown as Record<string, unknown>).thinking = {
-        type: "enabled",
-        budget_tokens: budgetTokens,
-      };
-    }
+    this.applyReasoningConfig(params, config);
 
     // Use streaming but collect into final response
-    const stream = this.client.messages.stream(params, { signal });
+    const stream = this.client.messages.stream(params, {
+      signal,
+      headers: this.buildHeaders(config),
+    });
 
     // Collect the full response from the stream
     const finalMessage = await stream.finalMessage();

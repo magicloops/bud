@@ -14,19 +14,21 @@ Each provider implements the `LLMProvider` interface, handling:
 
 ### `openai.ts`
 
-OpenAI provider using the Responses API (~580 lines).
+OpenAI provider using the Responses API (~650 lines).
 
 **Supported Models** (dated versions in `supportedModels`):
 | Model | Type | Notes |
 |-------|------|-------|
-| `gpt-5.2-2025-12-11` | Reasoning | Latest GPT-5, supports `reasoning.effort` |
-| `gpt-5-mini-2025-08-07` | Reasoning | Smaller GPT-5 variant |
-| `gpt-5-nano-2025-08-07` | Reasoning | Smallest GPT-5 variant |
+| `gpt-5.5` | Reasoning | Current frontier GPT model |
+| `gpt-5.4-2026-03-05` | Reasoning | GPT-5.4 snapshot, supports `xhigh` |
+| `gpt-5.4-mini-2026-03-17` | Reasoning | Smaller GPT-5.4 variant, supports `xhigh` |
+| `gpt-5.4-nano-2026-03-17` | Reasoning | Smallest GPT-5.4 variant, supports `xhigh` |
+| `gpt-5.2-2025-12-11`, `gpt-5-mini-2025-08-07`, `gpt-5-nano-2025-08-07` | Reasoning | Hidden legacy compatibility |
 
-Aliases (`gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`) map to these dated versions.
+Public product IDs and capability limits are owned by `model-catalog.ts`; the provider keeps enough `supportedModels` for registration and hidden compatibility.
 
 **Key Features**:
-- **Reasoning support**: GPT-5 series with `reasoning.effort` and `reasoning.summary`
+- **Reasoning support**: GPT-5 series with `reasoning.effort` (`none` omits reasoning, other supported values pass through including `xhigh`)
 - **Strict mode tools**: All tools use `strict: true` for reliable schema adherence
 - **Multi-turn reasoning**: Preserves reasoning blocks via `providerData` for tool loops
 - **Temperature handling**: Automatically sets `undefined` for reasoning models
@@ -81,21 +83,27 @@ This allows tool definitions to use clean standard JSON Schema while ensuring Op
 | `transformStream()` | OpenAI events → Canonical events |
 | `parseResponse()` | OpenAI response → CanonicalResponse |
 | `isReasoningModel()` | Check if model supports reasoning |
+| `applyReasoningConfig()` | Add provider reasoning config while keeping any provider-specific request typing local |
 
 ### `anthropic.ts`
 
-Anthropic provider using the Messages API (~550 lines).
+Anthropic provider using the Messages API (~650 lines).
 
 **Supported Models**:
 | Model | Type | Notes |
 |-------|------|-------|
+| `claude-opus-4-7` | Claude 4.7 | Adaptive thinking only; supports `xhigh` and `max` effort |
+| `claude-opus-4-6`, `claude-sonnet-4-6` | Claude 4.6 | Adaptive thinking plus `output_config.effort` |
+| `claude-haiku-4-5-20251001` | Claude 4.5 | Manual thinking-budget path for optional reasoning |
 | `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022` | Claude 3.5 | Vision, tools, thinking |
 | `claude-3-opus-20240229`, `claude-3-sonnet-20240229`, `claude-3-haiku-20240307` | Claude 3 | Vision, tools |
-| `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101` | Claude 4 | Interleaved thinking support |
+| `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101` | Claude 4.5 | Hidden legacy compatibility |
 
 **Key Features**:
-- **Extended thinking**: Budget-based thinking with `thinking.budget_tokens`
-- **Interleaved thinking**: Claude 4 models support thinking between tool calls
+- **Adaptive thinking**: Opus 4.6, Sonnet 4.6, and Opus 4.7 use `thinking: { type: "adaptive", display }`
+- **Effort control**: Opus 4.6/Sonnet 4.6/Opus 4.7 use `output_config.effort`
+- **Manual thinking**: Haiku 4.5 and legacy fallback can still use `thinking.budget_tokens`
+- **Interleaved thinking**: Claude 4 adaptive mode handles interleaved thinking without a beta header; manual fallback can still use the interleaved-thinking beta header
 - **Signature preservation**: Thinking blocks include cryptographic signatures for multi-turn
 - **Standard JSON Schema**: Tools use canonical schema directly (no transformation needed)
 
@@ -116,9 +124,12 @@ Context sync injects system messages between user messages to inform the agent a
 **Thinking Budget Calculation**:
 | Reasoning Effort | Budget Tokens |
 |------------------|---------------|
-| `low` | 1,024 |
+| `minimal`, `low` | 1,024 |
 | `medium` | 4,096 |
 | `high` | 16,384 |
+| `xhigh`, `max` | 32,768 |
+
+Budget calculation is used for Haiku 4.5 manual thinking and legacy fallback only. Opus 4.6, Sonnet 4.6, and Opus 4.7 use adaptive thinking with `output_config.effort`; Opus 4.7 never sends manual `budget_tokens`.
 
 **Streaming Events Mapped**:
 | Anthropic Event | Canonical Event |
@@ -153,6 +164,18 @@ Context sync injects system messages between user messages to inform the agent a
 | `parseResponse()` | Anthropic response → CanonicalResponse |
 | `isClaude4()` | Check if model supports interleaved thinking |
 | `calculateThinkingBudget()` | Convert effort level to token budget |
+| `applyReasoningConfig()` | Lower catalog reasoning controls to Anthropic request fields |
+| `buildHeaders()` | Add manual interleaved-thinking beta header only when requested |
+
+### `providers.test.ts`
+
+Direct request-shape tests for provider lowering without live API calls.
+
+**Current Coverage**:
+- OpenAI `xhigh` sends `reasoning.effort` and `none` omits reasoning
+- Anthropic Opus 4.7 sends adaptive thinking with omitted display and `output_config.effort`
+- Anthropic Opus 4.6 sends adaptive thinking with summarized display and `output_config.effort`
+- Anthropic Haiku 4.5 uses manual `thinking.budget_tokens`
 
 ## Provider Comparison
 
@@ -162,7 +185,7 @@ Context sync injects system messages between user messages to inform the agent a
 | **Tool results** | `function_call_output` item | `tool_result` content block |
 | **Tool call args** | JSON string | Parsed object |
 | **Max tokens** | Optional | **Required** |
-| **Reasoning** | `reasoning.effort` | `thinking.budget_tokens` |
+| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy |
 | **JSON mode** | `text.format.type` | Use structured tool output |
 
 ## Adding a New Provider

@@ -50,7 +50,8 @@ New thread creation view - allows users to start a new conversation.
 - Empty terminal display with placeholder message
 - Message composer for initial message
 - Reuses `WorkspaceShell` so the top bar / split panes / composer frame stay aligned with the existing-thread route
-- Loads `/api/models` through the shared `useAvailableModels()` hook using the normalized snake_case contract (`default_model`, model `display_name`, optional `is_alias`)
+- Loads `/api/models` through the shared `useAvailableModels()` hook using the normalized snake_case catalog contract (`default_model`, model `display_name`, `provider_model`, capabilities, and per-model `reasoning`)
+- Normalizes the selected reasoning level against the selected model and omits `reasoning_effort` if the model list has not loaded yet
 - Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
   1. POST `/api/threads` to create thread and read `{ thread_id }`
@@ -64,7 +65,7 @@ New thread creation view - allows users to start a new conversation.
 - `messageText` - Controlled input
 - `status` - idle | dispatching | streaming
 - `error` - Error messages
-- `reasoningEffort` - Agent thinking level
+- `reasoningEffort` - Agent thinking level, normalized from selected model metadata
 - `viewMode` - terminal | web
 
 ### `$threadId.tsx`
@@ -135,7 +136,7 @@ loader: async ({ params }) => {
 
 7. **Shared Workspace Frame**
    - Reuses `WorkspaceShell` with the same top bar, left/right pane contract, composer slot, and debug-panel slot as `/$budId/new`
-   - Reuses `useAvailableModels()` so model fetching/default selection matches the new-thread flow
+   - Reuses `useAvailableModels()` so model fetching/default selection and per-model reasoning normalization match the new-thread flow
    - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, and `ThreadTerminalPane`
 
 **State**:

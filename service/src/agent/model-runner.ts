@@ -13,6 +13,8 @@ import {
   type CanonicalTool,
   type CanonicalToolCall,
   type ModelConfig,
+  resolveModelReasoning,
+  type ResolvedModelReasoning,
   type TokenUsage,
 } from "../llm/index.js";
 import {
@@ -126,11 +128,14 @@ export class AgentModelRunner {
     model: string,
     requested?: ReasoningEffortSetting | null,
   ): ReasoningEffortSetting {
-    const desired = requested ?? this.defaultReasoningEffort;
-    if (desired === "none" && !this.supportsReasoningNone(model)) {
-      return "low";
-    }
-    return desired;
+    return this.resolveModelReasoning(model, requested).reasoningLevel;
+  }
+
+  resolveModelReasoning(
+    model: string,
+    requested?: ReasoningEffortSetting | null,
+  ): ResolvedModelReasoning {
+    return resolveModelReasoning(model, requested, this.defaultReasoningEffort);
   }
 
   async invokeModel(
@@ -138,27 +143,23 @@ export class AgentModelRunner {
     turnId: string,
     messages: CanonicalMessage[],
     model: string,
-    reasoningEffort: ReasoningEffortSetting,
+    modelReasoning: ResolvedModelReasoning,
     signal?: AbortSignal,
   ): Promise<StreamedModelResponse> {
+    const { providerModel, reasoning, reasoningLevel } = modelReasoning;
     const last = messages.at(-1);
     const lastRole = last?.role ?? "n/a";
     this.debug("Calling LLM via provider", {
       entries: messages.length,
       lastRole,
-      reasoningEffort,
+      reasoningEffort: reasoningLevel,
       model,
     });
 
     const provider = providerRegistry.getProviderForModel(model);
-    const resolvedModel = providerRegistry.resolveModelAlias(model);
-    const reasoning =
-      reasoningEffort === "none"
-        ? { enabled: false }
-        : { enabled: true, effort: reasoningEffort as "low" | "medium" | "high" };
 
     const modelConfig: ModelConfig = {
-      model: resolvedModel,
+      model: providerModel,
       maxOutputTokens: config.agentMaxOutputTokens,
       reasoning,
       responseFormat: "text",
@@ -384,17 +385,6 @@ export class AgentModelRunner {
       default:
         return null;
     }
-  }
-
-  private supportsReasoningNone(model: string): boolean {
-    const normalized = providerRegistry.resolveModelAlias(model).toLowerCase();
-    const requiresReasoning =
-      normalized.includes("gpt-5.1") ||
-      normalized.includes("gpt-5o") ||
-      normalized.includes("o1") ||
-      normalized.includes("o3") ||
-      normalized.includes("codex");
-    return !requiresReasoning;
   }
 
   private debug(message: string, meta?: Record<string, unknown>): void {

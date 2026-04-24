@@ -188,7 +188,7 @@ Model invocation ownership extracted from `AgentService`.
 
 **Responsibilities**:
 - resolve provider/model aliases for the selected request model
-- normalize reasoning effort against the actual selected model rather than a startup-time default-model snapshot
+- resolve model-specific reasoning through `llm/reasoning-policy.ts`, using catalog defaults and rejecting unsupported combinations before provider invocation
 - consume provider `invoke()` streams and emit draft assistant runtime events
 - reconstruct canonical responses and normalize provider tool-call payloads
 
@@ -197,7 +197,7 @@ Model invocation ownership extracted from `AgentService`.
 Direct tests for the extracted model runner.
 
 **Current Coverage**:
-- reasoning-effort normalization follows the selected model (`none` downgraded for `o3`-style models)
+- reasoning-effort normalization follows selected model policy, including Claude 4.6/4.7 and GPT-5.4 differences
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
 
 ### `terminal-tool-executor.ts`
@@ -233,7 +233,13 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 
 **Reasoning Effort Support**:
 
-`AgentModelRunner` supports OpenAI reasoning effort levels: `none`, `low`, `medium`, `high`, and now resolves compatibility against the actual selected model id/alias.
+`AgentModelRunner` delegates selected-model reasoning validation to the LLM catalog policy. Current first-party levels include:
+- OpenAI GPT-5.4/GPT-5.5: `none`, `low`, `medium`, `high`, `xhigh`
+- Anthropic Opus 4.6/Sonnet 4.6: `low`, `medium`, `high`, `max`
+- Anthropic Opus 4.7: `low`, `medium`, `high`, `xhigh`, `max`
+- Anthropic Haiku 4.5: `none`, `low`, `medium`, `high`
+
+Omitted `reasoning_effort` uses the selected model's catalog default, not the global env default.
 
 **Cancellation**:
 
@@ -342,10 +348,10 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 ## Configuration Used
 
 From `../config.js`:
-- `config.openaiModel` - Model to use (default: `gpt-4.1-mini`)
+- `config.defaultModel` - Product model to use when requests omit `model` (default: `claude-opus-4-6`)
 - `config.agentMaxSteps` - Max tool calls per request (default: 30)
 - `config.agentMaxOutputTokens` - Max tokens per response (default: 128000)
-- `config.agentReasoningEffortDefault` - Default reasoning effort (default: `none`)
+- `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `none`)
 - `config.agentDebug` - Enable debug logging
 - `config.agentOpenaiDebug` - Log raw OpenAI responses
 

@@ -1,7 +1,7 @@
 import type { FormEvent, KeyboardEvent } from 'react'
 import { LoaderCircle, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { ModelInfo } from '@/lib/models'
+import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
 
 type CommandComposerProps = {
   messageText: string
@@ -12,16 +12,9 @@ type CommandComposerProps = {
   models: ModelInfo[]
   selectedModel: string
   onModelChange: (value: string) => void
-  reasoningEffort: 'none' | 'low' | 'medium' | 'high'
-  onReasoningChange: (value: 'none' | 'low' | 'medium' | 'high') => void
+  reasoningEffort: ReasoningLevel
+  onReasoningChange: (value: ReasoningLevel) => void
 }
-
-const REASONING_OPTIONS = [
-  { value: 'none', label: 'Fast' },
-  { value: 'low', label: 'Think' },
-  { value: 'medium', label: 'Deep' },
-  { value: 'high', label: 'Max' }
-] as const
 
 export function CommandComposer({
   messageText,
@@ -35,6 +28,9 @@ export function CommandComposer({
   reasoningEffort,
   onReasoningChange
 }: CommandComposerProps) {
+  const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
+  const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -85,27 +81,29 @@ export function CommandComposer({
           )}
         </select>
         {/* Reasoning effort selector */}
-        <select
-          value={reasoningEffort}
-          onChange={(event) => onReasoningChange(event.target.value as 'none' | 'low' | 'medium' | 'high')}
-          className="rounded-lg border-3 border-black bg-card w-[75px] px-2 py-2 font-mono text-[11px] uppercase text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none"
+        {showReasoningSelector && (
+          <select
+            value={reasoningEffort}
+            onChange={(event) => onReasoningChange(event.target.value as ReasoningLevel)}
+            className="w-[112px] rounded-lg border-3 border-black bg-card px-2 py-2 font-mono text-[11px] text-muted-foreground shadow-[3px_3px_0_rgba(0,0,0,1)] focus:outline-none"
+            disabled={status === 'dispatching'}
+          >
+            {reasoningOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        )}
+        <Button
+          type="submit"
+          size="icon"
           disabled={status === 'dispatching'}
+          className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
+          style={{ backgroundColor: 'var(--bud-accent-muted)' }}
         >
-          {REASONING_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      <Button
-        type="submit"
-        size="icon"
-        disabled={status === 'dispatching'}
-        className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
-        style={{ backgroundColor: 'var(--bud-accent-muted)' }}
-      >
-        {status !== 'idle' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-      </Button>
+          {status !== 'idle' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+        </Button>
       </div>
     </form>
   )
