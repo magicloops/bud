@@ -8,7 +8,7 @@ import { threadTable } from "../db/schema.js";
 import type { TerminalSession, TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
-import type { CanonicalReasoningBlock } from "../llm/index.js";
+import type { CanonicalReasoningBlock, ResolvedModelReasoning } from "../llm/index.js";
 import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner } from "./model-runner.js";
@@ -61,7 +61,7 @@ export class AgentService {
     },
   ): Promise<{ sessionId: string }> {
     const model = options?.model ?? config.defaultModel;
-    const requestedEffort = this.modelRunner.resolveReasoningEffort(model, options?.reasoningEffort);
+    const modelReasoning = this.modelRunner.resolveModelReasoning(model, options?.reasoningEffort);
     const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
     const turnId = ulid();
     this.runtime.startTurn(threadId, turnId);
@@ -76,7 +76,7 @@ export class AgentService {
         turnId,
         sessionId: session.sessionId,
         model,
-        reasoningEffort: requestedEffort,
+        modelReasoning,
         ownerUserId,
         controller,
       }).catch((err) => {
@@ -107,18 +107,18 @@ export class AgentService {
     turnId: string;
     sessionId: string;
     model: string;
-    reasoningEffort: ReasoningEffortSetting;
+    modelReasoning: ResolvedModelReasoning;
     ownerUserId?: string | null;
     controller: AbortController;
   }): Promise<void> {
-    const { threadId, turnId, sessionId, model, reasoningEffort, ownerUserId, controller } = args;
+    const { threadId, turnId, sessionId, model, modelReasoning, ownerUserId, controller } = args;
     const conversation = await this.conversationLoader.load(threadId);
     this.debug("Starting agent run", {
       threadId,
       sessionId,
       model,
       entries: conversation.length,
-      reasoningEffort,
+      reasoningEffort: modelReasoning.reasoningLevel,
     });
 
     try {
@@ -135,7 +135,7 @@ export class AgentService {
             turnId,
             conversation,
             model,
-            reasoningEffort,
+            modelReasoning,
             controller.signal,
           );
 

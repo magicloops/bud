@@ -1,6 +1,10 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **LLM first visible token latency / prompt caching**
+  - Follow up on the 2-4s first-visible-token gap documented in [debug/llm-first-visible-token-latency.md](./debug/llm-first-visible-token-latency.md).
+  - New-thread testing showed roughly 1s responses, so prioritize provider-side prompt/cache behavior, context size, max-output defaults, and instrumentation before assuming a local service bottleneck.
+  - Add timing logs for provider request dispatch, first raw stream event, first reasoning event, first text delta, and stream completion so UX progress indicators can distinguish real provider latency from hidden reasoning/tool activity.
 - **Assistant timing / non-tool timing follow-up**
   - The tool-timing rollout now provides authoritative per-tool `started_at`, `finished_at`, and `duration_ms`, but exact assistant-response timing is still missing.
   - Follow up with a separate design/implementation pass if product needs authoritative non-tool timing, for example by timestamping assistant draft events or introducing an explicit turn-summary contract, rather than overloading the new tool-timing fields.

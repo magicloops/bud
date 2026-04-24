@@ -127,7 +127,8 @@ Message input form with options.
 - Enter to submit (Shift+Enter for newline)
 - The textarea submits with a named form field so route handlers can read the live form payload during submit instead of relying only on possibly stale controlled state
 - Model selector dropdown (grouped by provider)
-- Reasoning effort dropdown (Fast/Think/Deep/Max)
+- Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh` and `max`
+- Hides the reasoning selector when a model only exposes `none`
 - Submit button with loading state
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
 

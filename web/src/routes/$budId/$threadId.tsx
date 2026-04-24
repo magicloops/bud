@@ -28,7 +28,11 @@ import {
   isAuthRedirectPending,
 } from '@/lib/auth-redirect'
 import { toLoginRedirect } from '@/lib/route-auth'
-import { useAvailableModels } from '@/lib/models'
+import {
+  normalizeReasoningForModel,
+  useAvailableModels,
+  type ReasoningLevel,
+} from '@/lib/models'
 import type { ApiAgentState, ApiMessagePage, ApiThread } from '@/lib/api-types'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
@@ -80,9 +84,13 @@ function ThreadView() {
     initialAgentState.active ? 'streaming' : 'idle',
   )
   const [error, setError] = useState<string | null>(null)
-  const [reasoningEffort, setReasoningEffort] = useState<'none' | 'low' | 'medium' | 'high'>('none')
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('none')
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
   const { models, selectedModel, setSelectedModel } = useAvailableModels()
+  const handleModelChange = useCallback((nextModel: string) => {
+    setSelectedModel(nextModel)
+    setReasoningEffort((current) => normalizeReasoningForModel(models, nextModel, current))
+  }, [models, setSelectedModel])
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
     return isAuthRedirectPending() || response?.status === 401
   }, [])
@@ -117,6 +125,10 @@ function ThreadView() {
   useEffect(() => {
     setStatus(initialAgentState.active ? 'streaming' : 'idle')
   }, [initialAgentState, initialMessagePage])
+
+  useEffect(() => {
+    setReasoningEffort((current) => normalizeReasoningForModel(models, selectedModel, current))
+  }, [models, selectedModel])
 
   useEffect(() => {
     upsertThreadSummary(initialThread)
@@ -255,7 +267,7 @@ function ThreadView() {
           text: trimmedMessage,
           client_id: optimisticId,
           model: selectedModel || undefined,
-          reasoning_effort: reasoningEffort
+          reasoning_effort: selectedModel ? reasoningEffort : undefined
         })
       })
       if (shouldAbortForUnauthorized(messageResp)) {
@@ -293,7 +305,6 @@ function ThreadView() {
     addOptimisticUserMessage,
     budId,
     ensureAgentStreamConnected,
-    messageText,
     reasoningEffort,
     reconcilePersistedUserMessage,
     refreshAgentState,
@@ -350,7 +361,7 @@ function ThreadView() {
           error={error}
           models={models}
           selectedModel={selectedModel}
-          onModelChange={setSelectedModel}
+          onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={setReasoningEffort}
         />

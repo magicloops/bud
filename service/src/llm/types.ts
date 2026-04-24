@@ -6,6 +6,7 @@
  */
 
 import type { JSONSchema7 } from "json-schema";
+import type { ReasoningLevel } from "./model-catalog.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Canonical Roles & Content Types
@@ -99,8 +100,8 @@ export type CanonicalReasoningBlock =
 export type ReasoningConfig = {
   /** Enable reasoning/thinking */
   enabled: boolean;
-  /** Effort level: low/medium/high */
-  effort?: "low" | "medium" | "high";
+  /** Provider/model-specific effort level */
+  effort?: Exclude<ReasoningLevel, "none">;
   /** Summary verbosity (OpenAI only) */
   summaryLevel?: "auto" | "concise" | "detailed";
   /** Interleaved thinking (Anthropic Claude 4 only) */

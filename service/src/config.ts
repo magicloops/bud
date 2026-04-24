@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { readFileSync } from "node:fs";
+import type { ReasoningLevel } from "./llm/model-catalog.js";
 
 export const PROTO_VERSION = "0.1";
 export const TERMINAL_PROTO_VERSION = "0.2";
@@ -69,8 +70,8 @@ const toOrigin = (value: string) => {
   }
 };
 
-const REASONING_EFFORTS = ["none", "low", "medium", "high"] as const;
-export type ReasoningEffortSetting = (typeof REASONING_EFFORTS)[number];
+const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ReasoningLevel[];
+export type ReasoningEffortSetting = ReasoningLevel;
 
 const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortSetting): ReasoningEffortSetting => {
   if (!value) {
@@ -121,7 +122,7 @@ export const config = {
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   // Default model for agent (can be OpenAI or Anthropic)
-  defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "claude-opus-4-5",
+  defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "claude-opus-4-6",
   // Anthropic
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   anthropicTimeout: toNumber(process.env.ANTHROPIC_TIMEOUT_MS, 120000),

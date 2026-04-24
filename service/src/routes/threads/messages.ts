@@ -1,12 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { AgentService, ThreadTitleService } from "../../agent/index.js";
+import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { generateMessageClientId } from "../../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../../db/thread-metadata.js";
 import { messageTable, terminalSessionTable, threadReadStateTable } from "../../db/schema.js";
 import type { ContextSyncService } from "../../terminal/context-sync-service.js";
 import { isMessageNewerThanWatermark } from "../../notifications/index.js";
+import {
+  isModelSelectionError,
+  resolveModelReasoning,
+} from "../../llm/index.js";
 import {
   CreateMessageSchema,
   MarkThreadReadSchema,
@@ -177,6 +182,25 @@ export async function registerThreadMessageRoutes(
     const { thread, viewer } = access;
     const ownerUserId = thread.createdByUserId ?? viewer.userId;
     const effectiveClientId = body.client_id ?? generateMessageClientId();
+    const selectedModel = body.model ?? config.defaultModel;
+
+    try {
+      resolveModelReasoning(selectedModel, body.reasoning_effort ?? null, config.agentReasoningEffortDefault);
+    } catch (err) {
+      if (isModelSelectionError(err)) {
+        const bodyPayload: Record<string, unknown> = {
+          error: err.code,
+          message: err.message,
+          model: err.model,
+        };
+        if ("supportedValues" in err) {
+          bodyPayload.supported_values = err.supportedValues;
+        }
+        reply.code(400).send(bodyPayload);
+        return;
+      }
+      throw err;
+    }
 
     const existingMessage = await findOwnedUserMessageByClientId(
       thread.threadId,
@@ -267,7 +291,7 @@ export async function registerThreadMessageRoutes(
 
     try {
       await agentService.startUserMessage(thread.threadId, {
-        model: body.model ?? null,
+        model: selectedModel,
         reasoningEffort: body.reasoning_effort ?? null,
         ownerUserId,
       });

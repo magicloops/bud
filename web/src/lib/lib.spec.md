@@ -104,13 +104,21 @@ Shared model-list loading for workbench routes.
 
 **Exports**:
 - `ModelInfo`
+- `ReasoningLevel`
+- `ReasoningOption`
+- `getSelectedModelInfo(models, selectedModel)`
+- `getReasoningOptionsForModel(models, selectedModel)`
+- `getDefaultReasoningForModel(models, selectedModel)`
+- `normalizeReasoningForModel(models, selectedModel, currentReasoning)`
 - `useAvailableModels()`
 
 **Behavior**:
 - Loads `/api/models`
-- Prefers alias models when the API exposes aliases
+- Consumes catalog-backed product models directly
 - Preserves an existing selection when possible
 - Falls back to `default_model` or the first available model
+- Exposes per-model reasoning options and defaults so routes do not hardcode provider behavior
+- Normalizes stale reasoning selections to the selected model's default level
 
 ### `messages.ts`
 

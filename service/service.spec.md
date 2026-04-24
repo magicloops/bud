@@ -30,6 +30,7 @@ Package manifest:
 | `better-auth` | ^1.5.5 | Browser auth + OAuth |
 | `@better-auth/oauth-provider` | ^1.5.5 | OAuth 2.1 / OIDC provider + protected-resource metadata |
 | `openai` | ^6.8.1 | OpenAI SDK |
+| `@anthropic-ai/sdk` | ^0.91.0 | Anthropic SDK |
 | `drizzle-orm` | ^0.44.7 | Database ORM |
 | `pg` | ^8.13.1 | PostgreSQL client |
 | `zod` | ^3.23.8 | Validation |
@@ -224,7 +225,8 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth
 - `PORT` - Server port (default: 3000)
-- `OPENAI_MODEL` - Model (default: gpt-4.1-mini)
+- `DEFAULT_MODEL` - Product model used when requests omit `model` (default: `claude-opus-4-6`)
+- `OPENAI_MODEL` - Legacy fallback model env read before the built-in default
 - `AGENT_MAX_STEPS` - Max tool calls (default: 30)
 - `AGENT_DEBUG` - Enable debug logging
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
