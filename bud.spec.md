@@ -107,6 +107,9 @@ bud/
 │   │   ├── lib.rs          # Crate wiring
 │   │   ├── app.rs          # Runtime orchestration
 │   │   ├── run.rs          # Legacy queued run path
+│   │   ├── proto_wire.rs   # BudEnvelope protobuf compatibility codec
+│   │   ├── transport.rs    # Transport-neutral sender wrapper, currently backed by WebSocket
+│   │   ├── journal.rs      # Local daemon reconciliation journal foundation
 │   │   ├── terminal/
 │   │   │   ├── mod.rs      # Shared terminal runtime types
 │   │   │   ├── backend.rs  # Terminal backend trait
@@ -119,6 +122,10 @@ bud/
 │   │   └── ...             # Config, protocol, identity, claim, utilities
 │   └── Cargo.toml
 │
+├── proto/                  # Shared daemon-service protobuf schema and fixtures
+│   ├── bud/v1/bud.proto    # BudEnvelope v1 and network-upgrade payload schema
+│   └── fixtures/           # Cross-language protobuf conformance fixtures
+│
 ├── service/                # Node.js backend service
 │   ├── src/
 │   │   ├── auth/           # Better Auth bridge + session helpers
@@ -127,6 +134,8 @@ bud/
 │   │   ├── routes/         # HTTP API endpoints, with split thread submodules under routes/threads/
 │   │   ├── runtime/        # Terminal-session and agent runtime state management, including runtime/terminal/ helpers
 │   │   ├── terminal/       # Terminal utilities (readiness detection)
+│   │   ├── proto/          # Network-upgrade envelope helpers and compatibility wire codec
+│   │   ├── transport/      # Daemon transport router boundary and current WebSocket adapter
 │   │   └── ws/             # WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 │   ├── drizzle/            # Checked-in staging migration history
 │   └── scripts/            # Utility scripts
@@ -142,6 +151,7 @@ bud/
 ├── design/                 # Design documents
 ├── docs/                   # Documentation
 ├── plan/                   # Planning documents
+├── spikes/                 # Isolated validation spikes for transport/tooling decisions
 ├── review/                 # Review and audit notes
 └── debug/                  # Debug logs and notes
 ```
@@ -423,6 +433,7 @@ Detailed specifications for each subproject:
 | `/bud` | [bud/bud.spec.md](./bud/bud.spec.md) | Rust device daemon | ✅ Complete |
 | `/service` | [service/service.spec.md](./service/service.spec.md) | Node.js backend | ✅ Complete |
 | `/web` | [web/web.spec.md](./web/web.spec.md) | React frontend | ✅ Complete |
+| `/spikes` | [spikes/spikes.spec.md](./spikes/spikes.spec.md) | Isolated validation harnesses | ✅ Active |
 
 ---
 
@@ -504,6 +515,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md) | Reference validation runbook for the iOS team covering the hosted Bud-claim callback flow, local prerequisites, expected success/error payloads, and the exact manual test matrix to run |
 | [reference/render-multi-service-architecture.md](./reference/render-multi-service-architecture.md) | Captured Render guidance for the platform's generic multi-service pattern; useful as a contrast case because it assumes separate frontend/backend public URLs instead of Bud's chosen one-origin path-routing model |
 | [docs/proto.md](./docs/proto.md) | Wire protocol specification |
+| [proto/proto.spec.md](./proto/proto.spec.md) | Shared daemon-service protobuf schema and conformance fixture folder spec |
+| [spikes/grpc-interop/grpc-interop.spec.md](./spikes/grpc-interop/grpc-interop.spec.md) | Phase 1.5 Rust tonic to Node Connect/grpc-js native gRPC-over-HTTP/2 interop spike |
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
 | [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
 | [plan/mobile-auth/implementation-spec.md](./plan/mobile-auth/implementation-spec.md) | Phased implementation plan for native mobile auth, OAuth Provider rollout, and API readiness cleanup |

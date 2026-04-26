@@ -1,0 +1,18 @@
+{
+  "message_id": "msg_fixture_terminal_ensure",
+  "sent_at": "2026-04-25T00:00:00.000Z",
+  "frame_json": "{\"proto\":\"0.2\",\"type\":\"terminal_ensure\",\"id\":\"msg_fixture_terminal_ensure\",\"ts\":1777132800000,\"ext\":{},\"session_id\":\"sess_fixture\",\"config\":{\"cols\":120,\"rows\":40}}",
+  "frame": {
+    "proto": "0.2",
+    "type": "terminal_ensure",
+    "id": "msg_fixture_terminal_ensure",
+    "ts": 1777132800000,
+    "ext": {},
+    "session_id": "sess_fixture",
+    "config": {
+      "cols": 120,
+      "rows": 40
+    }
+  },
+  "binary_base64": "CAESG21zZ19maXh0dXJlX3Rlcm1pbmFsX2Vuc3VyZVIYMjAyNi0wNC0yNVQwMDowMDowMC4wMDBaWAJgAaIGvAEKowF7InByb3RvIjoiMC4yIiwidHlwZSI6InRlcm1pbmFsX2Vuc3VyZSIsImlkIjoibXNnX2ZpeHR1cmVfdGVybWluYWxfZW5zdXJlIiwidHMiOjE3NzcxMzI4MDAwMDAsImV4dCI6e30sInNlc3Npb25faWQiOiJzZXNzX2ZpeHR1cmUiLCJjb25maWciOnsiY29scyI6MTIwLCJyb3dzIjo0MH19Eg90ZXJtaW5hbF9lbnN1cmUaAzAuMg=="
+}

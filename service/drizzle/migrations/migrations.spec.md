@@ -103,6 +103,16 @@ Placeholder to ensure the directory exists in git.
 - Creates `push_notification_outbox` for durable push delivery, suppression, retry, and dead-letter state
 - Uses replay-safe `IF NOT EXISTS` / guarded constraint creation so environments that already received the schema via `db:push` can still apply the checked-in migration chain
 
+### `0013_strange_nocturne.sql`
+
+**Network upgrade durability foundation**:
+- Creates `device_session` for daemon control-session epochs, heartbeat timestamps, gateway ownership, and drain state
+- Creates `transport_session` for WebSocket/HTTP2/QUIC transport records and health metadata
+- Creates `bud_operation` for durable daemon-directed operation lifecycle, idempotency, typed errors, ownership stamps, and terminal/thread references
+- Creates `bud_stream` for stream lifecycle, type, traffic class, offsets, credits, reset reason, and typed stream errors
+- Creates `audit_event` as the append-only audit foundation for daemon/session/operation/stream events
+- Adds indexes for Bud/state lookups, thread operation history, transport stream recovery, device heartbeat scanning, and audit queries
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -113,7 +123,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0012` currently)
+- Snapshot files for each migration (`0000` through `0013` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -167,6 +177,9 @@ v11: drop dead standalone-run schema remnants
  │
  ▼
 v12: push notification endpoint, read-state, attention, and outbox schema
+ │
+ ▼
+v13: network upgrade device sessions, transport sessions, operations, streams, and audit events
 ```
 
 ---

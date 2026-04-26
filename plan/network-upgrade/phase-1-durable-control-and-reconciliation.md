@@ -1,7 +1,7 @@
 # Phase 1: Durable Control And Reconciliation
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Planned
+**Status**: In progress - durable schema/store, daemon journal, live reconnect exchange, and gateway drain foundation implemented
 
 ---
 
@@ -140,6 +140,12 @@ The service should resolve mismatches into:
 - reset directive
 - `UNKNOWN`
 
+Current implementation:
+- daemon sends `reconnect_report` after handshake from its local journal
+- service validates the report, records an audit event, compares reported operation/stream ids with durable rows, and replies with `reconciliation_decision`
+- unknown matches are returned as `unknown` with typed `UNKNOWN_OPERATION` / `UNKNOWN_STREAM` errors
+- daemon logs the decision; future proxy/file phases will add concrete resume/reset behavior per stream type
+
 ### Task 6: Add gateway drain semantics
 
 Add a gateway drain flag/state so a service instance can:
@@ -148,6 +154,11 @@ Add a gateway drain flag/state so a service instance can:
 - let existing streams finish within a deadline
 - mark affected operations/streams `unknown` or `reset` if cut short
 - tell daemons to reconnect to a new gateway if the deployment supports it
+
+Current implementation:
+- process-local gateway drain can be enabled through the transport helper
+- the WebSocket router refuses new long-lived work (`terminal_ensure`, proxy-open, file-open/read) while allowing control frames
+- active transport close/timeout marks affected durable operation/stream rows `unknown`
 
 ### Task 7: Update terminal routing to record operations where useful
 
@@ -201,4 +212,3 @@ Do not overfit terminal sends into a heavyweight workflow. Record enough operati
 - service can mark uncertain work `UNKNOWN`
 - terminal flows still behave the same for users
 - schema changes have checked-in migrations and updated specs
-

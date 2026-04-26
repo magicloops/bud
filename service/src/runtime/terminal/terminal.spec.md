@@ -19,11 +19,11 @@ Shared `SessionState` and `TerminalSession` types for the terminal runtime.
 
 ### `session-store.ts`
 
-Database-backed session-record lifecycle, including `ensureSessionRecordForThread(...)` as the single concurrency-safe first-use session boundary.
+Database-backed session-record lifecycle, including `ensureSessionRecordForThread(...)` as the single concurrency-safe first-use session boundary. It receives the daemon transport router so session ensure/resume checks do not depend on `ws/gateway` directly.
 
 ### `request-dispatcher.ts`
 
-Owns send/observe request orchestration, pending registries, result routing, and cancel/offline/session-close rejection.
+Owns send/observe request orchestration, pending registries, result routing, and cancel/offline/session-close rejection. It receives a daemon send function from the composed transport router instead of importing the WebSocket gateway directly.
 
 ### `output-store.ts`
 
@@ -52,4 +52,3 @@ Direct seam tests for `ensureSessionRecordForThread(...)` create-vs-conflict beh
 ---
 
 *Parent spec: [../runtime.spec.md](../runtime.spec.md)*
-

@@ -62,6 +62,33 @@ Durability phase covering:
 - explicit `UNKNOWN` outcomes
 - gateway drain semantics
 
+### `phase-1.5-grpc-stack-interop-validation.md`
+
+Intermediary validation phase covering:
+
+- Buf as the schema/tooling standard
+- Connect Node vs. `@grpc/grpc-js` as the daemon-gateway runtime decision
+- Rust `tonic` interoperability with a Node native-gRPC-over-HTTP/2 server
+- long-lived bidi stream, cancellation, deadline, metadata, status, drain, backpressure, churn, and attach-stream validation
+- the decision gate before Phase 2 can implement the HTTP/2 control plane
+
+### `phase-1.5-runtime-decision.md`
+
+Accepted runtime decision for Phase 2:
+
+- `@grpc/grpc-js` for the Node daemon gateway
+- Rust `tonic` / `prost` for the Bud daemon
+- Buf remains the schema/tooling standard
+- Connect-ES remains available for non-daemon APIs, but is rejected for the daemon control gateway because tonic client-deadline bidi streams surface as cancellation / transport timeout
+
+### `phase-1.5-connect-node-runtime-design.md`
+
+Candidate design review for using Connect Node correctly in the daemon gateway spike, including native HTTP/2 server shape, handler-context timeout handling, bounded bidi queues, typed errors, and current Connect findings.
+
+### `phase-1.5-grpc-js-runtime-design.md`
+
+Candidate design review for using `@grpc/grpc-js` correctly in the daemon gateway spike, including stream status emission, pending async write coordination, cancellation, deadline behavior, backpressure, and current grpc-js findings.
+
 ### `phase-2-http2-grpc-control-plane.md`
 
 Control-plane phase covering:
@@ -130,6 +157,9 @@ Manual and automated validation checklist for the network upgrade.
 
 - [../../review/network-upgrade.md](../../review/network-upgrade.md) - current implementation review and migration conclusions
 - [../../reference/protocol-transport-design-goals.md](../../reference/protocol-transport-design-goals.md) - target transport requirements and goals
+- [../../reference/connect-vs-grpc-js.md](../../reference/connect-vs-grpc-js.md) - Buf/Connect/grpc-js daemon gateway decision note
+- [../../spikes/grpc-interop/grpc-interop.spec.md](../../spikes/grpc-interop/grpc-interop.spec.md) - isolated Rust tonic to Node Connect/grpc-js interop spike for Phase 1.5
+- [phase-1.5-runtime-decision.md](./phase-1.5-runtime-decision.md) - accepted daemon-gateway gRPC runtime decision
 - [../../docs/proto.md](../../docs/proto.md) - current protocol documentation
 - [../../bud/bud.spec.md](../../bud/bud.spec.md) - Bud daemon project spec
 - [../../bud/src/src.spec.md](../../bud/src/src.spec.md) - Bud source/module spec
@@ -144,7 +174,7 @@ Manual and automated validation checklist for the network upgrade.
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- The concrete protobuf/gRPC stack choice is intentionally left to Phase 0/2 spikes because it depends on code generation, Fastify coexistence, and deployment front-door support.
+- The Phase 1.5 spike selected `@grpc/grpc-js` for the daemon gateway, but the production service binding shape still needs to choose between isolated `@grpc/proto-loader` and a Buf-managed grpc-js TypeScript generation plugin before broad Phase 2 implementation.
 - The direct device identity migration shape is intentionally left open between keypair challenge, mTLS, and short-lived token binding until Phase 2 validates local and hosted constraints.
 - The QUIC gateway placement is intentionally deferred until Phase 5 because HTTP/2 data fallback must be product-complete first.
 

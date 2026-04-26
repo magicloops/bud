@@ -4,34 +4,60 @@ Manual validation pending.
 
 ## Automated Verification Completed
 
-- [ ] Bud unit tests pass
-- [ ] Service unit tests pass
+- [x] Bud unit tests pass (`cargo test --manifest-path /Users/adam/bud/bud/Cargo.toml`)
+- [x] Service typecheck passes (`pnpm --dir /Users/adam/bud/service exec tsc --project tsconfig.json --noEmit`)
+- [x] Service lint passes (`pnpm --dir /Users/adam/bud/service lint`)
+- [x] Service unit tests pass (`pnpm --dir /Users/adam/bud/service test`)
 - [ ] Web tests/lint/build pass if web files are changed
-- [ ] Cross-language protobuf conformance tests pass
-- [ ] Drizzle migrations are generated and reviewed for deployable schema changes
-- [ ] `docs/proto.md` is updated for protocol changes
-- [ ] Relevant folder specs are updated for changed files/folders
+- [x] Cross-language protobuf conformance tests pass (`proto/fixtures/legacy-terminal-ensure.json` plus typed payload dispatch tests in service and Bud)
+- [x] Drizzle migrations are generated and reviewed for deployable schema changes (`0013_strange_nocturne.sql`)
+- [x] `docs/proto.md` is updated for protocol changes
+- [x] Relevant folder specs are updated for changed files/folders
 
 ## Phase 0 Validation
 
 - [ ] Current daemon can connect through WebSocket compatibility
-- [ ] Current terminal ensure/send/observe/output flow works through canonical envelope path
+- [x] Current terminal ensure carrier encodes through the typed protobuf payload path in unit coverage
+- [ ] Current terminal send/observe/output flow works through canonical envelope path in an integration run
 - [ ] Legacy JSON compatibility path works only where intentionally retained
-- [ ] Unknown protobuf fields are tolerated
+- [x] Unknown protobuf fields are tolerated
 - [ ] Unsupported payloads return typed errors
-- [ ] Terminal output chunks respect configured max size
-- [ ] Service terminal runtime uses transport router abstraction
-- [ ] Daemon terminal/runtime modules use transport client abstraction
+- [x] Terminal output chunks respect configured max size
+- [x] Service terminal runtime uses transport router abstraction
+- [x] Daemon terminal/runtime modules use transport client abstraction
 
 ## Phase 1 Validation
 
-- [ ] Operation rows record offered/accepted/running/final states
-- [ ] Stream rows record open/close/reset states
+- [x] Operation rows record offered/accepted/running/final states
+- [x] Stream rows record open/close/reset states
 - [ ] Reconnecting daemon reports active operations and streams
 - [ ] Service reconciles known states correctly
-- [ ] Service marks uncertain outcomes `UNKNOWN`
-- [ ] Gateway drain stops new long-lived streams and resolves existing ones predictably
+- [x] Service marks uncertain outcomes `UNKNOWN`
+- [x] Gateway drain refuses new long-lived daemon work in router unit coverage
+- [ ] Gateway drain resolves existing streams predictably in an integration run
 - [ ] Terminal session and output history remain intact across reconnect
+
+## Phase 1.5 Validation
+
+- [x] Buf generation works for both TypeScript and Rust spike code (`pnpm --dir /Users/adam/bud/spikes/grpc-interop generate`, `pnpm --dir /Users/adam/bud/spikes/grpc-interop check`, `cargo check --manifest-path /Users/adam/bud/spikes/grpc-interop/daemon/Cargo.toml`)
+- [x] Rust tonic client interoperates with Node Connect server over native gRPC/HTTP2 in basic smoke coverage (`cargo run --manifest-path /Users/adam/bud/spikes/grpc-interop/daemon/Cargo.toml -- control`, `cargo run --manifest-path /Users/adam/bud/spikes/grpc-interop/daemon/Cargo.toml -- drain`)
+- [x] grpc-js long-lived bidi control stream remains healthy for the configured test window
+- [x] grpc-js server directive arrives while client continues heartbeat streaming
+- [x] grpc-js client cancellation is observed by Node in the spike
+- [x] grpc-js server cancellation/reset is observed by Rust
+- [x] grpc-js deadline exceeded maps to expected gRPC status
+- [x] grpc-js max message size limits are enforced predictably
+- [x] grpc-js metadata propagates both directions where needed
+- [x] grpc-js status/error details are inspectable by Rust
+- [x] grpc-js drain notice smoke works
+- [x] grpc-js reconnect under load cleans stale streams without corrupting active streams in the spike
+- [x] grpc-js 1000 clean stream open/close cycles complete
+- [x] grpc-js concurrent attach streams complete independently
+- [x] grpc-js slow receiver/backpressure shape works with artificial slow echo
+- [x] grpc-js proxy/file streaming fallback shape works over attach-style bidi streams
+- [x] `@grpc/grpc-js` comparison is run if Connect behavior is ambiguous or failing
+- [x] Runtime decision is recorded with version pins and required local runtime settings
+- [ ] Staging/front-door HTTP/2 deployment settings are confirmed
 
 ## Phase 2 Validation
 
@@ -101,10 +127,9 @@ Manual validation pending.
 
 ## Docs And Rollout
 
-- [ ] `docs/proto.md` reflects shipped transport and payload contracts
-- [ ] Bud/service/web specs match changed folders and files
-- [ ] DB specs and migration specs match schema changes
+- [x] `docs/proto.md` reflects shipped transport and payload contracts
+- [x] Bud/service specs match changed folders and files
+- [x] DB specs and migration specs match schema changes
 - [ ] Deployment docs describe HTTP/2 and QUIC requirements
 - [ ] Rollback path is documented for each transport cutover
 - [ ] Web/mobile handoff confirms clients remain REST/SSE-only
-

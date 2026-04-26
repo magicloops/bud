@@ -1,7 +1,7 @@
 # Phase 0: Protocol Envelope And Transport Boundary
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Planned
+**Status**: In progress - protobuf envelope carrier and typed payload dispatch implemented
 
 ---
 
@@ -61,6 +61,10 @@ Recommended evaluation:
 - Fixtures: checked-in binary and JSON text-format examples if practical
 
 Keep this task small: choose the generator, add minimal build wiring, and document why it was chosen.
+
+Implementation note: the first carrier slice uses a checked-in `.proto` schema plus small in-repo Rust/TypeScript protobuf wire codecs for `BudEnvelope` compatibility frames. This avoids adding `protoc`/generated-code dependencies before the HTTP/2 gRPC stack decision, while still putting real protobuf envelope bytes on the WebSocket compatibility path. Generated protobuf types remain the intended replacement once Phase 2 validates the final gRPC/tooling stack.
+
+Current implementation note: known frames now dispatch through typed oneof payload fields in the in-repo codecs. The payload messages carry a transitional `frame_json` field so existing JSON-shaped handlers can keep running until generated field-level protobuf structs replace the bridge.
 
 ### Task 2: Define `BudEnvelope v1`
 
@@ -190,4 +194,3 @@ Update:
 - daemon runtime modules no longer depend on WebSocket sender types
 - terminal output chunks are bounded
 - `docs/proto.md` describes the envelope, payloads, errors, and compatibility path
-

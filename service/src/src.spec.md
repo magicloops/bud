@@ -134,11 +134,19 @@ REST API route handlers for buds, current-user auth surfaces, device claims, and
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 
-Runtime managers for terminal sessions, extracted terminal-runtime ownership units, generic event buses, and the dedicated agent runtime snapshot/resume store.
+Runtime managers for terminal sessions, extracted terminal-runtime ownership units, generic event buses, the dedicated agent runtime snapshot/resume store, and Phase 1 daemon operation/stream persistence helpers.
 
 ### `terminal/` → [terminal.spec.md](./terminal/terminal.spec.md)
 
 Terminal protocol types and known REPL program registry.
+
+### `proto/` → [proto/proto.spec.md](./proto/proto.spec.md)
+
+Phase 0 daemon-network upgrade helpers and compatibility protobuf wire codec for the transport-independent Bud envelope.
+
+### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
+
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The current implementation adapts the router to the existing WebSocket session tracker, sends typed protobuf-envelope binary frames to capable daemons, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 

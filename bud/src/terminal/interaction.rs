@@ -6,7 +6,8 @@ use tokio::time;
 use tracing::{info, warn};
 
 use crate::protocol::{TerminalInputFrame, TerminalSendFrame, TERMINAL_PROTO_VERSION};
-use crate::util::{new_message_id, now_millis, send_ws_frame};
+use crate::transport::send_transport_frame;
+use crate::util::{new_message_id, now_millis};
 
 use super::backend::TerminalBackend;
 use super::delta::{build_additive_delta_payload, build_delta_payload_json};
@@ -150,7 +151,11 @@ where
             match legacy_keys {
                 [] => None,
                 [key] => (!key.trim().is_empty()).then_some(key.as_str()),
-                _ => return self.send_send_error(&frame, "multiple_keys_unsupported").await,
+                _ => {
+                    return self
+                        .send_send_error(&frame, "multiple_keys_unsupported")
+                        .await
+                }
             }
         };
 
@@ -420,7 +425,7 @@ where
             "readiness": readiness,
             "error": Value::Null,
         });
-        send_ws_frame(&sender, payload)?;
+        send_transport_frame(&sender, payload)?;
 
         info!(
             request_id = request_id,
@@ -485,7 +490,7 @@ where
             "readiness": Self::error_readiness(),
             "error": error,
         });
-        send_ws_frame(&sender, payload)?;
+        send_transport_frame(&sender, payload)?;
         Ok(())
     }
 

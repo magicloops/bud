@@ -1,0 +1,18 @@
+[package]
+name = "bud-grpc-interop-daemon"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+prost = "0.14"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-stream = "0.1"
+tonic = "0.14"
+tonic-prost = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"

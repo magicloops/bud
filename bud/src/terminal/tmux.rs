@@ -15,10 +15,13 @@ use tokio::time;
 use tracing::{info, warn};
 
 use crate::protocol::TERMINAL_PROTO_VERSION;
-use crate::util::{new_message_id, now_millis, send_ws_frame, OutboundSender};
+use crate::transport::{send_transport_frame, OutboundSender};
+use crate::util::{new_message_id, now_millis};
 
 use super::backend::{BackendResultFuture, TerminalBackend};
 use super::TerminalConfig;
+
+const TERMINAL_OUTPUT_CHUNK_MAX_BYTES: u64 = 16 * 1024;
 
 #[derive(Clone)]
 pub struct TmuxBackend {
@@ -271,7 +274,7 @@ impl TmuxBackend {
         info!(session_id = %session_id, session = %session_name, log_path = %log_path.display(), "spawning terminal output watcher");
         tokio::spawn(async move {
             info!(session_id = %session_id, session = %session_name, "output watcher task started");
-            loop {
+            'watch: loop {
                 let size = match fs::metadata(&log_path).await {
                     Ok(meta) => meta.len(),
                     Err(err) => {
@@ -285,11 +288,17 @@ impl TmuxBackend {
                     info!(session_id = %session_id, session = %session_name, size = size, current_offset = current_offset, "new output detected");
                     match fs::File::open(&log_path).await {
                         Ok(mut file) => {
-                            if file.seek(SeekFrom::Start(current_offset)).await.is_ok() {
-                                let mut buf = vec![0u8; (size - current_offset) as usize];
+                            for (chunk_offset, chunk_len) in output_chunk_plan(current_offset, size)
+                            {
+                                if file.seek(SeekFrom::Start(chunk_offset)).await.is_err() {
+                                    warn!(session_id = %session_id, session = %session_name, offset = chunk_offset, "failed to seek log file");
+                                    break;
+                                }
+                                let mut buf = vec![0u8; chunk_len];
                                 if file.read_exact(&mut buf).await.is_ok() {
                                     let seq_no = seq.fetch_add(1, Ordering::SeqCst);
-                                    offset.store(size, Ordering::SeqCst);
+                                    let next_offset = chunk_offset + chunk_len as u64;
+                                    offset.store(next_offset, Ordering::SeqCst);
                                     last_output_at.store(now_millis(), Ordering::SeqCst);
                                     last_output_seq.store(seq_no, Ordering::SeqCst);
                                     let payload = json!({
@@ -298,21 +307,20 @@ impl TmuxBackend {
                                         "id": new_message_id(),
                                         "ts": now_millis(),
                                         "ext": {},
-                                        "session_id": session_id,
+                                        "session_id": &session_id,
                                         "seq": seq_no,
                                         "data": BASE64_STANDARD.encode(&buf),
-                                        "byte_offset": current_offset,
+                                        "byte_offset": chunk_offset,
                                     });
                                     info!(session_id = %session_id, session = %session_name, seq = seq_no, bytes = buf.len(), "sending terminal_output");
-                                    if let Err(err) = send_ws_frame(&sender, payload) {
+                                    if let Err(err) = send_transport_frame(&sender, payload) {
                                         warn!(session_id = %session_id, session = %session_name, error = %err, "failed to send terminal_output");
-                                        break;
+                                        break 'watch;
                                     }
                                 } else {
                                     warn!(session_id = %session_id, session = %session_name, "failed to read log file");
+                                    break;
                                 }
-                            } else {
-                                warn!(session_id = %session_id, session = %session_name, "failed to seek log file");
                             }
                         }
                         Err(err) => {
@@ -453,6 +461,17 @@ fn build_pipe_command(log_path: &Path) -> String {
     format!("cat >> {}", shell_quote_path(log_path))
 }
 
+fn output_chunk_plan(start_offset: u64, end_offset: u64) -> Vec<(u64, usize)> {
+    let mut chunks = Vec::new();
+    let mut next_offset = start_offset;
+    while next_offset < end_offset {
+        let chunk_len = (end_offset - next_offset).min(TERMINAL_OUTPUT_CHUNK_MAX_BYTES);
+        chunks.push((next_offset, chunk_len as usize));
+        next_offset += chunk_len;
+    }
+    chunks
+}
+
 fn shell_quote_path(path: &Path) -> String {
     let rendered = path.to_string_lossy();
     let escaped = rendered.replace('\'', "'\"'\"'");
@@ -463,7 +482,7 @@ fn shell_quote_path(path: &Path) -> String {
 mod tests {
     use std::path::Path;
 
-    use super::build_pipe_command;
+    use super::{build_pipe_command, output_chunk_plan, TERMINAL_OUTPUT_CHUNK_MAX_BYTES};
 
     #[test]
     fn build_pipe_command_quotes_paths_with_spaces() {
@@ -475,5 +494,14 @@ mod tests {
     fn build_pipe_command_escapes_single_quotes() {
         let command = build_pipe_command(Path::new("/tmp/bud's/terminal.log"));
         assert_eq!(command, "cat >> '/tmp/bud'\"'\"'s/terminal.log'");
+    }
+
+    #[test]
+    fn output_chunk_plan_caps_terminal_output_chunks() {
+        let max = TERMINAL_OUTPUT_CHUNK_MAX_BYTES;
+        assert_eq!(
+            output_chunk_plan(5, 5 + max * 2 + 7),
+            vec![(5, max as usize), (5 + max, max as usize), (5 + max * 2, 7)]
+        );
     }
 }

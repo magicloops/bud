@@ -1,0 +1,304 @@
+syntax = "proto3";
+
+package bud.v1;
+
+// BudEnvelope is the transport-independent daemon-service message carrier.
+message BudEnvelope {
+  uint32 envelope_version = 1;
+  string message_id = 2;
+  string correlation_id = 3;
+  string operation_id = 4;
+  string stream_id = 5;
+  string trace_id = 6;
+  string bud_id = 7;
+  string device_session_id = 8;
+  string transport_session_id = 9;
+  string sent_at = 10;
+  TrafficClass traffic_class = 11;
+  TransportKind transport_kind = 12;
+  map<string, string> extensions = 13;
+
+  oneof payload {
+    LegacyJsonPayload legacy_json = 100;
+    BudError error = 101;
+    Hello hello = 102;
+    HelloAck hello_ack = 103;
+    HelloChallenge hello_challenge = 104;
+    HelloProof hello_proof = 105;
+    Heartbeat heartbeat = 106;
+    HeartbeatAck heartbeat_ack = 107;
+    TerminalEnsure terminal_ensure = 120;
+    TerminalStatus terminal_status = 121;
+    TerminalInput terminal_input = 122;
+    TerminalResize terminal_resize = 123;
+    TerminalClose terminal_close = 124;
+    TerminalSend terminal_send = 125;
+    TerminalSendResult terminal_send_result = 126;
+    TerminalObserve terminal_observe = 127;
+    TerminalObserveResult terminal_observe_result = 128;
+    TerminalOutput terminal_output = 129;
+    TerminalReady terminal_ready = 130;
+    ReconnectReport reconnect_report = 150;
+    ReconciliationDecision reconciliation_decision = 151;
+  }
+}
+
+enum TrafficClass {
+  TRAFFIC_CLASS_UNSPECIFIED = 0;
+  TRAFFIC_CLASS_CONTROL = 1;
+  TRAFFIC_CLASS_INTERACTIVE = 2;
+  TRAFFIC_CLASS_PROXY_ACTIVE = 3;
+  TRAFFIC_CLASS_BULK = 4;
+  TRAFFIC_CLASS_TELEMETRY = 5;
+}
+
+enum TransportKind {
+  TRANSPORT_KIND_UNSPECIFIED = 0;
+  TRANSPORT_KIND_WEBSOCKET = 1;
+  TRANSPORT_KIND_H2_GRPC = 2;
+  TRANSPORT_KIND_H2_DATA = 3;
+  TRANSPORT_KIND_QUIC = 4;
+}
+
+enum StreamType {
+  STREAM_TYPE_UNSPECIFIED = 0;
+  STREAM_TYPE_TERMINAL_INTERACTIVE = 1;
+  STREAM_TYPE_LOCALHOST_HTTP_PROXY = 2;
+  STREAM_TYPE_FILE_READ = 3;
+}
+
+enum OperationState {
+  OPERATION_STATE_UNSPECIFIED = 0;
+  OPERATION_STATE_OFFERED = 1;
+  OPERATION_STATE_ACCEPTED = 2;
+  OPERATION_STATE_REJECTED = 3;
+  OPERATION_STATE_RUNNING = 4;
+  OPERATION_STATE_SUCCEEDED = 5;
+  OPERATION_STATE_FAILED = 6;
+  OPERATION_STATE_CANCELED = 7;
+  OPERATION_STATE_UNKNOWN = 8;
+  OPERATION_STATE_EXPIRED = 9;
+}
+
+enum StreamState {
+  STREAM_STATE_UNSPECIFIED = 0;
+  STREAM_STATE_OPENING = 1;
+  STREAM_STATE_OPEN = 2;
+  STREAM_STATE_HALF_CLOSED_LOCAL = 3;
+  STREAM_STATE_HALF_CLOSED_REMOTE = 4;
+  STREAM_STATE_CLOSED = 5;
+  STREAM_STATE_RESET = 6;
+  STREAM_STATE_UNKNOWN = 7;
+  STREAM_STATE_EXPIRED = 8;
+}
+
+enum StreamResetReason {
+  STREAM_RESET_REASON_UNSPECIFIED = 0;
+  STREAM_RESET_REASON_CANCELED = 1;
+  STREAM_RESET_REASON_POLICY_DENIED = 2;
+  STREAM_RESET_REASON_TRANSPORT_LOST = 3;
+  STREAM_RESET_REASON_TIMEOUT = 4;
+  STREAM_RESET_REASON_BACKPRESSURE = 5;
+  STREAM_RESET_REASON_PROTOCOL_ERROR = 6;
+  STREAM_RESET_REASON_LOCAL_ERROR = 7;
+  STREAM_RESET_REASON_REMOTE_ERROR = 8;
+}
+
+message LegacyJsonPayload {
+  bytes json = 1;
+  string frame_type = 2;
+  string proto = 3;
+}
+
+message BudError {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+  map<string, string> details = 4;
+  bytes frame_json = 99;
+}
+
+message Hello {
+  string name = 1;
+  string os = 2;
+  string arch = 3;
+  string version = 4;
+  string installation_id = 5;
+  string token = 6;
+  string bud_id = 7;
+  bytes capabilities_json = 8;
+  bytes frame_json = 99;
+}
+
+message HelloAck {
+  string session_id = 1;
+  string bud_id = 2;
+  uint32 heartbeat_sec = 3;
+  string device_secret = 4;
+  bytes frame_json = 99;
+}
+
+message HelloChallenge {
+  string nonce = 1;
+  bytes frame_json = 99;
+}
+
+message HelloProof {
+  string bud_id = 1;
+  string hmac = 2;
+  bytes frame_json = 99;
+}
+
+message Heartbeat {
+  string session_id = 1;
+  bytes frame_json = 99;
+}
+
+message HeartbeatAck {
+  string session_id = 1;
+  bytes frame_json = 99;
+}
+
+message TerminalEnsure {
+  string session_id = 1;
+  TerminalEnsureConfig config = 2;
+  bytes frame_json = 99;
+}
+
+message TerminalEnsureConfig {
+  string shell = 1;
+  string cwd = 2;
+  map<string, string> env = 3;
+  uint32 cols = 4;
+  uint32 rows = 5;
+}
+
+message TerminalStatus {
+  string session_id = 1;
+  string state = 2;
+  bytes info_json = 3;
+  bytes frame_json = 99;
+}
+
+message TerminalInput {
+  string session_id = 1;
+  bytes data = 2;
+  AwaitReady await_ready = 3;
+  bytes frame_json = 99;
+}
+
+message TerminalResize {
+  string session_id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+  bytes frame_json = 99;
+}
+
+message TerminalClose {
+  string session_id = 1;
+  string reason = 2;
+  bytes frame_json = 99;
+}
+
+message AwaitReady {
+  bool enabled = 1;
+  uint64 quiescence_ms = 2;
+  uint64 max_wait_ms = 3;
+  bool activity_based = 4;
+  uint64 activity_interval_ms = 5;
+  uint32 activity_stable_count = 6;
+  uint64 activity_initial_delay_ms = 7;
+}
+
+message TerminalSend {
+  string session_id = 1;
+  string request_id = 2;
+  string text = 3;
+  bool submit = 4;
+  string key = 5;
+  uint64 observe_after_ms = 6;
+  string wait_for = 7;
+  uint64 timeout_ms = 8;
+  bytes frame_json = 99;
+}
+
+message TerminalSendResult {
+  string session_id = 1;
+  string request_id = 2;
+  bool submitted = 3;
+  bytes delta_json = 4;
+  bytes readiness_json = 5;
+  string error = 6;
+  bytes frame_json = 99;
+}
+
+message TerminalObserve {
+  string session_id = 1;
+  string request_id = 2;
+  string view = 3;
+  int32 lines = 4;
+  string wait_for = 5;
+  uint64 timeout_ms = 6;
+  bytes frame_json = 99;
+}
+
+message TerminalObserveResult {
+  string session_id = 1;
+  string request_id = 2;
+  string view = 3;
+  bytes output = 4;
+  uint64 output_bytes = 5;
+  uint64 lines_captured = 6;
+  bool changed = 7;
+  bool truncated = 8;
+  bytes readiness_json = 9;
+  string error = 10;
+  bytes frame_json = 99;
+}
+
+message TerminalOutput {
+  string session_id = 1;
+  uint64 seq = 2;
+  bytes data = 3;
+  uint64 byte_offset = 4;
+  bytes frame_json = 99;
+}
+
+message TerminalReady {
+  string session_id = 1;
+  bytes assessment_json = 2;
+  bytes frame_json = 99;
+}
+
+message ReconnectReport {
+  string bud_id = 1;
+  string device_session_id = 2;
+  repeated OperationStatus operations = 3;
+  repeated StreamStatus streams = 4;
+  string local_policy_version = 5;
+  repeated string terminal_sessions = 6;
+  bytes frame_json = 99;
+}
+
+message OperationStatus {
+  string operation_id = 1;
+  OperationState state = 2;
+  BudError error = 3;
+}
+
+message StreamStatus {
+  string stream_id = 1;
+  string operation_id = 2;
+  StreamType stream_type = 3;
+  StreamState state = 4;
+  uint64 send_offset = 5;
+  uint64 receive_offset = 6;
+  StreamResetReason reset_reason = 7;
+  BudError error = 8;
+}
+
+message ReconciliationDecision {
+  repeated OperationStatus operations = 1;
+  repeated StreamStatus streams = 2;
+  bytes frame_json = 99;
+}

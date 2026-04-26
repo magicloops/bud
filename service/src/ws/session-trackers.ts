@@ -5,8 +5,12 @@ export type TimeoutHandle = ReturnType<typeof setTimeout>;
 export interface SessionTracker {
   budId: string;
   sessionId: string;
+  deviceSessionId?: string;
+  transportSessionId?: string;
+  drainState?: "active" | "draining";
   lastHeartbeat: number;
   socket: WebSocket;
+  supportsEnvelopeBinary?: boolean;
   timeout?: TimeoutHandle;
 }
 
@@ -64,4 +68,3 @@ export function isBudOnline(budId: string): boolean {
   const session = sessions.get(budId);
   return session !== undefined && session.socket.readyState === session.socket.OPEN;
 }
-

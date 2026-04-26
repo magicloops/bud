@@ -1,30 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Result};
 use hmac::{Hmac, Mac};
-use serde_json::Value;
 use sha2::Sha256;
-use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::protocol::Message;
 use tracing_subscriber::{fmt, EnvFilter};
 use ulid::Ulid;
 
 type HmacSha256 = Hmac<Sha256>;
-
-pub type OutboundSender = Arc<mpsc::UnboundedSender<Message>>;
-
-pub fn send_ws_frame(sender: &OutboundSender, payload: Value) -> Result<()> {
-    let text = serde_json::to_string(&payload)?;
-    send_ws_message(sender, Message::Text(text))
-}
-
-pub fn send_ws_message(sender: &OutboundSender, message: Message) -> Result<()> {
-    sender
-        .send(message)
-        .map_err(|_| anyhow!("websocket disconnected"))
-}
 
 pub fn compute_hmac(secret: &str, nonce: &str) -> Result<String> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;

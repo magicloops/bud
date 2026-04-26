@@ -18,9 +18,8 @@ use tokio::task;
 use tracing::{info, warn};
 
 use crate::protocol::PROTO_VERSION;
-use crate::util::{
-    default_shell, expand_path, new_message_id, now_millis, send_ws_frame, OutboundSender,
-};
+use crate::transport::{send_transport_frame, OutboundSender};
+use crate::util::{default_shell, expand_path, new_message_id, now_millis};
 
 const MAX_QUEUE_DEPTH: usize = 10;
 
@@ -143,7 +142,7 @@ impl RunExecutor {
             if let Err(err) = executor.execute_run(cmd.clone(), sender.clone()).await {
                 warn!(error = %err, "run execution failed");
                 if let Some(sender) = sender.clone() {
-                    let _ = send_ws_frame(
+                    let _ = send_transport_frame(
                         &sender,
                         json!({
                             "proto": PROTO_VERSION,
@@ -264,7 +263,7 @@ impl RunExecutor {
             "Shell command finished"
         );
 
-        send_ws_frame(
+        send_transport_frame(
             &sender,
             json!({
                 "proto": PROTO_VERSION,
@@ -301,7 +300,7 @@ async fn stream_pipe<R: AsyncRead + Unpin>(
         }
         let chunk = &buffer[..read];
         let seq_no = seq.fetch_add(1, Ordering::SeqCst);
-        send_ws_frame(
+        send_transport_frame(
             &sender,
             json!({
                 "proto": PROTO_VERSION,

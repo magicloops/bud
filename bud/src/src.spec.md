@@ -37,6 +37,7 @@ Top-level daemon orchestrator.
 - identity loading and device-claim bootstrap
 - WebSocket connect / reconnect behavior
 - handshake and challenge-response auth
+- live reconnect report emission after handshake using the local journal
 - heartbeat scheduling
 - routing inbound server frames to the run or terminal subsystems
 - capability advertisement in the `hello` frame, now trimmed to behavior-oriented fields (`sessions`, `terminal`, `terminal_proto`, `shell_default`) instead of tmux identity/version details
@@ -56,11 +57,41 @@ Bud <-> service frame definitions and protocol validation.
 - keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
 - exposes `validate_inbound_envelope_proto(...)` so the app layer rejects mismatched inbound protocol versions before dispatch
 
+### `proto_wire.rs`
+
+Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
+
+- encodes known current JSON-shaped frame bodies under typed protobuf oneof payload tags with transitional `frame_json`
+- keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and downgrade compatibility
+- decodes protobuf envelopes back to JSON text before handing off to existing frame handlers
+- shares conformance fixture coverage with the service through `proto/fixtures/legacy-terminal-ensure.json`
+- tolerates unknown protobuf fields while validating the envelope version and required compatibility payload
+
+### `transport.rs`
+
+Daemon-side transport sender boundary.
+
+- defines `TransportSender` and `TransportKind`
+- currently wraps the active WebSocket writer
+- sends protobuf envelope binary frames when the service negotiated `bud_envelope.websocket_binary`
+- exposes `send_transport_frame(...)` and `send_transport_message(...)`
+- lets terminal and legacy run modules emit daemon payloads without depending directly on raw WebSocket sender types
+
+### `journal.rs`
+
+Local daemon reconciliation journal foundation for network-upgrade Phase 1.
+
+- stores accepted operation summaries
+- stores active stream checkpoints
+- stores known terminal session ids and local policy version
+- loads missing/corrupt journals as empty state so daemon startup is not blocked
+
+`BudApp` now reads this journal after handshake and sends a live `reconnect_report`; service replies with `reconciliation_decision`, which the daemon currently logs while later stream-specific resume/reset behavior is built.
+
 ### `util.rs`
 
 Small shared helpers used across modules.
 
-- WebSocket frame sending helpers
 - HMAC proof generation
 - ULID message ids and millisecond timestamps
 - shell/path helpers
@@ -237,6 +268,10 @@ High-value local tests now live next to the extracted abstractions:
 
 - `protocol.rs`
   - inbound protocol validation
+- `proto_wire.rs`
+  - protobuf compatibility envelope fixture encode/decode
+- `journal.rs`
+  - journal round-trip and corrupt/missing tolerance
 - `terminal/registry.rs`
   - env defaults/overrides
   - terminal-status info merge behavior

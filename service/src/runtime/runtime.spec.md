@@ -98,6 +98,22 @@ Standalone Node tests for targeted terminal-session-manager context tracking reg
 - non-shell readiness assessments do not clear pending REPL context
 - observed shell readiness still clears pending REPL context
 
+### `daemon-state.ts`
+
+Phase 1 durable daemon-state helper for the network upgrade.
+
+Owns:
+- operation and stream lifecycle state constants/transition checks
+- `DaemonStateStore` repository methods for `device_session`, `transport_session`, `bud_operation`, `bud_stream`, and `audit_event`
+- optimistic state-transition updates
+- helper to mark in-flight operations/streams `unknown` when a transport session outcome is uncertain
+- heartbeat/close updates for durable device and transport sessions
+- reconnect-report reconciliation helpers that compare daemon-reported operations/streams with service rows and produce `reconciliation_decision` payload data
+
+### `daemon-state.test.ts`
+
+Standalone lifecycle tests for allowed operation and stream transitions, including `unknown` reconnect-recovery paths.
+
 ### `terminal-session-manager.ts`
 
 Thread-scoped terminal session composition root.
@@ -202,10 +218,11 @@ Internal terminal-runtime ownership helpers extracted from the old monolithic ma
 | `../db/client.js` | Database access |
 | `../db/schema.js` | Table schemas |
 | `../config.js` | Configuration values |
-| `../ws/gateway.js` | `sendFrameToBud()`, `isBudOnline()` |
+| `../transport/*.js` | Daemon transport router interface and current WebSocket adapter |
 | `../terminal/types.js` | Type definitions |
 | `../terminal/known-programs.js` | REPL detection |
 | `./terminal/*` | Extracted lifecycle/dispatch/output/runtime/idle helpers |
+| `./daemon-state.js` | Phase 1 daemon operation/stream/session persistence helpers |
 
 ## Configuration Used
 

@@ -10,7 +10,8 @@ The Bud daemon:
 2. maintains a persistent WebSocket connection with automatic reconnect and heartbeats
 3. executes the retained legacy queued `run` path for one-shot command work
 4. manages thread-scoped interactive terminal sessions
-5. detects readiness and screen stability so the service can drive terminal interactions safely
+5. reports local journal state after reconnect so the service can reconcile operation/stream outcomes
+6. detects readiness and screen stability so the service can drive terminal interactions safely
 
 ## Files
 
@@ -38,6 +39,9 @@ Modular daemon implementation split across:
 - `config.rs`, `protocol.rs`, `util.rs` for shared types/helpers
 - `identity.rs` and `claim.rs` for device-auth bootstrap and persistence
 - `run.rs` for the retained reference run path
+- `proto_wire.rs` for protobuf `BudEnvelope` typed-payload compatibility encode/decode
+- `transport.rs` for the daemon-side transport sender boundary that currently wraps WebSocket writes and can send negotiated binary envelope frames
+- `journal.rs` for the local reconnect/reconciliation journal foundation
 - `terminal/mod.rs` for shared terminal runtime types and composition
 - `terminal/backend.rs` for the backend trait
 - `terminal/registry.rs`, `interaction.rs`, `observe.rs`, `readiness.rs`, and `delta.rs` for the split terminal runtime ownership
@@ -67,6 +71,9 @@ Cargo build artifacts. Not tracked in version control.
 Key boundary decisions:
 
 - `app.rs` owns connection lifecycle and frame dispatch.
+- `proto_wire.rs` owns the first protobuf envelope carrier codec while generated protobuf tooling remains deferred.
+- `transport.rs` owns the first transport-neutral sender seam; it carries JSON payloads directly for legacy peers or wraps them in typed-payload protobuf `BudEnvelope` binary frames after WebSocket capability negotiation.
+- `journal.rs` stores the local Phase 1 reconciliation foundation without blocking startup on missing/corrupt journal files; `app.rs` sends a live `reconnect_report` after handshake and logs `reconciliation_decision` replies.
 - `terminal/mod.rs` owns shared terminal runtime types while the split terminal modules own session registry, interaction, observation, readiness, and delta behavior.
 - `terminal/backend.rs` defines the backend-neutral seam the runtime works against.
 - `terminal/tmux.rs` owns tmux command execution and log capture details behind that seam.
@@ -89,7 +96,7 @@ Terminal output still uses the tmux-compatible path:
 
 1. `pipe-pane` writes to `<terminal-base-dir>/sessions/{id}/terminal.log`
 2. a watcher tails new bytes from that log
-3. Bud emits `terminal_output` frames with base64-encoded chunks
+3. Bud emits `terminal_output` frames with base64-encoded chunks capped at 16 KiB
 
 The internal split keeps this behavior intact while isolating tmux-specific command construction in the backend adapter.
 
@@ -169,6 +176,7 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 - Readiness/state handling is more centralized than before, but the runtime still contains multiple wait strategies that should continue converging as additional backends are introduced.
 - The daemon still assumes the claim-flow HTTP origin can be derived from the configured WebSocket URL.
 - The legacy queued `run` path remains by design with limited ownership; it is retained as reference functionality for future capability work rather than as a first-class runtime direction.
+- The protobuf carrier still uses transitional JSON-shaped `frame_json` bodies under typed oneof payloads; generated field-level protobuf payload structs remain a follow-up before HTTP/2 control/data transports.
 
 ---
 

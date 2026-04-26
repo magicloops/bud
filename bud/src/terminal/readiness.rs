@@ -10,7 +10,8 @@ use tokio::time;
 use tracing::{info, warn};
 
 use crate::protocol::{AwaitReady, TERMINAL_PROTO_VERSION};
-use crate::util::{new_message_id, now_millis, send_ws_frame, OutboundSender};
+use crate::transport::{send_transport_frame, OutboundSender};
+use crate::util::{new_message_id, now_millis};
 
 use super::backend::TerminalBackend;
 use super::delta::{simple_hash, summarize_capture_for_log};
@@ -857,7 +858,7 @@ impl ReadinessDetector {
             "session_id": &self.session_id,
             "assessment": assessment,
         });
-        send_ws_frame(&self.sender, frame)?;
+        send_transport_frame(&self.sender, frame)?;
         Ok(())
     }
 }
@@ -1029,7 +1030,7 @@ where
             "session_id": &self.session_id,
             "assessment": &readiness,
         });
-        send_ws_frame(&self.sender, payload)?;
+        send_transport_frame(&self.sender, payload)?;
         Ok(())
     }
 }

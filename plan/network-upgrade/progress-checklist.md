@@ -2,35 +2,58 @@
 
 ## Phase 0: Protocol Envelope And Transport Boundary
 
-- [ ] Choose protobuf tooling for Rust and TypeScript
-- [ ] Define `BudEnvelope v1`
-- [ ] Define typed payloads for current daemon frames
-- [ ] Define typed `BudError`
-- [ ] Add cross-language conformance fixtures
-- [ ] Add service daemon transport router interface
-- [ ] Add daemon transport client interface
-- [ ] Carry canonical envelopes over WebSocket compatibility
-- [ ] Bound daemon terminal output chunk sizes
-- [ ] Update `docs/proto.md` and affected specs
+- [x] Choose protobuf tooling for Rust and TypeScript
+- [x] Define `BudEnvelope v1`
+- [x] Define typed payloads for current daemon frames
+- [x] Define typed `BudError`
+- [x] Add cross-language conformance fixtures
+- [x] Add service daemon transport router interface
+- [x] Add daemon transport client interface
+- [x] Carry canonical envelopes over WebSocket compatibility
+- [x] Bound daemon terminal output chunk sizes
+- [x] Update `docs/proto.md` and affected specs
 
 ## Phase 1: Durable Control And Reconciliation
 
-- [ ] Define operation lifecycle states
-- [ ] Define stream lifecycle states
-- [ ] Add device-session persistence
-- [ ] Add transport-session persistence
-- [ ] Add durable operation persistence
-- [ ] Add durable stream persistence
-- [ ] Add daemon local journal
-- [ ] Add reconnect reconciliation protocol
-- [ ] Add service reconciliation handling
-- [ ] Add gateway drain semantics
-- [ ] Generate and verify Drizzle migrations
-- [ ] Update DB/runtime specs
+- [x] Define operation lifecycle states
+- [x] Define stream lifecycle states
+- [x] Add device-session persistence
+- [x] Add transport-session persistence
+- [x] Add durable operation persistence
+- [x] Add durable stream persistence
+- [x] Add daemon local journal
+- [x] Add reconnect reconciliation protocol
+- [x] Add service reconciliation handling
+- [x] Add gateway drain semantics
+- [x] Generate and verify Drizzle migrations
+- [x] Update DB/runtime specs
+
+## Phase 1.5: gRPC Stack Interop Validation
+
+- [x] Add Buf spike scaffolding
+- [x] Implement Node Connect native-gRPC-over-HTTP/2 candidate
+- [x] Implement Rust tonic client harness
+- [x] Validate long-lived bidi control stream
+- [x] Validate server directive while client streams heartbeats
+- [x] Validate client cancellation
+- [x] Validate server cancellation
+- [x] Validate deadline exceeded behavior
+- [x] Validate max message size behavior
+- [x] Validate metadata propagation
+- [x] Validate status/error details
+- [x] Validate gateway drain smoke behavior
+- [x] Validate reconnect under load
+- [x] Validate 1000+ stream open/close cycles
+- [x] Validate concurrent attach streams
+- [x] Validate slow receiver/backpressure shape
+- [x] Validate proxy/file streaming fallback shape
+- [x] Run `@grpc/grpc-js` comparison if Connect is ambiguous or fails
+- [x] Record daemon-gateway runtime decision
+- [x] Update Phase 2 plan with selected runtime and version pins
 
 ## Phase 2: HTTP/2 gRPC Control Plane
 
-- [ ] Validate gRPC service stack and deployment/front-door support
+- [ ] Confirm selected gRPC service stack and deployment/front-door support
 - [ ] Define `BudControl.Connect`
 - [ ] Implement daemon signed identity or documented transition mechanism
 - [ ] Implement service control gateway
@@ -95,4 +118,3 @@
 - [ ] Remove service WebSocket gateway when safe
 - [ ] Remove unused dependencies
 - [ ] Update protocol docs and specs
-

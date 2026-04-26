@@ -52,10 +52,38 @@ Wire-format rules:
 
 ## 3. Transports
 
+### 3.0 Network Upgrade Transition
+
+The codebase now has a Phase 0 transport boundary for the daemon-network upgrade:
+
+- service runtime code sends daemon work through `DaemonTransportRouter`
+- the current router implementation is WebSocket-backed
+- daemon terminal/run modules send outbound payloads through a transport sender wrapper instead of a raw WebSocket sender type
+- shared protobuf schema lives in `proto/bud/v1/bud.proto`
+- service and daemon both encode/decode `BudEnvelope v1` binary frames for WebSocket-capable peers
+- WebSocket-capable peers now dispatch known current frames through typed protobuf oneof payloads such as `terminal_ensure`, `terminal_output`, `reconnect_report`, and `reconciliation_decision`
+- each typed payload carries a transitional `frame_json` field so existing JSON-shaped handlers remain reusable during the field-level protobuf rollout
+- `LegacyJsonPayload` remains decode-compatible for older binary fixtures and downgrade testing
+- terminal output emitted by the daemon is chunked to the documented 16 KiB maximum
+
+Receivers must continue to tolerate legacy JSON frames on `/ws`. New daemons advertise `capabilities.bud_envelope = { version: 1, websocket_binary: true }`; once both sides see that capability, service and daemon send protobuf `BudEnvelope` binary frames over the same WebSocket connection.
+
+Phase 1 durable state now exists in the service schema:
+
+- `device_session` records daemon control-session epochs, capabilities, heartbeat, and drain/close state
+- `transport_session` records concrete WebSocket/HTTP2/QUIC transport sessions
+- `bud_operation` records daemon-directed operation lifecycle with idempotency and typed error fields
+- `bud_stream` records stream lifecycle, byte offsets, credits, reset reasons, and typed stream errors
+- `audit_event` is the append-only audit foundation for daemon/session/operation/stream events
+
+The daemon has a local journal foundation for accepted operations, active stream checkpoints, terminal session ids, and local policy version. After a successful handshake, the daemon sends a live `reconnect_report`; the service records an audit event, compares reported operation/stream ids to durable service state, and replies with `reconciliation_decision`. Unknown service-side matches are reported as `unknown` instead of invented success/failure.
+
+Gateway drain is process-local in the current WebSocket adapter. When enabled, the gateway refuses new long-lived daemon work such as `terminal_ensure`, proxy-open, and file-open/read frames while allowing short control traffic to continue. If an active transport closes or times out, affected durable operation and stream rows owned by that transport are marked `unknown`.
+
 ### 3.1 Bud ⇄ Service WebSocket
 
 - URL: `wss://<host>/ws`
-- Encoding: UTF-8 JSON
+- Encoding: UTF-8 JSON for legacy peers, protobuf `BudEnvelope` binary frames for peers that advertise `bud_envelope.websocket_binary`
 - Bud should send `heartbeat` every 30 seconds
 - Service marks a Bud offline after `offlineGraceSec` with no accepted heartbeat
 - Bud output chunks should stay at or below 16 KiB
@@ -310,6 +338,69 @@ Notes:
 ```
 
 The service only accepts heartbeats from the currently authoritative socket for that Bud.
+
+### 5.6 `reconnect_report` (Bud → Service)
+
+Sent by the daemon after a successful handshake so the service can reconcile durable operation and stream state:
+
+```json
+{
+  "proto": "0.1",
+  "type": "reconnect_report",
+  "id": "01...",
+  "ts": 1731,
+  "bud_id": "b_01H...",
+  "device_session_id": "s_01H...",
+  "operations": [
+    {
+      "operation_id": "op_01H...",
+      "state": "running",
+      "operation_type": "terminal_send",
+      "updated_at": "2026-04-25T18:00:00.000Z"
+    }
+  ],
+  "streams": [
+    {
+      "stream_id": "st_01H...",
+      "operation_id": "op_01H...",
+      "stream_type": "terminal_interactive",
+      "state": "open",
+      "send_offset": 0,
+      "receive_offset": 16384
+    }
+  ],
+  "terminal_sessions": ["bud-b_123-thread-456"],
+  "local_policy_version": "local",
+  "ext": {}
+}
+```
+
+### 5.7 `reconciliation_decision` (Service → Bud)
+
+Service reply to `reconnect_report`. Each reported operation/stream is returned with the service's current state, or `unknown` if the service cannot match it.
+
+```json
+{
+  "proto": "0.1",
+  "type": "reconciliation_decision",
+  "id": "01...",
+  "ts": 1731,
+  "operations": [
+    {
+      "operation_id": "op_01H...",
+      "state": "unknown",
+      "operation_type": "terminal_send",
+      "error": {
+        "code": "UNKNOWN_OPERATION",
+        "message": "daemon reported an operation not known to this service",
+        "retryable": true
+      }
+    }
+  ],
+  "streams": [],
+  "ext": {}
+}
+```
 
 ---
 
@@ -595,6 +686,8 @@ hello(bud_id)  ─────▶ issue nonce
 hello_challenge ◀────
 hello_proof    ─────▶ verify HMAC(device_secret, nonce)
 hello_ack      ◀──── session_id
+reconnect_report ───▶ journal operation/stream summary
+reconciliation_decision ◀── service current/unknown states
 ```
 
 ### 10.3 Terminal Send

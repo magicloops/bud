@@ -8,6 +8,7 @@ The service is the central hub of the Bud system:
 - **REST API** - CRUD for buds, threads, messages, and terminal sessions
 - **Auth Server** - Better Auth-backed browser sessions plus OAuth/JWT provider endpoints for native clients
 - **WebSocket Gateway** - Persistent connections with bud daemons
+- **Transport Router** - Daemon-facing routing seam that currently adapts terminal runtime traffic onto the WebSocket gateway
 - **SSE Streaming** - Real-time events to web clients
 - **Agent Service** - LLM-powered tool calling via configured providers, with split ownership for conversation loading, model invocation, terminal tool execution, transcript writing, and cancellation
 - **Database** - PostgreSQL with Drizzle ORM
@@ -74,8 +75,10 @@ Main source code:
 - `db/` - Database layer
 - `notifications/` - Push notification helpers, APNs provider, and async outbox worker
 - `routes/` - HTTP endpoints, with split thread submodules under `routes/threads/`
-- `runtime/` - Session managers, with terminal-runtime ownership split into `runtime/terminal/`
+- `runtime/` - Session managers, with terminal-runtime ownership split into `runtime/terminal/` plus daemon operation/stream persistence helpers
 - `terminal/` - Terminal types
+- `proto/` - Network-upgrade envelope helpers and typed protobuf WebSocket carrier codec
+- `transport/` - Daemon transport router interface, current WebSocket/protobuf-envelope adapter, and gateway drain helper
 - `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 
 ### `drizzle/` → [drizzle/drizzle.spec.md](./drizzle/drizzle.spec.md)

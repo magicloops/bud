@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::protocol::{TerminalObserveFrame, TERMINAL_PROTO_VERSION};
-use crate::util::{new_message_id, now_millis, send_ws_frame};
+use crate::transport::send_transport_frame;
+use crate::util::{new_message_id, now_millis};
 
 use super::backend::TerminalBackend;
 use super::delta::build_additive_delta_payload;
@@ -229,7 +230,7 @@ where
             "readiness": readiness,
             "error": Value::Null,
         });
-        send_ws_frame(&sender, payload)?;
+        send_transport_frame(&sender, payload)?;
 
         if view == "delta" {
             self.store_delivered_capture(session_id, &current_capture, start_line)
@@ -301,7 +302,7 @@ where
             }),
             "error": error,
         });
-        send_ws_frame(&sender, payload)?;
+        send_transport_frame(&sender, payload)?;
         Ok(())
     }
 }

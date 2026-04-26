@@ -18,6 +18,27 @@ import { sql } from "drizzle-orm";
 const authSchema = pgSchema("auth");
 
 const messageRoleValues = ["user", "assistant", "tool", "system"] as const;
+export const operationStateValues = [
+  "offered",
+  "accepted",
+  "rejected",
+  "running",
+  "succeeded",
+  "failed",
+  "canceled",
+  "unknown",
+  "expired",
+] as const;
+export const streamStateValues = [
+  "opening",
+  "open",
+  "half_closed_local",
+  "half_closed_remote",
+  "closed",
+  "reset",
+  "unknown",
+  "expired",
+] as const;
 
 const byteaColumn = customType<{ data: Buffer }>({
   dataType() {
@@ -522,4 +543,187 @@ export const terminalSessionInputLogTable = pgTable(
   (table) => ({
     sessionIdx: index("terminal_session_input_log_idx").on(table.sessionId, table.createdAt)
   })
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Daemon transport durability (network-upgrade Phase 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const deviceSessionTable = pgTable(
+  "device_session",
+  {
+    deviceSessionId: text("device_session_id").primaryKey(),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    gatewayInstanceId: text("gateway_instance_id"),
+    capabilities: jsonb("capabilities")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    drainStartedAt: timestamp("drain_started_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closeReason: text("close_reason"),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    budStatusIdx: index("device_session_bud_status_idx").on(table.budId, table.status),
+    heartbeatIdx: index("device_session_heartbeat_idx").on(table.lastHeartbeatAt),
+  }),
+);
+
+export const transportSessionTable = pgTable(
+  "transport_session",
+  {
+    transportSessionId: text("transport_session_id").primaryKey(),
+    deviceSessionId: text("device_session_id").references(() => deviceSessionTable.deviceSessionId, {
+      onDelete: "set null",
+    }),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    transportKind: text("transport_kind").notNull(),
+    status: text("status").notNull().default("active"),
+    remoteAddr: text("remote_addr"),
+    userAgent: text("user_agent"),
+    connectedAt: timestamp("connected_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    drainStartedAt: timestamp("drain_started_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closeReason: text("close_reason"),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    deviceIdx: index("transport_session_device_idx").on(table.deviceSessionId),
+    budKindStatusIdx: index("transport_session_bud_kind_status_idx").on(
+      table.budId,
+      table.transportKind,
+      table.status,
+    ),
+  }),
+);
+
+export const budOperationTable = pgTable(
+  "bud_operation",
+  {
+    operationId: text("operation_id").primaryKey(),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => threadTable.threadId, { onDelete: "set null" }),
+    terminalSessionId: text("terminal_session_id").references(() => terminalSessionTable.sessionId, {
+      onDelete: "set null",
+    }),
+    deviceSessionId: text("device_session_id").references(() => deviceSessionTable.deviceSessionId, {
+      onDelete: "set null",
+    }),
+    transportSessionId: text("transport_session_id").references(() => transportSessionTable.transportSessionId, {
+      onDelete: "set null",
+    }),
+    idempotencyKey: text("idempotency_key"),
+    operationType: text("operation_type").notNull(),
+    trafficClass: text("traffic_class").notNull().default("control"),
+    state: text("state", { enum: operationStateValues }).notNull().default("offered"),
+    request: jsonb("request")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    errorRetryable: boolean("error_retryable"),
+    errorDetails: jsonb("error_details").$type<Record<string, unknown>>(),
+    offeredAt: timestamp("offered_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    budStateIdx: index("bud_operation_bud_state_idx").on(table.budId, table.state),
+    threadIdx: index("bud_operation_thread_idx").on(table.threadId, table.createdAt),
+    idempotencyIdx: uniqueIndex("bud_operation_idempotency_idx").on(table.budId, table.idempotencyKey),
+  }),
+);
+
+export const budStreamTable = pgTable(
+  "bud_stream",
+  {
+    streamId: text("stream_id").primaryKey(),
+    operationId: text("operation_id").references(() => budOperationTable.operationId, {
+      onDelete: "cascade",
+    }),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    deviceSessionId: text("device_session_id").references(() => deviceSessionTable.deviceSessionId, {
+      onDelete: "set null",
+    }),
+    transportSessionId: text("transport_session_id").references(() => transportSessionTable.transportSessionId, {
+      onDelete: "set null",
+    }),
+    streamType: text("stream_type").notNull(),
+    trafficClass: text("traffic_class").notNull().default("interactive"),
+    state: text("state", { enum: streamStateValues }).notNull().default("opening"),
+    sendOffset: bigint("send_offset", { mode: "number" }).notNull().default(0),
+    receiveOffset: bigint("receive_offset", { mode: "number" }).notNull().default(0),
+    creditWindowBytes: bigint("credit_window_bytes", { mode: "number" }),
+    resetReason: text("reset_reason"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    errorRetryable: boolean("error_retryable"),
+    errorDetails: jsonb("error_details").$type<Record<string, unknown>>(),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    operationIdx: index("bud_stream_operation_idx").on(table.operationId),
+    budStateIdx: index("bud_stream_bud_state_idx").on(table.budId, table.state),
+    transportIdx: index("bud_stream_transport_idx").on(table.transportSessionId, table.state),
+  }),
+);
+
+export const auditEventTable = pgTable(
+  "audit_event",
+  {
+    auditEventId: text("audit_event_id").primaryKey(),
+    budId: text("bud_id").references(() => budTable.budId, { onDelete: "set null" }),
+    userId: text("user_id").references(() => authUserTable.id, { onDelete: "set null" }),
+    operationId: text("operation_id").references(() => budOperationTable.operationId, {
+      onDelete: "set null",
+    }),
+    streamId: text("stream_id").references(() => budStreamTable.streamId, { onDelete: "set null" }),
+    eventType: text("event_type").notNull(),
+    eventData: jsonb("event_data")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    budIdx: index("audit_event_bud_idx").on(table.budId, table.createdAt),
+    userIdx: index("audit_event_user_idx").on(table.userId, table.createdAt),
+    operationIdx: index("audit_event_operation_idx").on(table.operationId),
+    streamIdx: index("audit_event_stream_idx").on(table.streamId),
+  }),
 );

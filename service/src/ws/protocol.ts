@@ -24,6 +24,13 @@ const CapabilitiesSchema = z
     sessions: z.boolean().default(false),
     terminal: z.boolean().optional().default(false),
     terminal_proto: z.string().optional(),
+    bud_envelope: z
+      .object({
+        version: z.number().int().positive(),
+        websocket_binary: z.boolean().optional().default(false)
+      })
+      .passthrough()
+      .optional(),
     supports_pty: z.boolean().optional(),
     sessions_backends: z.array(z.string()).optional(),
     tmux_version: z.string().optional(),
@@ -35,6 +42,7 @@ const CapabilitiesSchema = z
     sessions: capabilities.sessions,
     terminal: capabilities.terminal,
     ...(capabilities.terminal_proto ? { terminal_proto: capabilities.terminal_proto } : {}),
+    ...(capabilities.bud_envelope ? { bud_envelope: capabilities.bud_envelope } : {}),
   }));
 
 export const HelloSchema = EnvelopeSchema.extend({
@@ -139,6 +147,33 @@ export const ErrorFrameSchema = EnvelopeSchema.extend({
   message: z.string()
 });
 
+const ReconnectOperationReportSchema = z.object({
+  operation_id: z.string(),
+  state: z.string(),
+  operation_type: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+});
+
+const ReconnectStreamReportSchema = z.object({
+  stream_id: z.string(),
+  operation_id: z.string().nullable().optional(),
+  stream_type: z.string(),
+  state: z.string(),
+  send_offset: z.number().int().nonnegative().optional().default(0),
+  receive_offset: z.number().int().nonnegative().optional().default(0),
+  updated_at: z.string().nullable().optional(),
+});
+
+export const ReconnectReportSchema = EnvelopeSchema.extend({
+  type: z.literal("reconnect_report"),
+  bud_id: z.string(),
+  device_session_id: z.string().optional(),
+  operations: z.array(ReconnectOperationReportSchema).optional().default([]),
+  streams: z.array(ReconnectStreamReportSchema).optional().default([]),
+  terminal_sessions: z.array(z.string()).optional().default([]),
+  local_policy_version: z.string().nullable().optional(),
+});
+
 export type ConnectionState =
   | { kind: "awaiting_hello" }
   | {
@@ -155,4 +190,3 @@ export type ConnectionState =
       hello: HelloFrame;
     }
   | { kind: "closed" };
-

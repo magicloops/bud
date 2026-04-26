@@ -9,6 +9,8 @@
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
 **Phase 0**: [phase-0-protocol-envelope-and-transport-boundary.md](./phase-0-protocol-envelope-and-transport-boundary.md)
 **Phase 1**: [phase-1-durable-control-and-reconciliation.md](./phase-1-durable-control-and-reconciliation.md)
+**Phase 1.5**: [phase-1.5-grpc-stack-interop-validation.md](./phase-1.5-grpc-stack-interop-validation.md)
+**Runtime Decision**: [phase-1.5-runtime-decision.md](./phase-1.5-runtime-decision.md)
 **Phase 2**: [phase-2-http2-grpc-control-plane.md](./phase-2-http2-grpc-control-plane.md)
 **Phase 3**: [phase-3-http2-data-fallback.md](./phase-3-http2-data-fallback.md)
 **Phase 4**: [phase-4-localhost-proxy-and-file-reads.md](./phase-4-localhost-proxy-and-file-reads.md)
@@ -52,6 +54,10 @@ By the end of this plan:
 - Web and mobile clients do not connect to Bud daemons directly.
 - REST plus SSE remain the product-facing browser/mobile contracts.
 - HTTP/2 gRPC is the mandatory daemon control transport.
+- Buf is the protobuf schema/tooling standard.
+- The Phase 1.5 interop spike selected `@grpc/grpc-js` for the Node daemon gateway.
+- The Rust daemon uses `tonic` / `prost` generated from the same canonical `.proto` files.
+- Connect-ES may be used for non-daemon APIs, but not for the daemon's long-lived native gRPC bidi control stream.
 - HTTP/2 data streams are the mandatory data fallback for terminal, proxy, and file streams.
 - QUIC is optional and must not be required for web proxy or file viewer correctness.
 - The same protobuf envelope and typed payloads must be carried by WebSocket compatibility, HTTP/2 gRPC, and QUIC.
@@ -257,7 +263,8 @@ Any schema phase must follow the repo DB workflow:
 |-------|----------|----------|-----------------|
 | 0 | [phase-0-protocol-envelope-and-transport-boundary.md](./phase-0-protocol-envelope-and-transport-boundary.md) | Urgent | Define protobuf envelope/payloads and split service/daemon transport boundaries while preserving WebSocket behavior |
 | 1 | [phase-1-durable-control-and-reconciliation.md](./phase-1-durable-control-and-reconciliation.md) | Urgent | Add operation/stream/session durability and reconnect reconciliation before adding more stream-heavy features |
-| 2 | [phase-2-http2-grpc-control-plane.md](./phase-2-http2-grpc-control-plane.md) | High | Move daemon auth, heartbeat, negotiation, policy, and operation control to HTTP/2 gRPC |
+| 1.5 | [phase-1.5-grpc-stack-interop-validation.md](./phase-1.5-grpc-stack-interop-validation.md) | Urgent | Validate Rust tonic interoperability and select `@grpc/grpc-js` for the Node daemon gateway |
+| 2 | [phase-2-http2-grpc-control-plane.md](./phase-2-http2-grpc-control-plane.md) | High | Move daemon auth, heartbeat, negotiation, policy, and operation control to HTTP/2 gRPC using `@grpc/grpc-js` on the service and `tonic` on the daemon |
 | 3 | [phase-3-http2-data-fallback.md](./phase-3-http2-data-fallback.md) | High | Establish mandatory HTTP/2 data streams with backpressure, traffic classes, and terminal parity |
 | 4 | [phase-4-localhost-proxy-and-file-reads.md](./phase-4-localhost-proxy-and-file-reads.md) | High | Ship localhost proxy and read-only file/range serving over HTTP/2 fallback |
 | 5 | [phase-5-quic-data-fast-path.md](./phase-5-quic-data-fast-path.md) | Medium | Add QUIC as an optional data fast path for proven stream semantics |
@@ -307,6 +314,7 @@ Any schema phase must follow the repo DB workflow:
 ### Docs / Specs
 
 - `docs/proto.md`
+- `spikes/grpc-interop/` for the isolated Phase 1.5 runtime interop harness
 - `bud.spec.md`
 - `bud/bud.spec.md`
 - `bud/src/src.spec.md`
@@ -323,7 +331,8 @@ Any schema phase must follow the repo DB workflow:
 
 - Phase 0 must land first. It prevents protocol and transport changes from becoming one large cutover.
 - Phase 1 should happen before proxy/file work so reconnect, retries, and unknown outcomes are modeled before the feature depends on them.
-- Phase 2 should move control to HTTP/2 before the data plane is stretched.
+- Phase 1.5 should choose the Node daemon-gateway gRPC runtime with Rust tonic interop evidence before Phase 2 starts.
+- Phase 2 should move control to HTTP/2 after the gRPC runtime is selected and deployment constraints are known.
 - Phase 3 should prove terminal parity over HTTP/2 data before Phase 4 adds proxy/file traffic.
 - Phase 4 is the first product-feature phase and must work with QUIC disabled.
 - Phase 5 should reuse the same stream semantics; it must not introduce QUIC-only behavior.
@@ -337,7 +346,8 @@ Any schema phase must follow the repo DB workflow:
 | New DB state grows into a broad workflow engine | Medium | High | Keep operations and streams scoped to daemon work, terminal, proxy, and file sessions |
 | Device identity migration blocks all feature work | Medium | High | Add a deliberate transition path, but gate proxy/file on the hardened identity target if feasible |
 | Proxy/file policy is too broad on first release | Medium | High | Start with localhost-only proxy and read-only file handles/roots |
-| HTTP/2 support in the chosen service stack or deployment front door is awkward | Medium | High | Run a stack/deployment spike in Phase 2 before cutting over control |
+| HTTP/2 support in the chosen service stack or deployment front door is awkward | Medium | High | Run the Phase 1.5 Connect-vs-grpc-js interop/deployment spike before cutting over control |
+| Connect Node stream semantics are awkward for long-lived tonic daemon streams | Medium | High | Make Connect contingent on Phase 1.5 passing; fall back to `@grpc/grpc-js` for the daemon gateway if it fails |
 | Backpressure bugs hurt terminal interactivity | Medium | High | Add traffic classes, bounded chunks, credits, and validation before proxy/file |
 | QUIC becomes a second protocol | Medium | High | Require identical envelope, stream lifecycle, and fallback semantics |
 | WebSocket fallback becomes permanent feature debt | Medium | Medium | Phase 6 defines degraded limits and a removal switch |
@@ -346,11 +356,12 @@ Any schema phase must follow the repo DB workflow:
 
 1. Introduce envelope/protobuf and transport abstractions under current WebSocket behavior.
 2. Add durable operation/stream/session state and daemon reconnect reconciliation.
-3. Bring up HTTP/2 gRPC control in parallel with WebSocket compatibility.
-4. Move terminal data to HTTP/2 data fallback and validate current UX.
-5. Ship proxy/file sessions over HTTP/2 fallback.
-6. Add QUIC and promote it opportunistically based on health.
-7. Constrain and eventually retire WebSocket compatibility.
+3. Validate the Node daemon-gateway gRPC runtime with a Rust tonic interop spike.
+4. Bring up HTTP/2 gRPC control in parallel with WebSocket compatibility.
+5. Move terminal data to HTTP/2 data fallback and validate current UX.
+6. Ship proxy/file sessions over HTTP/2 fallback.
+7. Add QUIC and promote it opportunistically based on health.
+8. Constrain and eventually retire WebSocket compatibility.
 
 ## Definition Of Done
 

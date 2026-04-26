@@ -23,6 +23,8 @@ use crate::identity::{
     clear_identity, installation_id_path, load_identity, load_or_create_installation_id,
     persist_identity, DeviceIdentity,
 };
+use crate::journal::{load_journal, DaemonJournal};
+use crate::proto_wire::{decode_legacy_json_frame, encode_legacy_json_frame};
 use crate::protocol::{
     validate_inbound_envelope_proto, Envelope, ErrorFrame, HelloAckFrame, HelloChallengeFrame,
     RunFrame, TerminalCloseFrame, TerminalEnsureFrame, TerminalInputFrame, TerminalObserveFrame,
@@ -31,14 +33,13 @@ use crate::protocol::{
 };
 use crate::run::RunExecutor;
 use crate::terminal::{probe_tmux, TerminalConfig, TerminalManager};
-use crate::util::{
-    compute_hmac, default_shell, expand_path, new_message_id, now_millis, send_ws_frame,
-    send_ws_message,
-};
+use crate::transport::{send_transport_frame, send_transport_message, TransportSender};
+use crate::util::{compute_hmac, default_shell, expand_path, new_message_id, now_millis};
 
 pub struct BudApp {
     args: BudArgs,
     identity_path: PathBuf,
+    journal_path: PathBuf,
     installation_id_path: PathBuf,
     installation_id: String,
     identity: Option<DeviceIdentity>,
@@ -52,6 +53,7 @@ struct SessionMeta {
     bud_id: String,
     session_id: String,
     heartbeat_sec: u64,
+    envelope_binary: bool,
 }
 
 enum HandshakeError {
@@ -62,6 +64,7 @@ enum HandshakeError {
 impl BudApp {
     pub async fn new(args: BudArgs) -> Self {
         let identity_path = PathBuf::from(shellexpand::tilde(&args.identity_file).into_owned());
+        let journal_path = identity_path.with_file_name("journal.json");
         let installation_id_path = installation_id_path(&identity_path);
         let default_cwd = expand_path(&args.cwd)
             .or_else(|| std::env::current_dir().ok())
@@ -82,6 +85,7 @@ impl BudApp {
         Self {
             args,
             identity_path,
+            journal_path,
             installation_id_path,
             installation_id: String::new(),
             identity: None,
@@ -173,96 +177,25 @@ impl BudApp {
             .await
             .map_err(|err| HandshakeError::Other(err.into()))?;
 
+        let mut envelope_binary = false;
         loop {
             let Some(msg) = stream.next().await else {
                 return Err(HandshakeError::Other(anyhow!(
                     "connection closed before handshake completed"
                 )));
             };
-            match msg {
-                Ok(Message::Text(text)) => {
-                    let envelope: Envelope = serde_json::from_str(&text)
-                        .map_err(|err| HandshakeError::Other(err.into()))?;
-                    validate_inbound_envelope_proto(&envelope).map_err(HandshakeError::Other)?;
-                    match envelope.kind.as_str() {
-                        "hello_ack" => {
-                            let ack: HelloAckFrame = serde_json::from_str(&text)
-                                .map_err(|err| HandshakeError::Other(err.into()))?;
-                            if let Some(secret) = ack.device_secret.clone() {
-                                let new_identity = DeviceIdentity {
-                                    bud_id: ack.bud_id.clone(),
-                                    device_secret: secret,
-                                    server_url: self.args.server.clone(),
-                                    name: self.args.name.clone(),
-                                    default_cwd: self.args.cwd.clone(),
-                                };
-                                persist_identity(&self.identity_path, &new_identity)
-                                    .await
-                                    .map_err(HandshakeError::Other)?;
-                                self.identity = Some(new_identity);
-                                self.args.token = None;
-                            } else if self.identity.is_none() {
-                                return Err(HandshakeError::Other(anyhow!(
-                                    "hello_ack missing device_secret during enrollment"
-                                )));
-                            }
-                            let meta = SessionMeta {
-                                bud_id: ack.bud_id,
-                                session_id: ack.session_id,
-                                heartbeat_sec: ack.heartbeat_sec.unwrap_or(DEFAULT_HEARTBEAT_SEC),
-                            };
-                            return Ok((stream, meta));
-                        }
-                        "hello_challenge" => {
-                            let challenge: HelloChallengeFrame = serde_json::from_str(&text)
-                                .map_err(|err| HandshakeError::Other(err.into()))?;
-                            let identity = self.identity.as_ref().ok_or_else(|| {
-                                HandshakeError::Other(anyhow!(
-                                    "no identity available for challenge"
-                                ))
-                            })?;
-                            let proof = compute_hmac(&identity.device_secret, &challenge.nonce)
-                                .map_err(HandshakeError::Other)?;
-                            let proof_frame = json!({
-                                "proto": PROTO_VERSION,
-                                "type": "hello_proof",
-                                "id": new_message_id(),
-                                "ts": now_millis(),
-                                "ext": {},
-                                "bud_id": identity.bud_id,
-                                "hmac": proof
-                            });
-                            stream
-                                .send(Message::Text(
-                                    serde_json::to_string(&proof_frame)
-                                        .map_err(|err| HandshakeError::Other(err.into()))?,
-                                ))
-                                .await
-                                .map_err(|err| HandshakeError::Other(err.into()))?;
-                        }
-                        "error" => {
-                            let err_frame: ErrorFrame = serde_json::from_str(&text)
-                                .map_err(|err| HandshakeError::Other(err.into()))?;
-                            if err_frame.code == "AUTH_FAILED" {
-                                return Err(HandshakeError::AuthFailed {
-                                    code: err_frame.code,
-                                    message: err_frame.message,
-                                });
-                            }
-                            return Err(HandshakeError::Other(anyhow!(
-                                "backend error during handshake (code={}): {}",
-                                err_frame.code,
-                                err_frame.message
-                            )));
-                        }
-                        other => warn!(frame_type = other, "Unexpected frame during handshake"),
-                    }
+            let text = match msg {
+                Ok(Message::Text(text)) => text,
+                Ok(Message::Binary(bytes)) => {
+                    envelope_binary = true;
+                    decode_legacy_json_frame(&bytes).map_err(HandshakeError::Other)?
                 }
                 Ok(Message::Ping(payload)) => {
                     stream
                         .send(Message::Pong(payload))
                         .await
                         .map_err(|err| HandshakeError::Other(err.into()))?;
+                    continue;
                 }
                 Ok(Message::Close(frame)) => {
                     return Err(HandshakeError::Other(anyhow!(
@@ -270,10 +203,93 @@ impl BudApp {
                         frame
                     )));
                 }
-                Ok(Message::Binary(_)) => {}
                 Err(err) => return Err(HandshakeError::Other(err.into())),
-                _ => {}
-            }
+                _ => continue,
+            };
+
+            let envelope: Envelope =
+                serde_json::from_str(&text).map_err(|err| HandshakeError::Other(err.into()))?;
+            validate_inbound_envelope_proto(&envelope).map_err(HandshakeError::Other)?;
+            match envelope.kind.as_str() {
+                "hello_ack" => {
+                    let ack: HelloAckFrame = serde_json::from_str(&text)
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
+                    if let Some(secret) = ack.device_secret.clone() {
+                        let new_identity = DeviceIdentity {
+                            bud_id: ack.bud_id.clone(),
+                            device_secret: secret,
+                            server_url: self.args.server.clone(),
+                            name: self.args.name.clone(),
+                            default_cwd: self.args.cwd.clone(),
+                        };
+                        persist_identity(&self.identity_path, &new_identity)
+                            .await
+                            .map_err(HandshakeError::Other)?;
+                        self.identity = Some(new_identity);
+                        self.args.token = None;
+                    } else if self.identity.is_none() {
+                        return Err(HandshakeError::Other(anyhow!(
+                            "hello_ack missing device_secret during enrollment"
+                        )));
+                    }
+                    let meta = SessionMeta {
+                        bud_id: ack.bud_id,
+                        session_id: ack.session_id,
+                        heartbeat_sec: ack.heartbeat_sec.unwrap_or(DEFAULT_HEARTBEAT_SEC),
+                        envelope_binary,
+                    };
+                    return Ok((stream, meta));
+                }
+                "hello_challenge" => {
+                    let challenge: HelloChallengeFrame = serde_json::from_str(&text)
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
+                    let identity = self.identity.as_ref().ok_or_else(|| {
+                        HandshakeError::Other(anyhow!("no identity available for challenge"))
+                    })?;
+                    let proof = compute_hmac(&identity.device_secret, &challenge.nonce)
+                        .map_err(HandshakeError::Other)?;
+                    let proof_frame = json!({
+                        "proto": PROTO_VERSION,
+                        "type": "hello_proof",
+                        "id": new_message_id(),
+                        "ts": now_millis(),
+                        "ext": {},
+                        "bud_id": identity.bud_id,
+                        "hmac": proof
+                    });
+                    let proof_message = if envelope_binary {
+                        Message::Binary(
+                            encode_legacy_json_frame(&proof_frame)
+                                .map_err(HandshakeError::Other)?,
+                        )
+                    } else {
+                        Message::Text(
+                            serde_json::to_string(&proof_frame)
+                                .map_err(|err| HandshakeError::Other(err.into()))?,
+                        )
+                    };
+                    stream
+                        .send(proof_message)
+                        .await
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
+                }
+                "error" => {
+                    let err_frame: ErrorFrame = serde_json::from_str(&text)
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
+                    if err_frame.code == "AUTH_FAILED" {
+                        return Err(HandshakeError::AuthFailed {
+                            code: err_frame.code,
+                            message: err_frame.message,
+                        });
+                    }
+                    return Err(HandshakeError::Other(anyhow!(
+                        "backend error during handshake (code={}): {}",
+                        err_frame.code,
+                        err_frame.message
+                    )));
+                }
+                other => warn!(frame_type = other, "Unexpected frame during handshake"),
+            };
         }
     }
 
@@ -285,7 +301,7 @@ impl BudApp {
         let mut interval = time::interval(Duration::from_secs(meta.heartbeat_sec.max(5)));
         let (write, mut read) = stream.split();
         let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-        let sender = std::sync::Arc::new(tx);
+        let sender = TransportSender::websocket(tx, meta.envelope_binary);
 
         let writer_handle = task::spawn_local(async move {
             let mut sink = write;
@@ -302,6 +318,7 @@ impl BudApp {
         if self.terminal_manager.config.enabled && !self.terminal_manager.config.tmux_available {
             info!("terminal enabled but tmux unavailable; terminal sessions will fail");
         }
+        self.send_reconnect_report(&sender, &meta).await?;
 
         loop {
             tokio::select! {
@@ -314,7 +331,7 @@ impl BudApp {
                         "ext": {},
                         "session_id": meta.session_id
                     });
-                    if let Err(err) = send_ws_frame(&sender, heartbeat) {
+                    if let Err(err) = send_transport_frame(&sender, heartbeat) {
                         self.run_executor.clear_sender().await;
                         self.terminal_manager.clear_sender().await;
                         drop(sender);
@@ -327,8 +344,12 @@ impl BudApp {
                         Some(Ok(Message::Text(text))) => {
                             self.handle_server_frame(&text).await?;
                         }
+                        Some(Ok(Message::Binary(bytes))) => {
+                            let text = decode_legacy_json_frame(&bytes)?;
+                            self.handle_server_frame(&text).await?;
+                        }
                         Some(Ok(Message::Ping(payload))) => {
-                            if let Err(err) = send_ws_message(&sender, Message::Pong(payload)) {
+                            if let Err(err) = send_transport_message(&sender, Message::Pong(payload)) {
                                 self.run_executor.clear_sender().await;
                                 self.terminal_manager.clear_sender().await;
                                 drop(sender);
@@ -412,10 +433,87 @@ impl BudApp {
                 let err: ErrorFrame = serde_json::from_str(text)?;
                 warn!(code = %err.code, message = %err.message, "Backend error");
             }
+            "reconciliation_decision" => {
+                let value: Value = serde_json::from_str(text)?;
+                let operation_count = value
+                    .get("operations")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                let stream_count = value
+                    .get("streams")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                info!(
+                    operation_count,
+                    stream_count, "reconnect reconciliation decision received"
+                );
+            }
             "log_ack" | "hello_ack" | "hello_challenge" => {}
             other => warn!(frame_type = other, "Unhandled frame type"),
         }
         Ok(())
+    }
+
+    async fn send_reconnect_report(
+        &self,
+        sender: &TransportSender,
+        meta: &SessionMeta,
+    ) -> Result<()> {
+        let journal = match load_journal(&self.journal_path).await {
+            Ok(journal) => journal,
+            Err(err) => {
+                warn!(
+                    path = %self.journal_path.display(),
+                    error = %err,
+                    "failed to load daemon journal; reporting empty reconciliation state"
+                );
+                DaemonJournal::default()
+            }
+        };
+        let operations: Vec<Value> = journal
+            .accepted_operations
+            .iter()
+            .map(|operation| {
+                json!({
+                    "operation_id": &operation.operation_id,
+                    "state": &operation.state,
+                    "operation_type": &operation.operation_type,
+                    "updated_at": &operation.updated_at,
+                })
+            })
+            .collect();
+        let streams: Vec<Value> = journal
+            .active_streams
+            .iter()
+            .map(|stream| {
+                json!({
+                    "stream_id": &stream.stream_id,
+                    "operation_id": &stream.operation_id,
+                    "stream_type": &stream.stream_type,
+                    "state": &stream.state,
+                    "send_offset": stream.send_offset,
+                    "receive_offset": stream.receive_offset,
+                    "updated_at": &stream.updated_at,
+                })
+            })
+            .collect();
+
+        let report = json!({
+            "proto": PROTO_VERSION,
+            "type": "reconnect_report",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "bud_id": &meta.bud_id,
+            "device_session_id": &meta.session_id,
+            "operations": operations,
+            "streams": streams,
+            "terminal_sessions": journal.terminal_sessions,
+            "local_policy_version": journal.local_policy_version,
+        });
+        send_transport_frame(sender, report)
     }
 
     async fn handle_run_frame(&self, frame: RunFrame) -> Result<()> {
@@ -567,6 +665,10 @@ impl BudApp {
             "sessions": terminal_available,
             "terminal": terminal_available,
             "terminal_proto": TERMINAL_PROTO_VERSION,
+            "bud_envelope": {
+                "version": 1,
+                "websocket_binary": true
+            },
         })
     }
 }
