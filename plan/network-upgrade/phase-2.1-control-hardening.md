@@ -48,7 +48,7 @@ Phase 3 can now assume the service can shut down active gRPC control streams thr
 Phase 3 should build on the existing control stream as the metadata and lifecycle authority:
 
 - keep authentication, capability exchange, reconnect reports, stream-open directives, resets, and drain notices on `BudControl.Connect`
-- add a separate HTTP/2 data attachment service for high-volume terminal/proxy/file bytes
+- add a separate HTTP/2 data attachment service for high-volume terminal/file/web-serving bytes
 - continue persisting stream lifecycle in `bud_stream`
 - treat data streams as subordinate to an authenticated control session
 - keep WebSocket compatibility carrying the same stream frames with lower limits

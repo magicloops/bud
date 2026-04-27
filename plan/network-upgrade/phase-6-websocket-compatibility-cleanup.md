@@ -1,17 +1,18 @@
 # Phase 6: WebSocket Compatibility Cleanup
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
+**Design Doc**: [../../design/network-upgrade-websocket-fallback.md](../../design/network-upgrade-websocket-fallback.md)
 **Status**: Planned
 
 ---
 
 ## Objective
 
-Reduce WebSocket from a migration bridge to a constrained compatibility path, then remove it when supported daemon versions and deployment environments no longer need it.
+Reduce WebSocket from a migration bridge to a constrained compatibility path, allow it to act as a bounded worst-case data fallback where explicitly enabled, then remove it when supported daemon versions and deployment environments no longer need it.
 
 ## Context
 
-WebSocket starts as the only daemon transport, becomes a carrier for the common envelope, and then becomes fallback as HTTP/2 control/data and optional QUIC mature. If it remains feature-equivalent forever, the network upgrade will keep two production transport surfaces indefinitely.
+WebSocket starts as the only daemon transport, becomes a carrier for the common envelope, and then becomes fallback as HTTP/2 control/data and QUIC mature. The target product selector is QUIC first, HTTP/2 fallback, and WebSocket only as a bounded worst-case compatibility carrier if explicitly enabled. File bytes should be allowed over this fallback once limits and validation exist, because that is useful for constrained self-hosting deployments. Web-serving bytes require a separate enablement decision because proxy traffic is broader and easier to misuse.
 
 ## Scope
 
@@ -22,13 +23,15 @@ WebSocket starts as the only daemon transport, becomes a carrier for the common 
 - version/capability gates
 - operator switch to disable WebSocket compatibility
 - metrics for remaining WebSocket usage
+- bounded file-serving bytes over WebSocket fallback
+- explicit decision on whether web-serving bytes may use WebSocket fallback by default
 - removal checklist
 - final deletion when safe
 
 ### Out Of Scope
 
 - deleting WebSocket before HTTP/2 paths are stable
-- WebSocket-only proxy/file features
+- WebSocket-only file-serving or web-serving features
 - keeping legacy JSON behavior indefinitely
 
 ## Fixed Decisions
@@ -36,6 +39,9 @@ WebSocket starts as the only daemon transport, becomes a carrier for the common 
 - WebSocket compatibility carries the same envelope and stream frames.
 - WebSocket must not bypass auth, policy, ownership, operation, or stream state.
 - WebSocket fallback can have lower limits than HTTP/2/QUIC.
+- WebSocket fallback for file serving or web serving must be feature-gated and auditable; it is not implicit just because a WebSocket daemon is connected.
+- File bytes are an intended fallback use case once bounded validation exists.
+- Web-serving bytes should default to disabled until a web-serving fallback smoke proves the limits and policy are sufficient.
 - Legacy JSON support must have a specific removal gate.
 - Operators should be able to disable WebSocket compatibility after confidence is high.
 
@@ -49,6 +55,8 @@ Document:
 - supported envelope versions
 - legacy JSON sunset
 - feature restrictions
+- exact file-serving fallback limits
+- whether web serving is allowed over WebSocket fallback by default
 - degraded limits
 - removal metrics
 
@@ -59,7 +67,8 @@ Recommended WebSocket limits:
 - lower max concurrent streams
 - smaller chunks
 - lower bulk throughput
-- proxy/file disabled or heavily limited if HTTP/2 data is unavailable
+- file-serving bytes allowed only behind explicit fallback config and limits
+- web serving disabled by default unless a follow-on PR explicitly enables bounded WebSocket fallback
 - no QUIC promotion from WebSocket-only control
 
 The exact limits should be product-driven, but they must be explicit.
@@ -70,7 +79,8 @@ Add config for:
 
 - allow WebSocket compatibility
 - allow legacy JSON
-- allow proxy/file over WebSocket compatibility
+- allow file serving over WebSocket compatibility
+- allow web serving over WebSocket compatibility
 - maximum fallback stream counts
 
 Defaults should become stricter as rollout progresses.
@@ -82,7 +92,8 @@ Track:
 - active WebSocket daemon count
 - legacy JSON frame count
 - WebSocket envelope frame count
-- WebSocket fallback proxy/file attempts
+- WebSocket fallback file-serving attempts
+- WebSocket fallback web-serving attempts
 - unsupported daemon version count
 - users/Buds affected by disabling compatibility
 
@@ -144,4 +155,3 @@ When supported:
 - operators can disable WebSocket compatibility
 - final removal deletes unused WebSocket code/dependencies
 - protocol docs no longer describe WebSocket as a primary transport
-

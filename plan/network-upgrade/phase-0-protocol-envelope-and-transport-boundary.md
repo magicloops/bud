@@ -31,7 +31,7 @@ Today, WebSocket JSON frames are both the protocol and the transport. If HTTP/2 
 
 - HTTP/2 gRPC server/client implementation
 - QUIC implementation
-- proxy/file product features
+- file/web-serving product features
 - broad database lifecycle state
 - device keypair auth migration, except message fields reserved for it
 

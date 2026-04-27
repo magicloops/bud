@@ -1,17 +1,20 @@
-# Phase 5: QUIC Data Fast Path
+# Phase 5: QUIC-Preferred Data Streams
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
+**Design Doc**: [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md)
 **Status**: Planned
 
 ---
 
 ## Objective
 
-Add QUIC as an optional data fast path for already-proven stream semantics while preserving HTTP/2 data fallback feature parity.
+Add QUIC as the preferred data stream carrier for already-proven stream semantics while preserving HTTP/2 data fallback feature parity.
 
 ## Context
 
-By this phase, control is on HTTP/2 gRPC, data semantics are proven over HTTP/2, and proxy/file features work without QUIC. QUIC should improve stream concurrency, head-of-line behavior, and range/proxy performance when UDP is healthy. It must not become a second protocol or a required feature path.
+By this phase, control is on HTTP/2 gRPC and terminal/file/proxy foundation semantics are proven over HTTP/2. QUIC should improve stream concurrency, head-of-line behavior, and range/web-serving performance when UDP is healthy. It must not become a second protocol or a required feature path.
+
+The current PR can merge after proving the HTTP/2 daemon-service upgrade and stream foundations. If the team decides file serving or web serving must have QUIC before product exposure, this phase should run before those product PRs and should validate file reads as the first QUIC consumer.
 
 ## Scope
 
@@ -21,6 +24,7 @@ By this phase, control is on HTTP/2 gRPC, data semantics are proven over HTTP/2,
 - daemon QUIC data client
 - short-lived QUIC tokens bound to authenticated control session
 - same `BudEnvelope` and `bud_stream` lifecycle over QUIC
+- transport selector policy: QUIC preferred, HTTP/2 fallback, bounded WebSocket compatibility as worst-case fallback if enabled
 - health scoring
 - promotion/demotion between QUIC and HTTP/2 data
 - stream scheduler and priorities
@@ -42,6 +46,8 @@ By this phase, control is on HTTP/2 gRPC, data semantics are proven over HTTP/2,
 - QUIC session tokens are short-lived and bound to a live authenticated control session.
 - QUIC early data is disabled for non-idempotent effects.
 - UDP-blocked environments must lose performance, not features.
+- File serving and web serving remain service REST/HTTPS contracts; clients do not become transport-aware.
+- WebSocket compatibility is not automatically enabled for file/web-serving bytes; it requires the bounded fallback policy from Phase 6.
 
 ## Implementation Tasks
 
@@ -112,12 +118,15 @@ Track:
 
 Fallback to HTTP/2 data when QUIC is unavailable or unhealthy.
 
-### Task 6: Validate proxy/file/terminal behavior
+If WebSocket compatibility is enabled as a worst-case fallback, the selector must apply explicit degraded limits from [phase-6-websocket-compatibility-cleanup.md](./phase-6-websocket-compatibility-cleanup.md) and emit visible degraded/fallback telemetry.
+
+### Task 6: Validate terminal/file behavior first, then web serving
 
 Validate:
 
+- file reads work over QUIC and fall back to HTTP/2 data without changing the file URL contract
 - terminal remains interactive during file reads
-- proxy assets parallelize better when QUIC is healthy
+- web-serving assets parallelize better when QUIC is healthy
 - range reads improve but still work over HTTP/2
 - forced QUIC failure falls back without user-visible feature loss
 
@@ -150,13 +159,14 @@ Validate:
 - health scoring tests
 - fallback integration tests
 - manual UDP-blocked validation
-- proxy/file throughput comparison with and without QUIC
+- file-serving throughput/fallback comparison with and without QUIC
+- web-serving throughput comparison with and without QUIC when the follow-on product PR lands
 
 ## Exit Criteria
 
 - QUIC can carry existing data streams without payload divergence
-- disabling QUIC does not disable terminal/proxy/file features
+- disabling QUIC does not disable terminal/file/proxy foundations or follow-on product contracts
+- web serving uses the same selector when it is productized
 - unhealthy QUIC falls back to HTTP/2 data automatically
 - terminal input remains responsive during bulk transfers
 - deployment docs describe how QUIC is enabled and disabled
-

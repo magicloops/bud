@@ -2,6 +2,18 @@
 
 Manual validation pending.
 
+## Current PR Acceptance Gate
+
+- [x] Current PR scope split is recorded in [current-pr-http2-upgrade-scope.md](./current-pr-http2-upgrade-scope.md)
+- [x] Real daemon validates gRPC control plus HTTP/2 data terminal path
+- [x] Real daemon validates file stream foundation over gRPC control plus HTTP/2 data
+- [x] Real daemon validates proxy stream foundation over gRPC control plus HTTP/2 data
+- [x] File-serving productization is excluded from the current PR acceptance gate
+- [x] Web-serving/proxy product behavior is excluded from the current PR acceptance gate
+- [x] QUIC is deferred; HTTP/2 fallback remains the current PR correctness path
+- [x] WebSocket file/web-serving fallback is deferred to a bounded compatibility follow-on
+- [ ] Retained file/proxy foundation routes have owner/unauth validation before product exposure
+
 ## Automated Verification Completed
 
 - [x] Bud unit tests pass (`cargo test --manifest-path /Users/adam/bud/bud/Cargo.toml`)
@@ -123,14 +135,15 @@ Phase 3.1 smoke notes from 2026-04-27:
 - [x] Daemon validates localhost proxy-open policy for loopback GET/HEAD in unit coverage
 - [x] Authenticated owner can create a localhost proxy session route contract
 - [x] Authenticated owner can create a file session route contract
-- [ ] Non-owner receives `404` for another user's proxy/file session
-- [ ] Unauthenticated browser request receives `401`
+- [ ] Non-owner receives `404` for another user's file session and file edge URL
+- [ ] Unauthenticated file browser request receives `401`
+- [ ] Follow-on web-serving PR validates non-owner `404` / unauthenticated `401` for proxy sessions and proxy edge URLs
 - [x] Proxy only allows `http://127.0.0.1:<explicit_port>` by default in service validation coverage
 - [x] Proxy denies non-loopback hostnames/IPs at the service contract boundary in validation coverage
 - [ ] Daemon denies LAN, metadata, wildcard, Unix socket, Docker, Kubernetes, SSH agent, and `file://` targets before local side effects
 - [x] Proxy strips unsafe headers and Bud auth cookies in implementation allowlists
-- [x] Proxy supports streaming local HTTP responses in implementation
-- [ ] Local SSE through proxy works if in scope
+- [x] Proxy supports streaming local HTTP responses in foundation implementation
+- [ ] Local SSE through proxy is deferred to follow-on web-serving scope
 - [x] File sessions only allow the workspace root and root-relative paths in service validation coverage
 - [x] Daemon validates workspace file-open policy in unit coverage
 - [x] Daemon range selection enforces max bytes in unit coverage
@@ -142,8 +155,8 @@ Phase 3.1 smoke notes from 2026-04-27:
 - [x] File session create/revoke audit events are recorded by the service foundation
 - [ ] Audit events are recorded for all stream close/reset/deny/expire outcomes and file sessions
 - [x] Phase 4.2 automated validation runs with QUIC disabled
-- [x] Local proxy works end-to-end with a real daemon, local HTTP target, and HTTP/2 data stream
-- [x] File features work end-to-end with QUIC disabled
+- [x] Local proxy foundation works end-to-end with a real daemon, local HTTP target, and HTTP/2 data stream
+- [x] File stream foundation works end-to-end with QUIC disabled
 
 Local Phase 4.2 smoke notes from 2026-04-27:
 
@@ -164,12 +177,15 @@ Local Phase 4.4 smoke notes from 2026-04-27:
 - [ ] UDP-blocked environment falls back to HTTP/2 data
 - [ ] Unhealthy QUIC is demoted with cooldown
 - [ ] Terminal input remains responsive during bulk transfer
-- [ ] Proxy asset loading improves when QUIC is healthy
 - [ ] File range reads work over QUIC and HTTP/2 fallback
+- [ ] Web-serving asset loading improves when QUIC is healthy in the follow-on PR
+- [ ] Bounded WebSocket last-resort fallback decision is validated before file/web-serving bytes use WebSocket compatibility
 
 ## Phase 6 Validation
 
 - [ ] WebSocket compatibility has explicit degraded limits
+- [ ] File-serving WebSocket fallback is explicitly enabled with limits or explicitly disallowed
+- [ ] Web-serving WebSocket fallback is explicitly enabled with limits or explicitly disabled by default
 - [ ] Metrics identify active WebSocket and legacy JSON usage
 - [ ] Legacy JSON can be disabled without affecting current supported daemons
 - [ ] WebSocket compatibility can be disabled in a validation environment
@@ -180,10 +196,10 @@ Local Phase 4.4 smoke notes from 2026-04-27:
 
 - [ ] Every browser-facing read/write/stream resolves the authenticated viewer first
 - [ ] List endpoints filter by owner in SQL
-- [ ] Stream/proxy/file endpoints authorize before attaching listeners or daemon streams
-- [ ] Daemon verifies local policy before terminal/proxy/file side effects
+- [ ] Stream/file/web-serving endpoints authorize before attaching listeners or daemon streams
+- [ ] Daemon verifies local policy before terminal/file/web-serving side effects
 - [ ] Capability denial is surfaced as a typed operation/stream error
-- [ ] Revocation takes effect for device/proxy/file sessions
+- [ ] Revocation takes effect for device/file/web-serving sessions
 - [ ] Audit events contain actor, Bud, resource, action, outcome, and correlation ID
 
 ## Docs And Rollout

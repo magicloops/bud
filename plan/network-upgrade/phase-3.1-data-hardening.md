@@ -7,7 +7,7 @@
 
 ## Objective
 
-Tighten the Phase 3 terminal-output data path without expanding scope into proxy/file streams or QUIC.
+Tighten the Phase 3 terminal-output data path without expanding scope into file/web-serving streams or QUIC.
 
 This slice keeps `BudControl.Connect` as the lifecycle authority, proves the control-only fallback mode still works, and adds a larger terminal-output smoke so the first data-channel implementation is less brittle before Phase 4 depends on it.
 
@@ -19,15 +19,15 @@ This slice keeps `BudControl.Connect` as the lifecycle authority, proves the con
 - record active data tracker frame/byte counters and include them in close logs
 - add a local control-fallback smoke where `BudData.Attach` is disabled and terminal output still persists over control
 - add a local large-output smoke that verifies output moves over data while terminal input dispatch stays responsive
-- document remaining hardening that should wait for proxy/file work
+- document remaining hardening that should wait for file/web-serving work
 
 ### Out Of Scope
 
-- authoritative generic stream-credit enforcement for proxy/file streams
+- authoritative generic stream-credit enforcement for file/web-serving streams
 - per-stream fair scheduling
 - browser-visible degraded-state APIs
 - QUIC data path
-- proxy/file stream implementation
+- file/web-serving stream implementation
 
 ## Implemented Behavior
 
@@ -51,7 +51,7 @@ pnpm --dir /Users/adam/bud/service exec tsc --project tsconfig.json --noEmit
 
 ## Deferred Hardening
 
-- tie generic stream-credit grants to actual proxy/file downstream drain rather than synchronous consumption
+- tie generic stream-credit grants to actual file/web-serving downstream drain rather than synchronous consumption
 - add reset propagation from data stream failures into `bud_stream` state and runtime callers
 - expose degraded/fallback state in durable metrics or operator APIs instead of only smoke output and process logs
 - add hosted/front-door validation for long-lived data streams

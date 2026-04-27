@@ -30,7 +30,7 @@ Current terminal sessions persist in tmux and terminal output persists in `termi
 
 ### Out Of Scope
 
-- proxy/file sessions themselves
+- file/web-serving sessions themselves
 - QUIC health scoring
 - full workflow orchestration
 - multi-user collaboration semantics
@@ -144,7 +144,7 @@ Current implementation:
 - daemon sends `reconnect_report` after handshake from its local journal
 - service validates the report, records an audit event, compares reported operation/stream ids with durable rows, and replies with `reconciliation_decision`
 - unknown matches are returned as `unknown` with typed `UNKNOWN_OPERATION` / `UNKNOWN_STREAM` errors
-- daemon logs the decision; future proxy/file phases will add concrete resume/reset behavior per stream type
+- daemon logs the decision; future file/web-serving phases will add concrete resume/reset behavior per stream type
 
 ### Task 6: Add gateway drain semantics
 

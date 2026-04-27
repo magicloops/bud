@@ -7,11 +7,11 @@
 
 ## Objective
 
-Make HTTP/2 data streams the required fallback data plane for interactive terminal traffic and future proxy/file streams before QUIC exists.
+Make HTTP/2 data streams the required fallback data plane for interactive terminal traffic, file/proxy stream foundations, and future file-serving/web-serving product streams before QUIC exists.
 
 ## Context
 
-Control over HTTP/2 is not enough for web proxying or file range reads. The platform needs stream semantics, backpressure, traffic classes, chunk bounds, and typed resets that work over mandatory infrastructure. This phase proves those semantics using terminal traffic before product proxy/file features rely on them.
+Control over HTTP/2 is not enough for file range reads or future web serving. The platform needs stream semantics, backpressure, traffic classes, chunk bounds, and typed resets that work over mandatory infrastructure. This phase proves those semantics using terminal traffic before product file/web-serving features rely on them.
 
 ## Phase 2.1 Preconditions
 
@@ -46,7 +46,7 @@ Phase 3 assumes the Phase 2.1 control hardening slice is present:
 
 ## Fixed Decisions
 
-- HTTP/2 data must be feature-complete enough for proxy/file before QUIC is added.
+- HTTP/2 data must be feature-complete enough for file/proxy stream foundations and future file-serving/web-serving product work before QUIC becomes the preferred carrier.
 - Terminal input and cancellation must have priority over output and bulk data.
 - Data streams use the same `BudEnvelope` and `bud_stream` lifecycle.
 - WebSocket compatibility uses the same stream frames with lower limits.
@@ -117,7 +117,7 @@ Initial implementation:
 Deferred hardening:
 
 - Phase 4.0 adds authoritative credit accounting for generic `stream_data`; terminal output remains on its bounded queue and chunk-limit path.
-- Per-stream fair scheduling is still required before multiple concurrent proxy/file streams share one Bud data channel.
+- Per-stream fair scheduling is still required before multiple concurrent file/web-serving streams share one Bud data channel.
 
 ### Task 4: Implement service data-plane router
 

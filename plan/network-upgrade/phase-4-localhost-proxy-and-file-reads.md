@@ -1,17 +1,22 @@
-# Phase 4: Localhost Proxy And File Reads
+# Phase 4: Stream Foundation For File And Proxy Reads
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 4.4 file stat/read/range implemented over HTTP/2 data; web adoption pending
+**Current PR Scope**: [current-pr-http2-upgrade-scope.md](./current-pr-http2-upgrade-scope.md)
+**Status**: Phase 4.4 file stat/read/range implemented over HTTP/2 data; file-serving and web-serving productization deferred
 
 ---
 
 ## Objective
 
-Ship the first new daemon-networking product features on the mandatory HTTP/2 data fallback path: localhost HTTP proxying and read-only file/range serving.
+Ship the shared stream foundation and validate read-only file/proxy bytes over HTTP/2 data.
+
+File serving and localhost web serving use the same foundation, but neither is a current-PR product deliverable. They should be productized in follow-on PRs after the HTTP/2 upgrade proves the gRPC control/data replacement and after each feature has its own web/user acceptance gate.
 
 ## Context
 
-This phase is the security-critical feature phase. It must work with QUIC disabled. The service remains the browser-visible edge: users open service HTTPS URLs, the service authorizes the viewer and session, and the daemon only touches local resources after daemon-side policy accepts the exact target.
+This phase is the security-critical feature phase. It must work with QUIC disabled because HTTP/2 data is the mandatory correctness fallback. The service remains the browser-visible edge: users open service HTTPS URLs, the service authorizes the viewer and session, and the daemon only touches local resources after daemon-side policy accepts the exact target.
+
+The target transport policy for file serving and future web serving is QUIC preferred, HTTP/2 fallback, and bounded WebSocket compatibility as a worst-case fallback only after explicit limits and operator controls exist. Current Phase 4 implementation proves the HTTP/2 fallback path first.
 
 ## Phase 3.1 Baseline
 
@@ -29,21 +34,23 @@ Already available:
 Still not available:
 
 - durable file stream metrics beyond operation/stream/audit rows
-- minimal web adoption for launching/opening file URLs
+- web adoption for launching/opening file URLs
+- QUIC data stream transport selection
+- bounded WebSocket fallback for file/web-serving bytes
+- product file-serving UX and hardening
+- product web-serving UX and hardening
 
-Phase 4 therefore starts with a small stream foundation before adding product routes. Proxy/file must fail closed when `h2_data` is unavailable; unlike terminal output, they should not silently fall back to the control stream or WebSocket compatibility.
+Phase 4 therefore stays focused on the stream foundation and service/daemon route contracts. File and proxy streams currently fail closed when `h2_data` is unavailable; a later transport-selector pass can allow QUIC first and WebSocket worst-case fallback without changing the file/web-serving product contracts.
 
 ## Scope
 
 ### In Scope
 
-- minimal generic data-stream dispatcher for proxy/file stream frames
-- runtime stream credit enforcement sufficient for bounded proxy/file streaming
-- typed stream reset and close propagation for proxy/file callers
-- proxy session creation API
-- proxy edge route family
-- daemon localhost HTTP proxy adapter
-- `LOCALHOST_HTTP_PROXY` stream type
+- minimal generic data-stream dispatcher for file and future web-serving stream frames
+- runtime stream credit enforcement sufficient for bounded file/web-serving streaming
+- typed stream reset and close propagation for file/web-serving callers
+- proxy session creation API and localhost proxy adapter as reusable foundation and local validation evidence
+- `LOCALHOST_HTTP_PROXY` stream type as follow-on web-serving foundation
 - read-only file session creation API
 - file edge route family
 - daemon file stat/read/range adapter
@@ -51,13 +58,14 @@ Phase 4 therefore starts with a small stream foundation before adding product ro
 - default localhost proxy policy
 - default file read policy
 - audit events
-- web affordances only where needed to launch/view proxy and file URLs
 
 ### Out Of Scope
 
-- QUIC requirement
-- WebSocket compatibility for new proxy/file product behavior
-- proxy/file payload fallback onto `BudControl.Connect`
+- QUIC implementation
+- WebSocket compatibility fallback for file/web-serving bytes until explicit degraded limits exist
+- file/web-serving payload fallback onto `BudControl.Connect`
+- productizing localhost web serving in this PR
+- productizing file serving in this PR
 - raw TCP proxy
 - LAN proxy
 - arbitrary file browsing
@@ -69,22 +77,24 @@ Phase 4 therefore starts with a small stream foundation before adding product ro
 ## Fixed Decisions
 
 - Proxy and file URLs terminate at the service, not the daemon.
-- Proxy/file require an active authenticated gRPC control session and an attached HTTP/2 data stream.
+- File and web-serving streams require an active authenticated gRPC control session and an attached data stream.
 - Proxy sessions are short-lived and scoped to a user, Bud, target host, target port, and methods.
 - Initial proxy target is only `http://127.0.0.1:<explicit_port>`.
 - File sessions are short-lived and scoped to a user, Bud, approved handle/root/path policy, and byte/range limits.
+- File-serving productization is a follow-on PR. The current PR only keeps the safe file-session/stream foundation.
+- Localhost web serving is a follow-on PR that should use the same stream foundation and transport selector.
 - The daemon must deny unsafe targets even if the service asks.
 - All policy denials are auditable.
-- Runtime stream credits and resets must be in place before proxy/file bytes move onto `BudData.Attach`.
-- The Phase 2 shared-secret device credential remains acceptable for internal implementation, but production exposure of proxy/file should require a recorded device-identity hardening decision.
+- Runtime stream credits and resets must be in place before file/web-serving bytes move onto `BudData.Attach` or QUIC.
+- The Phase 2 shared-secret device credential remains acceptable for internal implementation, but production exposure of file/web-serving should require a recorded device-identity hardening decision.
 
 ## Implementation Tasks
 
 ### Task 0: Add generic stream foundation
 
-Add the smallest runtime needed for proxy/file streams over the existing control/data split:
+Add the smallest runtime needed for file and future web-serving streams over the existing control/data split:
 
-- service creates durable `bud_operation` and `bud_stream` rows for proxy/file work before opening daemon streams
+- service creates durable `bud_operation` and `bud_stream` rows for file/web-serving work before opening daemon streams
 - service sends stream-open metadata over `BudControl.Connect`
 - daemon accepts, rejects, resets, and closes streams over control
 - data bytes move only over `BudData.Attach` using `stream_data`
@@ -93,7 +103,7 @@ Add the smallest runtime needed for proxy/file streams over the existing control
 - reset/close transitions update `bud_stream` state and unblock waiting HTTP callers
 - data-unavailable state maps to a typed service error, not control/WebSocket fallback
 
-This task should stay intentionally small. It can support one active proxy/file stream at first if that keeps scheduling simple, as long as limits are explicit and safe.
+This task should stay intentionally small. It can support one active file/web-serving stream at first if that keeps scheduling simple, as long as limits are explicit and safe.
 
 Initial implementation:
 
@@ -101,15 +111,15 @@ Initial implementation:
 - service accepts `stream_data` only for registered runtime streams, enforces offset order, chunk size, and available receive credit, then grants credit after synchronous consumption
 - service applies `stream_credit`, `stream_reset`, and `stream_close` to runtime stream state and best-effort `bud_stream` transitions
 - service write helpers send generic stream frames only over active `h2_data`
-- daemon treats generic stream frames as data-only; `stream_data` is rejected with `UNSUPPORTED_STREAM` until proxy/file adapters land
+- daemon treats generic stream frames as data-only; `stream_data` is rejected with `UNSUPPORTED_STREAM` until file/web-serving adapters land
 - daemon `TransportSender` fails generic `stream_*` frames closed if the data channel is unavailable, while preserving terminal-output control fallback
 
-Still required before proxy/file routes are shippable:
+Still required before file/web-serving routes can serve product traffic:
 
 - service-created stream-open metadata over control
-- durable `bud_operation` / `bud_stream` creation at proxy/file open time
+- durable `bud_operation` / `bud_stream` creation at file/web-serving open time
 - asynchronous credit grants tied to actual HTTP response/file consumer drain
-- proxy/file adapters on the daemon
+- file/web-serving adapters on the daemon
 
 Phase 4.2 update:
 
@@ -121,6 +131,8 @@ Phase 4.2 update:
 - generic stream frames still fail closed when `h2_data` is unavailable
 
 ### Task 1: Define proxy session contract
+
+Follow-on product scope.
 
 Add API contract for creating a proxy session:
 
@@ -151,6 +163,8 @@ Initial implementation:
 
 ### Task 2: Add proxy schema and ownership helpers
 
+Follow-on product scope for web serving; current branch schema/helpers may remain as foundation if already implemented.
+
 Add `proxy_session` with:
 
 - `tenant_id`
@@ -176,6 +190,8 @@ Initial implementation:
 - session create/revoke writes `proxy.session_create` and `proxy.session_revoke` audit events
 
 ### Task 3: Implement service proxy edge
+
+Follow-on product scope for web serving; current branch edge work should be treated as validation/foundation unless the follow-on PR completes the web-serving acceptance gate.
 
 Add routes such as:
 
@@ -210,6 +226,8 @@ Initial implementation:
 - active response streams receive daemon reset/close notifications through the proxy runtime bridge
 
 ### Task 4: Implement daemon proxy adapter
+
+Follow-on product scope for web serving; current loopback GET/HEAD adapter remains useful for stream validation.
 
 The daemon should:
 
@@ -343,46 +361,52 @@ Audit:
 - selected transport and transport health for a session
 - data unavailable / degraded open failure
 
-### Task 9: Add minimal web adoption
+### Task 9: Productize file serving
 
-Add only the UI needed to use the feature:
+Follow-on product scope.
 
-- create/open proxy session for a selected Bud/port
+Add the UI needed to use the feature:
+
 - open file URL from a supported surface
 - show expired/denied/offline/degraded states
+- choose markdown, code, or text fallback rendering
 
 Do not make web transport-aware.
 
+Web-serving adoption, including creating/opening proxy sessions for a selected Bud/port, is deferred to the follow-on web-serving PR.
+
 ## Recommended Sequencing
 
-1. **Phase 4.0 stream foundation**: implement generic proxy/file stream open, `stream_data`, credits, resets, and data-unavailable failures without adding browser product routes.
-2. **Phase 4.1 proxy security/session foundation**: add `proxy_session`, ownership helpers, audit helpers, and service route contracts with strict localhost validation.
-3. **Phase 4.2 minimal proxy streaming**: implement GET/HEAD streaming through the daemon adapter over HTTP/2 data with QUIC disabled.
+1. **Phase 4.0 stream foundation**: implement generic stream open, `stream_data`, credits, resets, and data-unavailable failures without adding browser product routes.
+2. **Phase 4.1 proxy/web-serving foundation**: add strict localhost session/policy scaffolding only as a reusable foundation, not as current-PR product scope.
+3. **Phase 4.2 proxy smoke foundation**: validate GET/HEAD streaming through the daemon adapter over HTTP/2 data with QUIC disabled, then defer product web serving.
 4. **Phase 4.3 file security/session foundation**: add `file_session`, ownership helpers, local policy shape, and audit events.
 5. **Phase 4.4 file stat/read/range**: implement read-only file bytes over HTTP/2 data with content identity and mutation failure.
-6. **Phase 4.5 minimal web adoption**: add only launch/open surfaces and user-visible denied/offline/expired states.
+6. **Follow-on file-serving productization**: add path-open surfaces and user-visible denied/offline/expired states for file viewing.
 
 ## Phase 3.1 Gaps Carried Forward
 
-These gaps should be resolved inside Phase 4 before proxy/file are considered shippable:
+These gaps should be resolved before file serving or web serving is considered shippable:
 
 - runtime stream credits and max in-flight byte enforcement
 - typed reset propagation from daemon/service stream failures
 - data-unavailable and degraded-state visibility in service responses, logs, audit events, or metrics
 - hosted/front-door validation for long-lived HTTP/2 data streams
 
-Phase 4.2 resolved the first two items for the localhost proxy path. Phase 4.4 now applies the same durable stream-open, credit, reset, close, and data-unavailable behavior to file stat/read/range requests. Richer metrics/operator views remain deferred.
+Phase 4.2 resolved the first two items for the localhost proxy foundation. Phase 4.4 now applies the same durable stream-open, credit, reset, close, and data-unavailable behavior to file stat/read/range requests. Richer metrics/operator views remain deferred.
 
 Phase 4.2 local smoke validation is now covered by `pnpm --dir /Users/adam/bud/service smoke:grpc-proxy`, which runs the real Rust daemon against in-process grpc-js control/data gateways and verifies a loopback HTTP target through the proxy edge with QUIC disabled.
 
 Phase 4.4 local smoke validation is now covered by `pnpm --dir /Users/adam/bud/service smoke:grpc-file`, which runs the real Rust daemon against in-process grpc-js control/data gateways and verifies workspace file `HEAD`, full `GET`, range `GET`, durable stream close state, persisted content identity, and stale-content rejection with QUIC disabled.
 
-These gaps may remain deferred until after the first internal Phase 4 slice:
+These gaps may remain deferred until after the current HTTP/2 upgrade PR:
 
-- QUIC
-- WebSocket compatibility for proxy/file
+- QUIC transport selection
+- WebSocket compatibility fallback for file/web-serving bytes
 - multi-stream fair scheduling beyond conservative per-Bud/per-class limits
 - hardened keypair device identity, if the feature remains strictly internal during implementation
+- product file-serving hardening and UX
+- product web-serving hardening and UX
 
 ## Files Likely Affected
 
@@ -406,27 +430,38 @@ These gaps may remain deferred until after the first internal Phase 4 slice:
 
 ### Web
 
-- `web/src/lib/api.ts`
-- relevant workbench/thread UI files
+- Follow-on file-serving and web-serving product PRs should update `web/src/lib/api.ts` and relevant workbench/thread UI files.
 
 ## Test Plan
 
-- service ownership tests for proxy/file session creation and lookup
+- service ownership tests for file session creation/lookup now and web-serving session creation/lookup in the follow-on PR
 - service SQL owner-filter tests
 - proxy target validation tests
 - daemon local policy tests
-- proxy streaming tests with a local HTTP server (`pnpm --dir /Users/adam/bud/service smoke:grpc-proxy`)
+- proxy streaming tests with a local HTTP server (`pnpm --dir /Users/adam/bud/service smoke:grpc-proxy`) as foundation validation, not current-PR product acceptance
 - file stat/read/range tests (`pnpm --dir /Users/adam/bud/service smoke:grpc-file`)
 - file mutation during range test (`pnpm --dir /Users/adam/bud/service smoke:grpc-file`)
 - audit event tests
-- manual localhost webview validation with QUIC disabled
-- manual file viewer validation with QUIC disabled
+- follow-on manual file viewer validation with QUIC disabled
+- follow-on manual localhost web-serving validation with QUIC preferred and HTTP/2 fallback
 
 ## Exit Criteria
 
-- localhost proxy works over HTTP/2 data with QUIC disabled
 - file stat/read/range works over HTTP/2 data with QUIC disabled
 - unsafe proxy targets and file paths are denied before local side effects
 - sessions are user-scoped, short-lived, revocable, and audited
 - browser/mobile clients only see service REST/SSE/HTTPS contracts
 - relevant specs, protocol docs, and migrations are updated
+
+Follow-on file-serving exit criteria:
+
+- user-clicked file open flows create service-authorized file sessions
+- markdown/code/text viewers render supported files
+- denied, expired, offline, and unsupported states are visible in the web app
+- the agent does not manage file access
+
+Follow-on web-serving exit criteria:
+
+- localhost web serving uses the shared stream foundation through the transport selector
+- QUIC is preferred when healthy, HTTP/2 data remains fallback, and WebSocket compatibility is explicitly bounded if enabled
+- web-serving proxy policy and browser behavior are validated independently from file viewing

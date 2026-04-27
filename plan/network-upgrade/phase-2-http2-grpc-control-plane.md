@@ -36,7 +36,7 @@ This phase introduces the required HTTP/2 gRPC control transport without moving 
 ### Out Of Scope
 
 - HTTP/2 data stream migration
-- proxy/file data traffic
+- file/web-serving data traffic
 - QUIC implementation
 - broad service process split unless HTTP/2/front-door constraints require it
 
@@ -136,7 +136,7 @@ Preferred target:
 - service verifies signature
 - old shared-secret daemons continue through WebSocket compatibility during rollout
 
-If direct migration is too large, record a deliberate transition step and do not let that step bypass proxy/file policy requirements later.
+If direct migration is too large, record a deliberate transition step and do not let that step bypass file/web-serving policy requirements later.
 
 ### Task 5: Implement service control gateway
 

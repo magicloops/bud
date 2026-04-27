@@ -1,5 +1,17 @@
 # Progress Checklist: Network Upgrade
 
+## Current PR: HTTP/2 Network Upgrade
+
+- [x] Record HTTP/2 upgrade vs. follow-on feature scope split
+- [x] Validate gRPC control/data replacement with real-daemon terminal smoke coverage
+- [x] Validate file stream foundation over gRPC control plus HTTP/2 data with real-daemon smoke coverage
+- [x] Validate proxy stream foundation over gRPC control plus HTTP/2 data with real-daemon smoke coverage
+- [x] Defer file-serving productization to [../../design/network-upgrade-file-serving-productization.md](../../design/network-upgrade-file-serving-productization.md)
+- [x] Defer QUIC transport to [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md)
+- [x] Defer web-serving productization to [../../design/network-upgrade-web-serving-productization.md](../../design/network-upgrade-web-serving-productization.md)
+- [x] Defer WebSocket data fallback to [../../design/network-upgrade-websocket-fallback.md](../../design/network-upgrade-websocket-fallback.md)
+- [ ] Confirm retained file/proxy foundation routes have the required owner/unauth validation before product exposure
+
 ## Phase 0: Protocol Envelope And Transport Boundary
 
 - [x] Choose protobuf tooling for Rust and TypeScript
@@ -97,10 +109,10 @@
 
 ## Phase 4: Localhost Proxy And File Reads
 
-- [x] Add generic proxy/file stream foundation over `BudData.Attach`
-- [x] Enforce runtime stream credits and max in-flight bytes for proxy/file streams
+- [x] Add generic file/web-serving stream foundation over `BudData.Attach`
+- [x] Enforce runtime stream credits and max in-flight bytes for file/web-serving streams
 - [x] Propagate typed stream reset/close states to service runtime callers
-- [x] Fail proxy/file opens closed when HTTP/2 data is unavailable
+- [x] Fail file/web-serving opens closed when HTTP/2 data is unavailable
 - [x] Define proxy session API contract
 - [x] Add proxy session schema and migrations
 - [x] Implement service proxy edge contract and GET/HEAD streaming path
@@ -114,29 +126,37 @@
 - [x] Add proxy session create/revoke audit events
 - [x] Add proxy stream open audit events and durable stream close/reset state
 - [x] Add file session create/revoke audit events
-- [ ] Add minimal web adoption
+- [x] Defer file-serving product adoption to follow-on PR
+- [x] Defer web-serving product adoption to follow-on PR
 - [x] Validate Phase 4.2 unit/type coverage with QUIC disabled
 - [x] Validate Phase 4.4 real-daemon file smoke with QUIC disabled
 - [x] Update protocol and affected specs for Phase 4.2
 - [x] Update affected specs and migrations for Phase 4.3
 - [x] Update affected specs and migrations for Phase 4.4
 
-## Phase 5: QUIC Data Fast Path
+## Phase 5: QUIC-Preferred Data Streams
 
+- [x] Defer QUIC implementation out of the HTTP/2 upgrade PR
 - [ ] Validate QUIC stack and deployment support
 - [ ] Add QUIC candidate advertisement
 - [ ] Add short-lived QUIC token binding
 - [ ] Implement service QUIC data gateway
 - [ ] Implement daemon QUIC data client
 - [ ] Carry the same envelope/stream frames over QUIC
+- [ ] Add transport selector policy for QUIC preferred, HTTP/2 fallback, and bounded WebSocket last-resort fallback
 - [ ] Add stream scheduler
 - [ ] Add health scoring and fallback
-- [ ] Validate terminal/proxy/file behavior with forced QUIC failure
+- [ ] Validate terminal/file-stream behavior with forced QUIC failure
+- [ ] Validate web-serving behavior with forced QUIC failure in the follow-on PR
 - [ ] Update deployment docs and specs
 
 ## Phase 6: WebSocket Compatibility Cleanup
 
+- [x] Defer WebSocket data fallback out of the HTTP/2 upgrade PR
+- [x] Record design goal that file bytes should be allowed over bounded WebSocket fallback when enabled
 - [ ] Define WebSocket compatibility policy
+- [ ] Decide exact limits for file-serving bytes over WebSocket fallback
+- [ ] Decide whether web-serving bytes are enabled or disabled by default over WebSocket fallback
 - [ ] Add degraded limits
 - [ ] Add operator controls
 - [ ] Add usage metrics and warnings

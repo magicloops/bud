@@ -10,7 +10,7 @@
 
 Phase 2 now has an opt-in gRPC control-plane slice: grpc-js on the service, tonic/prost on the daemon, `BudControl.Connect`, durable session registration, heartbeat/offline handling, reconnect reconciliation, terminal control/result routing, and WebSocket fallback.
 
-This file captures hardening work that should not block the Phase 3 HTTP/2 data-plane design, but must be resolved before proxy/file capabilities depend on gRPC control in production.
+This file captures hardening work that should not block the Phase 3 HTTP/2 data-plane design, but must be resolved before file viewing or web-serving capabilities depend on gRPC control in production.
 
 ## Defer Until After The Local Acceptance Gate
 
@@ -21,7 +21,7 @@ This file captures hardening work that should not block the Phase 3 HTTP/2 data-
 - **Lifecycle/load validation**: add production-shaped churn, reconnect, slow-receiver, and gateway-drain tests outside the spike harness.
 - **Observability**: add control stream metrics for active sessions, auth failures, heartbeat lag, reconnect decisions, drain, backpressure, and transport kind.
 - **Operator controls**: add explicit config/runbook coverage for enabling/disabling gRPC control, fallback behavior, listener placement, and drain windows.
-- **Security review for proxy/file**: require hardened control identity plus daemon local policy before localhost proxy or file reads can be exposed.
+- **Security review for file/web-serving**: require hardened control identity plus daemon local policy before file reads or localhost web serving can be exposed.
 
 ## Acceptance Gate Before Phase 3
 
