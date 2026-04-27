@@ -39,6 +39,18 @@ export const streamStateValues = [
   "unknown",
   "expired",
 ] as const;
+export const proxySessionStateValues = [
+  "ready",
+  "unavailable",
+  "revoked",
+  "expired",
+] as const;
+export const fileSessionStateValues = [
+  "ready",
+  "unavailable",
+  "revoked",
+  "expired",
+] as const;
 
 const byteaColumn = customType<{ data: Buffer }>({
   dataType() {
@@ -698,6 +710,106 @@ export const budStreamTable = pgTable(
     operationIdx: index("bud_stream_operation_idx").on(table.operationId),
     budStateIdx: index("bud_stream_bud_state_idx").on(table.budId, table.state),
     transportIdx: index("bud_stream_transport_idx").on(table.transportSessionId, table.state),
+  }),
+);
+
+export const proxySessionTable = pgTable(
+  "proxy_session",
+  {
+    proxySessionId: text("proxy_session_id").primaryKey(),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => threadTable.threadId, { onDelete: "set null" }),
+    operationId: text("operation_id").references(() => budOperationTable.operationId, {
+      onDelete: "set null",
+    }),
+    activeStreamId: text("active_stream_id").references(() => budStreamTable.streamId, {
+      onDelete: "set null",
+    }),
+    targetHost: text("target_host").notNull(),
+    targetPort: integer("target_port").notNull(),
+    allowedMethods: jsonb("allowed_methods")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'["GET","HEAD"]'::jsonb`),
+    state: text("state", { enum: proxySessionStateValues }).notNull().default("ready"),
+    displayMetadata: jsonb("display_metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    auditCorrelationId: text("audit_correlation_id").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedByUserId: text("revoked_by_user_id").references(() => authUserTable.id, {
+      onDelete: "set null",
+    }),
+    revokeReason: text("revoke_reason"),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    ownerStateIdx: index("proxy_session_owner_state_idx").on(
+      table.createdByUserId,
+      table.state,
+      table.expiresAt,
+    ),
+    budStateIdx: index("proxy_session_bud_state_idx").on(table.budId, table.state, table.expiresAt),
+    threadIdx: index("proxy_session_thread_idx").on(table.threadId, table.createdAt),
+    auditCorrelationIdx: index("proxy_session_audit_correlation_idx").on(table.auditCorrelationId),
+  }),
+);
+
+export const fileSessionTable = pgTable(
+  "file_session",
+  {
+    fileSessionId: text("file_session_id").primaryKey(),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").references(() => threadTable.threadId, { onDelete: "set null" }),
+    operationId: text("operation_id").references(() => budOperationTable.operationId, {
+      onDelete: "set null",
+    }),
+    activeStreamId: text("active_stream_id").references(() => budStreamTable.streamId, {
+      onDelete: "set null",
+    }),
+    rootKey: text("root_key").notNull(),
+    relativePath: text("relative_path").notNull(),
+    permissions: jsonb("permissions")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'["stat","read","range"]'::jsonb`),
+    maxBytes: bigint("max_bytes", { mode: "number" }).notNull(),
+    state: text("state", { enum: fileSessionStateValues }).notNull().default("ready"),
+    contentIdentity: jsonb("content_identity").$type<Record<string, unknown>>(),
+    displayMetadata: jsonb("display_metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    auditCorrelationId: text("audit_correlation_id").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedByUserId: text("revoked_by_user_id").references(() => authUserTable.id, {
+      onDelete: "set null",
+    }),
+    revokeReason: text("revoke_reason"),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    ownerStateIdx: index("file_session_owner_state_idx").on(
+      table.createdByUserId,
+      table.state,
+      table.expiresAt,
+    ),
+    budStateIdx: index("file_session_bud_state_idx").on(table.budId, table.state, table.expiresAt),
+    threadIdx: index("file_session_thread_idx").on(table.threadId, table.createdAt),
+    auditCorrelationIdx: index("file_session_audit_correlation_idx").on(table.auditCorrelationId),
   }),
 );
 

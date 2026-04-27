@@ -14,6 +14,7 @@
 **Phase 2**: [phase-2-http2-grpc-control-plane.md](./phase-2-http2-grpc-control-plane.md)
 **Phase 2.1**: [phase-2.1-control-hardening.md](./phase-2.1-control-hardening.md)
 **Phase 3**: [phase-3-http2-data-fallback.md](./phase-3-http2-data-fallback.md)
+**Phase 3.1**: [phase-3.1-data-hardening.md](./phase-3.1-data-hardening.md)
 **Phase 4**: [phase-4-localhost-proxy-and-file-reads.md](./phase-4-localhost-proxy-and-file-reads.md)
 **Phase 5**: [phase-5-quic-data-fast-path.md](./phase-5-quic-data-fast-path.md)
 **Phase 6**: [phase-6-websocket-compatibility-cleanup.md](./phase-6-websocket-compatibility-cleanup.md)
@@ -268,7 +269,7 @@ Any schema phase must follow the repo DB workflow:
 | 2 | [phase-2-http2-grpc-control-plane.md](./phase-2-http2-grpc-control-plane.md) | High | Move daemon auth, heartbeat, negotiation, policy, and operation control to HTTP/2 gRPC using `@grpc/grpc-js` on the service and `tonic` on the daemon |
 | 2.1 | [phase-2.1-control-hardening.md](./phase-2.1-control-hardening.md) | High | Close the immediate gRPC control lifecycle/auth gaps needed before Phase 3 data streams |
 | 3 | [phase-3-http2-data-fallback.md](./phase-3-http2-data-fallback.md) | High | Establish mandatory HTTP/2 data streams with backpressure, traffic classes, and terminal parity |
-| 4 | [phase-4-localhost-proxy-and-file-reads.md](./phase-4-localhost-proxy-and-file-reads.md) | High | Ship localhost proxy and read-only file/range serving over HTTP/2 fallback |
+| 4 | [phase-4-localhost-proxy-and-file-reads.md](./phase-4-localhost-proxy-and-file-reads.md) | High | Add generic proxy/file stream handling, then ship localhost proxy and read-only file/range serving over HTTP/2 fallback |
 | 5 | [phase-5-quic-data-fast-path.md](./phase-5-quic-data-fast-path.md) | Medium | Add QUIC as an optional data fast path for proven stream semantics |
 | 6 | [phase-6-websocket-compatibility-cleanup.md](./phase-6-websocket-compatibility-cleanup.md) | Medium | Constrain, degrade, and eventually remove WebSocket compatibility |
 
@@ -340,7 +341,9 @@ Any schema phase must follow the repo DB workflow:
 - The first Phase 2 slice is opt-in: `GRPC_CONTROL_ENABLED=true` starts the service grpc-js control listener and `BUD_GRPC_CONTROL_URL` makes the daemon use tonic instead of WebSocket.
 - Phase 2.1 hardens the local control lifecycle so service `SIGTERM` drains active gRPC sessions through Fastify `onClose`, closes durable session rows, and rejects invalid transition credentials before Phase 3 depends on control-session authority.
 - Phase 3 should prove terminal parity over HTTP/2 data before Phase 4 adds proxy/file traffic.
-- Phase 4 is the first product-feature phase and must work with QUIC disabled.
+- Phase 3.1 closes the immediate data/control lifecycle gaps and validates normal, fallback, and large-output terminal paths.
+- Phase 4 is the first product-feature phase and must work with QUIC disabled. It starts with generic `stream_data` / credit / reset handling because Phase 3.1 only dispatches terminal output over `BudData.Attach`.
+- Proxy/file should fail closed when HTTP/2 data is unavailable; terminal-only control fallback must not become implicit proxy/file fallback.
 - Phase 5 should reuse the same stream semantics; it must not introduce QUIC-only behavior.
 - Phase 6 can overlap with late rollout once H2 paths are stable, but it should not delete compatibility while older daemons still need it.
 

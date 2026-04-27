@@ -7,6 +7,7 @@ Main source code for the Bud service - a Node.js backend handling API requests, 
 The service acts as the central hub:
 - Accepts WebSocket connections from bud daemons
 - Optionally accepts HTTP/2 gRPC control streams from bud daemons
+- Optionally accepts subordinate HTTP/2 gRPC data streams from bud daemons
 - Serves REST API and SSE streams to web clients
 - Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic)
 - Persists all data to PostgreSQL
@@ -26,10 +27,12 @@ Application entry point and thin Fastify composition root.
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
 - Start the push-notification outbox worker when APNs credentials are configured
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
+- Register the proxy and file session route families used by Phase 4 daemon-network features
 - Compose the current thread-scoped streaming/runtime surface without the removed standalone run manager
 - Optionally start the grpc-js daemon control gateway when `GRPC_CONTROL_ENABLED=true`
+- Optionally start the grpc-js daemon data gateway when `GRPC_DATA_ENABLED=true`
 - Expose `/healthz` as lightweight liveness and `/readyz` as deploy/readiness verification for the primary DB plus auth schema
-- Configure `SIGINT` / `SIGTERM` graceful shutdown so `server.close()` runs the gRPC control gateway finalizer, push worker stop, idle-check stop, and both app and auth pool shutdown
+- Configure `SIGINT` / `SIGTERM` graceful shutdown so `server.close()` runs the gRPC data/control gateway finalizers, push worker stop, idle-check stop, and both app and auth pool shutdown
 
 **Manager Instantiation**:
 ```typescript
@@ -81,6 +84,15 @@ Environment-based configuration with defaults.
 | `grpcControlMaxConcurrentStreams` | `GRPC_CONTROL_MAX_CONCURRENT_STREAMS` | - | Optional grpc-js max concurrent HTTP/2 streams setting |
 | `grpcControlMaxSessionMemory` | `GRPC_CONTROL_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting |
 | `grpcControlEnableChannelz` | `GRPC_CONTROL_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle |
+| `grpcDataEnabled` | `GRPC_DATA_ENABLED` | false | Start the grpc-js daemon data listener |
+| `grpcDataHost` | `GRPC_DATA_HOST` | 127.0.0.1 | gRPC data bind host |
+| `grpcDataPort` | `GRPC_DATA_PORT` | 50052 | gRPC data bind port |
+| `grpcDataMaxMessageBytes` | `GRPC_DATA_MAX_MESSAGE_BYTES` | 4MB | Max inbound/outbound gRPC data envelope size |
+| `grpcDataMaxChunkBytes` | `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Max decoded terminal-output chunk accepted on the data stream |
+| `grpcDataInitialCreditBytes` | `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Advertised initial data credit window for Phase 3 stream clients |
+| `grpcDataMaxConcurrentStreams` | `GRPC_DATA_MAX_CONCURRENT_STREAMS` | - | Optional grpc-js max concurrent HTTP/2 streams setting for data |
+| `grpcDataMaxSessionMemory` | `GRPC_DATA_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting for data |
+| `grpcDataEnableChannelz` | `GRPC_DATA_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle for data |
 | `betterAuthUrl` | `BETTER_AUTH_URL` | http://localhost:3000 | Public auth base URL |
 | `appBaseUrl` | `APP_BASE_URL` | `BETTER_AUTH_URL` or http://localhost:3000 | Browser origin used when generating Bud claim URLs |
 | `betterAuthBasePath` | fixed | `/api/auth` | Better Auth mount path and OAuth issuer path |
@@ -140,7 +152,7 @@ Push notification helpers covering unread attention math, APNs delivery, and out
 
 ### `routes/` → [routes.spec.md](./routes/routes.spec.md)
 
-REST API route handlers for buds, current-user auth surfaces, device claims, and split thread/message/agent/terminal modules, all enforcing per-user ownership across browser-facing resources.
+REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, and split thread/message/agent/terminal modules, all enforcing per-user ownership across browser-facing resources.
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 
@@ -154,13 +166,21 @@ Terminal protocol types and known REPL program registry.
 
 Phase 0 daemon-network upgrade helpers and compatibility protobuf wire codec for the transport-independent Bud envelope.
 
+### `proxy/` → [proxy/proxy.spec.md](./proxy/proxy.spec.md)
+
+Phase 4.2 localhost proxy helpers for strict target/method validation, gRPC control/data readiness checks, owned `proxy_session` persistence, daemon `proxy_open` dispatch, and GET/HEAD response streaming over `BudData.Attach`.
+
+### `files/` → [files/files.spec.md](./files/files.spec.md)
+
+Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, gRPC control/data readiness checks, owned `file_session` persistence, daemon `file_open` dispatch, and stat/read/range response streaming over `BudData.Attach`.
+
 ### `grpc/` → [grpc.spec.md](./grpc/grpc.spec.md)
 
-HTTP/2 gRPC daemon control gateway using grpc-js/proto-loader, isolated behind the transport router and `BudEnvelope.frame_json` compatibility adapter.
+HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolated behind the transport router and `BudEnvelope.frame_json` compatibility adapter.
 
 ### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
 
-Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation prefers active gRPC control streams, falls back to the existing WebSocket session tracker, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows.
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation prefers active gRPC control streams, falls back to the existing WebSocket session tracker, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder also tracks active subordinate gRPC data streams used for terminal output and the Phase 4 generic stream credit foundation used by localhost proxy and file responses.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 

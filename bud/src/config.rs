@@ -14,6 +14,9 @@ pub struct BudArgs {
     #[arg(long, env = "BUD_GRPC_CONTROL_URL")]
     pub grpc_control_url: Option<String>,
 
+    #[arg(long, env = "BUD_GRPC_DATA_URL")]
+    pub grpc_data_url: Option<String>,
+
     #[arg(long, env = "BUD_ENROLLMENT_TOKEN")]
     pub token: Option<String>,
 

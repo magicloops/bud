@@ -59,6 +59,79 @@ test("encodes known frames as typed protobuf payloads", () => {
   assert.deepEqual(decodeLegacyJsonFrame(bytes), fixture.frame);
 });
 
+test("encodes generic stream frames as typed protobuf payloads", () => {
+  const frame = {
+    proto: "0.1",
+    type: "stream_data",
+    id: "msg_stream_data",
+    ts: 1777132800000,
+    ext: {},
+    stream_id: "st_test",
+    stream_type: "file_read",
+    offset: 0,
+    data: Buffer.from("hello").toString("base64"),
+    end_stream: false,
+  };
+  const bytes = encodeLegacyJsonFrame(frame, { transportKind: "h2_data" });
+  const envelope = decodeBudEnvelope(bytes);
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "stream_data");
+  assert.equal(envelope.traffic_class, "bulk");
+  assert.equal(envelope.transport_kind, "h2_data");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});
+
+test("encodes proxy open frames as typed protobuf payloads", () => {
+  const frame = {
+    proto: "0.1",
+    type: "proxy_open",
+    id: "msg_proxy_open",
+    ts: 1777132800000,
+    ext: {},
+    operation_id: "op_test",
+    stream_id: "st_test",
+    proxy_session_id: "ps_test",
+    stream_type: "localhost_http_proxy",
+    target_host: "127.0.0.1",
+    target_port: 5173,
+    method: "GET",
+    path: "/",
+    headers: {},
+    initial_credit_bytes: 1048576,
+    max_chunk_bytes: 16384,
+  };
+  const bytes = encodeLegacyJsonFrame(frame, { transportKind: "h2_grpc" });
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "proxy_open");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});
+
+test("encodes file open frames as typed protobuf payloads", () => {
+  const frame = {
+    proto: "0.1",
+    type: "file_open",
+    id: "msg_file_open",
+    ts: 1777132800000,
+    ext: {},
+    operation_id: "op_test",
+    stream_id: "st_test",
+    file_session_id: "fs_test",
+    stream_type: "file_read",
+    root_key: "workspace",
+    relative_path: "src/index.ts",
+    mode: "range",
+    range_start: 0,
+    range_end: 10,
+    max_bytes: 1048576,
+    initial_credit_bytes: 1048576,
+    max_chunk_bytes: 16384,
+  };
+  const bytes = encodeLegacyJsonFrame(frame, { transportKind: "h2_grpc" });
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "file_open");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});
+
 test("tolerates unknown protobuf fields", () => {
   const bytes = Buffer.concat([
     Buffer.from(fixture.binary_base64, "base64"),

@@ -6,6 +6,7 @@ This document specifies the active on-wire contracts used by Bud:
 
 - Bud daemon ⇄ service over WebSocket JSON frames at `/ws`
 - Bud daemon ⇄ service over opt-in HTTP/2 gRPC control streams at `bud.v1.BudControl.Connect`
+- Bud daemon ⇄ service over opt-in subordinate HTTP/2 gRPC data streams at `bud.v1.BudData.Attach`
 - Service → browser over SSE for thread-scoped agent and terminal streams
 - Browser → service thread message writes that participate in the live agent-stream contract
 
@@ -61,10 +62,10 @@ The codebase now has a Phase 0 transport boundary for the daemon-network upgrade
 - the current router implementation is composite: active gRPC control streams are preferred, and WebSocket remains the compatibility fallback
 - daemon terminal/run modules send outbound payloads through a transport sender wrapper instead of a raw WebSocket sender type
 - shared protobuf schema lives in `proto/bud/v1/bud.proto`
-- the shared schema now exposes `service BudControl { rpc Connect(stream BudEnvelope) returns (stream BudEnvelope); }`
+- the shared schema now exposes `service BudControl { rpc Connect(stream BudEnvelope) returns (stream BudEnvelope); }` and `service BudData { rpc Attach(stream BudEnvelope) returns (stream BudEnvelope); }`
 - service and daemon both encode/decode `BudEnvelope v1` binary frames for WebSocket-capable peers
 - service and daemon both use `BudEnvelope v1` on the gRPC control stream, with typed oneof payloads carrying transitional `frame_json`
-- WebSocket-capable peers now dispatch known current frames through typed protobuf oneof payloads such as `terminal_ensure`, `terminal_output`, `reconnect_report`, and `reconciliation_decision`
+- WebSocket-capable peers now dispatch known current frames through typed protobuf oneof payloads such as `terminal_ensure`, `terminal_output`, `reconnect_report`, `reconciliation_decision`, `proxy_open`, and `file_open`
 - each typed payload carries a transitional `frame_json` field so existing JSON-shaped handlers remain reusable during the field-level protobuf rollout
 - `LegacyJsonPayload` remains decode-compatible for older binary fixtures and downgrade testing
 - terminal output emitted by the daemon is chunked to the documented 16 KiB maximum
@@ -92,6 +93,21 @@ Phase 2 gRPC control is opt-in during rollout:
 - authenticated gRPC sessions register `transport_session.transport_kind = "h2_grpc"`
 - terminal lifecycle/control frames may route over gRPC through the same transport router; bulk proxy/file/data migration remains later-phase work
 
+Phase 3 HTTP/2 data fallback is opt-in during rollout:
+
+- service starts the grpc-js data listener only when `GRPC_DATA_ENABLED=true`
+- default listener address is `127.0.0.1:50052`
+- daemon attaches only when `BUD_GRPC_DATA_URL` is set
+- data streams must attach after successful gRPC control authentication
+- the first data-stream frame must be `data_attach`
+- the service binds `data_attach.bud_id` and `data_attach.device_session_id` to the active authenticated control tracker
+- authenticated data streams register `transport_session.transport_kind = "h2_data"`
+- the initial concrete migration sends daemon `terminal_output` over `BudData.Attach`
+- terminal requests, heartbeat, reconnect reconciliation, terminal status/readiness, and terminal send/observe results remain on control
+- if the daemon data channel is unavailable or full, daemon terminal output falls back to the gRPC control stream rather than being dropped
+- Phase 4.2 localhost proxy streams negotiate `localhost_http_proxy`; proxy bytes are data-only and never fall back to control/WebSocket
+- Phase 4.4 file streams negotiate `file_read`; file bytes are data-only and never fall back to control/WebSocket
+
 ### 3.1 Bud ⇄ Service WebSocket
 
 - URL: `wss://<host>/ws`
@@ -111,6 +127,227 @@ Phase 2 gRPC control is opt-in during rollout:
 - Heartbeats and reconnect reconciliation use the same frame shapes as WebSocket
 - Message size default: 4 MiB control envelopes, configurable with `GRPC_CONTROL_MAX_MESSAGE_BYTES`
 - Deployed traffic must use TLS or an equivalent trusted HTTP/2 front-door termination path
+
+### 3.1.2 Bud ⇄ Service gRPC Data
+
+- Service: `bud.v1.BudData.Attach`
+- Encoding: protobuf `BudEnvelope`
+- Runtime: grpc-js on the service, tonic/prost on the daemon
+- Stream shape: bidirectional subordinate data stream
+- Current payload bridge: typed oneof payloads with `frame_json` bytes containing the same JSON frame shapes documented below
+- Auth binding: first frame is `data_attach`; service accepts it only if `bud_id` and `device_session_id` match the active authenticated gRPC control session
+- Current migrated traffic: Bud → Service `terminal_output`, Phase 4.2 daemon-backed localhost proxy response bytes, and Phase 4.4 daemon-backed file stat/read/range bytes
+- Current control fallback: if the daemon-side bounded data queue is closed or full, `terminal_output` is sent on `BudControl.Connect`
+- Generic stream frames: `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` are data-only for proxy/file stream work and must not fall back to control or WebSocket compatibility
+- Localhost proxy open frames: `proxy_open` and `proxy_open_result` move over `BudControl.Connect`; the bytes for accepted streams move over `BudData.Attach`
+- File open frames: `file_open` and `file_open_result` move over `BudControl.Connect`; the bytes for accepted read/range streams move over `BudData.Attach`
+- Stream credits: Phase 4.0 tracks per-stream receive/send offsets and credit windows for generic streams; accepted bytes consume credit and credit is re-granted only after the receiver has consumed the bytes
+- Chunk limit default: 16 KiB decoded terminal-output chunks, configurable with `GRPC_DATA_MAX_CHUNK_BYTES`
+- Message size default: 4 MiB data envelopes, configurable with `GRPC_DATA_MAX_MESSAGE_BYTES`
+- Deployed traffic must use TLS or an equivalent trusted HTTP/2 front-door termination path
+
+Initial attach frame:
+
+```json
+{
+  "proto": "0.1",
+  "type": "data_attach",
+  "id": "01...",
+  "ts": 1731,
+  "bud_id": "b_01H...",
+  "device_session_id": "s_01H...",
+  "streams": ["terminal_output", "localhost_http_proxy", "file_read"],
+  "max_chunk_bytes": 16384,
+  "ext": {}
+}
+```
+
+Successful attach reply:
+
+```json
+{
+  "proto": "0.1",
+  "type": "data_attach_ack",
+  "id": "01...",
+  "ts": 1731,
+  "bud_id": "b_01H...",
+  "device_session_id": "s_01H...",
+  "transport_session_id": "ts_01H...",
+  "streams": ["terminal_output", "localhost_http_proxy", "file_read"],
+  "max_chunk_bytes": 16384,
+  "initial_credit_bytes": 1048576,
+  "ext": {}
+}
+```
+
+Generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` envelope payloads exist in `proto/bud/v1/bud.proto` for proxy/file work. Runtime credit enforcement is now implemented for generic streams and remains separate from the terminal-output path; terminal output still uses the current bounded queue plus chunk limits.
+
+Generic stream data frame:
+
+```json
+{
+  "proto": "0.1",
+  "type": "stream_data",
+  "id": "01...",
+  "ts": 1731,
+  "stream_id": "st_01H...",
+  "stream_type": "localhost_http_proxy",
+  "offset": 0,
+  "data": "base64-bytes",
+  "end_stream": false,
+  "ext": {}
+}
+```
+
+Generic stream credit frame:
+
+```json
+{
+  "proto": "0.1",
+  "type": "stream_credit",
+  "id": "01...",
+  "ts": 1731,
+  "stream_id": "st_01H...",
+  "receive_offset": 16384,
+  "credit_bytes": 16384,
+  "ext": {}
+}
+```
+
+Generic reset/close frames:
+
+```json
+{
+  "proto": "0.1",
+  "type": "stream_reset",
+  "id": "01...",
+  "ts": 1731,
+  "stream_id": "st_01H...",
+  "reason": "backpressure",
+  "error": {
+    "code": "CREDIT_EXHAUSTED",
+    "message": "stream frame exceeds available credit",
+    "retryable": false
+  },
+  "ext": {}
+}
+```
+
+```json
+{
+  "proto": "0.1",
+  "type": "stream_close",
+  "id": "01...",
+  "ts": 1731,
+  "stream_id": "st_01H...",
+  "final_offset": 32768,
+  "ext": {}
+}
+```
+
+Localhost proxy open request (Service → Bud on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "proxy_open",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "stream_id": "st_01H...",
+  "proxy_session_id": "ps_01H...",
+  "stream_type": "localhost_http_proxy",
+  "target_host": "127.0.0.1",
+  "target_port": 5173,
+  "method": "GET",
+  "path": "/index.html?dev=1",
+  "headers": {
+    "accept": "text/html"
+  },
+  "initial_credit_bytes": 1048576,
+  "max_chunk_bytes": 16384,
+  "ext": {}
+}
+```
+
+Localhost proxy open result (Bud → Service on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "proxy_open_result",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "stream_id": "st_01H...",
+  "accepted": true,
+  "status_code": 200,
+  "headers": {
+    "content-type": "text/html"
+  },
+  "ext": {}
+}
+```
+
+Rejected proxy opens use the same frame with `accepted: false` and a typed `error` object.
+
+File open request (Service → Bud on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "file_open",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "stream_id": "st_01H...",
+  "file_session_id": "fs_01H...",
+  "stream_type": "file_read",
+  "root_key": "workspace",
+  "relative_path": "src/index.ts",
+  "mode": "range",
+  "range_start": 0,
+  "range_end": 1023,
+  "expected_content_identity": {
+    "size": 4096,
+    "modified_ms": 1777132800000
+  },
+  "max_bytes": 67108864,
+  "initial_credit_bytes": 1048576,
+  "max_chunk_bytes": 16384,
+  "ext": {}
+}
+```
+
+File open result (Bud → Service on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "file_open_result",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "stream_id": "st_01H...",
+  "accepted": true,
+  "status_code": 206,
+  "headers": {
+    "accept-ranges": "bytes",
+    "content-length": "1024",
+    "content-range": "bytes 0-1023/4096",
+    "content-type": "application/octet-stream",
+    "etag": "W/\"bud-4096-1777132800000\""
+  },
+  "content_identity": {
+    "size": 4096,
+    "modified_ms": 1777132800000
+  },
+  "size": 4096,
+  "ext": {}
+}
+```
+
+Rejected file opens use the same frame with `accepted: false` and a typed `error` object. Common file error codes include `POLICY_DENIED`, `UNSUPPORTED_ROOT`, `UNSAFE_PATH`, `UNSAFE_FILE_TYPE`, `SYMLINK_DENIED`, `FILE_NOT_FOUND`, `RANGE_NOT_SATISFIABLE`, `FILE_TOO_LARGE`, `CONTENT_CHANGED`, and `LOCAL_READ_FAILED`.
 
 ### 3.2 Agent Runtime Snapshot
 
@@ -205,6 +442,113 @@ APNs registration rules:
 - `provider_environment: "sandbox"` and `"development"` target APNs sandbox delivery; `"production"` targets production APNs delivery
 - registering the same APNs provider token or reused installation id under a different authenticated user removes stale prior endpoint ownership before the new registration is stored
 
+### 3.8 Localhost Proxy Sessions
+
+Phase 4.2 adds the browser-facing proxy session contract and a minimal daemon-backed GET/HEAD streaming path.
+
+Create session:
+
+- URL: `POST /api/buds/:bud_id/proxy-sessions`
+- Authenticated viewer required
+- `bud_id` must belong to the viewer
+- optional `thread_id` must belong to the same viewer and Bud
+- target is restricted to explicit `http://127.0.0.1:<port>`
+- if active `h2_grpc` control or subordinate `h2_data` with `localhost_http_proxy` negotiation is unavailable, the session records degraded state and proxy edge requests fail closed with `424`
+
+Request body:
+
+```json
+{
+  "target_host": "127.0.0.1",
+  "target_port": 5173,
+  "allowed_methods": ["GET", "HEAD"],
+  "ttl_seconds": 900,
+  "thread_id": "uuid optional",
+  "display_metadata": {}
+}
+```
+
+Response:
+
+```json
+{
+  "proxy_session_id": "ps_01H...",
+  "bud_id": "b_01H...",
+  "thread_id": null,
+  "operation_id": null,
+  "active_stream_id": null,
+  "target": {
+    "host": "127.0.0.1",
+    "port": 5173,
+    "url": "http://127.0.0.1:5173"
+  },
+  "allowed_methods": ["GET", "HEAD"],
+  "state": "ready",
+  "proxy_url": "https://service.example/api/proxy/ps_01H.../",
+  "expires_at": "2026-04-27T12:00:00.000Z",
+  "revoked_at": null,
+  "audit_correlation_id": "pc_01H...",
+  "transport": {
+    "available": true,
+    "code": null,
+    "message": null,
+    "device_session_id": "ds_01H...",
+    "control_transport_session_id": "ts_01H...",
+    "data_transport_session_id": "ts_01H..."
+  },
+  "degraded": null,
+  "created_at": "2026-04-27T11:45:00.000Z",
+  "updated_at": "2026-04-27T11:45:00.000Z"
+}
+```
+
+Additional routes:
+
+- `GET /api/buds/:bud_id/proxy-sessions` lists owned proxy sessions for an owned Bud
+- `GET /api/proxy-sessions/:proxy_session_id` reads one owned session
+- `DELETE /api/proxy-sessions/:proxy_session_id` revokes one owned session
+- `/api/proxy/:proxy_session_id/*` authorizes the viewer/session, enforces method/expiry/revocation/transport readiness, and streams `GET`/`HEAD` through daemon `proxy_open` plus `BudData.Attach`
+- non-GET/HEAD methods remain unsupported in Phase 4.2 and return `501 proxy_method_not_implemented`
+- request and response headers are allowlisted; cookies, auth headers, hop-by-hop headers, and non-loopback targets are not forwarded
+
+### 3.9 File Sessions
+
+Phase 4.4 adds browser-facing file sessions and daemon-backed `HEAD`, full read, and single-range read support.
+
+Create session:
+
+- URL: `POST /api/buds/:bud_id/file-sessions`
+- Authenticated viewer required
+- `bud_id` must belong to the viewer
+- optional `thread_id` must belong to the same viewer and Bud
+- root is restricted to `workspace`
+- `relative_path` must be POSIX-style, root-relative, non-empty, and must not contain absolute, drive-prefix, backslash, NUL, or parent-directory traversal segments
+- if active `h2_grpc` control or subordinate `h2_data` with `file_read` negotiation is unavailable, the session records degraded state and file edge requests fail closed with `424`
+
+Request body:
+
+```json
+{
+  "root_key": "workspace",
+  "relative_path": "src/index.ts",
+  "permissions": ["stat", "read", "range"],
+  "max_bytes": 67108864,
+  "ttl_seconds": 900,
+  "thread_id": "uuid optional",
+  "display_metadata": {}
+}
+```
+
+Additional routes:
+
+- `GET /api/buds/:bud_id/file-sessions` lists owned file sessions for an owned Bud
+- `GET /api/file-sessions/:file_session_id` reads one owned session
+- `DELETE /api/file-sessions/:file_session_id` revokes one owned session
+- `HEAD /api/files/:file_session_id` authorizes `stat` and returns daemon stat headers through `file_open`
+- `GET /api/files/:file_session_id` authorizes `read` and streams the file through daemon `file_open` plus `BudData.Attach`
+- `GET /api/files/:file_session_id` with a single `Range: bytes=start-end`, `bytes=start-`, or `bytes=-suffix` header authorizes `range` and returns `206` when the daemon accepts the range
+- unsafe daemon paths, symlinks, non-regular files, out-of-range reads, over-limit reads, and content identity changes fail closed with typed errors
+
 ---
 
 ## 4. WebSocket Envelope
@@ -263,7 +607,23 @@ Enrollment example:
     "shell_default": "/bin/sh",
     "sessions": true,
     "terminal": true,
-    "terminal_proto": "0.2"
+    "terminal_proto": "0.2",
+    "bud_envelope": {
+      "version": 1,
+      "websocket_binary": true,
+      "h2_grpc_control": true,
+      "h2_data": true
+    },
+    "proxy": {
+      "localhost_http": true,
+      "methods": ["GET", "HEAD"],
+      "target_hosts": ["127.0.0.1"]
+    },
+    "files": {
+      "workspace_read": true,
+      "roots": ["workspace"],
+      "permissions": ["stat", "read", "range"]
+    }
   },
   "ext": {}
 }
@@ -288,7 +648,23 @@ Reconnect example:
     "shell_default": "/bin/zsh",
     "sessions": true,
     "terminal": true,
-    "terminal_proto": "0.2"
+    "terminal_proto": "0.2",
+    "bud_envelope": {
+      "version": 1,
+      "websocket_binary": true,
+      "h2_grpc_control": true,
+      "h2_data": true
+    },
+    "proxy": {
+      "localhost_http": true,
+      "methods": ["GET", "HEAD"],
+      "target_hosts": ["127.0.0.1"]
+    },
+    "files": {
+      "workspace_read": true,
+      "roots": ["workspace"],
+      "permissions": ["stat", "read", "range"]
+    }
   },
   "ext": {}
 }
@@ -507,6 +883,7 @@ Rules:
 - `seq` is monotonic per session output stream
 - `byte_offset` is monotonic and is the durable ordering/backfill coordinate stored by the service
 - Bud output chunks should remain at or below 16 KiB
+- gRPC-capable daemons send `terminal_output` on `BudData.Attach` when the data stream is attached; WebSocket and gRPC-control fallback carry the same frame shape
 
 ### 6.4 `terminal_ready` (Bud → Service)
 
@@ -741,7 +1118,14 @@ Service: otherwise emit agent.resync_required
 - device secrets must never be logged and should be stored with restrictive local permissions
 - reconnect auth should always use challenge-response, not reusable bearer secrets on the wire
 - TLS is required for deployed WebSocket traffic
+- gRPC data streams must be subordinate to an authenticated gRPC control session and must be rejected if `bud_id` or `device_session_id` does not match the active control tracker
 - browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
+- browser proxy-session reads, revokes, and edge attaches must authorize `proxy_session.created_by_user_id` before checking or opening daemon streams
+- browser file-session reads, revokes, and edge attaches must authorize `file_session.created_by_user_id` before checking or opening daemon streams
+- localhost proxy sessions must deny non-`127.0.0.1` targets at the service boundary; the daemon re-checks local policy before any local HTTP side effect
+- localhost proxy streams require `h2_grpc` plus a `localhost_http_proxy`-negotiated `h2_data` stream; they do not fall back to WebSocket or control-plane byte transfer
+- file read streams require `h2_grpc` plus a `file_read`-negotiated `h2_data` stream; they do not fall back to WebSocket or control-plane byte transfer
+- file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, and content-identity policy before sending bytes
 - push endpoint registrations and unread/read watermarks are user-owned resources; normal client-directed reads and deletes are scoped to the authenticated owner
 - the push registration route may additionally server-side reclaim the same provider token or reused installation id from stale prior ownership so a logged-out account cannot keep receiving notifications for a device now registered by another user
 
@@ -751,5 +1135,8 @@ Service: otherwise emit agent.resync_required
 
 - **Current**
   - thread-scoped terminal protocol is the active execution surface
+  - opt-in `BudData.Attach` carries daemon terminal output over HTTP/2 data when configured
+  - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
+  - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - legacy standalone run transport and browser `/api/runs/*` streaming are removed from the supported protocol

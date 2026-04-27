@@ -113,6 +113,22 @@ Placeholder to ensure the directory exists in git.
 - Creates `audit_event` as the append-only audit foundation for daemon/session/operation/stream events
 - Adds indexes for Bud/state lookups, thread operation history, transport stream recovery, device heartbeat scanning, and audit queries
 
+### `0014_worthless_frank_castle.sql`
+
+**Phase 4.1 proxy session foundation**:
+- Creates `proxy_session` for user-owned localhost proxy sessions
+- Stores Bud/thread/operation/active-stream references, localhost target host/port, allowed methods, session state, TTL, revocation fields, display metadata, and audit correlation id
+- Adds owner/state, Bud/state, thread, and audit-correlation indexes
+- Adds foreign keys to `bud`, `thread`, `bud_operation`, `bud_stream`, and `auth.user`
+
+### `0015_gifted_kinsey_walden.sql`
+
+**Phase 4.3 file session foundation**:
+- Creates `file_session` for user-owned file stat/read/range sessions
+- Stores Bud/thread/operation/active-stream references, root key, root-relative path, allowed permissions, max bytes, session state, optional content identity, TTL, revocation fields, display metadata, and audit correlation id
+- Adds owner/state, Bud/state, thread, and audit-correlation indexes
+- Adds foreign keys to `bud`, `thread`, `bud_operation`, `bud_stream`, and `auth.user`
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -123,7 +139,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0013` currently)
+- Snapshot files for each migration (`0000` through `0015` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -180,6 +196,12 @@ v12: push notification endpoint, read-state, attention, and outbox schema
  │
  ▼
 v13: network upgrade device sessions, transport sessions, operations, streams, and audit events
+ │
+ ▼
+v14: Phase 4.1 localhost proxy session persistence
+ │
+ ▼
+v15: Phase 4.3 file session persistence
 ```
 
 ---

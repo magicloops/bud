@@ -119,10 +119,21 @@ Data fallback phase covering:
 - terminal data migration
 - WebSocket fallback for the same stream frames
 
+### `phase-3.1-data-hardening.md`
+
+Small hardening slice after the initial terminal-output data fallback:
+
+- subordinate `h2_data` cleanup when the owning `h2_grpc` control session closes
+- data tracker frame/byte counters and close-log context
+- local control-fallback smoke coverage
+- local large-output smoke coverage
+- deferred stream-credit, reset propagation, and degraded-state work before proxy/file streams
+
 ### `phase-4-localhost-proxy-and-file-reads.md`
 
 Product-feature phase covering:
 
+- generic proxy/file stream foundation on top of `BudData.Attach`
 - localhost HTTP proxy sessions
 - service proxy edge
 - daemon proxy adapter
@@ -131,6 +142,7 @@ Product-feature phase covering:
 - default local policy
 - audit events
 - validation with QUIC disabled
+- explicit fail-closed behavior when HTTP/2 data is unavailable
 
 ### `phase-5-quic-data-fast-path.md`
 

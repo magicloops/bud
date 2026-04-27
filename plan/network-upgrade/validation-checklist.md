@@ -10,7 +10,7 @@ Manual validation pending.
 - [x] Service unit tests pass (`pnpm --dir /Users/adam/bud/service test`)
 - [ ] Web tests/lint/build pass if web files are changed
 - [x] Cross-language protobuf conformance tests pass (`proto/fixtures/legacy-terminal-ensure.json` plus typed payload dispatch tests in service and Bud)
-- [x] Drizzle migrations are generated and reviewed for deployable schema changes (`0013_strange_nocturne.sql`)
+- [x] Drizzle migrations are generated and reviewed for deployable schema changes (`0013_strange_nocturne.sql`, `0014_worthless_frank_castle.sql`, `0015_gifted_kinsey_walden.sql`)
 - [x] `docs/proto.md` is updated for protocol changes
 - [x] Relevant folder specs are updated for changed files/folders
 
@@ -87,30 +87,75 @@ Phase 2.1 smoke notes from 2026-04-27:
 
 ## Phase 3 Validation
 
-- [ ] Terminal output streams over HTTP/2 data
-- [ ] Terminal input remains responsive during large output
-- [ ] Stream credits prevent unbounded buffering
-- [ ] Typed resets propagate to service/runtime callers
+- [x] `BudData.Attach` data frames encode/decode through typed protobuf payload coverage
+- [x] Service rejects data attachments that do not bind to the active control-session ids in unit coverage
+- [x] Daemon transport routes `terminal_output` over the bounded data channel and falls back to control when data is closed in unit coverage
+- [x] Terminal output streams over HTTP/2 data in local end-to-end smoke coverage
+- [x] Terminal input remains responsive during large output
+- [x] Generic stream credits prevent unbounded buffering in Phase 4.0 unit coverage
+- [x] Typed resets propagate to service/runtime callers for Phase 4 generic stream consumers
 - [ ] Browser terminal SSE/history behavior is unchanged
-- [ ] HTTP/2 data disabled path falls back only according to policy
+- [x] HTTP/2 data disabled path falls back only according to policy
 - [ ] Degraded/fallback state is visible in logs/metrics
+
+Local Phase 3 smoke notes from 2026-04-27:
+
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-data-terminal` builds the local Bud debug binary, starts in-process grpc-js control/data gateways on reserved localhost ports, launches the real Rust daemon with `BUD_GRPC_CONTROL_URL` and `BUD_GRPC_DATA_URL`, and creates a real tmux-backed terminal session through `TerminalSessionManager`.
+- The smoke confirmed active `h2_grpc` and `h2_data` transport sessions, sent a marker command into the terminal, found the marker in persisted terminal output, and verified the active gRPC data tracker recorded `terminal_output` frames/bytes.
+- Latest local data-path run recorded `data_frames_received = 2`, `data_bytes_received = 677`, `output_bytes = 677`, `input_dispatch_ms = 6`, and `marker_found = true`.
+
+Phase 3.1 smoke notes from 2026-04-27:
+
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-data-terminal:fallback` launched the daemon without `BUD_GRPC_DATA_URL`, confirmed no active `h2_data` transport, found the marker in persisted terminal output, and recorded `data_frames_received = 0`, `data_bytes_received = 0`, `output_bytes = 677`, and `input_dispatch_ms = 6`.
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-data-terminal:large` emitted a large terminal-output burst over data, found the marker in persisted terminal output, and recorded `data_frames_received = 17`, `data_bytes_received = 258837`, `output_bytes = 258837`, and `input_dispatch_ms = 7`.
+- Fallback/degraded state is still not promoted into durable metrics or operator APIs; Phase 3.1 only exposes it through smoke output, process logs, and active in-memory tracker counters.
 
 ## Phase 4 Validation
 
-- [ ] Authenticated owner can create a localhost proxy session
+- [x] Generic `stream_data` / `stream_credit` frames encode through typed gRPC payload coverage
+- [x] `proxy_open` / `proxy_open_result` frames encode through typed protobuf payload coverage
+- [x] `file_open` / `file_open_result` frames encode through typed protobuf payload coverage
+- [x] Service generic stream receive credits enforce offset order and available credit in unit coverage
+- [x] Service generic stream send helper refuses writes without available peer credit in unit coverage
+- [x] Service proxy runtime receives open results and streams data chunks into an HTTP body in unit coverage
+- [x] Daemon generic `stream_*` frames fail closed instead of falling back to control when `h2_data` is unavailable in unit coverage
+- [x] Daemon rejects unsupported inbound generic `stream_data` with typed `stream_reset` foundation behavior in local code path
+- [x] Daemon validates localhost proxy-open policy for loopback GET/HEAD in unit coverage
+- [x] Authenticated owner can create a localhost proxy session route contract
+- [x] Authenticated owner can create a file session route contract
 - [ ] Non-owner receives `404` for another user's proxy/file session
 - [ ] Unauthenticated browser request receives `401`
-- [ ] Proxy only allows `http://127.0.0.1:<explicit_port>` by default
-- [ ] Proxy denies LAN, metadata, wildcard, Unix socket, Docker, Kubernetes, SSH agent, and `file://` targets
-- [ ] Proxy strips unsafe headers and Bud auth cookies
-- [ ] Proxy supports streaming local HTTP responses
+- [x] Proxy only allows `http://127.0.0.1:<explicit_port>` by default in service validation coverage
+- [x] Proxy denies non-loopback hostnames/IPs at the service contract boundary in validation coverage
+- [ ] Daemon denies LAN, metadata, wildcard, Unix socket, Docker, Kubernetes, SSH agent, and `file://` targets before local side effects
+- [x] Proxy strips unsafe headers and Bud auth cookies in implementation allowlists
+- [x] Proxy supports streaming local HTTP responses in implementation
 - [ ] Local SSE through proxy works if in scope
-- [ ] File stat/read works for approved handle/root
-- [ ] File range read works with content identity
-- [ ] File mutation during range read returns typed change error
-- [ ] Expired/revoked sessions fail closed
-- [ ] Audit events are recorded for create/open/close/reset/deny/expire
-- [ ] Proxy and file features work with QUIC disabled
+- [x] File sessions only allow the workspace root and root-relative paths in service validation coverage
+- [x] Daemon validates workspace file-open policy in unit coverage
+- [x] Daemon range selection enforces max bytes in unit coverage
+- [x] File stat/read works for approved handle/root in local end-to-end smoke
+- [x] File range read works with content identity in local end-to-end smoke
+- [x] File mutation during range read returns typed change error in local end-to-end smoke
+- [x] Expired/revoked proxy sessions fail closed at the service edge contract
+- [x] Proxy session create/revoke audit events are recorded by the service foundation
+- [x] File session create/revoke audit events are recorded by the service foundation
+- [ ] Audit events are recorded for all stream close/reset/deny/expire outcomes and file sessions
+- [x] Phase 4.2 automated validation runs with QUIC disabled
+- [x] Local proxy works end-to-end with a real daemon, local HTTP target, and HTTP/2 data stream
+- [x] File features work end-to-end with QUIC disabled
+
+Local Phase 4.2 smoke notes from 2026-04-27:
+
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-proxy` builds the local Bud debug binary, starts in-process grpc-js control/data gateways, launches the real Rust daemon with `BUD_GRPC_CONTROL_URL` and `BUD_GRPC_DATA_URL`, creates an owned proxy session, and drives a proxied GET through the production proxy edge stream.
+- The smoke confirmed active `h2_grpc` and `h2_data` transport sessions, daemon-side localhost proxy forwarding to a loopback target, unsafe request-header stripping for `Authorization` and `Cookie`, durable proxy `bud_operation`/`bud_stream` close state, proxy session active-stream cleanup, and a `proxy.stream_open` audit event.
+- Latest local proxy run recorded `status_code = 200`, `body_bytes = 92`, `data_frames_delta = 2`, `data_bytes_delta = 92`, and `stream_receive_offset = 92`.
+
+Local Phase 4.4 smoke notes from 2026-04-27:
+
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-file` builds the local Bud debug binary, starts in-process grpc-js control/data gateways, launches the real Rust daemon with `BUD_GRPC_CONTROL_URL` and `BUD_GRPC_DATA_URL`, creates an owned file session, and drives `HEAD`, full `GET`, range `GET`, and stale range `GET` through the production file edge stream.
+- The smoke confirmed active `h2_grpc` and `h2_data` transport sessions, daemon-side workspace file stat/read/range, persisted file content identity, durable file `bud_operation`/`bud_stream` terminal state, file session active-stream cleanup, a `file.stream_open` audit event, and stale content identity rejection as `409 content_changed`.
+- Latest local file run recorded `body_bytes = 114`, `range_body = "daemon file"`, `data_frames_delta = 2`, `data_bytes_delta = 125`, status codes `HEAD 200`, `GET 200`, `range 206`, `stale_range 409`, and stream receive offsets `[0, 11, 114]`.
 
 ## Phase 5 Validation
 

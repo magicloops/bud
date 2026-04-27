@@ -15,9 +15,12 @@ import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 import { ContextSyncService } from "./terminal/context-sync-service.js";
 import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
 import { registerMeRoutes } from "./routes/me.js";
+import { registerProxyRoutes } from "./routes/proxy.js";
+import { registerFileRoutes } from "./routes/files.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 import { PushNotificationWorker } from "./notifications/index.js";
 import { startGrpcControlGateway } from "./grpc/control-gateway.js";
+import { startGrpcDataGateway } from "./grpc/data-gateway.js";
 
 const SERVICE_VERSION = "0.0.1";
 const CORS_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
@@ -140,6 +143,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerDeviceAuthRoutes(server);
   await registerMeRoutes(server);
   await registerBudRoutes(server, terminalSessionManager);
+  await registerProxyRoutes(server);
+  await registerFileRoutes(server);
   await registerThreadRoutes(
     server,
     agentService,
@@ -155,8 +160,13 @@ export async function buildServer(): Promise<FastifyInstance> {
     terminalSessionManager,
     server.log.child({ component: "grpc_control_gateway" }),
   );
+  const grpcDataGateway = await startGrpcDataGateway(
+    terminalSessionManager,
+    server.log.child({ component: "grpc_data_gateway" }),
+  );
 
   server.addHook("onClose", async () => {
+    await grpcDataGateway?.close();
     await grpcControlGateway?.close();
     pushNotificationWorker.stop();
     terminalSessionManager.stopIdleChecks();

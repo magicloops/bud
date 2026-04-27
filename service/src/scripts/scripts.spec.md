@@ -147,6 +147,81 @@ pnpm oauth:provision:ios-staging
 **Execution Contract**:
 - The package script loads `.env.staging` explicitly via Node's `--env-file` flag before importing `tsx`, so the staging bundle is always derived from the checked-in staging env file rather than whichever shell env happens to be active.
 
+### `smoke-grpc-data-terminal.ts`
+
+Local end-to-end smoke test for network-upgrade Phase 3.
+
+**Responsibilities**:
+- Start the real grpc-js control and data gateways in-process on reserved localhost ports
+- Launch the compiled Rust daemon with `BUD_GRPC_CONTROL_URL`, optional `BUD_GRPC_DATA_URL`, a dev enrollment token, and a temporary identity/terminal base directory
+- Wait for active `h2_grpc` and, when data is enabled, `h2_data` transport sessions
+- Create a real thread-scoped terminal session through `TerminalSessionManager`
+- Send a shell command into the tmux-backed terminal and wait for the marker in persisted terminal output
+- Assert the active gRPC data tracker recorded received terminal-output frames and bytes in data-enabled modes
+- Assert the control-only fallback path persists terminal output without registering `h2_data` when `SMOKE_GRPC_DATA_MODE=control-fallback`
+- Assert large terminal output uses multiple data frames and input dispatch stays bounded when `SMOKE_GRPC_DATA_MODE=large-output`
+- Close the terminal session, stop the daemon, close gateways, and remove smoke rows/temp files
+
+**Usage**:
+```bash
+pnpm smoke:grpc-data-terminal
+pnpm smoke:grpc-data-terminal:fallback
+pnpm smoke:grpc-data-terminal:large
+```
+
+**Prerequisites**:
+- Local Postgres schema is up to date
+- `tmux` is installed
+
+The package script builds the local Bud debug binary before launching the smoke so it does not accidentally exercise a stale daemon.
+
+### `smoke-grpc-proxy.ts`
+
+Local end-to-end smoke test for network-upgrade Phase 4.2 proxy streaming.
+
+**Responsibilities**:
+- Start the real grpc-js control and data gateways in-process on reserved localhost ports
+- Launch the compiled Rust daemon with gRPC control/data URLs, a dev enrollment token, and temporary local state
+- Start a loopback HTTP target server and create an auth-owned proxy session for that target
+- Drive the production proxy edge stream through a small Fastify harness at `/api/proxy/:proxySessionId/*`
+- Assert the daemon forwards the request to the local target, streams the response body back, and strips unsafe target headers such as `Authorization` and `Cookie`
+- Assert the gRPC data tracker, durable `bud_operation`/`bud_stream` rows, proxy session cleanup, and proxy audit event all reflect the completed stream
+- Stop the daemon, close gateways, and remove smoke rows/temp files
+
+**Usage**:
+```bash
+pnpm smoke:grpc-proxy
+```
+
+**Prerequisites**:
+- Local Postgres schema is up to date
+
+The package script builds the local Bud debug binary before launching the smoke so it does not accidentally exercise a stale daemon.
+
+### `smoke-grpc-file.ts`
+
+Local end-to-end smoke test for network-upgrade Phase 4.4 file stat/read/range streaming.
+
+**Responsibilities**:
+- Start the real grpc-js control and data gateways in-process on reserved localhost ports
+- Launch the compiled Rust daemon with gRPC control/data URLs, a dev enrollment token, temporary local state, and a temporary workspace root
+- Create a workspace-relative file and an auth-owned file session for that path
+- Drive the production file edge stream through a small Fastify harness at `/api/files/:fileSessionId`
+- Assert HEAD/stat, full GET/read, and single-range GET all stream through the daemon over HTTP/2 data
+- Mutate the underlying file and assert the stale range request fails closed with `content_changed`
+- Assert the gRPC data tracker, durable `bud_operation`/`bud_stream` rows, file session content identity/cleanup, and file audit event all reflect the completed streams
+- Stop the daemon, close gateways, and remove smoke rows/temp files
+
+**Usage**:
+```bash
+pnpm smoke:grpc-file
+```
+
+**Prerequisites**:
+- Local Postgres schema is up to date
+
+The package script builds the local Bud debug binary before launching the smoke so it does not accidentally exercise a stale daemon.
+
 ### `seed.ts`
 
 Creates initial development data.

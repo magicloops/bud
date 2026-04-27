@@ -1,7 +1,7 @@
 # Phase 3: HTTP/2 Data Fallback
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Planned
+**Status**: Initial terminal-output implementation complete; Phase 3.1 hardening tracked in [phase-3.1-data-hardening.md](./phase-3.1-data-hardening.md)
 
 ---
 
@@ -67,6 +67,14 @@ Define `BudData.Attach` or equivalent:
 - reset semantics
 - transport health events
 
+Initial implementation:
+
+- `proto/bud/v1/bud.proto` defines `BudData.Attach`.
+- `data_attach` is daemon initiated and must be the first data-stream frame.
+- The service rejects attaches that do not bind to the active authenticated `BudControl.Connect` tracker.
+- The service registers a subordinate `transport_session` with `transport_kind = "h2_data"`.
+- The daemon advertises `capabilities.bud_envelope.h2_data` when `BUD_GRPC_DATA_URL` is configured.
+
 ### Task 2: Add traffic classes
 
 Initial classes:
@@ -99,6 +107,18 @@ Define:
 - daemon buffer limits
 - behavior on credit exhaustion
 
+Initial implementation:
+
+- Service advertises `initial_credit_bytes` in `data_attach_ack`.
+- Service enforces `GRPC_DATA_MAX_CHUNK_BYTES` on decoded `terminal_output` chunks.
+- Daemon uses a bounded data frame queue for gRPC data attachment.
+- If the data queue is full or closed, daemon terminal output falls back to the gRPC control channel instead of being dropped.
+
+Deferred hardening:
+
+- Phase 4.0 adds authoritative credit accounting for generic `stream_data`; terminal output remains on its bounded queue and chunk-limit path.
+- Per-stream fair scheduling is still required before multiple concurrent proxy/file streams share one Bud data channel.
+
 ### Task 4: Implement service data-plane router
 
 The router should:
@@ -111,6 +131,14 @@ The router should:
 - persist terminal output bytes where applicable
 - emit SSE terminal events unchanged for web clients
 
+Initial implementation:
+
+- `service/src/grpc/data-gateway.ts` exposes `BudData.Attach`.
+- `service/src/transport/grpc-data-router.ts` tracks active data attachments keyed by Bud and device session.
+- `terminal_output` frames are persisted through `TerminalSessionManager.handleTerminalOutput(...)`, preserving browser SSE/history behavior.
+- Data-gateway shutdown closes only the subordinate data `transport_session`; control remains authoritative for device lifecycle.
+- Phase 3.1 closes subordinate data streams when the owning control tracker closes, drains, times out, or is superseded.
+
 ### Task 5: Implement daemon data client
 
 The daemon should:
@@ -121,6 +149,12 @@ The daemon should:
 - honor credits
 - prioritize interactive traffic
 - report stream checkpoints on reconnect
+
+Initial implementation:
+
+- `bud/src/grpc_data.rs` opens `BudData.Attach` and encodes outbound frames with `transport_kind = H2_DATA`.
+- `bud/src/app.rs` attaches data after gRPC control handshake when `BUD_GRPC_DATA_URL` is configured.
+- `bud/src/transport.rs` routes `terminal_output` over data while keeping heartbeat, reconnect, input, status, readiness, and terminal results on control.
 
 ### Task 6: Migrate terminal traffic
 
@@ -133,6 +167,12 @@ Move enough terminal traffic to prove parity:
 
 Preserve browser-facing SSE and history APIs.
 
+Initial implementation:
+
+- Migrated daemon-to-service `terminal_output`.
+- Kept terminal input, resize, status, readiness, send results, and observe results on control for simpler lifecycle semantics.
+- Browser REST/SSE terminal APIs are unchanged.
+
 ### Task 7: Validate fallback behavior
 
 Ensure:
@@ -141,6 +181,12 @@ Ensure:
 - HTTP/2 data unavailable path uses WebSocket compatibility if allowed
 - WebSocket fallback has lower limits and clear degraded status
 - terminal remains interactive during large output
+
+Initial implementation:
+
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-data-terminal` validates the normal HTTP/2 control plus HTTP/2 data path with a real daemon and tmux-backed terminal.
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-data-terminal:fallback` validates the control-only path when `BudData.Attach` is disabled.
+- `pnpm --dir /Users/adam/bud/service smoke:grpc-data-terminal:large` validates multi-frame terminal output over data and bounded input dispatch latency.
 
 ## Files Likely Affected
 

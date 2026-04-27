@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
+import test from "node:test";
+import {
+  ProxyRuntimeStream,
+  deleteProxyRuntimeStream,
+  handleProxyOpenResult,
+  registerProxyRuntimeStream,
+} from "./proxy-runtime.js";
+
+test("proxy runtime resolves open results and streams data to the response body", async () => {
+  const chunks: Buffer[] = [];
+  const runtime = new ProxyRuntimeStream("st_test", "op_test", () => {
+    deleteProxyRuntimeStream("st_test");
+  });
+  registerProxyRuntimeStream(runtime);
+  runtime.body.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+  const wait = runtime.waitForOpen(1000);
+  const parsed = handleProxyOpenResult({
+    proto: "0.1",
+    type: "proxy_open_result",
+    id: "msg_open_result",
+    ts: 1777132800000,
+    ext: {},
+    operation_id: "op_test",
+    stream_id: "st_test",
+    accepted: true,
+    status_code: 200,
+    headers: { "content-type": "text/plain" },
+  });
+
+  assert.equal(parsed?.accepted, true);
+  assert.equal((await wait).status_code, 200);
+
+  await runtime.handleData(Buffer.from("hello"));
+  runtime.handleClose();
+
+  assert.equal(Buffer.concat(chunks).toString("utf-8"), "hello");
+  assert.equal(runtime.isComplete(), true);
+  assert.equal(handleProxyOpenResult({}), null);
+});
+

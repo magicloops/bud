@@ -47,6 +47,16 @@ const TYPED_PAYLOAD_FIELD_BY_FRAME_TYPE: Record<string, string> = {
   terminal_ready: "terminalReady",
   reconnect_report: "reconnectReport",
   reconciliation_decision: "reconciliationDecision",
+  data_attach: "dataAttach",
+  data_attach_ack: "dataAttachAck",
+  stream_data: "streamData",
+  stream_credit: "streamCredit",
+  stream_reset: "streamReset",
+  stream_close: "streamClose",
+  proxy_open: "proxyOpen",
+  proxy_open_result: "proxyOpenResult",
+  file_open: "fileOpen",
+  file_open_result: "fileOpenResult",
 };
 
 const FRAME_TYPE_BY_TYPED_PAYLOAD_FIELD = new Map(

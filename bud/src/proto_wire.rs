@@ -65,10 +65,7 @@ pub fn encode_legacy_json_frame(frame: &Value) -> Result<Vec<u8>> {
         .and_then(Value::as_u64)
         .map(timestamp_millis_to_rfc3339)
         .unwrap_or_else(|| timestamp_millis_to_rfc3339(now_millis()));
-    let traffic_class = frame_type
-        .as_deref()
-        .map(traffic_class_for_frame_type)
-        .unwrap_or(TrafficClass::Control);
+    let traffic_class = traffic_class_for_frame(frame);
     let json = serde_json::to_vec(frame)?;
 
     encode_json_frame_envelope(
@@ -233,7 +230,14 @@ enum PayloadEncoding {
 }
 
 pub fn traffic_class_for_frame_type(frame_type: &str) -> TrafficClass {
-    if frame_type == "terminal_output"
+    if frame_type == "stream_data" {
+        TrafficClass::ProxyActive
+    } else if frame_type == "stream_credit"
+        || frame_type == "stream_reset"
+        || frame_type == "stream_close"
+    {
+        TrafficClass::Control
+    } else if frame_type == "terminal_output"
         || frame_type == "terminal_send"
         || frame_type == "terminal_input"
         || frame_type.starts_with("terminal_")
@@ -242,6 +246,17 @@ pub fn traffic_class_for_frame_type(frame_type: &str) -> TrafficClass {
     } else {
         TrafficClass::Control
     }
+}
+
+pub fn traffic_class_for_frame(frame: &Value) -> TrafficClass {
+    let frame_type = frame.get("type").and_then(Value::as_str).unwrap_or("");
+    if frame_type == "stream_data" {
+        return match frame.get("stream_type").and_then(Value::as_str) {
+            Some("file_read") => TrafficClass::Bulk,
+            _ => TrafficClass::ProxyActive,
+        };
+    }
+    traffic_class_for_frame_type(frame_type)
 }
 
 fn decode_legacy_json_payload(bytes: &[u8]) -> Result<LegacyJsonPayload> {
@@ -310,6 +325,16 @@ fn payload_field_for_frame_type(frame_type: &str) -> Option<u32> {
         "terminal_ready" => 130,
         "reconnect_report" => 150,
         "reconciliation_decision" => 151,
+        "data_attach" => 170,
+        "data_attach_ack" => 171,
+        "stream_data" => 172,
+        "stream_credit" => 173,
+        "stream_reset" => 174,
+        "stream_close" => 175,
+        "proxy_open" => 176,
+        "proxy_open_result" => 177,
+        "file_open" => 178,
+        "file_open_result" => 179,
         _ => return None,
     })
 }
@@ -336,6 +361,16 @@ fn frame_type_for_payload_field(field_number: u32) -> Option<&'static str> {
         130 => "terminal_ready",
         150 => "reconnect_report",
         151 => "reconciliation_decision",
+        170 => "data_attach",
+        171 => "data_attach_ack",
+        172 => "stream_data",
+        173 => "stream_credit",
+        174 => "stream_reset",
+        175 => "stream_close",
+        176 => "proxy_open",
+        177 => "proxy_open_result",
+        178 => "file_open",
+        179 => "file_open_result",
         _ => return None,
     })
 }
@@ -543,6 +578,107 @@ mod tests {
         let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
         let decoded_value: Value = serde_json::from_str(&decoded).expect("decode json");
         assert_eq!(decoded_value, frame);
+    }
+
+    #[test]
+    fn encodes_data_attach_with_typed_payload_field() {
+        let frame = json!({
+            "proto": "0.1",
+            "type": "data_attach",
+            "id": "msg_data_attach",
+            "ts": 1777132800000_u64,
+            "ext": {},
+            "bud_id": "b_test",
+            "device_session_id": "s_test",
+            "streams": ["terminal_output"],
+            "max_chunk_bytes": 16384
+        });
+
+        let bytes = encode_typed_json_envelope(
+            "msg_data_attach",
+            "2026-04-25T16:00:00.000Z",
+            TrafficClass::Control,
+            EnvelopeTransportKind::H2Data,
+            Some("data_attach"),
+            Some("0.1"),
+            serde_json::to_vec(&frame).expect("frame json").as_slice(),
+        )
+        .expect("encode frame");
+
+        assert_eq!(top_level_payload_fields(&bytes), vec![170]);
+        let decoded = decode_legacy_json_envelope(&bytes).expect("decode frame");
+        assert_eq!(decoded.transport_kind, Some(EnvelopeTransportKind::H2Data));
+        assert_eq!(decoded.payload.frame_type.as_deref(), Some("data_attach"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&decoded.payload.json).expect("decode json"),
+            frame,
+        );
+    }
+
+    #[test]
+    fn encodes_stream_data_with_typed_payload_field() {
+        let frame = json!({
+            "proto": "0.1",
+            "type": "stream_data",
+            "id": "msg_stream_data",
+            "ts": 1777132800000_u64,
+            "ext": {},
+            "stream_id": "st_test",
+            "stream_type": "localhost_http_proxy",
+            "offset": 0,
+            "data": "",
+            "end_stream": false
+        });
+
+        let bytes = encode_typed_json_envelope(
+            "msg_stream_data",
+            "2026-04-25T16:00:00.000Z",
+            TrafficClass::ProxyActive,
+            EnvelopeTransportKind::H2Data,
+            Some("stream_data"),
+            Some("0.1"),
+            serde_json::to_vec(&frame).expect("frame json").as_slice(),
+        )
+        .expect("encode frame");
+
+        assert_eq!(top_level_payload_fields(&bytes), vec![172]);
+        let decoded = decode_legacy_json_envelope(&bytes).expect("decode frame");
+        assert_eq!(decoded.transport_kind, Some(EnvelopeTransportKind::H2Data));
+        assert_eq!(decoded.payload.frame_type.as_deref(), Some("stream_data"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&decoded.payload.json).expect("decode json"),
+            frame,
+        );
+    }
+
+    #[test]
+    fn classifies_file_stream_data_as_bulk() {
+        let frame = json!({
+            "proto": "0.1",
+            "type": "stream_data",
+            "id": "msg_stream_data",
+            "ts": 1777132800000_u64,
+            "ext": {},
+            "stream_id": "st_test",
+            "stream_type": "file_read",
+            "offset": 0,
+            "data": "",
+            "end_stream": false
+        });
+
+        let bytes = encode_typed_json_envelope(
+            "msg_stream_data",
+            "2026-04-25T16:00:00.000Z",
+            traffic_class_for_frame(&frame),
+            EnvelopeTransportKind::H2Data,
+            Some("stream_data"),
+            Some("0.1"),
+            serde_json::to_vec(&frame).expect("frame json").as_slice(),
+        )
+        .expect("encode frame");
+
+        let decoded = decode_legacy_json_envelope(&bytes).expect("decode frame");
+        assert_eq!(decoded.traffic_class, TrafficClass::Bulk);
     }
 
     #[test]

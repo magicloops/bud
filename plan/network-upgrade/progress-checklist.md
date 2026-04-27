@@ -76,32 +76,50 @@
 
 ## Phase 3: HTTP/2 Data Fallback
 
-- [ ] Define `BudData.Attach` or equivalent
-- [ ] Define traffic classes and priorities
-- [ ] Add stream credit model
-- [ ] Add bounded buffering limits
-- [ ] Implement service data-plane router
-- [ ] Implement daemon data client
-- [ ] Migrate terminal output/input data path
-- [ ] Preserve browser REST/SSE behavior
+- [x] Define `BudData.Attach` or equivalent
+- [x] Define traffic classes and priorities
+- [ ] Add stream credit model (schema and attach acknowledgement exist; runtime enforcement deferred)
+- [x] Add bounded buffering limits for the initial terminal-output data channel
+- [x] Implement service data-plane router
+- [x] Implement daemon data client
+- [x] Migrate terminal output data path
+- [x] Preserve browser REST/SSE behavior
 - [ ] Add fallback/degraded-state metrics
-- [ ] Update protocol and specs
+- [x] Update protocol and specs
+
+## Phase 3.1: Data Fallback Hardening
+
+- [x] Close subordinate `h2_data` sessions when their owning `h2_grpc` control tracker closes
+- [x] Keep active data tracker frame and byte counters for smoke assertions and close-log context
+- [x] Add local control-fallback smoke coverage for data-disabled terminal output
+- [x] Add local large-output smoke coverage for multi-frame data output and input dispatch latency
+- [ ] Promote fallback/degraded-state visibility from local logs/smoke output into durable metrics or operator APIs
 
 ## Phase 4: Localhost Proxy And File Reads
 
-- [ ] Define proxy session API contract
-- [ ] Add proxy session schema and migrations
-- [ ] Implement service proxy edge
-- [ ] Implement daemon localhost proxy adapter
-- [ ] Define file session API contract
-- [ ] Add file session schema and migrations
-- [ ] Implement service file edge
-- [ ] Implement daemon file stat/read/range adapter
-- [ ] Add default proxy and file local policies
-- [ ] Add audit events
+- [x] Add generic proxy/file stream foundation over `BudData.Attach`
+- [x] Enforce runtime stream credits and max in-flight bytes for proxy/file streams
+- [x] Propagate typed stream reset/close states to service runtime callers
+- [x] Fail proxy/file opens closed when HTTP/2 data is unavailable
+- [x] Define proxy session API contract
+- [x] Add proxy session schema and migrations
+- [x] Implement service proxy edge contract and GET/HEAD streaming path
+- [x] Implement daemon localhost proxy adapter
+- [x] Define file session API contract
+- [x] Add file session schema and migrations
+- [x] Implement service file edge contract
+- [x] Implement daemon file stat/read/range adapter
+- [x] Add default service-side file root/path policy
+- [x] Add default daemon file local policy
+- [x] Add proxy session create/revoke audit events
+- [x] Add proxy stream open audit events and durable stream close/reset state
+- [x] Add file session create/revoke audit events
 - [ ] Add minimal web adoption
-- [ ] Validate with QUIC disabled
-- [ ] Update protocol, specs, and DB migration specs
+- [x] Validate Phase 4.2 unit/type coverage with QUIC disabled
+- [x] Validate Phase 4.4 real-daemon file smoke with QUIC disabled
+- [x] Update protocol and affected specs for Phase 4.2
+- [x] Update affected specs and migrations for Phase 4.3
+- [x] Update affected specs and migrations for Phase 4.4
 
 ## Phase 5: QUIC Data Fast Path
 

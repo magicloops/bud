@@ -12,7 +12,9 @@ import { hashEnrollmentToken } from "../auth/enrollment-token.js";
 import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable, enrollmentTokenTable } from "../db/schema.js";
+import { handleFileOpenResult } from "../files/file-runtime.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
+import { handleProxyOpenResult } from "../proxy/proxy-runtime.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type {
   ReadinessAssessment,
@@ -20,6 +22,7 @@ import type {
   TerminalPromptType,
   TerminalReadyTrigger,
 } from "../terminal/types.js";
+import { finalizeGrpcDataSessionsForControlTracker } from "./data-gateway.js";
 import { decodeGrpcLegacyJsonEnvelope, encodeGrpcLegacyJsonEnvelope } from "./envelope-codec.js";
 import {
   deleteGrpcSessionTrackerIfCurrent,
@@ -158,18 +161,18 @@ export async function finalizeGrpcSessionTracker(args: {
   daemonStateStore?: DaemonStateStore;
 }): Promise<void> {
   const { tracker, reason, terminalSessionManager, logger } = args;
-  if (tracker.finalized) {
+  if (tracker.finalized || tracker.finalizing) {
     clearGrpcTrackerTimeout(tracker);
     return;
   }
 
-  tracker.finalized = true;
   tracker.drainState = args.markDraining ? "draining" : tracker.drainState;
   deleteGrpcSessionTrackerIfCurrent(tracker);
   clearGrpcTrackerTimeout(tracker);
 
   await closeGrpcTrackerDurable(args.daemonStateStore ?? new DaemonStateStore(), tracker, reason, {
     markDraining: args.markDraining,
+    logger,
   });
   await handleOfflineTransitionIfNoOtherTransport(tracker.budId, terminalSessionManager, logger);
 }
@@ -273,6 +276,12 @@ class GrpcControlConnection {
         break;
       case "reconnect_report":
         await this.handleReconnectReport(frame);
+        break;
+      case "proxy_open_result":
+        await this.handleProxyOpenResult(frame);
+        break;
+      case "file_open_result":
+        await this.handleFileOpenResult(frame);
         break;
       default:
         this.logger.warn(
@@ -542,6 +551,50 @@ class GrpcControlConnection {
     });
   }
 
+  private async handleProxyOpenResult(raw: unknown): Promise<void> {
+    const frame = handleProxyOpenResult(raw);
+    if (!frame) {
+      this.logger.warn(
+        { component: "grpc_control_gateway" },
+        "Invalid proxy_open_result frame",
+      );
+      return;
+    }
+    this.logger.debug?.(
+      {
+        streamId: frame.stream_id,
+        operationId: frame.operation_id ?? null,
+        accepted: frame.accepted,
+        statusCode: frame.status_code ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "grpc_control_gateway",
+      },
+      "Handled proxy_open_result frame",
+    );
+  }
+
+  private async handleFileOpenResult(raw: unknown): Promise<void> {
+    const frame = handleFileOpenResult(raw);
+    if (!frame) {
+      this.logger.warn(
+        { component: "grpc_control_gateway" },
+        "Invalid file_open_result frame",
+      );
+      return;
+    }
+    this.logger.debug?.(
+      {
+        streamId: frame.stream_id,
+        operationId: frame.operation_id ?? null,
+        accepted: frame.accepted,
+        statusCode: frame.status_code ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "grpc_control_gateway",
+      },
+      "Handled file_open_result frame",
+    );
+  }
+
   private async handleTerminalStatus(raw: unknown): Promise<void> {
     if (!config.terminalEnabled || this.state.kind !== "connected") {
       return;
@@ -788,7 +841,10 @@ class GrpcControlConnection {
     if (!tracker) {
       return;
     }
-    await closeGrpcTrackerDurable(this.daemonStateStore, tracker, reason, options);
+    await closeGrpcTrackerDurable(this.daemonStateStore, tracker, reason, {
+      ...options,
+      logger: this.logger,
+    });
   }
 
   private async sendError(code: string, message: string): Promise<void> {
@@ -855,10 +911,17 @@ async function closeGrpcTrackerDurable(
   daemonStateStore: DaemonStateStore,
   tracker: GrpcSessionTracker,
   reason: string,
-  options: { markUnknown?: boolean; markDraining?: boolean } = {},
+  options: { markUnknown?: boolean; markDraining?: boolean; logger: FastifyBaseLogger },
 ): Promise<void> {
   tracker.finalizing = true;
   try {
+    await finalizeGrpcDataSessionsForControlTracker({
+      tracker,
+      reason,
+      markDraining: options.markDraining,
+      logger: options.logger,
+      daemonStateStore,
+    });
     if (tracker.deviceSessionId) {
       await daemonStateStore.closeDeviceSession({
         deviceSessionId: tracker.deviceSessionId,

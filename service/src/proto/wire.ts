@@ -40,6 +40,16 @@ const TYPED_PAYLOAD_FIELD_BY_FRAME_TYPE: Record<string, number> = {
   terminal_ready: 130,
   reconnect_report: 150,
   reconciliation_decision: 151,
+  data_attach: 170,
+  data_attach_ack: 171,
+  stream_data: 172,
+  stream_credit: 173,
+  stream_reset: 174,
+  stream_close: 175,
+  proxy_open: 176,
+  proxy_open_result: 177,
+  file_open: 178,
+  file_open_result: 179,
 };
 
 const FRAME_TYPE_BY_TYPED_PAYLOAD_FIELD = new Map(
@@ -251,6 +261,13 @@ export function decodeBudEnvelopePayloadCase(bytes: Uint8Array): string {
 
 export function trafficClassForLegacyFrame(frame: Record<string, unknown>): TrafficClass {
   const frameType = typeof frame.type === "string" ? frame.type : "";
+  if (frameType === "stream_data") {
+    const streamType = typeof frame.stream_type === "string" ? frame.stream_type : "";
+    return streamType === "file_read" ? "bulk" : "proxy_active";
+  }
+  if (frameType === "stream_credit" || frameType === "stream_reset" || frameType === "stream_close") {
+    return "control";
+  }
   if (frameType === "terminal_output" || frameType === "terminal_send" || frameType === "terminal_input") {
     return "interactive";
   }

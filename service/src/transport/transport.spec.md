@@ -37,6 +37,19 @@ gRPC-backed adapter for active `BudControl.Connect` streams.
 - tracks gRPC backpressure and refuses additional frames while a stream is still draining
 - marks trackers as finalizing/finalized during gateway shutdown so router online checks stop treating draining control streams as usable
 
+### `grpc-data-router.ts`
+
+Process-local tracker map for active `BudData.Attach` streams.
+
+- keys data streams by `bud_id` and `device_session_id`
+- records the subordinate `h2_data` transport session id and negotiated stream families
+- records active terminal-output frame and byte counters for local validation and gateway close logs
+- owns Phase 4.0 runtime stream state for generic proxy/file stream ids, offsets, receive credits, send credits, and close/reset flags
+- lets callers register per-stream data/reset/close callbacks for active HTTP proxy/file consumers
+- exports write helpers that send generic `stream_*` frames only over active `h2_data`
+- exposes helpers for registering, looking up, and deleting active data stream trackers
+- deliberately does not implement browser-facing authorization; data streams are accepted only after `grpc/data-gateway.ts` binds them to an authenticated control tracker
+
 ### `websocket-daemon-router.ts`
 
 Current WebSocket-backed adapter for the router interface. It reuses the existing WebSocket session tracker and sends protobuf `BudEnvelope` binary frames to daemons that advertised `bud_envelope.websocket_binary`; legacy sessions still receive JSON text frames.
@@ -68,8 +81,8 @@ The drain state is deliberately small: it blocks new long-lived daemon streams o
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Add HTTP/2 data router implementations in later network-upgrade phases.
 - Replace the transitional typed-payload `frame_json` bridge with generated field-level protobuf payload mapping once current terminal/control payloads are fully mapped.
+- Add per-class fair scheduling and durable metrics once concurrent proxy/file data volumes require more than per-stream credit windows.
 
 ---
 

@@ -7,8 +7,8 @@ use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Streaming};
 
 use crate::proto_wire::{
-    decode_legacy_json_frame, encode_typed_json_envelope, traffic_class_for_frame_type,
-    EnvelopeTransportKind, TrafficClass,
+    decode_legacy_json_frame, encode_typed_json_envelope, traffic_class_for_frame,
+    EnvelopeTransportKind,
 };
 use crate::util::{new_message_id, now_millis};
 
@@ -36,6 +36,13 @@ pub async fn connect_control_stream(
 }
 
 pub fn json_frame_to_envelope(frame: &Value) -> Result<BudEnvelope> {
+    json_frame_to_envelope_with_transport(frame, EnvelopeTransportKind::H2Grpc)
+}
+
+pub fn json_frame_to_envelope_with_transport(
+    frame: &Value,
+    transport_kind: EnvelopeTransportKind,
+) -> Result<BudEnvelope> {
     let frame_type = frame.get("type").and_then(Value::as_str);
     let proto = frame.get("proto").and_then(Value::as_str);
     let message_id = frame
@@ -48,15 +55,13 @@ pub fn json_frame_to_envelope(frame: &Value) -> Result<BudEnvelope> {
         .and_then(Value::as_u64)
         .map(timestamp_millis_to_rfc3339)
         .unwrap_or_else(|| timestamp_millis_to_rfc3339(now_millis()));
-    let traffic_class = frame_type
-        .map(traffic_class_for_frame_type)
-        .unwrap_or(TrafficClass::Control);
+    let traffic_class = traffic_class_for_frame(frame);
     let frame_json = serde_json::to_vec(frame)?;
     let bytes = encode_typed_json_envelope(
         &message_id,
         &sent_at,
         traffic_class,
-        EnvelopeTransportKind::H2Grpc,
+        transport_kind,
         frame_type,
         proto,
         &frame_json,

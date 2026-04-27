@@ -1,10 +1,10 @@
 # grpc
 
-HTTP/2 gRPC daemon-gateway implementation for the network-upgrade control plane.
+HTTP/2 gRPC daemon-gateway implementation for the network-upgrade control and data planes.
 
 ## Purpose
 
-This folder keeps grpc-js/proto-loader details isolated from the rest of the service. Runtime, route, and DB code continue to speak JSON-shaped daemon frames through the transport router while this layer adapts those frames to `BudEnvelope` messages on the `BudControl.Connect` bidirectional stream.
+This folder keeps grpc-js/proto-loader details isolated from the rest of the service. Runtime, route, and DB code continue to speak JSON-shaped daemon frames through the transport router while this layer adapts those frames to `BudEnvelope` messages on `BudControl.Connect` and the opt-in `BudData.Attach` bidirectional stream.
 
 ## Files
 
@@ -17,6 +17,7 @@ Opt-in grpc-js server for daemon control streams.
 - authenticates daemon `hello` / `hello_proof` traffic with the existing enrollment-token and device-secret challenge flow
 - registers durable `device_session` and `transport_session` rows with `transport_kind = "h2_grpc"`
 - handles heartbeat, reconnect reconciliation, and terminal result/status/output frames
+- handles daemon `proxy_open_result` and `file_open_result` frames and delivers them to the proxy/file runtime bridges
 - records Bud online/offline transitions through the same terminal manager side effects used by WebSocket
 - starts process-local gateway drain and ends active gRPC streams during service shutdown, with a short force-shutdown fallback
 - explicitly finalizes active gRPC trackers during gateway shutdown so durable `device_session` / `transport_session` rows close before DB pools stop
@@ -24,13 +25,37 @@ Opt-in grpc-js server for daemon control streams.
 
 The implementation deliberately keeps `@grpc/grpc-js` stream objects inside this module and `transport/grpc-daemon-router.ts`.
 
+### `data-gateway.ts`
+
+Opt-in grpc-js server for daemon data streams.
+
+- loads [../../../proto/bud/v1/bud.proto](../../../proto/bud/v1/bud.proto) with `@grpc/proto-loader`
+- exposes `bud.v1.BudData.Attach`
+- requires the first inbound frame to be `data_attach`
+- binds the data stream to the active authenticated `BudControl.Connect` tracker using `bud_id` and `device_session_id`
+- registers a subordinate durable `transport_session` row with `transport_kind = "h2_data"`
+- currently accepts negotiated `terminal_output` frames and forwards them to `TerminalSessionManager.handleTerminalOutput(...)`
+- enforces the configured terminal-output data chunk limit before storing output
+- closes the data transport row on data-stream shutdown
+- finalizes subordinate data streams when the owning control tracker closes, drains, times out, or is superseded
+- resets registered runtime streams during data-session finalization so active proxy/file callers do not hang on transport loss
+- records active data frame and byte counters for smoke assertions and close-log context
+- handles Phase 4.0 generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` frames for registered runtime streams
+- enforces generic stream offset, chunk-size, and credit windows before acknowledging consumed bytes
+- invokes registered runtime-stream callbacks so proxy/file callers can consume bytes, observe resets, and close HTTP responses before credit is re-granted
+- tolerates data-stream close frames racing ahead of control-stream open acknowledgements by promoting `opening` streams to `open` before closing them durably
+
+### `data-gateway.test.ts`
+
+Focused unit coverage for data-attach parsing, generic stream-data parsing, active-control binding checks, and control-owned data session finalization.
+
 ### `envelope-codec.ts`
 
 Adapter between proto-loader message objects and the service's existing JSON-shaped frame handlers.
 
 - encodes outbound daemon frames as typed `BudEnvelope` oneof payloads carrying transitional `frame_json`
 - decodes inbound `LegacyJsonPayload` or typed `frame_json` payloads back to `Record<string, unknown>`
-- stamps gRPC transport metadata as `TRANSPORT_KIND_H2_GRPC`
+- stamps gRPC transport metadata as `TRANSPORT_KIND_H2_GRPC` or `TRANSPORT_KIND_H2_DATA`
 
 ### `envelope-codec.test.ts`
 
@@ -47,12 +72,14 @@ Focused unit coverage for gRPC tracker finalization during service shutdown.
 - [../runtime/runtime.spec.md](../runtime/runtime.spec.md) - durable daemon session and terminal runtime state
 - [../../../docs/proto.md](../../../docs/proto.md) - protocol documentation
 - [../../../plan/network-upgrade/phase-2-http2-grpc-control-plane.md](../../../plan/network-upgrade/phase-2-http2-grpc-control-plane.md) - implementation phase spec
+- [../../../plan/network-upgrade/phase-3-http2-data-fallback.md](../../../plan/network-upgrade/phase-3-http2-data-fallback.md) - HTTP/2 data fallback phase spec
 
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
 - Replace proto-loader dynamic objects with Buf-managed generated TypeScript bindings if the adapter becomes noisy or unsafe.
 - Move from the shared-secret transition credential to the planned device keypair challenge before exposing proxy/file capabilities.
+- Add richer per-stream scheduler/fairness metrics once multiple high-volume proxy/file streams are common.
 
 ---
 

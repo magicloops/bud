@@ -20,10 +20,12 @@ use crate::claim::{
     poll_device_auth_flow, print_device_claim_instructions, start_device_auth_flow,
 };
 use crate::config::BudArgs;
+use crate::files::FileManager;
 use crate::grpc_control::{
     bud::v1::BudEnvelope, connect_control_stream, envelope_to_json_text, json_frame_to_envelope,
     GrpcControlStream,
 };
+use crate::grpc_data::{connect_data_stream, json_frame_to_data_envelope};
 use crate::identity::{
     clear_identity, installation_id_path, load_identity, load_or_create_installation_id,
     persist_identity, DeviceIdentity,
@@ -31,11 +33,13 @@ use crate::identity::{
 use crate::journal::{load_journal, DaemonJournal};
 use crate::proto_wire::{decode_legacy_json_frame, encode_legacy_json_frame};
 use crate::protocol::{
-    validate_inbound_envelope_proto, Envelope, ErrorFrame, HelloAckFrame, HelloChallengeFrame,
-    RunFrame, TerminalCloseFrame, TerminalEnsureFrame, TerminalInputFrame, TerminalObserveFrame,
-    TerminalResizeFrame, TerminalSendFrame, DEFAULT_HEARTBEAT_SEC, PROTO_VERSION,
-    TERMINAL_PROTO_VERSION,
+    validate_inbound_envelope_proto, Envelope, ErrorFrame, FileOpenFrame, HelloAckFrame,
+    HelloChallengeFrame, ProxyOpenFrame, RunFrame, StreamCloseFrame, StreamCreditFrame,
+    StreamDataFrame, StreamResetFrame, TerminalCloseFrame, TerminalEnsureFrame, TerminalInputFrame,
+    TerminalObserveFrame, TerminalResizeFrame, TerminalSendFrame, DEFAULT_HEARTBEAT_SEC,
+    PROTO_VERSION, TERMINAL_PROTO_VERSION,
 };
+use crate::proxy::ProxyManager;
 use crate::run::RunExecutor;
 use crate::terminal::{probe_tmux, TerminalConfig, TerminalManager};
 use crate::transport::{send_transport_frame, send_transport_message, TransportSender};
@@ -51,6 +55,9 @@ pub struct BudApp {
     run_executor: RunExecutor,
     terminal_manager: TerminalManager,
     http_client: Client,
+    proxy_http_client: Client,
+    proxy_manager: ProxyManager,
+    file_manager: FileManager,
     debug_enabled: bool,
 }
 
@@ -59,6 +66,22 @@ struct SessionMeta {
     session_id: String,
     heartbeat_sec: u64,
     envelope_binary: bool,
+}
+
+struct GrpcDataAttachment {
+    sender: mpsc::Sender<Value>,
+    writer_handle: task::JoinHandle<()>,
+    reader_handle: task::JoinHandle<()>,
+}
+
+impl GrpcDataAttachment {
+    async fn shutdown(self) {
+        drop(self.sender);
+        self.writer_handle.abort();
+        let _ = self.writer_handle.await;
+        self.reader_handle.abort();
+        let _ = self.reader_handle.await;
+    }
 }
 
 enum HandshakeError {
@@ -77,6 +100,10 @@ impl BudApp {
         let default_shell = default_shell().to_string();
         let tmux_available = probe_tmux();
         let debug_enabled = args.debug;
+        let proxy_http_client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_else(|_| Client::new());
         let terminal_config = TerminalConfig {
             enabled: args.terminal_enabled,
             base_log_dir: expand_path(&args.terminal_base_dir)
@@ -94,9 +121,12 @@ impl BudApp {
             installation_id_path,
             installation_id: String::new(),
             identity: None,
-            run_executor: RunExecutor::new(default_cwd),
+            run_executor: RunExecutor::new(default_cwd.clone()),
             terminal_manager: TerminalManager::new(terminal_config),
             http_client: Client::new(),
+            proxy_http_client,
+            proxy_manager: ProxyManager::default(),
+            file_manager: FileManager::new(default_cwd),
             debug_enabled,
         }
     }
@@ -193,7 +223,7 @@ impl BudApp {
                     }
                 }
             });
-            let sender = TransportSender::grpc(frame_tx);
+            let sender = TransportSender::grpc(frame_tx.clone());
             let hello_frame = self.build_hello_frame()?;
             send_transport_frame(&sender, hello_frame)?;
 
@@ -215,8 +245,34 @@ impl BudApp {
                         heartbeat_sec = meta.heartbeat_sec,
                         "gRPC handshake established"
                     );
+                    let data_attachment = match self.start_grpc_data_attachment(&meta).await {
+                        Ok(attachment) => attachment,
+                        Err(err) => {
+                            warn!(
+                                error = ?err,
+                                "Failed to attach gRPC data stream; falling back to control stream for terminal output"
+                            );
+                            None
+                        }
+                    };
+                    let session_sender = data_attachment
+                        .as_ref()
+                        .map(|attachment| {
+                            TransportSender::grpc_with_data(
+                                frame_tx.clone(),
+                                attachment.sender.clone(),
+                            )
+                        })
+                        .unwrap_or_else(|| sender.clone());
+                    drop(sender);
                     return self
-                        .run_grpc_session(sender, stream, meta, writer_handle)
+                        .run_grpc_session(
+                            session_sender,
+                            stream,
+                            meta,
+                            writer_handle,
+                            data_attachment,
+                        )
                         .await;
                 }
                 Err(HandshakeError::AuthFailed { code, message }) => {
@@ -334,12 +390,192 @@ impl BudApp {
         }
     }
 
+    async fn start_grpc_data_attachment(
+        &self,
+        meta: &SessionMeta,
+    ) -> Result<Option<GrpcDataAttachment>> {
+        let Some(endpoint) = self.args.grpc_data_url.clone() else {
+            return Ok(None);
+        };
+
+        info!(endpoint = %endpoint, "Attaching gRPC data stream");
+        let (frame_tx, mut frame_rx) = mpsc::channel::<Value>(128);
+        let (envelope_tx, envelope_rx) = mpsc::channel::<BudEnvelope>(128);
+        let writer_handle = task::spawn_local(async move {
+            while let Some(frame) = frame_rx.recv().await {
+                let envelope = match json_frame_to_data_envelope(&frame) {
+                    Ok(envelope) => envelope,
+                    Err(err) => {
+                        warn!(error = %err, "Failed to encode gRPC data BudEnvelope");
+                        break;
+                    }
+                };
+                if envelope_tx.send(envelope).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let attach_frame = json!({
+            "proto": PROTO_VERSION,
+            "type": "data_attach",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "bud_id": &meta.bud_id,
+            "device_session_id": &meta.session_id,
+            "streams": ["terminal_output", "localhost_http_proxy", "file_read"],
+            "max_chunk_bytes": 16 * 1024,
+        });
+        if frame_tx.send(attach_frame).await.is_err() {
+            drop(frame_tx);
+            let _ = writer_handle.await;
+            bail!("gRPC data writer stopped before attach");
+        }
+
+        let mut stream =
+            match connect_data_stream(&endpoint, ReceiverStream::new(envelope_rx)).await {
+                Ok(stream) => stream,
+                Err(err) => {
+                    drop(frame_tx);
+                    let _ = writer_handle.await;
+                    return Err(err);
+                }
+            };
+
+        let reader_frame_tx = frame_tx.clone();
+        let proxy_manager = self.proxy_manager.clone();
+        let file_manager = self.file_manager.clone();
+        let reader_handle = task::spawn_local(async move {
+            loop {
+                match stream.message().await {
+                    Ok(Some(envelope)) => match envelope_to_json_text(&envelope) {
+                        Ok(text) => {
+                            let envelope: std::result::Result<Envelope, _> =
+                                serde_json::from_str(&text);
+                            match envelope {
+                                Ok(envelope) if envelope.kind == "data_attach_ack" => {
+                                    info!("gRPC data stream attached");
+                                }
+                                Ok(envelope) if envelope.kind == "stream_credit" => {
+                                    match serde_json::from_str::<StreamCreditFrame>(&text) {
+                                        Ok(frame) => {
+                                            tracing::debug!(
+                                                stream_id = %frame.stream_id,
+                                                receive_offset = frame.receive_offset,
+                                                credit_bytes = frame.credit_bytes,
+                                                "gRPC data stream credit received"
+                                            );
+                                            proxy_manager.apply_credit(frame.clone()).await;
+                                            file_manager.apply_credit(frame).await;
+                                        }
+                                        Err(err) => warn!(
+                                            error = %err,
+                                            "Failed to parse gRPC data stream_credit frame"
+                                        ),
+                                    }
+                                }
+                                Ok(envelope) if envelope.kind == "stream_data" => {
+                                    match serde_json::from_str::<StreamDataFrame>(&text) {
+                                        Ok(frame) => {
+                                            warn!(
+                                                stream_id = %frame.stream_id,
+                                                stream_type = %frame.stream_type,
+                                                "Rejecting unsupported inbound gRPC data stream"
+                                            );
+                                            let reset = json!({
+                                                "proto": PROTO_VERSION,
+                                                "type": "stream_reset",
+                                                "id": new_message_id(),
+                                                "ts": now_millis(),
+                                                "ext": {},
+                                                "stream_id": frame.stream_id,
+                                                "reason": "protocol_error",
+                                                "error": {
+                                                    "code": "UNSUPPORTED_STREAM",
+                                                    "message": "daemon has no adapter for this stream type",
+                                                    "retryable": false
+                                                }
+                                            });
+                                            if reader_frame_tx.send(reset).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Err(err) => warn!(
+                                            error = %err,
+                                            "Failed to parse gRPC data stream_data frame"
+                                        ),
+                                    }
+                                }
+                                Ok(envelope) if envelope.kind == "stream_reset" => {
+                                    match serde_json::from_str::<StreamResetFrame>(&text) {
+                                        Ok(frame) => {
+                                            warn!(
+                                                stream_id = %frame.stream_id,
+                                                reason = %frame.reason,
+                                                "gRPC data runtime stream reset"
+                                            );
+                                            proxy_manager.apply_reset(frame.clone()).await;
+                                            file_manager.apply_reset(frame).await;
+                                        }
+                                        Err(err) => warn!(
+                                            error = %err,
+                                            "Failed to parse gRPC data stream_reset frame"
+                                        ),
+                                    }
+                                }
+                                Ok(envelope) if envelope.kind == "stream_close" => {
+                                    match serde_json::from_str::<StreamCloseFrame>(&text) {
+                                        Ok(frame) => tracing::debug!(
+                                            stream_id = %frame.stream_id,
+                                            final_offset = frame.final_offset,
+                                            "gRPC data runtime stream closed"
+                                        ),
+                                        Err(err) => warn!(
+                                            error = %err,
+                                            "Failed to parse gRPC data stream_close frame"
+                                        ),
+                                    }
+                                }
+                                Ok(envelope) if envelope.kind == "error" => {
+                                    warn!(frame = %text, "gRPC data stream error frame received");
+                                }
+                                Ok(envelope) => {
+                                    warn!(frame_type = %envelope.kind, "Unhandled gRPC data stream frame");
+                                }
+                                Err(err) => {
+                                    warn!(error = %err, "Failed to parse gRPC data stream frame");
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "Failed to decode gRPC data stream envelope");
+                            break;
+                        }
+                    },
+                    Ok(None) => break,
+                    Err(err) => {
+                        warn!(error = %err, "gRPC data stream read error");
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(Some(GrpcDataAttachment {
+            sender: frame_tx,
+            writer_handle,
+            reader_handle,
+        }))
+    }
+
     async fn run_grpc_session(
         &self,
         sender: TransportSender,
         mut stream: GrpcControlStream,
         meta: SessionMeta,
         writer_handle: task::JoinHandle<()>,
+        data_attachment: Option<GrpcDataAttachment>,
     ) -> Result<()> {
         let mut interval = time::interval(Duration::from_secs(meta.heartbeat_sec.max(5)));
 
@@ -362,10 +598,7 @@ impl BudApp {
                         "session_id": meta.session_id
                     });
                     if let Err(err) = send_transport_frame(&sender, heartbeat) {
-                        self.run_executor.clear_sender().await;
-                        self.terminal_manager.clear_sender().await;
-                        drop(sender);
-                        let _ = writer_handle.await;
+                        self.shutdown_grpc_session(sender, writer_handle, data_attachment).await;
                         return Err(err);
                     }
                 }
@@ -373,32 +606,42 @@ impl BudApp {
                     match message {
                         Ok(Some(envelope)) => {
                             let text = envelope_to_json_text(&envelope)?;
-                            self.handle_server_frame(&text).await?;
+                            self.handle_server_frame(&text, &sender).await?;
                         }
                         Ok(None) => {
                             if self.debug_enabled {
                                 info!("gRPC control stream ended; reconnecting");
                             }
-                            self.run_executor.clear_sender().await;
-                            self.terminal_manager.clear_sender().await;
-                            drop(sender);
-                            let _ = writer_handle.await;
+                            self.shutdown_grpc_session(sender, writer_handle, data_attachment).await;
                             return Ok(());
                         }
                         Err(err) => {
                             if self.debug_enabled {
                                 info!(error = %err, "gRPC control read error; reconnecting soon");
                             }
-                            self.run_executor.clear_sender().await;
-                            self.terminal_manager.clear_sender().await;
-                            drop(sender);
-                            let _ = writer_handle.await;
+                            self.shutdown_grpc_session(sender, writer_handle, data_attachment).await;
                             return Err(err.into());
                         }
                     }
                 }
             }
         }
+    }
+
+    async fn shutdown_grpc_session(
+        &self,
+        sender: TransportSender,
+        writer_handle: task::JoinHandle<()>,
+        data_attachment: Option<GrpcDataAttachment>,
+    ) {
+        self.run_executor.clear_sender().await;
+        self.terminal_manager.clear_sender().await;
+        drop(sender);
+        if let Some(data_attachment) = data_attachment {
+            data_attachment.shutdown().await;
+        }
+        writer_handle.abort();
+        let _ = writer_handle.await;
     }
 
     async fn perform_handshake(
@@ -582,11 +825,11 @@ impl BudApp {
                 msg = read.next() => {
                     match msg {
                         Some(Ok(Message::Text(text))) => {
-                            self.handle_server_frame(&text).await?;
+                            self.handle_server_frame(&text, &sender).await?;
                         }
                         Some(Ok(Message::Binary(bytes))) => {
                             let text = decode_legacy_json_frame(&bytes)?;
-                            self.handle_server_frame(&text).await?;
+                            self.handle_server_frame(&text, &sender).await?;
                         }
                         Some(Ok(Message::Ping(payload))) => {
                             if let Err(err) = send_transport_message(&sender, Message::Pong(payload)) {
@@ -632,7 +875,7 @@ impl BudApp {
         }
     }
 
-    async fn handle_server_frame(&self, text: &str) -> Result<()> {
+    async fn handle_server_frame(&self, text: &str, sender: &TransportSender) -> Result<()> {
         let envelope: Envelope = serde_json::from_str(text)?;
         validate_inbound_envelope_proto(&envelope)?;
         match envelope.kind.as_str() {
@@ -668,6 +911,18 @@ impl BudApp {
             "terminal_observe" => {
                 let frame: TerminalObserveFrame = serde_json::from_str(text)?;
                 self.terminal_manager.handle_observe(frame).await?;
+            }
+            "proxy_open" => {
+                let frame: ProxyOpenFrame = serde_json::from_str(text)?;
+                self.proxy_manager.handle_open(
+                    frame,
+                    sender.clone(),
+                    self.proxy_http_client.clone(),
+                );
+            }
+            "file_open" => {
+                let frame: FileOpenFrame = serde_json::from_str(text)?;
+                self.file_manager.handle_open(frame, sender.clone());
             }
             "error" => {
                 let err: ErrorFrame = serde_json::from_str(text)?;
@@ -908,7 +1163,18 @@ impl BudApp {
             "bud_envelope": {
                 "version": 1,
                 "websocket_binary": true,
-                "h2_grpc_control": self.args.grpc_control_url.is_some()
+                "h2_grpc_control": self.args.grpc_control_url.is_some(),
+                "h2_data": self.args.grpc_data_url.is_some()
+            },
+            "proxy": {
+                "localhost_http": self.args.grpc_control_url.is_some() && self.args.grpc_data_url.is_some(),
+                "methods": ["GET", "HEAD"],
+                "target_hosts": ["127.0.0.1"]
+            },
+            "files": {
+                "workspace_read": self.args.grpc_control_url.is_some() && self.args.grpc_data_url.is_some(),
+                "roots": ["workspace"],
+                "permissions": ["stat", "read", "range"]
             },
         })
     }

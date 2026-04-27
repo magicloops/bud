@@ -82,6 +82,8 @@ Main source code:
 - `terminal/` - Terminal types
 - `grpc/` - Opt-in grpc-js daemon control gateway and envelope adapter
 - `proto/` - Network-upgrade envelope helpers and typed protobuf WebSocket carrier codec
+- `proxy/` - Phase 4.2 localhost proxy session validation, persistence helpers, transport readiness checks, daemon open dispatch, and GET/HEAD streaming bridge
+- `files/` - Phase 4.4 file session validation, persistence helpers, transport readiness checks, daemon open dispatch, and stat/read/range streaming bridge
 - `transport/` - Daemon transport router interface, composite gRPC/WebSocket adapters, and gateway drain helper
 - `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 
@@ -111,6 +113,11 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `db:studio` | `drizzle-kit studio` | Open Drizzle Studio |
 | `db:studio:staging` | `DOTENV_CONFIG_PATH=.env.staging drizzle-kit studio` | Open Drizzle Studio against the checked-in staging env without manually exporting `DOTENV_CONFIG_PATH` |
 | `db:seed` | `tsx src/scripts/seed.ts` | Seed database |
+| `smoke:grpc-data-terminal` | `cargo build --manifest-path ../bud/Cargo.toml && tsx src/scripts/smoke-grpc-data-terminal.ts` | Build Bud and run the real-daemon HTTP/2 terminal data smoke |
+| `smoke:grpc-data-terminal:fallback` | `cargo build --manifest-path ../bud/Cargo.toml && SMOKE_GRPC_DATA_MODE=control-fallback tsx src/scripts/smoke-grpc-data-terminal.ts` | Build Bud and run the terminal control-fallback smoke |
+| `smoke:grpc-data-terminal:large` | `cargo build --manifest-path ../bud/Cargo.toml && SMOKE_GRPC_DATA_MODE=large-output tsx src/scripts/smoke-grpc-data-terminal.ts` | Build Bud and run the large-output HTTP/2 terminal data smoke |
+| `smoke:grpc-proxy` | `cargo build --manifest-path ../bud/Cargo.toml && tsx src/scripts/smoke-grpc-proxy.ts` | Build Bud and run the real-daemon HTTP/2 localhost proxy smoke |
+| `smoke:grpc-file` | `cargo build --manifest-path ../bud/Cargo.toml && tsx src/scripts/smoke-grpc-file.ts` | Build Bud and run the real-daemon HTTP/2 file stat/read/range smoke |
 | `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
 | `oauth:provision:ios-staging` | `node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using the checked-in staging env file |
 
@@ -132,6 +139,16 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `GET` | `/api/models` | Available LLM models for authenticated product clients |
 | `GET` | `/api/buds` | List registered buds |
 | `GET` | `/api/buds/:id/sessions` | List bud's terminal sessions |
+| `POST` | `/api/buds/:id/proxy-sessions` | Create a short-lived owned localhost proxy session |
+| `GET` | `/api/buds/:id/proxy-sessions` | List owned localhost proxy sessions for a Bud |
+| `GET` | `/api/proxy-sessions/:id` | Read one owned proxy session |
+| `DELETE` | `/api/proxy-sessions/:id` | Revoke one owned proxy session |
+| `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:id/*` | Authorize a proxy edge request; stream GET/HEAD through the daemon over gRPC control plus HTTP/2 data; fail closed for unsupported methods or missing transport |
+| `POST` | `/api/buds/:id/file-sessions` | Create a short-lived owned file session for a workspace-relative path |
+| `GET` | `/api/buds/:id/file-sessions` | List owned file sessions for a Bud |
+| `GET` | `/api/file-sessions/:id` | Read one owned file session |
+| `DELETE` | `/api/file-sessions/:id` | Revoke one owned file session |
+| `GET/HEAD` | `/api/files/:id` | Authorize a file edge request; stream stat/read/range work through the daemon over gRPC control plus HTTP/2 data |
 | `GET` | `/api/threads` | List threads |
 | `POST` | `/api/threads` | Create thread |
 | `GET` | `/api/threads/:id/messages` | Get messages |
@@ -159,6 +176,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | Service | Purpose |
 |---------|---------|
 | `bud.v1.BudControl.Connect` | Opt-in daemon control stream when `GRPC_CONTROL_ENABLED=true` |
+| `bud.v1.BudData.Attach` | Opt-in subordinate daemon data stream when `GRPC_DATA_ENABLED=true` |
 
 ### SSE Endpoints
 

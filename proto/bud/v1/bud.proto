@@ -6,6 +6,10 @@ service BudControl {
   rpc Connect(stream BudEnvelope) returns (stream BudEnvelope);
 }
 
+service BudData {
+  rpc Attach(stream BudEnvelope) returns (stream BudEnvelope);
+}
+
 // BudEnvelope is the transport-independent daemon-service message carrier.
 message BudEnvelope {
   uint32 envelope_version = 1;
@@ -44,6 +48,16 @@ message BudEnvelope {
     TerminalReady terminal_ready = 130;
     ReconnectReport reconnect_report = 150;
     ReconciliationDecision reconciliation_decision = 151;
+    DataAttach data_attach = 170;
+    DataAttachAck data_attach_ack = 171;
+    StreamData stream_data = 172;
+    StreamCredit stream_credit = 173;
+    StreamReset stream_reset = 174;
+    StreamClose stream_close = 175;
+    ProxyOpen proxy_open = 176;
+    ProxyOpenResult proxy_open_result = 177;
+    FileOpen file_open = 178;
+    FileOpenResult file_open_result = 179;
   }
 }
 
@@ -304,5 +318,109 @@ message StreamStatus {
 message ReconciliationDecision {
   repeated OperationStatus operations = 1;
   repeated StreamStatus streams = 2;
+  bytes frame_json = 99;
+}
+
+message DataAttach {
+  string bud_id = 1;
+  string device_session_id = 2;
+  string control_transport_session_id = 3;
+  repeated string streams = 4;
+  uint32 max_chunk_bytes = 5;
+  uint64 initial_credit_bytes = 6;
+  bytes frame_json = 99;
+}
+
+message DataAttachAck {
+  string bud_id = 1;
+  string device_session_id = 2;
+  string transport_session_id = 3;
+  repeated string streams = 4;
+  uint32 max_chunk_bytes = 5;
+  uint64 initial_credit_bytes = 6;
+  bytes frame_json = 99;
+}
+
+message StreamData {
+  string stream_id = 1;
+  StreamType stream_type = 2;
+  uint64 offset = 3;
+  bytes data = 4;
+  bool end_stream = 5;
+  bytes frame_json = 99;
+}
+
+message StreamCredit {
+  string stream_id = 1;
+  uint64 receive_offset = 2;
+  uint64 credit_bytes = 3;
+  bytes frame_json = 99;
+}
+
+message StreamReset {
+  string stream_id = 1;
+  StreamResetReason reason = 2;
+  BudError error = 3;
+  bytes frame_json = 99;
+}
+
+message StreamClose {
+  string stream_id = 1;
+  uint64 final_offset = 2;
+  bytes frame_json = 99;
+}
+
+message ProxyOpen {
+  string operation_id = 1;
+  string stream_id = 2;
+  string proxy_session_id = 3;
+  StreamType stream_type = 4;
+  string target_host = 5;
+  uint32 target_port = 6;
+  string method = 7;
+  string path = 8;
+  map<string, string> headers = 9;
+  uint64 initial_credit_bytes = 10;
+  uint32 max_chunk_bytes = 11;
+  bytes frame_json = 99;
+}
+
+message ProxyOpenResult {
+  string operation_id = 1;
+  string stream_id = 2;
+  bool accepted = 3;
+  uint32 status_code = 4;
+  map<string, string> headers = 5;
+  BudError error = 6;
+  bytes frame_json = 99;
+}
+
+message FileOpen {
+  string operation_id = 1;
+  string stream_id = 2;
+  string file_session_id = 3;
+  StreamType stream_type = 4;
+  string root_key = 5;
+  string relative_path = 6;
+  string mode = 7;
+  uint64 range_start = 8;
+  uint64 range_end = 9;
+  uint64 range_suffix_bytes = 10;
+  bytes expected_content_identity_json = 11;
+  uint64 max_bytes = 12;
+  uint64 initial_credit_bytes = 13;
+  uint32 max_chunk_bytes = 14;
+  bytes frame_json = 99;
+}
+
+message FileOpenResult {
+  string operation_id = 1;
+  string stream_id = 2;
+  bool accepted = 3;
+  uint32 status_code = 4;
+  map<string, string> headers = 5;
+  bytes content_identity_json = 6;
+  uint64 size = 7;
+  BudError error = 8;
   bytes frame_json = 99;
 }

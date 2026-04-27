@@ -143,6 +143,87 @@ pub struct TerminalObserveFrame {
     pub timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct StreamDataFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub stream_id: String,
+    pub stream_type: String,
+    pub offset: u64,
+    pub data: String,
+    #[serde(default)]
+    pub end_stream: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct StreamCreditFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub stream_id: String,
+    pub receive_offset: u64,
+    pub credit_bytes: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct StreamResetFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub stream_id: String,
+    pub reason: String,
+    pub error: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct StreamCloseFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub stream_id: String,
+    pub final_offset: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProxyOpenFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub operation_id: String,
+    pub stream_id: String,
+    pub proxy_session_id: String,
+    pub stream_type: String,
+    pub target_host: String,
+    pub target_port: u16,
+    pub method: String,
+    pub path: String,
+    pub headers: Option<HashMap<String, String>>,
+    pub initial_credit_bytes: Option<u64>,
+    pub max_chunk_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct FileOpenFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub operation_id: String,
+    pub stream_id: String,
+    pub file_session_id: String,
+    pub stream_type: String,
+    pub root_key: String,
+    pub relative_path: String,
+    pub mode: String,
+    pub range_start: Option<u64>,
+    pub range_end: Option<u64>,
+    pub range_suffix_bytes: Option<u64>,
+    pub expected_content_identity: Option<Value>,
+    pub max_bytes: Option<u64>,
+    pub initial_credit_bytes: Option<u64>,
+    pub max_chunk_bytes: Option<u64>,
+}
+
 pub fn validate_inbound_envelope_proto(envelope: &Envelope) -> Result<()> {
     let expected = if envelope.kind.starts_with("terminal_") {
         TERMINAL_PROTO_VERSION
