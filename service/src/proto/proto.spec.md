@@ -34,7 +34,7 @@ Exports:
 - `encodeLegacyJsonFrame(...)`
 - `decodeLegacyJsonFrame(...)`
 
-The shared schema is [../../../proto/bud/v1/bud.proto](../../../proto/bud/v1/bud.proto). Known frame types now dispatch through typed oneof payload fields such as `terminal_ensure`, `terminal_output`, `reconnect_report`, and `reconciliation_decision`. During this transition each typed payload also carries `frame_json` so the existing JSON-shaped handlers remain reusable. `LegacyJsonPayload` remains decode-compatible and can still be forced in conformance tests.
+The shared schema is [../../../proto/bud/v1/bud.proto](../../../proto/bud/v1/bud.proto). It now defines the Phase 2 `BudControl.Connect` bidirectional gRPC stream plus the transport-independent `BudEnvelope`. Known frame types dispatch through typed oneof payload fields such as `terminal_ensure`, `terminal_output`, `reconnect_report`, and `reconciliation_decision`. During this transition each typed payload also carries `frame_json` so the existing JSON-shaped handlers remain reusable. `LegacyJsonPayload` remains decode-compatible and can still be forced in conformance tests.
 
 ### `wire.test.ts`
 

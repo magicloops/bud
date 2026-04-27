@@ -1,13 +1,13 @@
 # bud
 
-Rust device daemon that runs on user machines and connects to the Bud service via WebSocket. It bootstraps device auth, maintains the on-device runtime for cloud-hosted agents, and currently provides a tmux-backed terminal implementation behind a more modular internal runtime split.
+Rust device daemon that runs on user machines and connects to the Bud service via WebSocket or the Phase 2 opt-in gRPC control stream. It bootstraps device auth, maintains the on-device runtime for cloud-hosted agents, and currently provides a tmux-backed terminal implementation behind a more modular internal runtime split.
 
 ## Purpose
 
 The Bud daemon:
 
 1. bootstraps auth through a browser claim flow, with a legacy enrollment-token fallback
-2. maintains a persistent WebSocket connection with automatic reconnect and heartbeats
+2. maintains a persistent WebSocket connection, or an opt-in tonic gRPC control stream, with automatic reconnect and heartbeats
 3. executes the retained legacy queued `run` path for one-shot command work
 4. manages thread-scoped interactive terminal sessions
 5. reports local journal state after reconnect so the service can reconcile operation/stream outcomes
@@ -40,7 +40,8 @@ Modular daemon implementation split across:
 - `identity.rs` and `claim.rs` for device-auth bootstrap and persistence
 - `run.rs` for the retained reference run path
 - `proto_wire.rs` for protobuf `BudEnvelope` typed-payload compatibility encode/decode
-- `transport.rs` for the daemon-side transport sender boundary that currently wraps WebSocket writes and can send negotiated binary envelope frames
+- `grpc_control.rs` for tonic/prost `BudControl.Connect` client bindings and envelope conversion
+- `transport.rs` for the daemon-side transport sender boundary that wraps WebSocket writes or gRPC control-stream frame writes
 - `journal.rs` for the local reconnect/reconciliation journal foundation
 - `terminal/mod.rs` for shared terminal runtime types and composition
 - `terminal/backend.rs` for the backend trait
@@ -70,9 +71,10 @@ Cargo build artifacts. Not tracked in version control.
 
 Key boundary decisions:
 
-- `app.rs` owns connection lifecycle and frame dispatch.
-- `proto_wire.rs` owns the first protobuf envelope carrier codec while generated protobuf tooling remains deferred.
-- `transport.rs` owns the first transport-neutral sender seam; it carries JSON payloads directly for legacy peers or wraps them in typed-payload protobuf `BudEnvelope` binary frames after WebSocket capability negotiation.
+- `app.rs` owns connection lifecycle and frame dispatch for both WebSocket and opt-in gRPC control.
+- `proto_wire.rs` owns the compatibility envelope carrier codec used by both WebSocket binary frames and the tonic gRPC adapter.
+- `grpc_control.rs` owns generated tonic/prost bindings and converts generated `BudEnvelope` messages to/from JSON-frame text for the existing handlers.
+- `transport.rs` owns the transport-neutral sender seam; it carries JSON payloads directly for legacy peers, wraps them in typed-payload protobuf `BudEnvelope` binary frames after WebSocket capability negotiation, or forwards JSON payloads to the gRPC control writer.
 - `journal.rs` stores the local Phase 1 reconciliation foundation without blocking startup on missing/corrupt journal files; `app.rs` sends a live `reconnect_report` after handshake and logs `reconciliation_decision` replies.
 - `terminal/mod.rs` owns shared terminal runtime types while the split terminal modules own session registry, interaction, observation, readiness, and delta behavior.
 - `terminal/backend.rs` defines the backend-neutral seam the runtime works against.
@@ -146,7 +148,8 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 
 | Option | Env Variable | Default | Description |
 |--------|--------------|---------|-------------|
-| `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service endpoint |
+| `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service endpoint used for WebSocket control and device-claim HTTP origin derivation |
+| `--grpc-control-url` | `BUD_GRPC_CONTROL_URL` | - | Optional tonic gRPC control endpoint such as `http://127.0.0.1:50051`; when set, daemon control uses gRPC instead of WebSocket |
 | `--token` | `BUD_ENROLLMENT_TOKEN` | - | Enrollment token |
 | `--name` | `BUD_DEVICE_NAME` | `bud-dev` | Device name |
 | `--cwd` | `BUD_DEFAULT_CWD` | `~` | Working directory |
@@ -168,15 +171,16 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 
 - Rust stable toolchain
 - system trust store support for TLS
+- `protoc` available on `PATH` for tonic/prost code generation
 
 ## Known Issues
 
 <!-- SPEC:TODO -->
 - The daemon still accepts the legacy plural `keys` field as a one-entry compatibility alias during rollout; once all first-party callers have moved to canonical `key`, that shim can be removed.
 - Readiness/state handling is more centralized than before, but the runtime still contains multiple wait strategies that should continue converging as additional backends are introduced.
-- The daemon still assumes the claim-flow HTTP origin can be derived from the configured WebSocket URL.
+- The daemon still assumes the claim-flow HTTP origin can be derived from the configured `--server` URL; gRPC control users should point `BUD_SERVER_URL` at the service HTTP origin when not using WebSocket.
 - The legacy queued `run` path remains by design with limited ownership; it is retained as reference functionality for future capability work rather than as a first-class runtime direction.
-- The protobuf carrier still uses transitional JSON-shaped `frame_json` bodies under typed oneof payloads; generated field-level protobuf payload structs remain a follow-up before HTTP/2 control/data transports.
+- The protobuf carrier still uses transitional JSON-shaped `frame_json` bodies under typed oneof payloads; generated field-level protobuf payload structs remain a follow-up before HTTP/2 data transports.
 
 ---
 

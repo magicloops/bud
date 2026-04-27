@@ -6,6 +6,7 @@ Main source code for the Bud service - a Node.js backend handling API requests, 
 
 The service acts as the central hub:
 - Accepts WebSocket connections from bud daemons
+- Optionally accepts HTTP/2 gRPC control streams from bud daemons
 - Serves REST API and SSE streams to web clients
 - Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic)
 - Persists all data to PostgreSQL
@@ -26,8 +27,9 @@ Application entry point and thin Fastify composition root.
 - Start the push-notification outbox worker when APNs credentials are configured
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
 - Compose the current thread-scoped streaming/runtime surface without the removed standalone run manager
+- Optionally start the grpc-js daemon control gateway when `GRPC_CONTROL_ENABLED=true`
 - Expose `/healthz` as lightweight liveness and `/readyz` as deploy/readiness verification for the primary DB plus auth schema
-- Configure graceful shutdown for the push worker plus both app and auth pools
+- Configure `SIGINT` / `SIGTERM` graceful shutdown so `server.close()` runs the gRPC control gateway finalizer, push worker stop, idle-check stop, and both app and auth pool shutdown
 
 **Manager Instantiation**:
 ```typescript
@@ -55,6 +57,7 @@ Focused regression coverage for service composition behavior that is easiest to 
 
 **Current Coverage**:
 - trusted-origin `OPTIONS` preflight responses include the full direct-browser API method set needed by the current web app and push-registration clients, including `PUT`, `PATCH`, and `DELETE`
+- gRPC control shutdown finalization is covered in [grpc/control-gateway.test.ts](./grpc/control-gateway.test.ts)
 
 ### `config.ts`
 
@@ -71,6 +74,13 @@ Environment-based configuration with defaults.
 | `pgPoolMax` | `PG_POOL_MAX` | 10 | Max Postgres pool size |
 | `heartbeatSec` | `WS_HEARTBEAT_SEC` | 30 | Expected heartbeat interval |
 | `offlineGraceSec` | `WS_OFFLINE_GRACE_SEC` | 90 | Offline detection grace period |
+| `grpcControlEnabled` | `GRPC_CONTROL_ENABLED` | false | Start the grpc-js daemon control listener |
+| `grpcControlHost` | `GRPC_CONTROL_HOST` | 127.0.0.1 | gRPC control bind host |
+| `grpcControlPort` | `GRPC_CONTROL_PORT` | 50051 | gRPC control bind port |
+| `grpcControlMaxMessageBytes` | `GRPC_CONTROL_MAX_MESSAGE_BYTES` | 4MB | Max inbound/outbound gRPC control envelope size |
+| `grpcControlMaxConcurrentStreams` | `GRPC_CONTROL_MAX_CONCURRENT_STREAMS` | - | Optional grpc-js max concurrent HTTP/2 streams setting |
+| `grpcControlMaxSessionMemory` | `GRPC_CONTROL_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting |
+| `grpcControlEnableChannelz` | `GRPC_CONTROL_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle |
 | `betterAuthUrl` | `BETTER_AUTH_URL` | http://localhost:3000 | Public auth base URL |
 | `appBaseUrl` | `APP_BASE_URL` | `BETTER_AUTH_URL` or http://localhost:3000 | Browser origin used when generating Bud claim URLs |
 | `betterAuthBasePath` | fixed | `/api/auth` | Better Auth mount path and OAuth issuer path |
@@ -144,9 +154,13 @@ Terminal protocol types and known REPL program registry.
 
 Phase 0 daemon-network upgrade helpers and compatibility protobuf wire codec for the transport-independent Bud envelope.
 
+### `grpc/` → [grpc.spec.md](./grpc/grpc.spec.md)
+
+HTTP/2 gRPC daemon control gateway using grpc-js/proto-loader, isolated behind the transport router and `BudEnvelope.frame_json` compatibility adapter.
+
 ### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
 
-Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The current implementation adapts the router to the existing WebSocket session tracker, sends typed protobuf-envelope binary frames to capable daemons, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows.
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation prefers active gRPC control streams, falls back to the existing WebSocket session tracker, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 
@@ -262,6 +276,8 @@ POST /api/device-auth/flows/:flowId/approve
 |---------|---------|
 | `fastify` | HTTP framework |
 | `@fastify/websocket` | WebSocket support |
+| `@grpc/grpc-js` | Native gRPC over HTTP/2 daemon control gateway |
+| `@grpc/proto-loader` | Dynamic protobuf loading for the isolated daemon gateway adapter |
 | `fastify-sse-v2` | Server-Sent Events |
 | `better-auth` | Browser authentication and OAuth |
 | `openai` | OpenAI SDK |

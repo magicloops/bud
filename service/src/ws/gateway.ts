@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type WebSocket from "ws";
 import { BudConnection } from "./bud-connection.js";
 import { setGatewayLogger } from "./debug.js";
-import { websocketDaemonTransportRouter } from "../transport/websocket-daemon-router.js";
+import { daemonTransportRouter } from "../transport/composite-daemon-router.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 
 export {
@@ -18,15 +18,15 @@ export {
 } from "../transport/gateway-drain.js";
 
 export function getActiveBudIds(): string[] {
-  return websocketDaemonTransportRouter.getActiveBudIds();
+  return daemonTransportRouter.getActiveBudIds();
 }
 
 export function isBudOnline(budId: string): boolean {
-  return websocketDaemonTransportRouter.isBudOnline(budId);
+  return daemonTransportRouter.isBudOnline(budId);
 }
 
 export function sendFrameToBud(budId: string, payload: Record<string, unknown>): boolean {
-  return websocketDaemonTransportRouter.sendFrameToBud(budId, payload);
+  return daemonTransportRouter.sendFrameToBud(budId, payload);
 }
 
 export async function registerWsGateway(

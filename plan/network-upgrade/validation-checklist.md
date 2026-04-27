@@ -61,13 +61,29 @@ Manual validation pending.
 
 ## Phase 2 Validation
 
-- [ ] Daemon authenticates over HTTP/2 gRPC control
-- [ ] Invalid daemon signatures or credentials are rejected
-- [ ] Heartbeat/offline behavior works without WebSocket
+- [x] Daemon authenticates over HTTP/2 gRPC control in local dev-token smoke coverage
+- [x] Invalid daemon signatures or credentials are rejected in local invalid-token gRPC smoke coverage
+- [x] Heartbeat/offline behavior works without WebSocket for daemon-initiated disconnect and service `SIGTERM`
 - [ ] Capability manifest and policy version are recorded
 - [ ] Operation offers and cancellations work over gRPC control
 - [ ] Reconciliation works over gRPC control
 - [ ] WebSocket compatibility still works for an older daemon
+
+Local smoke notes from 2026-04-27:
+
+- Service gRPC gateway started on `127.0.0.1:55051` with `GRPC_CONTROL_ENABLED=true`.
+- Daemon enrolled over `BUD_GRPC_CONTROL_URL` and persisted `transport_session.transport_kind = "h2_grpc"`.
+- Heartbeats updated `device_session.last_heartbeat_at` and `transport_session.last_seen_at`.
+- Daemon-initiated disconnect closed the device and transport sessions.
+- Reconnect with the same identity file created a new active h2 gRPC session and preserved the prior closed session.
+- Service-first shutdown left the newest session active in the DB; this is tracked in [phase-2-deferred-hardening.md](./phase-2-deferred-hardening.md) as graceful shutdown finalization.
+
+Phase 2.1 smoke notes from 2026-04-27:
+
+- Service `SIGTERM` now runs Fastify `onClose`, the gRPC gateway finalizer, terminal offline side effects, and pool shutdown.
+- The DB recorded Bud offline plus closed `device_session` and `transport_session` rows with `close_reason = "grpc_control_gateway_shutdown"` and drain timestamps.
+- Invalid gRPC enrollment credentials returned a typed `AUTH_FAILED` protocol error frame.
+- PTY Ctrl-C against the local `pnpm exec tsx` wrapper can still bypass graceful app shutdown; deploy/runtime validation should use real `SIGTERM` or the process manager's graceful stop path.
 
 ## Phase 3 Validation
 

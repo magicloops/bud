@@ -2,6 +2,10 @@ syntax = "proto3";
 
 package bud.v1;
 
+service BudControl {
+  rpc Connect(stream BudEnvelope) returns (stream BudEnvelope);
+}
+
 // BudEnvelope is the transport-independent daemon-service message carrier.
 message BudEnvelope {
   uint32 envelope_version = 1;

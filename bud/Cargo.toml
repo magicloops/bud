@@ -11,6 +11,7 @@ futures = "0.3"
 hmac = "0.12"
 libc = "0.2"
 nix = { version = "0.28", default-features = false, features = ["fs", "signal", "term"] }
+prost = "0.14"
 qrcodegen = "1.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustls = "0.23"
@@ -21,9 +22,15 @@ shellexpand = "3.1"
 sha2 = "0.10"
 tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "signal", "fs", "time", "process", "sync"] }
 tokio-rustls = "0.25"
+tokio-stream = "0.1"
 tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+tonic = "0.14"
+tonic-prost = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 ulid = "1.1"
 url = "2.5"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"

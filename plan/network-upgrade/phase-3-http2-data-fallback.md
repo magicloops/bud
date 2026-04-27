@@ -13,6 +13,16 @@ Make HTTP/2 data streams the required fallback data plane for interactive termin
 
 Control over HTTP/2 is not enough for web proxying or file range reads. The platform needs stream semantics, backpressure, traffic classes, chunk bounds, and typed resets that work over mandatory infrastructure. This phase proves those semantics using terminal traffic before product proxy/file features rely on them.
 
+## Phase 2.1 Preconditions
+
+Phase 3 assumes the Phase 2.1 control hardening slice is present:
+
+- `BudControl.Connect` remains the lifecycle authority for auth, capabilities, stream-open directives, resets, reconnect reports, and drain notices.
+- Service `SIGINT` / `SIGTERM` reaches Fastify `onClose`, so active gRPC control trackers are finalized before DB pools close.
+- Durable `device_session` and `transport_session` rows close on service-driven drain with `grpc_control_gateway_shutdown`.
+- Invalid daemon credentials receive a typed `AUTH_FAILED` protocol error.
+- Data-plane streams are subordinate to an authenticated control session; they do not introduce an independent browser-visible authorization path.
+
 ## Scope
 
 ### In Scope
@@ -49,6 +59,7 @@ Control over HTTP/2 is not enough for web proxying or file range reads. The plat
 Define `BudData.Attach` or equivalent:
 
 - daemon-initiated stream attachment
+- authentication binding to the active `BudControl.Connect` session
 - service-initiated stream open metadata over control
 - data frames over attached stream
 - stream credit updates
@@ -94,6 +105,7 @@ The router should:
 
 - choose HTTP/2 data when available
 - fall back to WebSocket compatibility only when allowed
+- refuse data attachments that are not bound to an active authenticated control session
 - update `bud_stream` state
 - enforce per-Bud/user/session limits
 - persist terminal output bytes where applicable
@@ -169,4 +181,3 @@ Ensure:
 - data streams have bounded chunking and backpressure
 - WebSocket fallback carries the same stream frames with degraded limits
 - metrics expose stream health and fallback state
-

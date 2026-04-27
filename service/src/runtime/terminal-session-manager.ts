@@ -9,7 +9,7 @@ import {
 } from "../db/schema.js";
 import { TERMINAL_PROTO_VERSION } from "../config.js";
 import type { DaemonTransportRouter } from "../transport/daemon-router.js";
-import { websocketDaemonTransportRouter } from "../transport/websocket-daemon-router.js";
+import { daemonTransportRouter } from "../transport/composite-daemon-router.js";
 import type { PendingCommand, ReadinessAssessment } from "../terminal/types.js";
 import { isKnownReplProgram } from "../terminal/known-programs.js";
 import { TerminalEventBus } from "./event-bus.js";
@@ -77,7 +77,7 @@ export class TerminalSessionManager {
   constructor(
     logger: FastifyBaseLogger,
     events: TerminalEventBus,
-    daemonTransport: DaemonTransportRouter = websocketDaemonTransportRouter,
+    daemonTransport: DaemonTransportRouter = daemonTransportRouter,
   ) {
     this.logger = logger;
     this.events = events;

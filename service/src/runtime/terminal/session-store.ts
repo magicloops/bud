@@ -5,7 +5,7 @@ import { db } from "../../db/client.js";
 import { terminalSessionTable } from "../../db/schema.js";
 import { TERMINAL_PROTO_VERSION } from "../../config.js";
 import type { DaemonTransportRouter } from "../../transport/daemon-router.js";
-import { websocketDaemonTransportRouter } from "../../transport/websocket-daemon-router.js";
+import { daemonTransportRouter } from "../../transport/composite-daemon-router.js";
 import type { TerminalSession } from "./session-types.js";
 
 type TerminalSessionRow = typeof terminalSessionTable.$inferSelect;
@@ -16,7 +16,7 @@ export class TerminalSessionStore {
 
   constructor(
     logger: FastifyBaseLogger,
-    daemonTransport: DaemonTransportRouter = websocketDaemonTransportRouter,
+    daemonTransport: DaemonTransportRouter = daemonTransportRouter,
   ) {
     this.logger = logger;
     this.daemonTransport = daemonTransport;

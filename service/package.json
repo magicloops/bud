@@ -30,6 +30,8 @@
     "@anthropic-ai/sdk": "^0.91.0",
     "@better-auth/oauth-provider": "^1.5.5",
     "@fastify/websocket": "^10.0.1",
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.7.15",
     "better-auth": "^1.5.5",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.44.7",

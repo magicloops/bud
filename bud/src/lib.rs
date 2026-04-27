@@ -1,6 +1,7 @@
 pub mod app;
 pub mod claim;
 pub mod config;
+pub mod grpc_control;
 pub mod identity;
 pub mod journal;
 pub mod proto_wire;

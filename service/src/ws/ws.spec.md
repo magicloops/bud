@@ -19,7 +19,7 @@ Thin Bud WebSocket gateway entrypoint.
 Current responsibilities:
 - expose `/ws`
 - install the gateway-scoped debug logger
-- export public tracker/query helpers (`getActiveBudIds()`, `isBudOnline()`, `sendFrameToBud()`) as compatibility wrappers over the daemon transport router
+- export public tracker/query helpers (`getActiveBudIds()`, `isBudOnline()`, `sendFrameToBud()`) as compatibility wrappers over the composite daemon transport router
 - construct the extracted `BudConnection` runtime for each accepted socket
 
 ### `bud-connection.ts`
@@ -54,7 +54,7 @@ Gateway drain state is owned by the transport layer and re-exported through `gat
 
 Small gateway logger helper used by both `gateway.ts` and `bud-connection.ts`.
 
-The actual WebSocket-backed send implementation now lives behind `service/src/transport/websocket-daemon-router.ts`, so runtime modules can depend on the transport router interface instead of importing this gateway directly.
+The actual WebSocket-backed send implementation now lives behind `service/src/transport/websocket-daemon-router.ts`, and Phase 2 gRPC control streams live behind `service/src/transport/grpc-daemon-router.ts`; runtime modules depend on the composite transport router instead of importing this gateway directly.
 
 **Connection Lifecycle**:
 
@@ -108,7 +108,7 @@ type ConnectionState =
   | { kind: "closed" };
 ```
 
-**Session Tracking** now lives in `session-trackers.ts` and remains the authoritative in-memory Bud routing table.
+**Session Tracking** now lives in `session-trackers.ts` for WebSocket sessions. The composite transport router also consults the gRPC session tracker when deciding active Bud routing.
 
 **Active-Tracker Guardrails**:
 
@@ -145,7 +145,7 @@ Direct regression coverage for the extracted Bud connection runtime.
 | `registerWsGateway(server, ...)` | Setup `/ws` route and construct `BudConnection` instances |
 | `getActiveBudIds()` | List connected bud IDs |
 | `isBudOnline(budId)` | Check if bud is connected |
-| `sendFrameToBud(budId, frame)` | Compatibility wrapper that sends a message to a specific Bud through the current WebSocket transport router |
+| `sendFrameToBud(budId, frame)` | Compatibility wrapper that sends a message to a specific Bud through the composite daemon transport router |
 | `startGatewayDrain(...)` / `clearGatewayDrain()` | Process-local drain controls for refusing new long-lived daemon work during gateway shutdown/deploy |
 | `registerActiveSessionTracker(...)` | Replace the active tracker for a Bud while retiring the superseded timeout |
 | `getActiveSessionTracker(...)` | Check whether a tracker is still the authoritative active entry for a Bud |
@@ -239,7 +239,7 @@ The gateway still tolerates deprecated tmux-shaped hello fields from older daemo
 | `../config.js` | Configuration |
 | `../auth/enrollment-token.js` | Shared enrollment-token hashing |
 | `../runtime/*.js` | Terminal runtime and presence routing |
-| `../transport/websocket-daemon-router.js` | Current WebSocket-backed daemon transport adapter |
+| `../transport/composite-daemon-router.js` | Daemon transport adapter that prefers active gRPC control streams and falls back to WebSocket |
 
 ## TODOs / Technical Debt
 

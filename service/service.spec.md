@@ -1,14 +1,15 @@
 # service
 
-Node.js backend service providing REST API, SSE streams, WebSocket daemon connectivity, and AI agent orchestration.
+Node.js backend service providing REST API, SSE streams, WebSocket/gRPC daemon connectivity, and AI agent orchestration.
 
 ## Purpose
 
 The service is the central hub of the Bud system:
 - **REST API** - CRUD for buds, threads, messages, and terminal sessions
 - **Auth Server** - Better Auth-backed browser sessions plus OAuth/JWT provider endpoints for native clients
-- **WebSocket Gateway** - Persistent connections with bud daemons
-- **Transport Router** - Daemon-facing routing seam that currently adapts terminal runtime traffic onto the WebSocket gateway
+- **WebSocket Gateway** - Compatibility persistent connections with bud daemons
+- **gRPC Control Gateway** - Opt-in HTTP/2 daemon control streams through grpc-js
+- **Transport Router** - Daemon-facing routing seam that prefers active gRPC control streams and falls back to WebSocket
 - **SSE Streaming** - Real-time events to web clients
 - **Agent Service** - LLM-powered tool calling via configured providers, with split ownership for conversation loading, model invocation, terminal tool execution, transcript writing, and cancellation
 - **Database** - PostgreSQL with Drizzle ORM
@@ -27,6 +28,8 @@ Package manifest:
 |---------|---------|---------|
 | `fastify` | ^4.28.1 | HTTP framework |
 | `@fastify/websocket` | ^10.0.1 | WebSocket support |
+| `@grpc/grpc-js` | ^1.14.3 | Native gRPC over HTTP/2 daemon gateway |
+| `@grpc/proto-loader` | ^0.7.15 | Dynamic protobuf loading for the isolated daemon gateway |
 | `fastify-sse-v2` | ^2.2.1 | Server-Sent Events |
 | `better-auth` | ^1.5.5 | Browser auth + OAuth |
 | `@better-auth/oauth-provider` | ^1.5.5 | OAuth 2.1 / OIDC provider + protected-resource metadata |
@@ -77,8 +80,9 @@ Main source code:
 - `routes/` - HTTP endpoints, with split thread submodules under `routes/threads/`
 - `runtime/` - Session managers, with terminal-runtime ownership split into `runtime/terminal/` plus daemon operation/stream persistence helpers
 - `terminal/` - Terminal types
+- `grpc/` - Opt-in grpc-js daemon control gateway and envelope adapter
 - `proto/` - Network-upgrade envelope helpers and typed protobuf WebSocket carrier codec
-- `transport/` - Daemon transport router interface, current WebSocket/protobuf-envelope adapter, and gateway drain helper
+- `transport/` - Daemon transport router interface, composite gRPC/WebSocket adapters, and gateway drain helper
 - `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 
 ### `drizzle/` → [drizzle/drizzle.spec.md](./drizzle/drizzle.spec.md)
@@ -149,6 +153,12 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | Path | Purpose |
 |------|---------|
 | `/ws` | Bud daemon connections |
+
+### gRPC Endpoints
+
+| Service | Purpose |
+|---------|---------|
+| `bud.v1.BudControl.Connect` | Opt-in daemon control stream when `GRPC_CONTROL_ENABLED=true` |
 
 ### SSE Endpoints
 
@@ -234,6 +244,7 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `AGENT_DEBUG` - Enable debug logging
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
 - `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_FILE` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` / `APNS_ALLOWED_TOPICS` - APNs provider credentials, fallback topic, and accepted Bud app topics
+- `GRPC_CONTROL_ENABLED` / `GRPC_CONTROL_HOST` / `GRPC_CONTROL_PORT` - Optional daemon gRPC control listener
 
 See [src/config.ts](./src/src.spec.md) for complete list.
 

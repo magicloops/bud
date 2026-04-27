@@ -100,6 +100,14 @@ Control-plane phase covering:
 - capability and policy exchange
 - operation control and reconciliation over HTTP/2
 
+### `phase-2.1-control-hardening.md`
+
+Local hardening slice between Phase 2 and Phase 3 covering service signal handling, gRPC tracker shutdown finalization, durable session closure, invalid credential validation, and the handoff assumptions for HTTP/2 data streams.
+
+### `phase-2-deferred-hardening.md`
+
+Deferred hardening backlog for the Phase 2 gRPC control slice, including hosted/front-door validation, device identity hardening, generated service bindings, status taxonomy, lifecycle/load validation, observability, operator controls, and proxy/file security prerequisites.
+
 ### `phase-3-http2-data-fallback.md`
 
 Data fallback phase covering:
@@ -174,8 +182,8 @@ Manual and automated validation checklist for the network upgrade.
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- The Phase 1.5 spike selected `@grpc/grpc-js` for the daemon gateway, but the production service binding shape still needs to choose between isolated `@grpc/proto-loader` and a Buf-managed grpc-js TypeScript generation plugin before broad Phase 2 implementation.
-- The direct device identity migration shape is intentionally left open between keypair challenge, mTLS, and short-lived token binding until Phase 2 validates local and hosted constraints.
+- Phase 2 initially uses isolated `@grpc/proto-loader` inside `service/src/grpc/`; switch to Buf-managed grpc-js TypeScript generation if the adapter becomes unsafe or noisy.
+- Phase 2 uses the existing shared-secret challenge as a documented transition credential; keypair challenge, mTLS, or short-lived token binding remain required design work before proxy/file capabilities depend on gRPC control.
 - The QUIC gateway placement is intentionally deferred until Phase 5 because HTTP/2 data fallback must be product-complete first.
 
 ---

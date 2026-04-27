@@ -54,15 +54,25 @@
 ## Phase 2: HTTP/2 gRPC Control Plane
 
 - [ ] Confirm selected gRPC service stack and deployment/front-door support
-- [ ] Define `BudControl.Connect`
-- [ ] Implement daemon signed identity or documented transition mechanism
-- [ ] Implement service control gateway
-- [ ] Implement daemon control client
-- [ ] Register device and transport sessions from gRPC control
-- [ ] Move heartbeat/offline detection to gRPC control
-- [ ] Move operation control/reconciliation to gRPC control
-- [ ] Keep WebSocket control compatibility during rollout
-- [ ] Update protocol and specs
+- [x] Define `BudControl.Connect`
+- [x] Implement daemon signed identity or documented transition mechanism
+- [x] Implement service control gateway
+- [x] Implement daemon control client
+- [x] Register device and transport sessions from gRPC control
+- [x] Move heartbeat/offline detection to gRPC control
+- [x] Move operation control/reconciliation to gRPC control
+- [x] Keep WebSocket control compatibility during rollout
+- [x] Update protocol and specs
+
+## Phase 2.1: Control-Plane Hardening
+
+- [x] Add service signal handling so `SIGTERM` / `SIGINT` call `server.close()`
+- [x] Finalize active gRPC trackers during gateway shutdown
+- [x] Close durable gRPC `device_session` and `transport_session` rows on service drain
+- [x] Mark Bud offline when no alternate transport remains
+- [x] Confirm invalid gRPC enrollment credentials return `AUTH_FAILED`
+- [x] Add focused finalization unit coverage
+- [x] Record Phase 3 handoff assumptions
 
 ## Phase 3: HTTP/2 Data Fallback
 

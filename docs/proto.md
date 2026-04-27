@@ -5,6 +5,7 @@
 This document specifies the active on-wire contracts used by Bud:
 
 - Bud daemon ⇄ service over WebSocket JSON frames at `/ws`
+- Bud daemon ⇄ service over opt-in HTTP/2 gRPC control streams at `bud.v1.BudControl.Connect`
 - Service → browser over SSE for thread-scoped agent and terminal streams
 - Browser → service thread message writes that participate in the live agent-stream contract
 
@@ -57,10 +58,12 @@ Wire-format rules:
 The codebase now has a Phase 0 transport boundary for the daemon-network upgrade:
 
 - service runtime code sends daemon work through `DaemonTransportRouter`
-- the current router implementation is WebSocket-backed
+- the current router implementation is composite: active gRPC control streams are preferred, and WebSocket remains the compatibility fallback
 - daemon terminal/run modules send outbound payloads through a transport sender wrapper instead of a raw WebSocket sender type
 - shared protobuf schema lives in `proto/bud/v1/bud.proto`
+- the shared schema now exposes `service BudControl { rpc Connect(stream BudEnvelope) returns (stream BudEnvelope); }`
 - service and daemon both encode/decode `BudEnvelope v1` binary frames for WebSocket-capable peers
+- service and daemon both use `BudEnvelope v1` on the gRPC control stream, with typed oneof payloads carrying transitional `frame_json`
 - WebSocket-capable peers now dispatch known current frames through typed protobuf oneof payloads such as `terminal_ensure`, `terminal_output`, `reconnect_report`, and `reconciliation_decision`
 - each typed payload carries a transitional `frame_json` field so existing JSON-shaped handlers remain reusable during the field-level protobuf rollout
 - `LegacyJsonPayload` remains decode-compatible for older binary fixtures and downgrade testing
@@ -78,7 +81,16 @@ Phase 1 durable state now exists in the service schema:
 
 The daemon has a local journal foundation for accepted operations, active stream checkpoints, terminal session ids, and local policy version. After a successful handshake, the daemon sends a live `reconnect_report`; the service records an audit event, compares reported operation/stream ids to durable service state, and replies with `reconciliation_decision`. Unknown service-side matches are reported as `unknown` instead of invented success/failure.
 
-Gateway drain is process-local in the current WebSocket adapter. When enabled, the gateway refuses new long-lived daemon work such as `terminal_ensure`, proxy-open, and file-open/read frames while allowing short control traffic to continue. If an active transport closes or times out, affected durable operation and stream rows owned by that transport are marked `unknown`.
+Gateway drain is process-local in the current daemon transport adapters. When enabled, the gateway refuses new long-lived daemon work such as `terminal_ensure`, proxy-open, and file-open/read frames while allowing short control traffic to continue. If an active transport closes or times out, affected durable operation and stream rows owned by that transport are marked `unknown`.
+
+Phase 2 gRPC control is opt-in during rollout:
+
+- service starts the grpc-js listener only when `GRPC_CONTROL_ENABLED=true`
+- default listener address is `127.0.0.1:50051`
+- daemon uses tonic control only when `BUD_GRPC_CONTROL_URL` is set
+- the existing shared-secret challenge-response flow is the transition credential for gRPC control
+- authenticated gRPC sessions register `transport_session.transport_kind = "h2_grpc"`
+- terminal lifecycle/control frames may route over gRPC through the same transport router; bulk proxy/file/data migration remains later-phase work
 
 ### 3.1 Bud ⇄ Service WebSocket
 
@@ -87,6 +99,18 @@ Gateway drain is process-local in the current WebSocket adapter. When enabled, t
 - Bud should send `heartbeat` every 30 seconds
 - Service marks a Bud offline after `offlineGraceSec` with no accepted heartbeat
 - Bud output chunks should stay at or below 16 KiB
+
+### 3.1.1 Bud ⇄ Service gRPC Control
+
+- Service: `bud.v1.BudControl.Connect`
+- Encoding: protobuf `BudEnvelope`
+- Runtime: grpc-js on the service, tonic/prost on the daemon
+- Stream shape: bidirectional long-lived control stream
+- Current payload bridge: typed oneof payloads with `frame_json` bytes containing the same JSON frame shapes documented below
+- Auth: same `hello` → `hello_challenge` → `hello_proof` → `hello_ack` challenge-response as WebSocket during the transition
+- Heartbeats and reconnect reconciliation use the same frame shapes as WebSocket
+- Message size default: 4 MiB control envelopes, configurable with `GRPC_CONTROL_MAX_MESSAGE_BYTES`
+- Deployed traffic must use TLS or an equivalent trusted HTTP/2 front-door termination path
 
 ### 3.2 Agent Runtime Snapshot
 

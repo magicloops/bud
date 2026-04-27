@@ -17,10 +17,12 @@ import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
 import { registerMeRoutes } from "./routes/me.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 import { PushNotificationWorker } from "./notifications/index.js";
+import { startGrpcControlGateway } from "./grpc/control-gateway.js";
 
 const SERVICE_VERSION = "0.0.1";
 const CORS_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
 const DEFAULT_CORS_HEADERS = "Authorization, Content-Type, Last-Event-ID";
+const SHUTDOWN_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
 function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean {
   const origin = request.headers.origin;
@@ -149,8 +151,13 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerThreadTerminalRoutes(server, terminalSessionManager, terminalEvents);
   await registerModelsRoutes(server);
   await registerWsGateway(server, terminalSessionManager);
+  const grpcControlGateway = await startGrpcControlGateway(
+    terminalSessionManager,
+    server.log.child({ component: "grpc_control_gateway" }),
+  );
 
   server.addHook("onClose", async () => {
+    await grpcControlGateway?.close();
     pushNotificationWorker.stop();
     terminalSessionManager.stopIdleChecks();
     await authPool.end();
@@ -197,6 +204,28 @@ export async function buildServer(): Promise<FastifyInstance> {
 
 async function start() {
   const server = await buildServer();
+  let shuttingDown = false;
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    server.log.info({ signal }, "service shutdown requested");
+    try {
+      await server.close();
+      server.log.info({ signal }, "service shutdown complete");
+    } catch (err) {
+      server.log.error({ err, signal }, "service shutdown failed");
+      process.exitCode = 1;
+    }
+  };
+
+  for (const signal of SHUTDOWN_SIGNALS) {
+    process.once(signal, () => {
+      void shutdown(signal);
+    });
+  }
+
   try {
     await server.listen({ port: config.port, host: config.host });
     server.log.info({ port: config.port }, "service listening");

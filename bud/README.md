@@ -1,6 +1,6 @@
 # Bud Daemon
 
-Rust device daemon that connects to the service over `/ws`, maintains terminal capability state, and now bootstraps auth through the browser-mediated device-claim flow.
+Rust device daemon that connects to the service over `/ws` or the opt-in Phase 2 gRPC control stream, maintains terminal capability state, and now bootstraps auth through the browser-mediated device-claim flow.
 
 ## Setup
 
@@ -24,6 +24,7 @@ Bud does not auto-load `.env` itself; you need to export the variables in your s
 | Env | Flag | Purpose |
 |-----|------|---------|
 | `BUD_SERVER_URL` | `--server` | Service WebSocket URL. For local service dev: `ws://localhost:3000/ws` |
+| `BUD_GRPC_CONTROL_URL` | `--grpc-control-url` | Optional gRPC control endpoint, for example `http://127.0.0.1:50051`; when set, Bud uses tonic control instead of WebSocket |
 | `BUD_DEVICE_NAME` | `--name` | Device name shown during claim and in the UI |
 | `BUD_DEFAULT_CWD` | `--cwd` | Default working directory |
 | `BUD_IDENTITY_FILE` | `--identity-file` | Path to persisted `{ bud_id, device_secret }` |
@@ -52,7 +53,7 @@ On first run without a stored identity:
 2. Bud prints a claim URL and terminal QR code
 3. You open the link or scan the QR
 4. You sign in through the web flow if needed
-5. Bud polls `/api/device-auth/poll`, stores the issued `device_secret`, and reconnects over `/ws`
+5. Bud polls `/api/device-auth/poll`, stores the issued `device_secret`, and reconnects over the configured control transport
 
 On later runs, Bud reuses:
 
@@ -190,6 +191,20 @@ cargo run -- \
   --name local-bud \
   --terminal-enabled
 ```
+
+## Opt-In gRPC Control
+
+Start the service with `GRPC_CONTROL_ENABLED=true`, then run Bud with both the HTTP origin for claim bootstrap and the gRPC control endpoint:
+
+```bash
+cd bud
+cargo run -- \
+  --server http://localhost:3000 \
+  --grpc-control-url http://127.0.0.1:50051 \
+  --terminal-enabled
+```
+
+The gRPC path currently reuses the existing `hello` / `hello_challenge` / `hello_proof` auth flow and JSON-shaped terminal/control handlers through protobuf `BudEnvelope.frame_json`.
 
 ## Notes
 

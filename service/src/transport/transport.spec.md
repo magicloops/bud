@@ -17,6 +17,26 @@ Defines the transport-neutral router interface:
 - send a daemon payload
 - report transport status and transport kind
 
+### `composite-daemon-router.ts`
+
+Phase 2 router composition used by runtime code.
+
+- returns the union of active gRPC and WebSocket Bud ids
+- treats a Bud as online if either transport has an active authoritative session
+- prefers `h2_grpc` for outbound frames when a gRPC control stream is active
+- falls back to WebSocket for compatibility daemons
+
+### `grpc-daemon-router.ts`
+
+gRPC-backed adapter for active `BudControl.Connect` streams.
+
+- owns the in-memory gRPC session tracker map
+- sends outbound frames as typed `BudEnvelope` payloads with transitional `frame_json`
+- reports transport status as `h2_grpc`
+- applies process-local gateway drain blocking to long-lived work just like the WebSocket adapter
+- tracks gRPC backpressure and refuses additional frames while a stream is still draining
+- marks trackers as finalizing/finalized during gateway shutdown so router online checks stop treating draining control streams as usable
+
 ### `websocket-daemon-router.ts`
 
 Current WebSocket-backed adapter for the router interface. It reuses the existing WebSocket session tracker and sends protobuf `BudEnvelope` binary frames to daemons that advertised `bud_envelope.websocket_binary`; legacy sessions still receive JSON text frames.
@@ -48,7 +68,7 @@ The drain state is deliberately small: it blocks new long-lived daemon streams o
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Add HTTP/2 gRPC control and HTTP/2 data router implementations in later network-upgrade phases.
+- Add HTTP/2 data router implementations in later network-upgrade phases.
 - Replace the transitional typed-payload `frame_json` bridge with generated field-level protobuf payload mapping once current terminal/control payloads are fully mapped.
 
 ---

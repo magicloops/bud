@@ -12,6 +12,13 @@ const toNumber = (value: string | undefined, fallback: number) => {
 };
 
 const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+const toOptionalNumber = (value: string | undefined) => {
+  if (value === undefined || value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 const toNullable = (value: string | undefined) => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -118,6 +125,16 @@ export const config = {
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   heartbeatSec: toNumber(process.env.WS_HEARTBEAT_SEC, 30),
   offlineGraceSec: toNumber(process.env.WS_OFFLINE_GRACE_SEC, 90),
+  grpcControlEnabled: toBool(process.env.GRPC_CONTROL_ENABLED),
+  grpcControlHost: process.env.GRPC_CONTROL_HOST ?? "127.0.0.1",
+  grpcControlPort: toNumber(process.env.GRPC_CONTROL_PORT, 50051),
+  grpcControlMaxMessageBytes: toNumber(
+    process.env.GRPC_CONTROL_MAX_MESSAGE_BYTES,
+    4 * 1024 * 1024,
+  ),
+  grpcControlMaxConcurrentStreams: toOptionalNumber(process.env.GRPC_CONTROL_MAX_CONCURRENT_STREAMS),
+  grpcControlMaxSessionMemory: toOptionalNumber(process.env.GRPC_CONTROL_MAX_SESSION_MEMORY),
+  grpcControlEnableChannelz: toOptionalNumber(process.env.GRPC_CONTROL_ENABLE_CHANNELZ),
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",

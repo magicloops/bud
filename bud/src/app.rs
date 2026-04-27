@@ -9,6 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task;
 use tokio::time;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
@@ -19,6 +20,10 @@ use crate::claim::{
     poll_device_auth_flow, print_device_claim_instructions, start_device_auth_flow,
 };
 use crate::config::BudArgs;
+use crate::grpc_control::{
+    bud::v1::BudEnvelope, connect_control_stream, envelope_to_json_text, json_frame_to_envelope,
+    GrpcControlStream,
+};
 use crate::identity::{
     clear_identity, installation_id_path, load_identity, load_or_create_installation_id,
     persist_identity, DeviceIdentity,
@@ -118,6 +123,10 @@ impl BudApp {
     }
 
     async fn connect_once(&mut self) -> Result<()> {
+        if let Some(endpoint) = self.args.grpc_control_url.clone() {
+            return self.connect_once_grpc(endpoint).await;
+        }
+
         loop {
             if self.identity.is_none() && self.args.token.is_none() {
                 self.bootstrap_device_auth().await?;
@@ -157,6 +166,237 @@ impl BudApp {
                     self.bootstrap_device_auth().await?;
                 }
                 Err(HandshakeError::Other(err)) => return Err(err),
+            }
+        }
+    }
+
+    async fn connect_once_grpc(&mut self, endpoint: String) -> Result<()> {
+        loop {
+            if self.identity.is_none() && self.args.token.is_none() {
+                self.bootstrap_device_auth().await?;
+            }
+
+            info!(endpoint = %endpoint, "Connecting to backend gRPC control gateway");
+            let (frame_tx, mut frame_rx) = mpsc::unbounded_channel::<Value>();
+            let (envelope_tx, envelope_rx) = mpsc::channel::<BudEnvelope>(128);
+            let writer_handle = task::spawn_local(async move {
+                while let Some(frame) = frame_rx.recv().await {
+                    let envelope = match json_frame_to_envelope(&frame) {
+                        Ok(envelope) => envelope,
+                        Err(err) => {
+                            warn!(error = %err, "Failed to encode gRPC BudEnvelope");
+                            break;
+                        }
+                    };
+                    if envelope_tx.send(envelope).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            let sender = TransportSender::grpc(frame_tx);
+            let hello_frame = self.build_hello_frame()?;
+            send_transport_frame(&sender, hello_frame)?;
+
+            let mut stream =
+                match connect_control_stream(&endpoint, ReceiverStream::new(envelope_rx)).await {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        drop(sender);
+                        let _ = writer_handle.await;
+                        return Err(err);
+                    }
+                };
+
+            match self.perform_grpc_handshake(&sender, &mut stream).await {
+                Ok(meta) => {
+                    info!(
+                        bud_id = %meta.bud_id,
+                        session_id = %meta.session_id,
+                        heartbeat_sec = meta.heartbeat_sec,
+                        "gRPC handshake established"
+                    );
+                    return self
+                        .run_grpc_session(sender, stream, meta, writer_handle)
+                        .await;
+                }
+                Err(HandshakeError::AuthFailed { code, message }) => {
+                    drop(sender);
+                    let _ = writer_handle.await;
+                    if self.args.token.is_some() {
+                        bail!(
+                            "backend error during gRPC handshake (code={}): {}",
+                            code,
+                            message
+                        );
+                    }
+
+                    warn!(
+                        code = %code,
+                        message = %message,
+                        "Stored device credential rejected over gRPC; starting device claim flow"
+                    );
+                    self.clear_identity().await?;
+                    self.bootstrap_device_auth().await?;
+                }
+                Err(HandshakeError::Other(err)) => {
+                    drop(sender);
+                    let _ = writer_handle.await;
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    async fn perform_grpc_handshake(
+        &mut self,
+        sender: &TransportSender,
+        stream: &mut GrpcControlStream,
+    ) -> std::result::Result<SessionMeta, HandshakeError> {
+        loop {
+            let envelope = stream
+                .message()
+                .await
+                .map_err(|err| HandshakeError::Other(err.into()))?
+                .ok_or_else(|| {
+                    HandshakeError::Other(anyhow!(
+                        "gRPC control stream closed before handshake completed"
+                    ))
+                })?;
+            let text = envelope_to_json_text(&envelope).map_err(HandshakeError::Other)?;
+            let envelope: Envelope =
+                serde_json::from_str(&text).map_err(|err| HandshakeError::Other(err.into()))?;
+            validate_inbound_envelope_proto(&envelope).map_err(HandshakeError::Other)?;
+            match envelope.kind.as_str() {
+                "hello_ack" => {
+                    let ack: HelloAckFrame = serde_json::from_str(&text)
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
+                    if let Some(secret) = ack.device_secret.clone() {
+                        let new_identity = DeviceIdentity {
+                            bud_id: ack.bud_id.clone(),
+                            device_secret: secret,
+                            server_url: self.args.server.clone(),
+                            name: self.args.name.clone(),
+                            default_cwd: self.args.cwd.clone(),
+                        };
+                        persist_identity(&self.identity_path, &new_identity)
+                            .await
+                            .map_err(HandshakeError::Other)?;
+                        self.identity = Some(new_identity);
+                        self.args.token = None;
+                    } else if self.identity.is_none() {
+                        return Err(HandshakeError::Other(anyhow!(
+                            "hello_ack missing device_secret during enrollment"
+                        )));
+                    }
+                    return Ok(SessionMeta {
+                        bud_id: ack.bud_id,
+                        session_id: ack.session_id,
+                        heartbeat_sec: ack.heartbeat_sec.unwrap_or(DEFAULT_HEARTBEAT_SEC),
+                        envelope_binary: true,
+                    });
+                }
+                "hello_challenge" => {
+                    let challenge: HelloChallengeFrame = serde_json::from_str(&text)
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
+                    let identity = self.identity.as_ref().ok_or_else(|| {
+                        HandshakeError::Other(anyhow!("no identity available for challenge"))
+                    })?;
+                    let proof = compute_hmac(&identity.device_secret, &challenge.nonce)
+                        .map_err(HandshakeError::Other)?;
+                    let proof_frame = json!({
+                        "proto": PROTO_VERSION,
+                        "type": "hello_proof",
+                        "id": new_message_id(),
+                        "ts": now_millis(),
+                        "ext": {},
+                        "bud_id": identity.bud_id,
+                        "hmac": proof
+                    });
+                    send_transport_frame(sender, proof_frame).map_err(HandshakeError::Other)?;
+                }
+                "error" => {
+                    let err_frame: ErrorFrame = serde_json::from_str(&text)
+                        .map_err(|err| HandshakeError::Other(err.into()))?;
+                    if err_frame.code == "AUTH_FAILED" {
+                        return Err(HandshakeError::AuthFailed {
+                            code: err_frame.code,
+                            message: err_frame.message,
+                        });
+                    }
+                    return Err(HandshakeError::Other(anyhow!(
+                        "backend error during gRPC handshake (code={}): {}",
+                        err_frame.code,
+                        err_frame.message
+                    )));
+                }
+                other => warn!(frame_type = other, "Unexpected frame during gRPC handshake"),
+            }
+        }
+    }
+
+    async fn run_grpc_session(
+        &self,
+        sender: TransportSender,
+        mut stream: GrpcControlStream,
+        meta: SessionMeta,
+        writer_handle: task::JoinHandle<()>,
+    ) -> Result<()> {
+        let mut interval = time::interval(Duration::from_secs(meta.heartbeat_sec.max(5)));
+
+        self.run_executor.set_sender(sender.clone()).await;
+        self.terminal_manager.set_sender(sender.clone()).await;
+        if self.terminal_manager.config.enabled && !self.terminal_manager.config.tmux_available {
+            info!("terminal enabled but tmux unavailable; terminal sessions will fail");
+        }
+        self.send_reconnect_report(&sender, &meta).await?;
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let heartbeat = json!({
+                        "proto": PROTO_VERSION,
+                        "type": "heartbeat",
+                        "id": new_message_id(),
+                        "ts": now_millis(),
+                        "ext": {},
+                        "session_id": meta.session_id
+                    });
+                    if let Err(err) = send_transport_frame(&sender, heartbeat) {
+                        self.run_executor.clear_sender().await;
+                        self.terminal_manager.clear_sender().await;
+                        drop(sender);
+                        let _ = writer_handle.await;
+                        return Err(err);
+                    }
+                }
+                message = stream.message() => {
+                    match message {
+                        Ok(Some(envelope)) => {
+                            let text = envelope_to_json_text(&envelope)?;
+                            self.handle_server_frame(&text).await?;
+                        }
+                        Ok(None) => {
+                            if self.debug_enabled {
+                                info!("gRPC control stream ended; reconnecting");
+                            }
+                            self.run_executor.clear_sender().await;
+                            self.terminal_manager.clear_sender().await;
+                            drop(sender);
+                            let _ = writer_handle.await;
+                            return Ok(());
+                        }
+                        Err(err) => {
+                            if self.debug_enabled {
+                                info!(error = %err, "gRPC control read error; reconnecting soon");
+                            }
+                            self.run_executor.clear_sender().await;
+                            self.terminal_manager.clear_sender().await;
+                            drop(sender);
+                            let _ = writer_handle.await;
+                            return Err(err.into());
+                        }
+                    }
+                }
             }
         }
     }
@@ -667,7 +907,8 @@ impl BudApp {
             "terminal_proto": TERMINAL_PROTO_VERSION,
             "bud_envelope": {
                 "version": 1,
-                "websocket_binary": true
+                "websocket_binary": true,
+                "h2_grpc_control": self.args.grpc_control_url.is_some()
             },
         })
     }

@@ -18,7 +18,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 ```
 ┌─────────────────┐         ┌─────────────────────────────────────┐         ┌─────────────────┐
-│                 │   WS    │                                     │  HTTP   │                 │
+│                 │ WS/gRPC │                                     │  HTTP   │                 │
 │   Bud Daemon    │◀───────▶│            Service                  │◀───────▶│     Web UI      │
 │   (Rust CLI)    │         │         (Node.js/Fastify)           │   SSE   │   (React/Vite)  │
 │                 │         │                                     │         │                 │
@@ -38,7 +38,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 | Path | Protocol | Purpose |
 |------|----------|---------|
-| Daemon ↔ Service | WebSocket | Device reauth, heartbeat, terminal I/O, command execution |
+| Daemon ↔ Service | WebSocket or HTTP/2 gRPC control | Device reauth, heartbeat, terminal control, command execution |
 | Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |
@@ -108,7 +108,8 @@ bud/
 │   │   ├── app.rs          # Runtime orchestration
 │   │   ├── run.rs          # Legacy queued run path
 │   │   ├── proto_wire.rs   # BudEnvelope protobuf compatibility codec
-│   │   ├── transport.rs    # Transport-neutral sender wrapper, currently backed by WebSocket
+│   │   ├── grpc_control.rs # tonic/prost BudControl.Connect client adapter
+│   │   ├── transport.rs    # Transport-neutral sender wrapper for WebSocket or gRPC control
 │   │   ├── journal.rs      # Local daemon reconciliation journal foundation
 │   │   ├── terminal/
 │   │   │   ├── mod.rs      # Shared terminal runtime types
@@ -167,6 +168,7 @@ bud/
 | **Rust** | Systems language for reliable, performant daemon |
 | **Tokio** | Async runtime for concurrent I/O |
 | **tokio-tungstenite** | WebSocket client |
+| **tonic / prost** | Opt-in HTTP/2 gRPC control client and generated protobuf types |
 | **clap** | CLI argument parsing |
 | **nix** | PTY handling for terminal sessions |
 | **rustls** | TLS for secure WebSocket connections |
@@ -178,6 +180,8 @@ bud/
 | **Node.js 20+** | JavaScript runtime |
 | **Fastify** | HTTP server framework |
 | **@fastify/websocket** | WebSocket support |
+| **@grpc/grpc-js** | Opt-in native gRPC daemon control gateway |
+| **@grpc/proto-loader** | Isolated protobuf loader for the daemon gateway |
 | **fastify-sse-v2** | Server-Sent Events |
 | **Better Auth** | Browser authentication + OAuth |
 | **Drizzle ORM** | Type-safe database access |
@@ -366,7 +370,8 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 
 | Argument | Env | Default | Description |
 |----------|-----|---------|-------------|
-| `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service WebSocket URL |
+| `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service WebSocket URL or HTTP origin used for device-claim bootstrap |
+| `--grpc-control-url` | `BUD_GRPC_CONTROL_URL` | - | Optional tonic gRPC control endpoint |
 | `--token` | `BUD_ENROLLMENT_TOKEN` | - | One-time enrollment token |
 | `--name` | `BUD_DEVICE_NAME` | `bud-dev` | Device display name |
 | `--terminal-enabled` | `BUD_TERMINAL_ENABLED` | false | Enable terminal features |

@@ -26,7 +26,7 @@ Crate root for the daemon runtime.
 CLI and environment configuration.
 
 - defines `BudArgs`
-- owns daemon defaults for server URL, identity path, terminal base dir, terminal dimensions, reconnect timing, and debug mode
+- owns daemon defaults for server URL, optional gRPC control URL, identity path, terminal base dir, terminal dimensions, reconnect timing, and debug mode
 
 ### `app.rs`
 
@@ -36,6 +36,7 @@ Top-level daemon orchestrator.
 
 - identity loading and device-claim bootstrap
 - WebSocket connect / reconnect behavior
+- opt-in tonic gRPC control connect / reconnect behavior when `BUD_GRPC_CONTROL_URL` is set
 - handshake and challenge-response auth
 - live reconnect report emission after handshake using the local journal
 - heartbeat scheduling
@@ -67,12 +68,22 @@ Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 - shares conformance fixture coverage with the service through `proto/fixtures/legacy-terminal-ensure.json`
 - tolerates unknown protobuf fields while validating the envelope version and required compatibility payload
 
+### `grpc_control.rs`
+
+tonic/prost adapter for the Phase 2 daemon control client.
+
+- includes generated `bud.v1` protobuf bindings from [../../proto/bud/v1/bud.proto](../../proto/bud/v1/bud.proto)
+- opens `BudControl.Connect` bidirectional streams
+- converts outbound JSON frames into generated `BudEnvelope` messages with `transport_kind = H2_GRPC`
+- converts inbound generated `BudEnvelope` messages back to JSON text for the existing frame dispatcher
+- keeps generated protobuf details out of terminal/run modules
+
 ### `transport.rs`
 
 Daemon-side transport sender boundary.
 
 - defines `TransportSender` and `TransportKind`
-- currently wraps the active WebSocket writer
+- wraps the active WebSocket writer or gRPC control frame sender
 - sends protobuf envelope binary frames when the service negotiated `bud_envelope.websocket_binary`
 - exposes `send_transport_frame(...)` and `send_transport_message(...)`
 - lets terminal and legacy run modules emit daemon payloads without depending directly on raw WebSocket sender types
@@ -297,6 +308,8 @@ External crates (from `Cargo.toml`):
 |-------|---------|
 | `tokio` | Async runtime with process, fs, sync features |
 | `tokio-tungstenite` | WebSocket client |
+| `tonic` / `tonic-prost` / `prost` | gRPC control client and generated protobuf message support |
+| `tokio-stream` | Adapts control-stream outbound channels for tonic |
 | `clap` | CLI argument parsing |
 | `serde` / `serde_json` | JSON serialization |
 | `nix` | Unix utilities for the legacy run executor |

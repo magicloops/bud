@@ -2,7 +2,7 @@
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Runtime Decision**: [phase-1.5-runtime-decision.md](./phase-1.5-runtime-decision.md)
-**Status**: Planned
+**Status**: Initial vertical slice implemented
 
 ---
 
@@ -63,6 +63,21 @@ The runtime decision narrows Phase 2:
 - Browser REST/SSE should remain on the existing Fastify path.
 - grpc-js lifecycle handling should be treated as product code, not handwritten per handler.
 - Data-plane APIs should not be over-designed in Phase 2; the control stream only needs enough stream metadata to negotiate later HTTP/2 data and QUIC candidates.
+
+## Implementation Notes
+
+The first Phase 2 implementation is intentionally opt-in:
+
+- shared schema defines `bud.v1.BudControl.Connect`
+- service hosts a grpc-js listener when `GRPC_CONTROL_ENABLED=true`
+- service uses proto-loader behind `service/src/grpc/` only; dynamic message shapes do not leak into runtime or routes
+- service transport routing is composite and prefers active `h2_grpc` sessions before falling back to WebSocket
+- daemon uses tonic/prost only when `BUD_GRPC_CONTROL_URL` is set
+- existing terminal/control JSON frame handlers are reused through typed `BudEnvelope.frame_json`
+- shared-secret challenge-response remains the transition credential for this slice
+- WebSocket remains the default compatibility transport
+
+The slice covers daemon auth, durable `device_session` / `transport_session` registration, heartbeat/offline handling, reconnect reconciliation, terminal control/result routing, and gateway drain blocking on both transport adapters. Keypair auth, generated TypeScript bindings, data streams, and QUIC remain follow-up work.
 
 ## Implementation Tasks
 
