@@ -507,6 +507,55 @@ fn encode_field_level_payload(frame_type: &str, frame: &Value) -> Result<Option<
                     .collect::<Result<Vec<_>>>()?,
             );
         }
+        "data_attach" => {
+            write_optional_string(&mut out, 1, string_value(frame, "bud_id"));
+            write_optional_string(&mut out, 2, string_value(frame, "device_session_id"));
+            write_optional_string(
+                &mut out,
+                3,
+                string_value(frame, "control_transport_session_id"),
+            );
+            write_repeated_strings(&mut out, 4, string_array_value(frame, "streams"));
+            write_optional_u32(&mut out, 5, u64_value(frame, "max_chunk_bytes"));
+            write_optional_u64(&mut out, 6, u64_value(frame, "initial_credit_bytes"));
+        }
+        "data_attach_ack" => {
+            write_optional_string(&mut out, 1, string_value(frame, "bud_id"));
+            write_optional_string(&mut out, 2, string_value(frame, "device_session_id"));
+            write_optional_string(&mut out, 3, string_value(frame, "transport_session_id"));
+            write_repeated_strings(&mut out, 4, string_array_value(frame, "streams"));
+            write_optional_u32(&mut out, 5, u64_value(frame, "max_chunk_bytes"));
+            write_optional_u64(&mut out, 6, u64_value(frame, "initial_credit_bytes"));
+        }
+        "stream_data" => {
+            write_optional_string(&mut out, 1, string_value(frame, "stream_id"));
+            write_optional_enum(
+                &mut out,
+                2,
+                stream_type_proto(string_value(frame, "stream_type").unwrap_or_default()),
+            );
+            write_optional_u64(&mut out, 3, u64_value(frame, "offset"));
+            write_optional_base64_bytes(&mut out, 4, string_value(frame, "data"))?;
+            write_optional_bool(&mut out, 5, bool_value(frame, "end_stream"));
+        }
+        "stream_credit" => {
+            write_optional_string(&mut out, 1, string_value(frame, "stream_id"));
+            write_optional_u64(&mut out, 2, u64_value(frame, "receive_offset"));
+            write_optional_u64(&mut out, 3, u64_value(frame, "credit_bytes"));
+        }
+        "stream_reset" => {
+            write_optional_string(&mut out, 1, string_value(frame, "stream_id"));
+            write_optional_enum(
+                &mut out,
+                2,
+                stream_reset_reason_proto(string_value(frame, "reason").unwrap_or_default()),
+            );
+            write_optional_message(&mut out, 3, encode_bud_error(frame.get("error"))?);
+        }
+        "stream_close" => {
+            write_optional_string(&mut out, 1, string_value(frame, "stream_id"));
+            write_optional_u64(&mut out, 2, u64_value(frame, "final_offset"));
+        }
         _ => return Ok(None),
     }
 
@@ -742,6 +791,38 @@ fn decode_field_level_payload(
                         &mut frame,
                         "streams",
                         decode_stream_status(reader.read_bytes_for_wire_type(wire_type)?)?,
+                    );
+                } else {
+                    reader.skip(wire_type)?;
+                }
+            }
+            "data_attach" => {
+                read_data_attach_field(&mut frame, &mut reader, field_number, wire_type)?
+            }
+            "data_attach_ack" => {
+                read_data_attach_ack_field(&mut frame, &mut reader, field_number, wire_type)?
+            }
+            "stream_data" => {
+                read_stream_data_field(&mut frame, &mut reader, field_number, wire_type)?
+            }
+            "stream_credit" => {
+                read_stream_credit_field(&mut frame, &mut reader, field_number, wire_type)?
+            }
+            "stream_reset" => {
+                read_stream_reset_field(&mut frame, &mut reader, field_number, wire_type)?
+            }
+            "stream_close" => {
+                if field_number == 1 {
+                    insert_string(
+                        &mut frame,
+                        "stream_id",
+                        reader.read_string_for_wire_type(wire_type)?,
+                    );
+                } else if field_number == 2 {
+                    insert_u64(
+                        &mut frame,
+                        "final_offset",
+                        reader.read_varint_for_wire_type(wire_type)?,
                     );
                 } else {
                     reader.skip(wire_type)?;
@@ -1342,6 +1423,182 @@ fn read_reconnect_report_field(
     Ok(())
 }
 
+fn read_data_attach_field(
+    frame: &mut Map<String, Value>,
+    reader: &mut ProtoReader<'_>,
+    field_number: u32,
+    wire_type: u8,
+) -> Result<()> {
+    match field_number {
+        1 => insert_string(
+            frame,
+            "bud_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        2 => insert_string(
+            frame,
+            "device_session_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        3 => insert_string(
+            frame,
+            "control_transport_session_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        4 => push_array_value(
+            frame,
+            "streams",
+            Value::String(reader.read_string_for_wire_type(wire_type)?),
+        ),
+        5 => insert_u64(
+            frame,
+            "max_chunk_bytes",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
+        6 => insert_u64(
+            frame,
+            "initial_credit_bytes",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
+        _ => reader.skip(wire_type)?,
+    }
+    Ok(())
+}
+
+fn read_data_attach_ack_field(
+    frame: &mut Map<String, Value>,
+    reader: &mut ProtoReader<'_>,
+    field_number: u32,
+    wire_type: u8,
+) -> Result<()> {
+    match field_number {
+        1 => insert_string(
+            frame,
+            "bud_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        2 => insert_string(
+            frame,
+            "device_session_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        3 => insert_string(
+            frame,
+            "transport_session_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        4 => push_array_value(
+            frame,
+            "streams",
+            Value::String(reader.read_string_for_wire_type(wire_type)?),
+        ),
+        5 => insert_u64(
+            frame,
+            "max_chunk_bytes",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
+        6 => insert_u64(
+            frame,
+            "initial_credit_bytes",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
+        _ => reader.skip(wire_type)?,
+    }
+    Ok(())
+}
+
+fn read_stream_data_field(
+    frame: &mut Map<String, Value>,
+    reader: &mut ProtoReader<'_>,
+    field_number: u32,
+    wire_type: u8,
+) -> Result<()> {
+    match field_number {
+        1 => insert_string(
+            frame,
+            "stream_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        2 => insert_string(
+            frame,
+            "stream_type",
+            stream_type_json(reader.read_varint_for_wire_type(wire_type)?).to_string(),
+        ),
+        3 => insert_u64(
+            frame,
+            "offset",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
+        4 => insert_string(
+            frame,
+            "data",
+            BASE64_STANDARD.encode(reader.read_bytes_for_wire_type(wire_type)?),
+        ),
+        5 => insert_bool(
+            frame,
+            "end_stream",
+            reader.read_varint_for_wire_type(wire_type)? != 0,
+        ),
+        _ => reader.skip(wire_type)?,
+    }
+    Ok(())
+}
+
+fn read_stream_credit_field(
+    frame: &mut Map<String, Value>,
+    reader: &mut ProtoReader<'_>,
+    field_number: u32,
+    wire_type: u8,
+) -> Result<()> {
+    match field_number {
+        1 => insert_string(
+            frame,
+            "stream_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        2 => insert_u64(
+            frame,
+            "receive_offset",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
+        3 => insert_u64(
+            frame,
+            "credit_bytes",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
+        _ => reader.skip(wire_type)?,
+    }
+    Ok(())
+}
+
+fn read_stream_reset_field(
+    frame: &mut Map<String, Value>,
+    reader: &mut ProtoReader<'_>,
+    field_number: u32,
+    wire_type: u8,
+) -> Result<()> {
+    match field_number {
+        1 => insert_string(
+            frame,
+            "stream_id",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
+        2 => insert_string(
+            frame,
+            "reason",
+            stream_reset_reason_json(reader.read_varint_for_wire_type(wire_type)?).to_string(),
+        ),
+        3 => {
+            frame.insert(
+                "error".to_string(),
+                decode_bud_error(reader.read_bytes_for_wire_type(wire_type)?)?,
+            );
+        }
+        _ => reader.skip(wire_type)?,
+    }
+    Ok(())
+}
+
 fn payload_contains_frame_json(bytes: &[u8]) -> Result<bool> {
     let mut reader = ProtoReader::new(bytes);
     while !reader.done() {
@@ -1377,6 +1634,12 @@ fn is_field_level_frame_type(frame_type: &str) -> bool {
             | "terminal_ready"
             | "reconnect_report"
             | "reconciliation_decision"
+            | "data_attach"
+            | "data_attach_ack"
+            | "stream_data"
+            | "stream_credit"
+            | "stream_reset"
+            | "stream_close"
     )
 }
 
@@ -2114,6 +2377,115 @@ mod tests {
             serde_json::from_slice::<Value>(&decoded.payload.json).expect("decode json"),
             frame,
         );
+    }
+
+    #[test]
+    fn encodes_core_data_plane_lifecycle_with_field_level_payloads() {
+        let frames = vec![
+            (
+                json!({
+                    "proto": "0.1",
+                    "type": "data_attach",
+                    "id": "msg_data_attach",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "bud_id": "b_test",
+                    "device_session_id": "s_test",
+                    "control_transport_session_id": "ts_control",
+                    "streams": ["file_read", "localhost_http_proxy"],
+                    "max_chunk_bytes": 16384,
+                    "initial_credit_bytes": 1048576
+                }),
+                170,
+            ),
+            (
+                json!({
+                    "proto": "0.1",
+                    "type": "data_attach_ack",
+                    "id": "msg_data_attach_ack",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "bud_id": "b_test",
+                    "device_session_id": "s_test",
+                    "transport_session_id": "ts_data",
+                    "streams": ["file_read"],
+                    "max_chunk_bytes": 16384,
+                    "initial_credit_bytes": 1048576
+                }),
+                171,
+            ),
+            (
+                json!({
+                    "proto": "0.1",
+                    "type": "stream_data",
+                    "id": "msg_stream_data",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "stream_id": "st_test",
+                    "stream_type": "file_read",
+                    "offset": 0,
+                    "data": BASE64_STANDARD.encode("hello"),
+                    "end_stream": false
+                }),
+                172,
+            ),
+            (
+                json!({
+                    "proto": "0.1",
+                    "type": "stream_credit",
+                    "id": "msg_stream_credit",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "stream_id": "st_test",
+                    "receive_offset": 5,
+                    "credit_bytes": 1024
+                }),
+                173,
+            ),
+            (
+                json!({
+                    "proto": "0.1",
+                    "type": "stream_reset",
+                    "id": "msg_stream_reset",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "stream_id": "st_test",
+                    "reason": "protocol_error",
+                    "error": {
+                        "code": "OFFSET_MISMATCH",
+                        "message": "bad offset",
+                        "retryable": false
+                    }
+                }),
+                174,
+            ),
+            (
+                json!({
+                    "proto": "0.1",
+                    "type": "stream_close",
+                    "id": "msg_stream_close",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "stream_id": "st_test",
+                    "final_offset": 5
+                }),
+                175,
+            ),
+        ];
+
+        for (frame, payload_field) in frames {
+            let bytes = encode_legacy_json_frame(&frame).expect("encode frame");
+            assert_eq!(top_level_payload_fields(&bytes), vec![payload_field]);
+            assert!(!nested_payload_contains_field(
+                &bytes,
+                payload_field,
+                TYPED_FRAME_JSON_FIELD
+            ));
+
+            let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
+            let decoded_value: Value = serde_json::from_str(&decoded).expect("decode json");
+            assert_eq!(decoded_value, frame);
+        }
     }
 
     #[test]

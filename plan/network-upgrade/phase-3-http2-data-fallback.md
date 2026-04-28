@@ -1,5 +1,8 @@
 # Phase 3: HTTP/2 Data Fallback
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Status**: Initial terminal-output implementation complete; Phase 3.1 hardening tracked in [phase-3.1-data-hardening.md](./phase-3.1-data-hardening.md)
 

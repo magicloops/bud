@@ -4,7 +4,7 @@ Database utility scripts for development and operations.
 
 ## Purpose
 
-Standalone scripts for database management and auth/bootstrap tasks like local schema push, staging migration alignment, token seeding, table inspection, and first-party iOS OAuth-client provisioning.
+Standalone scripts for database management and auth/bootstrap tasks like local schema push, staging migration alignment, development Bud seeding, table inspection, and first-party iOS OAuth-client provisioning.
 
 ## Files
 
@@ -153,7 +153,7 @@ Local end-to-end smoke test for network-upgrade Phase 3.
 
 **Responsibilities**:
 - Start the real grpc-js control and data gateways in-process on reserved localhost ports
-- Launch the compiled Rust daemon with `BUD_GRPC_CONTROL_URL`, optional `BUD_GRPC_DATA_URL`, a dev enrollment token, and a temporary identity/terminal base directory
+- Launch the compiled Rust daemon with `BUD_GRPC_CONTROL_URL`, optional `BUD_GRPC_DATA_URL`, a dev token-bypass credential, and a temporary identity/terminal base directory
 - Wait for active `h2_grpc` and, when data is enabled, `h2_data` transport sessions
 - Create a real thread-scoped terminal session through `TerminalSessionManager`
 - Send a shell command into the tmux-backed terminal and wait for the marker in persisted terminal output
@@ -181,7 +181,7 @@ Local end-to-end smoke test for the swappable-transport Phase 0 WebSocket termin
 
 **Responsibilities**:
 - Start the real WebSocket gateway in-process on a reserved localhost port with gRPC disabled
-- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev enrollment token and temporary identity/terminal base directory
+- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev token-bypass credential and temporary identity/terminal base directory
 - Wait for daemon enrollment, binary `BudEnvelope` capability negotiation, an active `websocket` transport session, and no active `h2_grpc`/`h2_data` transport sessions for the smoke Bud
 - Confirm reconnect reconciliation reached the service by checking the `daemon.reconnect_report` audit event
 - Create a real thread-scoped terminal session through `TerminalSessionManager`
@@ -205,7 +205,7 @@ Local end-to-end smoke test for network-upgrade Phase 4.2 proxy streaming.
 
 **Responsibilities**:
 - Start the real grpc-js control and data gateways in-process on reserved localhost ports
-- Launch the compiled Rust daemon with gRPC control/data URLs, a dev enrollment token, and temporary local state
+- Launch the compiled Rust daemon with gRPC control/data URLs, a dev token-bypass credential, and temporary local state
 - Start a loopback HTTP target server and create an auth-owned proxy session for that target
 - Drive the production proxy edge stream through a small Fastify harness at `/api/proxy/:proxySessionId/*`
 - Assert the daemon forwards the request to the local target, streams the response body back, and strips unsafe target headers such as `Authorization` and `Cookie`
@@ -228,7 +228,7 @@ Local end-to-end smoke test for network-upgrade Phase 4.4 file stat/read/range s
 
 **Responsibilities**:
 - Start the real grpc-js control and data gateways in-process on reserved localhost ports
-- Launch the compiled Rust daemon with gRPC control/data URLs, a dev enrollment token, temporary local state, and a temporary workspace root
+- Launch the compiled Rust daemon with gRPC control/data URLs, a dev token-bypass credential, temporary local state, and a temporary workspace root
 - Create a workspace-relative file and an auth-owned file session for that path
 - Drive the production file edge stream through a small Fastify harness at `/api/files/:fileSessionId`
 - Assert HEAD/stat, full GET/read, and single-range GET all stream through the daemon over HTTP/2 data
@@ -252,7 +252,7 @@ Local end-to-end smoke test for swappable-transport Phase 3 file streaming over 
 
 **Responsibilities**:
 - Start the real WebSocket gateway in-process on a reserved localhost port with gRPC disabled
-- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev enrollment token, temporary local state, and a temporary workspace root
+- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev token-bypass credential, temporary local state, and a temporary workspace root
 - Create a workspace-relative file and an auth-owned file session for that path
 - Drive the production file edge stream through a small Fastify harness at `/api/files/:fileSessionId`
 - Assert HEAD/stat, full GET/read, and single-range GET all stream through the daemon over the WebSocket data-plane carrier
@@ -277,7 +277,7 @@ Local end-to-end smoke test for swappable-transport Phase 4 proxy streaming over
 
 **Responsibilities**:
 - Start the real WebSocket gateway in-process on a reserved localhost port with gRPC disabled
-- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev enrollment token and temporary local state
+- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev token-bypass credential and temporary local state
 - Start a loopback HTTP target server and create an auth-owned proxy session for that target
 - Drive the production proxy edge stream through a small Fastify harness at `/api/proxy/:proxySessionId/*`
 - Assert GET and HEAD requests reach the local target over the WebSocket data-plane carrier
@@ -302,8 +302,7 @@ Creates initial development data.
 
 **Creates**:
 - Sample or overridden Bud row for local development
-- Sample enrollment token row (valid for 24 hours by default)
-- Uses the shared enrollment-token hash helper so seeded tokens match gateway validation exactly
+- Does not create legacy enrollment-token rows; normal onboarding uses device claim and local automation uses `DEV_BUD_TOKEN_BYPASS`
 
 **Usage**:
 ```bash
@@ -311,7 +310,7 @@ npx tsx src/scripts/seed.ts
 ```
 
 **Output**:
-- Prints the seeded bud id, plain enrollment token, hashed token, and expiration timestamp
+- Prints the seeded Bud id and notes whether `DEV_BUD_TOKEN_BYPASS` is configured
 
 ### `check-tables.ts`
 

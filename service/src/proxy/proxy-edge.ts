@@ -437,26 +437,40 @@ export async function openProxyEdgeStream(args: {
     },
   });
 
-  const sent = sendDataPlaneControlFrame(dataTracker, {
-    proto: PROTO_VERSION,
-    type: "proxy_open",
-    id: `msg_${ulid()}`,
-    ts: Date.now(),
-    ext: {},
-    operation_id: operationId,
-    stream_id: streamId,
-    proxy_session_id: args.session.proxySessionId,
-    stream_type: LOCALHOST_PROXY_STREAM_TYPE,
-    target_host: args.session.targetHost,
-    target_port: args.session.targetPort,
-    method,
-    path: targetPath,
-    headers: sanitizeRequestHeaders(args.request.headers),
-    initial_credit_bytes: dataTracker.initialCreditBytes,
-    max_chunk_bytes: dataTracker.maxChunkBytes,
-  });
+  let openSendError: unknown = null;
+  let sent = false;
+  try {
+    sent = sendDataPlaneControlFrame(dataTracker, {
+      proto: PROTO_VERSION,
+      type: "proxy_open",
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
+      operation_id: operationId,
+      stream_id: streamId,
+      proxy_session_id: args.session.proxySessionId,
+      stream_type: LOCALHOST_PROXY_STREAM_TYPE,
+      target_host: args.session.targetHost,
+      target_port: args.session.targetPort,
+      method,
+      path: targetPath,
+      headers: sanitizeRequestHeaders(args.request.headers),
+      initial_credit_bytes: dataTracker.initialCreditBytes,
+      max_chunk_bytes: dataTracker.maxChunkBytes,
+    });
+  } catch (err) {
+    openSendError = err;
+  }
   if (!sent) {
     cleanup();
+    const error = {
+      code: "DATA_PLANE_UNAVAILABLE",
+      message:
+        openSendError instanceof Error
+          ? `selected data-plane carrier failed proxy_open: ${openSendError.message}`
+          : "selected data-plane carrier refused proxy_open",
+      retryable: true,
+    };
     await daemonStateStore.appendAuditEvent({
       eventType: "proxy.stream_denied",
       budId: args.session.budId,
@@ -466,7 +480,8 @@ export async function openProxyEdgeStream(args: {
       createdByUserId: args.viewer.userId,
       eventData: {
         denied_by: "service",
-        reason: "carrier_refused_open",
+        reason: openSendError ? "carrier_send_failed" : "carrier_refused_open",
+        error,
         proxy_session_id: args.session.proxySessionId,
         audit_correlation_id: args.session.auditCorrelationId,
         transport_kind: dataTracker.transportKind,
@@ -478,25 +493,17 @@ export async function openProxyEdgeStream(args: {
       from: ["opening"],
       to: "reset",
       resetReason: "transport_lost",
-      error: {
-        code: "DATA_PLANE_UNAVAILABLE",
-        message: "selected data-plane carrier refused proxy_open",
-        retryable: true,
-      },
+      error,
     });
     await daemonStateStore.transitionOperation({
       operationId,
       from: ["offered"],
       to: "rejected",
-      error: {
-        code: "DATA_PLANE_UNAVAILABLE",
-        message: "selected data-plane carrier refused proxy_open",
-        retryable: true,
-      },
+      error,
     });
     return args.reply.status(424).send({
       error: "DATA_PLANE_UNAVAILABLE",
-      message: "selected data-plane carrier refused proxy_open",
+      message: error.message,
     });
   }
 
@@ -588,6 +595,56 @@ export async function openProxyEdgeStream(args: {
   const statusCode = openResult.status_code ?? 502;
   if (!openResult.status_code) {
     cleanup();
+    const error = {
+      code: "INVALID_PROXY_OPEN_RESULT",
+      message: "Bud accepted the proxy stream without an HTTP status code",
+      retryable: false,
+    };
+    await resetRemote("protocol_error", error);
+    await daemonStateStore
+      .appendAuditEvent({
+        eventType: "proxy.stream_denied",
+        budId: args.session.budId,
+        userId: args.viewer.userId,
+        operationId,
+        streamId,
+        createdByUserId: args.viewer.userId,
+        eventData: {
+          denied_by: "daemon",
+          reason: "invalid_open_result",
+          error,
+          proxy_session_id: args.session.proxySessionId,
+          audit_correlation_id: args.session.auditCorrelationId,
+          transport_kind: dataTracker.transportKind,
+          data_transport_session_id: dataTracker.transportSessionId ?? null,
+        },
+      })
+      .catch(() => null);
+    await daemonStateStore
+      .transitionStream({
+        streamId,
+        from: ["opening", "open", "half_closed_local", "half_closed_remote"],
+        to: "reset",
+        resetReason: "protocol_error",
+        error,
+      })
+      .catch(() => null);
+    await daemonStateStore
+      .transitionOperation({
+        operationId,
+        from: ["offered"],
+        to: "rejected",
+        error,
+      })
+      .catch(() => null);
+    await daemonStateStore
+      .transitionOperation({
+        operationId,
+        from: ["accepted", "running"],
+        to: "failed",
+        error,
+      })
+      .catch(() => null);
     return args.reply.status(502).send({
       error: "invalid_proxy_open_result",
       message: "Bud accepted the proxy stream without an HTTP status code",

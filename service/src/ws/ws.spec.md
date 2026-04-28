@@ -68,8 +68,8 @@ Browser/Client                 Service                      Bud Daemon
      │                           │                              │
      │                           │◄───── hello ─────────────────│
      │                           │                              │
-     │                           │   (enrollment token or       │
-     │                           │   challenge-response auth)   │
+     │                           │   (device-secret challenge   │
+     │                           │   or dev token bypass)       │
      │                           │                              │
      │                           │────── hello_ack ────────────►│
      │                           │                              │
@@ -164,24 +164,29 @@ Direct regression coverage for the extracted Bud connection runtime.
 
 **Authentication Flow**:
 
-1. **Token Enrollment** (new bud):
-   - Bud sends `hello` with `token`
-   - Service validates token, creates bud record
-   - Service sends `hello_ack` with `bud_id` and `device_secret`
-   - Bud persists identity for future connections
+1. **Browser-Mediated Claim** (normal new bud):
+   - Bud starts `/api/device-auth/*` over HTTP and waits for browser approval
+   - after approval, Bud reconnects with `bud_id` and completes challenge-response auth
+   - `/ws` no longer accepts database-backed legacy enrollment tokens
 
-2. **Challenge-Response** (returning bud):
+2. **Dev-Only Token Bypass** (local automation):
+   - Bud sends `hello` with `token`
+   - service accepts the token only when it exactly matches `DEV_BUD_TOKEN_BYPASS`
+   - service creates a local-only Bud record and sends `hello_ack` with `bud_id` and `device_secret`
+   - this path is for smoke/dev harnesses only and must not be used for production onboarding
+
+3. **Challenge-Response** (returning bud):
    - Bud sends `hello` with `bud_id`
    - Service sends `hello_challenge` with random `nonce`
    - Bud computes HMAC-SHA256 of nonce with device_secret
    - Bud sends `hello_proof` with `hmac`
-   - Service verifies, sends `hello_ack`
+   - Service verifies, registers durable/session trackers, then sends `hello_ack`
 
-3. **Claim Completion Sync**:
+4. **Claim Completion Sync**:
    - Bud `hello` frames now include `installation_id`
    - successful challenge auth can mark matching `device_auth_flow` rows as `completed`
    - approved claim secrets are cleared only after the daemon reconnects successfully
-   - `terminal.bud_online` notifications are emitted only after `hello_ack` has been sent and the Bud has been registered in the in-memory session map, so follow-up `terminal_ensure` calls can route immediately
+   - `terminal.bud_online` notifications are emitted only after the Bud has been registered and `hello_ack` has been sent, so follow-up `terminal_ensure` calls can route immediately
 
 **Important**: Browser-mediated claim bootstrap now happens over HTTP (`/api/device-auth/*`) before `/ws`; `/ws` remains the long-lived daemon transport and challenge-response path.
 
@@ -217,7 +222,7 @@ The gateway also rejects `hello` frames that do not advertise `bud_envelope.vers
 | `proxy_open_result` | proxy runtime open-result delivery |
 | `file_open_result` | file runtime open-result delivery |
 
-Enrollment-token validation now routes through the shared `auth/enrollment-token.ts` helper so seed/bootstrap writes and gateway checks use the same hash contract.
+Database-backed enrollment-token validation is disabled on the gateway. The only token path is the exact `DEV_BUD_TOKEN_BYPASS` local bypass; normal onboarding uses browser-mediated device claim.
 
 **Capabilities Tracking**:
 
@@ -246,7 +251,6 @@ The gateway still tolerates deprecated tmux-shaped hello fields from older daemo
 - `config.heartbeatSec` - Expected heartbeat interval (default: 30)
 - `config.offlineGraceSec` - Grace period before marking offline (default: 90)
 - `config.devTokenBypass` - Dev-mode token bypass
-- `config.enrollmentHashSecret` - Token hashing secret
 - `/api/device-auth/*` routes - Claim bootstrap surfaces that feed the post-approval `/ws` reconnect path
 
 ## Dependencies
@@ -258,11 +262,10 @@ The gateway still tolerates deprecated tmux-shaped hello fields from older daemo
 | `zod` | Frame validation |
 | `crypto` | Challenge-response HMAC and nonce generation |
 | `../db/client.js` | Database access |
-| `../db/schema.js` | Bud/token tables |
+| `../db/schema.js` | Bud and device-claim tables |
 | `../config.js` | Configuration |
-| `../auth/enrollment-token.js` | Shared enrollment-token hashing |
 | `../runtime/*.js` | Terminal runtime and presence routing |
-| `../transport/composite-daemon-router.js` | Daemon transport adapter that prefers active gRPC control streams and falls back to WebSocket |
+| `../transport/composite-daemon-router.js` | Daemon transport adapter that follows the explicit carrier policy and falls back across active carriers |
 | `../transport/data-plane-router.js` | WebSocket carrier registration and shared generic stream dispatch |
 
 ## TODOs / Technical Debt

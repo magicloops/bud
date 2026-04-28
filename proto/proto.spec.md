@@ -19,7 +19,7 @@ Checked-in conformance fixtures used by both service and daemon tests.
 ## Dependencies
 
 - [../docs/proto.md](../docs/proto.md) - human-readable protocol documentation
-- [../plan/network-upgrade/implementation-spec.md](../plan/network-upgrade/implementation-spec.md) - network-upgrade implementation plan
+- [../plan/swappable-transport/implementation-spec.md](../plan/swappable-transport/implementation-spec.md) - current swappable-transport implementation plan
 
 ---
 

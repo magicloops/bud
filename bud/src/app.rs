@@ -68,6 +68,12 @@ struct SessionMeta {
     envelope_binary: bool,
 }
 
+#[derive(Clone, Copy)]
+enum HelloTransportMode {
+    WebSocket,
+    GrpcControl,
+}
+
 struct GrpcDataAttachment {
     sender: mpsc::Sender<Value>,
     writer_handle: task::JoinHandle<()>,
@@ -154,9 +160,23 @@ impl BudApp {
 
     async fn connect_once(&mut self) -> Result<()> {
         if let Some(endpoint) = self.args.grpc_control_url.clone() {
-            return self.connect_once_grpc(endpoint).await;
+            match self.connect_once_grpc(endpoint).await {
+                Ok(()) => return Ok(()),
+                Err(err) if grpc_error_allows_websocket_fallback(&err) => {
+                    warn!(
+                        error = ?err,
+                        server = %self.args.server,
+                        "gRPC control unavailable; falling back to WebSocket baseline"
+                    );
+                }
+                Err(err) => return Err(err),
+            }
         }
 
+        self.connect_once_websocket().await
+    }
+
+    async fn connect_once_websocket(&mut self) -> Result<()> {
         loop {
             if self.identity.is_none() && self.args.token.is_none() {
                 self.bootstrap_device_auth().await?;
@@ -224,7 +244,7 @@ impl BudApp {
                 }
             });
             let sender = TransportSender::grpc(frame_tx.clone());
-            let hello_frame = self.build_hello_frame()?;
+            let hello_frame = self.build_hello_frame(HelloTransportMode::GrpcControl)?;
             send_transport_frame(&sender, hello_frame)?;
 
             let mut stream =
@@ -651,7 +671,9 @@ impl BudApp {
         (WebSocketStream<MaybeTlsStream<TcpStream>>, SessionMeta),
         HandshakeError,
     > {
-        let hello_frame = self.build_hello_frame().map_err(HandshakeError::Other)?;
+        let hello_frame = self
+            .build_hello_frame(HelloTransportMode::WebSocket)
+            .map_err(HandshakeError::Other)?;
         stream
             .send(Message::Binary(
                 encode_bud_frame(&hello_frame).map_err(HandshakeError::Other)?,
@@ -1103,7 +1125,7 @@ impl BudApp {
             &self.args.server,
             &self.installation_id,
             &self.args.name,
-            self.device_capabilities(),
+            self.device_capabilities(HelloTransportMode::WebSocket),
         )
         .await?;
         print_device_claim_instructions(&start);
@@ -1169,7 +1191,7 @@ impl BudApp {
         }
     }
 
-    fn build_hello_frame(&self) -> Result<Value> {
+    fn build_hello_frame(&self, transport_mode: HelloTransportMode) -> Result<Value> {
         let mut frame = Map::new();
         frame.insert("proto".into(), Value::String(PROTO_VERSION.into()));
         frame.insert("type".into(), Value::String("hello".into()));
@@ -1187,7 +1209,10 @@ impl BudApp {
             "installation_id".into(),
             Value::String(self.installation_id.clone()),
         );
-        frame.insert("capabilities".into(), self.device_capabilities());
+        frame.insert(
+            "capabilities".into(),
+            self.device_capabilities(transport_mode),
+        );
 
         if let Some(identity) = &self.identity {
             frame.insert("bud_id".into(), Value::String(identity.bud_id.clone()));
@@ -1200,12 +1225,12 @@ impl BudApp {
         Ok(Value::Object(frame))
     }
 
-    fn device_capabilities(&self) -> Value {
+    fn device_capabilities(&self, transport_mode: HelloTransportMode) -> Value {
         let terminal_available =
             self.args.terminal_enabled && self.terminal_manager.config.tmux_available;
-        let websocket_mode = self.args.grpc_control_url.is_none();
-        let grpc_data_mode =
-            self.args.grpc_control_url.is_some() && self.args.grpc_data_url.is_some();
+        let websocket_mode = matches!(transport_mode, HelloTransportMode::WebSocket);
+        let grpc_data_mode = matches!(transport_mode, HelloTransportMode::GrpcControl)
+            && self.args.grpc_data_url.is_some();
         let stream_frames_supported = websocket_mode || grpc_data_mode;
 
         json!({
@@ -1217,8 +1242,8 @@ impl BudApp {
             "bud_envelope": {
                 "version": 1,
                 "websocket_binary": true,
-                "h2_grpc_control": self.args.grpc_control_url.is_some(),
-                "h2_data": self.args.grpc_data_url.is_some(),
+                "h2_grpc_control": matches!(transport_mode, HelloTransportMode::GrpcControl),
+                "h2_data": grpc_data_mode,
                 "stream_frames": stream_frames_supported
             },
             "proxy": {
@@ -1233,4 +1258,12 @@ impl BudApp {
             },
         })
     }
+}
+
+fn grpc_error_allows_websocket_fallback(err: &anyhow::Error) -> bool {
+    !err.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("gRPC handshake (code=AUTH_FAILED)")
+    })
 }

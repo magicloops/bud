@@ -1,17 +1,24 @@
 # network-upgrade
 
-Implementation planning documents for moving Bud's daemon-service networking from WebSocket-only JSON frames to a transport-independent protobuf protocol with HTTP/2 gRPC control, a data-plane selector that can prefer QUIC and fall back to HTTP/2 or bounded WebSocket compatibility, and product features built on that shared stream model.
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
+Historical implementation planning documents from the earlier HTTP/2-first daemon-networking direction.
 
 ## Purpose
 
-This folder turns the analysis in:
+This folder is no longer the active implementation plan. It is retained only as origin context because several useful protocol and stream-state shapes from the HTTP/2-first work informed the current WebSocket-baseline design.
+
+The active plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). New work should be tracked there unless the team explicitly reopens this older direction.
+
+Historically, this folder turned the analysis in:
 
 - [../../review/network-upgrade.md](../../review/network-upgrade.md)
 - [../../reference/protocol-transport-design-goals.md](../../reference/protocol-transport-design-goals.md)
 
 into a phased implementation specification.
 
-The plan assumes:
+The superseded plan assumed:
 
 - web and mobile clients remain on service-owned REST plus SSE
 - HTTP/2 gRPC is the required daemon control path
@@ -27,7 +34,7 @@ The plan assumes:
 
 ### `implementation-spec.md`
 
-Parent implementation spec for the full network upgrade.
+Superseded parent implementation spec for the full network upgrade.
 
 Documents:
 
@@ -41,7 +48,7 @@ Documents:
 
 ### `current-pr-http2-upgrade-scope.md`
 
-Current scope reset for the active PR.
+Superseded scope reset for the older HTTP/2-first PR direction.
 
 Documents:
 
@@ -184,18 +191,18 @@ Cleanup phase covering:
 
 ### `progress-checklist.md`
 
-Running implementation checklist for the network upgrade.
+Superseded running implementation checklist for the network upgrade.
 
 ### `validation-checklist.md`
 
-Manual and automated validation checklist for the network upgrade.
+Superseded manual and automated validation checklist for the network upgrade.
 
 ## Dependencies
 
-- [../../review/network-upgrade.md](../../review/network-upgrade.md) - current implementation review and migration conclusions
+- [../../review/network-upgrade.md](../../review/network-upgrade.md) - historical implementation review and migration conclusions
 - [../../reference/protocol-transport-design-goals.md](../../reference/protocol-transport-design-goals.md) - target transport requirements and goals
 - [../../reference/connect-vs-grpc-js.md](../../reference/connect-vs-grpc-js.md) - Buf/Connect/grpc-js daemon gateway decision note
-- [current-pr-http2-upgrade-scope.md](./current-pr-http2-upgrade-scope.md) - current PR scope reset and follow-on split
+- [current-pr-http2-upgrade-scope.md](./current-pr-http2-upgrade-scope.md) - superseded PR scope reset and follow-on split
 - [../../design/network-upgrade-file-serving-productization.md](../../design/network-upgrade-file-serving-productization.md) - follow-on file serving design
 - [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md) - follow-on QUIC transport design
 - [../../design/network-upgrade-web-serving-productization.md](../../design/network-upgrade-web-serving-productization.md) - follow-on web serving design
@@ -216,10 +223,7 @@ Manual and automated validation checklist for the network upgrade.
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Phase 2 initially uses isolated `@grpc/proto-loader` inside `service/src/grpc/`; switch to Buf-managed grpc-js TypeScript generation if the adapter becomes unsafe or noisy.
-- Phase 2 uses the existing shared-secret challenge as a documented transition credential; keypair challenge, mTLS, or short-lived token binding remain required design work before file/web-serving capabilities depend on gRPC control.
-- The QUIC gateway placement is still deferred until the stream semantics are stable, but QUIC is now the preferred long-term carrier for file serving and web serving rather than a generic optional nice-to-have.
-- File serving, web serving, and WebSocket data fallback are intentionally follow-on product/transport PRs after the HTTP/2 upgrade.
+- Do not add new active implementation checklist items to this folder. Use [../swappable-transport/](../swappable-transport/) for forward tracking.
 
 ---
 

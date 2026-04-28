@@ -4,7 +4,7 @@ Implementation planning documents for reframing the network-upgrade branch aroun
 
 ## Purpose
 
-This folder turns the review in [../../review/network-upgrade-websocket-first-pr-review.md](../../review/network-upgrade-websocket-first-pr-review.md) into an actionable phased implementation plan.
+This folder turns the review in [../../review/network-upgrade-websocket-first-pr-review.md](../../review/network-upgrade-websocket-first-pr-review.md) and the current branch review in [../../review/network-upgrade/current-branch-review.md](../../review/network-upgrade/current-branch-review.md) into an actionable phased implementation plan.
 
 The plan assumes:
 
@@ -15,6 +15,7 @@ The plan assumes:
 - HTTP/2 gRPC control/data stays useful as an optional advanced carrier, but is no longer the definition of correctness.
 - QUIC is deferred as a data-plane optimization for hosted or advanced deployments.
 - File viewing and localhost web proxying have foundation smokes over WebSocket binary protobuf envelopes; Phase 5 has added route-auth coverage, bounded service limits, audit observability, and product handoff docs before UI/API exposure.
+- Phase 6 and Phase 7 are branch-landing cleanup phases for carrier policy/correctness and protobuf debt. They do not productize file viewer or web proxy UX.
 - Browser and mobile clients keep using service-owned REST plus SSE; they do not connect directly to daemons.
 - File viewer and web proxy product work must not learn carrier-specific behavior.
 
@@ -95,7 +96,30 @@ Productization gate covering:
 - audit and observability requirements before product UI lands
 - lazy-on-click file session and explicit user-action proxy session product decisions
 
-### `phase-6-optional-transport-upgrades.md`
+### `phase-6-landing-correctness-and-fallback-policy.md`
+
+Landing-correctness phase covering:
+
+- explicit carrier preference/fallback policy
+- alignment between control and data carrier selection
+- daemon gRPC fallback behavior
+- `stream_close.final_offset` validation
+- durable cleanup for file/proxy open send failures and invalid accepted results
+- WebSocket/gRPC handshake registration ordering
+- ownerless legacy enrollment-token cleanup
+
+### `phase-7-protobuf-layer-cleanup.md`
+
+Protocol cleanup phase covering:
+
+- `frame_json` and `LegacyJsonPayload` inventory
+- generated vs. manual codec decision
+- core stream lifecycle payload cleanup
+- conformance fixture expansion
+- safe JavaScript `uint64` handling
+- documentation of any remaining compatibility bridge
+
+### `phase-8-optional-transport-upgrades.md`
 
 Optional carrier phase covering:
 
@@ -114,8 +138,9 @@ Manual and automated validation checklist for WebSocket-first stream behavior an
 ## Dependencies
 
 - [../../review/network-upgrade-websocket-first-pr-review.md](../../review/network-upgrade-websocket-first-pr-review.md) - PR review that motivates the pivot
-- [../network-upgrade/implementation-spec.md](../network-upgrade/implementation-spec.md) - previous HTTP/2-first implementation plan retained as historical context
-- [../network-upgrade/current-pr-http2-upgrade-scope.md](../network-upgrade/current-pr-http2-upgrade-scope.md) - previous current-PR scope reset
+- [../../review/network-upgrade/current-branch-review.md](../../review/network-upgrade/current-branch-review.md) - current branch review that motivates Phase 6 and Phase 7 cleanup
+- [../network-upgrade/implementation-spec.md](../network-upgrade/implementation-spec.md) - superseded HTTP/2-first implementation plan retained as historical context
+- [../network-upgrade/current-pr-http2-upgrade-scope.md](../network-upgrade/current-pr-http2-upgrade-scope.md) - superseded current-PR scope reset retained as historical context
 - [../../design/network-upgrade-file-serving-productization.md](../../design/network-upgrade-file-serving-productization.md) - follow-on file viewer design context
 - [../../design/network-upgrade-web-serving-productization.md](../../design/network-upgrade-web-serving-productization.md) - follow-on web proxy design context
 - [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md) - deferred QUIC data-plane design context
@@ -133,8 +158,9 @@ Manual and automated validation checklist for WebSocket-first stream behavior an
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- The old `plan/network-upgrade/` documents still describe HTTP/2 gRPC as required control/data infrastructure. Use this folder as the forward implementation plan unless the team explicitly reopens the HTTP/2-first direction.
-- Transitional `frame_json` payload bodies still exist for optional gRPC adapter paths and later stream/proxy/file foundation frames. The active WebSocket terminal/control path has moved to typed protobuf fields; remove the remaining `frame_json` usage as each stream family is productized over the WebSocket carrier.
+- The old `plan/network-upgrade/` documents are now marked superseded and retained only as origin context for the HTTP/2-first work. Keep this folder as the forward implementation plan unless the team explicitly reopens that direction.
+- Transitional `frame_json` payload bodies still exist for optional gRPC adapter paths and proxy/file open-result frames. Phase 7 moved core stream lifecycle frames to direct typed payload fields and tracks the remaining protocol bridge before optional carriers or product surfaces copy it forward.
+- Phase 6 still needs to close fallback policy, stream final-offset validation, durable cleanup for open failures, handshake ordering, and ownerless enrollment behavior.
 - File viewing and web proxy product UI can now build on Phase 5 ownership, limit, audit, and operator-hardening foundations, but still need feature-specific frontend/UX validation before exposure.
 
 ---

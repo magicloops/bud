@@ -93,6 +93,7 @@ Environment-based configuration with defaults.
 | `grpcDataMaxConcurrentStreams` | `GRPC_DATA_MAX_CONCURRENT_STREAMS` | - | Optional grpc-js max concurrent HTTP/2 streams setting for data |
 | `grpcDataMaxSessionMemory` | `GRPC_DATA_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting for data |
 | `grpcDataEnableChannelz` | `GRPC_DATA_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle for data |
+| `daemonTransportPolicy` | `DAEMON_TRANSPORT_POLICY` | websocket_baseline | Carrier preference order for daemon control and data-plane selection (`websocket_baseline`, `h2_preferred`, `quic_preferred`) |
 | `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy streams |
 | `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy streams |
 | `dataPlaneMaxInFlightBytes` | `DATA_PLANE_MAX_IN_FLIGHT_BYTES` | 1MB | Cap on accumulated outbound stream credit per runtime stream |
@@ -185,11 +186,11 @@ Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative pa
 
 ### `grpc/` → [grpc.spec.md](./grpc/grpc.spec.md)
 
-HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolated behind the transport router and `BudEnvelope.frame_json` compatibility adapter.
+HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolated behind the transport router and bounded `BudEnvelope.frame_json` compatibility adapter.
 
 ### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
 
-Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation keeps WebSocket as the baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, credit caps, per-Bud stream concurrency, and generic stream dispatch used by localhost proxy and file responses.
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy and file responses.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 

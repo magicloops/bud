@@ -89,6 +89,12 @@ const FIELD_LEVEL_FRAME_TYPES = new Set([
   "terminal_ready",
   "reconnect_report",
   "reconciliation_decision",
+  "data_attach",
+  "data_attach_ack",
+  "stream_data",
+  "stream_credit",
+  "stream_reset",
+  "stream_close",
 ]);
 
 const STREAM_TYPE_PROTO_VALUES: Record<string, number> = {
@@ -671,6 +677,43 @@ function encodeFieldLevelPayload(frameType: string, frame: Record<string, unknow
       writeRepeatedMessages(chunks, 1, arrayField(frame, "operations").map(encodeOperationStatus));
       writeRepeatedMessages(chunks, 2, arrayField(frame, "streams").map(encodeStreamStatus));
       break;
+    case "data_attach":
+      writeOptionalString(chunks, 1, stringField(frame, "bud_id"));
+      writeOptionalString(chunks, 2, stringField(frame, "device_session_id"));
+      writeOptionalString(chunks, 3, stringField(frame, "control_transport_session_id"));
+      writeRepeatedStrings(chunks, 4, stringArrayField(frame, "streams"));
+      writeOptionalUint32(chunks, 5, numberField(frame, "max_chunk_bytes"));
+      writeOptionalUint64(chunks, 6, numberField(frame, "initial_credit_bytes"));
+      break;
+    case "data_attach_ack":
+      writeOptionalString(chunks, 1, stringField(frame, "bud_id"));
+      writeOptionalString(chunks, 2, stringField(frame, "device_session_id"));
+      writeOptionalString(chunks, 3, stringField(frame, "transport_session_id"));
+      writeRepeatedStrings(chunks, 4, stringArrayField(frame, "streams"));
+      writeOptionalUint32(chunks, 5, numberField(frame, "max_chunk_bytes"));
+      writeOptionalUint64(chunks, 6, numberField(frame, "initial_credit_bytes"));
+      break;
+    case "stream_data":
+      writeOptionalString(chunks, 1, stringField(frame, "stream_id"));
+      writeOptionalEnum(chunks, 2, STREAM_TYPE_PROTO_VALUES[stringField(frame, "stream_type") ?? ""]);
+      writeOptionalUint64(chunks, 3, numberField(frame, "offset"));
+      writeOptionalBase64Bytes(chunks, 4, stringField(frame, "data"));
+      writeOptionalBool(chunks, 5, booleanField(frame, "end_stream"));
+      break;
+    case "stream_credit":
+      writeOptionalString(chunks, 1, stringField(frame, "stream_id"));
+      writeOptionalUint64(chunks, 2, numberField(frame, "receive_offset"));
+      writeOptionalUint64(chunks, 3, numberField(frame, "credit_bytes"));
+      break;
+    case "stream_reset":
+      writeOptionalString(chunks, 1, stringField(frame, "stream_id"));
+      writeOptionalEnum(chunks, 2, STREAM_RESET_REASON_PROTO_VALUES[stringField(frame, "reason") ?? ""]);
+      writeOptionalMessage(chunks, 3, encodeBudError(recordField(frame, "error")));
+      break;
+    case "stream_close":
+      writeOptionalString(chunks, 1, stringField(frame, "stream_id"));
+      writeOptionalUint64(chunks, 2, numberField(frame, "final_offset"));
+      break;
     default:
       return null;
   }
@@ -759,9 +802,9 @@ function decodeFieldLevelPayload(
         break;
       case "terminal_output":
         if (fieldNumber === 1) frame.session_id = reader.readStringForWireType(wireType);
-        else if (fieldNumber === 2) frame.seq = Number(reader.readVarintForWireType(wireType));
+        else if (fieldNumber === 2) frame.seq = readSafeUint64(reader, wireType, "terminal_output.seq");
         else if (fieldNumber === 3) frame.data = Buffer.from(reader.readBytesForWireType(wireType)).toString("base64");
-        else if (fieldNumber === 4) frame.byte_offset = Number(reader.readVarintForWireType(wireType));
+        else if (fieldNumber === 4) frame.byte_offset = readSafeUint64(reader, wireType, "terminal_output.byte_offset");
         else reader.skip(wireType);
         break;
       case "terminal_ready":
@@ -775,6 +818,26 @@ function decodeFieldLevelPayload(
       case "reconciliation_decision":
         if (fieldNumber === 1) pushArrayValue(frame, "operations", decodeOperationStatus(reader.readBytesForWireType(wireType)));
         else if (fieldNumber === 2) pushArrayValue(frame, "streams", decodeStreamStatus(reader.readBytesForWireType(wireType)));
+        else reader.skip(wireType);
+        break;
+      case "data_attach":
+        readDataAttachField(frame, reader, fieldNumber, wireType);
+        break;
+      case "data_attach_ack":
+        readDataAttachAckField(frame, reader, fieldNumber, wireType);
+        break;
+      case "stream_data":
+        readStreamDataField(frame, reader, fieldNumber, wireType);
+        break;
+      case "stream_credit":
+        readStreamCreditField(frame, reader, fieldNumber, wireType);
+        break;
+      case "stream_reset":
+        readStreamResetField(frame, reader, fieldNumber, wireType);
+        break;
+      case "stream_close":
+        if (fieldNumber === 1) frame.stream_id = reader.readStringForWireType(wireType);
+        else if (fieldNumber === 2) frame.final_offset = readSafeUint64(reader, wireType, "stream_close.final_offset");
         else reader.skip(wireType);
         break;
       default:
@@ -858,22 +921,22 @@ function decodeAwaitReady(bytes: Uint8Array): Record<string, unknown> {
         awaitReady.enabled = reader.readVarintForWireType(wireType) !== 0n;
         break;
       case 2:
-        awaitReady.quiescence_ms = Number(reader.readVarintForWireType(wireType));
+        awaitReady.quiescence_ms = readSafeUint64(reader, wireType, "await_ready.quiescence_ms");
         break;
       case 3:
-        awaitReady.max_wait_ms = Number(reader.readVarintForWireType(wireType));
+        awaitReady.max_wait_ms = readSafeUint64(reader, wireType, "await_ready.max_wait_ms");
         break;
       case 4:
         awaitReady.activity_based = reader.readVarintForWireType(wireType) !== 0n;
         break;
       case 5:
-        awaitReady.activity_interval_ms = Number(reader.readVarintForWireType(wireType));
+        awaitReady.activity_interval_ms = readSafeUint64(reader, wireType, "await_ready.activity_interval_ms");
         break;
       case 6:
         awaitReady.activity_stable_count = Number(reader.readVarintForWireType(wireType));
         break;
       case 7:
-        awaitReady.activity_initial_delay_ms = Number(reader.readVarintForWireType(wireType));
+        awaitReady.activity_initial_delay_ms = readSafeUint64(reader, wireType, "await_ready.activity_initial_delay_ms");
         break;
       default:
         reader.skip(wireType);
@@ -957,10 +1020,10 @@ function decodeStreamStatus(bytes: Uint8Array): Record<string, unknown> {
         status.state = STREAM_STATE_JSON_VALUES[Number(reader.readVarintForWireType(wireType))] ?? "unknown";
         break;
       case 5:
-        status.send_offset = Number(reader.readVarintForWireType(wireType));
+        status.send_offset = readSafeUint64(reader, wireType, "stream_status.send_offset");
         break;
       case 6:
-        status.receive_offset = Number(reader.readVarintForWireType(wireType));
+        status.receive_offset = readSafeUint64(reader, wireType, "stream_status.receive_offset");
         break;
       case 7:
         status.reset_reason = STREAM_RESET_REASON_JSON_VALUES[Number(reader.readVarintForWireType(wireType))] ?? "protocol_error";
@@ -1054,9 +1117,9 @@ function readTerminalSendField(frame: Record<string, unknown>, reader: ProtoRead
   else if (fieldNumber === 3) frame.text = reader.readStringForWireType(wireType);
   else if (fieldNumber === 4) frame.submit = reader.readVarintForWireType(wireType) !== 0n;
   else if (fieldNumber === 5) frame.key = reader.readStringForWireType(wireType);
-  else if (fieldNumber === 6) frame.observe_after_ms = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 6) frame.observe_after_ms = readSafeUint64(reader, wireType, "terminal_send.observe_after_ms");
   else if (fieldNumber === 7) frame.wait_for = reader.readStringForWireType(wireType);
-  else if (fieldNumber === 8) frame.timeout_ms = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 8) frame.timeout_ms = readSafeUint64(reader, wireType, "terminal_send.timeout_ms");
   else reader.skip(wireType);
 }
 
@@ -1076,7 +1139,7 @@ function readTerminalObserveField(frame: Record<string, unknown>, reader: ProtoR
   else if (fieldNumber === 3) frame.view = reader.readStringForWireType(wireType);
   else if (fieldNumber === 4) frame.lines = Number(reader.readVarintForWireType(wireType));
   else if (fieldNumber === 5) frame.wait_for = reader.readStringForWireType(wireType);
-  else if (fieldNumber === 6) frame.timeout_ms = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 6) frame.timeout_ms = readSafeUint64(reader, wireType, "terminal_observe.timeout_ms");
   else reader.skip(wireType);
 }
 
@@ -1085,8 +1148,8 @@ function readTerminalObserveResultField(frame: Record<string, unknown>, reader: 
   else if (fieldNumber === 2) frame.request_id = reader.readStringForWireType(wireType);
   else if (fieldNumber === 3) frame.view = reader.readStringForWireType(wireType);
   else if (fieldNumber === 4) frame.output = Buffer.from(reader.readBytesForWireType(wireType)).toString("base64");
-  else if (fieldNumber === 5) frame.output_bytes = Number(reader.readVarintForWireType(wireType));
-  else if (fieldNumber === 6) frame.lines_captured = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 5) frame.output_bytes = readSafeUint64(reader, wireType, "terminal_observe_result.output_bytes");
+  else if (fieldNumber === 6) frame.lines_captured = readSafeUint64(reader, wireType, "terminal_observe_result.lines_captured");
   else if (fieldNumber === 7) frame.changed = reader.readVarintForWireType(wireType) !== 0n;
   else if (fieldNumber === 8) frame.truncated = reader.readVarintForWireType(wireType) !== 0n;
   else if (fieldNumber === 9) frame.readiness = parseJsonBytes(reader.readBytesForWireType(wireType));
@@ -1101,6 +1164,49 @@ function readReconnectReportField(frame: Record<string, unknown>, reader: ProtoR
   else if (fieldNumber === 4) pushArrayValue(frame, "streams", decodeStreamStatus(reader.readBytesForWireType(wireType)));
   else if (fieldNumber === 5) frame.local_policy_version = reader.readStringForWireType(wireType);
   else if (fieldNumber === 6) pushArrayValue(frame, "terminal_sessions", reader.readStringForWireType(wireType));
+  else reader.skip(wireType);
+}
+
+function readDataAttachField(frame: Record<string, unknown>, reader: ProtoReader, fieldNumber: number, wireType: number): void {
+  if (fieldNumber === 1) frame.bud_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 2) frame.device_session_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 3) frame.control_transport_session_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 4) pushArrayValue(frame, "streams", reader.readStringForWireType(wireType));
+  else if (fieldNumber === 5) frame.max_chunk_bytes = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 6) frame.initial_credit_bytes = readSafeUint64(reader, wireType, "data_attach.initial_credit_bytes");
+  else reader.skip(wireType);
+}
+
+function readDataAttachAckField(frame: Record<string, unknown>, reader: ProtoReader, fieldNumber: number, wireType: number): void {
+  if (fieldNumber === 1) frame.bud_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 2) frame.device_session_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 3) frame.transport_session_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 4) pushArrayValue(frame, "streams", reader.readStringForWireType(wireType));
+  else if (fieldNumber === 5) frame.max_chunk_bytes = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 6) frame.initial_credit_bytes = readSafeUint64(reader, wireType, "data_attach_ack.initial_credit_bytes");
+  else reader.skip(wireType);
+}
+
+function readStreamDataField(frame: Record<string, unknown>, reader: ProtoReader, fieldNumber: number, wireType: number): void {
+  if (fieldNumber === 1) frame.stream_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 2) frame.stream_type = STREAM_TYPE_JSON_VALUES[Number(reader.readVarintForWireType(wireType))] ?? "terminal_interactive";
+  else if (fieldNumber === 3) frame.offset = readSafeUint64(reader, wireType, "stream_data.offset");
+  else if (fieldNumber === 4) frame.data = Buffer.from(reader.readBytesForWireType(wireType)).toString("base64");
+  else if (fieldNumber === 5) frame.end_stream = reader.readVarintForWireType(wireType) !== 0n;
+  else reader.skip(wireType);
+}
+
+function readStreamCreditField(frame: Record<string, unknown>, reader: ProtoReader, fieldNumber: number, wireType: number): void {
+  if (fieldNumber === 1) frame.stream_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 2) frame.receive_offset = readSafeUint64(reader, wireType, "stream_credit.receive_offset");
+  else if (fieldNumber === 3) frame.credit_bytes = readSafeUint64(reader, wireType, "stream_credit.credit_bytes");
+  else reader.skip(wireType);
+}
+
+function readStreamResetField(frame: Record<string, unknown>, reader: ProtoReader, fieldNumber: number, wireType: number): void {
+  if (fieldNumber === 1) frame.stream_id = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 2) frame.reason = STREAM_RESET_REASON_JSON_VALUES[Number(reader.readVarintForWireType(wireType))] ?? "protocol_error";
+  else if (fieldNumber === 3) frame.error = decodeBudError(reader.readBytesForWireType(wireType));
   else reader.skip(wireType);
 }
 
@@ -1266,9 +1372,13 @@ function writeOptionalUint32(chunks: Buffer[], fieldNumber: number, value: numbe
 }
 
 function writeOptionalUint64(chunks: Buffer[], fieldNumber: number, value: number | undefined): void {
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
-    writeVarintField(chunks, fieldNumber, value);
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return;
   }
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`uint64 field ${fieldNumber} exceeds JavaScript safe integer range`);
+  }
+  writeVarintField(chunks, fieldNumber, value);
 }
 
 function writeOptionalInt32(chunks: Buffer[], fieldNumber: number, value: number | undefined): void {
@@ -1347,6 +1457,14 @@ function writeBytes(chunks: Buffer[], fieldNumber: number, value: Uint8Array): v
     encodeVarint(value.length),
     Buffer.from(value),
   );
+}
+
+function readSafeUint64(reader: ProtoReader, wireType: number, fieldName: string): number {
+  const value = reader.readVarintForWireType(wireType);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${fieldName} exceeds JavaScript safe integer range`);
+  }
+  return Number(value);
 }
 
 function encodeVarint(value: number | bigint): Buffer {

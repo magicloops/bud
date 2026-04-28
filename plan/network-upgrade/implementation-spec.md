@@ -1,6 +1,9 @@
 # Implementation Spec: Network Upgrade
 
-**Status**: Draft
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
+**Status**: Superseded by [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md)
 **Created**: 2026-04-25
 **Review Doc**: [../../review/network-upgrade.md](../../review/network-upgrade.md)
 **Reference Goals**: [../../reference/protocol-transport-design-goals.md](../../reference/protocol-transport-design-goals.md)

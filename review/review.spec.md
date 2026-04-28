@@ -2,6 +2,16 @@
 
 Review and audit notes for architecture, implementation, and product-contract investigations. These files are analysis artifacts rather than executable source, but they are kept indexed so future work can discover prior conclusions before starting another large refactor or design pass.
 
+## Subfolders
+
+### `network-upgrade/`
+
+Current review folder for the active network-upgrade branch after the branch pivoted to a WebSocket-baseline, transport-independent protocol foundation.
+
+- [`network-upgrade/current-branch-review.md`](./network-upgrade/current-branch-review.md) - comprehensive current-branch review against `origin/main`, covering landing blockers, implementation gaps, protocol debt, legacy cleanup, and open questions.
+- [`network-upgrade/cleanup-checklist.md`](./network-upgrade/cleanup-checklist.md) - action-oriented cleanup checklist for keeping, consolidating, or marking network-upgrade files and follow-up work.
+- [`network-upgrade/network-upgrade.spec.md`](./network-upgrade/network-upgrade.spec.md) - child folder spec for the current network-upgrade review notes.
+
 ## Files
 
 ### `network-upgrade.md`

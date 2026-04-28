@@ -1,5 +1,8 @@
 # Phase 2.1: Control-Plane Hardening
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Phase 2**: [phase-2-http2-grpc-control-plane.md](./phase-2-http2-grpc-control-plane.md)
 **Status**: Implemented local hardening slice

@@ -23,8 +23,17 @@ Phase 2 router composition used by runtime code.
 
 - returns the union of active gRPC and WebSocket Bud ids
 - treats a Bud as online if either transport has an active authoritative session
-- prefers `h2_grpc` for outbound frames when a gRPC control stream is active
-- falls back to authenticated binary-envelope WebSocket sessions
+- sends outbound frames according to the explicit `DAEMON_TRANSPORT_POLICY` carrier order
+- defaults to the WebSocket baseline and falls back across active authenticated carriers when a preferred router refuses or throws
+
+### `carrier-policy.ts`
+
+Explicit service-side carrier policy for daemon control and data-plane selection.
+
+- default `websocket_baseline`: WebSocket first, then HTTP/2 fallbacks
+- `h2_preferred`: HTTP/2 data/control first, then WebSocket fallback
+- `quic_preferred`: future QUIC data first for data-plane selection, then HTTP/2/WebSocket fallback
+- shared by the composite control router and data-plane selector so control/data choices do not drift
 
 ### `grpc-daemon-router.ts`
 
@@ -59,13 +68,14 @@ Carrier-neutral data-plane registry and runtime stream dispatcher.
 - counts active runtime streams per Bud/stream family for file/proxy concurrency enforcement
 - caps accumulated outbound stream credit to the selected carrier's max in-flight byte limit
 - dispatches `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` for both WebSocket and HTTP/2 paths
+- validates `stream_close.final_offset` exactly against the runtime stream's accepted receive offset and resets on mismatch
 - finalizes logical data-plane sessions when their underlying control transport closes
 - records generic stream reset/close audit events with carrier metadata
 - exposes carrier-neutral file/proxy readiness errors: `DATA_PLANE_UNAVAILABLE`, `STREAM_FAMILY_UNSUPPORTED`, and `TRANSPORT_DEGRADED`
 
 ### `data-plane-router.test.ts`
 
-Focused unit coverage for data-plane selection and generic stream dispatch.
+Focused unit coverage for data-plane selection, explicit carrier policy ordering, generic stream dispatch, credit capping, and final-offset mismatch resets.
 
 ### `websocket-daemon-router.ts`
 
@@ -98,7 +108,7 @@ The drain state is deliberately small: it blocks new long-lived daemon streams o
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Replace the remaining stream/proxy/file typed-payload `frame_json` bridge with field-level protobuf payload mapping as those WebSocket stream families are productized.
+- Replace the remaining proxy/file open typed-payload `frame_json` bridge with field-level protobuf payload mapping as those WebSocket stream families are productized.
 - Add per-class fair scheduling and durable metrics once concurrent proxy/file data volumes require more than per-stream credit windows and per-Bud concurrency caps.
 
 ---

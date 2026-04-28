@@ -2,9 +2,10 @@ import { Buffer } from "node:buffer";
 import type { FastifyBaseLogger } from "fastify";
 import { ulid } from "ulid";
 import { z } from "zod";
-import { PROTO_VERSION } from "../config.js";
+import { PROTO_VERSION, type DaemonTransportPolicy } from "../config.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import { EnvelopeSchema } from "../ws/protocol.js";
+import { rankDataPlaneTransport } from "./carrier-policy.js";
 import type { DaemonTransportPayload } from "./daemon-router.js";
 import { grpcDaemonTransportRouter } from "./grpc-daemon-router.js";
 import { websocketDaemonTransportRouter } from "./websocket-daemon-router.js";
@@ -110,11 +111,17 @@ export type DataPlaneCarrierSelection =
       initialCreditBytes: number | null;
     };
 
+const SafeNonnegativeIntegerSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .refine(Number.isSafeInteger, "must be a safe integer");
+
 const StreamDataSchema = EnvelopeSchema.extend({
   type: z.literal("stream_data"),
   stream_id: z.string(),
   stream_type: z.string(),
-  offset: z.number().int().nonnegative(),
+  offset: SafeNonnegativeIntegerSchema,
   data: z.string(),
   end_stream: z.boolean().optional().default(false),
 });
@@ -122,8 +129,8 @@ const StreamDataSchema = EnvelopeSchema.extend({
 const StreamCreditSchema = EnvelopeSchema.extend({
   type: z.literal("stream_credit"),
   stream_id: z.string(),
-  receive_offset: z.number().int().nonnegative(),
-  credit_bytes: z.number().int().nonnegative(),
+  receive_offset: SafeNonnegativeIntegerSchema,
+  credit_bytes: SafeNonnegativeIntegerSchema,
 });
 
 const StreamResetSchema = EnvelopeSchema.extend({
@@ -143,7 +150,7 @@ const StreamResetSchema = EnvelopeSchema.extend({
 const StreamCloseSchema = EnvelopeSchema.extend({
   type: z.literal("stream_close"),
   stream_id: z.string(),
-  final_offset: z.number().int().nonnegative(),
+  final_offset: SafeNonnegativeIntegerSchema,
 });
 
 export type StreamDataFrame = z.infer<typeof StreamDataSchema>;
@@ -202,8 +209,9 @@ export function getActiveDataPlaneSessionForBud(args: {
   streamType?: string;
   transportKind?: DataPlaneTransportKind;
   includeDraining?: boolean;
+  policy?: DaemonTransportPolicy;
 }): DataPlaneSessionTracker | null {
-  const candidates = rankedDataPlaneSessions(args.budId, args.deviceSessionId ?? undefined).filter((tracker) => {
+  const candidates = rankedDataPlaneSessions(args.budId, args.deviceSessionId ?? undefined, args.policy).filter((tracker) => {
     if (args.transportKind && tracker.transportKind !== args.transportKind) {
       return false;
     }
@@ -223,8 +231,9 @@ export function selectDataPlaneCarrier(args: {
   deviceSessionId?: string | null;
   streamType: string;
   preferredTransportKind?: DataPlaneTransportKind;
+  policy?: DaemonTransportPolicy;
 }): DataPlaneCarrierSelection {
-  const connected = rankedDataPlaneSessions(args.budId, args.deviceSessionId ?? undefined).filter(
+  const connected = rankedDataPlaneSessions(args.budId, args.deviceSessionId ?? undefined, args.policy).filter(
     isDataPlaneSessionConnected,
   );
   const filtered = args.preferredTransportKind
@@ -682,6 +691,7 @@ export async function resetRuntimeStreamsForDataPlaneTracker(args: {
 function rankedDataPlaneSessions(
   budId: string,
   deviceSessionId?: string,
+  policy?: DaemonTransportPolicy,
 ): DataPlaneSessionTracker[] {
   return Array.from(dataPlaneSessions.values())
     .filter((tracker) => {
@@ -693,18 +703,7 @@ function rankedDataPlaneSessions(
       }
       return true;
     })
-    .sort((a, b) => transportPreference(a.transportKind) - transportPreference(b.transportKind));
-}
-
-function transportPreference(kind: DataPlaneTransportKind): number {
-  switch (kind) {
-    case "websocket":
-      return 0;
-    case "h2_data":
-      return 1;
-    case "quic":
-      return 2;
-  }
+    .sort((a, b) => rankDataPlaneTransport(a.transportKind, policy) - rankDataPlaneTransport(b.transportKind, policy));
 }
 
 function isDataPlaneSessionConnected(tracker: DataPlaneSessionTracker): boolean {
@@ -968,15 +967,58 @@ async function handleStreamClose(
     return;
   }
   const stream = getDataPlaneRuntimeStream(tracker, result.data.stream_id);
+  const daemonStateStore = args.daemonStateStore ?? new DaemonStateStore();
+  if (stream && result.data.final_offset !== stream.receiveOffset) {
+    const error = {
+      code: "FINAL_OFFSET_MISMATCH",
+      message: `expected final_offset ${stream.receiveOffset}, got ${result.data.final_offset}`,
+      retryable: false,
+      details: {
+        expected_final_offset: stream.receiveOffset,
+        received_final_offset: result.data.final_offset,
+      },
+    };
+    stream.resetReason = "protocol_error";
+    await stream.onReset?.({
+      streamId: result.data.stream_id,
+      reason: "protocol_error",
+      error,
+    });
+    await sendStreamReset(tracker, result.data.stream_id, "protocol_error", error).catch(() => null);
+    await daemonStateStore
+      .transitionStream({
+        streamId: result.data.stream_id,
+        from: ["opening", "open", "half_closed_local", "half_closed_remote"],
+        to: "reset",
+        resetReason: "protocol_error",
+        error,
+      })
+      .catch(() => null);
+    await daemonStateStore
+      .appendAuditEvent({
+        eventType: "data_plane.stream_reset",
+        budId: tracker.budId,
+        streamId: result.data.stream_id,
+        eventData: {
+          reason: "protocol_error",
+          error,
+          stream_type: stream.streamType,
+          device_session_id: tracker.deviceSessionId,
+          control_transport_session_id: tracker.controlTransportSessionId ?? null,
+          data_transport_session_id: tracker.transportSessionId ?? null,
+          transport_kind: tracker.transportKind,
+        },
+      })
+      .catch(() => null);
+    return;
+  }
   if (stream) {
     stream.remoteClosed = true;
-    stream.receiveOffset = Math.max(stream.receiveOffset, result.data.final_offset);
     await stream.onClose?.({
       streamId: result.data.stream_id,
       finalOffset: result.data.final_offset,
     });
   }
-  const daemonStateStore = args.daemonStateStore ?? new DaemonStateStore();
   await daemonStateStore
     .transitionStream({
       streamId: result.data.stream_id,

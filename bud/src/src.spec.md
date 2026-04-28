@@ -38,6 +38,7 @@ Top-level daemon orchestrator.
 - WebSocket connect / reconnect behavior
 - WebSocket bootstrap now sends `hello` as a binary `BudEnvelope` instead of JSON text
 - opt-in tonic gRPC control connect / reconnect behavior when `BUD_GRPC_CONTROL_URL` is set
+- falls back to the WebSocket baseline when the opt-in gRPC control carrier is unavailable, while preserving auth failures instead of looping through fallback
 - opt-in tonic gRPC data attachment after control authentication when `BUD_GRPC_DATA_URL` is set
 - handshake and challenge-response auth
 - live reconnect report emission after handshake using the local journal
@@ -52,6 +53,7 @@ Top-level daemon orchestrator.
 
 - `BudApp` - process-wide runtime owner
 - `SessionMeta` - server-issued session bookkeeping
+- `HelloTransportMode` - active hello/capability shape selector for WebSocket vs gRPC attempts
 - `HandshakeError` - separates `AUTH_FAILED` reauth from transport/protocol failures
 
 ### `protocol.rs`
@@ -68,7 +70,7 @@ Bud <-> service frame definitions and protocol validation.
 Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 
 - encodes active terminal/control frame bodies under typed protobuf oneof payload tags with direct protobuf fields
-- encodes stream/proxy/file foundation frames under typed payload tags so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
+- encodes core stream lifecycle frames under typed payload tags with direct protobuf fields so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
 - keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and pre-cutover fixture coverage
 - decodes protobuf envelopes back to JSON text before handing off to existing frame handlers
 - shares conformance fixture coverage with the service through `proto/fixtures/legacy-terminal-ensure.json`

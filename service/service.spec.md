@@ -9,7 +9,7 @@ The service is the central hub of the Bud system:
 - **Auth Server** - Better Auth-backed browser sessions plus OAuth/JWT provider endpoints for native clients
 - **WebSocket Gateway** - Compatibility persistent connections with bud daemons
 - **gRPC Control Gateway** - Opt-in HTTP/2 daemon control streams through grpc-js
-- **Transport Router** - Daemon-facing routing seam that prefers active gRPC control streams and falls back to WebSocket
+- **Transport Router** - Daemon-facing routing boundary with explicit WebSocket-baseline carrier policy and optional HTTP/2/QUIC preference modes
 - **SSE Streaming** - Real-time events to web clients
 - **Agent Service** - LLM-powered tool calling via configured providers, with split ownership for conversation loading, model invocation, terminal tool execution, transcript writing, and cancellation
 - **Database** - PostgreSQL with Drizzle ORM
@@ -84,7 +84,7 @@ Main source code:
 - `proto/` - Network-upgrade envelope helpers and typed protobuf WebSocket carrier codec
 - `proxy/` - Phase 4.2 localhost proxy session validation, persistence helpers, transport readiness checks, daemon open dispatch, and GET/HEAD streaming bridge
 - `files/` - Phase 4.4 file session validation, persistence helpers, transport readiness checks, daemon open dispatch, and stat/read/range streaming bridge
-- `transport/` - Daemon transport router interface, composite gRPC/WebSocket adapters, and gateway drain helper
+- `transport/` - Daemon transport router interface, explicit carrier policy, composite gRPC/WebSocket adapters, and gateway drain helper
 - `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 
 ### `drizzle/` → [drizzle/drizzle.spec.md](./drizzle/drizzle.spec.md)
@@ -143,12 +143,12 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `GET` | `/api/buds/:id/proxy-sessions` | List owned localhost proxy sessions for a Bud |
 | `GET` | `/api/proxy-sessions/:id` | Read one owned proxy session |
 | `DELETE` | `/api/proxy-sessions/:id` | Revoke one owned proxy session |
-| `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:id/*` | Authorize a proxy edge request; stream GET/HEAD through the daemon over gRPC control plus HTTP/2 data; fail closed for unsupported methods or missing transport |
+| `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:id/*` | Authorize a proxy edge request; stream GET/HEAD through the daemon over the selected data-plane carrier; fail closed for unsupported methods or missing transport |
 | `POST` | `/api/buds/:id/file-sessions` | Create a short-lived owned file session for a workspace-relative path |
 | `GET` | `/api/buds/:id/file-sessions` | List owned file sessions for a Bud |
 | `GET` | `/api/file-sessions/:id` | Read one owned file session |
 | `DELETE` | `/api/file-sessions/:id` | Revoke one owned file session |
-| `GET/HEAD` | `/api/files/:id` | Authorize a file edge request; stream stat/read/range work through the daemon over gRPC control plus HTTP/2 data |
+| `GET/HEAD` | `/api/files/:id` | Authorize a file edge request; stream stat/read/range work through the daemon over the selected data-plane carrier |
 | `GET` | `/api/threads` | List threads |
 | `POST` | `/api/threads` | Create thread |
 | `GET` | `/api/threads/:id/messages` | Get messages |
@@ -263,6 +263,7 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
 - `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_FILE` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` / `APNS_ALLOWED_TOPICS` - APNs provider credentials, fallback topic, and accepted Bud app topics
 - `GRPC_CONTROL_ENABLED` / `GRPC_CONTROL_HOST` / `GRPC_CONTROL_PORT` - Optional daemon gRPC control listener
+- `DAEMON_TRANSPORT_POLICY` - Optional daemon carrier preference order; defaults to `websocket_baseline`
 
 See [src/config.ts](./src/src.spec.md) for complete list.
 

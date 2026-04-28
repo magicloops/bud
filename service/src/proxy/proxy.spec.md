@@ -31,8 +31,8 @@ Browser-facing proxy edge implementation.
 - sends `proxy_open` metadata over the selected carrier's control side
 - streams daemon response chunks into the Fastify reply body
 - maps daemon open rejection, timeout, transport loss, and client close to typed HTTP/durable states
+- fails and resets durable state when carrier send throws or when an accepted daemon open-result omits the required HTTP status code
 - records stream-open and service/daemon denial audit events with selected carrier metadata
-- tolerates tiny responses where data-stream close arrives before control-stream state transitions finish
 - sanitizes request and response headers
 
 ### `proxy-runtime.ts`

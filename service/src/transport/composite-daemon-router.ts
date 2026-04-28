@@ -3,8 +3,14 @@ import type {
   DaemonTransportRouter,
   DaemonTransportStatus,
 } from "./daemon-router.js";
+import { orderedControlTransportKinds, type ControlTransportKind } from "./carrier-policy.js";
 import { grpcDaemonTransportRouter } from "./grpc-daemon-router.js";
 import { websocketDaemonTransportRouter } from "./websocket-daemon-router.js";
+
+const routers: Record<ControlTransportKind, DaemonTransportRouter> = {
+  websocket: websocketDaemonTransportRouter,
+  h2_grpc: grpcDaemonTransportRouter,
+};
 
 export const daemonTransportRouter: DaemonTransportRouter = {
   getActiveBudIds(): string[] {
@@ -21,16 +27,28 @@ export const daemonTransportRouter: DaemonTransportRouter = {
   },
 
   sendFrameToBud(budId: string, payload: DaemonTransportPayload): boolean {
-    if (grpcDaemonTransportRouter.isBudOnline(budId)) {
-      return grpcDaemonTransportRouter.sendFrameToBud(budId, payload);
+    for (const kind of orderedControlTransportKinds()) {
+      const router = routers[kind];
+      if (!router.isBudOnline(budId)) {
+        continue;
+      }
+      try {
+        if (router.sendFrameToBud(budId, payload)) {
+          return true;
+        }
+      } catch {
+        continue;
+      }
     }
-    return websocketDaemonTransportRouter.sendFrameToBud(budId, payload);
+    return false;
   },
 
   getTransportStatus(budId: string): DaemonTransportStatus {
-    const grpcStatus = grpcDaemonTransportRouter.getTransportStatus(budId);
-    if (grpcStatus.online) {
-      return grpcStatus;
+    for (const kind of orderedControlTransportKinds()) {
+      const status = routers[kind].getTransportStatus(budId);
+      if (status.online) {
+        return status;
+      }
     }
     return websocketDaemonTransportRouter.getTransportStatus(budId);
   },

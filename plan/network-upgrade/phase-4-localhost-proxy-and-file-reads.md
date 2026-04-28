@@ -1,5 +1,8 @@
 # Phase 4: Stream Foundation For File And Proxy Reads
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Current PR Scope**: [current-pr-http2-upgrade-scope.md](./current-pr-http2-upgrade-scope.md)
 **Status**: Phase 4.4 file stat/read/range implemented over HTTP/2 data; file-serving and web-serving productization deferred

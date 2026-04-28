@@ -1,5 +1,8 @@
 # Progress Checklist: Network Upgrade
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 ## Current PR: HTTP/2 Network Upgrade
 
 - [x] Record HTTP/2 upgrade vs. follow-on feature scope split

@@ -1,5 +1,8 @@
 # Current PR Scope: HTTP/2 Network Upgrade
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Status**: Scope reset for the current network-upgrade PR
 **Follow-On Designs**: [../../design/network-upgrade-file-serving-productization.md](../../design/network-upgrade-file-serving-productization.md), [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md), [../../design/network-upgrade-web-serving-productization.md](../../design/network-upgrade-web-serving-productization.md), [../../design/network-upgrade-websocket-fallback.md](../../design/network-upgrade-websocket-fallback.md)

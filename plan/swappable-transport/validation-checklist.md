@@ -80,6 +80,30 @@
 - [x] Idle timeout closes streams with a typed reason.
 - [x] Absolute stream TTL closes streams with a typed reason.
 
+## Landing Correctness And Fallback Policy
+
+- [x] Carrier selection tests prove WebSocket baseline behavior.
+- [x] Carrier selection tests prove advanced-carrier preference only when policy enables it.
+- [x] Daemon gRPC failure falls back to WebSocket or clearly reports configured gRPC-only mode.
+- [x] `stream_close.final_offset` mismatch produces reset/protocol-error state.
+- [ ] File open carrier send exception returns deterministic `424` and leaves no dangling operation/stream rows.
+- [ ] Proxy open carrier send exception returns deterministic `424` and leaves no dangling operation/stream rows.
+- [ ] File accepted-without-status result produces deterministic cleanup and audit.
+- [ ] Proxy accepted-without-status result produces deterministic cleanup and audit.
+- [ ] Immediate post-ack reconnect report sees registered device/transport session state.
+- [x] Legacy enrollment token path cannot create production-visible ownerless Buds.
+
+## Protobuf Layer Cleanup
+
+- [x] `frame_json` / `LegacyJsonPayload` inventory is current.
+- [x] Codec strategy decision is documented.
+- [x] Rust and TypeScript fixtures cover active baseline payloads.
+- [x] Rust and TypeScript fixtures cover stream data/credit/reset/close payloads.
+- [x] Unknown protobuf fields remain tolerated.
+- [x] Unsupported payloads return typed protocol errors.
+- [x] JavaScript decoders reject or safely represent unsafe `uint64` values.
+- [x] Any remaining `frame_json` bridge is documented with a removal gate.
+
 ## Optional Carrier Parity
 
 - [ ] Existing HTTP/2 gRPC terminal smoke still passes when enabled.

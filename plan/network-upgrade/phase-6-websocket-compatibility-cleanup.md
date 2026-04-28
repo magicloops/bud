@@ -1,5 +1,8 @@
 # Phase 6: WebSocket Compatibility Cleanup
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Design Doc**: [../../design/network-upgrade-websocket-fallback.md](../../design/network-upgrade-websocket-fallback.md)
 **Status**: Planned

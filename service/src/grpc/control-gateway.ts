@@ -5,13 +5,12 @@ import { fileURLToPath } from "node:url";
 import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import type { FastifyBaseLogger } from "fastify";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
-import { hashEnrollmentToken } from "../auth/enrollment-token.js";
 import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
-import { budTable, deviceAuthFlowTable, enrollmentTokenTable } from "../db/schema.js";
+import { budTable, deviceAuthFlowTable } from "../db/schema.js";
 import { handleFileOpenResult } from "../files/file-runtime.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import { handleProxyOpenResult } from "../proxy/proxy-runtime.js";
@@ -320,21 +319,11 @@ class GrpcControlConnection {
     }
     const bypassToken =
       config.devTokenBypass && frame.token === config.devTokenBypass ? config.devTokenBypass : null;
-    const tokenHash = hashEnrollmentToken(frame.token);
 
     if (!bypassToken) {
-      const tokenRow = await db.query.enrollmentTokenTable.findFirst({
-        where: and(
-          eq(enrollmentTokenTable.tokenHash, tokenHash),
-          isNull(enrollmentTokenTable.consumedAt),
-          gt(enrollmentTokenTable.expiresAt, new Date()),
-        ),
-      });
-      if (!tokenRow) {
-        await this.sendError("AUTH_FAILED", "Enrollment token invalid or expired");
-        this.endStream();
-        return;
-      }
+      await this.sendError("AUTH_FAILED", "Enrollment tokens are disabled; use device claim");
+      this.endStream();
+      return;
     }
 
     const budId = `b_${ulid()}`;
@@ -371,27 +360,20 @@ class GrpcControlConnection {
           },
         });
 
-      if (!bypassToken) {
-        await tx
-          .update(enrollmentTokenTable)
-          .set({ consumedAt: now })
-          .where(eq(enrollmentTokenTable.tokenHash, tokenHash));
-      }
     });
 
     if (bypassToken) {
       this.logger.warn({ budId, component: "grpc_control_gateway" }, "Dev token bypass used for enrollment");
     }
 
+    this.state = { kind: "connected", budId, sessionId, hello: frame };
+    await this.registerSession(budId, sessionId, frame);
     await this.sendFrame("hello_ack", {
       session_id: sessionId,
       bud_id: budId,
       device_secret: deviceSecret,
       heartbeat_sec: config.heartbeatSec,
     });
-
-    this.state = { kind: "connected", budId, sessionId, hello: frame };
-    await this.registerSession(budId, sessionId, frame);
     await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 
@@ -473,14 +455,13 @@ class GrpcControlConnection {
         );
     }
 
+    this.state = { kind: "connected", budId, sessionId, hello };
+    await this.registerSession(budId, sessionId, hello);
     await this.sendFrame("hello_ack", {
       session_id: sessionId,
       bud_id: budId,
       heartbeat_sec: config.heartbeatSec,
     });
-
-    this.state = { kind: "connected", budId, sessionId, hello };
-    await this.registerSession(budId, sessionId, hello);
     await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 

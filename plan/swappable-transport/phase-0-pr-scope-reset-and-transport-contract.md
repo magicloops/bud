@@ -74,7 +74,7 @@ The fallback outcome, if field-level mapping is not feasible in this PR, must do
 
 The terminal/control mapping is feasible for the current PR.
 
-Phase 0 added direct protobuf coverage for the reconnect metadata that was missing from `OperationStatus` and `StreamStatus`, then cut the active WebSocket terminal/control codec over to typed payload fields. `frame_json` remains decode-compatible and remains available for gRPC adapter transition paths plus later stream/proxy/file foundation frames, but the active WebSocket terminal/control path no longer depends on whole-frame `frame_json`.
+Phase 0 added direct protobuf coverage for the reconnect metadata that was missing from `OperationStatus` and `StreamStatus`, then cut the active WebSocket terminal/control codec over to typed payload fields. Phase 7 later moved the core data-plane lifecycle frames to typed fields as well. `frame_json` remains decode-compatible and remains available for gRPC adapter transition paths plus proxy/file open-result frames, but the active WebSocket terminal/control and core stream lifecycle paths no longer depend on whole-frame `frame_json`.
 
 Because the product is still internal, this PR does not carry a legacy JSON terminal compatibility mode. The daemon sends bootstrap `hello` as binary `BudEnvelope`, and the WebSocket gateway requires `bud_envelope.version = 1` and `bud_envelope.websocket_binary = true` before auth/registration. The service may parse a pre-negotiation JSON `hello` only to return a useful protocol error to unsupported clients. Post-negotiation JSON frames fail with `PROTO_VERSION_MISMATCH`, and unknown `BudEnvelope` payload oneof fields fail with typed `UNSUPPORTED_PAYLOAD`.
 
@@ -142,14 +142,14 @@ Because the product is still internal, this PR does not carry a legacy JSON term
 
 ## Specs To Update
 
-- [ ] [../../bud.spec.md](../../bud.spec.md)
+- [x] [../../bud.spec.md](../../bud.spec.md)
 - [x] [../../docs/proto.md](../../docs/proto.md)
 - [x] [../../proto/bud/v1/v1.spec.md](../../proto/bud/v1/v1.spec.md)
 - [x] [../../service/src/proto/proto.spec.md](../../service/src/proto/proto.spec.md)
 - [x] [../../service/src/ws/ws.spec.md](../../service/src/ws/ws.spec.md)
 - [x] [../../bud/src/src.spec.md](../../bud/src/src.spec.md)
-- [ ] [../network-upgrade/network-upgrade.spec.md](../network-upgrade/network-upgrade.spec.md) if we choose to mark the old plan as superseded
-- [ ] [swappable-transport.spec.md](./swappable-transport.spec.md)
+- [x] [../network-upgrade/network-upgrade.spec.md](../network-upgrade/network-upgrade.spec.md) if we choose to mark the old plan as superseded
+- [x] [swappable-transport.spec.md](./swappable-transport.spec.md)
 
 ## Notes
 

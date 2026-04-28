@@ -1,8 +1,9 @@
 # Implementation Spec: Swappable Transport
 
-**Status**: Implemented through Phase 5; optional carrier upgrades remain
+**Status**: Implemented through Phase 5; landing cleanup phases and optional carrier upgrades remain
 **Created**: 2026-04-27
 **Review Doc**: [../../review/network-upgrade-websocket-first-pr-review.md](../../review/network-upgrade-websocket-first-pr-review.md)
+**Current Branch Review**: [../../review/network-upgrade/current-branch-review.md](../../review/network-upgrade/current-branch-review.md)
 **Folder Spec**: [swappable-transport.spec.md](./swappable-transport.spec.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -12,7 +13,9 @@
 **Phase 3**: [phase-3-file-stream-over-websocket.md](./phase-3-file-stream-over-websocket.md)
 **Phase 4**: [phase-4-web-proxy-stream-over-websocket.md](./phase-4-web-proxy-stream-over-websocket.md)
 **Phase 5**: [phase-5-productization-handoff-and-hardening.md](./phase-5-productization-handoff-and-hardening.md)
-**Phase 6**: [phase-6-optional-transport-upgrades.md](./phase-6-optional-transport-upgrades.md)
+**Phase 6**: [phase-6-landing-correctness-and-fallback-policy.md](./phase-6-landing-correctness-and-fallback-policy.md)
+**Phase 7**: [phase-7-protobuf-layer-cleanup.md](./phase-7-protobuf-layer-cleanup.md)
+**Phase 8**: [phase-8-optional-transport-upgrades.md](./phase-8-optional-transport-upgrades.md)
 
 ---
 
@@ -26,7 +29,7 @@ The active `network-upgrade` branch added valuable protocol and runtime foundati
 - durable device, transport, operation, and stream state
 - HTTP/2 gRPC control/data adapters
 - file and localhost proxy stream foundations
-- typed oneof payload tags, with active WebSocket terminal/control payloads now moved to direct protobuf fields and later stream/proxy/file families still carrying transitional `frame_json`
+- typed oneof payload tags, with active WebSocket terminal/control and core stream lifecycle payloads now moved to direct protobuf fields while proxy/file open families still carry transitional `frame_json`
 
 The original plan treated HTTP/2 gRPC as the required daemon-service control/data path and WebSocket as a worst-case fallback. That no longer matches the deployment priority.
 
@@ -42,13 +45,14 @@ Future data optimization: QUIC
 Product contract: carrier-neutral REST/SSE service APIs
 ```
 
-This plan supersedes the forward implementation direction in [../network-upgrade/implementation-spec.md](../network-upgrade/implementation-spec.md), while preserving that folder as historical context for the HTTP/2 work already completed on the branch.
+This plan supersedes the forward implementation direction in [../network-upgrade/implementation-spec.md](../network-upgrade/implementation-spec.md), while preserving that folder as historical context for thinking that informed the current shape. The old folder is not an active checklist.
 
 The current PR should now close on the existing terminal path plus the carrier prerequisites for future file/proxy product work:
 
 - WebSocket remains the default daemon-service carrier.
 - Existing terminal/control traffic uses binary `BudEnvelope` over WebSocket.
 - Phase 0 removes whole-frame `frame_json` from the active WebSocket terminal/control path by mapping terminal/control frames to typed protobuf fields.
+- Phase 7 removes whole-frame `frame_json` from the core data-plane lifecycle payloads on the WebSocket binary carrier.
 - Phase 1/2 make data-plane selection and WebSocket stream-frame dispatch carrier-neutral.
 - File viewing and web proxy productization remain follow-on work after WebSocket-only file/proxy smokes and Phase 5 hardening are proven.
 
@@ -77,6 +81,9 @@ By the end of this plan:
 - "gRPC semantics" means envelope, stream IDs, backpressure credits, typed reset/close, durable operation/stream state, and reconciliation. It does not require `@grpc/grpc-js` to be present.
 - HTTP/2 gRPC control/data remains opt-in for advanced or hosted deployments.
 - QUIC is deferred until file/proxy behavior works over the baseline carrier.
+- Carrier fallback policy must be explicit before optional carriers are treated as production posture.
+- Ownerless legacy enrollment cannot be part of production browser-visible Bud inventory.
+- Core stream lifecycle payloads should not depend indefinitely on whole-frame `frame_json`.
 - Browser and mobile clients continue to use service-owned REST plus SSE.
 - File viewer and web proxy product APIs must not expose transport selection.
 - New file/proxy routes require binary `BudEnvelope` stream-frame support; they do not support legacy JSON WebSocket frames.
@@ -202,7 +209,9 @@ Transport security:
 | 3 | [phase-3-file-stream-over-websocket.md](./phase-3-file-stream-over-websocket.md) | High | Prove file stat/read/range foundations over WebSocket with gRPC disabled |
 | 4 | [phase-4-web-proxy-stream-over-websocket.md](./phase-4-web-proxy-stream-over-websocket.md) | High | Prove loopback GET/HEAD proxy foundations over WebSocket with gRPC disabled |
 | 5 | [phase-5-productization-handoff-and-hardening.md](./phase-5-productization-handoff-and-hardening.md) | High | Close security, limits, audit, and product handoff gates before file viewer/web proxy UI |
-| 6 | [phase-6-optional-transport-upgrades.md](./phase-6-optional-transport-upgrades.md) | Medium | Keep HTTP/2/QUIC as carrier adapters behind the same product contracts |
+| 6 | [phase-6-landing-correctness-and-fallback-policy.md](./phase-6-landing-correctness-and-fallback-policy.md) | Urgent | Clarify carrier policy, close stream correctness gaps, and remove/quarantine ownerless enrollment before branch landing |
+| 7 | [phase-7-protobuf-layer-cleanup.md](./phase-7-protobuf-layer-cleanup.md) | High | Clean up transitional protobuf/frame_json debt and add conformance/safe-integer rules |
+| 8 | [phase-8-optional-transport-upgrades.md](./phase-8-optional-transport-upgrades.md) | Medium | Keep HTTP/2/QUIC as carrier adapters behind the same product contracts |
 
 ## Expected Files And Areas
 
@@ -233,7 +242,7 @@ Transport security:
 - `docs/proto.md`
 - affected service and daemon specs
 - this plan folder
-- old `plan/network-upgrade/` docs only where needed to mark the new plan as the forward path
+- old `plan/network-upgrade/` docs only as historical context; do not use them as active tracking docs
 
 ### Product Follow-On Areas
 
@@ -251,7 +260,9 @@ Transport security:
 - Phase 3 proved that file sessions are no longer coupled to gRPC data by passing the real-daemon WebSocket-only file smoke with gRPC disabled.
 - Phase 4 reused the same data-plane selector and stream callbacks as Phase 3 and passed the real-daemon WebSocket-only proxy smoke with gRPC disabled.
 - Phase 5 added route-auth coverage, bounded data-plane limits, service/daemon denial audit events, generic reset/close audit events, and WebSocket-first product handoff docs.
-- Phase 6 is intentionally after WebSocket-first correctness. QUIC should improve performance, not define correctness.
+- Phase 6 landed the explicit carrier policy, daemon gRPC-to-WebSocket fallback, final-offset validation, file/proxy failure cleanup, handshake ordering, and dev-only legacy token quarantine.
+- Phase 7 moved core data-plane lifecycle payloads off whole-frame `frame_json`, bounded the remaining gRPC/proxy/file bridge, and added safe-`uint64` coverage.
+- Phase 8 is intentionally after WebSocket-first correctness and protocol cleanup. QUIC should improve performance, not define correctness.
 
 ## Risks
 
@@ -261,7 +272,7 @@ Transport security:
 | WebSocket stream bytes overwhelm self-hosted deployments | Medium | High | Add explicit degraded limits and default-safe max frame/in-flight settings |
 | Control and data on one WebSocket cause head-of-line pressure | Medium | Medium | Default to one socket, but model carrier roles so an optional second data WebSocket can register later |
 | Renaming `GrpcData*` creates a large noisy diff | High | Medium | Refactor in layers: adapter names first, mechanical rename second if needed |
-| Remaining stream/proxy/file `frame_json` becomes permanent | Medium | Medium | Keep field-level payload cutover in each WebSocket stream-family phase |
+| Remaining proxy/file `frame_json` becomes permanent | Medium | Medium | Keep field-level payload cutover in the proxy/file open-result cleanup phase |
 | File/proxy product work starts before auth and limits are proven | Medium | High | Phase 5 blocks product UI on ownership, non-owner, audit, and limit validation |
 | Optional HTTP/2/QUIC carrier behavior drifts from WebSocket | Medium | High | Shared conformance fixtures and carrier parity tests for every stream lifecycle event |
 
@@ -274,9 +285,10 @@ Transport security:
 5. Teach the WebSocket gateway to carry generic stream lifecycle frames.
 6. Validate file sessions over WebSocket.
 7. Validate proxy sessions over WebSocket.
-8. Close hardening gaps that would block file viewer and web proxy product exposure.
-9. Build file viewer and web proxy against carrier-neutral REST/SSE contracts.
-10. Add QUIC as an optional data-plane adapter later.
+8. Close branch landing gaps around fallback policy, stream close correctness, file/proxy edge cleanup, handshake ordering, and enrollment ownership.
+9. Clean the protobuf layer enough that optional carriers do not copy transitional `frame_json` debt forward.
+10. Build file viewer and web proxy against carrier-neutral REST/SSE contracts in separate product follow-ons.
+11. Add QUIC as an optional data-plane adapter later.
 
 ## Current PR Closeout Gate
 
@@ -302,3 +314,7 @@ Transport security:
 - [x] Real-daemon terminal, file, and proxy smokes pass with gRPC disabled.
 - [x] Ownership, non-owner denial, limits, audit, and stream reset/close behavior are validated before product UI.
 - [x] Relevant protocol docs and specs match shipped behavior.
+- [x] Carrier/fallback policy is explicit and tested before optional carriers are promoted.
+- [x] Stream close and file/proxy open failure paths leave durable operation/stream rows in terminal states.
+- [x] Production-visible Bud enrollment cannot create ownerless browser-visible devices.
+- [x] Core data-plane protobuf payloads have a documented cleanup path away from whole-frame `frame_json`.

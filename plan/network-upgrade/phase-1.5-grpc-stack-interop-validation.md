@@ -1,5 +1,8 @@
 # Phase 1.5: gRPC Stack Interop Validation
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Status**: Complete
 **Reference Note**: [../../reference/connect-vs-grpc-js.md](../../reference/connect-vs-grpc-js.md)

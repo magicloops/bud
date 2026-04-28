@@ -151,27 +151,124 @@ test("round-trips reconnect reports with typed protobuf fields", () => {
   assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
 });
 
-test("encodes generic stream frames as typed protobuf payloads", () => {
-  const frame = {
-    proto: "0.1",
-    type: "stream_data",
-    id: "msg_stream_data",
-    ts: 1777132800000,
-    ext: {},
-    stream_id: "st_test",
-    stream_type: "file_read",
-    offset: 0,
-    data: Buffer.from("hello").toString("base64"),
-    end_stream: false,
-  };
-  const bytes = encodeLegacyJsonFrame(frame, { transportKind: "h2_data" });
-  const envelope = decodeBudEnvelope(bytes);
+test("round-trips core data-plane frames with typed protobuf fields", () => {
+  const frames = [
+    {
+      proto: "0.1",
+      type: "data_attach",
+      id: "msg_data_attach",
+      ts: 1777132800000,
+      ext: {},
+      bud_id: "b_test",
+      device_session_id: "s_test",
+      control_transport_session_id: "ts_control",
+      streams: ["file_read", "localhost_http_proxy"],
+      max_chunk_bytes: 16384,
+      initial_credit_bytes: 1048576,
+    },
+    {
+      proto: "0.1",
+      type: "data_attach_ack",
+      id: "msg_data_attach_ack",
+      ts: 1777132800000,
+      ext: {},
+      bud_id: "b_test",
+      device_session_id: "s_test",
+      transport_session_id: "ts_data",
+      streams: ["file_read"],
+      max_chunk_bytes: 16384,
+      initial_credit_bytes: 1048576,
+    },
+    {
+      proto: "0.1",
+      type: "stream_data",
+      id: "msg_stream_data",
+      ts: 1777132800000,
+      ext: {},
+      stream_id: "st_test",
+      stream_type: "file_read",
+      offset: 0,
+      data: Buffer.from("hello").toString("base64"),
+      end_stream: false,
+    },
+    {
+      proto: "0.1",
+      type: "stream_credit",
+      id: "msg_stream_credit",
+      ts: 1777132800000,
+      ext: {},
+      stream_id: "st_test",
+      receive_offset: 5,
+      credit_bytes: 1024,
+    },
+    {
+      proto: "0.1",
+      type: "stream_reset",
+      id: "msg_stream_reset",
+      ts: 1777132800000,
+      ext: {},
+      stream_id: "st_test",
+      reason: "protocol_error",
+      error: {
+        code: "OFFSET_MISMATCH",
+        message: "bad offset",
+        retryable: false,
+      },
+    },
+    {
+      proto: "0.1",
+      type: "stream_close",
+      id: "msg_stream_close",
+      ts: 1777132800000,
+      ext: {},
+      stream_id: "st_test",
+      final_offset: 5,
+    },
+  ];
 
-  assert.equal(decodeBudEnvelopePayloadCase(bytes), "stream_data");
-  assert.equal(decodeBudEnvelopePayloadEncoding(bytes), "typed_frame_json");
-  assert.equal(envelope.traffic_class, "bulk");
-  assert.equal(envelope.transport_kind, "h2_data");
-  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+  for (const frame of frames) {
+    const bytes = encodeLegacyJsonFrame(frame, { transportKind: "h2_data" });
+    const envelope = decodeBudEnvelope(bytes);
+
+    assert.equal(decodeBudEnvelopePayloadCase(bytes), frame.type);
+    assert.equal(decodeBudEnvelopePayloadEncoding(bytes), "typed_fields");
+    assert.equal(envelope.transport_kind, "h2_data");
+    assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+  }
+});
+
+test("rejects uint64 values outside JavaScript's safe integer range", () => {
+  assert.throws(
+    () =>
+      encodeLegacyJsonFrame({
+        proto: "0.2",
+        type: "terminal_output",
+        id: "msg_terminal_output",
+        ts: 1777132800000,
+        ext: {},
+        session_id: "sess_test",
+        seq: Number.MAX_SAFE_INTEGER + 1,
+        data: Buffer.from("hello").toString("base64"),
+        byte_offset: 0,
+      }),
+    /safe integer/,
+  );
+
+  const payload = Buffer.concat([
+    encodeStringField(1, "sess_test"),
+    encodeVarintField(2, BigInt(Number.MAX_SAFE_INTEGER) + 1n),
+    encodeLengthDelimitedField(3, Buffer.from("hello", "utf8")),
+    encodeVarintField(4, 0),
+  ]);
+  const bytes = Buffer.concat([
+    encodeVarintField(1, 1),
+    encodeStringField(2, "msg_terminal_output"),
+    encodeStringField(10, "2026-04-25T16:00:00.000Z"),
+    encodeVarintField(11, 2),
+    encodeLengthDelimitedField(129, payload),
+  ]);
+
+  assert.throws(() => decodeBudEnvelope(bytes), /terminal_output\.seq.*safe integer/);
 });
 
 test("encodes proxy open frames as typed protobuf payloads", () => {
@@ -260,17 +357,17 @@ function encodeLengthDelimitedField(fieldNumber: number, bytes: Buffer): Buffer 
   return Buffer.concat([encodeVarint((fieldNumber << 3) | 2), encodeVarint(bytes.length), bytes]);
 }
 
-function encodeVarintField(fieldNumber: number, value: number): Buffer {
+function encodeVarintField(fieldNumber: number, value: number | bigint): Buffer {
   return Buffer.concat([encodeVarint(fieldNumber << 3), encodeVarint(value)]);
 }
 
-function encodeVarint(value: number): Buffer {
+function encodeVarint(value: number | bigint): Buffer {
   const chunks: number[] = [];
-  let remaining = value;
-  while (remaining >= 0x80) {
-    chunks.push((remaining & 0x7f) | 0x80);
-    remaining >>>= 7;
+  let remaining = BigInt(value);
+  while (remaining >= 0x80n) {
+    chunks.push(Number((remaining & 0x7fn) | 0x80n));
+    remaining >>= 7n;
   }
-  chunks.push(remaining);
+  chunks.push(Number(remaining));
   return Buffer.from(chunks);
 }

@@ -1,5 +1,8 @@
 # Phase 1.5: grpc-js Runtime Design Review
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)  
 **Interop Phase**: [phase-1.5-grpc-stack-interop-validation.md](./phase-1.5-grpc-stack-interop-validation.md)  
 **Decision Record**: [phase-1.5-runtime-decision.md](./phase-1.5-runtime-decision.md)  

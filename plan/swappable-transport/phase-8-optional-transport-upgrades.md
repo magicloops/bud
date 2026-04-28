@@ -1,4 +1,4 @@
-# Phase 6: Optional Transport Upgrades
+# Phase 8: Optional Transport Upgrades
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Status**: Draft
@@ -10,7 +10,7 @@
 
 Keep HTTP/2 gRPC and future QUIC as carrier adapters behind the same protocol and product contracts.
 
-This phase is intentionally after the WebSocket-first correctness work. Optional carriers should improve performance or hosted reliability without changing file viewer or web proxy behavior.
+This phase is intentionally after the WebSocket-first correctness work, fallback policy clarification, and protobuf cleanup phases. Optional carriers should improve performance or hosted reliability without changing file viewer or web proxy behavior.
 
 ## HTTP/2 gRPC Position
 
@@ -48,10 +48,7 @@ QUIC must carry the same logical frames:
 ## Implementation Steps
 
 1. Keep HTTP/2 gRPC carrier registration behind the carrier-neutral interfaces from Phase 1.
-2. Add carrier preference policy:
-   - baseline: WebSocket
-   - hosted advanced: QUIC data if healthy
-   - optional: HTTP/2 data/control if configured and healthy
+2. Reuse the carrier preference policy from [phase-6-landing-correctness-and-fallback-policy.md](./phase-6-landing-correctness-and-fallback-policy.md).
 3. Add health scoring and fallback tests for all configured carriers.
 4. Add QUIC token-binding design before implementation.
 5. Implement QUIC data adapter only after the design is approved.

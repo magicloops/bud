@@ -1,5 +1,8 @@
 # Phase 1.5 Runtime Decision: daemon gateway gRPC stack
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Status**: Accepted  
 **Decision Date**: 2026-04-26  
 **Interop Phase**: [phase-1.5-grpc-stack-interop-validation.md](./phase-1.5-grpc-stack-interop-validation.md)  

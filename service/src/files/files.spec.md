@@ -33,8 +33,8 @@ Browser-facing file edge implementation.
 - streams daemon file chunks from the selected data-plane carrier into the Fastify reply body
 - stores daemon-provided `content_identity` back onto the file session
 - maps daemon open rejection, timeout, transport loss, and client close to typed HTTP/durable states
+- fails and resets durable state when carrier send throws or when an accepted daemon open-result omits the required HTTP status code
 - records stream-open and service/daemon denial audit events with selected carrier metadata
-- tolerates tiny stat/range responses where data-stream close arrives before control-stream state transitions finish
 - sanitizes response headers before sending them to the browser
 
 ### `file-runtime.ts`

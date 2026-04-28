@@ -1,15 +1,14 @@
 import { Buffer } from "node:buffer";
 import { createHmac, randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import type { RawData } from "ws";
 import type WebSocket from "ws";
 import { z } from "zod";
-import { hashEnrollmentToken } from "../auth/enrollment-token.js";
 import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
-import { budTable, deviceAuthFlowTable, enrollmentTokenTable } from "../db/schema.js";
+import { budTable, deviceAuthFlowTable } from "../db/schema.js";
 import { handleFileOpenResult as handleFileOpenRuntimeResult } from "../files/file-runtime.js";
 import { decodeBudFrame, encodeBudFrame, UnsupportedBudEnvelopePayloadError } from "../proto/wire.js";
 import { handleProxyOpenResult as handleProxyOpenRuntimeResult } from "../proxy/proxy-runtime.js";
@@ -378,21 +377,11 @@ export class BudConnection {
     }
     const bypassToken =
       config.devTokenBypass && frame.token === config.devTokenBypass ? config.devTokenBypass : null;
-    const tokenHash = hashEnrollmentToken(frame.token);
 
     if (!bypassToken) {
-      const tokenRow = await db.query.enrollmentTokenTable.findFirst({
-        where: and(
-          eq(enrollmentTokenTable.tokenHash, tokenHash),
-          isNull(enrollmentTokenTable.consumedAt),
-          gt(enrollmentTokenTable.expiresAt, new Date())
-        )
-      });
-      if (!tokenRow) {
-        await this.sendError("AUTH_FAILED", "Enrollment token invalid or expired");
-        this.socket.close();
-        return;
-      }
+      await this.sendError("AUTH_FAILED", "Enrollment tokens are disabled; use device claim");
+      this.socket.close();
+      return;
     }
 
     const budId = `b_${ulid()}`;
@@ -429,12 +418,6 @@ export class BudConnection {
           }
         });
 
-      if (!bypassToken) {
-        await tx
-          .update(enrollmentTokenTable)
-          .set({ consumedAt: now })
-          .where(eq(enrollmentTokenTable.tokenHash, tokenHash));
-      }
     });
 
     if (bypassToken) {
@@ -442,6 +425,13 @@ export class BudConnection {
     }
     this.server.log.info({ budId }, "Bud enrolled");
 
+    this.state = {
+      kind: "connected",
+      budId,
+      sessionId,
+      hello: frame
+    };
+    await this.registerSession(budId, sessionId, frame);
     await this.sendFrame(
       "hello_ack",
       {
@@ -452,14 +442,6 @@ export class BudConnection {
       },
       { useEnvelopeBinary: helloSupportsEnvelopeBinary(frame) },
     );
-
-    this.state = {
-      kind: "connected",
-      budId,
-      sessionId,
-      hello: frame
-    };
-    await this.registerSession(budId, sessionId, frame);
     await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 
@@ -541,12 +523,6 @@ export class BudConnection {
         );
     }
 
-    await this.sendFrame("hello_ack", {
-      session_id: sessionId,
-      bud_id: budId,
-      heartbeat_sec: config.heartbeatSec
-    });
-
     this.state = {
       kind: "connected",
       budId,
@@ -554,6 +530,11 @@ export class BudConnection {
       hello
     };
     await this.registerSession(budId, sessionId, hello);
+    await this.sendFrame("hello_ack", {
+      session_id: sessionId,
+      bud_id: budId,
+      heartbeat_sec: config.heartbeatSec
+    });
     await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 

@@ -75,10 +75,34 @@
 - [x] Produce product handoff notes
 - [x] Decide file viewer vs web proxy implementation order
 
-## Phase 6: Optional Transport Upgrades
+## Phase 6: Landing Correctness And Fallback Policy
+
+- [x] Define explicit carrier preference/fallback policy
+- [x] Align control and data selectors on the same policy vocabulary
+- [x] Add WebSocket-baseline and hosted/advanced carrier selection tests
+- [x] Implement daemon gRPC-to-WebSocket fallback or document gRPC-only mode
+- [x] Validate `stream_close.final_offset` against accepted runtime bytes
+- [x] Reset streams instead of closing cleanly on final-offset mismatch
+- [x] Wrap file/proxy open sends and clean durable rows on thrown send failures
+- [x] Clean durable rows when a daemon accepts open without required status metadata
+- [x] Fix or buffer the `hello_ack` before registration race
+- [x] Remove, dev-gate, or owner-assign legacy token enrollment
+- [x] Update affected specs and protocol docs
+
+## Phase 7: Protobuf Layer Cleanup
+
+- [x] Inventory all `frame_json` and `LegacyJsonPayload` usage
+- [x] Decide generated vs. manual WebSocket codec strategy
+- [x] Add conformance fixtures for active baseline and data-plane lifecycle payloads
+- [x] Remove whole-frame `frame_json` from core stream lifecycle frames or record blockers
+- [x] Bound any remaining `frame_json` bridge with explicit carrier/version/removal gates
+- [x] Audit JavaScript `uint64` decoding and reject or safely represent unsafe values
+- [x] Update protobuf, protocol, service, and daemon specs
+
+## Phase 8: Optional Transport Upgrades
 
 - [ ] Keep HTTP/2 gRPC behind carrier-neutral adapters
-- [ ] Define carrier preference policy for hosted deployments
+- [ ] Reuse Phase 6 carrier preference policy for hosted deployments
 - [ ] Add carrier health/fallback tests
 - [ ] Finalize QUIC token-binding design
 - [ ] Implement QUIC data adapter when approved

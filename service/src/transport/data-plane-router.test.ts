@@ -124,6 +124,29 @@ test("selectDataPlaneCarrier prefers WebSocket when both current carriers are ac
   assert.equal(result.dataTransportSessionId, "ts_ws");
 });
 
+test("selectDataPlaneCarrier can prefer H2 data under explicit policy", (t) => {
+  t.after(() => dataPlaneSessions.clear());
+  dataPlaneSessions.clear();
+  registerActiveDataPlaneSessionTracker(
+    makeTracker({
+      transportKind: "h2_data",
+      role: "data",
+      transportSessionId: "ts_h2",
+    }),
+  );
+  registerActiveDataPlaneSessionTracker(makeTracker({ transportSessionId: "ts_ws" }));
+
+  const result = selectDataPlaneCarrier({
+    budId: "b_test",
+    streamType: "localhost_http_proxy",
+    policy: "h2_preferred",
+  });
+
+  assert.equal(result.available, true);
+  assert.equal(result.transportKind, "h2_data");
+  assert.equal(result.dataTransportSessionId, "ts_h2");
+});
+
 test("handleDataPlaneStreamFrame dispatches stream data through runtime callbacks", async () => {
   const sentFrames: Record<string, unknown>[] = [];
   const chunks: Buffer[] = [];
@@ -238,4 +261,51 @@ test("stream_credit is capped to the carrier max in-flight bytes", async () => {
   );
 
   assert.equal(stream.sendCreditBytes, 10);
+});
+
+test("stream_close with a mismatched final_offset resets the stream", async () => {
+  const sentFrames: Record<string, unknown>[] = [];
+  const resetFrames: unknown[] = [];
+  const transitions: unknown[] = [];
+  const audits: unknown[] = [];
+  const tracker = makeTracker({}, sentFrames);
+  const stream = registerDataPlaneRuntimeStream(tracker, {
+    streamId: "st_close",
+    streamType: "localhost_http_proxy",
+    initialReceiveCreditBytes: 16,
+    onReset(frame) {
+      resetFrames.push(frame);
+    },
+  });
+  stream.receiveOffset = 5;
+
+  await handleDataPlaneStreamFrame(
+    tracker,
+    {
+      proto: "0.1",
+      type: "stream_close",
+      id: "msg_stream_close",
+      ts: 1777132800000,
+      ext: {},
+      stream_id: "st_close",
+      final_offset: 4,
+    },
+    {
+      logger: makeLogger() as never,
+      daemonStateStore: {
+        async transitionStream(args: unknown) {
+          transitions.push(args);
+        },
+        async appendAuditEvent(args: unknown) {
+          audits.push(args);
+        },
+      } as never,
+    },
+  );
+
+  assert.equal(stream.resetReason, "protocol_error");
+  assert.deepEqual(sentFrames.map((frame) => frame.type), ["stream_reset"]);
+  assert.equal(resetFrames.length, 1);
+  assert.equal(transitions.length, 1);
+  assert.equal(audits.length, 1);
 });

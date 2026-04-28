@@ -59,15 +59,15 @@ Wire-format rules:
 The codebase now has a Phase 0 transport boundary for the daemon-network upgrade:
 
 - service runtime code sends ordinary daemon control work through `DaemonTransportRouter`
-- the current control router implementation is composite: active gRPC control streams are preferred for generic control frames, and WebSocket remains the always-supported baseline
+- the current control router implementation is composite and follows `DAEMON_TRANSPORT_POLICY`; the default `websocket_baseline` policy keeps WebSocket first and uses HTTP/2 as fallback
 - file/proxy stream work selects an explicit data-plane carrier instead of hard-coding gRPC control/data
 - daemon terminal/run modules send outbound payloads through a transport sender wrapper instead of a raw WebSocket sender type
 - shared protobuf schema lives in `proto/bud/v1/bud.proto`
 - the shared schema now exposes `service BudControl { rpc Connect(stream BudEnvelope) returns (stream BudEnvelope); }` and `service BudData { rpc Attach(stream BudEnvelope) returns (stream BudEnvelope); }`
 - service and daemon both encode/decode `BudEnvelope v1` binary frames for WebSocket-capable peers; active daemon sessions must advertise `bud_envelope.websocket_binary`
-- WebSocket-capable peers map active terminal/control payloads to typed protobuf fields instead of wrapping the whole JSON frame in `frame_json`; intentionally dynamic nested documents such as capabilities, terminal deltas, readiness, and reconnect details remain explicit JSON/bytes subfields
+- WebSocket-capable peers map active terminal/control and core data-plane lifecycle payloads to typed protobuf fields instead of wrapping the whole JSON frame in `frame_json`; intentionally dynamic nested documents such as capabilities, terminal deltas, readiness, and reconnect details remain explicit JSON/bytes subfields
 - service and daemon both use `BudEnvelope v1` on the gRPC control stream, with typed oneof payloads carrying transitional `frame_json`
-- WebSocket-capable peers dispatch generic stream/proxy/file foundation frames through typed protobuf oneof payload tags; file/proxy stream bytes now require `bud_envelope.stream_frames` and route through the shared data-plane runtime
+- WebSocket-capable peers dispatch generic stream/proxy/file foundation frames through typed protobuf oneof payload tags; `data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` use direct protobuf fields, while proxy/file open payloads remain on the bounded `frame_json` bridge
 - `LegacyJsonPayload` remains decode-compatible for older binary fixtures and conformance tests, but it is not part of the active WebSocket daemon path
 - terminal output emitted by the daemon is chunked to the documented 16 KiB maximum
 
@@ -90,6 +90,7 @@ Phase 2 gRPC control is opt-in during rollout:
 - service starts the grpc-js listener only when `GRPC_CONTROL_ENABLED=true`
 - default listener address is `127.0.0.1:50051`
 - daemon uses tonic control only when `BUD_GRPC_CONTROL_URL` is set
+- if that opt-in gRPC control carrier is unavailable, the daemon falls back to the configured WebSocket server and advertises WebSocket-capable stream-frame support for that connection
 - the existing shared-secret challenge-response flow is the transition credential for gRPC control
 - authenticated gRPC sessions register `transport_session.transport_kind = "h2_grpc"`
 - terminal lifecycle/control frames may route over gRPC through the same transport router; bulk proxy/file/data migration remains later-phase work
@@ -114,6 +115,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - URL: `wss://<host>/ws`
 - Encoding: protobuf `BudEnvelope` binary frames; daemon sessions require `bud_envelope.websocket_binary`
 - Active terminal/control binary payloads use typed protobuf fields under their oneof payload tags, not whole-frame `frame_json`
+- Core data-plane lifecycle binary payloads (`data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, `stream_close`) also use typed protobuf fields under their oneof payload tags
 - Peers that also advertise `bud_envelope.stream_frames` can use the same authenticated WebSocket as a control+data carrier for `stream_data`, `stream_credit`, `stream_reset`, `stream_close`, `proxy_open_result`, and `file_open_result`
 - Bud should send `heartbeat` every 30 seconds
 - Service marks a Bud offline after `offlineGraceSec` with no accepted heartbeat
@@ -125,7 +127,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Encoding: protobuf `BudEnvelope`
 - Runtime: grpc-js on the service, tonic/prost on the daemon
 - Stream shape: bidirectional long-lived control stream
-- Current payload bridge: typed oneof payloads with `frame_json` bytes containing the same JSON frame shapes documented below; the Phase 0 field-level cutover currently applies to WebSocket binary frames
+- Current payload bridge: typed oneof payloads with `frame_json` bytes containing the same JSON frame shapes documented below; field-level payloads currently apply to the active WebSocket binary carrier
 - Auth: same `hello` → `hello_challenge` → `hello_proof` → `hello_ack` challenge-response as WebSocket during the transition
 - Heartbeats and reconnect reconciliation use the same frame shapes as WebSocket
 - Message size default: 4 MiB control envelopes, configurable with `GRPC_CONTROL_MAX_MESSAGE_BYTES`
@@ -184,7 +186,7 @@ Successful attach reply:
 }
 ```
 
-Generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` envelope payloads exist in `proto/bud/v1/bud.proto` for proxy/file work. Runtime credit enforcement is now implemented for generic streams and remains separate from the terminal-output path; terminal output still uses the current bounded queue plus chunk limits.
+Generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` envelope payloads exist in `proto/bud/v1/bud.proto` for proxy/file work and use direct protobuf fields on the WebSocket BudEnvelope carrier. Runtime credit enforcement is now implemented for generic streams and remains separate from the terminal-output path; terminal output still uses the current bounded queue plus chunk limits. `stream_close.final_offset` must exactly equal the receiver's accepted byte count; a mismatch is a protocol error and resets the stream.
 
 Generic stream data frame:
 
@@ -586,14 +588,15 @@ Terminal-specific frames use the terminal protocol version:
 
 ## 5. Bud Identity and Authentication
 
-Bud connects in one of two modes:
+Bud connects in one of three modes:
 
-1. **Enrollment**: Bud sends `hello` with a one-time enrollment token
+1. **Device claim**: Bud completes `/api/device-auth/*` over HTTP, then reconnects with `bud_id` and proves possession of `device_secret`
 2. **Reconnect**: Bud sends `hello` with `bud_id`, then proves possession of `device_secret`
+3. **Dev-only token bypass**: local automation may send `hello.token` only when it exactly matches `DEV_BUD_TOKEN_BYPASS`
 
 ### 5.1 `hello` (Bud → Service)
 
-Enrollment example:
+Dev-only token bypass example:
 
 ```json
 {
@@ -606,7 +609,7 @@ Enrollment example:
   "arch": "arm64",
   "version": "0.1.0",
   "installation_id": "inst_123",
-  "token": "<opaque-enrollment-token>",
+  "token": "<DEV_BUD_TOKEN_BYPASS>",
   "capabilities": {
     "max_concurrency": 1,
     "shell_default": "/bin/sh",
@@ -678,10 +681,10 @@ Reconnect example:
 ```
 
 Rules:
-- `token` is only present on first-time enrollment
+- `token` is only accepted for the local-only `DEV_BUD_TOKEN_BYPASS` path; database-backed legacy enrollment tokens are disabled
 - `bud_id` is only present on reconnect
 - `installation_id` is optional but, when present, must remain consistent for an already-known Bud
-- enrollment tokens are validated by the service against the shared HMAC hash contract
+- normal first-time onboarding uses browser-mediated device claim before challenge-response reconnect
 
 ### 5.2 `hello_challenge` (Service → Bud)
 
@@ -729,8 +732,9 @@ The HMAC is computed from the nonce using the persisted `device_secret`.
 ```
 
 Notes:
-- `device_secret` is only sent on first-time enrollment
-- service emits Bud-online notifications only after the Bud is registered in the active in-memory session map
+- `device_secret` is only sent on device claim completion or local dev-token bypass
+- service registers durable sessions and active in-memory trackers before sending `hello_ack`
+- service emits Bud-online notifications only after the Bud is registered and `hello_ack` has been sent
 
 ### 5.5 `heartbeat` (Bud → Service)
 
@@ -1060,7 +1064,7 @@ Rules:
 
 Common service/Bud codes:
 
-- `AUTH_FAILED` — invalid enrollment token, bad device proof, or installation mismatch
+- `AUTH_FAILED` — invalid dev token bypass, bad device proof, unknown Bud, or installation mismatch
 - `PROTO_VERSION_MISMATCH` — invalid envelope or incompatible `proto`
 - `UNSUPPORTED_PAYLOAD` — protobuf `BudEnvelope` used an unknown payload oneof field in the reserved payload range
 - `BUD_BUSY` — Bud cannot accept the requested work right now
@@ -1078,14 +1082,19 @@ HTTP auth rules:
 
 ## 10. Illustrative Flows
 
-### 10.1 Enrollment
+### 10.1 Device Claim / Dev Bypass
 
 ```text
 Bud                  Service
 ---                  -------
-hello(token)   ─────▶ validate token; create bud + device_secret
-hello_ack      ◀──── session_id + bud_id + device_secret
+/api/device-auth/start ─▶ create pending flow
+browser approval ──────▶ issue bud + device_secret
+hello(bud_id)  ────────▶ issue nonce
+hello_proof    ────────▶ verify HMAC(device_secret, nonce)
+hello_ack      ◀─────── session_id
 ```
+
+Local smoke/dev harnesses may use `hello(token)` only when the token equals `DEV_BUD_TOKEN_BYPASS`.
 
 ### 10.2 Reconnect
 
@@ -1122,8 +1131,8 @@ Service: otherwise emit agent.resync_required
 
 ## 11. Security
 
-- enrollment tokens must be time-limited, single-use, and hashed at rest
-- service and bootstrap tooling must share the same enrollment-token hash contract
+- production onboarding must use browser-mediated device claim; database-backed legacy enrollment tokens are disabled on daemon gateways
+- `DEV_BUD_TOKEN_BYPASS` is local-only and must not be configured in deployed environments
 - device secrets must never be logged and should be stored with restrictive local permissions
 - reconnect auth should always use challenge-response, not reusable bearer secrets on the wire
 - TLS is required for deployed WebSocket traffic
@@ -1144,6 +1153,11 @@ Service: otherwise emit agent.resync_required
 
 - **Current**
   - WebSocket-capable terminal/control traffic now uses binary `BudEnvelope` typed payload fields instead of typed `frame_json`; active sessions reject legacy JSON after capability negotiation, while `LegacyJsonPayload` decode support remains for fixtures and conformance tests
+  - WebSocket-capable core data-plane lifecycle traffic now uses typed protobuf fields for `data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, and `stream_close`
+  - Explicit daemon transport policy defaults to the WebSocket baseline, with opt-in HTTP/2/QUIC preference ordering for hosted deployments
+  - Daemon gRPC control attempts fall back to the WebSocket baseline when the opt-in gRPC carrier is unavailable
+  - `stream_close.final_offset` mismatches now reset as protocol errors instead of closing cleanly
+  - Database-backed legacy enrollment tokens are disabled on WebSocket/gRPC gateways; only device claim and local `DEV_BUD_TOKEN_BYPASS` remain
   - Unknown top-level `BudEnvelope` payload fields now fail with `UNSUPPORTED_PAYLOAD` instead of being silently treated as missing payloads
   - WebSocket-capable daemons can advertise `bud_envelope.stream_frames`; the service registers the authenticated WebSocket as a control+data carrier and dispatches generic stream lifecycle frames through the shared data-plane runtime
   - thread-scoped terminal protocol is the active execution surface

@@ -14,8 +14,9 @@ Opt-in grpc-js server for daemon control streams.
 
 - loads [../../../proto/bud/v1/bud.proto](../../../proto/bud/v1/bud.proto) with `@grpc/proto-loader`
 - exposes `bud.v1.BudControl.Connect`
-- authenticates daemon `hello` / `hello_proof` traffic with the existing enrollment-token and device-secret challenge flow
+- authenticates daemon `hello` / `hello_proof` traffic with the device-secret challenge flow and the dev-only `DEV_BUD_TOKEN_BYPASS` token path
 - registers durable `device_session` and `transport_session` rows with `transport_kind = "h2_grpc"`
+- registers durable/session trackers before sending `hello_ack`, so post-auth frames cannot arrive before the service can route them
 - handles heartbeat, reconnect reconciliation, and terminal result/status/output frames
 - handles daemon `proxy_open_result` and `file_open_result` frames and delivers them to the proxy/file runtime bridges
 - records Bud online/offline transitions through the same terminal manager side effects used by WebSocket
@@ -43,7 +44,7 @@ Opt-in grpc-js server for daemon data streams.
 - handles Phase 4.0 generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` frames for registered runtime streams
 - enforces generic stream offset, chunk-size, and credit windows before acknowledging consumed bytes
 - invokes registered runtime-stream callbacks so proxy/file callers can consume bytes, observe resets, and close HTTP responses before credit is re-granted
-- tolerates data-stream close frames racing ahead of control-stream open acknowledgements by promoting `opening` streams to `open` before closing them durably
+- rejects mismatched `stream_close.final_offset` values through the shared data-plane runtime instead of promoting them to clean close
 
 ### `data-gateway.test.ts`
 
@@ -56,6 +57,7 @@ Adapter between proto-loader message objects and the service's existing JSON-sha
 - encodes outbound daemon frames as typed `BudEnvelope` oneof payloads carrying transitional `frame_json`
 - decodes inbound `LegacyJsonPayload` or typed `frame_json` payloads back to `Record<string, unknown>`
 - stamps gRPC transport metadata as `TRANSPORT_KIND_H2_GRPC` or `TRANSPORT_KIND_H2_DATA`
+- remains the bounded gRPC proto-loader compatibility bridge while WebSocket binary frames move active terminal/control and core stream lifecycle payloads to direct protobuf fields
 
 ### `envelope-codec.test.ts`
 
@@ -71,8 +73,8 @@ Focused unit coverage for gRPC tracker finalization during service shutdown.
 - [../ws/ws.spec.md](../ws/ws.spec.md) - shared frame schemas and legacy auth flow
 - [../runtime/runtime.spec.md](../runtime/runtime.spec.md) - durable daemon session and terminal runtime state
 - [../../../docs/proto.md](../../../docs/proto.md) - protocol documentation
-- [../../../plan/network-upgrade/phase-2-http2-grpc-control-plane.md](../../../plan/network-upgrade/phase-2-http2-grpc-control-plane.md) - implementation phase spec
-- [../../../plan/network-upgrade/phase-3-http2-data-fallback.md](../../../plan/network-upgrade/phase-3-http2-data-fallback.md) - HTTP/2 data fallback phase spec
+- [../../../plan/swappable-transport/implementation-spec.md](../../../plan/swappable-transport/implementation-spec.md) - active swappable-transport implementation spec
+- [../../../plan/swappable-transport/phase-6-landing-correctness-and-fallback-policy.md](../../../plan/swappable-transport/phase-6-landing-correctness-and-fallback-policy.md) - landing correctness and fallback policy
 
 ## TODOs / Technical Debt
 

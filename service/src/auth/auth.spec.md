@@ -84,12 +84,12 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 
 ### `enrollment-token.ts`
 
-Shared enrollment-token hashing helper.
+Legacy enrollment-token hashing helper.
 
 **Responsibilities**:
-- Defines the canonical HMAC-SHA256 enrollment-token hash used by service bootstrap and gateway validation
+- Defines the historical HMAC-SHA256 enrollment-token hash used by older bootstrap utilities
 - Defaults to `config.enrollmentHashSecret`
-- Keeps seeding/manual token creation aligned with runtime token verification
+- Retained for migration/debug compatibility; WebSocket and gRPC gateways no longer accept database-backed enrollment tokens
 
 **Exports**:
 - `hashEnrollmentToken(token, secret?)`

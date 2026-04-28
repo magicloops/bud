@@ -1,5 +1,8 @@
 # Phase 0: Protocol Envelope And Transport Boundary
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Status**: In progress - protobuf envelope carrier and typed payload dispatch implemented
 

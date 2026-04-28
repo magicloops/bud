@@ -84,6 +84,9 @@ const toOrigin = (value: string) => {
 const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ReasoningLevel[];
 export type ReasoningEffortSetting = ReasoningLevel;
 
+const DAEMON_TRANSPORT_POLICIES = ["websocket_baseline", "h2_preferred", "quic_preferred"] as const;
+export type DaemonTransportPolicy = (typeof DAEMON_TRANSPORT_POLICIES)[number];
+
 const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortSetting): ReasoningEffortSetting => {
   if (!value) {
     return fallback;
@@ -92,6 +95,13 @@ const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortS
   return (REASONING_EFFORTS as readonly string[]).includes(normalized as (typeof REASONING_EFFORTS)[number])
     ? (normalized as ReasoningEffortSetting)
     : fallback;
+};
+
+const toDaemonTransportPolicy = (value: string | undefined): DaemonTransportPolicy => {
+  const normalized = value?.toLowerCase();
+  return normalized && (DAEMON_TRANSPORT_POLICIES as readonly string[]).includes(normalized)
+    ? (normalized as DaemonTransportPolicy)
+    : "websocket_baseline";
 };
 
 const apnsKeyId = toNullable(process.env.APNS_KEY_ID);
@@ -160,6 +170,7 @@ export const config = {
   grpcDataMaxConcurrentStreams: toOptionalNumber(process.env.GRPC_DATA_MAX_CONCURRENT_STREAMS),
   grpcDataMaxSessionMemory: toOptionalNumber(process.env.GRPC_DATA_MAX_SESSION_MEMORY),
   grpcDataEnableChannelz: toOptionalNumber(process.env.GRPC_DATA_ENABLE_CHANNELZ),
+  daemonTransportPolicy: toDaemonTransportPolicy(process.env.DAEMON_TRANSPORT_POLICY),
   dataPlaneMaxChunkBytes,
   dataPlaneInitialCreditBytes,
   dataPlaneMaxInFlightBytes,

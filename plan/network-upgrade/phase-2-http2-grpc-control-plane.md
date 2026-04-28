@@ -1,5 +1,8 @@
 # Phase 2: HTTP/2 gRPC Control Plane
 
+> **Superseded:** This HTTP/2-first implementation note is historical. The forward implementation plan is [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md). Keep this file only for origin context; do not use it as an active checklist.
+
+
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Runtime Decision**: [phase-1.5-runtime-decision.md](./phase-1.5-runtime-decision.md)
 **Status**: Initial vertical slice implemented
