@@ -5,6 +5,7 @@ import {
   dataPlaneSessions,
   checkDataPlaneRuntimeStreamCapacity,
   countActiveDataPlaneRuntimeStreamsForBud,
+  getActiveDataPlaneSessionForBud,
   handleDataPlaneStreamFrame,
   registerActiveDataPlaneSessionTracker,
   registerDataPlaneRuntimeStream,
@@ -145,6 +146,127 @@ test("selectDataPlaneCarrier can prefer H2 data under explicit policy", (t) => {
   assert.equal(result.available, true);
   assert.equal(result.transportKind, "h2_data");
   assert.equal(result.dataTransportSessionId, "ts_h2");
+});
+
+test("selectDataPlaneCarrier can prefer QUIC under explicit policy", (t) => {
+  t.after(() => dataPlaneSessions.clear());
+  dataPlaneSessions.clear();
+  registerActiveDataPlaneSessionTracker(makeTracker({ transportSessionId: "ts_ws" }));
+  registerActiveDataPlaneSessionTracker(
+    makeTracker({
+      transportKind: "quic",
+      role: "data",
+      transportSessionId: "ts_quic",
+      health: { status: "healthy", score: 95, reason: "probe_ok", checkedAt: 1777132800000 },
+    }),
+  );
+
+  const result = selectDataPlaneCarrier({
+    budId: "b_test",
+    streamType: "localhost_http_proxy",
+    policy: "quic_preferred",
+  });
+
+  assert.equal(result.available, true);
+  assert.equal(result.transportKind, "quic");
+  assert.equal(result.dataTransportSessionId, "ts_quic");
+  assert.equal(result.health?.score, 95);
+});
+
+test("selectDataPlaneCarrier falls back when a preferred QUIC carrier is unhealthy", (t) => {
+  t.after(() => dataPlaneSessions.clear());
+  dataPlaneSessions.clear();
+  registerActiveDataPlaneSessionTracker(makeTracker({ transportSessionId: "ts_ws" }));
+  registerActiveDataPlaneSessionTracker(
+    makeTracker({
+      transportKind: "h2_data",
+      role: "data",
+      transportSessionId: "ts_h2",
+    }),
+  );
+  registerActiveDataPlaneSessionTracker(
+    makeTracker({
+      transportKind: "quic",
+      role: "data",
+      transportSessionId: "ts_quic",
+      health: { status: "unhealthy", score: 0, reason: "udp_blocked", checkedAt: 1777132800000 },
+    }),
+  );
+
+  const result = selectDataPlaneCarrier({
+    budId: "b_test",
+    streamType: "localhost_http_proxy",
+    policy: "quic_preferred",
+  });
+
+  assert.equal(result.available, true);
+  assert.equal(result.transportKind, "h2_data");
+  assert.match(result.selectionReason, /skipped quic: unhealthy\(0\): udp_blocked/);
+  assert.equal(result.candidateTransports.find((candidate) => candidate.transportKind === "quic")?.available, false);
+});
+
+test("selectDataPlaneCarrier falls back from unhealthy H2 to WebSocket", (t) => {
+  t.after(() => dataPlaneSessions.clear());
+  dataPlaneSessions.clear();
+  registerActiveDataPlaneSessionTracker(makeTracker({ transportSessionId: "ts_ws" }));
+  registerActiveDataPlaneSessionTracker(
+    makeTracker({
+      transportKind: "h2_data",
+      role: "data",
+      transportSessionId: "ts_h2",
+      health: { status: "unhealthy", score: 0, reason: "stream_closed", checkedAt: 1777132800000 },
+    }),
+  );
+
+  const result = selectDataPlaneCarrier({
+    budId: "b_test",
+    streamType: "localhost_http_proxy",
+    policy: "h2_preferred",
+  });
+
+  assert.equal(result.available, true);
+  assert.equal(result.transportKind, "websocket");
+  assert.match(result.selectionReason, /skipped h2_data: unhealthy\(0\): stream_closed/);
+});
+
+test("selectDataPlaneCarrier reports degraded when every matching carrier is unhealthy", (t) => {
+  t.after(() => dataPlaneSessions.clear());
+  dataPlaneSessions.clear();
+  registerActiveDataPlaneSessionTracker(
+    makeTracker({
+      transportSessionId: "ts_ws",
+      health: { status: "unhealthy", score: 0, reason: "socket_backpressure", checkedAt: 1777132800000 },
+    }),
+  );
+
+  const result = selectDataPlaneCarrier({
+    budId: "b_test",
+    streamType: "localhost_http_proxy",
+  });
+
+  assert.equal(result.available, false);
+  assert.equal(result.code, "TRANSPORT_DEGRADED");
+  assert.equal(result.transportKind, "websocket");
+  assert.equal(result.health?.status, "unhealthy");
+  assert.match(result.selectionReason, /no healthier localhost_http_proxy carrier is available/);
+});
+
+test("getActiveDataPlaneSessionForBud refuses unhealthy carriers for new stream opens", (t) => {
+  t.after(() => dataPlaneSessions.clear());
+  dataPlaneSessions.clear();
+  registerActiveDataPlaneSessionTracker(
+    makeTracker({
+      health: { status: "unhealthy", score: 0, reason: "cooldown", checkedAt: 1777132800000 },
+    }),
+  );
+
+  assert.equal(
+    getActiveDataPlaneSessionForBud({
+      budId: "b_test",
+      streamType: "localhost_http_proxy",
+    }),
+    null,
+  );
 });
 
 test("handleDataPlaneStreamFrame dispatches stream data through runtime callbacks", async () => {

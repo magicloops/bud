@@ -38,7 +38,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 | Path | Protocol | Purpose |
 |------|----------|---------|
-| Daemon ↔ Service | WebSocket binary `BudEnvelope` baseline, optional HTTP/2 gRPC control | Device reauth, heartbeat, terminal control, command execution |
+| Daemon ↔ Service | WebSocket binary `BudEnvelope` baseline, optional HTTP/2 gRPC control/data, future QUIC data | Device reauth, heartbeat, terminal control, command execution, file/proxy stream foundations |
 | Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |

@@ -15,7 +15,7 @@ The plan assumes:
 - HTTP/2 gRPC control/data stays useful as an optional advanced carrier, but is no longer the definition of correctness.
 - QUIC is deferred as a data-plane optimization for hosted or advanced deployments.
 - File viewing and localhost web proxying have foundation smokes over WebSocket binary protobuf envelopes; Phase 5 has added route-auth coverage, bounded service limits, audit observability, and product handoff docs before UI/API exposure.
-- Phase 6 and Phase 7 are branch-landing cleanup phases for carrier policy/correctness and protobuf debt. They do not productize file viewer or web proxy UX.
+- Phase 6 and Phase 7 are branch-landing cleanup phases for carrier policy/correctness and protobuf debt. Phase 8 adds optional-carrier health/fallback observability and QUIC token-binding design without productizing file viewer or web proxy UX.
 - Browser and mobile clients keep using service-owned REST plus SSE; they do not connect directly to daemons.
 - File viewer and web proxy product work must not learn carrier-specific behavior.
 
@@ -160,8 +160,8 @@ Manual and automated validation checklist for WebSocket-first stream behavior an
 <!-- SPEC:TODO -->
 - The old `plan/network-upgrade/` documents are now marked superseded and retained only as origin context for the HTTP/2-first work. Keep this folder as the forward implementation plan unless the team explicitly reopens that direction.
 - Transitional `frame_json` payload bodies still exist for optional gRPC adapter paths and proxy/file open-result frames. Phase 7 moved core stream lifecycle frames to direct typed payload fields and tracks the remaining protocol bridge before optional carriers or product surfaces copy it forward.
-- Phase 6 still needs to close fallback policy, stream final-offset validation, durable cleanup for open failures, handshake ordering, and ownerless enrollment behavior.
 - File viewing and web proxy product UI can now build on Phase 5 ownership, limit, audit, and operator-hardening foundations, but still need feature-specific frontend/UX validation before exposure.
+- The QUIC data adapter is intentionally deferred until the runtime/deployment design is approved; current Phase 8 coverage is selector/router health fallback plus token-binding design.
 
 ---
 

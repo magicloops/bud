@@ -190,7 +190,7 @@ HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolate
 
 ### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
 
-Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy and file responses.
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, carrier health and selection observability, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy and file responses.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 

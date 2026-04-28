@@ -35,6 +35,15 @@ Explicit service-side carrier policy for daemon control and data-plane selection
 - `quic_preferred`: future QUIC data first for data-plane selection, then HTTP/2/WebSocket fallback
 - shared by the composite control router and data-plane selector so control/data choices do not drift
 
+### `carrier-health.ts`
+
+Lightweight optional-carrier health vocabulary used by data-plane selection.
+
+- normalizes carrier health as `healthy`, `degraded`, or `unhealthy` with a bounded `0..100` score
+- keeps current WebSocket and HTTP/2 sessions healthy by default unless a gateway/adaptor marks them otherwise
+- lets future QUIC probes demote a low-score or unhealthy candidate without changing product routes
+- serializes candidate health/reasons so file/proxy transport responses and audits can explain selected or skipped carriers
+
 ### `grpc-daemon-router.ts`
 
 gRPC-backed adapter for active `BudControl.Connect` streams.
@@ -64,6 +73,8 @@ Carrier-neutral data-plane registry and runtime stream dispatcher.
 
 - represents WebSocket control+data, HTTP/2 data, and future QUIC/data-only carriers behind `DataPlaneSessionTracker`
 - selects carriers for stream families such as `file_read` and `localhost_http_proxy`
+- applies explicit carrier policy order plus per-carrier health, demoting unhealthy or low-score preferred carriers to the next eligible candidate
+- returns selected-carrier health, candidate summaries, and selection reasons so operators can see why WebSocket/H2/QUIC was chosen
 - owns generic stream runtime state for stream ids, offsets, receive/send credits, close/reset flags, and per-stream callbacks
 - counts active runtime streams per Bud/stream family for file/proxy concurrency enforcement
 - caps accumulated outbound stream credit to the selected carrier's max in-flight byte limit
@@ -75,7 +86,11 @@ Carrier-neutral data-plane registry and runtime stream dispatcher.
 
 ### `data-plane-router.test.ts`
 
-Focused unit coverage for data-plane selection, explicit carrier policy ordering, generic stream dispatch, credit capping, and final-offset mismatch resets.
+Focused unit coverage for data-plane selection, explicit carrier policy ordering, QUIC/H2/WebSocket health fallback, generic stream dispatch, credit capping, and final-offset mismatch resets.
+
+### `composite-daemon-router.test.ts`
+
+Focused unit coverage for control-router fallback when a preferred HTTP/2 carrier refuses or throws, and for normal unavailable behavior when no control carrier is online.
 
 ### `websocket-daemon-router.ts`
 
@@ -104,11 +119,13 @@ The drain state is deliberately small: it blocks new long-lived daemon streams o
 - [../runtime/runtime.spec.md](../runtime/runtime.spec.md) - terminal runtime that consumes the router
 - [../proto/proto.spec.md](../proto/proto.spec.md) - transport-neutral envelope type helpers
 - [../../../plan/swappable-transport/implementation-spec.md](../../../plan/swappable-transport/implementation-spec.md) - WebSocket-first swappable transport plan
+- [../../../plan/swappable-transport/phase-8-optional-transport-upgrades.md](../../../plan/swappable-transport/phase-8-optional-transport-upgrades.md) - optional-carrier health/fallback validation and QUIC deferral
 
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
 - Replace the remaining proxy/file open typed-payload `frame_json` bridge with field-level protobuf payload mapping as those WebSocket stream families are productized.
+- Carrier health is currently process-local selection metadata. Add durable metrics/audit aggregation before using it for cross-instance hosted balancing.
 - Add per-class fair scheduling and durable metrics once concurrent proxy/file data volumes require more than per-stream credit windows and per-Bud concurrency caps.
 
 ---

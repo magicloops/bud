@@ -5,6 +5,13 @@ import { z } from "zod";
 import { PROTO_VERSION, type DaemonTransportPolicy } from "../config.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import { EnvelopeSchema } from "../ws/protocol.js";
+import {
+  carrierHealthAllowsNewWork,
+  describeCarrierHealth,
+  normalizeCarrierHealth,
+  type CarrierHealth,
+  type CarrierSelectionCandidate,
+} from "./carrier-health.js";
 import { rankDataPlaneTransport } from "./carrier-policy.js";
 import type { DaemonTransportPayload } from "./daemon-router.js";
 import { grpcDaemonTransportRouter } from "./grpc-daemon-router.js";
@@ -65,6 +72,7 @@ export interface DataPlaneSessionTracker {
   drainState?: "active" | "draining";
   finalizing?: boolean;
   finalized?: boolean;
+  health?: Partial<CarrierHealth>;
   lastSeenAt: number;
   lastSeenWrite?: number;
   streams: Set<string>;
@@ -94,6 +102,9 @@ export type DataPlaneCarrierSelection =
       maxChunkBytes: number;
       maxInFlightBytes: number;
       initialCreditBytes: number;
+      health: CarrierHealth;
+      selectionReason: string;
+      candidateTransports: CarrierSelectionCandidate[];
     }
   | {
       available: false;
@@ -109,6 +120,9 @@ export type DataPlaneCarrierSelection =
       maxChunkBytes: number | null;
       maxInFlightBytes: number | null;
       initialCreditBytes: number | null;
+      health: CarrierHealth | null;
+      selectionReason: string;
+      candidateTransports: CarrierSelectionCandidate[];
     };
 
 const SafeNonnegativeIntegerSchema = z
@@ -218,6 +232,9 @@ export function getActiveDataPlaneSessionForBud(args: {
     if (!args.includeDraining && tracker.drainState === "draining") {
       return false;
     }
+    if (!args.includeDraining && !carrierHealthAllowsNewWork(normalizeCarrierHealth(tracker.health))) {
+      return false;
+    }
     if (args.streamType && !tracker.streams.has(args.streamType)) {
       return false;
     }
@@ -239,12 +256,17 @@ export function selectDataPlaneCarrier(args: {
   const filtered = args.preferredTransportKind
     ? connected.filter((tracker) => tracker.transportKind === args.preferredTransportKind)
     : connected;
+  const candidates = filtered.map((tracker) => dataPlaneSelectionCandidate(tracker, args.streamType));
 
   if (filtered.length === 0) {
     return unavailableSelection({
       code: DATA_PLANE_UNAVAILABLE,
       message: "Bud does not have an active data-plane carrier",
       tracker: connected[0] ?? null,
+      candidates,
+      selectionReason: args.preferredTransportKind
+        ? `No active ${args.preferredTransportKind} data-plane carrier is connected`
+        : "No active data-plane carrier is connected",
     });
   }
 
@@ -254,15 +276,31 @@ export function selectDataPlaneCarrier(args: {
       code: STREAM_FAMILY_UNSUPPORTED,
       message: `Bud data-plane carrier has not negotiated ${args.streamType} support`,
       tracker: filtered[0],
+      candidates,
+      selectionReason: `No active data-plane carrier negotiated ${args.streamType}`,
     });
   }
 
-  const familyMatch = familyMatches.find((tracker) => tracker.drainState !== "draining") ?? familyMatches[0];
+  const healthyFamilyMatches = familyMatches.filter((tracker) => dataPlaneTrackerAcceptsNewWork(tracker));
+  const familyMatch =
+    healthyFamilyMatches[0] ?? familyMatches.find((tracker) => tracker.drainState !== "draining") ?? familyMatches[0];
   if (familyMatch.drainState === "draining") {
     return unavailableSelection({
       code: TRANSPORT_DEGRADED,
       message: "Bud data-plane carrier is draining and cannot accept new streams",
       tracker: familyMatch,
+      candidates,
+      selectionReason: `${familyMatch.transportKind} is draining and no healthier ${args.streamType} carrier is available`,
+    });
+  }
+  const familyMatchHealth = normalizeCarrierHealth(familyMatch.health);
+  if (!carrierHealthAllowsNewWork(familyMatchHealth)) {
+    return unavailableSelection({
+      code: TRANSPORT_DEGRADED,
+      message: `Bud data-plane carrier is unhealthy: ${describeCarrierHealth(familyMatchHealth)}`,
+      tracker: familyMatch,
+      candidates,
+      selectionReason: `${familyMatch.transportKind} is ${describeCarrierHealth(familyMatchHealth)} and no healthier ${args.streamType} carrier is available`,
     });
   }
 
@@ -280,6 +318,13 @@ export function selectDataPlaneCarrier(args: {
     maxChunkBytes: familyMatch.maxChunkBytes,
     maxInFlightBytes: familyMatch.maxInFlightBytes,
     initialCreditBytes: familyMatch.initialCreditBytes,
+    health: familyMatchHealth,
+    selectionReason: selectionReasonForDataPlaneCarrier({
+      selected: familyMatch,
+      candidates,
+      policy: args.policy,
+    }),
+    candidateTransports: candidates,
   };
 }
 
@@ -717,8 +762,11 @@ function unavailableSelection(args: {
   code: DataPlaneUnavailableCode;
   message: string;
   tracker: DataPlaneSessionTracker | null;
+  candidates: CarrierSelectionCandidate[];
+  selectionReason: string;
 }): DataPlaneCarrierSelection {
   const tracker = args.tracker;
+  const health = tracker ? normalizeCarrierHealth(tracker.health) : null;
   return {
     available: false,
     code: args.code,
@@ -733,7 +781,67 @@ function unavailableSelection(args: {
     maxChunkBytes: tracker?.maxChunkBytes ?? null,
     maxInFlightBytes: tracker?.maxInFlightBytes ?? null,
     initialCreditBytes: tracker?.initialCreditBytes ?? null,
+    health,
+    selectionReason: args.selectionReason,
+    candidateTransports: args.candidates,
   };
+}
+
+function dataPlaneSelectionCandidate(
+  tracker: DataPlaneSessionTracker,
+  streamType: string,
+): CarrierSelectionCandidate {
+  const health = normalizeCarrierHealth(tracker.health);
+  const supportsStream = tracker.streams.has(streamType);
+  const connected = isDataPlaneSessionConnected(tracker);
+  const draining = tracker.drainState === "draining";
+  const healthy = carrierHealthAllowsNewWork(health);
+  return {
+    transportKind: tracker.transportKind,
+    role: tracker.role,
+    health,
+    available: connected && supportsStream && !draining && healthy,
+    reason: candidateUnavailableReason({ connected, supportsStream, draining, health }),
+  };
+}
+
+function candidateUnavailableReason(args: {
+  connected: boolean;
+  supportsStream: boolean;
+  draining: boolean;
+  health: CarrierHealth;
+}): string | null {
+  if (!args.connected) {
+    return "not connected";
+  }
+  if (!args.supportsStream) {
+    return "stream family unsupported";
+  }
+  if (args.draining) {
+    return "draining";
+  }
+  if (!carrierHealthAllowsNewWork(args.health)) {
+    return describeCarrierHealth(args.health);
+  }
+  return null;
+}
+
+function dataPlaneTrackerAcceptsNewWork(tracker: DataPlaneSessionTracker): boolean {
+  return tracker.drainState !== "draining" && carrierHealthAllowsNewWork(normalizeCarrierHealth(tracker.health));
+}
+
+function selectionReasonForDataPlaneCarrier(args: {
+  selected: DataPlaneSessionTracker;
+  candidates: CarrierSelectionCandidate[];
+  policy?: DaemonTransportPolicy;
+}): string {
+  const demoted = args.candidates
+    .filter((candidate) => candidate.transportKind !== args.selected.transportKind && !candidate.available)
+    .map((candidate) => `${candidate.transportKind}: ${candidate.reason ?? describeCarrierHealth(candidate.health)}`);
+  const policyText = args.policy ? ` by ${args.policy} policy` : "";
+  const selectedHealth = normalizeCarrierHealth(args.selected.health);
+  const suffix = demoted.length > 0 ? `; skipped ${demoted.join(", ")}` : "";
+  return `selected ${args.selected.transportKind}${policyText} with ${describeCarrierHealth(selectedHealth)}${suffix}`;
 }
 
 async function handleStreamData(

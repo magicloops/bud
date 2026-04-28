@@ -18,7 +18,7 @@ Proxy session helpers and route-facing contracts.
 - creates owned `proxy_session` rows with TTL, audit correlation id, display metadata, and transport degraded state
 - records `proxy.session_create` and `proxy.session_revoke` audit events
 - reads and lists sessions with SQL owner filters
-- serializes the stable browser REST response shape
+- serializes the stable browser REST response shape, including carrier health, candidate transports, and selection reason for operator debugging
 
 ### `proxy-edge.ts`
 
@@ -47,7 +47,7 @@ In-memory bridge between daemon `proxy_open_result` / generic stream frames and 
 
 ### `proxy-session.test.ts`
 
-Focused unit coverage for target validation, method normalization, and carrier-neutral transport readiness checks.
+Focused unit coverage for target validation, method normalization, carrier-neutral transport readiness checks, and selected-carrier health metadata.
 
 ### `proxy-runtime.test.ts`
 

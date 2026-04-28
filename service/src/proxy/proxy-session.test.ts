@@ -59,40 +59,31 @@ function makeDataPlaneTracker(streams: string[]): DataPlaneSessionTracker {
 test("proxy transport status requires an active carrier with localhost proxy support", () => {
   dataPlaneSessions.clear();
 
-  assert.deepEqual(resolveProxyTransportStatus("bud-1"), {
-    available: false,
-    code: "DATA_PLANE_UNAVAILABLE",
-    message: "Bud does not have an active data-plane carrier",
-    deviceSessionId: null,
-    controlTransportSessionId: null,
-    dataTransportSessionId: null,
-    transportKind: null,
-  });
+  const missingStatus = resolveProxyTransportStatus("bud-1");
+  assert.equal(missingStatus.available, false);
+  assert.equal(missingStatus.code, "DATA_PLANE_UNAVAILABLE");
+  assert.equal(missingStatus.transportKind, null);
+  assert.deepEqual(missingStatus.candidateTransports, []);
 
   const dataTracker = makeDataPlaneTracker(["file_read"]);
   registerActiveDataPlaneSessionTracker(dataTracker);
 
-  assert.deepEqual(resolveProxyTransportStatus("bud-1"), {
-    available: false,
-    code: "STREAM_FAMILY_UNSUPPORTED",
-    message: "Bud data-plane carrier has not negotiated localhost_http_proxy support",
-    deviceSessionId: "ds_1",
-    controlTransportSessionId: "ts_ws",
-    dataTransportSessionId: "ts_ws",
-    transportKind: "websocket",
-  });
+  const unsupportedStatus = resolveProxyTransportStatus("bud-1");
+  assert.equal(unsupportedStatus.available, false);
+  assert.equal(unsupportedStatus.code, "STREAM_FAMILY_UNSUPPORTED");
+  assert.equal(unsupportedStatus.deviceSessionId, "ds_1");
+  assert.equal(unsupportedStatus.transportKind, "websocket");
+  assert.equal(unsupportedStatus.candidateTransports[0]?.reason, "stream family unsupported");
 
   dataTracker.streams.add("localhost_http_proxy");
 
-  assert.deepEqual(resolveProxyTransportStatus("bud-1"), {
-    available: true,
-    code: null,
-    message: null,
-    deviceSessionId: "ds_1",
-    controlTransportSessionId: "ts_ws",
-    dataTransportSessionId: "ts_ws",
-    transportKind: "websocket",
-  });
+  const readyStatus = resolveProxyTransportStatus("bud-1");
+  assert.equal(readyStatus.available, true);
+  assert.equal(readyStatus.code, null);
+  assert.equal(readyStatus.deviceSessionId, "ds_1");
+  assert.equal(readyStatus.transportKind, "websocket");
+  assert.equal(readyStatus.health?.status, "healthy");
+  assert.match(readyStatus.selectionReason, /selected websocket/);
 
   dataPlaneSessions.clear();
 });

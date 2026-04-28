@@ -6,6 +6,8 @@ HTTP/2 gRPC daemon-gateway implementation for the network-upgrade control and da
 
 This folder keeps grpc-js/proto-loader details isolated from the rest of the service. Runtime, route, and DB code continue to speak JSON-shaped daemon frames through the transport router while this layer adapts those frames to `BudEnvelope` messages on `BudControl.Connect` and the opt-in `BudData.Attach` bidirectional stream.
 
+HTTP/2 remains an optional carrier adapter. The WebSocket baseline stays correct when gRPC is disabled or unhealthy, and carrier policy/health in [../transport/transport.spec.md](../transport/transport.spec.md) decides when these streams are preferred or demoted.
+
 ## Files
 
 ### `control-gateway.ts`
@@ -75,6 +77,7 @@ Focused unit coverage for gRPC tracker finalization during service shutdown.
 - [../../../docs/proto.md](../../../docs/proto.md) - protocol documentation
 - [../../../plan/swappable-transport/implementation-spec.md](../../../plan/swappable-transport/implementation-spec.md) - active swappable-transport implementation spec
 - [../../../plan/swappable-transport/phase-6-landing-correctness-and-fallback-policy.md](../../../plan/swappable-transport/phase-6-landing-correctness-and-fallback-policy.md) - landing correctness and fallback policy
+- [../../../plan/swappable-transport/phase-8-optional-transport-upgrades.md](../../../plan/swappable-transport/phase-8-optional-transport-upgrades.md) - optional-carrier parity, health, and fallback expectations
 
 ## TODOs / Technical Debt
 

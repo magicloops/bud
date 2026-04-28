@@ -10,6 +10,12 @@ import {
 } from "../db/schema.js";
 import type { Viewer } from "../auth/session.js";
 import {
+  serializeCarrierHealth,
+  serializeCarrierSelectionCandidate,
+  type CarrierHealth,
+  type CarrierSelectionCandidate,
+} from "../transport/carrier-health.js";
+import {
   selectDataPlaneCarrier,
   type DataPlaneTransportKind,
   type DataPlaneUnavailableCode,
@@ -59,6 +65,9 @@ export type ProxyTransportStatus =
       controlTransportSessionId: string | null;
       dataTransportSessionId: string | null;
       transportKind: DataPlaneTransportKind;
+      health: CarrierHealth;
+      selectionReason: string;
+      candidateTransports: CarrierSelectionCandidate[];
     }
   | {
       available: false;
@@ -68,6 +77,9 @@ export type ProxyTransportStatus =
       controlTransportSessionId: string | null;
       dataTransportSessionId: string | null;
       transportKind: DataPlaneTransportKind | null;
+      health: CarrierHealth | null;
+      selectionReason: string;
+      candidateTransports: CarrierSelectionCandidate[];
     };
 
 export class ProxySessionValidationError extends Error {
@@ -130,6 +142,9 @@ export function resolveProxyTransportStatus(budId: string): ProxyTransportStatus
       controlTransportSessionId: carrier.controlTransportSessionId,
       dataTransportSessionId: carrier.dataTransportSessionId,
       transportKind: carrier.transportKind,
+      health: carrier.health,
+      selectionReason: carrier.selectionReason,
+      candidateTransports: carrier.candidateTransports,
     };
   }
 
@@ -141,6 +156,9 @@ export function resolveProxyTransportStatus(budId: string): ProxyTransportStatus
     controlTransportSessionId: carrier.controlTransportSessionId,
     dataTransportSessionId: carrier.dataTransportSessionId,
     transportKind: carrier.transportKind,
+    health: carrier.health,
+    selectionReason: carrier.selectionReason,
+    candidateTransports: carrier.candidateTransports,
   };
 }
 
@@ -346,6 +364,9 @@ export function serializeProxyTransportStatus(status: ProxyTransportStatus): Rec
     control_transport_session_id: status.controlTransportSessionId,
     data_transport_session_id: status.dataTransportSessionId,
     transport_kind: status.transportKind,
+    health: serializeCarrierHealth(status.health),
+    selection_reason: status.selectionReason,
+    candidate_transports: status.candidateTransports.map(serializeCarrierSelectionCandidate),
   };
 }
 

@@ -1,6 +1,6 @@
 # Implementation Spec: Swappable Transport
 
-**Status**: Implemented through Phase 5; landing cleanup phases and optional carrier upgrades remain
+**Status**: Implemented through Phase 8; QUIC data adapter remains deferred pending approved runtime/deployment design
 **Created**: 2026-04-27
 **Review Doc**: [../../review/network-upgrade-websocket-first-pr-review.md](../../review/network-upgrade-websocket-first-pr-review.md)
 **Current Branch Review**: [../../review/network-upgrade/current-branch-review.md](../../review/network-upgrade/current-branch-review.md)
@@ -262,7 +262,7 @@ Transport security:
 - Phase 5 added route-auth coverage, bounded data-plane limits, service/daemon denial audit events, generic reset/close audit events, and WebSocket-first product handoff docs.
 - Phase 6 landed the explicit carrier policy, daemon gRPC-to-WebSocket fallback, final-offset validation, file/proxy failure cleanup, handshake ordering, and dev-only legacy token quarantine.
 - Phase 7 moved core data-plane lifecycle payloads off whole-frame `frame_json`, bounded the remaining gRPC/proxy/file bridge, and added safe-`uint64` coverage.
-- Phase 8 is intentionally after WebSocket-first correctness and protocol cleanup. QUIC should improve performance, not define correctness.
+- Phase 8 added optional-carrier health and fallback observability, selector/router failure tests for HTTP/2 and synthetic QUIC demotion, and finalized the QUIC token-binding design. QUIC should improve performance, not define correctness, and its data adapter remains a later approved implementation.
 
 ## Risks
 

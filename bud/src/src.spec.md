@@ -132,6 +132,7 @@ Daemon-side transport sender boundary.
 - lets terminal and legacy run modules emit daemon payloads without depending directly on raw WebSocket sender types
 - routes `terminal_output` over the gRPC data channel when attached and falls back to the control channel if the data channel is unavailable
 - routes generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` over the WebSocket carrier when connected by WebSocket, or over the gRPC data channel when connected by gRPC with data attached
+- has no QUIC implementation yet; future QUIC data adapters must reuse the same `BudEnvelope` stream lifecycle frames and keep WebSocket fallback behavior intact
 
 ### `journal.rs`
 

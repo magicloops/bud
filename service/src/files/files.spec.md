@@ -19,7 +19,7 @@ File session helpers and route-facing contracts.
 - creates owned `file_session` rows with TTL, configurable default max-byte limit, audit correlation id, display metadata, and transport degraded state
 - records `file.session_create` and `file.session_revoke` audit events
 - reads and lists sessions with SQL owner filters
-- serializes the stable browser REST response shape
+- serializes the stable browser REST response shape, including carrier health, candidate transports, and selection reason for operator debugging
 
 ### `file-edge.ts`
 
@@ -50,7 +50,7 @@ In-memory bridge between daemon `file_open_result` / generic stream frames and o
 
 ### `file-session.test.ts`
 
-Focused unit coverage for root/path validation, permission normalization, and carrier-neutral transport readiness checks.
+Focused unit coverage for root/path validation, permission normalization, carrier-neutral transport readiness checks, and selected-carrier health metadata.
 
 ### `file-runtime.test.ts`
 

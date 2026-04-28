@@ -366,6 +366,7 @@ Phase 4.2 localhost proxy session and edge routes.
 - session reads/revokes filter by `proxy_session.created_by_user_id` in SQL
 - proxy targets are limited to explicit `127.0.0.1` plus an explicit port
 - proxy sessions report degraded state when no active carrier has `localhost_http_proxy` support; the edge returns `424` instead of opening daemon work
+- proxy transport payloads include selected-carrier health and skipped candidate reasons so operators can diagnose WebSocket/H2/QUIC fallback without route-specific branches
 - the edge route supports `GET` and `HEAD` in Phase 4.2; other allowed methods still return `501 proxy_method_not_implemented`
 - each proxied request creates durable `bud_operation` / `bud_stream` rows before sending daemon `proxy_open`
 - proxied requests enforce owner checks before stream registration plus per-Bud concurrency, max response bytes, chunk/credit, idle, and TTL limits
@@ -396,6 +397,7 @@ Phase 4.4 file session and daemon-backed file edge routes.
 - file sessions are limited to the `workspace` root key and POSIX-style root-relative paths with no traversal segments
 - permissions default to `stat`, `read`, and `range`; `range` implies `read`, and `read` implies `stat`
 - file sessions report degraded state when no active carrier has `file_read` support
+- file transport payloads include selected-carrier health and skipped candidate reasons so operators can diagnose WebSocket/H2/QUIC fallback without route-specific branches
 - ready sessions support `HEAD`, full `GET`, and single-byte-range `GET` by sending `file_open` over the selected control side and streaming bytes from the selected data-plane carrier
 - file reads enforce owner checks before stream registration plus per-Bud concurrency, max bytes, chunk/credit, idle, and TTL limits
 - daemon re-checks workspace root/path, symlink, regular-file, max-byte, and content-identity policy before sending bytes

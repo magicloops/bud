@@ -84,7 +84,7 @@ Main source code:
 - `proto/` - Network-upgrade envelope helpers and typed protobuf WebSocket carrier codec
 - `proxy/` - Phase 4.2 localhost proxy session validation, persistence helpers, transport readiness checks, daemon open dispatch, and GET/HEAD streaming bridge
 - `files/` - Phase 4.4 file session validation, persistence helpers, transport readiness checks, daemon open dispatch, and stat/read/range streaming bridge
-- `transport/` - Daemon transport router interface, explicit carrier policy, composite gRPC/WebSocket adapters, and gateway drain helper
+- `transport/` - Daemon transport router interface, explicit carrier policy, composite gRPC/WebSocket adapters, gateway drain helper, optional-carrier health metadata, and selected/skipped carrier observability for file/proxy data-plane work
 - `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 
 ### `drizzle/` → [drizzle/drizzle.spec.md](./drizzle/drizzle.spec.md)

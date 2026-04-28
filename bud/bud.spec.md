@@ -6,8 +6,8 @@ Rust device daemon that runs on user machines and connects to the Bud service vi
 
 The Bud daemon:
 
-1. bootstraps auth through a browser claim flow, with a legacy enrollment-token fallback
-2. maintains a persistent WebSocket connection, or an opt-in tonic gRPC control stream, with automatic reconnect and heartbeats
+1. bootstraps auth through a browser claim flow, with a dev-only token bypass for local automation
+2. maintains a persistent WebSocket connection, or attempts an opt-in tonic gRPC control stream before falling back to WebSocket on non-auth transport failures, with automatic reconnect and heartbeats
 3. executes the retained legacy queued `run` path for one-shot command work
 4. manages thread-scoped interactive terminal sessions
 5. reports local journal state after reconnect so the service can reconcile operation/stream outcomes
@@ -130,11 +130,13 @@ On first run without a stored device secret, the daemon:
 4. polls `/api/device-auth/poll` until approval
 5. persists `bud_id` and `device_secret` to the configured identity path
 
-### Legacy Manual Enrollment
+### Dev Token Bypass
 
 ```bash
 cargo run -- --token <enrollment-token> --terminal-enabled
 ```
+
+The token path is for local automation only and must match the service `DEV_BUD_TOKEN_BYPASS`; production onboarding uses the browser-mediated claim flow.
 
 ### Subsequent Connections
 
@@ -149,8 +151,8 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 | Option | Env Variable | Default | Description |
 |--------|--------------|---------|-------------|
 | `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service endpoint used for WebSocket control and device-claim HTTP origin derivation |
-| `--grpc-control-url` | `BUD_GRPC_CONTROL_URL` | - | Optional tonic gRPC control endpoint such as `http://127.0.0.1:50051`; when set, daemon control uses gRPC instead of WebSocket |
-| `--token` | `BUD_ENROLLMENT_TOKEN` | - | Enrollment token |
+| `--grpc-control-url` | `BUD_GRPC_CONTROL_URL` | - | Optional tonic gRPC control endpoint such as `http://127.0.0.1:50051`; non-auth connection failures fall back to the WebSocket baseline |
+| `--token` | `BUD_ENROLLMENT_TOKEN` | - | Dev-only token-bypass credential for local automation |
 | `--name` | `BUD_DEVICE_NAME` | `bud-dev` | Device name |
 | `--cwd` | `BUD_DEFAULT_CWD` | `~` | Working directory |
 | `--identity-file` | `BUD_IDENTITY_FILE` | `~/.bud/identity.json` | Identity storage |
@@ -180,7 +182,7 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 - Readiness/state handling is more centralized than before, but the runtime still contains multiple wait strategies that should continue converging as additional backends are introduced.
 - The daemon still assumes the claim-flow HTTP origin can be derived from the configured `--server` URL; gRPC control users should point `BUD_SERVER_URL` at the service HTTP origin when not using WebSocket.
 - The legacy queued `run` path remains by design with limited ownership; it is retained as reference functionality for future capability work rather than as a first-class runtime direction.
-- The protobuf carrier still uses transitional JSON-shaped `frame_json` bodies under typed oneof payloads; generated field-level protobuf payload structs remain a follow-up before HTTP/2 data transports.
+- Optional HTTP/2 gRPC still keeps a bounded `frame_json` compatibility bridge in the adapter, while WebSocket terminal/control and core stream lifecycle frames use typed protobuf fields. Future QUIC work must reuse the typed payload contract instead of copying the bridge.
 
 ---
 

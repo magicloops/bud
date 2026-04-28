@@ -101,10 +101,10 @@
 
 ## Phase 8: Optional Transport Upgrades
 
-- [ ] Keep HTTP/2 gRPC behind carrier-neutral adapters
-- [ ] Reuse Phase 6 carrier preference policy for hosted deployments
-- [ ] Add carrier health/fallback tests
-- [ ] Finalize QUIC token-binding design
+- [x] Keep HTTP/2 gRPC behind carrier-neutral adapters
+- [x] Reuse Phase 6 carrier preference policy for hosted deployments
+- [x] Add carrier health/fallback tests
+- [x] Finalize QUIC token-binding design
 - [ ] Implement QUIC data adapter when approved
-- [ ] Validate forced carrier failures
-- [ ] Update deployment docs and specs
+- [x] Validate forced carrier failures at selector/router level
+- [x] Update deployment docs and specs

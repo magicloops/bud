@@ -109,9 +109,10 @@
 - [ ] Existing HTTP/2 gRPC terminal smoke still passes when enabled.
 - [x] Existing HTTP/2 file smoke still passes when enabled.
 - [x] Existing HTTP/2 proxy smoke still passes when enabled.
-- [ ] Forced HTTP/2 failure does not break WebSocket baseline.
+- [x] Forced HTTP/2 failure does not break WebSocket baseline at control-router/data-selector level.
 - [ ] QUIC, when implemented, carries the same envelope and stream lifecycle.
-- [ ] Forced QUIC failure falls back according to carrier policy.
+- [x] Forced synthetic QUIC health failure falls back according to carrier policy.
+- [x] File/proxy transport status includes selected-carrier health and skipped-candidate reasons.
 
 ## Documentation
 

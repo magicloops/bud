@@ -61,6 +61,8 @@ The codebase now has a Phase 0 transport boundary for the daemon-network upgrade
 - service runtime code sends ordinary daemon control work through `DaemonTransportRouter`
 - the current control router implementation is composite and follows `DAEMON_TRANSPORT_POLICY`; the default `websocket_baseline` policy keeps WebSocket first and uses HTTP/2 as fallback
 - file/proxy stream work selects an explicit data-plane carrier instead of hard-coding gRPC control/data
+- data-plane selection applies the configured carrier policy plus per-carrier health; unhealthy or low-score degraded preferred carriers are skipped in favor of the next eligible WebSocket/HTTP2/QUIC candidate
+- file/proxy transport responses include selected-carrier health, candidate summaries, and a selection reason so operators can tell which carrier was used or skipped
 - daemon terminal/run modules send outbound payloads through a transport sender wrapper instead of a raw WebSocket sender type
 - shared protobuf schema lives in `proto/bud/v1/bud.proto`
 - the shared schema now exposes `service BudControl { rpc Connect(stream BudEnvelope) returns (stream BudEnvelope); }` and `service BudData { rpc Attach(stream BudEnvelope) returns (stream BudEnvelope); }`
@@ -149,6 +151,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Stream credits: Phase 4.0 tracks per-stream receive/send offsets and credit windows for generic streams; accepted bytes consume credit and credit is re-granted only after the receiver has consumed the bytes
 - Chunk limit default: 16 KiB decoded generic stream chunks, configurable with `DATA_PLANE_MAX_CHUNK_BYTES`; gRPC terminal-output chunks keep the legacy `GRPC_DATA_MAX_CHUNK_BYTES` setting
 - Generic stream limits: the service enforces per-Bud file/proxy concurrency, max in-flight credit, idle timeout, absolute stream TTL, file-session max bytes, and proxy response max bytes before forwarding bytes to the browser
+- Carrier health: the service treats connected carriers as healthy by default, but optional adapters may mark a carrier degraded/unhealthy; carriers below the healthy threshold are not selected for new streams when another eligible candidate exists
 - Message size default: 4 MiB data envelopes, configurable with `GRPC_DATA_MAX_MESSAGE_BYTES`
 - Deployed traffic must use TLS or an equivalent trusted HTTP/2 front-door termination path
 
@@ -501,7 +504,28 @@ Response:
     "device_session_id": "ds_01H...",
     "control_transport_session_id": "ts_01H...",
     "data_transport_session_id": "ts_01H...",
-    "transport_kind": "websocket"
+    "transport_kind": "websocket",
+    "health": {
+      "status": "healthy",
+      "score": 100,
+      "reason": null,
+      "checked_at": null
+    },
+    "selection_reason": "selected websocket with healthy(100)",
+    "candidate_transports": [
+      {
+        "transport_kind": "websocket",
+        "role": "control_data",
+        "health": {
+          "status": "healthy",
+          "score": 100,
+          "reason": null,
+          "checked_at": null
+        },
+        "available": true,
+        "reason": null
+      }
+    ]
   },
   "degraded": null,
   "created_at": "2026-04-27T11:45:00.000Z",
@@ -1144,6 +1168,7 @@ Service: otherwise emit agent.resync_required
 - localhost proxy streams require an authenticated data-plane carrier with `localhost_http_proxy` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, and content-identity policy before sending bytes
+- future QUIC data sessions must attach with a short-lived token bound to the active authenticated Bud, device session, control transport session, allowed endpoint candidates, and allowed stream families; token issuance/attach is not part of the active WebSocket/HTTP2 protocol yet
 - push endpoint registrations and unread/read watermarks are user-owned resources; normal client-directed reads and deletes are scoped to the authenticated owner
 - the push registration route may additionally server-side reclaim the same provider token or reused installation id from stale prior ownership so a logged-out account cannot keep receiving notifications for a device now registered by another user
 
@@ -1155,6 +1180,7 @@ Service: otherwise emit agent.resync_required
   - WebSocket-capable terminal/control traffic now uses binary `BudEnvelope` typed payload fields instead of typed `frame_json`; active sessions reject legacy JSON after capability negotiation, while `LegacyJsonPayload` decode support remains for fixtures and conformance tests
   - WebSocket-capable core data-plane lifecycle traffic now uses typed protobuf fields for `data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, and `stream_close`
   - Explicit daemon transport policy defaults to the WebSocket baseline, with opt-in HTTP/2/QUIC preference ordering for hosted deployments
+  - Data-plane carrier selection now includes health scores and selected/skipped carrier reasons; unhealthy or low-score degraded optional carriers are demoted without changing file/proxy product contracts
   - Daemon gRPC control attempts fall back to the WebSocket baseline when the opt-in gRPC carrier is unavailable
   - `stream_close.final_offset` mismatches now reset as protocol errors instead of closing cleanly
   - Database-backed legacy enrollment tokens are disabled on WebSocket/gRPC gateways; only device claim and local `DEV_BUD_TOKEN_BYPASS` remain

@@ -62,6 +62,97 @@ Token and session requirements:
 - token revokes when the owning control session drains/closes
 - early data is disabled for non-idempotent effects
 
+## Token Binding Contract
+
+The approved pre-implementation contract is a service-issued, short-lived, signed bearer token delivered only over the already-authenticated control carrier. The token is not a product credential and must not be accepted by REST/SSE/browser routes.
+
+Token claims:
+
+- `token_id`: ULID used for revocation/audit lookup
+- `bud_id`: authenticated Bud id
+- `device_session_id`: active durable device session id
+- `control_transport_session_id`: active WebSocket or `h2_grpc` control transport session id
+- `allowed_transport_kind`: `quic`
+- `allowed_stream_families`: stream families the QUIC attach may negotiate
+- `endpoint_candidates`: service-advertised QUIC host/port/alpn candidates
+- `not_before`, `expires_at`: short validity window
+- `nonce`: random anti-replay value
+
+Validation rules:
+
+- reject missing, expired, malformed, replayed, or wrong-kind tokens
+- reject if `bud_id`, `device_session_id`, or `control_transport_session_id` no longer matches the active authenticated control tracker
+- reject if the owning control transport is draining, closed, or superseded
+- reject stream families outside `allowed_stream_families`
+- bind the created durable `transport_session` to the validated `token_id`
+- revoke outstanding QUIC tokens when the owning control session finalizes
+
+Health scoring:
+
+- a successful QUIC attach starts as `healthy(100)`
+- UDP/connectivity probe failures are `unhealthy(0)` with reason such as `udp_blocked`
+- gateway drain is `unhealthy(0)` for new streams
+- elevated reset/error rates should demote to `degraded(<50)` or `unhealthy(0)` depending on threshold
+- cooldown prevents rapid promotion/demotion loops
+
+The Phase 8 implementation adds selector-level health/fallback behavior and synthetic QUIC demotion tests, but intentionally does not add token issuance or a QUIC gateway. The gateway/runtime stack selection remains the next approval point.
+
+## Follow-On Implementation Plan
+
+This document is the design guardrail for a future QUIC pass, not the implementation checklist for that pass. Before opening a QUIC implementation PR, create a dedicated plan under `plan/` that turns the remaining choices into testable work items.
+
+Example checklist:
+
+- [ ] Select the QUIC runtime shape:
+  - main service process vs. adjacent gateway process
+  - Node/Rust/library choice
+  - local development startup path
+- [ ] Define control-plane frame shapes:
+  - service-advertised endpoint candidates
+  - token issuance/revocation frames
+  - daemon QUIC attach status/health reports
+- [ ] Implement token storage and revocation:
+  - signed token format
+  - replay protection for `token_id` / `nonce`
+  - revocation on control-session drain/close/supersede
+  - audit events for issued, accepted, rejected, and revoked tokens
+- [ ] Add service configuration:
+  - enable/disable QUIC
+  - bind host/port
+  - public endpoint candidates
+  - TLS/certificate settings
+  - health thresholds and cooldowns
+- [ ] Add daemon configuration:
+  - enable/disable QUIC probing
+  - endpoint candidate handling
+  - fallback to WebSocket/HTTP2 by service policy
+  - operator-visible logs for failed probe/fallback reasons
+- [ ] Implement the data adapter:
+  - register `transport_session.transport_kind = "quic"`
+  - register `DataPlaneSessionTracker` with health metadata
+  - carry `stream_data`, `stream_credit`, `stream_reset`, and `stream_close`
+  - preserve the same offset, credit, reset, close, and final-offset validation rules
+- [ ] Add conformance coverage:
+  - same protobuf payload fields as WebSocket for each stream family QUIC carries
+  - no new file/proxy product payloads
+  - unsafe integer handling parity with the WebSocket codec
+- [ ] Add fallback and health tests:
+  - UDP blocked
+  - token expired/replayed/wrong session
+  - QUIC gateway draining
+  - high reset/error demotion and cooldown
+  - WebSocket baseline remains green when QUIC is disabled or unhealthy
+- [ ] Add smoke validation:
+  - file range read over QUIC
+  - proxy GET/HEAD over QUIC
+  - terminal output/input responsiveness during file/proxy traffic
+  - HTTP/2 fallback path when policy prefers H2 after QUIC demotion
+- [ ] Add deployment docs:
+  - UDP/front-door requirements
+  - TLS/certificate model
+  - metrics/log fields
+  - operational rollback steps
+
 ## Gateway Placement
 
 Open implementation choice:

@@ -1,7 +1,7 @@
 # Phase 8: Optional Transport Upgrades
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Draft
+**Status**: Implemented for HTTP/2 health/fallback parity; QUIC adapter deferred pending runtime/deployment approval
 **Priority**: Medium
 
 ---
@@ -51,7 +51,7 @@ QUIC must carry the same logical frames:
 2. Reuse the carrier preference policy from [phase-6-landing-correctness-and-fallback-policy.md](./phase-6-landing-correctness-and-fallback-policy.md).
 3. Add health scoring and fallback tests for all configured carriers.
 4. Add QUIC token-binding design before implementation.
-5. Implement QUIC data adapter only after the design is approved.
+5. Implement QUIC data adapter only after the runtime/deployment design is approved.
 6. Validate forced carrier failure:
    - QUIC unavailable falls back to WebSocket or HTTP/2 by policy
    - HTTP/2 unavailable does not break WebSocket baseline
@@ -59,26 +59,26 @@ QUIC must carry the same logical frames:
 
 ## Acceptance Criteria
 
-- [ ] Product routes do not branch on carrier type.
-- [ ] HTTP/2 gRPC remains optional and adapter-backed.
-- [ ] QUIC design requires no new file/proxy product payloads.
-- [ ] Carrier failure tests prove fallback does not change product semantics.
-- [ ] Operators can tell which carrier was selected and why.
+- [x] Product routes do not branch on carrier type.
+- [x] HTTP/2 gRPC remains optional and adapter-backed.
+- [x] QUIC design requires no new file/proxy product payloads.
+- [x] Carrier failure tests prove fallback does not change product semantics at selector/router level.
+- [x] Operators can tell which carrier was selected and why through file/proxy transport status, audit metadata, and candidate summaries.
 
 ## Validation
 
 - Carrier-selection unit tests.
-- Forced HTTP/2 failure with WebSocket baseline still passing file/proxy smokes.
-- Forced QUIC failure once QUIC exists.
+- Forced HTTP/2 control fallback unit tests, plus existing WebSocket baseline smokes.
+- Forced QUIC health demotion unit tests using a synthetic QUIC data-plane tracker; real QUIC gateway smoke remains blocked until the adapter exists.
 - Hosted deployment smoke only after front-door support is known.
 
 ## Specs To Update
 
-- [ ] [../../service/src/transport/transport.spec.md](../../service/src/transport/transport.spec.md)
-- [ ] [../../service/src/grpc/grpc.spec.md](../../service/src/grpc/grpc.spec.md)
-- [ ] [../../bud/src/src.spec.md](../../bud/src/src.spec.md)
-- [ ] [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md)
-- [ ] [../../docs/proto.md](../../docs/proto.md)
+- [x] [../../service/src/transport/transport.spec.md](../../service/src/transport/transport.spec.md)
+- [x] [../../service/src/grpc/grpc.spec.md](../../service/src/grpc/grpc.spec.md)
+- [x] [../../bud/src/src.spec.md](../../bud/src/src.spec.md)
+- [x] [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md)
+- [x] [../../docs/proto.md](../../docs/proto.md)
 
 ## Non-Goals
 
