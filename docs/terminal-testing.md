@@ -32,7 +32,7 @@ This document describes the test strategy for the persistent terminal feature (P
 |-----------|-----------|
 | TerminalManager | `ensureTerminal()` creates DB row and dispatches frame |
 | | `sendInput()` validates budId, creates frame, records input |
-| | `sendInteraction()` can dispatch tmux-style chords like `keys: ["C-c"]` |
+| | `sendInteraction()` can dispatch semantic keys like `key: "ctrl+c"` |
 | | `handleTerminalOutput()` stores to DB, emits SSE |
 | | `handleTerminalReady()` caches assessment, emits SSE |
 | | `tailOutput()` returns most recent bytes from DB |
@@ -45,10 +45,10 @@ This document describes the test strategy for the persistent terminal feature (P
 
 | Component | Test Cases |
 |-----------|-----------|
-| terminal.send | Sends shell or interactive input and interprets fast post-send delta conservatively |
+| terminal.send | Sends shell or interactive input, waits for settled output by default, and interprets additive delta conservatively |
 | terminal.observe | Waits when requested and returns explicit delta/screen/history observations |
-| Ctrl+C via send | `keys: ["C-c"]` shares the same `terminal.send` contract as other keypresses |
-| Historical replay | Legacy `terminal.interrupt` tool rows replay as `terminal.send` with `keys: ["C-c"]` |
+| Ctrl+C via send | `key: "ctrl+c"` shares the same `terminal.send` contract as other keypresses |
+| Historical replay | Legacy `terminal.interrupt` tool rows replay as `terminal.send` with `key: "ctrl+c"` |
 | Fallback readiness | `normalizeReadiness()` provides defaults |
 
 ### 1.3 Frontend (React/TypeScript)
@@ -76,23 +76,24 @@ This document describes the test strategy for the persistent terminal feature (P
 describe('Terminal E2E', () => {
   it('ensure → input → readiness → output', async () => {
     // 1. Connect mock Bud via WebSocket
-    // 2. Call POST /api/terminals/:budId/ensure
+    // 2. Call POST /api/threads/:threadId/terminal
     // 3. Verify terminal_ensure frame sent to Bud
     // 4. Mock Bud sends terminal_status { state: 'ready' }
-    // 5. Call POST /api/terminals/:budId/input { input: 'echo hello\n' }
+    // 5. Call POST /api/threads/:threadId/terminal/input { input: 'echo hello\n' }
     // 6. Verify terminal_input frame
     // 7. Mock Bud sends terminal_output
     // 8. Mock Bud sends terminal_ready
     // 9. Verify SSE events emitted
-    // 10. Call GET /api/terminals/:budId/history
+    // 10. Call GET /api/threads/:threadId/terminal/history
     // 11. Verify output returned
   });
 
-  it('browser interrupt endpoint reuses terminal_send with C-c', async () => {
+  it('browser interrupt endpoint reuses terminal_send with Ctrl+C', async () => {
     // 1. Start long-running command
-    // 2. Call POST /api/terminals/:budId/interrupt
-    // 3. Verify terminal_send frame with keys:["C-c"]
-    // 4. Mock Bud sends terminal_send_result
+    // 2. Call POST /api/threads/:threadId/terminal/interrupt
+    // 3. Verify terminal_send frame with key:"ctrl+c" and wait_for:"none"
+    // 4. Verify older pending settled waits reject as "interrupted"
+    // 5. Mock Bud sends terminal_send_result for the Ctrl+C request
   });
 
   it('idle terminals marked and closed', async () => {
@@ -188,7 +189,16 @@ describe('Agent Terminal Integration', () => {
 3. Verify terminal scrolls
 4. Verify interrupt stops the loop
 
-### 3.6 Truncation
+### 3.6 Settled Agent Wait
+
+1. Ask the agent to start a TUI or command that emits output for more than 30 seconds
+2. Verify the active `terminal.send` tool remains pending past 30 seconds
+3. Verify terminal SSE continues streaming output while the tool is pending
+4. Verify `/api/threads/:threadId/agent/state` shows `pending_tool.started_at`
+5. Use `POST /api/threads/:threadId/terminal/interrupt`
+6. Verify the terminal receives Ctrl+C and the pending tool resolves with `error: "interrupted"`
+
+### 3.7 Truncation
 
 1. Run command that produces large output (> history cap)
 2. Refresh page

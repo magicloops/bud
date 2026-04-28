@@ -32,6 +32,47 @@ type ObserveDebugState = {
   timedOutAt?: number;
 };
 
+type SendDebugState = {
+  sessionId: string;
+  requestId: string;
+  waitFor: TerminalWaitFor;
+  timeoutMs: number;
+  localTimeoutMs: number;
+  startedAt: number;
+  deadlineAt: number;
+  startOffset: number;
+  latestOffset: number;
+  outputSeen: boolean;
+  outputEventCount: number;
+  hasText: boolean;
+  submit: boolean;
+  hasKey: boolean;
+  timedOutAt?: number;
+};
+
+export const TERMINAL_SETTLED_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
+export const TERMINAL_DEFAULT_WAIT_TIMEOUT_MS = 30 * 1000;
+export const TERMINAL_LOCAL_TIMEOUT_GRACE_MS = 1000;
+
+export function resolveTerminalWaitTimeout(
+  waitFor: TerminalWaitFor,
+  requestedTimeoutMs?: number | null,
+): number {
+  if (waitFor === "settled") {
+    return TERMINAL_SETTLED_WAIT_TIMEOUT_MS;
+  }
+
+  if (
+    typeof requestedTimeoutMs === "number" &&
+    Number.isFinite(requestedTimeoutMs) &&
+    requestedTimeoutMs > 0
+  ) {
+    return Math.floor(requestedTimeoutMs);
+  }
+
+  return TERMINAL_DEFAULT_WAIT_TIMEOUT_MS;
+}
+
 export type ObserveOptions = {
   lines?: number;
   waitFor?: TerminalWaitFor;
@@ -97,6 +138,7 @@ type PendingSend = {
   resolve: (result: SendResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  state: SendDebugState;
 };
 
 type TerminalRequestDispatcherDeps = {
@@ -117,6 +159,7 @@ export class TerminalRequestDispatcher {
   private readonly pendingObserves = new Map<string, PendingObserve>();
   private readonly pendingSends = new Map<string, PendingSend>();
   private readonly recentObserveStates = new Map<string, ObserveDebugState>();
+  private readonly recentSendStates = new Map<string, SendDebugState>();
 
   constructor(deps: TerminalRequestDispatcherDeps) {
     this.deps = deps;
@@ -125,7 +168,7 @@ export class TerminalRequestDispatcher {
   async observeTerminal(
     sessionId: string,
     options: ObserveOptions = {},
-    timeoutMs = 30000
+    requestedTimeoutMs?: number
   ): Promise<ObserveResult> {
     const session = await this.deps.getSession(sessionId);
     if (!session) {
@@ -135,9 +178,9 @@ export class TerminalRequestDispatcher {
     const requestId = `obs_${ulid()}`;
     const view = options.view ?? "delta";
     const waitFor = options.waitFor ?? "none";
+    const timeoutMs = resolveTerminalWaitTimeout(waitFor, requestedTimeoutMs);
     const lines = options.lines ?? -50;
-    const localGraceMs = 1000;
-    const localTimeoutMs = timeoutMs + localGraceMs;
+    const localTimeoutMs = timeoutMs + TERMINAL_LOCAL_TIMEOUT_GRACE_MS;
     const startedAt = Date.now();
     const deadlineAt = startedAt + localTimeoutMs;
     const context = this.deps.getSessionContext(sessionId);
@@ -246,6 +289,8 @@ export class TerminalRequestDispatcher {
     interaction: SendInteraction,
     options: {
       timeoutMs?: number;
+      rejectPendingRequestsWith?: string;
+      onPendingRequestsRejected?: (count: number) => void;
     } = {}
   ): Promise<SendResult> {
     const session = await this.deps.getSession(sessionId);
@@ -254,8 +299,9 @@ export class TerminalRequestDispatcher {
     }
 
     const requestId = `send_${ulid()}`;
-    const timeoutMs = options.timeoutMs ?? 30000;
     const waitFor = interaction.waitFor ?? "settled";
+    const timeoutMs = resolveTerminalWaitTimeout(waitFor, options.timeoutMs);
+    const localTimeoutMs = timeoutMs + TERMINAL_LOCAL_TIMEOUT_GRACE_MS;
     const observeAfterMs =
       waitFor === "none" ? (interaction.observeAfterMs ?? 1000) : interaction.observeAfterMs;
     const legacyKeys = interaction.keys?.filter((value) => value.trim().length > 0) ?? [];
@@ -283,6 +329,26 @@ export class TerminalRequestDispatcher {
       throw new Error("empty_interaction");
     }
 
+    const startedAt = Date.now();
+    const deadlineAt = startedAt + localTimeoutMs;
+    const startOffset = this.deps.getLastOffset(sessionId);
+    const sendState: SendDebugState = {
+      sessionId,
+      requestId,
+      waitFor,
+      timeoutMs,
+      localTimeoutMs,
+      startedAt,
+      deadlineAt,
+      startOffset,
+      latestOffset: startOffset,
+      outputSeen: false,
+      outputEventCount: 0,
+      hasText: hasTextField,
+      submit: interaction.submit === true,
+      hasKey: Boolean(key)
+    };
+
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_send",
@@ -304,16 +370,23 @@ export class TerminalRequestDispatcher {
       throw new Error("bud_offline");
     }
 
+    this.pruneRecentSendStates(startedAt);
+    this.recentSendStates.set(requestId, sendState);
+
     this.deps.logger.info(
       {
         sessionId,
         requestId,
-        hasText: hasTextField,
-        submit: interaction.submit === true,
-        hasKey: Boolean(key),
+        hasText: sendState.hasText,
+        submit: sendState.submit,
+        hasKey: sendState.hasKey,
         observeAfterMs,
         waitFor,
         timeoutMs,
+        localTimeoutMs,
+        startedAt: new Date(startedAt).toISOString(),
+        deadlineAt: new Date(deadlineAt).toISOString(),
+        startOffset,
         component: "terminal_request_dispatcher"
       },
       "Sending terminal_send request"
@@ -321,11 +394,46 @@ export class TerminalRequestDispatcher {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        const pending = this.pendingSends.get(requestId);
+        if (!pending) {
+          return;
+        }
+        const timedOutAt = Date.now();
+        pending.state.timedOutAt = timedOutAt;
+        pending.state.latestOffset = this.deps.getLastOffset(sessionId);
         this.pendingSends.delete(requestId);
+        this.deps.logger.warn(
+          {
+            sessionId,
+            requestId,
+            waitFor: pending.state.waitFor,
+            timeoutMs: pending.state.timeoutMs,
+            localTimeoutMs: pending.state.localTimeoutMs,
+            elapsedMs: timedOutAt - pending.state.startedAt,
+            deadlineAt: new Date(pending.state.deadlineAt).toISOString(),
+            startOffset: pending.state.startOffset,
+            latestOffset: pending.state.latestOffset,
+            outputSeen: pending.state.outputSeen,
+            outputEventCount: pending.state.outputEventCount,
+            offsetDelta: Math.max(pending.state.latestOffset - pending.state.startOffset, 0),
+            readinessNow: this.summarizeReadiness(this.deps.getLatestReadiness(sessionId)),
+            component: "terminal_request_dispatcher"
+          },
+          "terminal_send timed out locally"
+        );
         reject(new Error("send_timeout"));
-      }, timeoutMs + 1000);
+      }, localTimeoutMs);
 
-      this.pendingSends.set(requestId, { sessionId, resolve, reject, timeout });
+      this.pendingSends.set(requestId, { sessionId, resolve, reject, timeout, state: sendState });
+
+      if (options.rejectPendingRequestsWith) {
+        const rejected = this.rejectPendingRequestsForSession(
+          sessionId,
+          options.rejectPendingRequestsWith,
+          { exceptRequestId: requestId },
+        );
+        options.onPendingRequestsRejected?.(rejected);
+      }
     });
   }
 
@@ -344,10 +452,22 @@ export class TerminalRequestDispatcher {
       observeRequestsSeeingOutput.push(pending.state.requestId);
     }
 
-    if (observeRequestsSeeingOutput.length > 0) {
-      this.debug("terminal output arrived while observe was pending", {
+    const sendRequestsSeeingOutput: string[] = [];
+    for (const pending of this.pendingSends.values()) {
+      if (pending.state.sessionId !== sessionId) {
+        continue;
+      }
+      pending.state.outputSeen = true;
+      pending.state.outputEventCount += 1;
+      pending.state.latestOffset = Math.max(pending.state.latestOffset, details.endOffset);
+      sendRequestsSeeingOutput.push(pending.state.requestId);
+    }
+
+    if (observeRequestsSeeingOutput.length > 0 || sendRequestsSeeingOutput.length > 0) {
+      this.debug("terminal output arrived while terminal requests were pending", {
         sessionId,
-        requestIds: observeRequestsSeeingOutput,
+        observeRequestIds: observeRequestsSeeingOutput,
+        sendRequestIds: sendRequestsSeeingOutput,
         byteOffset: details.requestOffset,
         endOffset: details.endOffset,
         outputBytes: details.outputBytes
@@ -447,7 +567,39 @@ export class TerminalRequestDispatcher {
 
   handleSendResult(sessionId: string, payload: SendResultPayload): void {
     const pending = this.pendingSends.get(payload.requestId);
+    const sendState = this.recentSendStates.get(payload.requestId) ?? pending?.state;
+    const latencyMs = sendState ? Date.now() - sendState.startedAt : undefined;
     if (!pending) {
+      if (sendState?.timedOutAt) {
+        this.deps.logger.warn(
+          {
+            sessionId,
+            requestId: payload.requestId,
+            waitFor: sendState.waitFor,
+            timeoutMs: sendState.timeoutMs,
+            localTimeoutMs: sendState.localTimeoutMs,
+            latencyMs,
+            lateByMs: Date.now() - sendState.timedOutAt,
+            submitted: payload.submitted,
+            delta: payload.delta
+              ? {
+                  changed: payload.delta.changed,
+                  textBytes: Buffer.byteLength(payload.delta.text, "utf-8"),
+                  truncated: payload.delta.truncated,
+                  summary: this.deps.summarizeObservedOutput(payload.delta.text),
+                }
+              : null,
+            readiness: this.summarizeReadiness(payload.readiness),
+            outputSeenDuringWait: sendState.outputSeen,
+            outputEventCount: sendState.outputEventCount,
+            outputOffsetDelta: Math.max(sendState.latestOffset - sendState.startOffset, 0),
+            component: "terminal_request_dispatcher"
+          },
+          "Send result arrived after local timeout"
+        );
+        this.recentSendStates.delete(payload.requestId);
+        return;
+      }
       this.deps.logger.warn(
         { sessionId, requestId: payload.requestId, component: "terminal_request_dispatcher" },
         "Orphaned send result"
@@ -457,6 +609,7 @@ export class TerminalRequestDispatcher {
 
     clearTimeout(pending.timeout);
     this.pendingSends.delete(payload.requestId);
+    this.recentSendStates.delete(payload.requestId);
 
     if (payload.error) {
       pending.reject(new Error(payload.error));
@@ -468,6 +621,10 @@ export class TerminalRequestDispatcher {
         sessionId,
         requestId: payload.requestId,
         submitted: payload.submitted,
+        waitFor: sendState?.waitFor,
+        timeoutMs: sendState?.timeoutMs,
+        localTimeoutMs: sendState?.localTimeoutMs,
+        latencyMs,
         delta: payload.delta
           ? {
               changed: payload.delta.changed,
@@ -476,7 +633,12 @@ export class TerminalRequestDispatcher {
               summary: this.deps.summarizeObservedOutput(payload.delta.text),
             }
           : null,
-        readiness: payload.readiness,
+        outputSeenDuringWait: sendState?.outputSeen ?? false,
+        outputEventCount: sendState?.outputEventCount ?? 0,
+        outputOffsetDelta: sendState
+          ? Math.max(sendState.latestOffset - sendState.startOffset, 0)
+          : 0,
+        readiness: this.summarizeReadiness(payload.readiness),
         component: "terminal_request_dispatcher"
       },
       "Send result received"
@@ -498,26 +660,39 @@ export class TerminalRequestDispatcher {
     });
   }
 
-  rejectPendingRequestsForSession(sessionId: string, errorMessage: string): number {
+  rejectPendingRequestsForSession(
+    sessionId: string,
+    errorMessage: string,
+    options: { exceptRequestId?: string } = {},
+  ): number {
     let rejected = 0;
 
     for (const [requestId, pending] of this.pendingObserves.entries()) {
+      if (requestId === options.exceptRequestId) {
+        continue;
+      }
       if (pending.state.sessionId !== sessionId) {
         continue;
       }
       clearTimeout(pending.timeout);
       this.pendingObserves.delete(requestId);
       this.recentObserveStates.delete(requestId);
+      this.logPendingObserveRejected(pending.state, errorMessage);
       pending.reject(new Error(errorMessage));
       rejected += 1;
     }
 
     for (const [requestId, pending] of this.pendingSends.entries()) {
+      if (requestId === options.exceptRequestId) {
+        continue;
+      }
       if (pending.sessionId !== sessionId) {
         continue;
       }
       clearTimeout(pending.timeout);
       this.pendingSends.delete(requestId);
+      this.recentSendStates.delete(requestId);
+      this.logPendingSendRejected(pending.state, errorMessage);
       pending.reject(new Error(errorMessage));
       rejected += 1;
     }
@@ -540,6 +715,68 @@ export class TerminalRequestDispatcher {
     return rejected;
   }
 
+  private logPendingObserveRejected(state: ObserveDebugState, errorMessage: string): void {
+    const rejectedAt = Date.now();
+    state.latestOffset = this.deps.getLastOffset(state.sessionId);
+    this.deps.logger.warn(
+      {
+        sessionId: state.sessionId,
+        requestId: state.requestId,
+        waitFor: state.waitFor,
+        view: state.view,
+        errorMessage,
+        timeoutMs: state.timeoutMs,
+        localTimeoutMs: state.localTimeoutMs,
+        elapsedMs: rejectedAt - state.startedAt,
+        startOffset: state.startOffset,
+        latestOffset: state.latestOffset,
+        outputSeen: state.outputSeen,
+        outputEventCount: state.outputEventCount,
+        offsetDelta: Math.max(state.latestOffset - state.startOffset, 0),
+        readinessNow: this.summarizeReadiness(this.deps.getLatestReadiness(state.sessionId)),
+        component: "terminal_request_dispatcher"
+      },
+      "Rejected pending terminal observe request"
+    );
+  }
+
+  private logPendingSendRejected(state: SendDebugState, errorMessage: string): void {
+    const rejectedAt = Date.now();
+    state.latestOffset = this.deps.getLastOffset(state.sessionId);
+    this.deps.logger.warn(
+      {
+        sessionId: state.sessionId,
+        requestId: state.requestId,
+        waitFor: state.waitFor,
+        errorMessage,
+        timeoutMs: state.timeoutMs,
+        localTimeoutMs: state.localTimeoutMs,
+        elapsedMs: rejectedAt - state.startedAt,
+        startOffset: state.startOffset,
+        latestOffset: state.latestOffset,
+        outputSeen: state.outputSeen,
+        outputEventCount: state.outputEventCount,
+        offsetDelta: Math.max(state.latestOffset - state.startOffset, 0),
+        readinessNow: this.summarizeReadiness(this.deps.getLatestReadiness(state.sessionId)),
+        component: "terminal_request_dispatcher"
+      },
+      "Rejected pending terminal send request"
+    );
+  }
+
+  private summarizeReadiness(readiness: ReadinessAssessment | null): Record<string, unknown> | null {
+    if (!readiness) {
+      return null;
+    }
+
+    return {
+      ready: readiness.ready,
+      confidence: readiness.confidence,
+      trigger: readiness.trigger,
+      promptType: readiness.prompt_type ?? null
+    };
+  }
+
   private debug(message: string, meta?: Record<string, unknown>) {
     this.deps.logger.info({ ...meta, component: "terminal_request_dispatcher" }, message);
   }
@@ -550,6 +787,16 @@ export class TerminalRequestDispatcher {
       const referenceTime = state.timedOutAt ?? state.startedAt;
       if (!this.pendingObserves.has(requestId) && now - referenceTime > retentionMs) {
         this.recentObserveStates.delete(requestId);
+      }
+    }
+  }
+
+  private pruneRecentSendStates(now = Date.now()): void {
+    const retentionMs = 5 * 60 * 1000;
+    for (const [requestId, state] of this.recentSendStates.entries()) {
+      const referenceTime = state.timedOutAt ?? state.startedAt;
+      if (!this.pendingSends.has(requestId) && now - referenceTime > retentionMs) {
+        this.recentSendStates.delete(requestId);
       }
     }
   }

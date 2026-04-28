@@ -25,6 +25,15 @@ Database-backed session-record lifecycle, including `ensureSessionRecordForThrea
 
 Owns send/observe request orchestration, pending registries, result routing, and cancel/offline/session-close rejection. It receives a daemon send function from the composed transport router instead of importing the WebSocket gateway directly.
 
+Also owns terminal wait timeout policy for request-response send/observe calls:
+- `wait_for: "settled"` resolves to the service-owned one-hour budget before dispatching to Bud.
+- non-settled modes use the existing short default unless a trusted lower-level caller passes an explicit timeout.
+- the model-facing schema advertises only `none`, `changed`, and `settled`; compatibility-only modes such as `shell_ready` can still pass through this lower dispatcher while old payload support remains enabled.
+- local request timeouts use the Bud timeout plus a small grace window so normal results do not orphan before the daemon reply arrives.
+- send and observe pending state tracks output activity while the request is in flight, including latest output offset and output event count.
+- human interrupt sends can reject older pending waits as `interrupted` while excluding the new `ctrl+c` send request, avoiding an orphaned interrupt result.
+- rejection/timeout/result logs include request id, wait mode, elapsed timing, output activity, and current readiness trigger/confidence summaries for long settled waits.
+
 ### `output-store.ts`
 
 Owns terminal output persistence, byte-offset tracking, replay/tail queries, and terminal-output SSE emission.
@@ -39,7 +48,11 @@ Periodic idle-state management wrapper.
 
 ### `request-dispatcher.test.ts`
 
-Direct seam tests for pending observe/send rejection behavior.
+Direct seam tests for pending observe/send rejection behavior, including cancel/offline/session-close style errors.
+
+Also covers settled timeout policy resolution, one-hour send/observe dispatch payloads, and local grace calculation for settled observes.
+
+Also covers human interrupt send behavior that rejects older pending waits without rejecting the interrupt request itself, plus diagnostic logging for rejected long settled sends.
 
 ### `session-store.test.ts`
 

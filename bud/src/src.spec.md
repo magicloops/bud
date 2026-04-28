@@ -186,7 +186,7 @@ Terminal runtime composition root.
 
 - defines shared terminal runtime types (`TerminalConfig`, `TerminalManager`, session/capture state)
 - makes `TerminalManager` generic over a `TerminalBackend`, with `TmuxBackend` as the default concrete backend
-- owns terminal-wide constants and the public `probe_tmux()` helper
+- owns terminal-wide constants, including the post-dispatch guard used before settled send quiescence sampling, and the public `probe_tmux()` helper
 
 ### `terminal/backend.rs`
 
@@ -219,6 +219,7 @@ Interactive send/input runtime.
 
 - `terminal_input`
 - `terminal_send`
+- settled `terminal_send` now sleeps a short post-dispatch guard before taking the output-quiescence offset/timestamp baseline
 - low-level CRLF-aware input splitting
 - single-gesture structured submission: either `text` with optional `submit`, or one semantic `key`
 - compatibility normalization for legacy one-entry `keys`
@@ -231,6 +232,7 @@ Explicit observation runtime.
 - `terminal_observe`
 - delta/screen/history view handling
 - delivered-capture baseline reuse
+- rejects compatibility-only `shell_ready` for default delta observations while allowing supported lower-level wait paths to remain available during rollout
 - observe error payload assembly
 
 ### `terminal/readiness.rs`
@@ -241,7 +243,7 @@ Readiness and wait-policy ownership above the backend layer.
 - `ActivityDetector`
 - output-quiescence waits
 - screen wait loops
-- readiness assessment generation
+- readiness assessment generation, including evidence-based settled quiescence assessment that does not treat quiet bytes alone as high-confidence readiness
 - capture helpers shared by send/observe
 
 ### `terminal/delta.rs`
@@ -312,7 +314,7 @@ app.rs::BudApp
 
 - maintain session handles and delivered-capture state
 - interpret inbound `terminal_*` frames
-- decide wait strategy (`none`, `changed`, `settled`, `shell_ready`)
+- decide wait strategy (`none`, `changed`, `settled`, with compatibility-only `shell_ready` where implemented)
 - build readiness assessments and additive delta payloads
 - expose the current backend-neutral service contract while keeping compatibility shims localized
 
@@ -346,11 +348,15 @@ High-value local tests now live next to the extracted abstractions:
   - ctrl-key normalization
   - CRLF low-level input splitting
   - fake-backend `terminal_send` flow
+  - settled send echo preservation, prompt readiness, weak-capture conservatism, and timeout delta behavior
 - `terminal/observe.rs`
   - fake-backend `terminal_observe` delta flow
+  - settled observe weak-capture readiness conservatism
+  - unsupported `terminal_observe(view:"delta", wait_for:"shell_ready")` validation
 - `terminal/readiness.rs`
   - wait-mode parsing
   - readiness assessment overrides
+  - evidence-based settled quiescence readiness
 - `terminal/delta.rs`
   - additive delta behavior
 - `terminal/tmux.rs`

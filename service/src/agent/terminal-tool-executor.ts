@@ -110,11 +110,41 @@ export class TerminalToolExecutor {
 
       this.debug("terminal.observe", { sessionId, lines, view, waitFor });
 
-      const capture = await this.terminalSessionManager.observeTerminal(
-        sessionId,
-        { lines, waitFor, view },
-        directive.timeoutMs ?? 30000,
-      );
+      let capture: Awaited<ReturnType<TerminalSessionManager["observeTerminal"]>>;
+      try {
+        capture = await this.terminalSessionManager.observeTerminal(
+          sessionId,
+          { lines, waitFor, view },
+        );
+      } catch (err) {
+        if (!this.isInterruptedError(err)) {
+          throw err;
+        }
+
+        const readiness = this.buildInterruptedReadiness();
+        this.logReadinessDecision(directive.tool, readiness);
+        return {
+          kind: "observation",
+          ...(view === "delta"
+            ? {
+                delta: {
+                  changed: false,
+                  text: "",
+                  truncated: false,
+                },
+              }
+            : {
+                output: "",
+                outputBytes: 0,
+              }),
+          readiness,
+          error: "interrupted",
+          truncated: view === "delta" ? undefined : false,
+          omittedLines: 0,
+          view,
+          contextAfter: buildContextAfter({ readiness }),
+        };
+      }
       const readiness = this.normalizeReadiness(capture.readiness, {
         ready: waitFor === "none",
         confidence: waitFor === "none" ? 0.7 : 0.5,
@@ -190,17 +220,34 @@ export class TerminalToolExecutor {
       program: contextBefore.program,
     });
 
-    const result = await this.terminalSessionManager.sendInteraction(
-      sessionId,
-      {
-        text: directive.text,
-        submit: directive.submit,
-        key: directive.key,
-        observeAfterMs: directive.observeAfterMs,
-        waitFor: directive.waitFor,
-      },
-      { timeoutMs: directive.timeoutMs ?? 30000 },
-    );
+    let result: Awaited<ReturnType<TerminalSessionManager["sendInteraction"]>>;
+    try {
+      result = await this.terminalSessionManager.sendInteraction(
+        sessionId,
+        {
+          text: directive.text,
+          submit: directive.submit,
+          key: directive.key,
+          observeAfterMs: directive.observeAfterMs,
+          waitFor: directive.waitFor,
+        },
+      );
+    } catch (err) {
+      if (!this.isInterruptedError(err)) {
+        throw err;
+      }
+
+      const readiness = this.buildInterruptedReadiness();
+      this.logReadinessDecision(directive.tool, readiness);
+      return {
+        kind: "interaction_ack",
+        readiness,
+        submitted: true,
+        delta: null,
+        error: "interrupted",
+        contextAfter: buildContextAfter({ readiness }),
+      };
+    }
 
     const finalReadiness = this.normalizeReadiness(result.readiness, {
       ready: true,
@@ -226,6 +273,9 @@ export class TerminalToolExecutor {
   ): string {
     switch (directive.tool) {
       case "terminal.send":
+        if (result.error === "interrupted") {
+          return "Terminal send wait was interrupted by the user after the input was sent";
+        }
         return buildTerminalSendSummary(
           {
             text: directive.text,
@@ -238,6 +288,9 @@ export class TerminalToolExecutor {
           (result.readiness.hints as ReadinessHints | undefined) ?? DEFAULT_READINESS_HINTS,
         );
       case "terminal.observe": {
+        if (result.error === "interrupted") {
+          return "Terminal observe wait was interrupted by the user";
+        }
         const view = directive.view ?? "delta";
         if (view === "delta") {
           if (directive.waitFor && directive.waitFor !== "none") {
@@ -348,6 +401,22 @@ export class TerminalToolExecutor {
       readiness.confidence >= 0.8 &&
       hints?.looks_like_prompt === true
     );
+  }
+
+  private buildInterruptedReadiness(): Record<string, unknown> {
+    return {
+      ready: false,
+      confidence: 0.2,
+      trigger: "error",
+      hints: {
+        ...DEFAULT_READINESS_HINTS,
+        may_still_be_processing: true,
+      },
+    };
+  }
+
+  private isInterruptedError(err: unknown): boolean {
+    return err instanceof Error && err.message === "interrupted";
   }
 
   private logReadinessDecision(tool: string, readiness: Record<string, unknown>): void {

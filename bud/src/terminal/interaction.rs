@@ -12,7 +12,10 @@ use crate::util::{new_message_id, now_millis};
 use super::backend::TerminalBackend;
 use super::delta::{build_additive_delta_payload, build_delta_payload_json};
 use super::readiness::{assess_capture_readiness, ActivityDetector, ReadinessDetector};
-use super::{TerminalManager, DEFAULT_DELTA_CAPTURE_START_LINE, TMUX_TEXT_TO_ENTER_DELAY_MS};
+use super::{
+    TerminalManager, DEFAULT_DELTA_CAPTURE_START_LINE, TERMINAL_SEND_POST_DISPATCH_GUARD_MS,
+    TMUX_TEXT_TO_ENTER_DELAY_MS,
+};
 
 impl<B> TerminalManager<B>
 where
@@ -219,8 +222,6 @@ where
                 return self.send_send_error(&frame, "send_keys_failed").await;
             }
         };
-        let dispatch_completed_at = now_millis();
-
         let (
             delta,
             readiness,
@@ -353,13 +354,22 @@ where
                 )
             }
             "settled" | "screen_stable" => {
+                if TERMINAL_SEND_POST_DISPATCH_GUARD_MS > 0 {
+                    time::sleep(std::time::Duration::from_millis(
+                        TERMINAL_SEND_POST_DISPATCH_GUARD_MS,
+                    ))
+                    .await;
+                }
+                let quiescence_started_at = now_millis();
+                let quiescence_start_offset =
+                    handle.offset.load(std::sync::atomic::Ordering::SeqCst);
                 let quiescence = self
                     .wait_for_output_quiescence(
                         &handle,
                         request_id,
                         timeout_ms,
-                        dispatch_completed_at,
-                        start_offset,
+                        quiescence_started_at,
+                        quiescence_start_offset,
                     )
                     .await?;
 
@@ -447,6 +457,11 @@ where
             quiescence_quiet_for_ms = ?quiescence_wait.as_ref().map(|value| value.quiet_for_ms),
             quiescence_latest_offset = ?quiescence_wait.as_ref().map(|value| value.latest_offset),
             quiescence_last_output_seq = ?quiescence_wait.as_ref().map(|value| value.last_output_seq),
+            post_dispatch_guard_ms = if matches!(wait_for, "settled" | "screen_stable") {
+                Some(TERMINAL_SEND_POST_DISPATCH_GUARD_MS)
+            } else {
+                None
+            },
             capture_hash = ?current_summary
                 .as_ref()
                 .map(|summary| format!("{:016x}", summary.hash)),
@@ -824,6 +839,151 @@ mod tests {
         let payload = recv_json(&mut rx).await;
         assert_eq!(
             payload.get("submitted").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_send_settled_preserves_echo_but_keeps_weak_capture_conservative() {
+        let (manager, backend, mut rx) = test_manager_with_sender().await;
+        install_test_session(&manager, &backend, "sess_1", "s_1").await;
+        backend.push_capture("s_1", Some(-50), "adam@mac bud % ");
+        backend.push_capture("s_1", Some(-50), "adam@mac bud % codex \"What is latest?\"");
+
+        let frame = TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: "sess_1".to_string(),
+            request_id: "req_settled_weak".to_string(),
+            text: Some("codex \"What is latest?\"".to_string()),
+            submit: Some(true),
+            key: None,
+            keys: None,
+            observe_after_ms: None,
+            wait_for: Some("settled".to_string()),
+            timeout_ms: Some(1_000),
+        };
+
+        manager.handle_send(frame).await.unwrap();
+
+        let payload = recv_json(&mut rx).await;
+        let delta = payload
+            .get("delta")
+            .and_then(Value::as_object)
+            .expect("delta");
+        let text = delta
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(text.contains("codex \"What is latest?\""));
+
+        let readiness = payload.get("readiness").expect("readiness");
+        assert_eq!(
+            readiness.get("trigger").and_then(Value::as_str),
+            Some("settled")
+        );
+        assert_eq!(readiness.get("ready").and_then(Value::as_bool), Some(false));
+        assert!(
+            readiness
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                <= 0.55
+        );
+        assert_eq!(
+            readiness
+                .get("hints")
+                .and_then(|value| value.get("may_still_be_processing"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_send_settled_preserves_prompt_readiness() {
+        let (manager, backend, mut rx) = test_manager_with_sender().await;
+        install_test_session(&manager, &backend, "sess_1", "s_1").await;
+        backend.push_capture("s_1", Some(-50), "adam@mac bud % ");
+        backend.push_capture(
+            "s_1",
+            Some(-50),
+            "adam@mac bud % pwd\n/Users/adam/bud\nadam@mac bud % ",
+        );
+
+        let frame = TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: "sess_1".to_string(),
+            request_id: "req_settled_prompt".to_string(),
+            text: Some("pwd".to_string()),
+            submit: Some(true),
+            key: None,
+            keys: None,
+            observe_after_ms: None,
+            wait_for: Some("settled".to_string()),
+            timeout_ms: Some(1_000),
+        };
+
+        manager.handle_send(frame).await.unwrap();
+
+        let payload = recv_json(&mut rx).await;
+        let readiness = payload.get("readiness").expect("readiness");
+        assert_eq!(
+            readiness.get("trigger").and_then(Value::as_str),
+            Some("settled")
+        );
+        assert_eq!(readiness.get("ready").and_then(Value::as_bool), Some(true));
+        assert!(
+            readiness
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0)
+                >= 0.8
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_send_settled_timeout_returns_latest_delta_conservatively() {
+        let (manager, backend, mut rx) = test_manager_with_sender().await;
+        install_test_session(&manager, &backend, "sess_1", "s_1").await;
+        backend.push_capture("s_1", Some(-50), "adam@mac bud % ");
+        backend.push_capture("s_1", Some(-50), "adam@mac bud % long-task\nstill working");
+
+        let frame = TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: "sess_1".to_string(),
+            request_id: "req_settled_timeout".to_string(),
+            text: Some("long-task".to_string()),
+            submit: Some(true),
+            key: None,
+            keys: None,
+            observe_after_ms: None,
+            wait_for: Some("settled".to_string()),
+            timeout_ms: Some(1),
+        };
+
+        manager.handle_send(frame).await.unwrap();
+
+        let payload = recv_json(&mut rx).await;
+        let delta = payload
+            .get("delta")
+            .and_then(Value::as_object)
+            .expect("delta");
+        let text = delta
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(text.contains("still working"));
+
+        let readiness = payload.get("readiness").expect("readiness");
+        assert_eq!(
+            readiness.get("trigger").and_then(Value::as_str),
+            Some("timeout")
+        );
+        assert_eq!(readiness.get("ready").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            readiness
+                .get("hints")
+                .and_then(|value| value.get("may_still_be_processing"))
+                .and_then(Value::as_bool),
             Some(true)
         );
     }

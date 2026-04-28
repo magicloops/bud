@@ -14,6 +14,15 @@ import type { ReasoningLevel } from "./model-catalog.js";
 
 export type CanonicalRole = "system" | "user" | "assistant";
 
+export type CanonicalProviderId = "openai" | "anthropic";
+
+export type CanonicalProviderData<
+  Provider extends CanonicalProviderId = CanonicalProviderId,
+> = {
+  provider: Provider;
+  payload: unknown;
+};
+
 /**
  * Content blocks that can appear in messages.
  */
@@ -79,19 +88,12 @@ export type CanonicalReasoningBlock =
        * Provider-specific data for multi-turn persistence.
        * MUST be passed back during tool call loops.
        */
-      providerData?: {
-        provider: "openai" | "anthropic";
-        /** Opaque payload - provider knows how to use it */
-        payload: unknown;
-      };
+      providerData?: CanonicalProviderData;
     }
   | {
       type: "reasoning_redacted";
       /** Anthropic-only: safety-filtered thinking */
-      providerData?: {
-        provider: "anthropic";
-        payload: unknown;
-      };
+      providerData?: CanonicalProviderData<"anthropic">;
     };
 
 /**
@@ -155,7 +157,12 @@ export type ContentType = "text" | "tool_use" | "reasoning";
 export type CanonicalStreamEvent =
   // Message lifecycle
   | { type: "message_start"; id: string }
-  | { type: "message_done"; stop_reason: CanonicalStopReason; usage?: TokenUsage }
+  | {
+      type: "message_done";
+      stop_reason: CanonicalStopReason;
+      usage?: TokenUsage;
+      providerData?: CanonicalProviderData;
+    }
 
   // Text content
   | { type: "content_start"; index: number; content_type: ContentType }
@@ -262,4 +269,6 @@ export type CanonicalResponse = {
   usage?: TokenUsage;
   /** Extracted tool calls for convenience */
   toolCalls?: CanonicalToolCall[];
+  /** Provider response data used for diagnostics only. */
+  providerData?: CanonicalProviderData;
 };

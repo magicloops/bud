@@ -362,4 +362,66 @@ mod tests {
         );
         assert_eq!(payload.get("changed").and_then(Value::as_bool), Some(true));
     }
+
+    #[tokio::test]
+    async fn handle_observe_settled_weak_capture_does_not_force_ready() {
+        let (manager, backend, mut rx) = test_manager_with_sender().await;
+        install_test_session(&manager, &backend, "sess_1", "s_1").await;
+        backend.push_capture("s_1", Some(-50), "adam@mac bud % ");
+        backend.push_capture("s_1", Some(-50), "adam@mac bud % codex \"What is latest?\"");
+
+        let frame = TerminalObserveFrame {
+            envelope: envelope("terminal_observe"),
+            session_id: "sess_1".to_string(),
+            request_id: "req_settled_observe".to_string(),
+            view: Some("delta".to_string()),
+            lines: Some(-50),
+            wait_for: Some("settled".to_string()),
+            timeout_ms: Some(1_000),
+        };
+
+        manager.handle_observe(frame).await.unwrap();
+
+        let payload = recv_json(&mut rx).await;
+        let readiness = payload.get("readiness").expect("readiness");
+        assert_eq!(
+            readiness.get("trigger").and_then(Value::as_str),
+            Some("settled")
+        );
+        assert_eq!(readiness.get("ready").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            readiness
+                .get("hints")
+                .and_then(|value| value.get("may_still_be_processing"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_observe_delta_rejects_shell_ready_wait() {
+        let (manager, _backend, mut rx) = test_manager_with_sender().await;
+
+        let frame = TerminalObserveFrame {
+            envelope: envelope("terminal_observe"),
+            session_id: "sess_1".to_string(),
+            request_id: "req_shell_ready_delta".to_string(),
+            view: Some("delta".to_string()),
+            lines: Some(-50),
+            wait_for: Some("shell_ready".to_string()),
+            timeout_ms: Some(1_000),
+        };
+
+        manager.handle_observe(frame).await.unwrap();
+
+        let payload = recv_json(&mut rx).await;
+        assert_eq!(
+            payload.get("type").and_then(Value::as_str),
+            Some("terminal_observe_result")
+        );
+        assert_eq!(
+            payload.get("error").and_then(Value::as_str),
+            Some("unsupported_wait_for")
+        );
+    }
 }

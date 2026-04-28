@@ -44,6 +44,7 @@ Canonical type definitions for the abstraction layer (~265 lines).
 | Type | Description |
 |------|-------------|
 | `CanonicalRole` | `"system" \| "user" \| "assistant"` |
+| `CanonicalProviderData` | Bounded-at-log-time provider payload attached to responses/events for diagnostics |
 | `CanonicalContentBlock` | Text, image, tool_use, tool_result, or reasoning blocks |
 | `CanonicalMessage` | `{ role, content }` - provider-agnostic message format |
 
@@ -64,6 +65,7 @@ Canonical type definitions for the abstraction layer (~265 lines).
 | Type | Description |
 |------|-------------|
 | `CanonicalStreamEvent` | Union of all stream events (message, text, tool, reasoning) |
+| `message_done.providerData` | Optional provider completion payload for response diagnostics |
 | `CanonicalStopReason` | `"end_turn" \| "tool_use" \| "max_tokens" \| "stop_sequence" \| "error"` |
 | `TokenUsage` | Token counts including reasoning tokens |
 
@@ -72,7 +74,7 @@ Canonical type definitions for the abstraction layer (~265 lines).
 |------|-------------|
 | `ModelConfig` | Model invocation settings (model, maxOutputTokens, temperature, etc.) |
 | `ModelCapabilities` | What a model supports (vision, tools, reasoning, thinking) |
-| `CanonicalResponse` | Non-streaming response with content, stopReason, usage, toolCalls |
+| `CanonicalResponse` | Non-streaming/stream-reconstructed response with content, stopReason, usage, toolCalls, and optional diagnostic providerData |
 
 ### `provider.ts`
 
@@ -218,6 +220,7 @@ for await (const event of provider.invoke(messages, tools, {
 **Current Agent Usage**:
 - `AgentService` now uses provider `invoke()` streams as the primary path for chat turns.
 - The agent reconstructs a `CanonicalResponse` from streamed text/tool/reasoning events after also forwarding assistant draft text to browser clients over SSE.
+- Providers may attach raw completion payloads as `providerData`; the agent uses those only for diagnostics when a response cannot be parsed into text or a tool call.
 - `invokeSync()` remains an optional adapter capability, but it is no longer the main chat-agent path in this repo.
 
 ## Canonical Tool Schema
@@ -230,7 +233,7 @@ Canonical tool schemas use **standard JSON Schema** where optional fields are si
   type: "object",
   properties: {
     input: { type: "string" },           // Required
-    timeout_ms: { type: "integer" }      // Optional (not in required)
+    limit: { type: "integer" }           // Optional (not in required)
   },
   required: ["input"],                   // Only truly required fields
   additionalProperties: false

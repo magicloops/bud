@@ -429,17 +429,28 @@ export class OpenAIProvider implements LLMProvider {
                 ? ((event.response.usage as unknown as Record<string, unknown>).output_tokens_details as Record<string, number>).reasoning_tokens
                 : undefined,
             } : undefined,
+            providerData: {
+              provider: "openai",
+              payload: event.response,
+            },
           };
           break;
 
-        case "response.failed":
+        case "response.failed": {
+          const error = new Error((event.response as unknown as Record<string, unknown>).error
+            ? ((event.response as unknown as Record<string, unknown>).error as Record<string, string>).message ?? "Request failed"
+            : "Request failed") as Error & {
+              provider?: string;
+              providerResponse?: unknown;
+            };
+          error.provider = "openai";
+          error.providerResponse = event.response;
           yield {
             type: "error",
-            error: new Error((event.response as unknown as Record<string, unknown>).error
-              ? ((event.response as unknown as Record<string, unknown>).error as Record<string, string>).message ?? "Request failed"
-              : "Request failed"),
+            error,
           };
           break;
+        }
 
         // Output item handling (including reasoning)
         case "response.output_item.added":
@@ -534,12 +545,14 @@ export class OpenAIProvider implements LLMProvider {
 
         case "response.function_call_arguments.done":
           if (currentToolCall) {
+            const argumentsJson =
+              typeof event.arguments === "string" ? event.arguments : currentToolCall.args;
             yield {
               type: "tool_use_done",
               index: currentToolCall.index,
-              id: event.item_id,
-              name: event.name,
-              input: JSON.parse(event.arguments),
+              id: currentToolCall.id,
+              name: currentToolCall.name,
+              input: JSON.parse(argumentsJson),
             };
             currentToolCall = null;
           }
@@ -630,6 +643,10 @@ export class OpenAIProvider implements LLMProvider {
         output_tokens: resp.usage.output_tokens,
       } : undefined,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      providerData: {
+        provider: "openai",
+        payload: response,
+      },
     };
   }
 

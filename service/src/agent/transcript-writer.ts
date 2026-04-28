@@ -67,6 +67,7 @@ export class AgentTranscriptWriter {
         call_id: directive.callId,
         name: directive.tool,
         args,
+        started_at: startedAt.toISOString(),
       },
       cursor,
     );

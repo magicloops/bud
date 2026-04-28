@@ -29,6 +29,37 @@ type StreamedModelResponse = {
   assistantClientId: string | null;
 };
 
+const MODEL_RESPONSE_TEXT_PREVIEW_CHARS = 4_000;
+const MODEL_RESPONSE_JSON_PREVIEW_CHARS = 8_000;
+const MODEL_RESPONSE_ERROR_MESSAGE_CHARS = 12_000;
+
+type ModelResponseDiagnostic = {
+  id: string;
+  stopReason: CanonicalStopReason;
+  usage?: TokenUsage;
+  content: unknown[];
+  toolCalls?: unknown[];
+  providerData?: unknown;
+};
+
+export class AgentModelResponseError extends Error {
+  readonly code: string;
+  readonly modelResponse: ModelResponseDiagnostic;
+
+  constructor(message: string, response: CanonicalResponse, code: string) {
+    const modelResponse = buildModelResponseDiagnostic(response);
+    super(
+      `${message}; response=${truncateText(
+        stringifyForDiagnostic(modelResponse),
+        MODEL_RESPONSE_ERROR_MESSAGE_CHARS,
+      )}`,
+    );
+    this.name = "AgentModelResponseError";
+    this.code = code;
+    this.modelResponse = modelResponse;
+  }
+}
+
 // Canonical tool definitions using standard JSON Schema.
 const CANONICAL_TOOLS: CanonicalTool[] = [
   {
@@ -58,13 +89,9 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
         },
         wait_for: {
           type: "string",
-          enum: ["none", "shell_ready", "changed", "settled"],
+          enum: ["none", "changed", "settled"],
           description:
             'Optional wait mode after sending input. Defaults to "settled" when omitted.',
-        },
-        timeout_ms: {
-          type: "integer",
-          description: "Optional max wait time in ms. Defaults to 30000ms for terminal.send.",
         },
       },
       required: [],
@@ -84,17 +111,13 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
         },
         wait_for: {
           type: "string",
-          enum: ["none", "shell_ready", "changed", "settled"],
+          enum: ["none", "changed", "settled"],
           description: "Optional wait mode before observing.",
         },
         view: {
           type: "string",
           enum: ["delta", "screen", "history"],
           description: "Observation view. Defaults to delta. Use screen for the full current screen and history for recent scrollback.",
-        },
-        timeout_ms: {
-          type: "integer",
-          description: "Optional max wait time in ms. Defaults to 30000ms when omitted.",
         },
       },
       required: [],
@@ -173,6 +196,7 @@ export class AgentModelRunner {
     let responseId: string | null = null;
     let stopReason: CanonicalStopReason = "end_turn";
     let usage: TokenUsage | undefined;
+    let providerData: CanonicalResponse["providerData"] | undefined;
     let draftText = "";
     let hasDraftText = false;
     let textBlockCount = 0;
@@ -225,6 +249,7 @@ export class AgentModelRunner {
         case "message_done":
           stopReason = event.stop_reason;
           usage = event.usage;
+          providerData = event.providerData;
           break;
         case "content_start":
           if (event.content_type === "text") {
@@ -310,6 +335,7 @@ export class AgentModelRunner {
       toolCalls: Array.from(toolCallsByIndex.entries())
         .sort(([left], [right]) => left - right)
         .map(([, toolCall]) => toolCall),
+      providerData,
     };
 
     this.debug("LLM response received", {
@@ -327,7 +353,11 @@ export class AgentModelRunner {
 
   parseFinalResponse(response: CanonicalResponse): AgentFinalDirective {
     if (response.stopReason === "max_tokens") {
-      throw new Error("model response incomplete: max_tokens reached");
+      throw new AgentModelResponseError(
+        "model response incomplete: max_tokens reached",
+        response,
+        "MODEL_MAX_TOKENS",
+      );
     }
 
     const textBlocks = response.content.filter(
@@ -335,14 +365,19 @@ export class AgentModelRunner {
     );
     const aggregated = textBlocks.map((block) => block.text).join("\n");
 
-    if (!aggregated) {
-      throw new Error("model returned no text or tool call");
+    const trimmed = aggregated.trim();
+    if (!trimmed) {
+      throw new AgentModelResponseError(
+        "model returned no text or tool call",
+        response,
+        "MODEL_EMPTY_RESPONSE",
+      );
     }
 
     return {
       type: "final",
       status: "succeeded",
-      message: aggregated.trim(),
+      message: trimmed,
     };
   }
 
@@ -408,4 +443,127 @@ export class AgentModelRunner {
       );
     }
   }
+}
+
+function buildModelResponseDiagnostic(response: CanonicalResponse): ModelResponseDiagnostic {
+  return {
+    id: response.id,
+    stopReason: response.stopReason,
+    usage: response.usage,
+    content: response.content.map((block) => diagnosticContentBlock(block)),
+    toolCalls: response.toolCalls?.map((toolCall) => ({
+      id: toolCall.id,
+      name: toolCall.name,
+      input: boundedJsonValue(toolCall.input),
+    })),
+    providerData: diagnosticProviderData(response.providerData),
+  };
+}
+
+function diagnosticContentBlock(block: CanonicalContentBlock): unknown {
+  switch (block.type) {
+    case "text":
+      return {
+        type: "text",
+        charCount: block.text.length,
+        text: truncateText(block.text, MODEL_RESPONSE_TEXT_PREVIEW_CHARS),
+      };
+    case "image":
+      return {
+        type: "image",
+        source: {
+          type: block.source.type,
+          media_type: block.source.media_type,
+          data_char_count: block.source.data.length,
+        },
+      };
+    case "tool_use":
+      return {
+        type: "tool_use",
+        id: block.id,
+        name: block.name,
+        input: boundedJsonValue(block.input),
+      };
+    case "tool_result":
+      return {
+        type: "tool_result",
+        tool_use_id: block.tool_use_id,
+        is_error: block.is_error,
+        content: typeof block.content === "string"
+          ? {
+              charCount: block.content.length,
+              text: truncateText(block.content, MODEL_RESPONSE_TEXT_PREVIEW_CHARS),
+            }
+          : block.content.map((nested) => diagnosticContentBlock(nested)),
+      };
+    case "reasoning":
+      return {
+        type: "reasoning",
+        charCount: block.text.length,
+        text: truncateText(block.text, MODEL_RESPONSE_TEXT_PREVIEW_CHARS),
+        providerData: diagnosticProviderData(block.providerData),
+      };
+    case "reasoning_redacted":
+      return {
+        type: "reasoning_redacted",
+        providerData: diagnosticProviderData(block.providerData),
+      };
+  }
+}
+
+function diagnosticProviderData(providerData: CanonicalResponse["providerData"]): unknown {
+  if (!providerData) {
+    return undefined;
+  }
+  return {
+    provider: providerData.provider,
+    payload: boundedJsonValue(providerData.payload),
+  };
+}
+
+function boundedJsonValue(value: unknown): unknown {
+  const serialized = stringifyForDiagnostic(value);
+  if (serialized.length <= MODEL_RESPONSE_JSON_PREVIEW_CHARS) {
+    try {
+      return JSON.parse(serialized) as unknown;
+    } catch {
+      return serialized;
+    }
+  }
+  return {
+    truncated: true,
+    charCount: serialized.length,
+    preview: serialized.slice(0, MODEL_RESPONSE_JSON_PREVIEW_CHARS),
+  };
+}
+
+function stringifyForDiagnostic(value: unknown): string {
+  const seen = new WeakSet<object>();
+  try {
+    const serialized = JSON.stringify(value, (_key, nested) => {
+      if (typeof nested === "bigint") {
+        return nested.toString();
+      }
+      if (typeof nested === "object" && nested !== null) {
+        if (seen.has(nested)) {
+          return "[Circular]";
+        }
+        seen.add(nested);
+      }
+      return nested;
+    });
+    return serialized ?? "undefined";
+  } catch (err) {
+    return JSON.stringify({
+      unserializable: true,
+      reason: err instanceof Error ? err.message : String(err),
+    }) ?? "{\"unserializable\":true}";
+  }
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, maxChars)}... [truncated ${value.length - maxChars} chars]`;
 }

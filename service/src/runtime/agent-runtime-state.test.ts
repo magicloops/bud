@@ -92,6 +92,7 @@ test("attach after a known cursor replays only newer visible events", () => {
       call_id: "call-1",
       name: "terminal.send",
       args: { text: "pwd", submit: true },
+      started_at: "2026-04-21T19:00:01.000Z",
     },
     toolCallCursor,
   );
@@ -162,7 +163,7 @@ test("finishing a turn returns the snapshot to idle with a fresh cursor", () => 
   attachment.detach();
 });
 
-test("runtime snapshots expose client_id on pending_tool and draft_assistant", () => {
+test("runtime snapshots expose pending tool metadata and draft assistant client id", () => {
   const runtime = new AgentRuntimeStateManager();
   runtime.startTurn("thread-1", "turn-1");
 
@@ -183,12 +184,14 @@ test("runtime snapshots expose client_id on pending_tool and draft_assistant", (
       call_id: "call-1",
       name: "terminal.send",
       args: { text: "pwd", submit: true },
+      started_at: "2026-04-21T19:00:01.000Z",
     },
     toolCursor,
   );
 
   const toolSnapshot = runtime.getSnapshot("thread-1");
   assert.equal(toolSnapshot.pending_tool?.client_id, "tool-client-1");
+  assert.equal(toolSnapshot.pending_tool?.started_at, "2026-04-21T19:00:01.000Z");
 
   const messageCursor = runtime.emit("thread-1", {
     event: "agent.message_start",
@@ -226,6 +229,7 @@ test("advanceCursor preserves runtime state while acknowledging external events"
       call_id: "call-1",
       name: "terminal.send",
       args: { text: "pwd", submit: true },
+      started_at: "2026-04-21T19:00:01.000Z",
     },
     toolCursor,
   );

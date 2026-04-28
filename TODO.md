@@ -1,6 +1,9 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **Pre-production wait mode cleanup**
+  - Before production launch, remove compatibility-only `wait_for` modes `screen_stable` and `shell_ready` from the service and Bud daemon once search/telemetry confirms no stored tool rows, old clients, or internal callers still depend on them.
+  - Phase 5 of [plan/improve-observe](./plan/improve-observe/phase-5-wait-for-mode-cleanup.md) removed `shell_ready` from model-facing schemas and prompt guidance; this TODO tracks the later lower-level compatibility removal.
 - **LLM first visible token latency / prompt caching**
   - Follow up on the 2-4s first-visible-token gap documented in [debug/llm-first-visible-token-latency.md](./debug/llm-first-visible-token-latency.md).
   - New-thread testing showed roughly 1s responses, so prioritize provider-side prompt/cache behavior, context size, max-output defaults, and instrumentation before assuming a local service bottleneck.

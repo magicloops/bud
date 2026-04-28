@@ -31,6 +31,7 @@ Public product IDs and capability limits are owned by `model-catalog.ts`; the pr
 - **Reasoning support**: GPT-5 series with `reasoning.effort` (`none` omits reasoning, other supported values pass through including `xhigh`)
 - **Strict mode tools**: All tools use `strict: true` for reliable schema adherence
 - **Multi-turn reasoning**: Preserves reasoning blocks via `providerData` for tool loops
+- **Response diagnostics**: Attaches the raw `response.completed` payload to `message_done.providerData` so agent parse failures can log the actual OpenAI result
 - **Temperature handling**: Automatically sets `undefined` for reasoning models
 
 **Message Transformation**:
@@ -48,7 +49,7 @@ The OpenAI provider transforms canonical JSON Schema to OpenAI strict mode forma
 
 | Canonical (Input) | OpenAI Strict (Output) |
 |-------------------|----------------------|
-| `required: ["input"]` | `required: ["input", "timeout_ms"]` (all props) |
+| `required: ["input"]` | `required: ["input", "limit"]` (all props) |
 | `type: "integer"` (optional) | `type: ["integer", "null"]` |
 | Standard JSON Schema | OpenAI strict mode |
 
@@ -58,10 +59,11 @@ This allows tool definitions to use clean standard JSON Schema while ensuring Op
 | OpenAI Event | Canonical Event |
 |--------------|-----------------|
 | `response.created` | `message_start` |
-| `response.completed` | `message_done` |
+| `response.completed` | `message_done` with OpenAI `providerData` |
 | `response.failed` | `error` |
 | `response.output_text.delta` | `text_delta` |
 | `response.function_call_arguments.delta` | `tool_use_delta` |
+| `response.function_call_arguments.done` | `tool_use_done` using the `call_id` and `name` captured from `response.output_item.added` |
 | `response.reasoning_summary_text.delta` | `reasoning_delta` |
 
 **Public Methods**:
@@ -81,7 +83,7 @@ This allows tool definitions to use clean standard JSON Schema while ensuring Op
 | `transformTools()` | Canonical tools → OpenAI function tools |
 | `transformToolChoice()` | Canonical choice → OpenAI tool_choice |
 | `transformStream()` | OpenAI events → Canonical events |
-| `parseResponse()` | OpenAI response → CanonicalResponse |
+| `parseResponse()` | OpenAI response → CanonicalResponse with diagnostic providerData |
 | `isReasoningModel()` | Check if model supports reasoning |
 | `applyReasoningConfig()` | Add provider reasoning config while keeping any provider-specific request typing local |
 
@@ -173,6 +175,8 @@ Direct request-shape tests for provider lowering without live API calls.
 
 **Current Coverage**:
 - OpenAI `xhigh` sends `reasoning.effort` and `none` omits reasoning
+- OpenAI streamed function calls preserve `call_id` and tool name from output-item metadata when arguments finish
+- OpenAI completed stream events preserve provider payload diagnostics
 - Anthropic Opus 4.7 sends adaptive thinking with omitted display and `output_config.effort`
 - Anthropic Opus 4.6 sends adaptive thinking with summarized display and `output_config.effort`
 - Anthropic Haiku 4.5 uses manual `thinking.budget_tokens`

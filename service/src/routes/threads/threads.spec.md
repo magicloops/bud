@@ -46,7 +46,17 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, and `/cancel`.
 
 ### `terminal.ts`
 
-Thread-scoped terminal routes for session create/ensure/read, SSE attach, human input/resize, and history reads.
+Thread-scoped terminal routes for session create/ensure/read, SSE attach, human input/interrupt/resize, and history reads.
+
+The interrupt route sends a human Ctrl+C through the terminal runtime and rejects older pending terminal waits as `interrupted`, so a long settled agent tool can return a conservative tool result instead of remaining pending for the full settled timeout.
+
+### `terminal.test.ts`
+
+Focused route-handler coverage for the terminal interrupt route.
+
+**Current Coverage**:
+- owned terminal interrupt returns dispatch metadata from the terminal manager
+- missing active sessions return `404 no_terminal_session`
 
 ### `registration.test.ts`
 

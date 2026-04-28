@@ -336,16 +336,11 @@ where
         quiescence: &OutputQuiescenceWaitResult,
     ) -> Value {
         match quiescence.trigger {
-            "settled" => build_screen_wait_assessment(
+            "settled" => build_settled_quiescence_assessment(
                 capture,
-                "settled",
                 quiescence.quiet_for_ms,
                 quiescence.check_count,
                 quiescence.stable_checks,
-                Some(false),
-                None,
-                Some(0.85),
-                Some(true),
             ),
             "timeout" => build_screen_wait_assessment(
                 capture,
@@ -1108,6 +1103,63 @@ pub(super) fn build_screen_wait_assessment(
     assessment
 }
 
+fn build_settled_quiescence_assessment(
+    capture: &str,
+    quiet_for_ms: u64,
+    check_count: u32,
+    stable_checks: u32,
+) -> Value {
+    let mut assessment = build_screen_wait_assessment(
+        capture,
+        "settled",
+        quiet_for_ms,
+        check_count,
+        stable_checks,
+        None,
+        None,
+        None,
+        None,
+    );
+
+    if has_strong_readiness_evidence(&assessment) {
+        return assessment;
+    }
+
+    if let Some(map) = assessment.as_object_mut() {
+        map.insert("ready".into(), Value::Bool(false));
+
+        let current_confidence = map
+            .get("confidence")
+            .and_then(|value| value.as_f64())
+            .unwrap_or(0.0);
+        let capped_confidence = current_confidence.min(0.55);
+        if let Some(number) = Number::from_f64(capped_confidence) {
+            map.insert("confidence".into(), Value::Number(number));
+        }
+
+        if let Some(hints) = map.get_mut("hints").and_then(|value| value.as_object_mut()) {
+            hints.insert("may_still_be_processing".into(), Value::Bool(true));
+        }
+    }
+
+    assessment
+}
+
+fn has_strong_readiness_evidence(assessment: &Value) -> bool {
+    let Some(hints) = assessment.get("hints").and_then(|value| value.as_object()) else {
+        return false;
+    };
+
+    [
+        "looks_like_prompt",
+        "looks_like_confirmation",
+        "looks_like_password",
+        "looks_like_pager",
+    ]
+    .iter()
+    .any(|key| hints.get(*key).and_then(|value| value.as_bool()) == Some(true))
+}
+
 fn last_line_from_text(text: &str) -> String {
     text.lines()
         .last()
@@ -1163,7 +1215,9 @@ async fn read_log_range(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_screen_wait_assessment, parse_screen_wait_mode};
+    use super::{
+        build_screen_wait_assessment, build_settled_quiescence_assessment, parse_screen_wait_mode,
+    };
     use crate::terminal::ScreenWaitMode;
 
     #[test]
@@ -1261,6 +1315,92 @@ mod tests {
         assert_eq!(
             assessment.get("trigger").and_then(|value| value.as_str()),
             Some("timeout")
+        );
+    }
+
+    #[test]
+    fn settled_quiescence_preserves_prompt_readiness_evidence() {
+        let assessment = build_settled_quiescence_assessment("adam@mac bud % ", 200, 4, 3);
+
+        assert_eq!(
+            assessment.get("trigger").and_then(|value| value.as_str()),
+            Some("settled")
+        );
+        assert_eq!(
+            assessment.get("ready").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(
+            assessment
+                .get("confidence")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0)
+                >= 0.8
+        );
+        assert_eq!(
+            assessment
+                .get("hints")
+                .and_then(|value| value.get("may_still_be_processing"))
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn settled_quiescence_does_not_promote_weak_echo_only_capture() {
+        let assessment = build_settled_quiescence_assessment(
+            "adam@mac bud % codex \"what is latest\"",
+            200,
+            4,
+            3,
+        );
+
+        assert_eq!(
+            assessment.get("trigger").and_then(|value| value.as_str()),
+            Some("settled")
+        );
+        assert_eq!(
+            assessment.get("ready").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert!(
+            assessment
+                .get("confidence")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(1.0)
+                <= 0.55
+        );
+        assert_eq!(
+            assessment
+                .get("hints")
+                .and_then(|value| value.get("may_still_be_processing"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn settled_quiescence_preserves_confirmation_readiness_evidence() {
+        let assessment =
+            build_settled_quiescence_assessment("Proceed with install? [y/n]", 200, 4, 3);
+
+        assert_eq!(
+            assessment.get("ready").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            assessment
+                .get("hints")
+                .and_then(|value| value.get("looks_like_confirmation"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(
+            assessment
+                .get("confidence")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0)
+                >= 0.8
         );
     }
 }

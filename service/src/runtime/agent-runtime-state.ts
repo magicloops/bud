@@ -14,6 +14,7 @@ export type AgentPendingTool = {
   call_id: string;
   name: string;
   args: Record<string, unknown>;
+  started_at: string;
 };
 
 export type AgentDraftAssistant = {

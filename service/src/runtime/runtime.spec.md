@@ -28,7 +28,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `phase`
 - `can_cancel`
 - `stream_cursor`
-- `pending_tool` (`client_id`, `call_id`, `name`, `args`)
+- `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`)
 - `draft_assistant` (`client_id`, `text`, `updated_at`)
 - `updated_at`
 
@@ -84,6 +84,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - stale cursors produce explicit resync
 - finishing a turn returns the snapshot to idle with a fresh cursor
 - runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
+- runtime snapshots expose `started_at` on `pending_tool` so long-running tool waits remain diagnosable after reconnect
 - `advanceCursor(...)` preserves in-flight runtime state while acknowledging external thread events already emitted on the shared cursor stream
 
 ### `event-bus.test.ts`
@@ -138,6 +139,7 @@ Thread-scoped terminal session composition root.
 | `observeTerminal(sessionId, options)` | Explicit delta/screen/history observation request-response |
 | `capturePane(sessionId, options)` | Compatibility wrapper used by context sync |
 | `sendInteraction(sessionId, interaction, options)` | Request-response interactive input / keypress dispatch |
+| `interruptThreadTerminal(threadId)` | Send `ctrl+c` as a terminal send, reject older pending waits as `interrupted`, and return dispatch metadata for human interrupt controls |
 | `tailOutput(sessionId, bytes, options)` | Get recent output from DB |
 | `setPendingCommand(sessionId, command)` | Track REPL program execution |
 | `handleTerminalStatus(sessionId, payload)` | Bud reports session state |
@@ -170,6 +172,7 @@ When agent sends commands like `python`, `node`, `claude`, the manager:
 
 Ctrl+C note:
 - server-side callers should reuse `sendInteraction(sessionId, { key: "ctrl+c" })` rather than adding a dedicated interrupt transport
+- human interrupt controls use `interruptThreadTerminal(threadId)`, which sends `key: "ctrl+c"` with `waitFor: "none"` and rejects any older pending send/observe wait with `error: "interrupted"` so the agent can record a conservative tool result instead of waiting up to the settled timeout
 - `sendInteraction(...)` still tolerates the older `keys: ["C-c"]` shape as a compatibility alias during rollout, but the canonical runtime model is now a single semantic `key`
 - pending REPL/TUI context is preserved until a later observed shell return clears it via readiness or context sync
 
@@ -194,11 +197,13 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `terminal.output` carries `seq`, `data`, and `byte_offset`
 - `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
 - the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
-- `sendInteraction()` now defaults to `waitFor: "settled"` and a `30000ms` timeout so the common agent path waits locally for output quiescence before returning
+- `sendInteraction()` now defaults to `waitFor: "settled"` and resolves settled waits to the service-owned one-hour timeout before dispatching to Bud
 - `sendInteraction()` still accepts `observeAfterMs`, but only uses the default `1000ms` fast-capture behavior when `waitFor: "none"` is requested explicitly
 - `sendInteraction()` now treats interactive input as a single gesture and emits canonical `key` values such as `ctrl+c`; the older `interaction.keys` array is accepted only as a one-entry compatibility alias
 - `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, readiness, and conservative timeout summaries
-- `observeTerminal()` now gives the daemon the requested timeout budget plus a local `1000ms` grace window so normal `changed` / `settled` results do not orphan as quickly
+- pending send and observe rejections now log request id, wait mode, elapsed time, latest output offset, output event count, and current readiness summary for long-wait diagnostics
+- `observeTerminal(waitFor: "settled")` uses the same one-hour settled budget as `sendInteraction()`, while non-settled observe modes keep the shorter default or trusted explicit timeout
+- `observeTerminal()` now gives the daemon timeout budget plus a local `1000ms` grace window so normal results do not orphan as quickly
 - `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests
 
 ### `terminal/` → [terminal/terminal.spec.md](./terminal/terminal.spec.md)

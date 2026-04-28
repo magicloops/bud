@@ -35,6 +35,8 @@ export type TerminalWaitFor =
   | "none" | "shell_ready" | "changed" | "settled";
 ```
 
+`shell_ready` is compatibility-only below the model schema during the rollout. The model-facing agent tools advertise only `none`, `changed`, and `settled`; legacy `screen_stable` payloads are normalized to `settled` before replay/dispatch where supported.
+
 **Message Types**:
 
 | Type | Direction | Purpose |
@@ -150,16 +152,22 @@ await_ready: {
 ```
 
 **Phase 6/7 Interactive Wait Notes**:
-- `terminal.send` now defaults to `wait_for: "settled"` and `timeout_ms: 30000`
+- `terminal.send` now defaults to `wait_for: "settled"` and the service resolves settled waits to a one-hour timeout budget before sending `timeout_ms` to Bud
 - settled waits are now driven by `pipe-pane` output quiescence, not repeated `capture-pane` polling
+- Bud starts settled `terminal.send` quiescence/readiness sampling after dispatch plus a short guard delay; the model-facing delta still compares the pre-send capture to the final capture, so command echo remains visible when it is part of the rendered change
+- settled quiescence is evidence-based: prompt/confirmation/password/pager evidence can be high-confidence ready, but weak settled captures do not become high-confidence ready solely because output is quiet
 - `terminal.send` still supports the older fast path, but only when `wait_for: "none"` is requested explicitly
 - `terminal.send` is now the primary tool for both shell commands and interactive input
 - `terminal.send` is now a single-gesture contract: either `text` with optional `submit`, or one semantic `key`
 - `terminal.send.key` uses backend-neutral key names such as `ctrl+c`, `enter`, and `escape`
 - `terminal.send.keys` remains a one-entry compatibility alias during rollout
 - agent-facing explicit waits are now `changed` and `settled`
+- model-facing wait modes are now limited to `none`, `changed`, and `settled`; `shell_ready` remains an internal compatibility mode until production-launch cleanup
 - `terminal.send` and `terminal.observe` still share the same delta engine, but only `changed` stays on the immediate-start screen wait engine
-- `terminal.observe(wait_for: "settled")` is the explicit longer-wait escape hatch after a timeout or for advanced cases
+- `terminal.observe(wait_for: "settled")` receives the same one-hour settled timeout budget as default `terminal.send`
+- `terminal.observe(wait_for: "settled")` shares the same conservative settled-readiness semantics for weak captures
+- model-facing agent tool schemas no longer advertise `timeout_ms`; `timeout_ms` remains on the wire so the service can pass the effective product policy to Bud and tolerate older payloads
+- human interrupt controls call the service terminal interrupt route, which sends `TerminalSendMessage.key = "ctrl+c"` with a fast `wait_for: "none"` interrupt send and rejects older pending terminal waits as `interrupted`
 - `submitted` means Bud dispatched the requested gesture to the current terminal backend
 - `delta.changed` is the main signal for whether the foreground program visibly reacted right away
 - default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested

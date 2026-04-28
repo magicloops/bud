@@ -363,6 +363,7 @@ Rejected file opens use the same frame with `accepted: false` and a typed `error
 - URL: `GET /api/threads/:thread_id/agent/state`
 - Returns the current best-effort in-flight runtime snapshot for the authorized viewer
 - Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
+- `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 
 ### 3.3 Agent SSE Stream
 
@@ -378,6 +379,25 @@ Rejected file opens use the same frame with `accepted: false` and a typed `error
 - Authorized, thread-scoped SSE stream
 - Carries live terminal output/status/readiness plus Bud online/offline notices for the owning thread
 - Historical backfill comes from `GET /api/threads/:thread_id/terminal/history`, not SSE replay
+
+### 3.4.1 Terminal Interrupt
+
+- URL: `POST /api/threads/:thread_id/terminal/interrupt`
+- Authorized, thread-scoped human interrupt endpoint
+- Sends `ctrl+c` through the normal `terminal_send` request path with `key: "ctrl+c"` and `wait_for: "none"`
+- Rejects older pending send/observe waits for the same terminal session as `interrupted`, excluding the newly-created Ctrl+C request
+- Missing active terminal session returns `404 { "error": "no_terminal_session" }`
+
+Successful response:
+
+```json
+{
+  "ok": true,
+  "session_id": "bud-b_123-thread-456",
+  "submitted": true,
+  "rejected_pending_requests": 1
+}
+```
 
 ### 3.5 Thread Message Write
 
@@ -867,7 +887,7 @@ Supported request families:
   "text": "git status",
   "submit": true,
   "wait_for": "settled",
-  "timeout_ms": 30000,
+  "timeout_ms": 3600000,
   "ext": {}
 }
 ```
@@ -875,8 +895,17 @@ Supported request families:
 Rules:
 - the request is either `text` with optional `submit`, or one semantic `key`
 - canonical keys are backend-neutral names such as `ctrl+c`, `enter`, and `escape`
-- `wait_for: "settled"` is the default agent path
+- canonical model-facing wait modes are `settled`, `changed`, and `none`
+- `wait_for: "settled"` is the default agent path and uses a service-owned one-hour timeout budget
+- `wait_for: "changed"` waits for quick visible change evidence; `wait_for: "none"` is the explicit fast path for deliberate send-and-follow or no-immediate-output workflows
+- `screen_stable` remains a legacy wire alias for `settled` during rollout but is not canonical or advertised to the model
+- `shell_ready` remains compatibility-only where implemented, is not advertised to the model, and `terminal_observe` rejects `view: "delta"` with `wait_for: "shell_ready"`
+- non-settled wait modes keep shorter service defaults unless a trusted lower-level caller supplies an explicit timeout
+- the model-facing agent schema does not expose `timeout_ms`; the service owns timeout policy and keeps `timeout_ms` on the Bud wire only
+- settled `terminal_send` waits begin output-quiescence/readiness assessment after dispatch plus a short guard delay, while the returned delta still compares the pre-send capture to the final capture so command echo can remain visible
 - `terminal.observe` is the explicit inspection hatch for `delta`, `screen`, or `history`
+- `terminal_observe` with `wait_for: "settled"` uses the same one-hour timeout budget as default `terminal_send`
+- weak settled captures do not become high-confidence ready solely because output is quiet; prompt, confirmation, password, and pager evidence can still produce high-confidence readiness
 
 ### 6.2 `terminal_status` (Bud → Service)
 
@@ -972,6 +1001,8 @@ Rules:
   "ext": {}
 }
 ```
+
+If a human interrupt rejects an older pending send wait, the service records a conservative tool result for the agent with `error: "interrupted"` and `readiness.trigger: "error"`. This is not a Bud wire-frame change; it is the service-side result shape used when the pending request promise is rejected before a matching `terminal_send_result` arrives.
 
 ### 6.6 `terminal_observe_result` (Bud → Service)
 
@@ -1142,6 +1173,15 @@ Bud → Service: terminal_send_result{submitted, delta, readiness, error}
 Service → Browser SSE: terminal.output* and terminal.ready/status as applicable
 ```
 
+### 10.3.1 Human Terminal Interrupt
+
+```text
+Browser → Service: POST /api/threads/:thread_id/terminal/interrupt
+Service → Bud: terminal_send{key:"ctrl+c", wait_for:"none"}
+Service: reject older pending send/observe waits for the session as "interrupted"
+Service → Browser SSE: agent.tool_result with conservative interrupted result when an agent tool was pending
+```
+
 ### 10.4 Agent Resume
 
 ```text
@@ -1191,4 +1231,8 @@ Service: otherwise emit agent.resync_required
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
+  - settled `terminal_send` and `terminal_observe(wait_for:"settled")` now use a service-owned one-hour timeout budget, while non-settled waits keep shorter defaults
+  - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
+  - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument
+  - human terminal interrupt is thread-scoped at `POST /api/threads/:thread_id/terminal/interrupt` and sends `key:"ctrl+c"` through `terminal_send` while rejecting older pending waits as `interrupted`
   - legacy standalone run transport and browser `/api/runs/*` streaming are removed from the supported protocol

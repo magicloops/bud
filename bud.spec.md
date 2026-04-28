@@ -154,7 +154,8 @@ bud/
 ├── plan/                   # Planning documents
 ├── spikes/                 # Isolated validation spikes for transport/tooling decisions
 ├── review/                 # Review and audit notes
-└── debug/                  # Debug logs and notes
+├── debug/                  # Debug logs and notes
+└── research/               # Current-state research notes before plan/design promotion
 ```
 
 ---
@@ -440,6 +441,7 @@ Detailed specifications for each subproject:
 | `/service` | [service/service.spec.md](./service/service.spec.md) | Node.js backend | ✅ Complete |
 | `/web` | [web/web.spec.md](./web/web.spec.md) | React frontend | ✅ Complete |
 | `/spikes` | [spikes/spikes.spec.md](./spikes/spikes.spec.md) | Isolated validation harnesses | ✅ Active |
+| `/research` | [research/research.spec.md](./research/research.spec.md) | Current-state research notes | ✅ Active |
 
 ---
 
@@ -537,6 +539,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/ios-local-auth/implementation-spec.md](./plan/ios-local-auth/implementation-spec.md) | Focused implementation plan for the local iOS auth handoff, covering public-origin alignment, deterministic client provisioning, revoke cleanup, and bundle publication |
 | [plan/deploy/implementation-spec.md](./plan/deploy/implementation-spec.md) | Phased implementation plan for the prototype Render staging deployment, covering the single-origin contract, service readiness, checked-in Render config, deployed mobile-testing validation, and the post-validation production-provider decision |
 | [plan/api-snake-case-normalization.md](./plan/api-snake-case-normalization.md) | Focused implementation plan for normalizing Bud-owned wire contracts to snake_case across the in-use service, web, stream, and any small daemon-facing payload leaks found during implementation |
+| [plan/improve-observe/improve-observe.spec.md](./plan/improve-observe/improve-observe.spec.md) | Folder spec for the phased improve-observe plan, covering one-hour settled waits, post-dispatch send quiescence timing, evidence-based readiness, and interruptible long pending tools |
+| [plan/improve-observe/implementation-spec.md](./plan/improve-observe/implementation-spec.md) | Phased implementation plan for improving `terminal.send` and `terminal.observe(wait_for:"settled")` so settled waits are service-owned, long-running, live-streamed, and not falsely ready on command echo alone |
 | [plan/browser-terminal-input-contract/implementation-spec.md](./plan/browser-terminal-input-contract/implementation-spec.md) | Focused phased implementation plan for replacing raw xterm `onData` browser input with explicit human-intent capture while keeping the current tmux-backed browser escape hatch |
 | [plan/browser-terminal-input-contract/validation-checklist.md](./plan/browser-terminal-input-contract/validation-checklist.md) | Manual validation checklist for the browser-terminal input-contract hardening work |
 | [plan/network-upgrade/network-upgrade.spec.md](./plan/network-upgrade/network-upgrade.spec.md) | Superseded folder spec for the earlier HTTP/2-first daemon-networking plan, retained only as historical origin context for the swappable-transport design |
@@ -630,6 +634,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [review/review.spec.md](./review/review.spec.md) | Folder spec for review and audit notes, including architecture reviews and transport-migration analysis |
 | [review/service-layer-implementation-review.md](./review/service-layer-implementation-review.md) | Full review of the current `service/` implementation, covering ownership-boundary regressions, provider/bootstrap gaps, terminal/runtime cancellation issues, legacy run overlap, and the recommended modularization sequence before a service refactor |
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
+| [research/research.spec.md](./research/research.spec.md) | Folder spec for current-state research notes that capture implementation findings before promotion to plan, debug, or design docs |
+| [research/terminal-observation-long-waits.md](./research/terminal-observation-long-waits.md) | Research note on the current send/observe wait path, 30-second timeout defaults, output quiescence semantics, optimistic readiness, and post-dispatch quiescence timing for long-running TUIs |
 | [debug/service-refactor-phase-1-contract-bugs.md](./debug/service-refactor-phase-1-contract-bugs.md) | Debug note for Phase 1 of the service refactor, covering provider-less boot, shared enrollment-token hashing, legacy run-surface removal, and the Node REPL prompt-classification fix |
 | [debug/service-refactor-phase-2-runtime-and-transport-split.md](./debug/service-refactor-phase-2-runtime-and-transport-split.md) | Debug note for the next service-refactor slice, covering terminal-runtime ownership extraction, pending terminal wait fast-fail behavior, and the route/gateway decomposition rationale |
 | [debug/service-refactor-final-build-fixes.md](./debug/service-refactor-final-build-fixes.md) | Debug note capturing the final closure-pass `service` build failure, including the broken `TerminalObservationView` import and the unsafe websocket-readiness casts that had to be normalized at the gateway boundary before continuing to lint/build sign-off |
