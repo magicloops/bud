@@ -123,6 +123,18 @@ Web-serving productization should remove that debt for proxy traffic:
 - add conformance tests proving proxy payloads use typed fields rather than whole-frame `frame_json`
 - ensure optional HTTP/2 and future QUIC adapters carry the same payload fields without a proxy-specific fork
 
+## Remaining Foundation Follow-Ups
+
+These items were intentionally left as future web-serving productization work rather than merge blockers for the WebSocket-first transport foundation.
+
+- [ ] Add route-level proxy-edge tests for selected-carrier send refusal and thrown send failures, proving deterministic `424` responses and no dangling `bud_operation`, `bud_stream`, or `proxy_session.active_stream_id` state.
+- [ ] Add route-level proxy-edge tests for accepted `proxy_open_result` frames without required HTTP status metadata, proving protocol reset, cleanup, audit, and deterministic `502`.
+- [ ] Add route-level proxy-edge tests for open timeout and daemon open rejection, including durable operation/stream terminal states.
+- [ ] Add concurrent file/proxy stream-id uniqueness coverage so two simultaneous sessions cannot collide or cross-deliver bytes.
+- [ ] Add monotonic `stream_data` sequence/offset validation coverage for concurrent proxy streams.
+- [ ] Add real-daemon negative proxy smokes for non-loopback targets, unsupported methods, unsupported schemes, response byte limits, and daemon policy denials.
+- [ ] Add typed denial propagation checks proving daemon proxy denials reach the browser/service as structured errors and audit events.
+
 ## Validation
 
 Required before product exposure:

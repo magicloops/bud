@@ -122,6 +122,18 @@ File-serving productization is the right time to remove that debt for the file s
 - add conformance tests proving file payloads use typed fields rather than whole-frame `frame_json`
 - avoid adding any UI or product route behavior that depends on the transitional JSON body
 
+## Remaining Foundation Follow-Ups
+
+These items were intentionally left as future file-productization work rather than merge blockers for the WebSocket-first transport foundation.
+
+- [ ] Add route-level file-edge tests for selected-carrier send refusal and thrown send failures, proving deterministic `424` responses and no dangling `bud_operation`, `bud_stream`, or `file_session.active_stream_id` state.
+- [ ] Add route-level file-edge tests for accepted `file_open_result` frames without required HTTP status metadata, proving protocol reset, cleanup, audit, and deterministic `502`.
+- [ ] Add route-level file-edge tests for open timeout and daemon open rejection, including durable operation/stream terminal states.
+- [ ] Add concurrent file/proxy stream-id uniqueness coverage so two simultaneous sessions cannot collide or cross-deliver bytes.
+- [ ] Add monotonic `stream_data` sequence/offset validation coverage for concurrent file streams.
+- [ ] Add real-daemon negative file smokes for paths outside the approved root, symlinks, directories, non-regular files, over-limit reads, and daemon policy denials.
+- [ ] Add typed denial propagation checks proving daemon file denials reach the browser/service as structured errors and audit events.
+
 ## Validation
 
 Required before product exposure:
