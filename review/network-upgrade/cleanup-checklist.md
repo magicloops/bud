@@ -52,31 +52,27 @@ Renaming is optional, but if files keep old names they should have a clear top-l
 
 ## Implementation Cleanup Before Merge
 
-- Add a single carrier policy abstraction used by both control and data routing.
-- Add tests for WebSocket-baseline selection and optional HTTP/2 preference if configured.
-- Add daemon-side gRPC-to-WebSocket fallback, or document that gRPC env vars opt into a separate mode with no fallback.
-- Validate stream close final offsets and reset on mismatch.
-- Wrap file/proxy open send in `try/catch` and clean durable rows on exception.
-- Reset and transition durable state when a daemon accepts file/proxy open without a status code.
-- Decide whether `unavailable` file/proxy sessions are terminal rows or transient transport snapshots.
-- Remove or quarantine ownerless token enrollment.
-- Add edge-stream tests for open timeout, open rejection, invalid accepted result, carrier refusal, carrier throw, and final-offset mismatch.
+- Done: carrier preference/fallback policy is centralized across control and data routing, with WebSocket-baseline and optional-carrier preference tests.
+- Done: daemon gRPC/WebSocket mode behavior is covered at the router/selector level, and the existing HTTP/2 gRPC terminal smoke still passes when enabled.
+- Done: `stream_close.final_offset` mismatch resets the stream instead of recording a clean close.
+- Done: file/proxy open send failures and accepted-without-status results have foundation cleanup behavior; route-level product edge tests are tracked as future file/proxy productization work.
+- Done: file/proxy unavailable status is treated as a transport snapshot returned to callers, not a terminal session row.
+- Done: legacy enrollment-token bootstrap is dev-gated/quarantined so it cannot create production-visible ownerless Buds.
+- Deferred by design: exhaustive file/proxy route-level edge tests for open timeout, open rejection, invalid accepted result, carrier refusal, carrier throw, concurrent stream ID uniqueness, monotonic stream data, and daemon policy denial are recorded in the file/proxy productization design docs rather than blocking this transport-foundation PR.
+- Deferred by design: QUIC runtime implementation and real QUIC smoke validation are follow-on work after the runtime/deployment shape is approved.
 
 ## Productization Follow-Ups
 
 - Replace daemon file prebuffering with chunked file reads under stream credit.
-- Add carrier metrics and operator-facing transport diagnostics.
-- Decide file/proxy WebSocket byte caps for the open-source baseline.
+- Add broader carrier metrics and operator-facing transport diagnostics beyond the current selected-carrier health/candidate status.
+- Revisit file/proxy WebSocket byte caps after product UX requirements are known.
 - Remove remaining `frame_json` payloads for stream/proxy/file families.
-- Add generated protobuf bindings or document why manual codecs remain intentional.
-- Add optional HTTP/2 fallback/demotion tests.
-- Add QUIC token binding, health scoring, and fallback only after baseline carrier parity is green.
+- Add generated protobuf bindings or keep documenting why manual codecs remain intentional.
+- Add full route-level optional-carrier demotion coverage after optional carriers move beyond adapter parity.
+- Implement QUIC data adapter and real QUIC smoke validation from the dedicated QUIC design checklist.
 
 ## Spike And Reference Decision
 
-The `spikes/grpc-interop/` tree is valuable evidence for choosing `@grpc/grpc-js`, but it is large. Before merge, choose one:
+The `spikes/grpc-interop/` tree is valuable evidence for choosing `@grpc/grpc-js`, but it is large.
 
-- Keep it as a reproducible spike with specs that say it is non-product and not part of normal builds.
-- Collapse it into a shorter `reference/` write-up and drop the runnable spike harness.
-
-Either choice is defensible. The current halfway state is acceptable for an internal branch but noisy for a clean landing.
+Decision: keep it as a reproducible spike. Its specs already mark it as spike-only and not imported by the production `bud/` or `service/` packages. It can be collapsed into a shorter `reference/` write-up later if branch size becomes a concern, but that is not a merge blocker for this PR.

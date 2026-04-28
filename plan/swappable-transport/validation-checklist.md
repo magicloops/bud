@@ -26,15 +26,17 @@
 - [x] `stream_close` reaches the waiting route/runtime caller.
 - [x] Carrier selection logs or returns the selected transport kind.
 
+Remaining unchecked concurrent file/proxy validation belongs to the productization follow-up docs, not the current transport-foundation landing gate.
+
 ## Terminal Smoke
 
 - [x] Create or attach a thread-scoped terminal session over WebSocket-only daemon connection.
 - [x] Send terminal input.
 - [x] Receive terminal output.
 - [x] Validate reconnect reconciliation over WebSocket-only daemon connection.
-- [ ] Confirm existing browser REST/SSE behavior is unchanged.
+- [x] Confirm existing browser REST/SSE behavior is unchanged. `pnpm --dir /Users/adam/bud/service test` passed the service route/runtime suite, including REST route registration/ownership, thread route registration, event-bus replay, and agent stream-state coverage.
 - [x] Confirm gRPC-disabled terminal smoke passes.
-- [ ] Confirm captured terminal traffic uses binary `BudEnvelope` payloads.
+- [x] Confirm captured terminal traffic uses binary `BudEnvelope` payloads. `pnpm --dir /Users/adam/bud/service smoke:ws-terminal` now captures service-to-daemon `terminal_ensure` / `terminal_input` and daemon-to-service `terminal_output` as typed-field binary envelopes.
 - [x] Confirm terminal traffic does not use whole-frame `frame_json`, unless Phase 0 documents a temporary blocker.
 
 ## File Smoke
@@ -49,6 +51,8 @@
 - [ ] Propagate daemon file denial as a typed error.
 - [x] Confirm gRPC-disabled file smoke passes.
 
+Negative daemon/file policy smokes are tracked in [../../design/network-upgrade-file-serving-productization.md](../../design/network-upgrade-file-serving-productization.md).
+
 ## Proxy Smoke
 
 - [x] Start a local HTTP server on `127.0.0.1`.
@@ -60,6 +64,8 @@
 - [ ] Enforce response byte limits.
 - [ ] Propagate daemon proxy denial as a typed error.
 - [x] Confirm gRPC-disabled proxy smoke passes.
+
+Negative daemon/proxy policy smokes are tracked in [../../design/network-upgrade-web-serving-productization.md](../../design/network-upgrade-web-serving-productization.md).
 
 ## Ownership And Auth
 
@@ -90,8 +96,10 @@
 - [ ] Proxy open carrier send exception returns deterministic `424` and leaves no dangling operation/stream rows.
 - [ ] File accepted-without-status result produces deterministic cleanup and audit.
 - [ ] Proxy accepted-without-status result produces deterministic cleanup and audit.
-- [ ] Immediate post-ack reconnect report sees registered device/transport session state.
+- [x] Immediate post-ack reconnect report sees registered device/transport session state. `pnpm --dir /Users/adam/bud/service smoke:ws-terminal` now requires the `daemon.reconnect_report` audit payload to include registered durable `device_session_id` and `transport_session_id`.
 - [x] Legacy enrollment token path cannot create production-visible ownerless Buds.
+
+The remaining route-level file/proxy edge cases above are now explicitly deferred to the productization design docs while the shared foundation cleanup is covered by Phase 6 tests.
 
 ## Protobuf Layer Cleanup
 
@@ -106,13 +114,15 @@
 
 ## Optional Carrier Parity
 
-- [ ] Existing HTTP/2 gRPC terminal smoke still passes when enabled.
+- [x] Existing HTTP/2 gRPC terminal smoke still passes when enabled. `pnpm --dir /Users/adam/bud/service smoke:grpc-data-terminal` passed with `data_enabled: true` and recorded gRPC data frames.
 - [x] Existing HTTP/2 file smoke still passes when enabled.
 - [x] Existing HTTP/2 proxy smoke still passes when enabled.
 - [x] Forced HTTP/2 failure does not break WebSocket baseline at control-router/data-selector level.
 - [ ] QUIC, when implemented, carries the same envelope and stream lifecycle.
 - [x] Forced synthetic QUIC health failure falls back according to carrier policy.
 - [x] File/proxy transport status includes selected-carrier health and skipped-candidate reasons.
+
+Real QUIC carrier validation remains deferred until the QUIC adapter is implemented from [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md).
 
 ## Documentation
 

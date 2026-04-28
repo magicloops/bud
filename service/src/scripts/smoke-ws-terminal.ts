@@ -41,6 +41,10 @@ const {
 } = await import("../db/schema.js");
 const { TerminalEventBus } = await import("../runtime/event-bus.js");
 const { TerminalSessionManager } = await import("../runtime/terminal-session-manager.js");
+const {
+  decodeBudEnvelopePayloadCase,
+  decodeBudEnvelopePayloadEncoding,
+} = await import("../proto/wire.js");
 const { registerWsGateway } = await import("../ws/gateway.js");
 const { sessions } = await import("../ws/session-trackers.js");
 
@@ -52,7 +56,9 @@ let daemon: ChildProcessWithoutNullStreams | null = null;
 let budId: string | null = null;
 let threadId: string | null = null;
 let sessionId: string | null = null;
+let stopEnvelopeCapture: (() => void) | null = null;
 const daemonOutput: string[] = [];
+const capturedFrames: CapturedEnvelopeFrame[] = [];
 
 try {
   await server.register(websocketPlugin, {
@@ -74,7 +80,8 @@ try {
   await assertNoActiveTransport(budId, "h2_grpc");
   await assertNoActiveTransport(budId, "h2_data");
   await waitForBinarySessionTracker(budId);
-  await waitForReconnectAudit(budId);
+  stopEnvelopeCapture = installEnvelopeCapture(budId, capturedFrames);
+  const reconnectAudit = await waitForRegisteredReconnectAudit(budId);
 
   threadId = randomUUID();
   const userId = `smoke-user-${smokeId}`;
@@ -109,6 +116,7 @@ try {
     timeoutMs: 20_000,
     marker,
   });
+  const capturedTerminalPayloads = assertCapturedTerminalBudEnvelopeTraffic(capturedFrames);
 
   console.log(JSON.stringify({
     ok: true,
@@ -123,6 +131,10 @@ try {
     h2_grpc_active: false,
     h2_data_active: false,
     reconnect_audit_seen: true,
+    reconnect_audit_device_session_id: reconnectAudit.deviceSessionId,
+    reconnect_audit_transport_session_id: reconnectAudit.transportSessionId,
+    captured_terminal_payload_cases: capturedTerminalPayloads,
+    captured_terminal_binary_envelopes: true,
   }, null, 2));
 } catch (err) {
   console.error("WebSocket terminal smoke failed");
@@ -131,6 +143,10 @@ try {
   console.error(daemonOutput.slice(-80).join("\n"));
   throw err;
 } finally {
+  if (stopEnvelopeCapture) {
+    stopEnvelopeCapture();
+    stopEnvelopeCapture = null;
+  }
   if (sessionId) {
     await terminalSessionManager.closeSession(sessionId, "ws_terminal_smoke_complete").catch(() => undefined);
   }
@@ -211,18 +227,42 @@ async function waitForBinarySessionTracker(budId: string): Promise<void> {
   }, { timeoutMs: 10_000, label: "binary WebSocket session tracker" });
 }
 
-async function waitForReconnectAudit(budId: string): Promise<void> {
-  await waitFor(async () => {
+async function waitForRegisteredReconnectAudit(budId: string): Promise<{
+  auditEventId: string;
+  deviceSessionId: string;
+  transportSessionId: string;
+}> {
+  return waitFor(async () => {
     const rows = await db
-      .select({ auditEventId: auditEventTable.auditEventId })
+      .select({
+        auditEventId: auditEventTable.auditEventId,
+        eventData: auditEventTable.eventData,
+      })
       .from(auditEventTable)
       .where(and(
         eq(auditEventTable.budId, budId),
         eq(auditEventTable.eventType, "daemon.reconnect_report"),
       ))
-      .limit(1);
-    return rows.length > 0 ? true : null;
-  }, { timeoutMs: 10_000, label: "reconnect report audit event" });
+      .orderBy(desc(auditEventTable.createdAt))
+      .limit(5);
+    for (const row of rows) {
+      const eventData = row.eventData;
+      if (!isRecord(eventData)) {
+        continue;
+      }
+      const deviceSessionId = eventData.device_session_id;
+      const transportSessionId = eventData.transport_session_id;
+      if (typeof deviceSessionId === "string" && deviceSessionId.length > 0
+        && typeof transportSessionId === "string" && transportSessionId.length > 0) {
+        return {
+          auditEventId: row.auditEventId,
+          deviceSessionId,
+          transportSessionId,
+        };
+      }
+    }
+    return null;
+  }, { timeoutMs: 10_000, label: "reconnect report audit event with registered session ids" });
 }
 
 async function waitForTransport(budId: string, transportKind: string): Promise<void> {
@@ -352,4 +392,124 @@ function createLogger() {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+type CapturedEnvelopeFrame = {
+  direction: "service_to_bud" | "bud_to_service";
+  binary: boolean;
+  payloadCase?: string;
+  payloadEncoding?: "legacy_json" | "typed_fields" | "typed_frame_json";
+  byteLength?: number;
+  error?: string;
+};
+
+function installEnvelopeCapture(budId: string, frames: CapturedEnvelopeFrame[]): () => void {
+  const tracker = sessions.get(budId);
+  if (!tracker) {
+    throw new Error(`cannot capture envelopes: no active tracker for ${budId}`);
+  }
+
+  const socket = tracker.socket as unknown as {
+    send: (...args: unknown[]) => unknown;
+    on: (event: string, listener: (payload: unknown) => void) => unknown;
+    off?: (event: string, listener: (payload: unknown) => void) => unknown;
+    removeListener?: (event: string, listener: (payload: unknown) => void) => unknown;
+  };
+  const originalSend = socket.send.bind(socket);
+  const capture = (direction: CapturedEnvelopeFrame["direction"], payload: unknown) => {
+    const bytes = rawFrameToBuffer(payload);
+    if (!bytes) {
+      frames.push({ direction, binary: false });
+      return;
+    }
+    try {
+      frames.push({
+        direction,
+        binary: true,
+        byteLength: bytes.byteLength,
+        payloadCase: decodeBudEnvelopePayloadCase(bytes),
+        payloadEncoding: decodeBudEnvelopePayloadEncoding(bytes),
+      });
+    } catch (err) {
+      frames.push({
+        direction,
+        binary: true,
+        byteLength: bytes.byteLength,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+  const onMessage = (payload: unknown) => capture("bud_to_service", payload);
+
+  socket.send = (...args: unknown[]) => {
+    capture("service_to_bud", args[0]);
+    return originalSend(...args);
+  };
+  socket.on("message", onMessage);
+
+  return () => {
+    socket.send = originalSend;
+    if (socket.off) {
+      socket.off("message", onMessage);
+      return;
+    }
+    socket.removeListener?.("message", onMessage);
+  };
+}
+
+function assertCapturedTerminalBudEnvelopeTraffic(frames: CapturedEnvelopeFrame[]): string[] {
+  const textFrames = frames.filter((frame) => !frame.binary);
+  if (textFrames.length > 0) {
+    throw new Error(`captured ${textFrames.length} non-binary WebSocket frames after BudEnvelope negotiation`);
+  }
+
+  const decodeFailures = frames.filter((frame) => frame.error);
+  if (decodeFailures.length > 0) {
+    throw new Error(`captured invalid BudEnvelope frames: ${decodeFailures.map((frame) => frame.error).join("; ")}`);
+  }
+
+  const terminalFrames = frames.filter((frame) => frame.payloadCase?.startsWith("terminal_"));
+  const legacyTerminalFrames = terminalFrames.filter((frame) => frame.payloadEncoding !== "typed_fields");
+  if (legacyTerminalFrames.length > 0) {
+    throw new Error(
+      `captured terminal frames without typed BudEnvelope fields: ${
+        legacyTerminalFrames.map((frame) => `${frame.direction}:${frame.payloadCase}:${frame.payloadEncoding}`).join(", ")
+      }`,
+    );
+  }
+
+  const hasTerminalEnsure = terminalFrames.some(
+    (frame) => frame.direction === "service_to_bud" && frame.payloadCase === "terminal_ensure",
+  );
+  const hasTerminalInput = terminalFrames.some(
+    (frame) => frame.direction === "service_to_bud" && frame.payloadCase === "terminal_input",
+  );
+  const hasTerminalOutput = terminalFrames.some(
+    (frame) => frame.direction === "bud_to_service" && frame.payloadCase === "terminal_output",
+  );
+  if (!hasTerminalEnsure || !hasTerminalInput || !hasTerminalOutput) {
+    throw new Error(
+      `missing captured terminal envelope traffic: terminal_ensure=${hasTerminalEnsure}, terminal_input=${hasTerminalInput}, terminal_output=${hasTerminalOutput}`,
+    );
+  }
+
+  return Array.from(
+    new Set(terminalFrames.map((frame) => `${frame.direction}:${frame.payloadCase}:${frame.payloadEncoding}`)),
+  ).sort();
+}
+
+function rawFrameToBuffer(payload: unknown): Buffer | null {
+  if (Buffer.isBuffer(payload)) {
+    return payload;
+  }
+  if (payload instanceof ArrayBuffer) {
+    return Buffer.from(payload);
+  }
+  if (ArrayBuffer.isView(payload)) {
+    return Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+  if (Array.isArray(payload) && payload.every(Buffer.isBuffer)) {
+    return Buffer.concat(payload);
+  }
+  return null;
 }

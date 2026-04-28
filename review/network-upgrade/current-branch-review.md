@@ -362,7 +362,7 @@ Already addressed by the docs cleanup in this branch:
 - `plan/network-upgrade/` is marked superseded and retained only as historical context.
 - `plan/swappable-transport/` now owns the active follow-up phases.
 
-Fix before merge if the goal is a clean branch:
+Original landing-gate items, now closed or explicitly deferred:
 
 - Define and test the carrier selection/fallback policy.
 - Validate `stream_close.final_offset` before recording a clean close.
@@ -370,6 +370,8 @@ Fix before merge if the goal is a clean branch:
 - Close or explicitly accept the `hello_ack` before registration race.
 - Remove or quarantine ownerless enrollment-token Bud creation.
 - Add focused tests for the new failure paths above.
+
+Closure status, 2026-04-28: these landing-gate items are now either implemented and validated in `plan/swappable-transport/` Phases 6-8 or explicitly moved to the file/proxy productization design docs as future route-level validation. The WebSocket terminal smoke now proves the post-ack reconnect report sees registered durable session IDs and captures terminal traffic as binary typed-field `BudEnvelope` payloads. The existing HTTP/2 gRPC terminal smoke still passes when enabled.
 
 Accept as known follow-up debt:
 

@@ -183,7 +183,8 @@ Local end-to-end smoke test for the swappable-transport Phase 0 WebSocket termin
 - Start the real WebSocket gateway in-process on a reserved localhost port with gRPC disabled
 - Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev token-bypass credential and temporary identity/terminal base directory
 - Wait for daemon enrollment, binary `BudEnvelope` capability negotiation, an active `websocket` transport session, and no active `h2_grpc`/`h2_data` transport sessions for the smoke Bud
-- Confirm reconnect reconciliation reached the service by checking the `daemon.reconnect_report` audit event
+- Confirm reconnect reconciliation reached the service by checking the `daemon.reconnect_report` audit event and requiring registered durable `device_session_id` / `transport_session_id` values in the audit payload
+- Capture service-to-daemon and daemon-to-service terminal WebSocket frames during the smoke and assert `terminal_ensure`, `terminal_input`, and `terminal_output` use binary `BudEnvelope` typed payload fields
 - Create a real thread-scoped terminal session through `TerminalSessionManager`
 - Send a shell command into the tmux-backed terminal and wait for the marker in persisted terminal output
 - Close the terminal session, stop the daemon, close the gateway, and remove smoke rows/temp files

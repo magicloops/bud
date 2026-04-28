@@ -24,6 +24,7 @@ Coverage:
 - daemon file/proxy performance concerns
 - stale plan/doc cleanup
 - open questions and recommended landing gate
+- closure status for the landing-gate items resolved or intentionally deferred by the swappable-transport implementation phases
 
 ### `cleanup-checklist.md`
 
@@ -37,6 +38,7 @@ Coverage:
 - implementation cleanup before merge
 - productization follow-ups
 - spike/reference retention decision
+- explicit done/deferred status for PR landing cleanup
 
 ## Dependencies
 
@@ -49,8 +51,7 @@ Coverage:
 
 ## TODOs / Technical Debt
 
-<!-- SPEC:TODO -->
-- Re-run this review after the branch resolves the landing-gate items, then either update `current-branch-review.md` with closure notes or add a short follow-up review.
+None at this review-folder level. Remaining transport/product follow-ups are tracked in [../../plan/swappable-transport/validation-checklist.md](../../plan/swappable-transport/validation-checklist.md), [../../design/network-upgrade-file-serving-productization.md](../../design/network-upgrade-file-serving-productization.md), [../../design/network-upgrade-web-serving-productization.md](../../design/network-upgrade-web-serving-productization.md), and [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md).
 
 ---
 
