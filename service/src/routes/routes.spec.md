@@ -112,6 +112,7 @@ Ownership-focused thread submodules:
 | `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
 | `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session |
 | `POST` | `/api/threads/:thread_id/terminal/input` | Send input as the signed-in human user |
+| `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send human Ctrl+C, reject older pending terminal waits as interrupted, and return dispatch metadata |
 | `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |
 | `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
 
@@ -137,7 +138,7 @@ Ownership-focused thread submodules:
 
 **Agent Stream Contract**:
 - `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
-- `pending_tool` now carries `client_id` in addition to `call_id`, `name`, and `args`
+- `pending_tool` now carries `client_id` and `started_at` in addition to `call_id`, `name`, and `args`
 - `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
 - `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
 - agent payloads include a per-turn `turn_id`
@@ -256,6 +257,7 @@ Before creating user message, validates the selected LLM model/reasoning pair an
 - new thread/message/session rows are stamped with the acting or owning user id
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
+- terminal interrupt is authorized at the same thread boundary as terminal input/stream/history and returns `404 no_terminal_session` when no active owned session exists
 - thread SSE routes send an initial heartbeat frame on empty-buffer/live-only attaches so the HTTP response stays in SSE mode even before the first real event arrives
 - `POST /api/threads` now returns `{ thread_id }`
 - `POST /api/threads/:thread_id/messages` now accepts optional `client_id`

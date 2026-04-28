@@ -67,6 +67,147 @@ test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async
   assert.equal("reasoning" in capturedParams[1], false);
 });
 
+test("OpenAI provider preserves completed response payload for diagnostics", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async () =>
+    (async function* stream() {
+      yield {
+        type: "response.created",
+        response: {
+          id: "resp_diag",
+        },
+      };
+      yield {
+        type: "response.completed",
+        response: {
+          id: "resp_diag",
+          status: "completed",
+          output: [
+            {
+              type: "reasoning",
+              id: "rs_diag",
+              summary: [],
+            },
+          ],
+          usage: {
+            input_tokens: 3,
+            output_tokens: 2,
+          },
+        },
+      };
+    })();
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  })) {
+    events.push(event);
+  }
+
+  const done = events.find((event) => event.type === "message_done");
+  assert.ok(done);
+  assert.equal(done.providerData?.provider, "openai");
+
+  const payload = done.providerData?.payload as { id: string; output: unknown[] };
+  assert.equal(payload.id, "resp_diag");
+  assert.deepEqual(payload.output, [
+    {
+      type: "reasoning",
+      id: "rs_diag",
+      summary: [],
+    },
+  ]);
+});
+
+test("OpenAI provider preserves function call name and call_id from streamed item metadata", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async () =>
+    (async function* stream() {
+      yield {
+        type: "response.created",
+        response: {
+          id: "resp_tool",
+        },
+      };
+      yield {
+        type: "response.output_item.added",
+        output_index: 1,
+        item: {
+          id: "fc_tool",
+          type: "function_call",
+          call_id: "call_tool",
+          name: "terminal_send",
+        },
+      };
+      yield {
+        type: "response.function_call_arguments.done",
+        item_id: "fc_tool",
+        output_index: 1,
+        arguments: JSON.stringify({
+          text: "pwd",
+          submit: true,
+          key: null,
+          observe_after_ms: null,
+          wait_for: "settled",
+        }),
+      };
+      yield {
+        type: "response.completed",
+        response: {
+          id: "resp_tool",
+          status: "completed",
+          usage: {
+            input_tokens: 3,
+            output_tokens: 2,
+          },
+        },
+      };
+    })();
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  })) {
+    events.push(event);
+  }
+
+  const toolUseDone = events.find((event) => event.type === "tool_use_done");
+  assert.ok(toolUseDone);
+  assert.equal(toolUseDone.id, "call_tool");
+  assert.equal(toolUseDone.name, "terminal_send");
+  assert.deepEqual(toolUseDone.input, {
+    text: "pwd",
+    submit: true,
+    key: null,
+    observe_after_ms: null,
+    wait_for: "settled",
+  });
+});
+
 test("Anthropic provider lowers adaptive effort models without manual budgets", async () => {
   const provider = new AnthropicProvider("test-key");
   const capturedParams: Record<string, unknown>[] = [];

@@ -42,6 +42,15 @@ Shared agent-facing tool/result contracts.
 - centralize readiness defaults plus tool-argument serialization
 - normalize legacy wait/key inputs reused during transcript replay and model-tool parsing
 
+### `contracts.test.ts`
+
+Direct tests for shared contract helpers.
+
+**Current Coverage**:
+- public wait modes parse as themselves
+- compatibility-only `shell_ready` remains accepted below the model-facing schema
+- legacy `screen_stable` payloads normalize to canonical `settled`
+
 ### `conversation-loader.ts`
 
 Conversation-building ownership extracted from `AgentService`.
@@ -60,6 +69,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - preferred-cwd metadata is appended to user messages
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`
 - stored `screen_stable` waits replay as canonical `settled`
+- the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
 
 ### `agent-service.ts`
 
@@ -81,8 +91,10 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `terminal_send` | `text?`, `submit?`, `key?`, `observe_after_ms?`, `wait_for?`, `timeout_ms?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a settled-by-default synchronous result |
-| `terminal_observe` | `lines?`, `wait_for?`, `view?`, `timeout_ms?` | Observe terminal deltas by default, with explicit full-screen/history modes |
+| `terminal_send` | `text?`, `submit?`, `key?`, `observe_after_ms?`, `wait_for?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a settled-by-default synchronous result |
+| `terminal_observe` | `lines?`, `wait_for?`, `view?` | Observe terminal deltas by default, with explicit full-screen/history modes |
+
+Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. The lower service/daemon parsers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where needed for replay and older clients.
 
 #### AgentService Class
 
@@ -142,6 +154,7 @@ startUserMessage()
 - The persisted assistant transcript row is still created only once the turn resolves, then emitted as `agent.message`.
 - Assistant/tool `client_id` values are now allocated before the first live runtime/SSE event that refers to them, and the persisted assistant/tool rows reuse those same values at insert time.
 - Reasoning blocks are preserved inside the in-memory conversation on tool-call loops so providers that require multi-turn reasoning context do not lose those items.
+- Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent uses the settled/default result or timeout delta and avoids claiming program progress when no visible delta appears.
@@ -149,6 +162,10 @@ startUserMessage()
 - historical persisted `terminal.interrupt` tool rows are normalized during replay into `terminal_send` with `key: "ctrl+c"`, so old transcripts still round-trip through the current provider/tool format.
 - `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model, and replay normalization maps any older `screen_stable` tool payloads to `settled`.
 - `terminal.observe` now defaults to `view: "delta"` and exposes `view: "screen"` / `view: "history"` only when the model explicitly needs broader context.
+- model-facing terminal tool schemas no longer advertise `timeout_ms`; the service owns effective timeout policy and ignores legacy model-supplied timeout values during normal agent tool execution.
+- model-facing terminal tool schemas no longer advertise compatibility-only `shell_ready`; the public `wait_for` set is `none`, `changed`, and `settled`.
+- settled `terminal.send` and `terminal.observe(wait_for: "settled")` requests now receive the one-hour service-owned wait budget before dispatching to Bud, while non-settled modes keep shorter budgets.
+- human terminal interrupts reject the currently pending terminal wait as `interrupted`; `TerminalToolExecutor` turns that into a conservative tool result with `readiness.trigger: "error"` so the model regains control without treating the original command as completed.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
 - the main `AgentService` file now delegates conversation loading, model invocation, terminal tool execution, and transcript persistence/runtime emission to dedicated modules instead of bundling those concerns inline
@@ -191,6 +208,7 @@ Model invocation ownership extracted from `AgentService`.
 - resolve model-specific reasoning through `llm/reasoning-policy.ts`, using catalog defaults and rejecting unsupported combinations before provider invocation
 - consume provider `invoke()` streams and emit draft assistant runtime events
 - reconstruct canonical responses and normalize provider tool-call payloads
+- throw structured `AgentModelResponseError` diagnostics when a completed response cannot be parsed into final text or a tool call
 
 ### `model-runner.test.ts`
 
@@ -198,7 +216,9 @@ Direct tests for the extracted model runner.
 
 **Current Coverage**:
 - reasoning-effort normalization follows selected model policy, including Claude 4.6/4.7 and GPT-5.4 differences
+- terminal tool schemas advertise only public `wait_for` modes and omit `timeout_ms`
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
+- empty final responses include bounded canonical/provider response diagnostics on the thrown error
 
 ### `terminal-tool-executor.ts`
 
@@ -209,6 +229,7 @@ Terminal tool execution ownership extracted from `AgentService`.
 - run `terminal.observe` and `terminal.send`
 - derive readiness/context-after snapshots from runtime state plus observed shell evidence
 - shape conservative tool summaries and persisted tool payloads
+- map user-triggered `interrupted` terminal waits into normal tool results with `error: "interrupted"` and conservative readiness
 
 ### `terminal-tool-executor.test.ts`
 
@@ -216,6 +237,7 @@ Direct tests for the extracted terminal tool executor.
 
 **Current Coverage**:
 - interrupt-style `terminal.send` remains conservative when no visible delta is observed
+- user-interrupted pending send/observe waits return conservative tool results instead of failing the agent turn
 - ambiguous mixed text+key terminal sends fail before touching the terminal runtime
 
 ### `transcript-writer.ts`
@@ -223,7 +245,7 @@ Direct tests for the extracted terminal tool executor.
 Transcript persistence and runtime-emission ownership extracted from `AgentService`.
 
 **Responsibilities**:
-- emit `agent.tool_call` and synchronize `/agent/state.pending_tool`
+- emit `agent.tool_call` and synchronize `/agent/state.pending_tool`, including the tool `started_at` timestamp
 - persist assistant/tool transcript rows with stable `client_id`
 - stamp thread attention metadata for final attention-worthy assistant output
 - enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
@@ -244,6 +266,8 @@ Omitted `reasoning_effort` uses the selected model's catalog default, not the gl
 **Cancellation**:
 
 `AgentService` now delegates per-thread `AbortController` ownership to `AgentCancellationRegistry`, and explicit cancel also rejects any pending terminal wait through `TerminalSessionManager.rejectPendingRequestsForThread(...)`.
+
+Human terminal interrupt is intentionally separate from agent cancel: the terminal route sends `ctrl+c` and rejects the current terminal wait as `interrupted`, allowing the active agent turn to record a tool result and continue.
 
 **Ownership Notes**:
 - `startUserMessage(..., { ownerUserId })` threads the resolved thread owner through the agent loop
@@ -312,6 +336,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `client_id` on `agent.message_start` / `agent.message_delta` / `agent.message_done` matches `/agent/state.draft_assistant.client_id` and the later persisted assistant row
 - `call_id` on `agent.tool_call` / `agent.tool_result` matches the persisted tool row `metadata.call_id`
 - `client_id` on `agent.tool_call` / `agent.tool_result` matches `/agent/state.pending_tool.client_id` and the later persisted tool row
+- `/agent/state.pending_tool.started_at` matches `agent.tool_call.started_at`, so reconnecting clients can show elapsed time for long pending waits
 - `started_at` on `agent.tool_call` is the service-side tool-start timestamp captured immediately before execution begins
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
 - tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop

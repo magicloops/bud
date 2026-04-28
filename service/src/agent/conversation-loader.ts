@@ -31,6 +31,7 @@ All terminal tools return a JSON result containing:
 - terminal.send waits for a settled result by default and returns delta: { changed, text, truncated }
 - terminal.send timeout still returns the latest visible delta and readiness; treat trigger:"timeout" as partial progress, not proof of completion
 - terminal.observe defaults to view:"delta" and returns delta in output; use view:"screen" or view:"history" for broader context
+- The service owns terminal wait timeout policy. Choose wait_for behavior, not timeout_ms values.
 
 Guidelines:
 - terminal.send is the primary terminal input tool for both shell commands and interactive programs.
@@ -45,6 +46,7 @@ Guidelines:
 - terminal.observe defaults to a delta view. Use view:"screen" for the full current screen and view:"history" for recent scrollback/history.
 - Use wait_for:"settled" with terminal.observe when you explicitly want to keep waiting longer after a timeout or ambiguous result.
 - Use wait_for:"changed" only when you specifically need a quick reaction proof instead of the normal settled result.
+- Use wait_for:"none" only when you deliberately want the fast path, such as a command expected to produce no immediate useful output before a later observe.
 - Check readiness from tool results to decide your next action:
   - confidence >= 0.8: Terminal is ready, send next command
   - confidence 0.5-0.8: Probably ready, verify output makes sense before proceeding

@@ -56,6 +56,7 @@ test("split thread route modules register the expected unique endpoint set", asy
     "POST /api/threads/:threadId/terminal",
     "POST /api/threads/:threadId/terminal/ensure",
     "POST /api/threads/:threadId/terminal/input",
+    "POST /api/threads/:threadId/terminal/interrupt",
     "POST /api/threads/:threadId/terminal/resize",
   ].sort();
 

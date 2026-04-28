@@ -86,7 +86,7 @@ Key boundary decisions:
 ```text
 terminal_ensure  -> create or reattach session, wire log capture, send ready status
 terminal_input   -> low-level text/Enter dispatch, optional readiness wait
-terminal_send    -> single-gesture interaction path (`text`+optional `submit` or one semantic `key`) with default settled wait and additive delta
+terminal_send    -> single-gesture interaction path (`text`+optional `submit` or one semantic `key`) with default settled wait, post-dispatch quiescence guard, and additive delta
 terminal_observe -> explicit delta/screen/history observation
 terminal_resize  -> backend resize
 terminal_close   -> backend close and status update
@@ -106,9 +106,11 @@ The internal split keeps this behavior intact while isolating tmux-specific comm
 
 The terminal runtime currently supports several wait/assessment paths:
 
-- output quiescence for the common settled shell path
+- output quiescence for the common settled shell path, with `terminal_send` starting quiescence sampling after dispatch plus a short guard delay while preserving the pre-send delta baseline
 - screen-change / screen-settled waits for explicit observe/send flows
 - legacy activity-based readiness for low-level `terminal_input`
+
+Settled quiescence no longer implies high-confidence readiness on its own. Prompt, confirmation, password, and pager evidence can still produce high-confidence ready results, while weak settled captures such as echoed TUI launch commands remain conservative with `may_still_be_processing`.
 
 These waits are owned above the backend layer so future PTY/mosh-like backends can reuse the same readiness and delta contract.
 

@@ -158,6 +158,27 @@ export async function registerThreadTerminalRoutes(
     return { ok: true };
   });
 
+  server.post("/api/threads/:threadId/terminal/interrupt", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
+    const result = await terminalSessionManager.interruptThreadTerminal(params.threadId);
+    if (!result.ok) {
+      const status = result.error === "no_terminal_session" ? 404 : 503;
+      return reply.code(status).send({ error: result.error ?? "terminal_interrupt_failed" });
+    }
+
+    return {
+      ok: true,
+      session_id: result.sessionId,
+      submitted: result.submitted === true,
+      rejected_pending_requests: result.rejectedPendingRequests ?? 0,
+    };
+  });
+
   server.post("/api/threads/:threadId/terminal/resize", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
     const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);

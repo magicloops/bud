@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { db } from "../db/client.js";
-import { AgentConversationLoader } from "./conversation-loader.js";
+import { AGENT_SYSTEM_PROMPT, AgentConversationLoader } from "./conversation-loader.js";
+
+test("system prompt documents only public wait_for modes", () => {
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /shell_ready/);
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /screen_stable/);
+  assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"settled"/);
+  assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"changed"/);
+  assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"none"/);
+});
 
 test("load normalizes persisted tool rows and preserves preferred cwd context", async (t) => {
   t.after(() => {

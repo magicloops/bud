@@ -12,6 +12,8 @@ import { AnthropicProvider } from "./providers/anthropic.js";
 // Types
 export type {
   CanonicalRole,
+  CanonicalProviderData,
+  CanonicalProviderId,
   CanonicalContentBlock,
   CanonicalMessage,
   CanonicalReasoningBlock,

@@ -377,9 +377,75 @@ export class TerminalSessionManager {
     interaction: SendInteraction,
     options: {
       timeoutMs?: number;
+      rejectPendingRequestsWith?: string;
+      onPendingRequestsRejected?: (count: number) => void;
     } = {}
   ): Promise<SendResult> {
     return this.requestDispatcher.sendInteraction(sessionId, interaction, options);
+  }
+
+  async interruptThreadTerminal(threadId: string): Promise<{
+    ok: boolean;
+    sessionId?: string;
+    submitted?: boolean;
+    rejectedPendingRequests?: number;
+    error?: string;
+  }> {
+    const session = await this.sessionStore.getSessionForThread(threadId);
+    if (!session) {
+      return { ok: false, error: "no_terminal_session" };
+    }
+
+    let rejectedPendingRequests = 0;
+
+    try {
+      const result = await this.requestDispatcher.sendInteraction(
+        session.sessionId,
+        { key: "ctrl+c", waitFor: "none" },
+        {
+          rejectPendingRequestsWith: "interrupted",
+          onPendingRequestsRejected: (count) => {
+            rejectedPendingRequests = count;
+          },
+        },
+      );
+
+      this.logger.info(
+        {
+          threadId,
+          sessionId: session.sessionId,
+          submitted: result.submitted,
+          rejectedPendingRequests,
+          component: "terminal_session_manager",
+        },
+        "Terminal interrupt sent",
+      );
+
+      return {
+        ok: true,
+        sessionId: session.sessionId,
+        submitted: result.submitted,
+        rejectedPendingRequests,
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "terminal_interrupt_failed";
+      this.logger.warn(
+        {
+          threadId,
+          sessionId: session.sessionId,
+          error,
+          rejectedPendingRequests,
+          component: "terminal_session_manager",
+        },
+        "Terminal interrupt failed",
+      );
+      return {
+        ok: false,
+        sessionId: session.sessionId,
+        rejectedPendingRequests,
+        error,
+      };
+    }
   }
 
   setPendingCommand(sessionId: string, command: PendingCommand): void {

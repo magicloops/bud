@@ -3,10 +3,11 @@ import test, { type TestContext } from "node:test";
 import {
   providerRegistry,
   type CanonicalStreamEvent,
+  type CanonicalTool,
   type LLMProvider,
   type ModelCapabilities,
 } from "../llm/index.js";
-import { AgentModelRunner } from "./model-runner.js";
+import { AgentModelResponseError, AgentModelRunner } from "./model-runner.js";
 
 function createRuntime() {
   return {
@@ -33,7 +34,12 @@ function createLogger() {
   };
 }
 
-function createProvider(name: "anthropic" | "openai", supportedModels: string[]): LLMProvider {
+function createProvider(
+  name: "anthropic" | "openai",
+  supportedModels: string[],
+  onInvoke?: (tools: CanonicalTool[]) => void,
+  events?: CanonicalStreamEvent[],
+): LLMProvider {
   const capabilities: ModelCapabilities = {
     supportsVision: true,
     supportsTools: true,
@@ -49,8 +55,12 @@ function createProvider(name: "anthropic" | "openai", supportedModels: string[])
   return {
     name,
     supportedModels,
-    async *invoke(): AsyncIterable<CanonicalStreamEvent> {
-      // noop
+    async *invoke(_messages, tools): AsyncIterable<CanonicalStreamEvent> {
+      onInvoke?.(tools);
+      yield* (events ?? [
+        { type: "message_start", id: "resp_test" },
+        { type: "message_done", stop_reason: "end_turn" },
+      ]);
     },
     supportsModel(model: string) {
       return name === "openai" ? model.startsWith("gpt-") : model.startsWith("claude-");
@@ -115,6 +125,118 @@ test("resolveReasoningEffort follows model-specific reasoning policies", (t) => 
   );
 });
 
+test("invokeModel advertises only public wait modes and no timeout_ms", async (t) => {
+  let capturedTools: CanonicalTool[] = [];
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register(
+    createProvider("openai", ["gpt-5.4-2026-03-05"], (tools) => {
+      capturedTools = tools;
+    }),
+  );
+
+  t.after(() => {
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    runner.resolveModelReasoning("gpt-5.4"),
+  );
+
+  const sendTool = capturedTools.find((tool) => tool.name === "terminal_send");
+  const observeTool = capturedTools.find((tool) => tool.name === "terminal_observe");
+  assert.ok(sendTool);
+  assert.ok(observeTool);
+
+  const sendProperties = sendTool.parameters.properties as Record<string, unknown>;
+  const observeProperties = observeTool.parameters.properties as Record<string, unknown>;
+  assert.equal(sendProperties.timeout_ms, undefined);
+  assert.equal(observeProperties.timeout_ms, undefined);
+  assert.deepEqual(
+    (sendProperties.wait_for as { enum?: unknown }).enum,
+    ["none", "changed", "settled"],
+  );
+  assert.deepEqual(
+    (observeProperties.wait_for as { enum?: unknown }).enum,
+    ["none", "changed", "settled"],
+  );
+});
+
+test("invokeModel carries provider diagnostics from message_done", async (t) => {
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register(
+    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+      { type: "message_start", id: "resp_test" },
+      {
+        type: "message_done",
+        stop_reason: "end_turn",
+        providerData: {
+          provider: "openai",
+          payload: {
+            id: "resp_raw",
+            output: [],
+          },
+        },
+      },
+    ]),
+  );
+
+  t.after(() => {
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const { response } = await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    runner.resolveModelReasoning("gpt-5.4"),
+  );
+
+  assert.equal(response.providerData?.provider, "openai");
+  assert.deepEqual(response.providerData?.payload, {
+    id: "resp_raw",
+    output: [],
+  });
+});
+
 test("extractToolCall normalizes legacy keys arrays to canonical semantic key strings", () => {
   const runner = new AgentModelRunner(
     createRuntime() as never,
@@ -149,4 +271,75 @@ test("extractToolCall normalizes legacy keys arrays to canonical semantic key st
     timeoutMs: undefined,
     callId: "call_send_legacy",
   });
+});
+
+test("parseFinalResponse includes bounded model response diagnostics on empty output", () => {
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const providerPayload = {
+    id: "resp_raw",
+    status: "completed",
+    output: [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [],
+      },
+    ],
+  };
+
+  assert.throws(
+    () =>
+      runner.parseFinalResponse({
+        id: "resp_test",
+        content: [
+          {
+            type: "reasoning",
+            text: "",
+            providerData: {
+              provider: "openai",
+              payload: {
+                type: "reasoning",
+                id: "rs_1",
+                summary: [],
+              },
+            },
+          },
+        ],
+        stopReason: "end_turn",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 2,
+          reasoning_tokens: 2,
+        },
+        toolCalls: [],
+        providerData: {
+          provider: "openai",
+          payload: providerPayload,
+        },
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof AgentModelResponseError);
+      assert.equal(err.code, "MODEL_EMPTY_RESPONSE");
+      assert.match(err.message, /model returned no text or tool call/);
+      assert.match(err.message, /resp_raw/);
+      assert.equal(err.modelResponse.id, "resp_test");
+      assert.equal(err.modelResponse.stopReason, "end_turn");
+
+      const providerData = err.modelResponse.providerData as {
+        provider: string;
+        payload: { id: string; status: string };
+      };
+      assert.equal(providerData.provider, "openai");
+      assert.equal(providerData.payload.id, "resp_raw");
+      assert.equal(providerData.payload.status, "completed");
+
+      return true;
+    },
+  );
 });
