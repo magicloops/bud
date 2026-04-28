@@ -18,17 +18,31 @@ import {
 } from "../transport/grpc-daemon-router.js";
 import {
   deleteGrpcDataSessionTrackerIfCurrent,
-  getGrpcDataRuntimeStream,
-  grantGrpcDataReceiveCredit,
+  getActiveGrpcDataSessionTracker,
   grpcDataSessions,
-  recordGrpcDataInboundChunk,
-  recordGrpcDataOutboundCredit,
   registerActiveGrpcDataSessionTracker,
   type GrpcDataCall,
   type GrpcDataSessionTracker,
 } from "../transport/grpc-data-router.js";
+import {
+  handleDataPlaneStreamFrame,
+  parseStreamDataFrame,
+  resetRuntimeStreamsForDataPlaneTracker,
+  type StreamCloseFrame,
+  type StreamCreditFrame,
+  type StreamDataFrame,
+  type StreamResetFrame,
+} from "../transport/data-plane-router.js";
 import { EnvelopeSchema, TerminalOutputSchema } from "../ws/protocol.js";
 import { decodeGrpcLegacyJsonEnvelope, encodeGrpcLegacyJsonEnvelope } from "./envelope-codec.js";
+
+export {
+  parseStreamDataFrame,
+  type StreamCloseFrame,
+  type StreamCreditFrame,
+  type StreamDataFrame,
+  type StreamResetFrame,
+};
 
 export type GrpcDataGatewayHandle = {
   close(): Promise<void>;
@@ -54,47 +68,7 @@ const DataAttachSchema = EnvelopeSchema.extend({
   initial_credit_bytes: z.number().int().nonnegative().optional(),
 });
 
-const StreamDataSchema = EnvelopeSchema.extend({
-  type: z.literal("stream_data"),
-  stream_id: z.string(),
-  stream_type: z.string(),
-  offset: z.number().int().nonnegative(),
-  data: z.string(),
-  end_stream: z.boolean().optional().default(false),
-});
-
-const StreamCreditSchema = EnvelopeSchema.extend({
-  type: z.literal("stream_credit"),
-  stream_id: z.string(),
-  receive_offset: z.number().int().nonnegative(),
-  credit_bytes: z.number().int().nonnegative(),
-});
-
-const StreamResetSchema = EnvelopeSchema.extend({
-  type: z.literal("stream_reset"),
-  stream_id: z.string(),
-  reason: z.string(),
-  error: z
-    .object({
-      code: z.string(),
-      message: z.string(),
-      retryable: z.boolean().optional(),
-      details: z.record(z.unknown()).optional(),
-    })
-    .optional(),
-});
-
-const StreamCloseSchema = EnvelopeSchema.extend({
-  type: z.literal("stream_close"),
-  stream_id: z.string(),
-  final_offset: z.number().int().nonnegative(),
-});
-
 export type DataAttachFrame = z.infer<typeof DataAttachSchema>;
-export type StreamDataFrame = z.infer<typeof StreamDataSchema>;
-export type StreamCreditFrame = z.infer<typeof StreamCreditSchema>;
-export type StreamResetFrame = z.infer<typeof StreamResetSchema>;
-export type StreamCloseFrame = z.infer<typeof StreamCloseSchema>;
 
 export async function startGrpcDataGateway(
   terminalSessionManager: TerminalSessionManager,
@@ -180,11 +154,6 @@ export async function startGrpcDataGateway(
 
 export function parseDataAttachFrame(raw: unknown): DataAttachFrame | null {
   const result = DataAttachSchema.safeParse(raw);
-  return result.success ? result.data : null;
-}
-
-export function parseStreamDataFrame(raw: unknown): StreamDataFrame | null {
-  const result = StreamDataSchema.safeParse(raw);
   return result.success ? result.data : null;
 }
 
@@ -357,16 +326,14 @@ class GrpcDataConnection {
         await this.handleTerminalOutput(frame);
         break;
       case "stream_data":
-        await this.handleStreamData(frame);
-        break;
       case "stream_credit":
-        await this.handleStreamCredit(frame);
-        break;
       case "stream_reset":
-        await this.handleStreamReset(frame);
-        break;
       case "stream_close":
-        await this.handleStreamClose(frame);
+        await handleDataPlaneStreamFrame(this.tracker, frame, {
+          logger: this.logger,
+          daemonStateStore: this.daemonStateStore,
+          component: "grpc_data_gateway",
+        });
         break;
       default:
         this.logger.warn({ type: frameType, component: "grpc_data_gateway" }, "Unhandled gRPC data frame type");
@@ -401,11 +368,14 @@ class GrpcDataConnection {
     });
 
     const streams = new Set(attach.streams.length > 0 ? attach.streams : ["terminal_output"]);
-    const tracker: GrpcDataSessionTracker = {
+    let tracker: GrpcDataSessionTracker;
+    tracker = {
       budId: attach.bud_id,
       deviceSessionId: controlTracker.deviceSessionId ?? attach.device_session_id,
       controlTransportSessionId: controlTracker.transportSessionId,
       transportSessionId: transportSession.transportSessionId,
+      transportKind: "h2_data",
+      role: "data",
       drainState: "active",
       lastSeenAt: Date.now(),
       lastSeenWrite: Date.now(),
@@ -413,6 +383,20 @@ class GrpcDataConnection {
       framesReceived: 0,
       bytesReceived: 0,
       runtimeStreams: new Map(),
+      maxChunkBytes: Math.min(attach.max_chunk_bytes ?? config.dataPlaneMaxChunkBytes, config.dataPlaneMaxChunkBytes),
+      initialCreditBytes: config.dataPlaneInitialCreditBytes,
+      maxInFlightBytes: config.dataPlaneMaxInFlightBytes,
+      sendFrame: (frame) => this.send(frame),
+      isActive: () =>
+        !this.closed &&
+        !this.call.destroyed &&
+        this.tracker === tracker &&
+        getActiveGrpcDataSessionTracker(tracker.budId, tracker.deviceSessionId) === tracker,
+      close: () => {
+        if (!this.call.destroyed) {
+          this.call.end();
+        }
+      },
       call: this.call,
     };
     const previous = registerActiveGrpcDataSessionTracker(tracker);
@@ -446,8 +430,8 @@ class GrpcDataConnection {
       device_session_id: tracker.deviceSessionId,
       transport_session_id: tracker.transportSessionId,
       streams: Array.from(streams),
-      max_chunk_bytes: config.grpcDataMaxChunkBytes,
-      initial_credit_bytes: config.grpcDataInitialCreditBytes,
+      max_chunk_bytes: config.dataPlaneMaxChunkBytes,
+      initial_credit_bytes: config.dataPlaneInitialCreditBytes,
     });
 
     this.logger.info(
@@ -494,211 +478,6 @@ class GrpcDataConnection {
       data: result.data.data,
       byte_offset: result.data.byte_offset,
     });
-  }
-
-  private async handleStreamData(raw: unknown): Promise<void> {
-    if (!this.tracker) {
-      return;
-    }
-    const result = StreamDataSchema.safeParse(raw);
-    if (!result.success) {
-      this.logger.warn(
-        { error: result.error.message, component: "grpc_data_gateway" },
-        "Invalid gRPC data stream_data frame",
-      );
-      return;
-    }
-    const frame = result.data;
-    const stream = getGrpcDataRuntimeStream(this.tracker, frame.stream_id);
-    if (!stream) {
-      await this.sendStreamReset(frame.stream_id, "protocol_error", {
-        code: "UNKNOWN_STREAM",
-        message: "stream_data received for an unknown stream",
-        retryable: false,
-      });
-      return;
-    }
-    if (stream.streamType !== frame.stream_type) {
-      await this.sendStreamReset(frame.stream_id, "protocol_error", {
-        code: "STREAM_TYPE_MISMATCH",
-        message: `expected stream_type ${stream.streamType}, got ${frame.stream_type}`,
-        retryable: false,
-      });
-      return;
-    }
-
-    const decoded = Buffer.from(frame.data, "base64");
-    if (decoded.byteLength > config.grpcDataMaxChunkBytes) {
-      await this.sendStreamReset(frame.stream_id, "protocol_error", {
-        code: "CHUNK_TOO_LARGE",
-        message: "stream_data chunk exceeds gRPC data max chunk size",
-        retryable: false,
-      });
-      return;
-    }
-
-    const creditResult = recordGrpcDataInboundChunk(stream, {
-      offset: frame.offset,
-      byteLength: decoded.byteLength,
-    });
-    if (!creditResult.ok) {
-      await this.sendStreamReset(frame.stream_id, streamResetReasonForCreditError(creditResult.code), {
-        code: creditResult.code,
-        message: creditResult.message,
-        retryable: false,
-      });
-      return;
-    }
-
-    this.tracker.framesReceived += 1;
-    this.tracker.bytesReceived += decoded.byteLength;
-
-    try {
-      await stream.onData?.(decoded, {
-        streamId: frame.stream_id,
-        streamType: frame.stream_type,
-        offset: frame.offset,
-        endStream: frame.end_stream,
-      });
-    } catch (err) {
-      this.logger.warn(
-        { err, streamId: frame.stream_id, component: "grpc_data_gateway" },
-        "gRPC data runtime stream consumer failed",
-      );
-      await this.sendStreamReset(frame.stream_id, "local_error", {
-        code: "STREAM_CONSUMER_FAILED",
-        message: err instanceof Error ? err.message : "stream consumer failed",
-        retryable: false,
-      });
-      await this.daemonStateStore
-        .transitionStream({
-          streamId: frame.stream_id,
-          from: ["opening", "open", "half_closed_local", "half_closed_remote"],
-          to: "reset",
-          resetReason: "local_error",
-          error: {
-            code: "STREAM_CONSUMER_FAILED",
-            message: err instanceof Error ? err.message : "stream consumer failed",
-            retryable: false,
-          },
-        })
-        .catch(() => null);
-      return;
-    }
-
-    grantGrpcDataReceiveCredit(stream, decoded.byteLength);
-    await this.sendFrame("stream_credit", {
-      stream_id: stream.streamId,
-      receive_offset: stream.receiveOffset,
-      credit_bytes: decoded.byteLength,
-    });
-    if (frame.end_stream) {
-      stream.remoteClosed = true;
-      await stream.onClose?.({
-        streamId: stream.streamId,
-        finalOffset: stream.receiveOffset,
-      });
-      await this.sendFrame("stream_close", {
-        stream_id: stream.streamId,
-        final_offset: stream.receiveOffset,
-      });
-    }
-  }
-
-  private async handleStreamCredit(raw: unknown): Promise<void> {
-    if (!this.tracker) {
-      return;
-    }
-    const result = StreamCreditSchema.safeParse(raw);
-    if (!result.success) {
-      this.logger.warn(
-        { error: result.error.message, component: "grpc_data_gateway" },
-        "Invalid gRPC data stream_credit frame",
-      );
-      return;
-    }
-    const stream = getGrpcDataRuntimeStream(this.tracker, result.data.stream_id);
-    if (!stream) {
-      this.logger.debug?.(
-        { streamId: result.data.stream_id, component: "grpc_data_gateway" },
-        "Ignoring credit for unknown gRPC data runtime stream",
-      );
-      return;
-    }
-    recordGrpcDataOutboundCredit(stream, {
-      receiveOffset: result.data.receive_offset,
-      creditBytes: result.data.credit_bytes,
-    });
-  }
-
-  private async handleStreamReset(raw: unknown): Promise<void> {
-    if (!this.tracker) {
-      return;
-    }
-    const result = StreamResetSchema.safeParse(raw);
-    if (!result.success) {
-      this.logger.warn(
-        { error: result.error.message, component: "grpc_data_gateway" },
-        "Invalid gRPC data stream_reset frame",
-      );
-      return;
-    }
-    const stream = getGrpcDataRuntimeStream(this.tracker, result.data.stream_id);
-    if (stream) {
-      stream.resetReason = result.data.reason;
-      await stream.onReset?.({
-        streamId: result.data.stream_id,
-        reason: result.data.reason,
-        ...(result.data.error ? { error: result.data.error } : {}),
-      });
-    }
-    await this.daemonStateStore
-      .transitionStream({
-        streamId: result.data.stream_id,
-        from: ["opening", "open", "half_closed_local", "half_closed_remote"],
-        to: "reset",
-        resetReason: result.data.reason,
-        error: result.data.error ?? null,
-      })
-      .catch(() => null);
-  }
-
-  private async handleStreamClose(raw: unknown): Promise<void> {
-    if (!this.tracker) {
-      return;
-    }
-    const result = StreamCloseSchema.safeParse(raw);
-    if (!result.success) {
-      this.logger.warn(
-        { error: result.error.message, component: "grpc_data_gateway" },
-        "Invalid gRPC data stream_close frame",
-      );
-      return;
-    }
-    const stream = getGrpcDataRuntimeStream(this.tracker, result.data.stream_id);
-    if (stream) {
-      stream.remoteClosed = true;
-      stream.receiveOffset = Math.max(stream.receiveOffset, result.data.final_offset);
-      await stream.onClose?.({
-        streamId: result.data.stream_id,
-        finalOffset: result.data.final_offset,
-      });
-    }
-    await this.daemonStateStore
-      .transitionStream({
-        streamId: result.data.stream_id,
-        from: ["opening"],
-        to: "open",
-      })
-      .catch(() => null);
-    await this.daemonStateStore
-      .transitionStream({
-        streamId: result.data.stream_id,
-        from: ["open", "half_closed_local", "half_closed_remote"],
-        to: "closed",
-        receiveOffset: result.data.final_offset,
-      })
-      .catch(() => null);
   }
 
   private trackerMatchesActiveControl(): boolean {
@@ -791,18 +570,6 @@ class GrpcDataConnection {
     });
   }
 
-  private async sendStreamReset(
-    streamId: string,
-    reason: string,
-    error: { code: string; message: string; retryable: boolean },
-  ): Promise<void> {
-    await this.sendFrame("stream_reset", {
-      stream_id: streamId,
-      reason,
-      error,
-    });
-  }
-
   private async send(frame: Record<string, unknown>): Promise<void> {
     if (this.call.destroyed) {
       return;
@@ -850,43 +617,7 @@ async function resetRuntimeStreamsForTracker(args: {
   logger: FastifyBaseLogger;
   daemonStateStore: DaemonStateStore;
 }): Promise<void> {
-  const error = {
-    code: "GRPC_DATA_STREAM_CLOSED",
-    message: `gRPC data stream closed before runtime stream completed: ${args.reason}`,
-    retryable: true,
-  };
-  for (const stream of Array.from(args.tracker.runtimeStreams.values())) {
-    if (stream.remoteClosed || stream.resetReason) {
-      continue;
-    }
-    stream.resetReason = "transport_lost";
-    try {
-      await stream.onReset?.({
-        streamId: stream.streamId,
-        reason: "transport_lost",
-        error,
-      });
-    } catch (err) {
-      args.logger.warn(
-        { err, streamId: stream.streamId, component: "grpc_data_gateway" },
-        "Runtime stream reset callback failed during data stream finalization",
-      );
-    }
-    await args.daemonStateStore
-      .transitionStream({
-        streamId: stream.streamId,
-        from: ["opening", "open", "half_closed_local", "half_closed_remote"],
-        to: "reset",
-        resetReason: "transport_lost",
-        error,
-      })
-      .catch(() => null);
-  }
-  args.tracker.runtimeStreams.clear();
-}
-
-function streamResetReasonForCreditError(code: string): string {
-  return code === "CREDIT_EXHAUSTED" ? "backpressure" : "protocol_error";
+  await resetRuntimeStreamsForDataPlaneTracker(args);
 }
 
 function grpcDataServerOptions(): grpc.ChannelOptions {

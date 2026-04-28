@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import type { DataPlaneTransportKind } from "../transport/data-plane-router.js";
 
 export type TimeoutHandle = ReturnType<typeof setTimeout>;
 
@@ -11,6 +12,9 @@ export interface SessionTracker {
   lastHeartbeat: number;
   socket: WebSocket;
   supportsEnvelopeBinary?: boolean;
+  supportsStreamFrames?: boolean;
+  streamFamilies?: Set<string>;
+  dataTransportKind?: DataPlaneTransportKind;
   timeout?: TimeoutHandle;
 }
 

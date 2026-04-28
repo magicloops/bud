@@ -9,8 +9,11 @@ import {
   threadTable,
 } from "../db/schema.js";
 import type { Viewer } from "../auth/session.js";
-import { getActiveGrpcSessionTracker, grpcSessions } from "../transport/grpc-daemon-router.js";
-import { getActiveGrpcDataSessionTracker } from "../transport/grpc-data-router.js";
+import {
+  selectDataPlaneCarrier,
+  type DataPlaneTransportKind,
+  type DataPlaneUnavailableCode,
+} from "../transport/data-plane-router.js";
 
 export const LOCALHOST_PROXY_STREAM_TYPE = "localhost_http_proxy";
 export const DEFAULT_PROXY_SESSION_TTL_SECONDS = 15 * 60;
@@ -55,14 +58,16 @@ export type ProxyTransportStatus =
       deviceSessionId: string;
       controlTransportSessionId: string | null;
       dataTransportSessionId: string | null;
+      transportKind: DataPlaneTransportKind;
     }
   | {
       available: false;
-      code: "GRPC_CONTROL_UNAVAILABLE" | "GRPC_DATA_UNAVAILABLE";
+      code: DataPlaneUnavailableCode;
       message: string;
       deviceSessionId: string | null;
       controlTransportSessionId: string | null;
       dataTransportSessionId: string | null;
+      transportKind: DataPlaneTransportKind | null;
     };
 
 export class ProxySessionValidationError extends Error {
@@ -111,48 +116,31 @@ export function normalizeProxyAllowedMethods(methods?: string[]): string[] {
 }
 
 export function resolveProxyTransportStatus(budId: string): ProxyTransportStatus {
-  const controlTracker = getActiveGrpcSessionTracker(budId, grpcSessions.get(budId) ?? null);
-  if (!controlTracker || controlTracker.call.destroyed || controlTracker.finalized) {
-    return {
-      available: false,
-      code: "GRPC_CONTROL_UNAVAILABLE",
-      message: "Bud does not have an active authenticated gRPC control stream",
-      deviceSessionId: null,
-      controlTransportSessionId: null,
-      dataTransportSessionId: null,
-    };
-  }
+  const carrier = selectDataPlaneCarrier({
+    budId,
+    streamType: LOCALHOST_PROXY_STREAM_TYPE,
+  });
 
-  const deviceSessionId = controlTracker.deviceSessionId ?? controlTracker.sessionId;
-  const dataTracker = getActiveGrpcDataSessionTracker(budId, deviceSessionId);
-  if (!dataTracker) {
+  if (carrier.available) {
     return {
-      available: false,
-      code: "GRPC_DATA_UNAVAILABLE",
-      message: "Bud does not have an active HTTP/2 data stream attached",
-      deviceSessionId,
-      controlTransportSessionId: controlTracker.transportSessionId ?? null,
-      dataTransportSessionId: null,
-    };
-  }
-  if (!dataTracker.streams.has(LOCALHOST_PROXY_STREAM_TYPE)) {
-    return {
-      available: false,
-      code: "GRPC_DATA_UNAVAILABLE",
-      message: "Bud HTTP/2 data stream has not negotiated localhost proxy support",
-      deviceSessionId,
-      controlTransportSessionId: controlTracker.transportSessionId ?? null,
-      dataTransportSessionId: dataTracker.transportSessionId ?? null,
+      available: true,
+      code: null,
+      message: null,
+      deviceSessionId: carrier.deviceSessionId,
+      controlTransportSessionId: carrier.controlTransportSessionId,
+      dataTransportSessionId: carrier.dataTransportSessionId,
+      transportKind: carrier.transportKind,
     };
   }
 
   return {
-    available: true,
-    code: null,
-    message: null,
-    deviceSessionId,
-    controlTransportSessionId: controlTracker.transportSessionId ?? null,
-    dataTransportSessionId: dataTracker.transportSessionId ?? null,
+    available: false,
+    code: carrier.code,
+    message: carrier.message,
+    deviceSessionId: carrier.deviceSessionId,
+    controlTransportSessionId: carrier.controlTransportSessionId,
+    dataTransportSessionId: carrier.dataTransportSessionId,
+    transportKind: carrier.transportKind,
   };
 }
 
@@ -357,6 +345,7 @@ export function serializeProxyTransportStatus(status: ProxyTransportStatus): Rec
     device_session_id: status.deviceSessionId,
     control_transport_session_id: status.controlTransportSessionId,
     data_transport_session_id: status.dataTransportSessionId,
+    transport_kind: status.transportKind,
   };
 }
 

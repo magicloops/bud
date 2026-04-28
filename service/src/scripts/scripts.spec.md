@@ -175,6 +175,30 @@ pnpm smoke:grpc-data-terminal:large
 
 The package script builds the local Bud debug binary before launching the smoke so it does not accidentally exercise a stale daemon.
 
+### `smoke-ws-terminal.ts`
+
+Local end-to-end smoke test for the swappable-transport Phase 0 WebSocket terminal baseline.
+
+**Responsibilities**:
+- Start the real WebSocket gateway in-process on a reserved localhost port with gRPC disabled
+- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev enrollment token and temporary identity/terminal base directory
+- Wait for daemon enrollment, binary `BudEnvelope` capability negotiation, an active `websocket` transport session, and no active `h2_grpc`/`h2_data` transport sessions for the smoke Bud
+- Confirm reconnect reconciliation reached the service by checking the `daemon.reconnect_report` audit event
+- Create a real thread-scoped terminal session through `TerminalSessionManager`
+- Send a shell command into the tmux-backed terminal and wait for the marker in persisted terminal output
+- Close the terminal session, stop the daemon, close the gateway, and remove smoke rows/temp files
+
+**Usage**:
+```bash
+pnpm smoke:ws-terminal
+```
+
+**Prerequisites**:
+- Local Postgres schema is up to date
+- `tmux` is installed
+
+The package script builds the local Bud debug binary before launching the smoke so it does not accidentally exercise a stale daemon.
+
 ### `smoke-grpc-proxy.ts`
 
 Local end-to-end smoke test for network-upgrade Phase 4.2 proxy streaming.
@@ -215,6 +239,56 @@ Local end-to-end smoke test for network-upgrade Phase 4.4 file stat/read/range s
 **Usage**:
 ```bash
 pnpm smoke:grpc-file
+```
+
+**Prerequisites**:
+- Local Postgres schema is up to date
+
+The package script builds the local Bud debug binary before launching the smoke so it does not accidentally exercise a stale daemon.
+
+### `smoke-ws-file.ts`
+
+Local end-to-end smoke test for swappable-transport Phase 3 file streaming over the WebSocket baseline.
+
+**Responsibilities**:
+- Start the real WebSocket gateway in-process on a reserved localhost port with gRPC disabled
+- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev enrollment token, temporary local state, and a temporary workspace root
+- Create a workspace-relative file and an auth-owned file session for that path
+- Drive the production file edge stream through a small Fastify harness at `/api/files/:fileSessionId`
+- Assert HEAD/stat, full GET/read, and single-range GET all stream through the daemon over the WebSocket data-plane carrier
+- Mutate the underlying file and assert the stale range request fails closed with `content_changed`
+- Assert the WebSocket data tracker, durable `bud_operation`/`bud_stream` rows, file session content identity/cleanup, and file audit event all reflect the completed streams
+- Assert no `h2_grpc` or `h2_data` transport session is active for the smoke Bud
+- Stop the daemon, close the gateway, and remove smoke rows/temp files
+
+**Usage**:
+```bash
+pnpm smoke:ws-file
+```
+
+**Prerequisites**:
+- Local Postgres schema is up to date
+
+The package script builds the local Bud debug binary before launching the smoke so it does not accidentally exercise a stale daemon.
+
+### `smoke-ws-proxy.ts`
+
+Local end-to-end smoke test for swappable-transport Phase 4 proxy streaming over the WebSocket baseline.
+
+**Responsibilities**:
+- Start the real WebSocket gateway in-process on a reserved localhost port with gRPC disabled
+- Launch the compiled Rust daemon without `BUD_GRPC_CONTROL_URL` or `BUD_GRPC_DATA_URL`, using a dev enrollment token and temporary local state
+- Start a loopback HTTP target server and create an auth-owned proxy session for that target
+- Drive the production proxy edge stream through a small Fastify harness at `/api/proxy/:proxySessionId/*`
+- Assert GET and HEAD requests reach the local target over the WebSocket data-plane carrier
+- Assert unsafe target headers such as `Authorization` and `Cookie` are stripped
+- Assert the WebSocket data tracker, durable `bud_operation`/`bud_stream` rows, proxy session cleanup, and proxy audit event all reflect completed streams
+- Assert no `h2_grpc` or `h2_data` transport session is active for the smoke Bud
+- Stop the daemon, close the gateway, and remove smoke rows/temp files
+
+**Usage**:
+```bash
+pnpm smoke:ws-proxy
 ```
 
 **Prerequisites**:
@@ -279,6 +353,13 @@ npx tsx src/scripts/apply-missing-migrations.ts
 | `../db/schema.js` | Table definitions |
 | `../auth/auth.js` | Shared OAuth scope/base-path constants for bundle output |
 | `../config.js` | Public-origin config used when printing the current iOS auth bundle |
+| `../ws/gateway.js` | In-process WebSocket gateway registration for WebSocket-only smoke scripts |
+| `../transport/data-plane-router.js` | WebSocket data-plane tracker inspection for file/proxy smoke assertions |
+| `../runtime/*.js` | Terminal runtime construction for daemon gateway smoke harnesses |
+| `../files/*.js` | File session creation and file edge stream smoke coverage |
+| `../proxy/*.js` | Proxy session creation and proxy edge stream smoke coverage |
+| `fastify` | In-process route harnesses for smoke tests |
+| `@fastify/websocket` | WebSocket gateway support in smoke harnesses |
 | `pg` | Auth-schema bootstrap connection |
 | `node:child_process` | Re-run Drizzle CLI after bootstrap |
 | `crypto` | Token generation (seed) |

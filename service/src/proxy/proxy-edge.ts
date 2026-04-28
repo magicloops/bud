@@ -8,11 +8,12 @@ import { db } from "../db/client.js";
 import { proxySessionTable } from "../db/schema.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import {
-  getActiveGrpcDataSessionTracker,
-  registerGrpcDataRuntimeStream,
-  sendGrpcDataFrame,
-} from "../transport/grpc-data-router.js";
-import { grpcDaemonTransportRouter } from "../transport/grpc-daemon-router.js";
+  getActiveDataPlaneSessionForBud,
+  checkDataPlaneRuntimeStreamCapacity,
+  registerDataPlaneRuntimeStream,
+  sendDataPlaneControlFrame,
+  sendDataPlaneFrame,
+} from "../transport/data-plane-router.js";
 import { LOCALHOST_PROXY_STREAM_TYPE, type ProxySessionRow, type ProxyTransportStatus } from "./proxy-session.js";
 import {
   ProxyRuntimeStream,
@@ -59,15 +60,48 @@ export async function openProxyEdgeStream(args: {
     });
   }
 
-  const dataTracker = getActiveGrpcDataSessionTracker(args.session.budId, args.transportStatus.deviceSessionId);
+  const dataTracker = getActiveDataPlaneSessionForBud({
+    budId: args.session.budId,
+    deviceSessionId: args.transportStatus.deviceSessionId,
+    streamType: LOCALHOST_PROXY_STREAM_TYPE,
+    transportKind: args.transportStatus.transportKind,
+  });
   if (!dataTracker) {
     return args.reply.status(424).send({
-      error: "GRPC_DATA_UNAVAILABLE",
-      message: "Bud data stream detached before proxy request could start",
+      error: "DATA_PLANE_UNAVAILABLE",
+      message: "Bud data-plane carrier detached before proxy request could start",
     });
   }
 
   const daemonStateStore = new DaemonStateStore();
+  const capacity = checkDataPlaneRuntimeStreamCapacity({
+    budId: args.session.budId,
+    streamType: LOCALHOST_PROXY_STREAM_TYPE,
+    maxConcurrentStreams: config.dataPlaneMaxConcurrentProxyStreamsPerBud,
+  });
+  if (!capacity.ok) {
+    await daemonStateStore.appendAuditEvent({
+      eventType: "proxy.stream_denied",
+      budId: args.session.budId,
+      userId: args.viewer.userId,
+      createdByUserId: args.viewer.userId,
+      eventData: {
+        denied_by: "service",
+        reason: "concurrent_stream_limit",
+        proxy_session_id: args.session.proxySessionId,
+        audit_correlation_id: args.session.auditCorrelationId,
+        active_streams: capacity.activeStreams,
+        max_concurrent_streams: config.dataPlaneMaxConcurrentProxyStreamsPerBud,
+        transport_kind: dataTracker.transportKind,
+        data_transport_session_id: dataTracker.transportSessionId ?? null,
+      },
+    });
+    return args.reply.status(429).send({
+      error: capacity.code,
+      message: capacity.message,
+      max_concurrent_streams: config.dataPlaneMaxConcurrentProxyStreamsPerBud,
+    });
+  }
   const operationId = `op_${ulid()}`;
   const streamId = `st_${ulid()}`;
   const targetPath = proxyTargetPath(args.request.url, args.session.proxySessionId);
@@ -123,14 +157,33 @@ export async function openProxyEdgeStream(args: {
       path: targetPath,
       target_host: args.session.targetHost,
       target_port: args.session.targetPort,
+      transport_kind: dataTracker.transportKind,
+      control_transport_session_id: args.transportStatus.controlTransportSessionId,
       data_transport_session_id: args.transportStatus.dataTransportSessionId,
+      max_chunk_bytes: dataTracker.maxChunkBytes,
+      initial_credit_bytes: dataTracker.initialCreditBytes,
+      max_in_flight_bytes: dataTracker.maxInFlightBytes,
+      max_response_bytes: config.proxySessionMaxResponseBytes,
     },
   });
 
   let responseCompleted = false;
   let runtime: ProxyRuntimeStream;
   let onClientClosed: () => void = () => undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let ttlTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearLimitTimers = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    if (ttlTimer) {
+      clearTimeout(ttlTimer);
+      ttlTimer = null;
+    }
+  };
   const cleanup = () => {
+    clearLimitTimers();
     deleteProxyRuntimeStream(streamId);
     dataTracker.runtimeStreams.delete(streamId);
     args.request.raw.off("aborted", onClientClosed);
@@ -144,10 +197,12 @@ export async function openProxyEdgeStream(args: {
       .where(eq(proxySessionTable.activeStreamId, streamId))
       .catch(() => null);
   };
-  runtime = new ProxyRuntimeStream(streamId, operationId, cleanup);
+  runtime = new ProxyRuntimeStream(streamId, operationId, cleanup, {
+    maxReceivedBytes: config.proxySessionMaxResponseBytes,
+  });
   const resetRemote = async (reason: string, error: ProxyOpenError) => {
     try {
-      await sendGrpcDataFrame(dataTracker, {
+      await sendDataPlaneFrame(dataTracker, {
         proto: PROTO_VERSION,
         type: "stream_reset",
         id: `msg_${ulid()}`,
@@ -161,6 +216,71 @@ export async function openProxyEdgeStream(args: {
       // The durable stream transition below records the local cancellation even
       // when the peer data channel has already disappeared.
     }
+  };
+  const resetFromServiceLimit = async (reason: string, error: ProxyOpenError) => {
+    if (runtime.isComplete() || responseCompleted) {
+      return;
+    }
+    await daemonStateStore
+      .appendAuditEvent({
+        eventType: "proxy.stream_denied",
+        budId: args.session.budId,
+        userId: args.viewer.userId,
+        operationId,
+        streamId,
+        createdByUserId: args.viewer.userId,
+        eventData: {
+          denied_by: "service",
+          reason,
+          error,
+          proxy_session_id: args.session.proxySessionId,
+          audit_correlation_id: args.session.auditCorrelationId,
+          transport_kind: dataTracker.transportKind,
+          data_transport_session_id: dataTracker.transportSessionId ?? null,
+        },
+      })
+      .catch(() => null);
+    await resetRemote(reason, error);
+    runtime.handleReset({ reason, error });
+    await daemonStateStore
+      .transitionStream({
+        streamId,
+        from: ["opening", "open", "half_closed_local", "half_closed_remote"],
+        to: "reset",
+        resetReason: reason,
+        error,
+      })
+      .catch(() => null);
+    await daemonStateStore
+      .transitionOperation({
+        operationId,
+        from: ["offered", "accepted", "running"],
+        to: "failed",
+        error,
+      })
+      .catch(() => null);
+  };
+  const refreshIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+      void resetFromServiceLimit("idle_timeout", {
+        code: "STREAM_IDLE_TIMEOUT",
+        message: "proxy stream exceeded the service idle timeout",
+        retryable: true,
+      });
+    }, config.dataPlaneStreamIdleTimeoutMs);
+  };
+  const startLimitTimers = () => {
+    refreshIdleTimer();
+    ttlTimer = setTimeout(() => {
+      void resetFromServiceLimit("ttl_exceeded", {
+        code: "STREAM_TTL_EXCEEDED",
+        message: "proxy stream exceeded the service stream TTL",
+        retryable: true,
+      });
+    }, config.dataPlaneStreamTtlMs);
   };
   onClientClosed = () => {
     if (runtime.isComplete() || responseCompleted) {
@@ -200,12 +320,56 @@ export async function openProxyEdgeStream(args: {
   };
 
   args.request.raw.once("aborted", onClientClosed);
+  startLimitTimers();
   registerProxyRuntimeStream(runtime);
-  registerGrpcDataRuntimeStream(dataTracker, {
+  registerDataPlaneRuntimeStream(dataTracker, {
     streamId,
     streamType: LOCALHOST_PROXY_STREAM_TYPE,
-    initialReceiveCreditBytes: config.grpcDataInitialCreditBytes,
-    onData: (chunk) => runtime.handleData(chunk),
+    initialReceiveCreditBytes: dataTracker.initialCreditBytes,
+    onData: async (chunk) => {
+      refreshIdleTimer();
+      try {
+        await runtime.handleData(chunk);
+      } catch (err) {
+        const error = {
+          code:
+            err instanceof Error && err.message.includes("exceeded max bytes")
+              ? "PROXY_RESPONSE_TOO_LARGE"
+              : "PROXY_RESPONSE_STREAM_FAILED",
+          message: err instanceof Error ? err.message : "proxy response stream failed",
+          retryable: false,
+        };
+        await daemonStateStore
+          .appendAuditEvent({
+            eventType: "proxy.stream_denied",
+            budId: args.session.budId,
+            userId: args.viewer.userId,
+            operationId,
+            streamId,
+            createdByUserId: args.viewer.userId,
+            eventData: {
+              denied_by: "service",
+              reason: "response_consumer_failed",
+              error,
+              proxy_session_id: args.session.proxySessionId,
+              audit_correlation_id: args.session.auditCorrelationId,
+              transport_kind: dataTracker.transportKind,
+              data_transport_session_id: dataTracker.transportSessionId ?? null,
+            },
+          })
+          .catch(() => null);
+        await daemonStateStore
+          .transitionOperation({
+            operationId,
+            from: ["offered", "accepted", "running"],
+            to: "failed",
+            error,
+          })
+          .catch(() => null);
+        throw err;
+      }
+      refreshIdleTimer();
+    },
     onReset: async (frame) => {
       runtime.handleReset({
         reason: frame.reason,
@@ -273,7 +437,7 @@ export async function openProxyEdgeStream(args: {
     },
   });
 
-  const sent = grpcDaemonTransportRouter.sendFrameToBud(args.session.budId, {
+  const sent = sendDataPlaneControlFrame(dataTracker, {
     proto: PROTO_VERSION,
     type: "proxy_open",
     id: `msg_${ulid()}`,
@@ -288,19 +452,35 @@ export async function openProxyEdgeStream(args: {
     method,
     path: targetPath,
     headers: sanitizeRequestHeaders(args.request.headers),
-    initial_credit_bytes: config.grpcDataInitialCreditBytes,
-    max_chunk_bytes: config.grpcDataMaxChunkBytes,
+    initial_credit_bytes: dataTracker.initialCreditBytes,
+    max_chunk_bytes: dataTracker.maxChunkBytes,
   });
   if (!sent) {
     cleanup();
+    await daemonStateStore.appendAuditEvent({
+      eventType: "proxy.stream_denied",
+      budId: args.session.budId,
+      userId: args.viewer.userId,
+      operationId,
+      streamId,
+      createdByUserId: args.viewer.userId,
+      eventData: {
+        denied_by: "service",
+        reason: "carrier_refused_open",
+        proxy_session_id: args.session.proxySessionId,
+        audit_correlation_id: args.session.auditCorrelationId,
+        transport_kind: dataTracker.transportKind,
+        data_transport_session_id: dataTracker.transportSessionId ?? null,
+      },
+    });
     await daemonStateStore.transitionStream({
       streamId,
       from: ["opening"],
       to: "reset",
       resetReason: "transport_lost",
       error: {
-        code: "GRPC_CONTROL_UNAVAILABLE",
-        message: "gRPC control stream refused proxy_open",
+        code: "DATA_PLANE_UNAVAILABLE",
+        message: "selected data-plane carrier refused proxy_open",
         retryable: true,
       },
     });
@@ -309,14 +489,14 @@ export async function openProxyEdgeStream(args: {
       from: ["offered"],
       to: "rejected",
       error: {
-        code: "GRPC_CONTROL_UNAVAILABLE",
-        message: "gRPC control stream refused proxy_open",
+        code: "DATA_PLANE_UNAVAILABLE",
+        message: "selected data-plane carrier refused proxy_open",
         retryable: true,
       },
     });
     return args.reply.status(424).send({
-      error: "GRPC_CONTROL_UNAVAILABLE",
-      message: "gRPC control stream refused proxy_open",
+      error: "DATA_PLANE_UNAVAILABLE",
+      message: "selected data-plane carrier refused proxy_open",
     });
   }
 
@@ -363,26 +543,40 @@ export async function openProxyEdgeStream(args: {
 
   if (!openResult.accepted) {
     cleanup();
+    const error = openResult.error ?? {
+      code: "PROXY_OPEN_REJECTED",
+      message: "Bud rejected the proxy stream",
+      retryable: false,
+    };
+    await daemonStateStore.appendAuditEvent({
+      eventType: "proxy.stream_denied",
+      budId: args.session.budId,
+      userId: args.viewer.userId,
+      operationId,
+      streamId,
+      createdByUserId: args.viewer.userId,
+      eventData: {
+        denied_by: "daemon",
+        reason: "open_rejected",
+        error,
+        proxy_session_id: args.session.proxySessionId,
+        audit_correlation_id: args.session.auditCorrelationId,
+        transport_kind: dataTracker.transportKind,
+        data_transport_session_id: dataTracker.transportSessionId ?? null,
+      },
+    });
     await daemonStateStore.transitionStream({
       streamId,
       from: ["opening"],
       to: "reset",
       resetReason: "remote_error",
-      error: openResult.error ?? {
-        code: "PROXY_OPEN_REJECTED",
-        message: "Bud rejected the proxy stream",
-        retryable: false,
-      },
+      error,
     });
     await daemonStateStore.transitionOperation({
       operationId,
       from: ["offered"],
       to: "rejected",
-      error: openResult.error ?? {
-        code: "PROXY_OPEN_REJECTED",
-        message: "Bud rejected the proxy stream",
-        retryable: false,
-      },
+      error,
     });
     const statusCode = statusForProxyOpenError(openResult.error);
     return args.reply.status(statusCode).send({

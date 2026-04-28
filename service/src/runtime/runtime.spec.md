@@ -109,6 +109,7 @@ Owns:
 - helper to mark in-flight operations/streams `unknown` when a transport session outcome is uncertain
 - heartbeat/close updates for durable device and transport sessions
 - reconnect-report reconciliation helpers that compare daemon-reported operations/streams with service rows and produce `reconciliation_decision` payload data
+- data-plane transport finalizers use this helper to mark logical stream loss when WebSocket or HTTP/2 carriers close before runtime streams complete
 
 ### `daemon-state.test.ts`
 

@@ -4,7 +4,7 @@ Daemon-side localhost HTTP proxy adapter for Phase 4.2 of the network upgrade.
 
 ## Purpose
 
-This folder owns the daemon's local adapter for service-requested localhost proxy streams. It revalidates service `proxy_open` requests against daemon-side policy before touching loopback resources, performs the local HTTP request, and streams response bytes over the HTTP/2 data channel with runtime credits.
+This folder owns the daemon's local adapter for service-requested localhost proxy streams. It revalidates service `proxy_open` requests against daemon-side policy before touching loopback resources, performs the local HTTP request, and streams response bytes over the active data-plane carrier with runtime credits.
 
 ## Files
 
@@ -19,14 +19,14 @@ Phase 4.2 localhost proxy implementation.
 - uses a reqwest client configured by `app.rs` with redirects disabled
 - forwards a small allowlist of request headers
 - returns sanitized response headers through `proxy_open_result`
-- sends response body chunks as generic `stream_data` frames over `BudData.Attach`
+- sends response body chunks as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` before sending more response bytes
 - stops active streams when service sends `stream_reset`
 
 ## Dependencies
 
-- [../app.rs](../app.rs) - dispatches `proxy_open`, owns the no-redirect HTTP client, and routes data-stream credit/reset frames into the manager
-- [../transport.rs](../transport.rs) - fails generic stream frames closed unless `BudData.Attach` is available
+- [../app.rs](../app.rs) - dispatches `proxy_open`, owns the no-redirect HTTP client, and routes WebSocket/HTTP2 data-stream credit/reset frames into the manager
+- [../transport.rs](../transport.rs) - routes generic stream frames over WebSocket or attached gRPC data according to the active transport
 - [../protocol.rs](../protocol.rs) - `ProxyOpenFrame`, `StreamCreditFrame`, and `StreamResetFrame` definitions
 - [../../src.spec.md](../src.spec.md) - daemon source overview
 - [../../../plan/network-upgrade/phase-4-localhost-proxy-and-file-reads.md](../../../plan/network-upgrade/phase-4-localhost-proxy-and-file-reads.md) - Phase 4 sequencing

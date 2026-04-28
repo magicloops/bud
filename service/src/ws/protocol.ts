@@ -27,7 +27,8 @@ const CapabilitiesSchema = z
     bud_envelope: z
       .object({
         version: z.number().int().positive(),
-        websocket_binary: z.boolean().optional().default(false)
+        websocket_binary: z.boolean().optional().default(false),
+        stream_frames: z.boolean().optional().default(false)
       })
       .passthrough()
       .optional(),

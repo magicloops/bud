@@ -8,6 +8,10 @@ Review and audit notes for architecture, implementation, and product-contract in
 
 Review of the proposed WebSocket-to-HTTP/2-gRPC/QUIC transport upgrade. Compares the reference transport goals against the current daemon, service, web, and DB implementation, then recommends a bounded phased migration through protobuf envelopes, durable operation/stream state, HTTP/2 control/data, proxy/file sessions, optional QUIC, and WebSocket fallback cleanup.
 
+### `network-upgrade-websocket-first-pr-review.md`
+
+Review of the active network-upgrade branch after the deployment baseline shifted back to WebSocket-first. Compares the PR against `origin/main`, identifies which protocol/stream foundations are worth keeping, calls out the remaining HTTP/2/gRPC-specific file/proxy assumptions, and recommends a carrier-neutral data-plane refactor before file viewer or web proxy productization.
+
 ### `service-layer-implementation-review.md`
 
 Full review of the service implementation before the service refactor, covering ownership-boundary regressions, provider/bootstrap gaps, terminal/runtime cancellation issues, legacy run overlap, and recommended modularization sequence.

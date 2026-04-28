@@ -17,12 +17,23 @@ function makeTracker(write: (frame: unknown) => boolean = () => true): GrpcDataS
     deviceSessionId: "s_test",
     controlTransportSessionId: "ts_control",
     transportSessionId: "ts_data",
+    transportKind: "h2_data",
+    role: "data",
     drainState: "active",
     lastSeenAt: Date.now(),
     streams: new Set(["localhost_http_proxy"]),
     framesReceived: 0,
     bytesReceived: 0,
     runtimeStreams: new Map(),
+    maxChunkBytes: 16 * 1024,
+    initialCreditBytes: 1024 * 1024,
+    maxInFlightBytes: 1024 * 1024,
+    sendFrame() {
+      // sendGrpcDataFrame exercises the gRPC call directly.
+    },
+    isActive() {
+      return true;
+    },
     call: {
       destroyed: false,
       write,

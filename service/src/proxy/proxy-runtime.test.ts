@@ -41,3 +41,21 @@ test("proxy runtime resolves open results and streams data to the response body"
   assert.equal(handleProxyOpenResult({}), null);
 });
 
+test("proxy runtime enforces max received bytes", async () => {
+  let cleaned = false;
+  const runtime = new ProxyRuntimeStream(
+    "st_over_limit",
+    "op_over_limit",
+    () => {
+      cleaned = true;
+    },
+    { maxReceivedBytes: 4 },
+  );
+
+  await assert.rejects(
+    runtime.handleData(Buffer.from("hello")),
+    /proxy response exceeded max bytes 4/,
+  );
+  assert.equal(cleaned, true);
+  assert.equal(runtime.isComplete(), true);
+});

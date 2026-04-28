@@ -9,15 +9,21 @@ import {
   threadTable,
 } from "../db/schema.js";
 import type { Viewer } from "../auth/session.js";
-import { getActiveGrpcSessionTracker, grpcSessions } from "../transport/grpc-daemon-router.js";
-import { getActiveGrpcDataSessionTracker } from "../transport/grpc-data-router.js";
+import {
+  selectDataPlaneCarrier,
+  type DataPlaneTransportKind,
+  type DataPlaneUnavailableCode,
+} from "../transport/data-plane-router.js";
 
 export const FILE_READ_STREAM_TYPE = "file_read";
 export const DEFAULT_FILE_SESSION_TTL_SECONDS = 15 * 60;
 export const MIN_FILE_SESSION_TTL_SECONDS = 60;
 export const MAX_FILE_SESSION_TTL_SECONDS = 60 * 60;
-export const DEFAULT_FILE_SESSION_MAX_BYTES = 64 * 1024 * 1024;
 export const MAX_FILE_SESSION_MAX_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_FILE_SESSION_MAX_BYTES = Math.min(
+  config.fileSessionDefaultMaxBytes,
+  MAX_FILE_SESSION_MAX_BYTES,
+);
 export const DEFAULT_FILE_ROOT_KEY = "workspace";
 export const FILE_SESSION_ROOT_KEYS = ["workspace"] as const;
 export const FILE_SESSION_PERMISSIONS = ["stat", "read", "range"] as const;
@@ -59,14 +65,16 @@ export type FileTransportStatus =
       deviceSessionId: string;
       controlTransportSessionId: string | null;
       dataTransportSessionId: string | null;
+      transportKind: DataPlaneTransportKind;
     }
   | {
       available: false;
-      code: "GRPC_CONTROL_UNAVAILABLE" | "GRPC_DATA_UNAVAILABLE";
+      code: DataPlaneUnavailableCode;
       message: string;
       deviceSessionId: string | null;
       controlTransportSessionId: string | null;
       dataTransportSessionId: string | null;
+      transportKind: DataPlaneTransportKind | null;
     };
 
 export class FileSessionValidationError extends Error {
@@ -161,48 +169,31 @@ export function normalizeFileSessionPermissions(permissions?: string[]): FileSes
 }
 
 export function resolveFileTransportStatus(budId: string): FileTransportStatus {
-  const controlTracker = getActiveGrpcSessionTracker(budId, grpcSessions.get(budId) ?? null);
-  if (!controlTracker || controlTracker.call.destroyed || controlTracker.finalized) {
-    return {
-      available: false,
-      code: "GRPC_CONTROL_UNAVAILABLE",
-      message: "Bud does not have an active authenticated gRPC control stream",
-      deviceSessionId: null,
-      controlTransportSessionId: null,
-      dataTransportSessionId: null,
-    };
-  }
+  const carrier = selectDataPlaneCarrier({
+    budId,
+    streamType: FILE_READ_STREAM_TYPE,
+  });
 
-  const deviceSessionId = controlTracker.deviceSessionId ?? controlTracker.sessionId;
-  const dataTracker = getActiveGrpcDataSessionTracker(budId, deviceSessionId);
-  if (!dataTracker) {
+  if (carrier.available) {
     return {
-      available: false,
-      code: "GRPC_DATA_UNAVAILABLE",
-      message: "Bud does not have an active HTTP/2 data stream attached",
-      deviceSessionId,
-      controlTransportSessionId: controlTracker.transportSessionId ?? null,
-      dataTransportSessionId: null,
-    };
-  }
-  if (!dataTracker.streams.has(FILE_READ_STREAM_TYPE)) {
-    return {
-      available: false,
-      code: "GRPC_DATA_UNAVAILABLE",
-      message: "Bud HTTP/2 data stream has not negotiated file-read support",
-      deviceSessionId,
-      controlTransportSessionId: controlTracker.transportSessionId ?? null,
-      dataTransportSessionId: dataTracker.transportSessionId ?? null,
+      available: true,
+      code: null,
+      message: null,
+      deviceSessionId: carrier.deviceSessionId,
+      controlTransportSessionId: carrier.controlTransportSessionId,
+      dataTransportSessionId: carrier.dataTransportSessionId,
+      transportKind: carrier.transportKind,
     };
   }
 
   return {
-    available: true,
-    code: null,
-    message: null,
-    deviceSessionId,
-    controlTransportSessionId: controlTracker.transportSessionId ?? null,
-    dataTransportSessionId: dataTracker.transportSessionId ?? null,
+    available: false,
+    code: carrier.code,
+    message: carrier.message,
+    deviceSessionId: carrier.deviceSessionId,
+    controlTransportSessionId: carrier.controlTransportSessionId,
+    dataTransportSessionId: carrier.dataTransportSessionId,
+    transportKind: carrier.transportKind,
   };
 }
 
@@ -414,6 +405,7 @@ export function serializeFileTransportStatus(status: FileTransportStatus): Recor
     device_session_id: status.deviceSessionId,
     control_transport_session_id: status.controlTransportSessionId,
     data_transport_session_id: status.dataTransportSessionId,
+    transport_kind: status.transportKind,
   };
 }
 

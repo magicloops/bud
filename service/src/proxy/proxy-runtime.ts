@@ -32,11 +32,13 @@ export class ProxyRuntimeStream {
   private openResolve: ((frame: ProxyOpenResultFrame) => void) | null = null;
   private openReject: ((err: Error) => void) | null = null;
   private completed = false;
+  private receivedBytes = 0;
 
   constructor(
     readonly streamId: string,
     readonly operationId: string,
     private readonly cleanup: () => void,
+    private readonly options: { maxReceivedBytes?: number } = {},
   ) {
     this.body.on("error", () => {
       // Stream errors are surfaced through the open promise or Fastify response.
@@ -88,6 +90,21 @@ export class ProxyRuntimeStream {
     if (chunk.byteLength === 0) {
       return;
     }
+    const nextReceivedBytes = this.receivedBytes + chunk.byteLength;
+    if (
+      this.options.maxReceivedBytes !== undefined &&
+      nextReceivedBytes > this.options.maxReceivedBytes
+    ) {
+      const err = new Error(
+        `proxy response exceeded max bytes ${this.options.maxReceivedBytes}`,
+      );
+      this.completed = true;
+      this.openReject?.(err);
+      this.body.destroy(err);
+      this.cleanup();
+      throw err;
+    }
+    this.receivedBytes = nextReceivedBytes;
     if (this.body.write(chunk)) {
       return;
     }

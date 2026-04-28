@@ -36,6 +36,7 @@ Top-level daemon orchestrator.
 
 - identity loading and device-claim bootstrap
 - WebSocket connect / reconnect behavior
+- WebSocket bootstrap now sends `hello` as a binary `BudEnvelope` instead of JSON text
 - opt-in tonic gRPC control connect / reconnect behavior when `BUD_GRPC_CONTROL_URL` is set
 - opt-in tonic gRPC data attachment after control authentication when `BUD_GRPC_DATA_URL` is set
 - handshake and challenge-response auth
@@ -44,7 +45,8 @@ Top-level daemon orchestrator.
 - routing inbound server frames to the run or terminal subsystems
 - routing Phase 4.2 `proxy_open` requests to the localhost proxy adapter
 - routing Phase 4.4 `file_open` requests to the workspace file adapter
-- capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy and workspace file-read support when gRPC control/data are configured
+- routing WebSocket-received `stream_credit`, `stream_reset`, and `stream_close` frames to the file/proxy managers
+- capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames
 
 **Key types**:
 
@@ -65,8 +67,9 @@ Bud <-> service frame definitions and protocol validation.
 
 Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 
-- encodes known current JSON-shaped frame bodies under typed protobuf oneof payload tags with transitional `frame_json`
-- keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and downgrade compatibility
+- encodes active terminal/control frame bodies under typed protobuf oneof payload tags with direct protobuf fields
+- encodes stream/proxy/file foundation frames under typed payload tags so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
+- keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and pre-cutover fixture coverage
 - decodes protobuf envelopes back to JSON text before handing off to existing frame handlers
 - shares conformance fixture coverage with the service through `proto/fixtures/legacy-terminal-ensure.json`
 - tolerates unknown protobuf fields while validating the envelope version and required compatibility payload
@@ -100,7 +103,7 @@ Daemon-side Phase 4.2 localhost HTTP proxy adapter.
 - validates `proxy_open` requests against local loopback/method policy
 - performs no-redirect `http://127.0.0.1:<port>` requests
 - returns `proxy_open_result` accept/reject metadata on control
-- streams response bytes as generic data-only `stream_data` frames
+- streams response bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
 
 ### `files/` → [files/files.spec.md](./files/files.spec.md)
@@ -112,7 +115,7 @@ Daemon-side Phase 4.4 workspace file adapter.
 - supports stat, full read, and single byte-range read modes
 - computes and checks file content identity
 - returns `file_open_result` accept/reject metadata on control
-- streams file bytes as generic data-only `stream_data` frames
+- streams file bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
 
 ### `transport.rs`
@@ -122,11 +125,11 @@ Daemon-side transport sender boundary.
 - defines `TransportSender` and `TransportKind`
 - wraps the active WebSocket writer or gRPC control frame sender
 - optionally wraps a bounded gRPC data frame sender for data-plane-capable sessions
-- sends protobuf envelope binary frames when the service negotiated `bud_envelope.websocket_binary`
+- sends protobuf envelope binary frames when the service negotiated `bud_envelope.websocket_binary`; active terminal/control binary frames use direct typed payload fields
 - exposes `send_transport_frame(...)` and `send_transport_message(...)`
 - lets terminal and legacy run modules emit daemon payloads without depending directly on raw WebSocket sender types
 - routes `terminal_output` over the gRPC data channel when attached and falls back to the control channel if the data channel is unavailable
-- routes generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` only over the gRPC data channel and fails closed if data is unavailable
+- routes generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` over the WebSocket carrier when connected by WebSocket, or over the gRPC data channel when connected by gRPC with data attached
 
 ### `journal.rs`
 

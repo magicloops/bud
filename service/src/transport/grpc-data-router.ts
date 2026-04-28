@@ -4,56 +4,25 @@ import type * as grpc from "@grpc/grpc-js";
 import { ulid } from "ulid";
 import { encodeGrpcLegacyJsonEnvelope } from "../grpc/envelope-codec.js";
 import type { GrpcBudEnvelope } from "./grpc-daemon-router.js";
+import {
+  deleteDataPlaneSessionTrackerIfCurrent,
+  getDataPlaneRuntimeStream,
+  grantDataPlaneReceiveCredit,
+  recordDataPlaneInboundChunk,
+  recordDataPlaneOutboundCredit,
+  registerActiveDataPlaneSessionTracker,
+  registerDataPlaneRuntimeStream,
+  type DataPlaneRuntimeStream,
+  type DataPlaneSessionTracker,
+} from "./data-plane-router.js";
 
 export type GrpcDataCall = grpc.ServerDuplexStream<GrpcBudEnvelope, GrpcBudEnvelope>;
 
-export interface GrpcDataRuntimeStream {
-  streamId: string;
-  streamType: string;
-  receiveOffset: number;
-  receiveCreditBytes: number;
-  sendOffset: number;
-  sendCreditBytes: number;
-  remoteReceiveOffset: number;
-  localClosed?: boolean;
-  remoteClosed?: boolean;
-  resetReason?: string;
-  onData?: (
-    chunk: Buffer,
-    frame: {
-      streamId: string;
-      streamType: string;
-      offset: number;
-      endStream: boolean;
-    },
-  ) => Promise<void> | void;
-  onReset?: (frame: {
-    streamId: string;
-    reason: string;
-    error?: {
-      code: string;
-      message: string;
-      retryable?: boolean;
-      details?: Record<string, unknown>;
-    };
-  }) => Promise<void> | void;
-  onClose?: (frame: { streamId: string; finalOffset: number }) => Promise<void> | void;
-}
+export type GrpcDataRuntimeStream = DataPlaneRuntimeStream;
 
-export interface GrpcDataSessionTracker {
-  budId: string;
-  deviceSessionId: string;
-  controlTransportSessionId?: string;
-  transportSessionId?: string;
-  drainState?: "active" | "draining";
-  finalizing?: boolean;
-  finalized?: boolean;
-  lastSeenAt: number;
-  lastSeenWrite?: number;
-  streams: Set<string>;
-  framesReceived: number;
-  bytesReceived: number;
-  runtimeStreams: Map<string, GrpcDataRuntimeStream>;
+export interface GrpcDataSessionTracker extends DataPlaneSessionTracker {
+  transportKind: "h2_data";
+  role: "data";
   call: GrpcDataCall;
 }
 
@@ -69,6 +38,7 @@ export function registerActiveGrpcDataSessionTracker(
   const key = grpcDataSessionKey(tracker.budId, tracker.deviceSessionId);
   const previous = grpcDataSessions.get(key) ?? null;
   grpcDataSessions.set(key, tracker);
+  registerActiveDataPlaneSessionTracker(tracker);
   return previous;
 }
 
@@ -94,6 +64,7 @@ export function deleteGrpcDataSessionTrackerIfCurrent(
     return false;
   }
   grpcDataSessions.delete(key);
+  deleteDataPlaneSessionTrackerIfCurrent(tracker);
   return true;
 }
 
@@ -113,76 +84,35 @@ export function registerGrpcDataRuntimeStream(
     onClose?: GrpcDataRuntimeStream["onClose"];
   },
 ): GrpcDataRuntimeStream {
-  const existing = tracker.runtimeStreams.get(args.streamId);
-  if (existing) {
-    return existing;
-  }
-  const stream: GrpcDataRuntimeStream = {
-    streamId: args.streamId,
-    streamType: args.streamType,
-    receiveOffset: 0,
-    receiveCreditBytes: args.initialReceiveCreditBytes,
-    sendOffset: 0,
-    sendCreditBytes: args.initialSendCreditBytes ?? 0,
-    remoteReceiveOffset: 0,
-    onData: args.onData,
-    onReset: args.onReset,
-    onClose: args.onClose,
-  };
-  tracker.runtimeStreams.set(args.streamId, stream);
-  return stream;
+  return registerDataPlaneRuntimeStream(tracker, args);
 }
 
 export function getGrpcDataRuntimeStream(
   tracker: GrpcDataSessionTracker,
   streamId: string,
 ): GrpcDataRuntimeStream | null {
-  return tracker.runtimeStreams.get(streamId) ?? null;
+  return getDataPlaneRuntimeStream(tracker, streamId);
 }
 
 export function recordGrpcDataInboundChunk(
   stream: GrpcDataRuntimeStream,
   args: { offset: number; byteLength: number },
 ): { ok: true; receiveOffset: number; creditRemaining: number } | { ok: false; code: string; message: string } {
-  if (stream.resetReason) {
-    return { ok: false, code: "STREAM_RESET", message: "stream has already been reset" };
-  }
-  if (stream.remoteClosed) {
-    return { ok: false, code: "STREAM_CLOSED", message: "stream is already closed by the remote peer" };
-  }
-  if (args.offset !== stream.receiveOffset) {
-    return {
-      ok: false,
-      code: "OFFSET_MISMATCH",
-      message: `expected stream offset ${stream.receiveOffset}, got ${args.offset}`,
-    };
-  }
-  if (args.byteLength > stream.receiveCreditBytes) {
-    return {
-      ok: false,
-      code: "CREDIT_EXHAUSTED",
-      message: `stream frame exceeds available credit by ${args.byteLength - stream.receiveCreditBytes} bytes`,
-    };
-  }
-  stream.receiveOffset += args.byteLength;
-  stream.receiveCreditBytes -= args.byteLength;
-  return { ok: true, receiveOffset: stream.receiveOffset, creditRemaining: stream.receiveCreditBytes };
+  return recordDataPlaneInboundChunk(stream, args);
 }
 
 export function grantGrpcDataReceiveCredit(
   stream: GrpcDataRuntimeStream,
   creditBytes: number,
 ): number {
-  stream.receiveCreditBytes += creditBytes;
-  return stream.receiveCreditBytes;
+  return grantDataPlaneReceiveCredit(stream, creditBytes);
 }
 
 export function recordGrpcDataOutboundCredit(
   stream: GrpcDataRuntimeStream,
   args: { receiveOffset: number; creditBytes: number },
 ): void {
-  stream.remoteReceiveOffset = Math.max(stream.remoteReceiveOffset, args.receiveOffset);
-  stream.sendCreditBytes += args.creditBytes;
+  recordDataPlaneOutboundCredit(stream, args);
 }
 
 export async function sendGrpcDataFrame(

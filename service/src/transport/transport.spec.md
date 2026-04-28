@@ -24,7 +24,7 @@ Phase 2 router composition used by runtime code.
 - returns the union of active gRPC and WebSocket Bud ids
 - treats a Bud as online if either transport has an active authoritative session
 - prefers `h2_grpc` for outbound frames when a gRPC control stream is active
-- falls back to WebSocket for compatibility daemons
+- falls back to authenticated binary-envelope WebSocket sessions
 
 ### `grpc-daemon-router.ts`
 
@@ -39,22 +39,39 @@ gRPC-backed adapter for active `BudControl.Connect` streams.
 
 ### `grpc-data-router.ts`
 
-Process-local tracker map for active `BudData.Attach` streams.
+HTTP/2 data adapter for active `BudData.Attach` streams.
 
 - keys data streams by `bud_id` and `device_session_id`
 - records the subordinate `h2_data` transport session id and negotiated stream families
 - records active terminal-output frame and byte counters for local validation and gateway close logs
-- owns Phase 4.0 runtime stream state for generic proxy/file stream ids, offsets, receive credits, send credits, and close/reset flags
-- lets callers register per-stream data/reset/close callbacks for active HTTP proxy/file consumers
+- delegates generic runtime stream state to `data-plane-router.ts`
 - exports write helpers that send generic `stream_*` frames only over active `h2_data`
 - exposes helpers for registering, looking up, and deleting active data stream trackers
 - deliberately does not implement browser-facing authorization; data streams are accepted only after `grpc/data-gateway.ts` binds them to an authenticated control tracker
 
+### `data-plane-router.ts`
+
+Carrier-neutral data-plane registry and runtime stream dispatcher.
+
+- represents WebSocket control+data, HTTP/2 data, and future QUIC/data-only carriers behind `DataPlaneSessionTracker`
+- selects carriers for stream families such as `file_read` and `localhost_http_proxy`
+- owns generic stream runtime state for stream ids, offsets, receive/send credits, close/reset flags, and per-stream callbacks
+- counts active runtime streams per Bud/stream family for file/proxy concurrency enforcement
+- caps accumulated outbound stream credit to the selected carrier's max in-flight byte limit
+- dispatches `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` for both WebSocket and HTTP/2 paths
+- finalizes logical data-plane sessions when their underlying control transport closes
+- records generic stream reset/close audit events with carrier metadata
+- exposes carrier-neutral file/proxy readiness errors: `DATA_PLANE_UNAVAILABLE`, `STREAM_FAMILY_UNSUPPORTED`, and `TRANSPORT_DEGRADED`
+
+### `data-plane-router.test.ts`
+
+Focused unit coverage for data-plane selection and generic stream dispatch.
+
 ### `websocket-daemon-router.ts`
 
-Current WebSocket-backed adapter for the router interface. It reuses the existing WebSocket session tracker and sends protobuf `BudEnvelope` binary frames to daemons that advertised `bud_envelope.websocket_binary`; legacy sessions still receive JSON text frames.
+Current WebSocket-backed adapter for the router interface. It reuses the existing WebSocket session tracker and sends protobuf `BudEnvelope` binary frames to daemons that advertised `bud_envelope.websocket_binary`; sessions without binary-envelope support are refused rather than receiving JSON text fallback frames.
 
-This adapter is the compatibility carrier for Phase 0/1. Capable sessions now dispatch known frames through typed protobuf oneof payload tags while preserving the current JSON-shaped frame body under each typed payload's `frame_json` transition field.
+This adapter is the baseline carrier for Phase 0/1. Capable sessions now dispatch active terminal/control frames through typed protobuf oneof payload tags with direct payload fields. When a daemon advertises `bud_envelope.stream_frames`, the authenticated WebSocket is also registered as a control+data data-plane carrier for file/proxy stream frames.
 
 During gateway drain, this adapter refuses new long-lived daemon work such as `terminal_ensure`, proxy-open, and file-open/read frames while still allowing short control traffic to continue.
 
@@ -76,13 +93,13 @@ The drain state is deliberately small: it blocks new long-lived daemon streams o
 - [../ws/ws.spec.md](../ws/ws.spec.md) - current WebSocket gateway and session tracker
 - [../runtime/runtime.spec.md](../runtime/runtime.spec.md) - terminal runtime that consumes the router
 - [../proto/proto.spec.md](../proto/proto.spec.md) - transport-neutral envelope type helpers
-- [../../../plan/network-upgrade/implementation-spec.md](../../../plan/network-upgrade/implementation-spec.md) - phased network-upgrade plan
+- [../../../plan/swappable-transport/implementation-spec.md](../../../plan/swappable-transport/implementation-spec.md) - WebSocket-first swappable transport plan
 
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Replace the transitional typed-payload `frame_json` bridge with generated field-level protobuf payload mapping once current terminal/control payloads are fully mapped.
-- Add per-class fair scheduling and durable metrics once concurrent proxy/file data volumes require more than per-stream credit windows.
+- Replace the remaining stream/proxy/file typed-payload `frame_json` bridge with field-level protobuf payload mapping as those WebSocket stream families are productized.
+- Add per-class fair scheduling and durable metrics once concurrent proxy/file data volumes require more than per-stream credit windows and per-Bud concurrency caps.
 
 ---
 

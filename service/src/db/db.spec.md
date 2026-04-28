@@ -234,6 +234,7 @@ Push-specific ownership follows the same rule:
 Network-upgrade durable rows follow the same ownership direction:
 - `device_session`, `transport_session`, `bud_operation`, `bud_stream`, and `audit_event` include nullable `tenant_id` and `created_by_user_id`
 - browser-originated operations/streams should stamp the authenticated owner before daemon work is offered
+- file/proxy edge streams append audit rows for session create/revoke, stream open, service/daemon open denial, and generic data-plane stream reset/close outcomes; these are event-data-only additions and do not change the schema
 - daemon-originated reconciliation rows may temporarily have no user stamp until tied back to an owning thread, proxy session, or file session
 - `proxy_session.created_by_user_id` scopes browser-visible proxy session reads, lists, revokes, and edge attaches
 - `file_session.created_by_user_id` scopes browser-visible file session reads, lists, revokes, and edge attaches

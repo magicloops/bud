@@ -6,12 +6,11 @@ import {
   normalizeFileSessionPermissions,
   resolveFileTransportStatus,
 } from "./file-session.js";
-import { grpcSessions } from "../transport/grpc-daemon-router.js";
 import {
-  grpcDataSessionKey,
-  grpcDataSessions,
-  type GrpcDataSessionTracker,
-} from "../transport/grpc-data-router.js";
+  dataPlaneSessions,
+  registerActiveDataPlaneSessionTracker,
+  type DataPlaneSessionTracker,
+} from "../transport/data-plane-router.js";
 
 test("file root validation only permits workspace root in Phase 4.3", () => {
   assert.equal(normalizeFileRootKey("workspace"), "workspace");
@@ -42,70 +41,69 @@ test("file permission validation normalizes implied read/stat permissions", () =
   assert.throws(() => normalizeFileSessionPermissions(["write"]), /File permission write is not allowed/);
 });
 
-test("file transport status requires active gRPC control and file-read data support", () => {
-  grpcSessions.clear();
-  grpcDataSessions.clear();
-
-  assert.deepEqual(resolveFileTransportStatus("bud-1"), {
-    available: false,
-    code: "GRPC_CONTROL_UNAVAILABLE",
-    message: "Bud does not have an active authenticated gRPC control stream",
-    deviceSessionId: null,
-    controlTransportSessionId: null,
-    dataTransportSessionId: null,
-  });
-
-  grpcSessions.set("bud-1", {
-    budId: "bud-1",
-    sessionId: "s_1",
-    deviceSessionId: "ds_1",
-    transportSessionId: "ts_control",
-    lastHeartbeat: Date.now(),
-    call: { destroyed: false } as never,
-  });
-
-  assert.deepEqual(resolveFileTransportStatus("bud-1"), {
-    available: false,
-    code: "GRPC_DATA_UNAVAILABLE",
-    message: "Bud does not have an active HTTP/2 data stream attached",
-    deviceSessionId: "ds_1",
-    controlTransportSessionId: "ts_control",
-    dataTransportSessionId: null,
-  });
-
-  grpcDataSessions.set(grpcDataSessionKey("bud-1", "ds_1"), {
+function makeDataPlaneTracker(streams: string[]): DataPlaneSessionTracker {
+  return {
     budId: "bud-1",
     deviceSessionId: "ds_1",
-    transportSessionId: "ts_data",
+    controlTransportSessionId: "ts_ws",
+    transportSessionId: "ts_ws",
+    transportKind: "websocket",
+    role: "control_data",
+    drainState: "active",
     lastSeenAt: Date.now(),
-    streams: new Set(["localhost_http_proxy"]),
+    streams: new Set(streams),
     framesReceived: 0,
     bytesReceived: 0,
     runtimeStreams: new Map(),
-    call: { destroyed: false } as never,
-  } as GrpcDataSessionTracker);
+    maxChunkBytes: 16 * 1024,
+    initialCreditBytes: 1024 * 1024,
+    maxInFlightBytes: 1024 * 1024,
+    sendFrame() {
+      // noop
+    },
+    isActive() {
+      return true;
+    },
+  };
+}
+
+test("file transport status requires an active carrier with file-read support", () => {
+  dataPlaneSessions.clear();
 
   assert.deepEqual(resolveFileTransportStatus("bud-1"), {
     available: false,
-    code: "GRPC_DATA_UNAVAILABLE",
-    message: "Bud HTTP/2 data stream has not negotiated file-read support",
-    deviceSessionId: "ds_1",
-    controlTransportSessionId: "ts_control",
-    dataTransportSessionId: "ts_data",
+    code: "DATA_PLANE_UNAVAILABLE",
+    message: "Bud does not have an active data-plane carrier",
+    deviceSessionId: null,
+    controlTransportSessionId: null,
+    dataTransportSessionId: null,
+    transportKind: null,
   });
 
-  const dataTracker = grpcDataSessions.get(grpcDataSessionKey("bud-1", "ds_1"));
-  dataTracker?.streams.add("file_read");
+  const dataTracker = makeDataPlaneTracker(["localhost_http_proxy"]);
+  registerActiveDataPlaneSessionTracker(dataTracker);
+
+  assert.deepEqual(resolveFileTransportStatus("bud-1"), {
+    available: false,
+    code: "STREAM_FAMILY_UNSUPPORTED",
+    message: "Bud data-plane carrier has not negotiated file_read support",
+    deviceSessionId: "ds_1",
+    controlTransportSessionId: "ts_ws",
+    dataTransportSessionId: "ts_ws",
+    transportKind: "websocket",
+  });
+
+  dataTracker.streams.add("file_read");
 
   assert.deepEqual(resolveFileTransportStatus("bud-1"), {
     available: true,
     code: null,
     message: null,
     deviceSessionId: "ds_1",
-    controlTransportSessionId: "ts_control",
-    dataTransportSessionId: "ts_data",
+    controlTransportSessionId: "ts_ws",
+    dataTransportSessionId: "ts_ws",
+    transportKind: "websocket",
   });
 
-  grpcSessions.clear();
-  grpcDataSessions.clear();
+  dataPlaneSessions.clear();
 });

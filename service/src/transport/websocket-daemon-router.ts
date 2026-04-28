@@ -4,7 +4,7 @@ import {
   isBudOnline as getBudOnlineState,
   sessions,
 } from "../ws/session-trackers.js";
-import { encodeLegacyJsonFrame } from "../proto/wire.js";
+import { encodeBudFrame } from "../proto/wire.js";
 import { getGatewayDrainState, shouldBlockNewDaemonWork } from "./gateway-drain.js";
 import type {
   DaemonTransportPayload,
@@ -52,11 +52,17 @@ export const websocketDaemonTransportRouter: DaemonTransportRouter = {
       );
       return false;
     }
-    if (session.supportsEnvelopeBinary) {
-      session.socket.send(encodeLegacyJsonFrame(payload));
-    } else {
-      session.socket.send(JSON.stringify(payload));
+    if (!session.supportsEnvelopeBinary) {
+      logGatewayDebug(
+        {
+          budId,
+          type: frameType(payload),
+        },
+        "WS session lacks BudEnvelope binary support; dropping frame",
+      );
+      return false;
     }
+    session.socket.send(encodeBudFrame(payload));
     logGatewayDebug({ budId, type: frameType(payload) }, "Frame sent to Bud");
     return true;
   },

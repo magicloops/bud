@@ -2,34 +2,32 @@
 
 ## Context
 
-The network-upgrade PR proves the daemon/service stream model over HTTP/2: gRPC control, `BudData.Attach`, durable operation/stream state, generic stream credits, typed reset/close semantics, terminal smoke coverage, and file/proxy foundation smokes.
+The network-upgrade PR proves the daemon/service stream model over the WebSocket baseline, with optional HTTP/2 adapters preserved behind the same carrier-neutral runtime: binary `BudEnvelope`, durable operation/stream state, generic stream credits, typed reset/close semantics, terminal smoke coverage, and file/proxy foundation smokes.
 
 QUIC is deferred to a follow-on PR. It should improve stream-heavy behavior, but it must not introduce a second protocol or become required for correctness.
 
 ## Goal
 
-Add QUIC as the preferred data carrier for daemon-originated and daemon-served stream bytes while preserving HTTP/2 data fallback.
+Add QUIC as an optional high-performance data carrier for daemon-originated and daemon-served stream bytes while preserving the WebSocket baseline and optional HTTP/2 data carrier.
 
 Target selector:
 
 ```text
 QUIC data stream, if healthy
-  -> HTTP/2 BudData.Attach fallback
-  -> bounded WebSocket fallback, if explicitly enabled by the compatibility design
+  -> WebSocket control+data baseline, or HTTP/2 BudData.Attach when operator policy prefers it
 ```
 
 ## Non-Goals
 
-- replacing HTTP/2 gRPC control
+- replacing WebSocket control/data correctness
 - adding QUIC-only product behavior
 - direct browser/mobile daemon connectivity
 - bypassing service authorization
-- removing HTTP/2 data fallback
-- implementing WebSocket fallback
+- removing the WebSocket baseline
 
 ## Protocol Model
 
-QUIC should carry the same protocol objects already used by HTTP/2 data:
+QUIC should carry the same protocol objects already used by the WebSocket and HTTP/2 data carriers:
 
 - `BudEnvelope`
 - stream IDs
@@ -43,11 +41,11 @@ QUIC-specific messages should be limited to transport-session negotiation, healt
 
 ## Negotiation
 
-HTTP/2 gRPC control remains authoritative.
+The authenticated control session remains authoritative. In the open-source baseline that control session is the daemon WebSocket; hosted deployments may also bind QUIC to an authenticated gRPC control session.
 
 Proposed flow:
 
-1. Daemon authenticates over `BudControl.Connect`.
+1. Daemon authenticates over WebSocket or `BudControl.Connect`.
 2. Service advertises QUIC endpoint candidates and capability metadata over control.
 3. Service issues a short-lived QUIC token bound to the authenticated control session.
 4. Daemon probes candidates and opens QUIC data transport.

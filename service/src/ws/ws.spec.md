@@ -28,11 +28,14 @@ Primary Bud daemon connection state machine extracted from `gateway.ts`.
 
 Owns:
 - hello / hello_proof auth flow
-- protobuf `BudEnvelope` binary-frame decode/encode when the daemon advertises `bud_envelope.websocket_binary`
+- protobuf `BudEnvelope` binary-frame decode/encode for daemon sessions that advertise `bud_envelope.websocket_binary`
+- protocol enforcement that rejects daemons without binary-envelope capability, rejects post-negotiation JSON frames, and returns `UNSUPPORTED_PAYLOAD` for unknown envelope payload fields
 - durable `device_session` / `transport_session` registration for authenticated daemon connections
 - daemon reconnect-report handling and reconciliation-decision replies
 - heartbeat handling
 - terminal frame parsing and routing
+- WebSocket data-plane carrier registration when `bud_envelope.stream_frames` is advertised
+- generic stream lifecycle dispatch into `transport/data-plane-router.ts`
 - active-session tracker registration and timeout scheduling
 - Bud offline transition side effects
 
@@ -44,7 +47,7 @@ Shared Zod schemas and type unions for `/ws` frames and connection states.
 
 In-memory active-Bud tracker registry and helper functions used by both the gateway shell and the extracted Bud connection runtime.
 
-Trackers now carry the durable `deviceSessionId`, durable `transportSessionId`, negotiated binary-envelope capability, and drain state for the active WebSocket transport.
+Trackers now carry the durable `deviceSessionId`, durable `transportSessionId`, negotiated binary-envelope capability, optional stream-frame capability/families, and drain state for the active WebSocket transport.
 
 ### `../transport/gateway-drain.ts`
 
@@ -92,11 +95,12 @@ Browser/Client                 Service                      Bud Daemon
 `TerminalStatusSchema` still tolerates deprecated `info.tmux_session` from older daemons during rollout, but the gateway no longer treats tmux session identity as part of the normal terminal contract.
 
 **WebSocket Carrier Modes**:
-- legacy daemons exchange UTF-8 JSON text frames
-- capable daemons advertise `capabilities.bud_envelope = { version: 1, websocket_binary: true }`
-- after capability negotiation, the service and daemon exchange protobuf `BudEnvelope` binary frames
-- known frame types dispatch through typed payload oneof fields; the transitional payload body remains JSON-shaped `frame_json`
-- `LegacyJsonPayload` remains decode-compatible for older binary fixtures and downgrade testing
+- the current daemon sends bootstrap `hello` as a binary `BudEnvelope`; the service only tolerates pre-negotiation JSON `hello` enough to return useful protocol errors to unsupported clients
+- daemons must advertise `capabilities.bud_envelope = { version: 1, websocket_binary: true }`
+- after capability negotiation, the service and daemon exchange protobuf `BudEnvelope` binary frames; JSON text/binary compatibility frames are rejected
+- active terminal/control frame types dispatch through typed payload oneof fields with direct protobuf fields rather than whole-frame `frame_json`
+- capable daemons can additionally advertise `bud_envelope.stream_frames`; the same authenticated socket is then registered as a control+data data-plane carrier for `file_read` and `localhost_http_proxy`
+- `LegacyJsonPayload` remains decode-compatible for older binary fixtures and conformance testing, but not active daemon sessions
 
 **Connection States**:
 
@@ -117,6 +121,7 @@ type ConnectionState =
 - heartbeat handling now ignores superseded sockets instead of refreshing the active tracker's timeout/presence
 - timeout and close cleanup now check that the tracker being cleaned up is still the active map entry before deleting the Bud session or emitting offline side effects
 - active transport close/timeout marks in-flight durable operations and streams `unknown`
+- WebSocket close/timeout also finalizes the logical data-plane carrier registered for that socket
 - real offline cleanup still clears caches, clears event buffers, suspends sessions, emits `terminal.bud_offline`, and marks the Bud offline, but only for the active tracker
 
 ### `gateway.test.ts`
@@ -128,7 +133,9 @@ Standalone Node test coverage for the active-tracker helpers re-exported through
 - stale cleanup from a superseded tracker is ignored
 - only the currently registered tracker is treated as authoritative
 - `sendFrameToBud(...)` only writes to the authoritative open socket and refuses missing/closed Bud sessions
-- capable sessions receive protobuf envelope binary frames through the compatibility carrier
+- sessions without binary-envelope capability are refused rather than receiving JSON text fallback frames
+- capable sessions receive protobuf envelope binary frames through the WebSocket carrier
+- terminal/control binary envelopes use typed protobuf fields rather than nested `frame_json`
 - gateway drain refuses new long-lived daemon work
 
 ### `bud-connection.test.ts`
@@ -137,6 +144,10 @@ Direct regression coverage for the extracted Bud connection runtime.
 
 **Current Coverage**:
 - offline transitions reject pending terminal waits before cache clearing, suspend, and offline emission side effects run
+- hello frames without binary-envelope capability fail before auth/registration
+- negotiated binary-envelope sessions reject legacy JSON text frames
+- unknown protobuf payload fields fail with a typed `UNSUPPORTED_PAYLOAD` error frame
+- WebSocket `stream_data` frames dispatch through the shared data-plane runtime
 
 **Exported Functions**:
 
@@ -187,6 +198,8 @@ Bud `hello` frames now include:
 
 If a stored Bud already has an `installationId`, the gateway rejects a mismatched `installation_id` during challenge setup.
 
+The gateway also rejects `hello` frames that do not advertise `bud_envelope.version = 1` and `bud_envelope.websocket_binary = true`; this branch has intentionally removed active legacy JSON daemon compatibility.
+
 **Frame Routing**:
 
 | Frame Type | Handler |
@@ -200,6 +213,9 @@ If a stored Bud already has an `installationId`, the gateway rejects a mismatche
 | `terminal_observe_result` | `terminalSessionManager.handleObserveResult()` |
 | `terminal_send_result` | `terminalSessionManager.handleSendResult()` with optional additive `delta` (`changed`, `text`, `truncated`) plus settled/timeout readiness assessment |
 | `reconnect_report` | `DaemonStateStore.reconcileReconnectReport()` then `reconciliation_decision` reply |
+| `stream_data` / `stream_credit` / `stream_reset` / `stream_close` | shared data-plane runtime dispatch |
+| `proxy_open_result` | proxy runtime open-result delivery |
+| `file_open_result` | file runtime open-result delivery |
 
 Enrollment-token validation now routes through the shared `auth/enrollment-token.ts` helper so seed/bootstrap writes and gateway checks use the same hash contract.
 
@@ -213,6 +229,13 @@ Bud's `hello` frame includes capabilities:
   sessions: boolean;
   terminal: boolean;
   terminal_proto?: string;      // "0.2"
+  bud_envelope?: {
+    version: 1;
+    websocket_binary: true;
+    stream_frames?: true;
+  };
+  proxy?: { localhost_http?: true };
+  files?: { workspace_read?: true };
 }
 ```
 
@@ -240,6 +263,7 @@ The gateway still tolerates deprecated tmux-shaped hello fields from older daemo
 | `../auth/enrollment-token.js` | Shared enrollment-token hashing |
 | `../runtime/*.js` | Terminal runtime and presence routing |
 | `../transport/composite-daemon-router.js` | Daemon transport adapter that prefers active gRPC control streams and falls back to WebSocket |
+| `../transport/data-plane-router.js` | WebSocket carrier registration and shared generic stream dispatch |
 
 ## TODOs / Technical Debt
 

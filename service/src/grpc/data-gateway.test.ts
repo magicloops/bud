@@ -40,12 +40,23 @@ function makeDataTracker(
     deviceSessionId: "s_test",
     controlTransportSessionId: "ts_control",
     transportSessionId: "ts_data",
+    transportKind: "h2_data",
+    role: "data",
     drainState: "active",
     lastSeenAt: Date.now(),
     streams: new Set(["terminal_output"]),
     framesReceived: 1,
     bytesReceived: 128,
     runtimeStreams: new Map(),
+    maxChunkBytes: 16 * 1024,
+    initialCreditBytes: 1024 * 1024,
+    maxInFlightBytes: 1024 * 1024,
+    sendFrame() {
+      // noop
+    },
+    isActive() {
+      return true;
+    },
     call: {
       destroyed: false,
       end: onEnd,
@@ -199,6 +210,7 @@ test("finalizing a data session resets active runtime streams", async (t) => {
 
   const resetCallbacks: unknown[] = [];
   const streamTransitions: unknown[] = [];
+  const auditEvents: unknown[] = [];
   const runtimeStreams = new Map<string, GrpcDataRuntimeStream>();
   runtimeStreams.set("st_proxy", {
     streamId: "st_proxy",
@@ -226,6 +238,9 @@ test("finalizing a data session resets active runtime streams", async (t) => {
       async transitionStream(args: unknown) {
         streamTransitions.push(args);
       },
+      async appendAuditEvent(args: unknown) {
+        auditEvents.push(args);
+      },
     } as never,
   });
 
@@ -234,11 +249,30 @@ test("finalizing a data session resets active runtime streams", async (t) => {
     streamId: "st_proxy",
     reason: "transport_lost",
     error: {
-      code: "GRPC_DATA_STREAM_CLOSED",
-      message: "gRPC data stream closed before runtime stream completed: control_closed",
+      code: "DATA_PLANE_STREAM_CLOSED",
+      message: "data-plane carrier closed before runtime stream completed: control_closed",
       retryable: true,
     },
   });
   assert.equal(streamTransitions.length, 1);
+  assert.equal(auditEvents.length, 1);
+  assert.deepEqual(auditEvents[0], {
+    eventType: "data_plane.stream_reset",
+    budId: tracker.budId,
+    streamId: "st_proxy",
+    eventData: {
+      reason: "transport_lost",
+      error: {
+        code: "DATA_PLANE_STREAM_CLOSED",
+        message: "data-plane carrier closed before runtime stream completed: control_closed",
+        retryable: true,
+      },
+      stream_type: "localhost_http_proxy",
+      device_session_id: tracker.deviceSessionId,
+      control_transport_session_id: tracker.controlTransportSessionId ?? null,
+      data_transport_session_id: tracker.transportSessionId ?? null,
+      transport_kind: tracker.transportKind,
+    },
+  });
   assert.equal(tracker.runtimeStreams.size, 0);
 });

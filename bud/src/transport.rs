@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
-use crate::proto_wire::encode_legacy_json_frame;
+use crate::proto_wire::encode_bud_frame;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransportKind {
@@ -77,7 +77,7 @@ impl TransportSender {
         match self.inner.as_ref() {
             TransportInner::WebSocket(_) => {
                 if self.envelope_binary {
-                    return self.send_message(Message::Binary(encode_legacy_json_frame(&payload)?));
+                    return self.send_message(Message::Binary(encode_bud_frame(&payload)?));
                 }
                 let text = serde_json::to_string(&payload)?;
                 self.send_message(Message::Text(text))

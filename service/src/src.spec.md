@@ -93,6 +93,15 @@ Environment-based configuration with defaults.
 | `grpcDataMaxConcurrentStreams` | `GRPC_DATA_MAX_CONCURRENT_STREAMS` | - | Optional grpc-js max concurrent HTTP/2 streams setting for data |
 | `grpcDataMaxSessionMemory` | `GRPC_DATA_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting for data |
 | `grpcDataEnableChannelz` | `GRPC_DATA_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle for data |
+| `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy streams |
+| `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy streams |
+| `dataPlaneMaxInFlightBytes` | `DATA_PLANE_MAX_IN_FLIGHT_BYTES` | 1MB | Cap on accumulated outbound stream credit per runtime stream |
+| `dataPlaneMaxConcurrentFileStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_FILE_STREAMS_PER_BUD` | 8 | Max active file streams per Bud across carriers |
+| `dataPlaneMaxConcurrentProxyStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_PROXY_STREAMS_PER_BUD` | 16 | Max active proxy streams per Bud across carriers |
+| `dataPlaneStreamIdleTimeoutMs` | `DATA_PLANE_STREAM_IDLE_TIMEOUT_MS` | 60s | Idle timeout before the service resets a file/proxy runtime stream |
+| `dataPlaneStreamTtlMs` | `DATA_PLANE_STREAM_TTL_MS` | 5m | Absolute service TTL for one file/proxy runtime stream |
+| `fileSessionDefaultMaxBytes` | `FILE_SESSION_DEFAULT_MAX_BYTES` | 64MB | Default file-session byte ceiling when the browser omits `max_bytes` |
+| `proxySessionMaxResponseBytes` | `PROXY_SESSION_MAX_RESPONSE_BYTES` | 16MB | Service-side max proxied response bytes per proxy request |
 | `betterAuthUrl` | `BETTER_AUTH_URL` | http://localhost:3000 | Public auth base URL |
 | `appBaseUrl` | `APP_BASE_URL` | `BETTER_AUTH_URL` or http://localhost:3000 | Browser origin used when generating Bud claim URLs |
 | `betterAuthBasePath` | fixed | `/api/auth` | Better Auth mount path and OAuth issuer path |
@@ -168,11 +177,11 @@ Phase 0 daemon-network upgrade helpers and compatibility protobuf wire codec for
 
 ### `proxy/` → [proxy/proxy.spec.md](./proxy/proxy.spec.md)
 
-Phase 4.2 localhost proxy helpers for strict target/method validation, gRPC control/data readiness checks, owned `proxy_session` persistence, daemon `proxy_open` dispatch, and GET/HEAD response streaming over `BudData.Attach`.
+Phase 4.2 localhost proxy helpers for strict target/method validation, carrier-neutral data-plane readiness checks, owned `proxy_session` persistence, daemon `proxy_open` dispatch, and bounded GET/HEAD response streaming over the selected WebSocket/HTTP2 carrier.
 
 ### `files/` → [files/files.spec.md](./files/files.spec.md)
 
-Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, gRPC control/data readiness checks, owned `file_session` persistence, daemon `file_open` dispatch, and stat/read/range response streaming over `BudData.Attach`.
+Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, carrier-neutral data-plane readiness checks, owned `file_session` persistence, daemon `file_open` dispatch, and bounded stat/read/range response streaming over the selected WebSocket/HTTP2 carrier.
 
 ### `grpc/` → [grpc.spec.md](./grpc/grpc.spec.md)
 
@@ -180,7 +189,7 @@ HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolate
 
 ### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
 
-Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation prefers active gRPC control streams, falls back to the existing WebSocket session tracker, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder also tracks active subordinate gRPC data streams used for terminal output and the Phase 4 generic stream credit foundation used by localhost proxy and file responses.
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation keeps WebSocket as the baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, credit caps, per-Bud stream concurrency, and generic stream dispatch used by localhost proxy and file responses.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 

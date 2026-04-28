@@ -302,6 +302,8 @@ message OperationStatus {
   string operation_id = 1;
   OperationState state = 2;
   BudError error = 3;
+  string operation_type = 4;
+  string updated_at = 5;
 }
 
 message StreamStatus {
@@ -313,6 +315,7 @@ message StreamStatus {
   uint64 receive_offset = 6;
   StreamResetReason reset_reason = 7;
   BudError error = 8;
+  string updated_at = 9;
 }
 
 message ReconciliationDecision {

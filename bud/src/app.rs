@@ -31,7 +31,7 @@ use crate::identity::{
     persist_identity, DeviceIdentity,
 };
 use crate::journal::{load_journal, DaemonJournal};
-use crate::proto_wire::{decode_legacy_json_frame, encode_legacy_json_frame};
+use crate::proto_wire::{decode_bud_frame, encode_bud_frame};
 use crate::protocol::{
     validate_inbound_envelope_proto, Envelope, ErrorFrame, FileOpenFrame, HelloAckFrame,
     HelloChallengeFrame, ProxyOpenFrame, RunFrame, StreamCloseFrame, StreamCreditFrame,
@@ -653,9 +653,8 @@ impl BudApp {
     > {
         let hello_frame = self.build_hello_frame().map_err(HandshakeError::Other)?;
         stream
-            .send(Message::Text(
-                serde_json::to_string(&hello_frame)
-                    .map_err(|err| HandshakeError::Other(err.into()))?,
+            .send(Message::Binary(
+                encode_bud_frame(&hello_frame).map_err(HandshakeError::Other)?,
             ))
             .await
             .map_err(|err| HandshakeError::Other(err.into()))?;
@@ -671,7 +670,7 @@ impl BudApp {
                 Ok(Message::Text(text)) => text,
                 Ok(Message::Binary(bytes)) => {
                     envelope_binary = true;
-                    decode_legacy_json_frame(&bytes).map_err(HandshakeError::Other)?
+                    decode_bud_frame(&bytes).map_err(HandshakeError::Other)?
                 }
                 Ok(Message::Ping(payload)) => {
                     stream
@@ -742,8 +741,7 @@ impl BudApp {
                     });
                     let proof_message = if envelope_binary {
                         Message::Binary(
-                            encode_legacy_json_frame(&proof_frame)
-                                .map_err(HandshakeError::Other)?,
+                            encode_bud_frame(&proof_frame).map_err(HandshakeError::Other)?,
                         )
                     } else {
                         Message::Text(
@@ -828,7 +826,7 @@ impl BudApp {
                             self.handle_server_frame(&text, &sender).await?;
                         }
                         Some(Ok(Message::Binary(bytes))) => {
-                            let text = decode_legacy_json_frame(&bytes)?;
+                            let text = decode_bud_frame(&bytes)?;
                             self.handle_server_frame(&text, &sender).await?;
                         }
                         Some(Ok(Message::Ping(payload))) => {
@@ -923,6 +921,58 @@ impl BudApp {
             "file_open" => {
                 let frame: FileOpenFrame = serde_json::from_str(text)?;
                 self.file_manager.handle_open(frame, sender.clone());
+            }
+            "stream_credit" => {
+                let frame: StreamCreditFrame = serde_json::from_str(text)?;
+                tracing::debug!(
+                    stream_id = %frame.stream_id,
+                    receive_offset = frame.receive_offset,
+                    credit_bytes = frame.credit_bytes,
+                    "WebSocket stream credit received"
+                );
+                self.proxy_manager.apply_credit(frame.clone()).await;
+                self.file_manager.apply_credit(frame).await;
+            }
+            "stream_data" => {
+                let frame: StreamDataFrame = serde_json::from_str(text)?;
+                warn!(
+                    stream_id = %frame.stream_id,
+                    stream_type = %frame.stream_type,
+                    "Rejecting unsupported inbound WebSocket data stream"
+                );
+                let reset = json!({
+                    "proto": PROTO_VERSION,
+                    "type": "stream_reset",
+                    "id": new_message_id(),
+                    "ts": now_millis(),
+                    "ext": {},
+                    "stream_id": frame.stream_id,
+                    "reason": "protocol_error",
+                    "error": {
+                        "code": "UNSUPPORTED_STREAM",
+                        "message": "daemon has no adapter for this stream type",
+                        "retryable": false
+                    }
+                });
+                send_transport_frame(sender, reset)?;
+            }
+            "stream_reset" => {
+                let frame: StreamResetFrame = serde_json::from_str(text)?;
+                warn!(
+                    stream_id = %frame.stream_id,
+                    reason = %frame.reason,
+                    "WebSocket runtime stream reset"
+                );
+                self.proxy_manager.apply_reset(frame.clone()).await;
+                self.file_manager.apply_reset(frame).await;
+            }
+            "stream_close" => {
+                let frame: StreamCloseFrame = serde_json::from_str(text)?;
+                tracing::debug!(
+                    stream_id = %frame.stream_id,
+                    final_offset = frame.final_offset,
+                    "WebSocket runtime stream closed"
+                );
             }
             "error" => {
                 let err: ErrorFrame = serde_json::from_str(text)?;
@@ -1153,6 +1203,10 @@ impl BudApp {
     fn device_capabilities(&self) -> Value {
         let terminal_available =
             self.args.terminal_enabled && self.terminal_manager.config.tmux_available;
+        let websocket_mode = self.args.grpc_control_url.is_none();
+        let grpc_data_mode =
+            self.args.grpc_control_url.is_some() && self.args.grpc_data_url.is_some();
+        let stream_frames_supported = websocket_mode || grpc_data_mode;
 
         json!({
             "max_concurrency": 1,
@@ -1164,15 +1218,16 @@ impl BudApp {
                 "version": 1,
                 "websocket_binary": true,
                 "h2_grpc_control": self.args.grpc_control_url.is_some(),
-                "h2_data": self.args.grpc_data_url.is_some()
+                "h2_data": self.args.grpc_data_url.is_some(),
+                "stream_frames": stream_frames_supported
             },
             "proxy": {
-                "localhost_http": self.args.grpc_control_url.is_some() && self.args.grpc_data_url.is_some(),
+                "localhost_http": stream_frames_supported,
                 "methods": ["GET", "HEAD"],
                 "target_hosts": ["127.0.0.1"]
             },
             "files": {
-                "workspace_read": self.args.grpc_control_url.is_some() && self.args.grpc_data_url.is_some(),
+                "workspace_read": stream_frames_supported,
                 "roots": ["workspace"],
                 "permissions": ["stat", "read", "range"]
             },

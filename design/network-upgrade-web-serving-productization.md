@@ -2,15 +2,16 @@
 
 ## Context
 
-The HTTP/2 upgrade PR includes localhost proxy foundations that are acceptable to merge as infrastructure:
+The network-upgrade PR includes localhost proxy foundations that are acceptable to merge as infrastructure. The open-source baseline is binary `BudEnvelope` stream frames on the authenticated daemon WebSocket; HTTP/2 gRPC data remains optional and QUIC remains a later performance carrier.
 
 - `proxy_session` schema and ownership helpers
 - proxy route contracts
-- service proxy edge for strict loopback `GET` / `HEAD`
+- service proxy edge for strict loopback `GET` / `HEAD` over the selected data-plane carrier
 - daemon localhost proxy adapter
 - typed `proxy_open` / `proxy_open_result` payloads
 - durable operation/stream state
-- real-daemon proxy smoke over HTTP/2 data
+- per-Bud stream concurrency, service-side response byte limits, chunk/credit caps, idle timeout, and stream TTL
+- real-daemon proxy smoke over WebSocket with gRPC disabled
 
 Those pieces are not the shipped web-serving product. Productization is deferred to this follow-on design.
 
@@ -37,7 +38,7 @@ The product should support common development-server use cases first:
 
 ## Current Foundation To Keep
 
-The already-added proxy DB routes and daemon/service adapter work can remain in the HTTP/2 upgrade PR as foundation and validation evidence.
+The already-added proxy DB routes and daemon/service adapter work can remain in the network-upgrade PR as foundation and validation evidence.
 
 Before exposing the feature as web serving, the follow-on PR must still harden:
 
@@ -59,7 +60,9 @@ Initial UX options:
 - user opens a port from a Bud/thread action menu
 - service returns a short-lived proxy URL with status metadata
 
-The browser should not know whether bytes flowed over QUIC, HTTP/2, or WebSocket fallback. It only sees service-owned HTTPS routes.
+The browser should not know whether bytes flowed over WebSocket, HTTP/2, or future QUIC. It only sees service-owned HTTPS routes.
+
+Proxy sessions should be created from an explicit user action for the first product version: a detected localhost URL/port action, or a Bud/thread menu action. Auto-creating proxy sessions from every mentioned port would create surprising network reachability and noisy audit records.
 
 ## Service Design
 
@@ -68,6 +71,7 @@ Existing lower-level contract:
 - `POST /api/buds/:budId/proxy-sessions`
 - `GET /api/proxy/:proxySessionId/*`
 - `HEAD /api/proxy/:proxySessionId/*`
+- WebSocket-first stream transport through carrier-neutral `DataPlane*` selectors
 
 Service requirements for productization:
 
@@ -80,7 +84,7 @@ Service requirements for productization:
 - sanitize request and response headers
 - strip Bud auth cookies and hop-by-hop headers
 - enforce method, body, response, stream, and duration limits
-- audit session create/revoke/open/deny/expire outcomes
+- audit session create/revoke/open/deny/reset/close/expire outcomes
 
 ## Daemon Policy
 
@@ -100,12 +104,12 @@ Initial daemon proxy policy should remain strict:
 Web serving should use the same stream selector as file serving:
 
 ```text
-QUIC data stream, if healthy
-  -> HTTP/2 BudData.Attach fallback
-  -> bounded WebSocket fallback, if explicitly enabled
+WebSocket control+data baseline
+  -> optional HTTP/2 BudData.Attach when configured and healthy
+  -> future QUIC data stream when implemented and healthy
 ```
 
-The product can start on HTTP/2 only, but the API should be transport-independent from day one. QUIC should improve asset concurrency and head-of-line behavior, not change the route contract.
+The API should be transport-independent from day one. QUIC should improve asset concurrency and head-of-line behavior, not change the route contract.
 
 ## Validation
 
@@ -113,6 +117,8 @@ Required before product exposure:
 
 - owner and non-owner route tests
 - unauthenticated route tests
+- WebSocket-only proxy smoke with gRPC disabled
+- service limit tests for concurrency, response byte ceiling, chunk/credit, idle, and TTL paths
 - daemon target-policy denial tests
 - local HTTP server smoke through the production proxy edge
 - streaming response tests

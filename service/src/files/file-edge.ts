@@ -7,11 +7,12 @@ import { db } from "../db/client.js";
 import { fileSessionTable } from "../db/schema.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import {
-  getActiveGrpcDataSessionTracker,
-  registerGrpcDataRuntimeStream,
-  sendGrpcDataFrame,
-} from "../transport/grpc-data-router.js";
-import { grpcDaemonTransportRouter } from "../transport/grpc-daemon-router.js";
+  getActiveDataPlaneSessionForBud,
+  checkDataPlaneRuntimeStreamCapacity,
+  registerDataPlaneRuntimeStream,
+  sendDataPlaneControlFrame,
+  sendDataPlaneFrame,
+} from "../transport/data-plane-router.js";
 import {
   FILE_READ_STREAM_TYPE,
   type FileSessionPermission,
@@ -63,15 +64,48 @@ export async function openFileEdgeStream(args: {
     });
   }
 
-  const dataTracker = getActiveGrpcDataSessionTracker(args.session.budId, args.transportStatus.deviceSessionId);
+  const dataTracker = getActiveDataPlaneSessionForBud({
+    budId: args.session.budId,
+    deviceSessionId: args.transportStatus.deviceSessionId,
+    streamType: FILE_READ_STREAM_TYPE,
+    transportKind: args.transportStatus.transportKind,
+  });
   if (!dataTracker) {
     return args.reply.status(424).send({
-      error: "GRPC_DATA_UNAVAILABLE",
-      message: "Bud data stream detached before file request could start",
+      error: "DATA_PLANE_UNAVAILABLE",
+      message: "Bud data-plane carrier detached before file request could start",
     });
   }
 
   const daemonStateStore = new DaemonStateStore();
+  const capacity = checkDataPlaneRuntimeStreamCapacity({
+    budId: args.session.budId,
+    streamType: FILE_READ_STREAM_TYPE,
+    maxConcurrentStreams: config.dataPlaneMaxConcurrentFileStreamsPerBud,
+  });
+  if (!capacity.ok) {
+    await daemonStateStore.appendAuditEvent({
+      eventType: "file.stream_denied",
+      budId: args.session.budId,
+      userId: args.viewer.userId,
+      createdByUserId: args.viewer.userId,
+      eventData: {
+        denied_by: "service",
+        reason: "concurrent_stream_limit",
+        file_session_id: args.session.fileSessionId,
+        audit_correlation_id: args.session.auditCorrelationId,
+        active_streams: capacity.activeStreams,
+        max_concurrent_streams: config.dataPlaneMaxConcurrentFileStreamsPerBud,
+        transport_kind: dataTracker.transportKind,
+        data_transport_session_id: dataTracker.transportSessionId ?? null,
+      },
+    });
+    return args.reply.status(429).send({
+      error: capacity.code,
+      message: capacity.message,
+      max_concurrent_streams: config.dataPlaneMaxConcurrentFileStreamsPerBud,
+    });
+  }
   const operationId = `op_${ulid()}`;
   const streamId = `st_${ulid()}`;
 
@@ -127,14 +161,32 @@ export async function openFileEdgeStream(args: {
       root_key: args.session.rootKey,
       relative_path: args.session.relativePath,
       mode,
+      transport_kind: dataTracker.transportKind,
+      control_transport_session_id: args.transportStatus.controlTransportSessionId,
       data_transport_session_id: args.transportStatus.dataTransportSessionId,
+      max_chunk_bytes: dataTracker.maxChunkBytes,
+      initial_credit_bytes: dataTracker.initialCreditBytes,
+      max_in_flight_bytes: dataTracker.maxInFlightBytes,
     },
   });
 
   let responseCompleted = false;
   let runtime: FileRuntimeStream;
   let onClientClosed: () => void = () => undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let ttlTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearLimitTimers = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    if (ttlTimer) {
+      clearTimeout(ttlTimer);
+      ttlTimer = null;
+    }
+  };
   const cleanup = () => {
+    clearLimitTimers();
     deleteFileRuntimeStream(streamId);
     dataTracker.runtimeStreams.delete(streamId);
     args.request.raw.off("aborted", onClientClosed);
@@ -148,10 +200,12 @@ export async function openFileEdgeStream(args: {
       .where(eq(fileSessionTable.activeStreamId, streamId))
       .catch(() => null);
   };
-  runtime = new FileRuntimeStream(streamId, operationId, cleanup);
+  runtime = new FileRuntimeStream(streamId, operationId, cleanup, {
+    maxReceivedBytes: args.session.maxBytes,
+  });
   const resetRemote = async (reason: string, error: FileOpenError) => {
     try {
-      await sendGrpcDataFrame(dataTracker, {
+      await sendDataPlaneFrame(dataTracker, {
         proto: PROTO_VERSION,
         type: "stream_reset",
         id: `msg_${ulid()}`,
@@ -165,6 +219,71 @@ export async function openFileEdgeStream(args: {
       // Durable transitions below record the local cancellation even when the
       // peer data channel has already disappeared.
     }
+  };
+  const resetFromServiceLimit = async (reason: string, error: FileOpenError) => {
+    if (runtime.isComplete() || responseCompleted) {
+      return;
+    }
+    await daemonStateStore
+      .appendAuditEvent({
+        eventType: "file.stream_denied",
+        budId: args.session.budId,
+        userId: args.viewer.userId,
+        operationId,
+        streamId,
+        createdByUserId: args.viewer.userId,
+        eventData: {
+          denied_by: "service",
+          reason,
+          error,
+          file_session_id: args.session.fileSessionId,
+          audit_correlation_id: args.session.auditCorrelationId,
+          transport_kind: dataTracker.transportKind,
+          data_transport_session_id: dataTracker.transportSessionId ?? null,
+        },
+      })
+      .catch(() => null);
+    await resetRemote(reason, error);
+    runtime.handleReset({ reason, error });
+    await daemonStateStore
+      .transitionStream({
+        streamId,
+        from: ["opening", "open", "half_closed_local", "half_closed_remote"],
+        to: "reset",
+        resetReason: reason,
+        error,
+      })
+      .catch(() => null);
+    await daemonStateStore
+      .transitionOperation({
+        operationId,
+        from: ["offered", "accepted", "running"],
+        to: "failed",
+        error,
+      })
+      .catch(() => null);
+  };
+  const refreshIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+      void resetFromServiceLimit("idle_timeout", {
+        code: "STREAM_IDLE_TIMEOUT",
+        message: "file stream exceeded the service idle timeout",
+        retryable: true,
+      });
+    }, config.dataPlaneStreamIdleTimeoutMs);
+  };
+  const startLimitTimers = () => {
+    refreshIdleTimer();
+    ttlTimer = setTimeout(() => {
+      void resetFromServiceLimit("ttl_exceeded", {
+        code: "STREAM_TTL_EXCEEDED",
+        message: "file stream exceeded the service stream TTL",
+        retryable: true,
+      });
+    }, config.dataPlaneStreamTtlMs);
   };
   onClientClosed = () => {
     if (runtime.isComplete() || responseCompleted) {
@@ -204,12 +323,56 @@ export async function openFileEdgeStream(args: {
   };
 
   args.request.raw.once("aborted", onClientClosed);
+  startLimitTimers();
   registerFileRuntimeStream(runtime);
-  registerGrpcDataRuntimeStream(dataTracker, {
+  registerDataPlaneRuntimeStream(dataTracker, {
     streamId,
     streamType: FILE_READ_STREAM_TYPE,
-    initialReceiveCreditBytes: config.grpcDataInitialCreditBytes,
-    onData: (chunk) => runtime.handleData(chunk),
+    initialReceiveCreditBytes: dataTracker.initialCreditBytes,
+    onData: async (chunk) => {
+      refreshIdleTimer();
+      try {
+        await runtime.handleData(chunk);
+      } catch (err) {
+        const error = {
+          code:
+            err instanceof Error && err.message.includes("exceeded max bytes")
+              ? "FILE_RESPONSE_TOO_LARGE"
+              : "FILE_RESPONSE_STREAM_FAILED",
+          message: err instanceof Error ? err.message : "file response stream failed",
+          retryable: false,
+        };
+        await daemonStateStore
+          .appendAuditEvent({
+            eventType: "file.stream_denied",
+            budId: args.session.budId,
+            userId: args.viewer.userId,
+            operationId,
+            streamId,
+            createdByUserId: args.viewer.userId,
+            eventData: {
+              denied_by: "service",
+              reason: "response_consumer_failed",
+              error,
+              file_session_id: args.session.fileSessionId,
+              audit_correlation_id: args.session.auditCorrelationId,
+              transport_kind: dataTracker.transportKind,
+              data_transport_session_id: dataTracker.transportSessionId ?? null,
+            },
+          })
+          .catch(() => null);
+        await daemonStateStore
+          .transitionOperation({
+            operationId,
+            from: ["offered", "accepted", "running"],
+            to: "failed",
+            error,
+          })
+          .catch(() => null);
+        throw err;
+      }
+      refreshIdleTimer();
+    },
     onReset: async (frame) => {
       runtime.handleReset({
         reason: frame.reason,
@@ -277,7 +440,7 @@ export async function openFileEdgeStream(args: {
     },
   });
 
-  const sent = grpcDaemonTransportRouter.sendFrameToBud(args.session.budId, {
+  const sent = sendDataPlaneControlFrame(dataTracker, {
     proto: PROTO_VERSION,
     type: "file_open",
     id: `msg_${ulid()}`,
@@ -295,19 +458,35 @@ export async function openFileEdgeStream(args: {
     ...(range.rangeSuffixBytes !== undefined ? { range_suffix_bytes: range.rangeSuffixBytes } : {}),
     ...(args.session.contentIdentity ? { expected_content_identity: args.session.contentIdentity } : {}),
     max_bytes: args.session.maxBytes,
-    initial_credit_bytes: config.grpcDataInitialCreditBytes,
-    max_chunk_bytes: config.grpcDataMaxChunkBytes,
+    initial_credit_bytes: dataTracker.initialCreditBytes,
+    max_chunk_bytes: dataTracker.maxChunkBytes,
   });
   if (!sent) {
     cleanup();
+    await daemonStateStore.appendAuditEvent({
+      eventType: "file.stream_denied",
+      budId: args.session.budId,
+      userId: args.viewer.userId,
+      operationId,
+      streamId,
+      createdByUserId: args.viewer.userId,
+      eventData: {
+        denied_by: "service",
+        reason: "carrier_refused_open",
+        file_session_id: args.session.fileSessionId,
+        audit_correlation_id: args.session.auditCorrelationId,
+        transport_kind: dataTracker.transportKind,
+        data_transport_session_id: dataTracker.transportSessionId ?? null,
+      },
+    });
     await daemonStateStore.transitionStream({
       streamId,
       from: ["opening"],
       to: "reset",
       resetReason: "transport_lost",
       error: {
-        code: "GRPC_CONTROL_UNAVAILABLE",
-        message: "gRPC control stream refused file_open",
+        code: "DATA_PLANE_UNAVAILABLE",
+        message: "selected data-plane carrier refused file_open",
         retryable: true,
       },
     });
@@ -316,14 +495,14 @@ export async function openFileEdgeStream(args: {
       from: ["offered"],
       to: "rejected",
       error: {
-        code: "GRPC_CONTROL_UNAVAILABLE",
-        message: "gRPC control stream refused file_open",
+        code: "DATA_PLANE_UNAVAILABLE",
+        message: "selected data-plane carrier refused file_open",
         retryable: true,
       },
     });
     return args.reply.status(424).send({
-      error: "GRPC_CONTROL_UNAVAILABLE",
-      message: "gRPC control stream refused file_open",
+      error: "DATA_PLANE_UNAVAILABLE",
+      message: "selected data-plane carrier refused file_open",
     });
   }
 
@@ -375,6 +554,23 @@ export async function openFileEdgeStream(args: {
       message: "Bud rejected the file stream",
       retryable: false,
     };
+    await daemonStateStore.appendAuditEvent({
+      eventType: "file.stream_denied",
+      budId: args.session.budId,
+      userId: args.viewer.userId,
+      operationId,
+      streamId,
+      createdByUserId: args.viewer.userId,
+      eventData: {
+        denied_by: "daemon",
+        reason: "open_rejected",
+        error,
+        file_session_id: args.session.fileSessionId,
+        audit_correlation_id: args.session.auditCorrelationId,
+        transport_kind: dataTracker.transportKind,
+        data_transport_session_id: dataTracker.transportSessionId ?? null,
+      },
+    });
     await daemonStateStore.transitionStream({
       streamId,
       from: ["opening"],

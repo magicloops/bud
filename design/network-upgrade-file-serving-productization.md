@@ -2,9 +2,11 @@
 
 ## Context
 
-The network-upgrade PR adds the daemon/service file-stream foundation over HTTP/2 gRPC control plus `BudData.Attach`, including `file_session` state, route contracts, daemon-side file stat/read/range handling, stream credits, typed resets, and real-daemon smoke coverage.
+The network-upgrade PR adds the daemon/service file-stream foundation over the carrier-neutral data-plane runtime. The open-source baseline is binary `BudEnvelope` stream frames on the authenticated daemon WebSocket; HTTP/2 gRPC data remains an optional carrier and QUIC remains a later optimization.
 
-This design covers the follow-on product work needed to turn that foundation into user-facing file viewing. File viewing should not be treated as complete in the HTTP/2 upgrade PR because it touches the web UI, viewer selection, user-facing states, and product authorization flows.
+The foundation includes `file_session` state, route contracts, daemon-side file stat/read/range handling, stream credits, typed resets, per-Bud stream limits, service-side byte ceilings, and real-daemon WebSocket-only smoke coverage.
+
+This design covers the follow-on product work needed to turn that foundation into user-facing file viewing. File viewing should not be treated as complete in the network-upgrade PR because it touches the web UI, viewer selection, user-facing states, and product authorization flows.
 
 ## Goal
 
@@ -27,7 +29,6 @@ The agent should not need to know about file-session creation, access policy, si
 - agent-managed file access
 - direct browser-to-daemon file reads
 - QUIC implementation
-- WebSocket fallback implementation
 - web-serving proxy productization
 
 ## Product Contract
@@ -49,7 +50,6 @@ Initial flow:
 Open questions:
 
 - whether the path action is inline on every detected path or shown through a contextual menu
-- whether file sessions are created lazily on click or preflighted when rendering a message
 - how much terminal transcript path detection should do before it becomes noisy
 - whether image/PDF preview is part of this follow-on or a later viewer expansion
 
@@ -62,8 +62,12 @@ The existing foundation can remain the lower-level carrier:
 - `HEAD /api/files/:fileSessionId`
 - range reads with content identity
 - `file_session` ownership, TTL, revocation, max bytes, and audit fields
+- WebSocket-first stream transport through carrier-neutral `DataPlane*` selectors
+- service-side concurrency, chunk, in-flight, idle, TTL, and response byte limits
 
 Productization may add a browser-facing helper such as `POST /api/threads/:threadId/open-file` if that better captures the ownership context. That helper should still produce the same `file_session` and file edge URL.
+
+Sessions should be lazy-on-click for the first product version. Pre-creating sessions while rendering agent output risks expanding access to paths the user never opens, creates noisy audit records, and increases expiry/reconciliation work. The UI can still pre-detect path-like text and only create the session when the user asks to open it.
 
 Service requirements:
 
@@ -74,8 +78,8 @@ Service requirements:
 - return `404` for signed-in non-owners
 - keep session TTL short
 - filter file-session list/read helpers by owner in SQL
-- record session create/revoke/open/deny/audit events
-- enforce max bytes, MIME/type sniffing limits, and response header policy
+- record session create/revoke/open/deny/reset/close audit events
+- enforce max bytes, MIME/type sniffing limits, stream limits, and response header policy
 
 ## Daemon Policy
 
@@ -96,15 +100,15 @@ The service must never treat a user-clicked path as sufficient authorization by 
 
 ## Transport
 
-File viewing should use the transport selector when it exists:
+File viewing should use the transport selector internally:
 
 ```text
-QUIC data stream, if healthy
-  -> HTTP/2 BudData.Attach fallback
-  -> bounded WebSocket fallback, if explicitly enabled
+WebSocket control+data baseline
+  -> optional HTTP/2 BudData.Attach when configured and healthy
+  -> future QUIC data stream when implemented and healthy
 ```
 
-The follow-on file product can ship on HTTP/2 only if QUIC and WebSocket fallback are still deferred. The viewer contract should not expose which daemon transport carried the bytes.
+The viewer contract must not expose which daemon transport carried the bytes. Product code should call service-owned routes and render states based on HTTP/session status, not carrier type.
 
 ## Validation
 
@@ -113,9 +117,11 @@ Required before product exposure:
 - route auth tests for unauthenticated `401`
 - route auth tests for signed-in non-owner `404`
 - file-session owner filtering tests
+- WebSocket-only file smoke with gRPC disabled
+- service limit tests for concurrency, byte ceiling, chunk/credit, idle, and TTL paths
 - path normalization and rejection tests
 - web viewer tests for markdown, code/text fallback, expired, denied, offline, and unsupported states
-- real-daemon file smoke remains green with QUIC disabled
+- real-daemon file smoke remains green with HTTP/2 and QUIC disabled
 - web lint/build/test coverage if frontend files change
 
 ## Exit Criteria

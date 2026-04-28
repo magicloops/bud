@@ -10,6 +10,10 @@ const toNumber = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+const toPositiveInteger = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
 
 const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
 const toOptionalNumber = (value: string | undefined) => {
@@ -93,6 +97,18 @@ const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortS
 const apnsKeyId = toNullable(process.env.APNS_KEY_ID);
 const apnsTeamId = toNullable(process.env.APNS_TEAM_ID);
 const apnsKeyFile = toNullable(process.env.APNS_KEY_FILE);
+const dataPlaneMaxChunkBytes = toPositiveInteger(
+  process.env.DATA_PLANE_MAX_CHUNK_BYTES ?? process.env.GRPC_DATA_MAX_CHUNK_BYTES,
+  16 * 1024,
+);
+const dataPlaneInitialCreditBytes = toPositiveInteger(
+  process.env.DATA_PLANE_INITIAL_CREDIT_BYTES ?? process.env.GRPC_DATA_INITIAL_CREDIT_BYTES,
+  1024 * 1024,
+);
+const dataPlaneMaxInFlightBytes = toPositiveInteger(
+  process.env.DATA_PLANE_MAX_IN_FLIGHT_BYTES,
+  dataPlaneInitialCreditBytes,
+);
 
 export const config = {
   port: defaultPort,
@@ -144,6 +160,30 @@ export const config = {
   grpcDataMaxConcurrentStreams: toOptionalNumber(process.env.GRPC_DATA_MAX_CONCURRENT_STREAMS),
   grpcDataMaxSessionMemory: toOptionalNumber(process.env.GRPC_DATA_MAX_SESSION_MEMORY),
   grpcDataEnableChannelz: toOptionalNumber(process.env.GRPC_DATA_ENABLE_CHANNELZ),
+  dataPlaneMaxChunkBytes,
+  dataPlaneInitialCreditBytes,
+  dataPlaneMaxInFlightBytes,
+  dataPlaneMaxConcurrentFileStreamsPerBud: toPositiveInteger(
+    process.env.DATA_PLANE_MAX_CONCURRENT_FILE_STREAMS_PER_BUD,
+    8,
+  ),
+  dataPlaneMaxConcurrentProxyStreamsPerBud: toPositiveInteger(
+    process.env.DATA_PLANE_MAX_CONCURRENT_PROXY_STREAMS_PER_BUD,
+    16,
+  ),
+  dataPlaneStreamIdleTimeoutMs: toPositiveInteger(
+    process.env.DATA_PLANE_STREAM_IDLE_TIMEOUT_MS,
+    60_000,
+  ),
+  dataPlaneStreamTtlMs: toPositiveInteger(process.env.DATA_PLANE_STREAM_TTL_MS, 5 * 60_000),
+  fileSessionDefaultMaxBytes: toPositiveInteger(
+    process.env.FILE_SESSION_DEFAULT_MAX_BYTES,
+    64 * 1024 * 1024,
+  ),
+  proxySessionMaxResponseBytes: toPositiveInteger(
+    process.env.PROXY_SESSION_MAX_RESPONSE_BYTES,
+    16 * 1024 * 1024,
+  ),
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",

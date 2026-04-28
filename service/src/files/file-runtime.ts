@@ -34,11 +34,14 @@ export class FileRuntimeStream {
   private openResolve: ((frame: FileOpenResultFrame) => void) | null = null;
   private openReject: ((err: Error) => void) | null = null;
   private completed = false;
+  private closedBeforeOpenResult = false;
+  private receivedBytes = 0;
 
   constructor(
     readonly streamId: string,
     readonly operationId: string,
     private readonly cleanup: () => void,
+    private readonly options: { maxReceivedBytes?: number } = {},
   ) {
     this.body.on("error", () => {
       // Stream errors are surfaced through the open promise or Fastify response.
@@ -76,11 +79,15 @@ export class FileRuntimeStream {
   }
 
   handleOpenResult(frame: FileOpenResultFrame): void {
-    if (this.completed) {
+    if (this.completed && !this.closedBeforeOpenResult) {
       return;
     }
     this.openResult = frame;
     this.openResolve?.(frame);
+    if (this.closedBeforeOpenResult) {
+      this.completed = true;
+      this.cleanup();
+    }
   }
 
   async handleData(chunk: Buffer): Promise<void> {
@@ -90,6 +97,19 @@ export class FileRuntimeStream {
     if (chunk.byteLength === 0) {
       return;
     }
+    const nextReceivedBytes = this.receivedBytes + chunk.byteLength;
+    if (
+      this.options.maxReceivedBytes !== undefined &&
+      nextReceivedBytes > this.options.maxReceivedBytes
+    ) {
+      const err = new Error(`file response exceeded max bytes ${this.options.maxReceivedBytes}`);
+      this.completed = true;
+      this.openReject?.(err);
+      this.body.destroy(err);
+      this.cleanup();
+      throw err;
+    }
+    this.receivedBytes = nextReceivedBytes;
     if (this.body.write(chunk)) {
       return;
     }
@@ -122,6 +142,11 @@ export class FileRuntimeStream {
 
   handleClose(): void {
     if (this.completed) {
+      return;
+    }
+    if (!this.openResult) {
+      this.closedBeforeOpenResult = true;
+      this.body.end();
       return;
     }
     this.completed = true;

@@ -10,7 +10,9 @@ import { hashEnrollmentToken } from "../auth/enrollment-token.js";
 import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable, enrollmentTokenTable } from "../db/schema.js";
-import { decodeLegacyJsonFrame, encodeLegacyJsonFrame } from "../proto/wire.js";
+import { handleFileOpenResult as handleFileOpenRuntimeResult } from "../files/file-runtime.js";
+import { decodeBudFrame, encodeBudFrame, UnsupportedBudEnvelopePayloadError } from "../proto/wire.js";
+import { handleProxyOpenResult as handleProxyOpenRuntimeResult } from "../proxy/proxy-runtime.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type {
@@ -19,6 +21,14 @@ import type {
   TerminalPromptType,
   TerminalReadyTrigger,
 } from "../terminal/types.js";
+import {
+  finalizeDataPlaneSessionTracker,
+  finalizeDataPlaneSessionsForControlTracker,
+  getActiveDataPlaneSessionForBud,
+  handleDataPlaneStreamFrame as handleRuntimeDataPlaneStreamFrame,
+  registerActiveDataPlaneSessionTracker,
+  type DataPlaneSessionTracker,
+} from "../transport/data-plane-router.js";
 import { logGatewayDebug } from "./debug.js";
 import {
   EnvelopeSchema,
@@ -72,7 +82,19 @@ export class BudConnection {
   }
 
   private async handleIncoming(raw: RawData): Promise<void> {
-    const decoded = this.decodeIncomingFrame(raw);
+    let decoded: string | null;
+    try {
+      decoded = this.decodeIncomingFrame(raw);
+    } catch (err) {
+      const violation = webSocketProtocolViolationFromError(err);
+      this.server.log.warn(
+        { err, code: violation.code, component: "ws_gateway" },
+        "Rejected invalid WebSocket protocol frame",
+      );
+      await this.sendError(violation.code, violation.message);
+      this.socket.close();
+      return;
+    }
     if (!decoded) {
       await this.sendError("PROTO_VERSION_MISMATCH", "Invalid frame encoding");
       this.socket.close();
@@ -83,6 +105,12 @@ export class BudConnection {
 
   private decodeIncomingFrame(raw: RawData): string | null {
     if (typeof raw === "string") {
+      if (this.requiresEnvelopeBinaryFrame()) {
+        throw new WebSocketProtocolViolation(
+          "PROTO_VERSION_MISMATCH",
+          "Binary BudEnvelope frames are required after capability negotiation",
+        );
+      }
       return raw;
     }
     if (Buffer.isBuffer(raw)) {
@@ -100,12 +128,27 @@ export class BudConnection {
   private decodeIncomingBuffer(raw: Buffer): string {
     const text = raw.toString("utf-8");
     if (text.trimStart().startsWith("{")) {
+      if (this.requiresEnvelopeBinaryFrame()) {
+        throw new WebSocketProtocolViolation(
+          "PROTO_VERSION_MISMATCH",
+          "Binary BudEnvelope frames are required after capability negotiation",
+        );
+      }
       return text;
     }
     try {
-      return JSON.stringify(decodeLegacyJsonFrame(raw));
+      return JSON.stringify(decodeBudFrame(raw));
     } catch (err) {
-      this.server.log.warn({ err }, "Failed to decode protobuf BudEnvelope; falling back to JSON text");
+      if (err instanceof UnsupportedBudEnvelopePayloadError) {
+        throw new WebSocketProtocolViolation("UNSUPPORTED_PAYLOAD", err.message);
+      }
+      if (this.requiresEnvelopeBinaryFrame()) {
+        throw new WebSocketProtocolViolation(
+          "PROTO_VERSION_MISMATCH",
+          "Invalid binary BudEnvelope frame",
+        );
+      }
+      this.server.log.warn({ err }, "Failed to decode protobuf BudEnvelope; treating as pre-negotiation JSON text");
       return text;
     }
   }
@@ -155,6 +198,18 @@ export class BudConnection {
         break;
       case "reconnect_report":
         await this.handleReconnectReport(parsed);
+        break;
+      case "stream_data":
+      case "stream_credit":
+      case "stream_reset":
+      case "stream_close":
+        await this.handleDataPlaneStreamFrame(parsed);
+        break;
+      case "proxy_open_result":
+        await this.handleProxyOpenResult(parsed);
+        break;
+      case "file_open_result":
+        await this.handleFileOpenResult(parsed);
         break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
@@ -298,6 +353,11 @@ export class BudConnection {
       return;
     }
     const frame = result.data;
+    if (!helloSupportsEnvelopeBinary(frame)) {
+      await this.sendError("PROTO_VERSION_MISMATCH", "BudEnvelope websocket_binary capability is required");
+      this.socket.close();
+      return;
+    }
     if (frame.token) {
       await this.handleEnrollmentHello(frame);
       return;
@@ -560,6 +620,78 @@ export class BudConnection {
     });
   }
 
+  private async handleDataPlaneStreamFrame(raw: unknown): Promise<void> {
+    if (this.state.kind !== "connected") {
+      this.server.log.warn({ component: "ws_gateway" }, "stream frame received before hello");
+      return;
+    }
+    const tracker = this.getCurrentTracker();
+    if (!tracker || !tracker.supportsStreamFrames) {
+      this.server.log.warn(
+        { budId: this.state.budId, component: "ws_gateway" },
+        "Ignoring WebSocket stream frame from session without stream-frame support",
+      );
+      return;
+    }
+    const dataTracker = getActiveDataPlaneSessionForBud({
+      budId: this.state.budId,
+      deviceSessionId: tracker.deviceSessionId ?? this.state.sessionId,
+      transportKind: "websocket",
+      includeDraining: true,
+    });
+    if (!dataTracker) {
+      this.server.log.warn(
+        { budId: this.state.budId, component: "ws_gateway" },
+        "Ignoring WebSocket stream frame without active data-plane tracker",
+      );
+      return;
+    }
+    await this.noteDataPlaneActivity(dataTracker);
+    await handleRuntimeDataPlaneStreamFrame(dataTracker, raw, {
+      logger: this.server.log,
+      daemonStateStore: this.daemonStateStore,
+      component: "ws_gateway",
+    });
+  }
+
+  private async handleProxyOpenResult(raw: unknown): Promise<void> {
+    const frame = handleProxyOpenRuntimeResult(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid proxy_open_result frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        streamId: frame.stream_id,
+        operationId: frame.operation_id ?? null,
+        accepted: frame.accepted,
+        statusCode: frame.status_code ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled proxy_open_result frame",
+    );
+  }
+
+  private async handleFileOpenResult(raw: unknown): Promise<void> {
+    const frame = handleFileOpenRuntimeResult(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid file_open_result frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        streamId: frame.stream_id,
+        operationId: frame.operation_id ?? null,
+        accepted: frame.accepted,
+        statusCode: frame.status_code ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled file_open_result frame",
+    );
+  }
+
   private async registerSession(budId: string, sessionId: string, hello: HelloFrame) {
     const deviceSession = await this.daemonStateStore.registerDeviceSession({
       deviceSessionId: sessionId,
@@ -579,15 +711,55 @@ export class BudConnection {
       drainState: "active",
       lastHeartbeat: Date.now(),
       socket: this.socket,
-      supportsEnvelopeBinary: this.peerSupportsEnvelopeBinary()
+      supportsEnvelopeBinary: this.peerSupportsEnvelopeBinary(),
+      supportsStreamFrames: helloSupportsStreamFrames(hello),
+      streamFamilies: streamFamiliesForHello(hello),
+      dataTransportKind: "websocket",
     };
     const previous = registerActiveSessionTracker(sessions, tracker);
     this.tracker = tracker;
+    if (tracker.supportsEnvelopeBinary && tracker.supportsStreamFrames && tracker.streamFamilies?.size) {
+      let dataTracker: DataPlaneSessionTracker;
+      dataTracker = {
+        budId,
+        deviceSessionId: deviceSession.deviceSessionId,
+        controlTransportSessionId: transportSession.transportSessionId,
+        transportSessionId: transportSession.transportSessionId,
+        transportKind: "websocket",
+        role: "control_data",
+        drainState: "active",
+        lastSeenAt: Date.now(),
+        lastSeenWrite: Date.now(),
+        streams: new Set(tracker.streamFamilies),
+        framesReceived: 0,
+        bytesReceived: 0,
+        runtimeStreams: new Map(),
+        maxChunkBytes: config.dataPlaneMaxChunkBytes,
+        initialCreditBytes: config.dataPlaneInitialCreditBytes,
+        maxInFlightBytes: config.dataPlaneMaxInFlightBytes,
+        sendFrame: (frame) => this.sendWebSocketDataPlaneFrame(tracker, frame),
+        isActive: () =>
+          tracker.socket.readyState === tracker.socket.OPEN &&
+          getActiveSessionTracker(sessions, budId, tracker) === tracker,
+      };
+      const previousDataTracker = registerActiveDataPlaneSessionTracker(dataTracker);
+      if (previousDataTracker && previousDataTracker !== dataTracker) {
+        previousDataTracker.drainState = "draining";
+        await finalizeDataPlaneSessionTracker({
+          tracker: previousDataTracker,
+          reason: "superseded",
+          logger: this.server.log,
+          daemonStateStore: this.daemonStateStore,
+        });
+      }
+    }
     this.server.log.info(
       {
         budId,
         sessionId,
-        replacedSessionId: previous?.sessionId ?? null
+        replacedSessionId: previous?.sessionId ?? null,
+        supportsStreamFrames: tracker.supportsStreamFrames ?? false,
+        streamFamilies: tracker.streamFamilies ? Array.from(tracker.streamFamilies) : [],
       },
       previous ? "Replaced active bud session tracker" : "Registered active bud session tracker"
     );
@@ -678,6 +850,19 @@ export class BudConnection {
     await markBudOffline(budId, this.server);
   }
 
+  private async noteDataPlaneActivity(tracker: DataPlaneSessionTracker): Promise<void> {
+    const now = Date.now();
+    tracker.lastSeenAt = now;
+    if (tracker.lastSeenWrite && now - tracker.lastSeenWrite < 5_000) {
+      return;
+    }
+    tracker.lastSeenWrite = now;
+    await this.daemonStateStore.recordHeartbeat({
+      deviceSessionId: tracker.deviceSessionId,
+      transportSessionId: tracker.transportSessionId,
+    });
+  }
+
   private async closeTrackerTransport(
     tracker: SessionTracker | null | undefined,
     reason: string,
@@ -686,6 +871,13 @@ export class BudConnection {
     if (!tracker) {
       return;
     }
+    await finalizeDataPlaneSessionsForControlTracker({
+      tracker,
+      reason,
+      markDraining: options.markDraining,
+      logger: this.server.log,
+      daemonStateStore: this.daemonStateStore,
+    });
     if (tracker.transportSessionId) {
       await this.daemonStateStore.closeTransportSession({
         transportSessionId: tracker.transportSessionId,
@@ -737,10 +929,42 @@ export class BudConnection {
       return;
     }
     if (options.useEnvelopeBinary ?? this.peerSupportsEnvelopeBinary()) {
-      this.socket.send(encodeLegacyJsonFrame(frame));
+      this.socket.send(encodeBudFrame(frame));
       return;
     }
     this.socket.send(JSON.stringify(frame));
+  }
+
+  private async sendWebSocketDataPlaneFrame(
+    tracker: SessionTracker,
+    frame: Record<string, unknown>,
+  ): Promise<void> {
+    if (tracker.socket.readyState !== tracker.socket.OPEN) {
+      throw new Error("WebSocket data-plane carrier is not active");
+    }
+    const payload = encodeBudFrame(frame);
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const done = (err?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve();
+      };
+      try {
+        tracker.socket.send(payload, done);
+        if (tracker.socket.send.length < 2) {
+          done();
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 
   private peerSupportsEnvelopeBinary(): boolean {
@@ -749,6 +973,31 @@ export class BudConnection {
     }
     return false;
   }
+
+  private requiresEnvelopeBinaryFrame(): boolean {
+    return this.peerSupportsEnvelopeBinary();
+  }
+}
+
+class WebSocketProtocolViolation extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "WebSocketProtocolViolation";
+    this.code = code;
+  }
+}
+
+function webSocketProtocolViolationFromError(err: unknown): WebSocketProtocolViolation {
+  if (err instanceof WebSocketProtocolViolation) {
+    return err;
+  }
+  if (err instanceof UnsupportedBudEnvelopePayloadError) {
+    return new WebSocketProtocolViolation("UNSUPPORTED_PAYLOAD", err.message);
+  }
+  const message = err instanceof Error ? err.message : "Invalid WebSocket protocol frame";
+  return new WebSocketProtocolViolation("PROTO_VERSION_MISMATCH", message);
 }
 
 async function markBudOffline(budId: string, server: FastifyInstance) {
@@ -851,4 +1100,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function helloSupportsEnvelopeBinary(hello: HelloFrame): boolean {
   const envelope = hello.capabilities.bud_envelope;
   return envelope?.version === 1 && envelope.websocket_binary === true;
+}
+
+function helloSupportsStreamFrames(hello: HelloFrame): boolean {
+  const envelope = hello.capabilities.bud_envelope;
+  return (
+    envelope?.version === 1 &&
+    envelope.websocket_binary === true &&
+    isRecord(envelope) &&
+    envelope.stream_frames === true
+  );
+}
+
+function streamFamiliesForHello(hello: HelloFrame): Set<string> {
+  const families = new Set<string>();
+  if (!helloSupportsStreamFrames(hello)) {
+    return families;
+  }
+  if (isRecord(hello.capabilities.files) && hello.capabilities.files.workspace_read === true) {
+    families.add("file_read");
+  }
+  if (isRecord(hello.capabilities.proxy) && hello.capabilities.proxy.localhost_http === true) {
+    families.add("localhost_http_proxy");
+  }
+  return families;
 }

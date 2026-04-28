@@ -10,7 +10,11 @@ import {
   startGatewayDrain,
   type SessionTracker,
 } from "./gateway.js";
-import { decodeLegacyJsonFrame } from "../proto/wire.js";
+import {
+  decodeBudEnvelopePayloadCase,
+  decodeBudEnvelopePayloadEncoding,
+  decodeLegacyJsonFrame,
+} from "../proto/wire.js";
 import { sessions } from "./session-trackers.js";
 
 function makeSocket() {
@@ -82,17 +86,15 @@ test("getActiveSessionTracker only returns the currently registered tracker", ()
   assert.equal(getActiveSessionTracker(activeSessions, "bud-1", current), current);
 });
 
-test("sendFrameToBud serializes frames onto the authoritative active socket", () => {
+test("sendFrameToBud refuses sessions without BudEnvelope binary support", () => {
   sessions.clear();
   const tracker = makeTracker("bud-1", "session-current");
   sessions.set("bud-1", tracker);
 
   const sent = sendFrameToBud("bud-1", { type: "terminal_ensure", session_id: "sess-1" });
 
-  assert.equal(sent, true);
-  assert.deepEqual((tracker.socket as unknown as { sentFrames: string[] }).sentFrames, [
-    JSON.stringify({ type: "terminal_ensure", session_id: "sess-1" }),
-  ]);
+  assert.equal(sent, false);
+  assert.deepEqual((tracker.socket as unknown as { sentFrames: string[] }).sentFrames, []);
 
   sessions.clear();
 });
@@ -103,12 +105,14 @@ test("sendFrameToBud uses protobuf envelope carrier for capable sessions", () =>
   tracker.supportsEnvelopeBinary = true;
   sessions.set("bud-1", tracker);
 
-  const payload = { proto: "0.2", type: "terminal_ensure", id: "msg_test", ts: 1, session_id: "sess-1" };
+  const payload = { proto: "0.2", type: "terminal_ensure", id: "msg_test", ts: 1, ext: {}, session_id: "sess-1" };
   const sent = sendFrameToBud("bud-1", payload);
 
   assert.equal(sent, true);
   const [encoded] = (tracker.socket as unknown as { sentFrames: Array<string | Buffer> }).sentFrames;
   assert.ok(Buffer.isBuffer(encoded));
+  assert.equal(decodeBudEnvelopePayloadCase(encoded), "terminal_ensure");
+  assert.equal(decodeBudEnvelopePayloadEncoding(encoded), "typed_fields");
   assert.deepEqual(decodeLegacyJsonFrame(encoded), payload);
 
   sessions.clear();
