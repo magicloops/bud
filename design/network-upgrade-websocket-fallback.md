@@ -1,10 +1,12 @@
-# Design: Network Upgrade WebSocket Baseline And Compatibility
+# Design: Network Upgrade WebSocket Baseline Carrier
 
 ## Context
 
 The network-upgrade PR now treats WebSocket as the mandatory open-source daemon/service baseline. The daemon still uses protobuf `BudEnvelope` semantics and generic stream frames; WebSocket is the default carrier for both control and data unless an operator enables optional HTTP/2 or future QUIC carriers.
 
 This matters for constrained self-hosting deployments. Some environments expose only HTTP/1.1 to the app process or make long-lived HTTP/2 bidi streams and UDP difficult, while long-lived WebSockets are supported and operationally simple.
+
+This document supersedes the earlier "WebSocket fallback" framing. WebSocket is not a degraded fallback for self-hosted Bud; it is the baseline carrier that must stay correct while HTTP/2 and QUIC remain optional adapters.
 
 This design captures the baseline policy for terminal, file, and web-serving stream frames over WebSocket with explicit bounded limits, while keeping optional carriers swappable.
 
@@ -17,6 +19,7 @@ The baseline supports terminal traffic and the file/proxy stream foundations. Pr
 ## Non-Goals
 
 - preserving legacy JSON behavior indefinitely
+- carrying legacy JSON daemon sessions in this PR
 - adding carrier-specific product features
 - bypassing gRPC-era operation/stream/session state
 - bypassing service authorization or daemon local policy
@@ -44,7 +47,8 @@ Feature gates and capability negotiation should distinguish:
 - terminal data over WebSocket
 - file bytes over WebSocket
 - web-serving bytes over WebSocket
-- legacy JSON compatibility
+
+The active daemon path sends binary `BudEnvelope` from the bootstrap `hello` onward. The service may parse a pre-negotiation JSON `hello` only to return useful protocol errors to unsupported clients; it must not register a legacy JSON daemon session.
 
 ## Recommended Limits
 
@@ -89,8 +93,15 @@ Carrier preference is an operator policy. The open-source default should prefer 
 - selected carrier and degraded/unavailable reasons are logged/audited
 - limits are enforced on both sides
 - legacy JSON cannot access new file/web-serving payloads
-- operators can disable WebSocket compatibility entirely
 - WebSocket baseline must not become an unbounded public file/proxy path
+
+## Follow-On Ownership
+
+This baseline document should stay small and transport-focused. Feature-specific hardening lives in the product docs:
+
+- file-serving negative smokes, daemon file policy denials, and file payload `frame_json` removal live in [network-upgrade-file-serving-productization.md](./network-upgrade-file-serving-productization.md)
+- web-serving negative smokes, daemon proxy policy denials, and proxy payload `frame_json` removal live in [network-upgrade-web-serving-productization.md](./network-upgrade-web-serving-productization.md)
+- HTTP/2 optional carrier parity, forced HTTP/2 fallback, and QUIC token/fallback behavior live in [network-upgrade-quic-transport.md](./network-upgrade-quic-transport.md)
 
 ## Validation
 
@@ -118,5 +129,5 @@ Additional validation for web-serving over WebSocket:
 - WebSocket baseline has explicit gates, limits, metrics, and operator controls
 - file bytes work over the WebSocket baseline
 - web-serving bytes are explicitly validated and gated before UI exposure
-- legacy JSON removal has a separate measured gate
+- legacy JSON daemon compatibility is not part of the active path
 - enabling optional HTTP/2/QUIC carriers leaves WebSocket baseline behavior green

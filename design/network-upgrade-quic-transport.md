@@ -39,6 +39,8 @@ QUIC should carry the same protocol objects already used by the WebSocket and HT
 
 QUIC-specific messages should be limited to transport-session negotiation, health, and diagnostics. Terminal, file, and web-serving payloads should not fork by transport.
 
+The foundation PR still leaves some transitional `frame_json` use in optional gRPC adapter paths and in stream/proxy/file families that are not productized yet. QUIC should not copy that debt forward. Before QUIC carries a product stream family, shared conformance tests should prove that the same typed protobuf fields are used on WebSocket, HTTP/2, and QUIC for that family.
+
 ## Negotiation
 
 The authenticated control session remains authoritative. In the open-source baseline that control session is the daemon WebSocket; hosted deployments may also bind QUIC to an authenticated gRPC control session.
@@ -93,7 +95,16 @@ The scheduler should protect terminal interactivity during file and web-serving 
 
 ## Fallback
 
-HTTP/2 data remains the required fallback when:
+WebSocket remains the correctness baseline. HTTP/2 data is an optional advanced carrier and should be validated before QUIC is added, but neither HTTP/2 nor QUIC is required for open-source correctness.
+
+Before implementing QUIC, the optional carrier parity work should cover:
+
+- HTTP/2 terminal smoke with WebSocket still available as the baseline
+- forced HTTP/2 control/data failure with clean fallback to WebSocket
+- carrier-status telemetry and audit fields that explain why HTTP/2 was demoted
+- parity assertions that HTTP/2 uses the same envelope semantics as WebSocket for the validated stream families
+
+QUIC data should fall back when:
 
 - UDP is blocked
 - QUIC token negotiation fails
@@ -102,7 +113,7 @@ HTTP/2 data remains the required fallback when:
 - service is draining the QUIC gateway
 - operator disables QUIC
 
-Fallback must not change service-facing URLs or browser behavior.
+Fallback must not change service-facing URLs, browser behavior, or daemon-local policy. Depending on operator policy, fallback may choose WebSocket directly or HTTP/2 data first; the WebSocket baseline must remain green either way.
 
 ## Security
 
@@ -115,10 +126,12 @@ Fallback must not change service-facing URLs or browser behavior.
 
 ## Validation
 
+- HTTP/2 terminal smoke passes with the optional carrier enabled
+- forced HTTP/2 control/data failure falls back to WebSocket without breaking terminal/file/proxy baseline behavior
 - token binding tests
 - control-session close revokes QUIC token/session
 - same protobuf/envelope conformance over QUIC
-- UDP-blocked fallback to HTTP/2
+- UDP-blocked fallback to the configured non-QUIC carrier, with WebSocket always available as the baseline
 - unhealthy QUIC demotion and cooldown
 - terminal input remains responsive during file/web bulk transfer
 - file range reads work over QUIC and HTTP/2 fallback

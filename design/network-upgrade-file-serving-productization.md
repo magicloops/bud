@@ -110,6 +110,18 @@ WebSocket control+data baseline
 
 The viewer contract must not expose which daemon transport carried the bytes. Product code should call service-owned routes and render states based on HTTP/session status, not carrier type.
 
+## Protocol Payload Debt
+
+The network-upgrade foundation intentionally proves file stream behavior over binary `BudEnvelope` without requiring every stream-family payload to have direct protobuf fields yet. The terminal/control WebSocket happy path has already moved off whole-frame `frame_json`, but the file foundation may still rely on transitional `frame_json` for `file_open`, `file_open_result`, and generic stream lifecycle frames.
+
+File-serving productization is the right time to remove that debt for the file stream family:
+
+- add direct protobuf fields for file open/result payloads where missing
+- keep generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` shared across file/proxy rather than creating file-specific byte frames
+- update service and daemon codecs together
+- add conformance tests proving file payloads use typed fields rather than whole-frame `frame_json`
+- avoid adding any UI or product route behavior that depends on the transitional JSON body
+
 ## Validation
 
 Required before product exposure:
@@ -120,6 +132,10 @@ Required before product exposure:
 - WebSocket-only file smoke with gRPC disabled
 - service limit tests for concurrency, byte ceiling, chunk/credit, idle, and TTL paths
 - path normalization and rejection tests
+- real-daemon negative smokes for unsafe paths, including parent traversal, root escape, NUL-like invalid paths where representable, and absolute paths outside the allowed policy
+- real-daemon negative smokes for symlinks, directories, FIFOs/sockets/devices, and other non-regular files
+- real-daemon negative smokes for over-limit full reads and range reads
+- typed denial propagation tests proving daemon policy denials reach the service/browser as structured errors and audit events, without leaking unnecessary host details
 - web viewer tests for markdown, code/text fallback, expired, denied, offline, and unsupported states
 - real-daemon file smoke remains green with HTTP/2 and QUIC disabled
 - web lint/build/test coverage if frontend files change

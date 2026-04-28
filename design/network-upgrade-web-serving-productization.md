@@ -111,6 +111,18 @@ WebSocket control+data baseline
 
 The API should be transport-independent from day one. QUIC should improve asset concurrency and head-of-line behavior, not change the route contract.
 
+## Protocol Payload Debt
+
+The network-upgrade foundation keeps the current proxy stream semantics transport-independent, but the proxy stream family may still carry transitional whole-frame `frame_json` in `proxy_open`, `proxy_open_result`, and shared generic stream payloads. That is acceptable for the foundation PR because the product is not exposed yet.
+
+Web-serving productization should remove that debt for proxy traffic:
+
+- add direct protobuf fields for proxy open/result payloads where missing
+- keep byte movement on shared generic stream frames rather than inventing proxy-only byte frames
+- update service and daemon codecs together
+- add conformance tests proving proxy payloads use typed fields rather than whole-frame `frame_json`
+- ensure optional HTTP/2 and future QUIC adapters carry the same payload fields without a proxy-specific fork
+
 ## Validation
 
 Required before product exposure:
@@ -120,6 +132,10 @@ Required before product exposure:
 - WebSocket-only proxy smoke with gRPC disabled
 - service limit tests for concurrency, response byte ceiling, chunk/credit, idle, and TTL paths
 - daemon target-policy denial tests
+- real-daemon negative smokes for non-loopback targets, LAN/metadata/wildcard hosts, redirects to unsafe targets if redirects are supported, and unsupported schemes
+- real-daemon negative smokes for unsupported proxy methods and request bodies while those remain disabled
+- real-daemon negative smokes for response byte limits and session/stream TTL limits
+- typed denial propagation tests proving daemon proxy denials reach the service/browser as structured errors and audit events, without leaking unnecessary host details
 - local HTTP server smoke through the production proxy edge
 - streaming response tests
 - redirect handling tests
