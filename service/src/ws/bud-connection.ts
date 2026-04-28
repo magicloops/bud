@@ -1,15 +1,18 @@
 import { Buffer } from "node:buffer";
 import { createHmac, randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import type { RawData } from "ws";
 import type WebSocket from "ws";
 import { z } from "zod";
-import { hashEnrollmentToken } from "../auth/enrollment-token.js";
 import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
-import { budTable, deviceAuthFlowTable, enrollmentTokenTable } from "../db/schema.js";
+import { budTable, deviceAuthFlowTable } from "../db/schema.js";
+import { handleFileOpenResult as handleFileOpenRuntimeResult } from "../files/file-runtime.js";
+import { decodeBudFrame, encodeBudFrame, UnsupportedBudEnvelopePayloadError } from "../proto/wire.js";
+import { handleProxyOpenResult as handleProxyOpenRuntimeResult } from "../proxy/proxy-runtime.js";
+import { DaemonStateStore } from "../runtime/daemon-state.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type {
   ReadinessAssessment,
@@ -17,12 +20,21 @@ import type {
   TerminalPromptType,
   TerminalReadyTrigger,
 } from "../terminal/types.js";
+import {
+  finalizeDataPlaneSessionTracker,
+  finalizeDataPlaneSessionsForControlTracker,
+  getActiveDataPlaneSessionForBud,
+  handleDataPlaneStreamFrame as handleRuntimeDataPlaneStreamFrame,
+  registerActiveDataPlaneSessionTracker,
+  type DataPlaneSessionTracker,
+} from "../transport/data-plane-router.js";
 import { logGatewayDebug } from "./debug.js";
 import {
   EnvelopeSchema,
   ErrorFrameSchema,
   HelloProofSchema,
   HelloSchema,
+  ReconnectReportSchema,
   TerminalEnvelopeSchema,
   TerminalObserveResultSchema,
   TerminalOutputSchema,
@@ -47,6 +59,7 @@ export class BudConnection {
   private readonly server: FastifyInstance;
   private readonly socket: WebSocket;
   private readonly terminalSessionManager: TerminalSessionManager;
+  private readonly daemonStateStore = new DaemonStateStore();
 
   constructor(
     server: FastifyInstance,
@@ -63,26 +76,80 @@ export class BudConnection {
 
   async start(): Promise<void> {
     this.socket.on("message", (raw: RawData) => {
-      if (typeof raw === "string") {
-        void this.handleRaw(raw);
-        return;
-      }
-      if (Buffer.isBuffer(raw)) {
-        void this.handleRaw(raw.toString("utf-8"));
-        return;
-      }
-      if (Array.isArray(raw)) {
-        raw.forEach((chunk) => {
-          if (Buffer.isBuffer(chunk)) {
-            void this.handleRaw(chunk.toString("utf-8"));
-          }
-        });
-        return;
-      }
-      if (raw instanceof ArrayBuffer) {
-        void this.handleRaw(Buffer.from(raw).toString("utf-8"));
-      }
+      void this.handleIncoming(raw);
     });
+  }
+
+  private async handleIncoming(raw: RawData): Promise<void> {
+    let decoded: string | null;
+    try {
+      decoded = this.decodeIncomingFrame(raw);
+    } catch (err) {
+      const violation = webSocketProtocolViolationFromError(err);
+      this.server.log.warn(
+        { err, code: violation.code, component: "ws_gateway" },
+        "Rejected invalid WebSocket protocol frame",
+      );
+      await this.sendError(violation.code, violation.message);
+      this.socket.close();
+      return;
+    }
+    if (!decoded) {
+      await this.sendError("PROTO_VERSION_MISMATCH", "Invalid frame encoding");
+      this.socket.close();
+      return;
+    }
+    await this.handleRaw(decoded);
+  }
+
+  private decodeIncomingFrame(raw: RawData): string | null {
+    if (typeof raw === "string") {
+      if (this.requiresEnvelopeBinaryFrame()) {
+        throw new WebSocketProtocolViolation(
+          "PROTO_VERSION_MISMATCH",
+          "Binary BudEnvelope frames are required after capability negotiation",
+        );
+      }
+      return raw;
+    }
+    if (Buffer.isBuffer(raw)) {
+      return this.decodeIncomingBuffer(raw);
+    }
+    if (Array.isArray(raw)) {
+      return this.decodeIncomingBuffer(Buffer.concat(raw));
+    }
+    if (raw instanceof ArrayBuffer) {
+      return this.decodeIncomingBuffer(Buffer.from(raw));
+    }
+    return null;
+  }
+
+  private decodeIncomingBuffer(raw: Buffer): string {
+    const text = raw.toString("utf-8");
+    if (text.trimStart().startsWith("{")) {
+      if (this.requiresEnvelopeBinaryFrame()) {
+        throw new WebSocketProtocolViolation(
+          "PROTO_VERSION_MISMATCH",
+          "Binary BudEnvelope frames are required after capability negotiation",
+        );
+      }
+      return text;
+    }
+    try {
+      return JSON.stringify(decodeBudFrame(raw));
+    } catch (err) {
+      if (err instanceof UnsupportedBudEnvelopePayloadError) {
+        throw new WebSocketProtocolViolation("UNSUPPORTED_PAYLOAD", err.message);
+      }
+      if (this.requiresEnvelopeBinaryFrame()) {
+        throw new WebSocketProtocolViolation(
+          "PROTO_VERSION_MISMATCH",
+          "Invalid binary BudEnvelope frame",
+        );
+      }
+      this.server.log.warn({ err }, "Failed to decode protobuf BudEnvelope; treating as pre-negotiation JSON text");
+      return text;
+    }
   }
 
   private async handleRaw(raw: string) {
@@ -127,6 +194,21 @@ export class BudConnection {
         break;
       case "terminal_send_result":
         await this.handleTerminalSendResult(parsed);
+        break;
+      case "reconnect_report":
+        await this.handleReconnectReport(parsed);
+        break;
+      case "stream_data":
+      case "stream_credit":
+      case "stream_reset":
+      case "stream_close":
+        await this.handleDataPlaneStreamFrame(parsed);
+        break;
+      case "proxy_open_result":
+        await this.handleProxyOpenResult(parsed);
+        break;
+      case "file_open_result":
+        await this.handleFileOpenResult(parsed);
         break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
@@ -270,6 +352,11 @@ export class BudConnection {
       return;
     }
     const frame = result.data;
+    if (!helloSupportsEnvelopeBinary(frame)) {
+      await this.sendError("PROTO_VERSION_MISMATCH", "BudEnvelope websocket_binary capability is required");
+      this.socket.close();
+      return;
+    }
     if (frame.token) {
       await this.handleEnrollmentHello(frame);
       return;
@@ -290,21 +377,11 @@ export class BudConnection {
     }
     const bypassToken =
       config.devTokenBypass && frame.token === config.devTokenBypass ? config.devTokenBypass : null;
-    const tokenHash = hashEnrollmentToken(frame.token);
 
     if (!bypassToken) {
-      const tokenRow = await db.query.enrollmentTokenTable.findFirst({
-        where: and(
-          eq(enrollmentTokenTable.tokenHash, tokenHash),
-          isNull(enrollmentTokenTable.consumedAt),
-          gt(enrollmentTokenTable.expiresAt, new Date())
-        )
-      });
-      if (!tokenRow) {
-        await this.sendError("AUTH_FAILED", "Enrollment token invalid or expired");
-        this.socket.close();
-        return;
-      }
+      await this.sendError("AUTH_FAILED", "Enrollment tokens are disabled; use device claim");
+      this.socket.close();
+      return;
     }
 
     const budId = `b_${ulid()}`;
@@ -341,12 +418,6 @@ export class BudConnection {
           }
         });
 
-      if (!bypassToken) {
-        await tx
-          .update(enrollmentTokenTable)
-          .set({ consumedAt: now })
-          .where(eq(enrollmentTokenTable.tokenHash, tokenHash));
-      }
     });
 
     if (bypassToken) {
@@ -354,20 +425,23 @@ export class BudConnection {
     }
     this.server.log.info({ budId }, "Bud enrolled");
 
-    await this.sendFrame("hello_ack", {
-      session_id: sessionId,
-      bud_id: budId,
-      device_secret: deviceSecret,
-      heartbeat_sec: config.heartbeatSec
-    });
-
     this.state = {
       kind: "connected",
       budId,
       sessionId,
       hello: frame
     };
-    this.registerSession(budId, sessionId);
+    await this.registerSession(budId, sessionId, frame);
+    await this.sendFrame(
+      "hello_ack",
+      {
+        session_id: sessionId,
+        bud_id: budId,
+        device_secret: deviceSecret,
+        heartbeat_sec: config.heartbeatSec
+      },
+      { useEnvelopeBinary: helloSupportsEnvelopeBinary(frame) },
+    );
     await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 
@@ -449,19 +523,18 @@ export class BudConnection {
         );
     }
 
-    await this.sendFrame("hello_ack", {
-      session_id: sessionId,
-      bud_id: budId,
-      heartbeat_sec: config.heartbeatSec
-    });
-
     this.state = {
       kind: "connected",
       budId,
       sessionId,
       hello
     };
-    this.registerSession(budId, sessionId);
+    await this.registerSession(budId, sessionId, hello);
+    await this.sendFrame("hello_ack", {
+      session_id: sessionId,
+      bud_id: budId,
+      heartbeat_sec: config.heartbeatSec
+    });
     await this.terminalSessionManager.emitBudOnlineForSessions(budId);
   }
 
@@ -487,28 +560,193 @@ export class BudConnection {
         .update(budTable)
         .set({ lastSeenAt: new Date() })
         .where(eq(budTable.budId, this.state.budId));
+      await this.daemonStateStore.recordHeartbeat({
+        deviceSessionId: tracker.deviceSessionId,
+        transportSessionId: tracker.transportSessionId,
+      });
     }
   }
 
-  private registerSession(budId: string, sessionId: string) {
+  private async handleReconnectReport(raw: unknown): Promise<void> {
+    if (this.state.kind !== "connected") {
+      return;
+    }
+    const result = ReconnectReportSchema.safeParse(raw);
+    if (!result.success) {
+      logGatewayDebug({ error: result.error.message }, "Invalid reconnect_report frame");
+      return;
+    }
+    if (result.data.bud_id !== this.state.budId) {
+      this.server.log.warn(
+        { expectedBudId: this.state.budId, reportedBudId: result.data.bud_id },
+        "Ignoring reconnect_report with mismatched bud_id",
+      );
+      return;
+    }
+
+    const tracker = this.getCurrentTracker();
+    const decision = await this.daemonStateStore.reconcileReconnectReport({
+      budId: this.state.budId,
+      deviceSessionId: result.data.device_session_id ?? tracker?.deviceSessionId ?? this.state.sessionId,
+      transportSessionId: tracker?.transportSessionId ?? null,
+      operations: result.data.operations,
+      streams: result.data.streams,
+      terminalSessions: result.data.terminal_sessions,
+      localPolicyVersion: result.data.local_policy_version ?? null,
+    });
+
+    await this.sendFrame("reconciliation_decision", {
+      operations: decision.operations,
+      streams: decision.streams,
+    });
+  }
+
+  private async handleDataPlaneStreamFrame(raw: unknown): Promise<void> {
+    if (this.state.kind !== "connected") {
+      this.server.log.warn({ component: "ws_gateway" }, "stream frame received before hello");
+      return;
+    }
+    const tracker = this.getCurrentTracker();
+    if (!tracker || !tracker.supportsStreamFrames) {
+      this.server.log.warn(
+        { budId: this.state.budId, component: "ws_gateway" },
+        "Ignoring WebSocket stream frame from session without stream-frame support",
+      );
+      return;
+    }
+    const dataTracker = getActiveDataPlaneSessionForBud({
+      budId: this.state.budId,
+      deviceSessionId: tracker.deviceSessionId ?? this.state.sessionId,
+      transportKind: "websocket",
+      includeDraining: true,
+    });
+    if (!dataTracker) {
+      this.server.log.warn(
+        { budId: this.state.budId, component: "ws_gateway" },
+        "Ignoring WebSocket stream frame without active data-plane tracker",
+      );
+      return;
+    }
+    await this.noteDataPlaneActivity(dataTracker);
+    await handleRuntimeDataPlaneStreamFrame(dataTracker, raw, {
+      logger: this.server.log,
+      daemonStateStore: this.daemonStateStore,
+      component: "ws_gateway",
+    });
+  }
+
+  private async handleProxyOpenResult(raw: unknown): Promise<void> {
+    const frame = handleProxyOpenRuntimeResult(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid proxy_open_result frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        streamId: frame.stream_id,
+        operationId: frame.operation_id ?? null,
+        accepted: frame.accepted,
+        statusCode: frame.status_code ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled proxy_open_result frame",
+    );
+  }
+
+  private async handleFileOpenResult(raw: unknown): Promise<void> {
+    const frame = handleFileOpenRuntimeResult(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid file_open_result frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        streamId: frame.stream_id,
+        operationId: frame.operation_id ?? null,
+        accepted: frame.accepted,
+        statusCode: frame.status_code ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled file_open_result frame",
+    );
+  }
+
+  private async registerSession(budId: string, sessionId: string, hello: HelloFrame) {
+    const deviceSession = await this.daemonStateStore.registerDeviceSession({
+      deviceSessionId: sessionId,
+      budId,
+      capabilities: hello.capabilities,
+    });
+    const transportSession = await this.daemonStateStore.registerTransportSession({
+      budId,
+      deviceSessionId: deviceSession.deviceSessionId,
+      transportKind: "websocket",
+    });
     const tracker: SessionTracker = {
       budId,
       sessionId,
+      deviceSessionId: deviceSession.deviceSessionId,
+      transportSessionId: transportSession.transportSessionId,
+      drainState: "active",
       lastHeartbeat: Date.now(),
-      socket: this.socket
+      socket: this.socket,
+      supportsEnvelopeBinary: this.peerSupportsEnvelopeBinary(),
+      supportsStreamFrames: helloSupportsStreamFrames(hello),
+      streamFamilies: streamFamiliesForHello(hello),
+      dataTransportKind: "websocket",
     };
     const previous = registerActiveSessionTracker(sessions, tracker);
     this.tracker = tracker;
+    if (tracker.supportsEnvelopeBinary && tracker.supportsStreamFrames && tracker.streamFamilies?.size) {
+      let dataTracker: DataPlaneSessionTracker;
+      dataTracker = {
+        budId,
+        deviceSessionId: deviceSession.deviceSessionId,
+        controlTransportSessionId: transportSession.transportSessionId,
+        transportSessionId: transportSession.transportSessionId,
+        transportKind: "websocket",
+        role: "control_data",
+        drainState: "active",
+        lastSeenAt: Date.now(),
+        lastSeenWrite: Date.now(),
+        streams: new Set(tracker.streamFamilies),
+        framesReceived: 0,
+        bytesReceived: 0,
+        runtimeStreams: new Map(),
+        maxChunkBytes: config.dataPlaneMaxChunkBytes,
+        initialCreditBytes: config.dataPlaneInitialCreditBytes,
+        maxInFlightBytes: config.dataPlaneMaxInFlightBytes,
+        sendFrame: (frame) => this.sendWebSocketDataPlaneFrame(tracker, frame),
+        isActive: () =>
+          tracker.socket.readyState === tracker.socket.OPEN &&
+          getActiveSessionTracker(sessions, budId, tracker) === tracker,
+      };
+      const previousDataTracker = registerActiveDataPlaneSessionTracker(dataTracker);
+      if (previousDataTracker && previousDataTracker !== dataTracker) {
+        previousDataTracker.drainState = "draining";
+        await finalizeDataPlaneSessionTracker({
+          tracker: previousDataTracker,
+          reason: "superseded",
+          logger: this.server.log,
+          daemonStateStore: this.daemonStateStore,
+        });
+      }
+    }
     this.server.log.info(
       {
         budId,
         sessionId,
-        replacedSessionId: previous?.sessionId ?? null
+        replacedSessionId: previous?.sessionId ?? null,
+        supportsStreamFrames: tracker.supportsStreamFrames ?? false,
+        streamFamilies: tracker.streamFamilies ? Array.from(tracker.streamFamilies) : [],
       },
       previous ? "Replaced active bud session tracker" : "Registered active bud session tracker"
     );
     this.scheduleTimeout(tracker);
     if (previous && previous.socket !== tracker.socket && previous.socket.readyState === previous.socket.OPEN) {
+      void this.closeTrackerTransport(previous, "superseded", { markUnknown: false });
       this.server.log.warn(
         {
           budId,
@@ -528,25 +766,30 @@ export class BudConnection {
   private scheduleTimeout(tracker: SessionTracker) {
     clearTrackerTimeout(tracker);
     tracker.timeout = setTimeout(() => {
-      const deleted = deleteSessionTrackerIfCurrent(sessions, tracker);
-      if (!deleted) {
-        this.server.log.info(
-          { budId: tracker.budId, sessionId: tracker.sessionId },
-          "Ignoring timeout for superseded bud session"
-        );
-        return;
-      }
-      this.server.log.warn(
-        { budId: tracker.budId, sessionId: tracker.sessionId },
-        "Active bud session heartbeat timed out"
-      );
-      void this.handleOfflineTransition(tracker.budId);
-      try {
-        tracker.socket.close();
-      } catch {
-        /* noop */
-      }
+      void this.handleTrackerTimeout(tracker);
     }, config.offlineGraceSec * 1000);
+  }
+
+  private async handleTrackerTimeout(tracker: SessionTracker): Promise<void> {
+    const deleted = deleteSessionTrackerIfCurrent(sessions, tracker);
+    if (!deleted) {
+      this.server.log.info(
+        { budId: tracker.budId, sessionId: tracker.sessionId },
+        "Ignoring timeout for superseded bud session"
+      );
+      return;
+    }
+    this.server.log.warn(
+      { budId: tracker.budId, sessionId: tracker.sessionId },
+      "Active bud session heartbeat timed out"
+    );
+    await this.closeTrackerTransport(tracker, "heartbeat_timeout");
+    await this.handleOfflineTransition(tracker.budId);
+    try {
+      tracker.socket.close();
+    } catch {
+      /* noop */
+    }
   }
 
   private async handleClose() {
@@ -554,6 +797,7 @@ export class BudConnection {
       const deleted = deleteSessionTrackerIfCurrent(sessions, this.tracker);
       if (!deleted) {
         clearTrackerTimeout(this.tracker);
+        await this.closeTrackerTransport(this.tracker, "superseded", { markUnknown: false });
         this.server.log.info(
           { budId: this.state.budId, sessionId: this.state.sessionId },
           "Ignoring close for superseded bud session"
@@ -563,6 +807,7 @@ export class BudConnection {
           { budId: this.state.budId, sessionId: this.state.sessionId },
           "Active bud session closed"
         );
+        await this.closeTrackerTransport(this.tracker, "socket_closed");
         await this.handleOfflineTransition(this.state.budId);
       }
     }
@@ -586,6 +831,51 @@ export class BudConnection {
     await markBudOffline(budId, this.server);
   }
 
+  private async noteDataPlaneActivity(tracker: DataPlaneSessionTracker): Promise<void> {
+    const now = Date.now();
+    tracker.lastSeenAt = now;
+    if (tracker.lastSeenWrite && now - tracker.lastSeenWrite < 5_000) {
+      return;
+    }
+    tracker.lastSeenWrite = now;
+    await this.daemonStateStore.recordHeartbeat({
+      deviceSessionId: tracker.deviceSessionId,
+      transportSessionId: tracker.transportSessionId,
+    });
+  }
+
+  private async closeTrackerTransport(
+    tracker: SessionTracker | null | undefined,
+    reason: string,
+    options: { markUnknown?: boolean; markDraining?: boolean } = {},
+  ): Promise<void> {
+    if (!tracker) {
+      return;
+    }
+    await finalizeDataPlaneSessionsForControlTracker({
+      tracker,
+      reason,
+      markDraining: options.markDraining,
+      logger: this.server.log,
+      daemonStateStore: this.daemonStateStore,
+    });
+    if (tracker.transportSessionId) {
+      await this.daemonStateStore.closeTransportSession({
+        transportSessionId: tracker.transportSessionId,
+        reason,
+        markUnknown: options.markUnknown,
+        markDraining: options.markDraining,
+      });
+    }
+    if (tracker.deviceSessionId) {
+      await this.daemonStateStore.closeDeviceSession({
+        deviceSessionId: tracker.deviceSessionId,
+        reason,
+        markDraining: options.markDraining,
+      });
+    }
+  }
+
   private async sendError(code: string, message: string) {
     const frame = {
       proto: PROTO_VERSION,
@@ -599,7 +889,11 @@ export class BudConnection {
     await this.send(frame);
   }
 
-  private async sendFrame(type: string, payload: Record<string, unknown>) {
+  private async sendFrame(
+    type: string,
+    payload: Record<string, unknown>,
+    options: { useEnvelopeBinary?: boolean } = {},
+  ) {
     const frame = {
       proto: PROTO_VERSION,
       type,
@@ -608,15 +902,83 @@ export class BudConnection {
       ext: {},
       ...payload
     };
-    await this.send(frame);
+    await this.send(frame, options);
   }
 
-  private async send(frame: object) {
+  private async send(frame: Record<string, unknown>, options: { useEnvelopeBinary?: boolean } = {}) {
     if (this.socket.readyState !== this.socket.OPEN) {
+      return;
+    }
+    if (options.useEnvelopeBinary ?? this.peerSupportsEnvelopeBinary()) {
+      this.socket.send(encodeBudFrame(frame));
       return;
     }
     this.socket.send(JSON.stringify(frame));
   }
+
+  private async sendWebSocketDataPlaneFrame(
+    tracker: SessionTracker,
+    frame: Record<string, unknown>,
+  ): Promise<void> {
+    if (tracker.socket.readyState !== tracker.socket.OPEN) {
+      throw new Error("WebSocket data-plane carrier is not active");
+    }
+    const payload = encodeBudFrame(frame);
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const done = (err?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve();
+      };
+      try {
+        tracker.socket.send(payload, done);
+        if (tracker.socket.send.length < 2) {
+          done();
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  private peerSupportsEnvelopeBinary(): boolean {
+    if (this.state.kind === "awaiting_proof" || this.state.kind === "connected") {
+      return helloSupportsEnvelopeBinary(this.state.hello);
+    }
+    return false;
+  }
+
+  private requiresEnvelopeBinaryFrame(): boolean {
+    return this.peerSupportsEnvelopeBinary();
+  }
+}
+
+class WebSocketProtocolViolation extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "WebSocketProtocolViolation";
+    this.code = code;
+  }
+}
+
+function webSocketProtocolViolationFromError(err: unknown): WebSocketProtocolViolation {
+  if (err instanceof WebSocketProtocolViolation) {
+    return err;
+  }
+  if (err instanceof UnsupportedBudEnvelopePayloadError) {
+    return new WebSocketProtocolViolation("UNSUPPORTED_PAYLOAD", err.message);
+  }
+  const message = err instanceof Error ? err.message : "Invalid WebSocket protocol frame";
+  return new WebSocketProtocolViolation("PROTO_VERSION_MISMATCH", message);
 }
 
 async function markBudOffline(budId: string, server: FastifyInstance) {
@@ -714,4 +1076,33 @@ function isPromptType(value: unknown): value is TerminalPromptType {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function helloSupportsEnvelopeBinary(hello: HelloFrame): boolean {
+  const envelope = hello.capabilities.bud_envelope;
+  return envelope?.version === 1 && envelope.websocket_binary === true;
+}
+
+function helloSupportsStreamFrames(hello: HelloFrame): boolean {
+  const envelope = hello.capabilities.bud_envelope;
+  return (
+    envelope?.version === 1 &&
+    envelope.websocket_binary === true &&
+    isRecord(envelope) &&
+    envelope.stream_frames === true
+  );
+}
+
+function streamFamiliesForHello(hello: HelloFrame): Set<string> {
+  const families = new Set<string>();
+  if (!helloSupportsStreamFrames(hello)) {
+    return families;
+  }
+  if (isRecord(hello.capabilities.files) && hello.capabilities.files.workspace_read === true) {
+    families.add("file_read");
+  }
+  if (isRecord(hello.capabilities.proxy) && hello.capabilities.proxy.localhost_http === true) {
+    families.add("localhost_http_proxy");
+  }
+  return families;
 }

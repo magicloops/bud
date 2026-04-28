@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::util::OutboundSender;
+use crate::transport::OutboundSender;
 
 pub type BackendResultFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 

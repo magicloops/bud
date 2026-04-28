@@ -6,6 +6,8 @@ Main source code for the Bud service - a Node.js backend handling API requests, 
 
 The service acts as the central hub:
 - Accepts WebSocket connections from bud daemons
+- Optionally accepts HTTP/2 gRPC control streams from bud daemons
+- Optionally accepts subordinate HTTP/2 gRPC data streams from bud daemons
 - Serves REST API and SSE streams to web clients
 - Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic)
 - Persists all data to PostgreSQL
@@ -25,9 +27,12 @@ Application entry point and thin Fastify composition root.
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
 - Start the push-notification outbox worker when APNs credentials are configured
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
+- Register the proxy and file session route families used by Phase 4 daemon-network features
 - Compose the current thread-scoped streaming/runtime surface without the removed standalone run manager
+- Optionally start the grpc-js daemon control gateway when `GRPC_CONTROL_ENABLED=true`
+- Optionally start the grpc-js daemon data gateway when `GRPC_DATA_ENABLED=true`
 - Expose `/healthz` as lightweight liveness and `/readyz` as deploy/readiness verification for the primary DB plus auth schema
-- Configure graceful shutdown for the push worker plus both app and auth pools
+- Configure `SIGINT` / `SIGTERM` graceful shutdown so `server.close()` runs the gRPC data/control gateway finalizers, push worker stop, idle-check stop, and both app and auth pool shutdown
 
 **Manager Instantiation**:
 ```typescript
@@ -55,6 +60,7 @@ Focused regression coverage for service composition behavior that is easiest to 
 
 **Current Coverage**:
 - trusted-origin `OPTIONS` preflight responses include the full direct-browser API method set needed by the current web app and push-registration clients, including `PUT`, `PATCH`, and `DELETE`
+- gRPC control shutdown finalization is covered in [grpc/control-gateway.test.ts](./grpc/control-gateway.test.ts)
 
 ### `config.ts`
 
@@ -71,6 +77,32 @@ Environment-based configuration with defaults.
 | `pgPoolMax` | `PG_POOL_MAX` | 10 | Max Postgres pool size |
 | `heartbeatSec` | `WS_HEARTBEAT_SEC` | 30 | Expected heartbeat interval |
 | `offlineGraceSec` | `WS_OFFLINE_GRACE_SEC` | 90 | Offline detection grace period |
+| `grpcControlEnabled` | `GRPC_CONTROL_ENABLED` | false | Start the grpc-js daemon control listener |
+| `grpcControlHost` | `GRPC_CONTROL_HOST` | 127.0.0.1 | gRPC control bind host |
+| `grpcControlPort` | `GRPC_CONTROL_PORT` | 50051 | gRPC control bind port |
+| `grpcControlMaxMessageBytes` | `GRPC_CONTROL_MAX_MESSAGE_BYTES` | 4MB | Max inbound/outbound gRPC control envelope size |
+| `grpcControlMaxConcurrentStreams` | `GRPC_CONTROL_MAX_CONCURRENT_STREAMS` | - | Optional grpc-js max concurrent HTTP/2 streams setting |
+| `grpcControlMaxSessionMemory` | `GRPC_CONTROL_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting |
+| `grpcControlEnableChannelz` | `GRPC_CONTROL_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle |
+| `grpcDataEnabled` | `GRPC_DATA_ENABLED` | false | Start the grpc-js daemon data listener |
+| `grpcDataHost` | `GRPC_DATA_HOST` | 127.0.0.1 | gRPC data bind host |
+| `grpcDataPort` | `GRPC_DATA_PORT` | 50052 | gRPC data bind port |
+| `grpcDataMaxMessageBytes` | `GRPC_DATA_MAX_MESSAGE_BYTES` | 4MB | Max inbound/outbound gRPC data envelope size |
+| `grpcDataMaxChunkBytes` | `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Max decoded terminal-output chunk accepted on the data stream |
+| `grpcDataInitialCreditBytes` | `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Advertised initial data credit window for Phase 3 stream clients |
+| `grpcDataMaxConcurrentStreams` | `GRPC_DATA_MAX_CONCURRENT_STREAMS` | - | Optional grpc-js max concurrent HTTP/2 streams setting for data |
+| `grpcDataMaxSessionMemory` | `GRPC_DATA_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting for data |
+| `grpcDataEnableChannelz` | `GRPC_DATA_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle for data |
+| `daemonTransportPolicy` | `DAEMON_TRANSPORT_POLICY` | websocket_baseline | Carrier preference order for daemon control and data-plane selection (`websocket_baseline`, `h2_preferred`, `quic_preferred`) |
+| `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy streams |
+| `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy streams |
+| `dataPlaneMaxInFlightBytes` | `DATA_PLANE_MAX_IN_FLIGHT_BYTES` | 1MB | Cap on accumulated outbound stream credit per runtime stream |
+| `dataPlaneMaxConcurrentFileStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_FILE_STREAMS_PER_BUD` | 8 | Max active file streams per Bud across carriers |
+| `dataPlaneMaxConcurrentProxyStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_PROXY_STREAMS_PER_BUD` | 16 | Max active proxy streams per Bud across carriers |
+| `dataPlaneStreamIdleTimeoutMs` | `DATA_PLANE_STREAM_IDLE_TIMEOUT_MS` | 60s | Idle timeout before the service resets a file/proxy runtime stream |
+| `dataPlaneStreamTtlMs` | `DATA_PLANE_STREAM_TTL_MS` | 5m | Absolute service TTL for one file/proxy runtime stream |
+| `fileSessionDefaultMaxBytes` | `FILE_SESSION_DEFAULT_MAX_BYTES` | 64MB | Default file-session byte ceiling when the browser omits `max_bytes` |
+| `proxySessionMaxResponseBytes` | `PROXY_SESSION_MAX_RESPONSE_BYTES` | 16MB | Service-side max proxied response bytes per proxy request |
 | `betterAuthUrl` | `BETTER_AUTH_URL` | http://localhost:3000 | Public auth base URL |
 | `appBaseUrl` | `APP_BASE_URL` | `BETTER_AUTH_URL` or http://localhost:3000 | Browser origin used when generating Bud claim URLs |
 | `betterAuthBasePath` | fixed | `/api/auth` | Better Auth mount path and OAuth issuer path |
@@ -130,15 +162,35 @@ Push notification helpers covering unread attention math, APNs delivery, and out
 
 ### `routes/` → [routes.spec.md](./routes/routes.spec.md)
 
-REST API route handlers for buds, current-user auth surfaces, device claims, and split thread/message/agent/terminal modules, all enforcing per-user ownership across browser-facing resources.
+REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, and split thread/message/agent/terminal modules, all enforcing per-user ownership across browser-facing resources.
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 
-Runtime managers for terminal sessions, extracted terminal-runtime ownership units, generic event buses, and the dedicated agent runtime snapshot/resume store.
+Runtime managers for terminal sessions, extracted terminal-runtime ownership units, generic event buses, the dedicated agent runtime snapshot/resume store, and Phase 1 daemon operation/stream persistence helpers.
 
 ### `terminal/` → [terminal.spec.md](./terminal/terminal.spec.md)
 
 Terminal protocol types and known REPL program registry.
+
+### `proto/` → [proto/proto.spec.md](./proto/proto.spec.md)
+
+Phase 0 daemon-network upgrade helpers and compatibility protobuf wire codec for the transport-independent Bud envelope.
+
+### `proxy/` → [proxy/proxy.spec.md](./proxy/proxy.spec.md)
+
+Phase 4.2 localhost proxy helpers for strict target/method validation, carrier-neutral data-plane readiness checks, owned `proxy_session` persistence, daemon `proxy_open` dispatch, and bounded GET/HEAD response streaming over the selected WebSocket/HTTP2 carrier.
+
+### `files/` → [files/files.spec.md](./files/files.spec.md)
+
+Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, carrier-neutral data-plane readiness checks, owned `file_session` persistence, daemon `file_open` dispatch, and bounded stat/read/range response streaming over the selected WebSocket/HTTP2 carrier.
+
+### `grpc/` → [grpc.spec.md](./grpc/grpc.spec.md)
+
+HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolated behind the transport router and bounded `BudEnvelope.frame_json` compatibility adapter.
+
+### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
+
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, carrier health and selection observability, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy and file responses.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 
@@ -254,6 +306,8 @@ POST /api/device-auth/flows/:flowId/approve
 |---------|---------|
 | `fastify` | HTTP framework |
 | `@fastify/websocket` | WebSocket support |
+| `@grpc/grpc-js` | Native gRPC over HTTP/2 daemon control gateway |
+| `@grpc/proto-loader` | Dynamic protobuf loading for the isolated daemon gateway adapter |
 | `fastify-sse-v2` | Server-Sent Events |
 | `better-auth` | Browser authentication and OAuth |
 | `openai` | OpenAI SDK |

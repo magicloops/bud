@@ -8,7 +8,8 @@ import {
   terminalSessionTable
 } from "../db/schema.js";
 import { TERMINAL_PROTO_VERSION } from "../config.js";
-import { sendFrameToBud } from "../ws/gateway.js";
+import type { DaemonTransportRouter } from "../transport/daemon-router.js";
+import { daemonTransportRouter } from "../transport/composite-daemon-router.js";
 import type { PendingCommand, ReadinessAssessment } from "../terminal/types.js";
 import { isKnownReplProgram } from "../terminal/known-programs.js";
 import { TerminalEventBus } from "./event-bus.js";
@@ -71,11 +72,17 @@ export class TerminalSessionManager {
   private readonly outputStore: TerminalOutputStore;
   private readonly requestDispatcher: TerminalRequestDispatcher;
   private readonly idleMonitor: TerminalIdleMonitor;
+  private readonly daemonTransport: DaemonTransportRouter;
 
-  constructor(logger: FastifyBaseLogger, events: TerminalEventBus) {
+  constructor(
+    logger: FastifyBaseLogger,
+    events: TerminalEventBus,
+    daemonTransport: DaemonTransportRouter = daemonTransportRouter,
+  ) {
     this.logger = logger;
     this.events = events;
-    this.sessionStore = new TerminalSessionStore(logger);
+    this.daemonTransport = daemonTransport;
+    this.sessionStore = new TerminalSessionStore(logger, daemonTransport);
     this.runtimeState = new TerminalRuntimeState(logger);
     this.outputStore = new TerminalOutputStore(logger, events);
     this.requestDispatcher = new TerminalRequestDispatcher({
@@ -94,7 +101,7 @@ export class TerminalSessionManager {
           id: ulid()
         });
       },
-      sendFrameToBud,
+      sendFrameToBud: (budId, payload) => this.daemonTransport.sendFrameToBud(budId, payload),
       summarizeContextForLog,
       summarizeObservedOutput,
     });
@@ -149,7 +156,7 @@ export class TerminalSessionManager {
       session_id: sessionId,
       reason
     };
-    sendFrameToBud(session.budId, payload);
+    this.daemonTransport.sendFrameToBud(session.budId, payload);
 
     await this.sessionStore.markClosed(sessionId);
     this.runtimeState.clearSessionCache(sessionId);
@@ -224,7 +231,7 @@ export class TerminalSessionManager {
       useActivityBased
     });
 
-    const sent = sendFrameToBud(session.budId, payload);
+    const sent = this.daemonTransport.sendFrameToBud(session.budId, payload);
     if (!sent) {
       this.logger.warn({ sessionId }, "Failed to send terminal_input (bud offline)");
       return { ok: false, error: "bud_offline" };
@@ -257,7 +264,7 @@ export class TerminalSessionManager {
       rows
     };
 
-    const sent = sendFrameToBud(session.budId, payload);
+    const sent = this.daemonTransport.sendFrameToBud(session.budId, payload);
     if (!sent) {
       this.logger.warn({ sessionId }, "Failed to send terminal_resize (bud offline)");
       return { ok: false, error: "bud_offline" };

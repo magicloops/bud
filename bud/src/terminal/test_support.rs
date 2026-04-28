@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
 use crate::protocol::Envelope;
-use crate::util::{now_millis, OutboundSender};
+use crate::transport::{OutboundSender, TransportSender};
+use crate::util::now_millis;
 
 use super::backend::{BackendResultFuture, TerminalBackend};
 use super::{TerminalConfig, TerminalHandle, TerminalManager};
@@ -174,7 +175,9 @@ pub(super) async fn test_manager_with_sender() -> (
     let backend = FakeBackend::default();
     let manager = TerminalManager::with_backend(test_config(), backend.clone());
     let (tx, rx) = mpsc::unbounded_channel();
-    manager.set_sender(Arc::new(tx)).await;
+    manager
+        .set_sender(TransportSender::websocket(tx, false))
+        .await;
     (manager, backend, rx)
 }
 

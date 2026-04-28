@@ -10,8 +10,19 @@ const toNumber = (value: string | undefined, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+const toPositiveInteger = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
 
 const toBool = (value: string | undefined) => ["1", "true", "yes"].includes((value ?? "").toLowerCase());
+const toOptionalNumber = (value: string | undefined) => {
+  if (value === undefined || value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 const toNullable = (value: string | undefined) => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -73,6 +84,9 @@ const toOrigin = (value: string) => {
 const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ReasoningLevel[];
 export type ReasoningEffortSetting = ReasoningLevel;
 
+const DAEMON_TRANSPORT_POLICIES = ["websocket_baseline", "h2_preferred", "quic_preferred"] as const;
+export type DaemonTransportPolicy = (typeof DAEMON_TRANSPORT_POLICIES)[number];
+
 const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortSetting): ReasoningEffortSetting => {
   if (!value) {
     return fallback;
@@ -83,9 +97,28 @@ const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortS
     : fallback;
 };
 
+const toDaemonTransportPolicy = (value: string | undefined): DaemonTransportPolicy => {
+  const normalized = value?.toLowerCase();
+  return normalized && (DAEMON_TRANSPORT_POLICIES as readonly string[]).includes(normalized)
+    ? (normalized as DaemonTransportPolicy)
+    : "websocket_baseline";
+};
+
 const apnsKeyId = toNullable(process.env.APNS_KEY_ID);
 const apnsTeamId = toNullable(process.env.APNS_TEAM_ID);
 const apnsKeyFile = toNullable(process.env.APNS_KEY_FILE);
+const dataPlaneMaxChunkBytes = toPositiveInteger(
+  process.env.DATA_PLANE_MAX_CHUNK_BYTES ?? process.env.GRPC_DATA_MAX_CHUNK_BYTES,
+  16 * 1024,
+);
+const dataPlaneInitialCreditBytes = toPositiveInteger(
+  process.env.DATA_PLANE_INITIAL_CREDIT_BYTES ?? process.env.GRPC_DATA_INITIAL_CREDIT_BYTES,
+  1024 * 1024,
+);
+const dataPlaneMaxInFlightBytes = toPositiveInteger(
+  process.env.DATA_PLANE_MAX_IN_FLIGHT_BYTES,
+  dataPlaneInitialCreditBytes,
+);
 
 export const config = {
   port: defaultPort,
@@ -118,6 +151,50 @@ export const config = {
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   heartbeatSec: toNumber(process.env.WS_HEARTBEAT_SEC, 30),
   offlineGraceSec: toNumber(process.env.WS_OFFLINE_GRACE_SEC, 90),
+  grpcControlEnabled: toBool(process.env.GRPC_CONTROL_ENABLED),
+  grpcControlHost: process.env.GRPC_CONTROL_HOST ?? "127.0.0.1",
+  grpcControlPort: toNumber(process.env.GRPC_CONTROL_PORT, 50051),
+  grpcControlMaxMessageBytes: toNumber(
+    process.env.GRPC_CONTROL_MAX_MESSAGE_BYTES,
+    4 * 1024 * 1024,
+  ),
+  grpcControlMaxConcurrentStreams: toOptionalNumber(process.env.GRPC_CONTROL_MAX_CONCURRENT_STREAMS),
+  grpcControlMaxSessionMemory: toOptionalNumber(process.env.GRPC_CONTROL_MAX_SESSION_MEMORY),
+  grpcControlEnableChannelz: toOptionalNumber(process.env.GRPC_CONTROL_ENABLE_CHANNELZ),
+  grpcDataEnabled: toBool(process.env.GRPC_DATA_ENABLED),
+  grpcDataHost: process.env.GRPC_DATA_HOST ?? "127.0.0.1",
+  grpcDataPort: toNumber(process.env.GRPC_DATA_PORT, 50052),
+  grpcDataMaxMessageBytes: toNumber(process.env.GRPC_DATA_MAX_MESSAGE_BYTES, 4 * 1024 * 1024),
+  grpcDataMaxChunkBytes: toNumber(process.env.GRPC_DATA_MAX_CHUNK_BYTES, 16 * 1024),
+  grpcDataInitialCreditBytes: toNumber(process.env.GRPC_DATA_INITIAL_CREDIT_BYTES, 1024 * 1024),
+  grpcDataMaxConcurrentStreams: toOptionalNumber(process.env.GRPC_DATA_MAX_CONCURRENT_STREAMS),
+  grpcDataMaxSessionMemory: toOptionalNumber(process.env.GRPC_DATA_MAX_SESSION_MEMORY),
+  grpcDataEnableChannelz: toOptionalNumber(process.env.GRPC_DATA_ENABLE_CHANNELZ),
+  daemonTransportPolicy: toDaemonTransportPolicy(process.env.DAEMON_TRANSPORT_POLICY),
+  dataPlaneMaxChunkBytes,
+  dataPlaneInitialCreditBytes,
+  dataPlaneMaxInFlightBytes,
+  dataPlaneMaxConcurrentFileStreamsPerBud: toPositiveInteger(
+    process.env.DATA_PLANE_MAX_CONCURRENT_FILE_STREAMS_PER_BUD,
+    8,
+  ),
+  dataPlaneMaxConcurrentProxyStreamsPerBud: toPositiveInteger(
+    process.env.DATA_PLANE_MAX_CONCURRENT_PROXY_STREAMS_PER_BUD,
+    16,
+  ),
+  dataPlaneStreamIdleTimeoutMs: toPositiveInteger(
+    process.env.DATA_PLANE_STREAM_IDLE_TIMEOUT_MS,
+    60_000,
+  ),
+  dataPlaneStreamTtlMs: toPositiveInteger(process.env.DATA_PLANE_STREAM_TTL_MS, 5 * 60_000),
+  fileSessionDefaultMaxBytes: toPositiveInteger(
+    process.env.FILE_SESSION_DEFAULT_MAX_BYTES,
+    64 * 1024 * 1024,
+  ),
+  proxySessionMaxResponseBytes: toPositiveInteger(
+    process.env.PROXY_SESSION_MAX_RESPONSE_BYTES,
+    16 * 1024 * 1024,
+  ),
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",

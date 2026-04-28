@@ -11,7 +11,8 @@ use crate::protocol::{
     TerminalCloseFrame, TerminalEnsureConfig, TerminalEnsureFrame, TerminalResizeFrame,
     TERMINAL_PROTO_VERSION,
 };
-use crate::util::{new_message_id, now_millis, send_ws_frame, OutboundSender};
+use crate::transport::{send_transport_frame, OutboundSender};
+use crate::util::{new_message_id, now_millis};
 
 use super::backend::TerminalBackend;
 use super::{
@@ -198,7 +199,7 @@ where
         };
 
         let payload = build_terminal_status_payload(session_id, state, info, handle_snapshot);
-        send_ws_frame(sender, payload)
+        send_transport_frame(sender, payload)
     }
 
     pub(super) async fn ensure_handle_for_session(

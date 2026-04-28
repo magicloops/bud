@@ -18,7 +18,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 ```
 ┌─────────────────┐         ┌─────────────────────────────────────┐         ┌─────────────────┐
-│                 │   WS    │                                     │  HTTP   │                 │
+│                 │ WS/gRPC │                                     │  HTTP   │                 │
 │   Bud Daemon    │◀───────▶│            Service                  │◀───────▶│     Web UI      │
 │   (Rust CLI)    │         │         (Node.js/Fastify)           │   SSE   │   (React/Vite)  │
 │                 │         │                                     │         │                 │
@@ -38,7 +38,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 | Path | Protocol | Purpose |
 |------|----------|---------|
-| Daemon ↔ Service | WebSocket | Device reauth, heartbeat, terminal I/O, command execution |
+| Daemon ↔ Service | WebSocket binary `BudEnvelope` baseline, optional HTTP/2 gRPC control/data, future QUIC data | Device reauth, heartbeat, terminal control, command execution, file/proxy stream foundations |
 | Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |
@@ -107,6 +107,10 @@ bud/
 │   │   ├── lib.rs          # Crate wiring
 │   │   ├── app.rs          # Runtime orchestration
 │   │   ├── run.rs          # Legacy queued run path
+│   │   ├── proto_wire.rs   # BudEnvelope protobuf compatibility codec
+│   │   ├── grpc_control.rs # tonic/prost BudControl.Connect client adapter
+│   │   ├── transport.rs    # Transport-neutral sender wrapper for WebSocket or gRPC control
+│   │   ├── journal.rs      # Local daemon reconciliation journal foundation
 │   │   ├── terminal/
 │   │   │   ├── mod.rs      # Shared terminal runtime types
 │   │   │   ├── backend.rs  # Terminal backend trait
@@ -119,6 +123,10 @@ bud/
 │   │   └── ...             # Config, protocol, identity, claim, utilities
 │   └── Cargo.toml
 │
+├── proto/                  # Shared daemon-service protobuf schema and fixtures
+│   ├── bud/v1/bud.proto    # BudEnvelope v1 and transport-neutral payload schema
+│   └── fixtures/           # Cross-language protobuf conformance fixtures
+│
 ├── service/                # Node.js backend service
 │   ├── src/
 │   │   ├── auth/           # Better Auth bridge + session helpers
@@ -127,6 +135,8 @@ bud/
 │   │   ├── routes/         # HTTP API endpoints, with split thread submodules under routes/threads/
 │   │   ├── runtime/        # Terminal-session and agent runtime state management, including runtime/terminal/ helpers
 │   │   ├── terminal/       # Terminal utilities (readiness detection)
+│   │   ├── proto/          # Network-upgrade envelope helpers and compatibility wire codec
+│   │   ├── transport/      # Daemon transport router boundary and current WebSocket adapter
 │   │   └── ws/             # WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
 │   ├── drizzle/            # Checked-in staging migration history
 │   └── scripts/            # Utility scripts
@@ -142,6 +152,7 @@ bud/
 ├── design/                 # Design documents
 ├── docs/                   # Documentation
 ├── plan/                   # Planning documents
+├── spikes/                 # Isolated validation spikes for transport/tooling decisions
 ├── review/                 # Review and audit notes
 └── debug/                  # Debug logs and notes
 ```
@@ -157,6 +168,7 @@ bud/
 | **Rust** | Systems language for reliable, performant daemon |
 | **Tokio** | Async runtime for concurrent I/O |
 | **tokio-tungstenite** | WebSocket client |
+| **tonic / prost** | Opt-in HTTP/2 gRPC control client and generated protobuf types |
 | **clap** | CLI argument parsing |
 | **nix** | PTY handling for terminal sessions |
 | **rustls** | TLS for secure WebSocket connections |
@@ -168,6 +180,8 @@ bud/
 | **Node.js 20+** | JavaScript runtime |
 | **Fastify** | HTTP server framework |
 | **@fastify/websocket** | WebSocket support |
+| **@grpc/grpc-js** | Opt-in native gRPC daemon control gateway |
+| **@grpc/proto-loader** | Isolated protobuf loader for the daemon gateway |
 | **fastify-sse-v2** | Server-Sent Events |
 | **Better Auth** | Browser authentication + OAuth |
 | **Drizzle ORM** | Type-safe database access |
@@ -196,11 +210,12 @@ bud/
 
 ### 1. Device Registration & Authentication
 
-Buds authenticate via enrollment tokens or device secrets:
+Buds authenticate through browser-mediated device claim or persisted device secrets:
 
-1. **First connection**: Daemon presents enrollment token, receives `bud_id` and `device_secret`
-2. **Subsequent connections**: Daemon responds to HMAC challenge using stored secret
-3. **Session establishment**: Successful auth yields `session_id` for message correlation
+1. **First connection**: Daemon starts `/api/device-auth/*`, waits for browser approval, and receives `bud_id` plus `device_secret`
+2. **Local automation**: Smoke/dev harnesses may use `BUD_ENROLLMENT_TOKEN` only when it matches the service `DEV_BUD_TOKEN_BYPASS`
+3. **Subsequent connections**: Daemon responds to HMAC challenge using stored secret
+4. **Session establishment**: Successful auth yields `session_id` for message correlation
 
 The service also now exposes browser authentication foundations through Better Auth:
 - OAuth providers: GitHub and Google
@@ -356,8 +371,9 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 
 | Argument | Env | Default | Description |
 |----------|-----|---------|-------------|
-| `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service WebSocket URL |
-| `--token` | `BUD_ENROLLMENT_TOKEN` | - | One-time enrollment token |
+| `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service WebSocket URL or HTTP origin used for device-claim bootstrap |
+| `--grpc-control-url` | `BUD_GRPC_CONTROL_URL` | - | Optional tonic gRPC control endpoint |
+| `--token` | `BUD_ENROLLMENT_TOKEN` | - | Dev-only token-bypass credential; normal onboarding uses device claim |
 | `--name` | `BUD_DEVICE_NAME` | `bud-dev` | Device display name |
 | `--terminal-enabled` | `BUD_TERMINAL_ENABLED` | false | Enable terminal features |
 
@@ -423,6 +439,7 @@ Detailed specifications for each subproject:
 | `/bud` | [bud/bud.spec.md](./bud/bud.spec.md) | Rust device daemon | ✅ Complete |
 | `/service` | [service/service.spec.md](./service/service.spec.md) | Node.js backend | ✅ Complete |
 | `/web` | [web/web.spec.md](./web/web.spec.md) | React frontend | ✅ Complete |
+| `/spikes` | [spikes/spikes.spec.md](./spikes/spikes.spec.md) | Isolated validation harnesses | ✅ Active |
 
 ---
 
@@ -498,11 +515,14 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md](./reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md) | Reference handoff for the iOS team summarizing the confirmed March 22, 2026 SSE streaming findings, what they rule out, and the remaining raw-byte/parser-focused hypotheses for `/api/threads/:thread_id/agent/stream` |
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md) | Current backend handoff for the shipped agent-stream contract, covering `/agent/state`, opaque resume cursors, bounded catch-up, explicit `agent.resync_required`, and the `client_id`-first mobile reconciliation model |
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md) | Current fixtures for the shipped agent-stream contract, covering passive open, active-turn bootstrap, bounded cursor resume, explicit resync, idle-to-active cursor races, and `client_id`-first identity projection |
+| [reference/IOS_LLM_MODELS_HANDOFF.md](./reference/IOS_LLM_MODELS_HANDOFF.md) | iOS handoff for the catalog-backed `/api/models` contract, model-specific reasoning controls, and message-send model selection semantics |
 | [IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md](./IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md) | Focused follow-up handoff for iOS covering the completed `client_id` rollout, the final Stage B/staging status, and the rule that mobile should key optimistic, runtime, stream, and canonical rows directly by `client_id` from the first stream event |
 | [reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md) | Reference handoff from the mobile team describing the original hosted-claim redirect gap, the requested callback contract, and the backend/web decisions needed for smooth app re-entry after claim approval |
 | [reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md) | Reference validation runbook for the iOS team covering the hosted Bud-claim callback flow, local prerequisites, expected success/error payloads, and the exact manual test matrix to run |
 | [reference/render-multi-service-architecture.md](./reference/render-multi-service-architecture.md) | Captured Render guidance for the platform's generic multi-service pattern; useful as a contrast case because it assumes separate frontend/backend public URLs instead of Bud's chosen one-origin path-routing model |
 | [docs/proto.md](./docs/proto.md) | Wire protocol specification |
+| [proto/proto.spec.md](./proto/proto.spec.md) | Shared daemon-service protobuf schema and conformance fixture folder spec |
+| [spikes/grpc-interop/grpc-interop.spec.md](./spikes/grpc-interop/grpc-interop.spec.md) | Phase 1.5 Rust tonic to Node Connect/grpc-js native gRPC-over-HTTP/2 interop spike |
 | [plan/spec-documentation-plan.md](./plan/spec-documentation-plan.md) | Spec system tracking and consolidated TODOs |
 | [plan/init-auth/implementation-spec.md](./plan/init-auth/implementation-spec.md) | Phased implementation plan for production auth and Bud claim flow |
 | [plan/mobile-auth/implementation-spec.md](./plan/mobile-auth/implementation-spec.md) | Phased implementation plan for native mobile auth, OAuth Provider rollout, and API readiness cleanup |
@@ -519,6 +539,30 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/api-snake-case-normalization.md](./plan/api-snake-case-normalization.md) | Focused implementation plan for normalizing Bud-owned wire contracts to snake_case across the in-use service, web, stream, and any small daemon-facing payload leaks found during implementation |
 | [plan/browser-terminal-input-contract/implementation-spec.md](./plan/browser-terminal-input-contract/implementation-spec.md) | Focused phased implementation plan for replacing raw xterm `onData` browser input with explicit human-intent capture while keeping the current tmux-backed browser escape hatch |
 | [plan/browser-terminal-input-contract/validation-checklist.md](./plan/browser-terminal-input-contract/validation-checklist.md) | Manual validation checklist for the browser-terminal input-contract hardening work |
+| [plan/network-upgrade/network-upgrade.spec.md](./plan/network-upgrade/network-upgrade.spec.md) | Superseded folder spec for the earlier HTTP/2-first daemon-networking plan, retained only as historical origin context for the swappable-transport design |
+| [plan/network-upgrade/implementation-spec.md](./plan/network-upgrade/implementation-spec.md) | Superseded parent implementation spec for the earlier network-upgrade direction; forward tracking moved to `plan/swappable-transport/` |
+| [plan/network-upgrade/phase-0-protocol-envelope-and-transport-boundary.md](./plan/network-upgrade/phase-0-protocol-envelope-and-transport-boundary.md) | Superseded foundation note for the original protobuf envelope and transport-boundary direction |
+| [plan/network-upgrade/phase-1-durable-control-and-reconciliation.md](./plan/network-upgrade/phase-1-durable-control-and-reconciliation.md) | Superseded durability note for the original device-session, operation, journaling, and reconnect-reconciliation direction |
+| [plan/network-upgrade/phase-2-http2-grpc-control-plane.md](./plan/network-upgrade/phase-2-http2-grpc-control-plane.md) | Superseded HTTP/2 gRPC control-plane note retained for historical design context |
+| [plan/network-upgrade/phase-3-http2-data-fallback.md](./plan/network-upgrade/phase-3-http2-data-fallback.md) | Superseded mandatory HTTP/2 data-fallback note retained for historical data-plane context |
+| [plan/network-upgrade/phase-4-localhost-proxy-and-file-reads.md](./plan/network-upgrade/phase-4-localhost-proxy-and-file-reads.md) | Superseded proxy/file session note; productization is deferred to the current design docs rather than tracked here |
+| [plan/network-upgrade/phase-5-quic-data-fast-path.md](./plan/network-upgrade/phase-5-quic-data-fast-path.md) | Superseded QUIC fast-path note retained as historical context for future optional carrier work |
+| [plan/network-upgrade/phase-6-websocket-compatibility-cleanup.md](./plan/network-upgrade/phase-6-websocket-compatibility-cleanup.md) | Superseded WebSocket-compatibility cleanup note from the HTTP/2-first plan; WebSocket is now the baseline carrier |
+| [plan/network-upgrade/progress-checklist.md](./plan/network-upgrade/progress-checklist.md) | Superseded checklist for the old network-upgrade plan; do not use for active tracking |
+| [plan/network-upgrade/validation-checklist.md](./plan/network-upgrade/validation-checklist.md) | Superseded validation checklist for the old network-upgrade plan; active validation moved to `plan/swappable-transport/validation-checklist.md` |
+| [plan/swappable-transport/swappable-transport.spec.md](./plan/swappable-transport/swappable-transport.spec.md) | Folder spec for the WebSocket-first swappable-transport pivot, reframing the network-upgrade branch around protobuf envelopes, carrier-neutral data-plane semantics, and optional HTTP/2/QUIC adapters |
+| [plan/swappable-transport/implementation-spec.md](./plan/swappable-transport/implementation-spec.md) | Forward implementation spec for making WebSocket the mandatory daemon-service baseline, closing the current PR around terminal-over-envelope, and preserving optional advanced carriers |
+| [plan/swappable-transport/phase-0-pr-scope-reset-and-transport-contract.md](./plan/swappable-transport/phase-0-pr-scope-reset-and-transport-contract.md) | Scope-reset phase covering the WebSocket-first baseline, terminal/control field-level payload investigation, carrier contract, and terminology shift away from moving off WebSockets |
+| [plan/swappable-transport/phase-1-carrier-neutral-data-plane-runtime.md](./plan/swappable-transport/phase-1-carrier-neutral-data-plane-runtime.md) | Runtime phase covering carrier-neutral `DataPlane*` abstractions, control+data vs. data-only carrier roles, stream-family selection, and removal of file/proxy gRPC-only readiness assumptions |
+| [plan/swappable-transport/phase-2-websocket-stream-carrier.md](./plan/swappable-transport/phase-2-websocket-stream-carrier.md) | WebSocket carrier phase covering default control+data WebSocket registration, future data-only WebSocket compatibility, and generic stream/result frame dispatch |
+| [plan/swappable-transport/phase-3-file-stream-over-websocket.md](./plan/swappable-transport/phase-3-file-stream-over-websocket.md) | File foundation phase covering stat/read/range streaming over WebSocket binary protobuf envelopes with gRPC disabled |
+| [plan/swappable-transport/phase-4-web-proxy-stream-over-websocket.md](./plan/swappable-transport/phase-4-web-proxy-stream-over-websocket.md) | Proxy foundation phase covering loopback HTTP GET/HEAD streaming over WebSocket binary protobuf envelopes with gRPC disabled |
+| [plan/swappable-transport/phase-5-productization-handoff-and-hardening.md](./plan/swappable-transport/phase-5-productization-handoff-and-hardening.md) | Productization gate covering ownership tests, WebSocket limits, audit coverage, and file viewer/web proxy handoff requirements |
+| [plan/swappable-transport/phase-6-landing-correctness-and-fallback-policy.md](./plan/swappable-transport/phase-6-landing-correctness-and-fallback-policy.md) | Landing cleanup phase covering explicit carrier fallback policy, durable correctness gaps, handshake ordering, and ownerless legacy enrollment behavior |
+| [plan/swappable-transport/phase-7-protobuf-layer-cleanup.md](./plan/swappable-transport/phase-7-protobuf-layer-cleanup.md) | Protocol cleanup phase covering `frame_json` inventory, WebSocket codec strategy, conformance fixtures, and bounded transitional protobuf bridges |
+| [plan/swappable-transport/phase-8-optional-transport-upgrades.md](./plan/swappable-transport/phase-8-optional-transport-upgrades.md) | Optional carrier phase covering HTTP/2 gRPC adapter retention, future QUIC data-plane support, health scoring, and fallback validation after the WebSocket baseline is correct |
+| [plan/swappable-transport/progress-checklist.md](./plan/swappable-transport/progress-checklist.md) | Running implementation checklist for the WebSocket-first swappable-transport pivot |
+| [plan/swappable-transport/validation-checklist.md](./plan/swappable-transport/validation-checklist.md) | Validation checklist for WebSocket-first terminal, file, proxy, ownership, limit, and optional carrier parity testing |
 | [plan/mobile-auth/phase-2-deferred-validation-checklist.md](./plan/mobile-auth/phase-2-deferred-validation-checklist.md) | Deferred runtime-validation checklist for the hosted mobile OAuth flow while prototype work proceeds into the API-contract phase |
 | [plan/deploy/validation-checklist.md](./plan/deploy/validation-checklist.md) | Release-gate checklist for the prototype Render deployment, covering public-origin auth, Bud claim/bootstrap, SSE, WebSockets, DB/migration posture, mobile bundle publication, and the post-validation platform decision |
 | [plan/deploy/cloudflare-front-door-runbook.md](./plan/deploy/cloudflare-front-door-runbook.md) | Operator runbook for the default Cloudflare-in-front-of-Render staging shape, including the route-scoped Worker used to proxy service-owned paths to Render, the forwarded-header/no-store expectations for auth/SSE/WebSocket traffic, deploy order, rollback entry points, and the note that production may still move to a cleaner edge-routing provider |
@@ -580,6 +624,10 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [review/bud-daemon-modularization-review.md](./review/bud-daemon-modularization-review.md) | Full architecture review of the Rust Bud daemon, covering current correctness gaps, tmux coupling, backend-neutral terminal abstractions, and a staged refactor plan for splitting `bud/src/main.rs` without changing current behavior |
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
+| [review/network-upgrade.md](./review/network-upgrade.md) | Review of the proposed daemon-networking upgrade from WebSocket-only transport to protobuf envelopes, HTTP/2 gRPC control/data fallback, optional QUIC data acceleration, and constrained WebSocket compatibility |
+| [review/network-upgrade/current-branch-review.md](./review/network-upgrade/current-branch-review.md) | Current review of the active network-upgrade branch after the WebSocket-baseline pivot, covering landing blockers, implementation gaps, legacy cleanup, protocol debt, and open questions |
+| [review/network-upgrade/cleanup-checklist.md](./review/network-upgrade/cleanup-checklist.md) | Cleanup checklist for landing the network-upgrade branch cleanly, including forward architecture, historical docs, rename candidates, implementation hardening, productization follow-ups, and spike retention |
+| [review/review.spec.md](./review/review.spec.md) | Folder spec for review and audit notes, including architecture reviews and transport-migration analysis |
 | [review/service-layer-implementation-review.md](./review/service-layer-implementation-review.md) | Full review of the current `service/` implementation, covering ownership-boundary regressions, provider/bootstrap gaps, terminal/runtime cancellation issues, legacy run overlap, and the recommended modularization sequence before a service refactor |
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
 | [debug/service-refactor-phase-1-contract-bugs.md](./debug/service-refactor-phase-1-contract-bugs.md) | Debug note for Phase 1 of the service refactor, covering provider-less boot, shared enrollment-token hashing, legacy run-surface removal, and the Node REPL prompt-classification fix |
@@ -645,4 +693,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-23*
+*Last updated: 2026-04-28*

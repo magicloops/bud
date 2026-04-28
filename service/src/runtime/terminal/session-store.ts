@@ -4,16 +4,22 @@ import { ulid } from "ulid";
 import { db } from "../../db/client.js";
 import { terminalSessionTable } from "../../db/schema.js";
 import { TERMINAL_PROTO_VERSION } from "../../config.js";
-import { isBudOnline, sendFrameToBud } from "../../ws/gateway.js";
+import type { DaemonTransportRouter } from "../../transport/daemon-router.js";
+import { daemonTransportRouter } from "../../transport/composite-daemon-router.js";
 import type { TerminalSession } from "./session-types.js";
 
 type TerminalSessionRow = typeof terminalSessionTable.$inferSelect;
 
 export class TerminalSessionStore {
   private readonly logger: FastifyBaseLogger;
+  private readonly daemonTransport: DaemonTransportRouter;
 
-  constructor(logger: FastifyBaseLogger) {
+  constructor(
+    logger: FastifyBaseLogger,
+    daemonTransport: DaemonTransportRouter = daemonTransportRouter,
+  ) {
     this.logger = logger;
+    this.daemonTransport = daemonTransport;
   }
 
   async ensureSessionRecordForThread(
@@ -88,7 +94,7 @@ export class TerminalSessionStore {
     }
 
     if (session.state === "ready" || session.state === "active" || session.state === "idle") {
-      if (!isBudOnline(session.budId)) {
+      if (!this.daemonTransport.isBudOnline(session.budId)) {
         this.logger.warn(
           { sessionId, budId: session.budId, state: session.state },
           "Session state is ready but bud is offline"
@@ -111,7 +117,7 @@ export class TerminalSessionStore {
       }
     };
 
-    const sent = sendFrameToBud(session.budId, payload);
+    const sent = this.daemonTransport.sendFrameToBud(session.budId, payload);
     if (!sent) {
       this.logger.warn({ sessionId, budId: session.budId }, "Failed to send terminal_ensure (bud offline)");
       return { ok: false, resumed: false, error: "bud_offline" };

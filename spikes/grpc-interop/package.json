@@ -1,0 +1,30 @@
+{
+  "name": "@bud/grpc-interop-spike",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Bud daemon-gateway gRPC interop spike.",
+  "type": "module",
+  "scripts": {
+    "generate": "buf generate",
+    "check": "tsc --project tsconfig.json --noEmit",
+    "connect:server": "tsx service/src/connect-server.ts",
+    "grpc-js:server": "tsx service/src/grpc-js-server.ts"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.2.3",
+    "@connectrpc/connect": "^2.0.2",
+    "@connectrpc/connect-node": "^2.0.2",
+    "@grpc/grpc-js": "^1.12.5",
+    "@grpc/proto-loader": "^0.7.13"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.50.0",
+    "@bufbuild/protoc-gen-es": "^2.2.3",
+    "@types/node": "^22.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20.19.0 || >=22.12.0"
+  }
+}

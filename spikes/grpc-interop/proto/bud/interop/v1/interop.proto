@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package bud.interop.v1;
+
+service BudControlInteropService {
+  rpc Connect(stream ClientControlEvent) returns (stream ServerControlDirective);
+}
+
+service BudAttachInteropService {
+  rpc Attach(stream DataFrame) returns (stream DataFrame);
+}
+
+message ClientControlEvent {
+  string session_id = 1;
+  uint64 seq = 2;
+  string kind = 3;
+  bytes payload = 4;
+  uint64 sent_at_unix_ms = 5;
+}
+
+message ServerControlDirective {
+  string session_id = 1;
+  uint64 seq = 2;
+  string kind = 3;
+  bytes payload = 4;
+  uint64 sent_at_unix_ms = 5;
+}
+
+message DataFrame {
+  string stream_id = 1;
+  uint64 seq = 2;
+  string kind = 3;
+  bytes payload = 4;
+  uint64 offset = 5;
+}

@@ -4,7 +4,7 @@ HTTP API route handlers using Fastify.
 
 ## Purpose
 
-Defines REST API endpoints for managing buds, threads, messages, terminal sessions, the authenticated current-user surface, and browser-mediated Bud device claims. All routes are prefixed with `/api/`.
+Defines REST API endpoints for managing buds, threads, messages, terminal sessions, the authenticated current-user surface, browser-mediated Bud device claims, and Phase 4 proxy/file sessions. All routes are prefixed with `/api/`.
 
 All browser-facing Bud/thread/message/terminal routes now require an authenticated viewer and resolve resources through ownership checks. Cross-user resource access returns `404`, while `401` is reserved for missing browser auth.
 
@@ -344,6 +344,67 @@ Route-level coverage for the catalog-backed model inventory.
 - model entries expose product `id`, `provider`, `provider_model`, `display_name`, `is_default`, capability limits, and model-specific `reasoning`
 - `reasoning.levels` is the client source of truth for valid `reasoning_effort` values
 - no `available` flag is emitted; configured catalog entries are treated as live
+
+### `proxy.ts`
+
+Phase 4.2 localhost proxy session and edge routes.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/buds/:budId/proxy-sessions` | Create a short-lived owned proxy session for `http://127.0.0.1:<port>` |
+| `GET` | `/api/buds/:budId/proxy-sessions` | List owned proxy sessions for an owned Bud |
+| `GET` | `/api/proxy-sessions/:proxySessionId` | Read one owned proxy session |
+| `DELETE` | `/api/proxy-sessions/:proxySessionId` | Revoke one owned proxy session |
+| `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:proxySessionId/*` | Authorize the owned proxy session; stream `GET`/`HEAD` through the daemon over the selected WebSocket/HTTP2 data-plane carrier; fail closed for unsupported methods, missing transport, or service limits |
+
+**Security Notes**:
+- all routes call `requireViewer(...)`
+- Bud-scoped create/list routes resolve ownership through `getAuthorizedBud(...)`
+- optional `thread_id` on create must belong to the same viewer and Bud
+- session reads/revokes filter by `proxy_session.created_by_user_id` in SQL
+- proxy targets are limited to explicit `127.0.0.1` plus an explicit port
+- proxy sessions report degraded state when no active carrier has `localhost_http_proxy` support; the edge returns `424` instead of opening daemon work
+- proxy transport payloads include selected-carrier health and skipped candidate reasons so operators can diagnose WebSocket/H2/QUIC fallback without route-specific branches
+- the edge route supports `GET` and `HEAD` in Phase 4.2; other allowed methods still return `501 proxy_method_not_implemented`
+- each proxied request creates durable `bud_operation` / `bud_stream` rows before sending daemon `proxy_open`
+- proxied requests enforce owner checks before stream registration plus per-Bud concurrency, max response bytes, chunk/credit, idle, and TTL limits
+
+### `proxy.test.ts`
+
+Route-registration and route-auth coverage for the Phase 4.2 proxy session and edge route family, including unauthenticated `401`, signed-in non-owner `404`, and owned session serialization.
+
+### `files.ts`
+
+Phase 4.4 file session and daemon-backed file edge routes.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/buds/:budId/file-sessions` | Create a short-lived owned file session for a workspace-relative path |
+| `GET` | `/api/buds/:budId/file-sessions` | List owned file sessions for an owned Bud |
+| `GET` | `/api/file-sessions/:fileSessionId` | Read one owned file session |
+| `DELETE` | `/api/file-sessions/:fileSessionId` | Revoke one owned file session |
+| `GET/HEAD` | `/api/files/:fileSessionId` | Authorize an owned file session and selected stat/read/range permission, then stream stat/read/range work through daemon `file_open` over the selected WebSocket/HTTP2 data-plane carrier |
+
+**Security Notes**:
+- all routes call `requireViewer(...)`
+- Bud-scoped create/list routes resolve ownership through `getAuthorizedBud(...)`
+- optional `thread_id` on create must belong to the same viewer and Bud
+- session reads/revokes filter by `file_session.created_by_user_id` in SQL
+- file sessions are limited to the `workspace` root key and POSIX-style root-relative paths with no traversal segments
+- permissions default to `stat`, `read`, and `range`; `range` implies `read`, and `read` implies `stat`
+- file sessions report degraded state when no active carrier has `file_read` support
+- file transport payloads include selected-carrier health and skipped candidate reasons so operators can diagnose WebSocket/H2/QUIC fallback without route-specific branches
+- ready sessions support `HEAD`, full `GET`, and single-byte-range `GET` by sending `file_open` over the selected control side and streaming bytes from the selected data-plane carrier
+- file reads enforce owner checks before stream registration plus per-Bud concurrency, max bytes, chunk/credit, idle, and TTL limits
+- daemon re-checks workspace root/path, symlink, regular-file, max-byte, and content-identity policy before sending bytes
+
+### `files.test.ts`
+
+Route-registration and route-auth coverage for the Phase 4 file session and edge route family, including unauthenticated `401`, signed-in non-owner `404`, and owned session serialization.
 
 **Model Response Shape**:
 ```json

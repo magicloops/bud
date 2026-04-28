@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 
 pub use backend::TerminalBackend;
 
-use crate::util::OutboundSender;
+use crate::transport::OutboundSender;
 
 use self::tmux::{probe_tmux as tmux_probe, TmuxBackend};
 
