@@ -65,7 +65,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [x] creating a thread without explicit selection stores `gpt-5.5` + `low`
 - [ ] creating a thread with invalid model fails before insert
 - [ ] creating a thread with invalid reasoning fails before insert
-- [ ] created thread response includes stored/effective selection
+- [-] created thread response intentionally remains `{ thread_id }`; stored/effective selection is verified through thread detail/list after creation
 
 ### Message Send
 
@@ -132,4 +132,5 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 ## Notes
 
 - Live provider smoke tests are not required for this persistence rollout unless the implementation changes provider request shapes.
+- `POST /api/threads` intentionally returns only `{ thread_id }`; clients that need stored/effective model selection should read the thread detail/list contract.
 - If a command fails, capture the exact command and error output in a debug note and stop for human guidance.

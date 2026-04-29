@@ -98,7 +98,6 @@ pending → creating → ready ↔ active → idle → closed
 ```
 bud/
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
-├── PR_SUMMARY.md           # Current branch PR summary and validation handoff
 ├── git_loc_breakdown.py    # Repo-wide LOC analyzer that buckets code, config, markdown, and other tracked text while honoring Git ignore rules
 ├── test_git_loc_breakdown.py # Regression tests for the LOC analyzer's category and summary accounting
 │
@@ -632,6 +631,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [review/bud-daemon-modularization-review.md](./review/bud-daemon-modularization-review.md) | Full architecture review of the Rust Bud daemon, covering current correctness gaps, tmux coupling, backend-neutral terminal abstractions, and a staged refactor plan for splitting `bud/src/main.rs` without changing current behavior |
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
+| [review/persist-model-prefs-branch-review.md](./review/persist-model-prefs-branch-review.md) | Current branch review for the thread model-preference persistence work, separating generated migration/doc/test line count from runtime implementation size and identifying cleanup items before merge |
 | [review/network-upgrade.md](./review/network-upgrade.md) | Review of the proposed daemon-networking upgrade from WebSocket-only transport to protobuf envelopes, HTTP/2 gRPC control/data fallback, optional QUIC data acceleration, and constrained WebSocket compatibility |
 | [review/network-upgrade/current-branch-review.md](./review/network-upgrade/current-branch-review.md) | Current review of the active network-upgrade branch after the WebSocket-baseline pivot, covering landing blockers, implementation gaps, legacy cleanup, protocol debt, and open questions |
 | [review/network-upgrade/cleanup-checklist.md](./review/network-upgrade/cleanup-checklist.md) | Cleanup checklist for landing the network-upgrade branch cleanly, including forward architecture, historical docs, rename candidates, implementation hardening, productization follow-ups, and spike retention |
