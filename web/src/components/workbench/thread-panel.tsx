@@ -5,6 +5,7 @@ import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { Button } from '@/components/ui/button'
 import type { MutationStatusTone } from '@/components/ui/mutation-status'
 import { apiFetch, readResponseErrorMessage } from '@/lib/transport'
+import type { ReasoningLevel } from '@/lib/models'
 
 export type ThreadSummary = {
   thread_id: string
@@ -20,6 +21,12 @@ export type ThreadSummary = {
   has_terminal_session?: boolean
   session_state?: string | null
   session_id?: string | null
+  // Persisted model selection
+  model?: string | null
+  reasoning_effort?: ReasoningLevel | null
+  effective_model?: string | null
+  effective_reasoning_effort?: ReasoningLevel | null
+  model_selection_source?: 'thread' | 'service_default' | null
 }
 
 type ThreadPanelProps = {

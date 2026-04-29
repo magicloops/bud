@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { mock, type TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../auth/auth.js";
+import { config } from "../config.js";
 import {
   providerRegistry,
   type CanonicalStreamEvent,
@@ -24,7 +25,9 @@ type ModelsPayload = {
       default_level: string;
     };
   }>;
+  service_default_model: string | null;
   default_model: string | null;
+  default_reasoning_effort: string | null;
 };
 
 class TestReply {
@@ -140,6 +143,11 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   t.after(() => {
     mock.restoreAll();
   });
+  const previousDefaultModel = config.defaultModel;
+  config.defaultModel = "gpt-5.5";
+  t.after(() => {
+    config.defaultModel = previousDefaultModel;
+  });
   registerTestProviders(t);
   mock.method(auth.api, "getSession", async () => SESSION as never);
 
@@ -153,7 +161,9 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
 
   assert.equal(reply.statusCode, 200);
-  assert.equal(payload.default_model, "claude-opus-4-6");
+  assert.equal(payload.service_default_model, "gpt-5.5");
+  assert.equal(payload.default_model, "gpt-5.5");
+  assert.equal(payload.default_reasoning_effort, "low");
   assert.equal(payload.models.some((model) => "available" in model), false);
   assert.deepEqual(payload.models.map((model) => model.id), [
     "claude-opus-4-6",
@@ -180,6 +190,7 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
 
   const gpt55 = payload.models.find((model) => model.id === "gpt-5.5");
   assert.ok(gpt55);
+  assert.equal(gpt55.is_default, true);
   assert.deepEqual(gpt55.reasoning.levels.map((level) => level.value), [
     "none",
     "low",
@@ -187,4 +198,5 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
     "high",
     "xhigh",
   ]);
+  assert.equal(gpt55.reasoning.default_level, "low");
 });

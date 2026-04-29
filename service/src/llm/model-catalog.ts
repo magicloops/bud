@@ -78,7 +78,6 @@ export const MODEL_CATALOG = [
     tier: "frontier",
     sortOrder: 10,
     defaultForProvider: true,
-    globalDefault: true,
     capabilities: {
       vision: true,
       tools: true,
@@ -252,6 +251,7 @@ export const MODEL_CATALOG = [
     family: "gpt",
     tier: "frontier",
     sortOrder: 140,
+    globalDefault: true,
     capabilities: {
       vision: true,
       tools: true,
@@ -263,7 +263,7 @@ export const MODEL_CATALOG = [
     reasoning: {
       kind: "openai_reasoning_effort",
       levels: OPENAI_GPT_5_4_REASONING_LEVELS,
-      defaultLevel: "none",
+      defaultLevel: "low",
       requestField: "reasoning.effort",
     },
   },

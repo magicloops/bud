@@ -37,6 +37,7 @@ Thread list sidebar for conversation navigation.
 - `thread_id`, `bud_id`, `title`
 - `last_activity_at`, `last_message_preview`, `message_count`
 - `has_terminal_session`, `session_state`, `session_id`
+- stored/effective model selection fields (`model`, `reasoning_effort`, `effective_model`, `effective_reasoning_effort`, `model_selection_source`)
 
 **Features**:
 - Sorted by last activity (most recent first)

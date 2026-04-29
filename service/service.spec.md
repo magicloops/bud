@@ -151,6 +151,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `GET/HEAD` | `/api/files/:id` | Authorize a file edge request; stream stat/read/range work through the daemon over the selected data-plane carrier |
 | `GET` | `/api/threads` | List threads |
 | `POST` | `/api/threads` | Create thread |
+| `PATCH` | `/api/threads/:id/model-preference` | Persist the owned thread's selected model/reasoning pair |
 | `GET` | `/api/threads/:id/messages` | Get messages |
 | `POST` | `/api/threads/:id/messages` | Send message (triggers agent) |
 | `POST` | `/api/threads/:id/read` | Advance the viewer's thread-read watermark to a specific owned message |
@@ -256,8 +257,9 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth
 - `PORT` - Server port (default: 3000)
-- `DEFAULT_MODEL` - Product model used when requests omit `model` (default: `claude-opus-4-6`)
+- `DEFAULT_MODEL` - Product model used when requests omit `model` (default: `gpt-5.5`)
 - `OPENAI_MODEL` - Legacy fallback model env read before the built-in default
+- `AGENT_REASONING_EFFORT` - Compatibility fallback reasoning effort for non-catalog model overrides (default: `low`)
 - `AGENT_MAX_STEPS` - Max tool calls (default: 30)
 - `AGENT_DEBUG` - Enable debug logging
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size

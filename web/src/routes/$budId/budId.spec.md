@@ -50,12 +50,12 @@ New thread creation view - allows users to start a new conversation.
 - Empty terminal display with placeholder message
 - Message composer for initial message
 - Reuses `WorkspaceShell` so the top bar / split panes / composer frame stay aligned with the existing-thread route
-- Loads `/api/models` through the shared `useAvailableModels()` hook using the normalized snake_case catalog contract (`default_model`, model `display_name`, `provider_model`, capabilities, and per-model `reasoning`)
-- Normalizes the selected reasoning level against the selected model and omits `reasoning_effort` if the model list has not loaded yet
+- Loads `/api/models` through the shared `useAvailableModels()` hook using the normalized snake_case catalog contract (`service_default_model`, `default_model`, `default_reasoning_effort`, model `display_name`, `provider_model`, capabilities, and per-model `reasoning`)
+- Normalizes the selected reasoning level against the selected model and default reasoning metadata, omitting model fields only if the model list has not loaded yet
 - Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
-  1. POST `/api/threads` to create thread and read `{ thread_id }`
-  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, ... }` and read `{ message_id, client_id }`
+  1. POST `/api/threads` with `{ bud_id, model, reasoning_effort }` to create the thread and persist its initial model preference
+  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, model, reasoning_effort }` and read `{ message_id, client_id }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
@@ -137,6 +137,8 @@ loader: async ({ params }) => {
 7. **Shared Workspace Frame**
    - Reuses `WorkspaceShell` with the same top bar, left/right pane contract, composer slot, and debug-panel slot as `/$budId/new`
    - Reuses `useAvailableModels()` so model fetching/default selection and per-model reasoning normalization match the new-thread flow
+   - Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
+   - Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
    - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, and `ThreadTerminalPane`
 
 **State**:

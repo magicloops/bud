@@ -3,6 +3,7 @@ import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../../auth/auth.js";
 import { db } from "../../db/client.js";
+import { providerRegistry } from "../../llm/index.js";
 import { registerThreadCoreRoutes } from "./core.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
@@ -42,6 +43,7 @@ function createServer(): FastifyInstance & { routes: Map<string, RouteHandler> }
     routes,
     get: addRoute("GET"),
     post: addRoute("POST"),
+    patch: addRoute("PATCH"),
     delete: addRoute("DELETE"),
   } as unknown as FastifyInstance & { routes: Map<string, RouteHandler> };
 }
@@ -95,6 +97,8 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       messageCount: 4,
       pinned: false,
       archived: false,
+      modelId: "gpt-5.5",
+      reasoningEffort: "low",
       lastAttentionMessageId: "22222222-2222-4222-8222-222222222222",
       lastAttentionMessageCreatedAt: new Date("2026-04-21T20:19:00.000Z"),
       lastAttentionKind: "assistant_completed",
@@ -113,6 +117,8 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       messageCount: 2,
       pinned: false,
       archived: false,
+      modelId: null,
+      reasoningEffort: null,
       lastAttentionMessageId: "55555555-5555-4555-8555-555555555555",
       lastAttentionMessageCreatedAt: new Date("2026-04-21T19:10:00.000Z"),
       lastAttentionKind: "assistant_completed",
@@ -159,6 +165,11 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       message_count: 4,
       pinned: false,
       archived: false,
+      model: "gpt-5.5",
+      reasoning_effort: "low",
+      effective_model: "gpt-5.5",
+      effective_reasoning_effort: "low",
+      model_selection_source: "thread",
       has_unseen_attention: true,
       last_attention_kind: "assistant_completed",
       has_terminal_session: true,
@@ -175,6 +186,11 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       message_count: 2,
       pinned: false,
       archived: false,
+      model: null,
+      reasoning_effort: null,
+      effective_model: "gpt-5.5",
+      effective_reasoning_effort: "low",
+      model_selection_source: "service_default",
       has_unseen_attention: false,
       last_attention_kind: "assistant_completed",
       has_terminal_session: false,
@@ -182,4 +198,153 @@ test("GET /api/threads includes unread-attention fields in the serialized respon
       session_id: null,
     },
   ]);
+});
+
+test("PATCH /api/threads/:threadId/model-preference persists resolved thread model selection", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const server = createServer();
+  await registerThreadCoreRoutes(server, {} as never);
+
+  const handler = server.routes.get("PATCH /api/threads/:threadId/model-preference");
+  assert.ok(handler, "expected thread model preference route to register");
+
+  const thread = {
+    threadId: "11111111-1111-4111-8111-111111111111",
+    budId: "bud-1",
+    title: null,
+    createdAt: new Date("2026-04-21T20:00:00.000Z"),
+    lastActivityAt: new Date("2026-04-21T20:00:00.000Z"),
+    lastMessagePreview: null,
+    messageCount: 0,
+    pinned: false,
+    archived: false,
+    modelId: null,
+    reasoningEffort: null,
+    deletedAt: null,
+    tenantId: null,
+    createdByUserId: "user-1",
+    updatedAt: new Date("2026-04-21T20:00:00.000Z"),
+    lastAttentionMessageId: null,
+    lastAttentionMessageCreatedAt: null,
+    lastAttentionKind: null,
+  };
+  let updateValues: Record<string, unknown> | null = null;
+
+  mock.method(auth.api, "getSession", async () => ({
+    user: {
+      id: "user-1",
+      email: "test@example.com",
+      emailVerified: true,
+      name: "Test User",
+      image: null,
+    },
+    session: {
+      id: "session-1",
+      expiresAt: new Date("2026-04-21T21:00:00.000Z"),
+    },
+  }) as never);
+  mock.method(db.query.threadTable, "findFirst", async () => thread as never);
+  mock.method(providerRegistry, "getProviderForModel", () => ({ name: "openai" }) as never);
+  mock.method(db, "update", () => ({
+    set(values: Record<string, unknown>) {
+      updateValues = values;
+      return {
+        where() {
+          return {
+            returning() {
+              return Promise.resolve([
+                {
+                  ...thread,
+                  modelId: values.modelId,
+                  reasoningEffort: values.reasoningEffort,
+                },
+              ]);
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: thread.threadId },
+    body: { model: "gpt-5.5", reasoning_effort: null },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(updateValues, {
+    modelId: "gpt-5.5",
+    reasoningEffort: "low",
+  });
+  assert.deepEqual(response.payload, {
+    thread_id: thread.threadId,
+    bud_id: "bud-1",
+    title: null,
+    created_at: new Date("2026-04-21T20:00:00.000Z"),
+    last_activity_at: new Date("2026-04-21T20:00:00.000Z"),
+    last_message_preview: null,
+    message_count: 0,
+    pinned: false,
+    archived: false,
+    model: "gpt-5.5",
+    reasoning_effort: "low",
+    effective_model: "gpt-5.5",
+    effective_reasoning_effort: "low",
+    model_selection_source: "thread",
+  });
+});
+
+test("PATCH /api/threads/:threadId/model-preference rejects missing model", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const server = createServer();
+  await registerThreadCoreRoutes(server, {} as never);
+
+  const handler = server.routes.get("PATCH /api/threads/:threadId/model-preference");
+  assert.ok(handler, "expected thread model preference route to register");
+
+  mock.method(auth.api, "getSession", async () => ({
+    user: {
+      id: "user-1",
+      email: "test@example.com",
+      emailVerified: true,
+      name: "Test User",
+      image: null,
+    },
+    session: {
+      id: "session-1",
+      expiresAt: new Date("2026-04-21T21:00:00.000Z"),
+    },
+  }) as never);
+  mock.method(db.query.threadTable, "findFirst", async () => ({
+    threadId: "11111111-1111-4111-8111-111111111111",
+    budId: "bud-1",
+    createdByUserId: "user-1",
+  }) as never);
+
+  let updateCalled = false;
+  mock.method(db, "update", () => {
+    updateCalled = true;
+    throw new Error("update should not be called for invalid model preference");
+  });
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: "11111111-1111-4111-8111-111111111111" },
+    body: {},
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.payload, {
+    error: "invalid_model",
+    message: "Model is required",
+    model: "null",
+  });
+  assert.equal(updateCalled, false);
 });

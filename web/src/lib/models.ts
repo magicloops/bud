@@ -35,7 +35,9 @@ export type ModelInfo = {
 
 type ModelsResponse = {
   models: ModelInfo[]
+  service_default_model?: string | null
   default_model?: string | null
+  default_reasoning_effort?: ReasoningLevel | null
 }
 
 export function getSelectedModelInfo(models: ModelInfo[], selectedModel: string): ModelInfo | null {
@@ -71,6 +73,8 @@ export function normalizeReasoningForModel(
 export function useAvailableModels() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
+  const [serviceDefaultModel, setServiceDefaultModel] = useState<string | null>(null)
+  const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<ReasoningLevel | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -88,6 +92,8 @@ export function useAvailableModels() {
         }
 
         setModels(data.models)
+        setServiceDefaultModel(data.service_default_model ?? null)
+        setDefaultReasoningEffort(data.default_reasoning_effort ?? null)
         setSelectedModel((currentModel) => {
           if (currentModel && data.models.some((model) => model.id === currentModel)) {
             return currentModel
@@ -113,5 +119,7 @@ export function useAvailableModels() {
     models,
     selectedModel,
     setSelectedModel,
+    serviceDefaultModel,
+    defaultReasoningEffort,
   }
 }

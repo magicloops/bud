@@ -52,7 +52,10 @@ export {
   InvalidModelSelectionError,
   InvalidReasoningEffortError,
   isModelSelectionError,
+  resolveEffectiveModelSelection,
   resolveModelReasoning,
+  type EffectiveModelSelection,
+  type ModelSelectionSource,
   type ResolvedModelReasoning,
 } from "./reasoning-policy.js";
 

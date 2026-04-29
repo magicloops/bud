@@ -100,7 +100,7 @@ Central product model catalog and reasoning-control metadata.
 - own the first-party product IDs exposed through `/api/models`
 - map product IDs to provider API model strings
 - keep provider/model-specific reasoning levels, defaults, labels, and capability metadata in one place
-- define the global default model (`claude-opus-4-6`)
+- define the global default model (`gpt-5.5`)
 
 **Current Product Models**:
 
@@ -113,7 +113,7 @@ Central product model catalog and reasoning-control metadata.
 | `gpt-5.4` | `gpt-5.4-2026-03-05` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
-| `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
+| `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
 
 ### `reasoning-policy.ts`
 
@@ -124,6 +124,8 @@ Model-specific reasoning validation and lowering.
 - use the catalog default when a request omits `reasoning_effort`
 - reject unsupported model/reasoning combinations with `InvalidReasoningEffortError`
 - build the canonical `ReasoningConfig` consumed by providers
+- resolve an effective selection from explicit request, stored thread preference, or the service default (`gpt-5.5` + `low`)
+- ignore invalid stored thread selections while still rejecting invalid explicit submissions
 
 ### `model-catalog.test.ts`
 
@@ -131,8 +133,18 @@ Standalone Node tests for catalog invariants and reasoning option labels.
 
 **Current Coverage**:
 - current product model order and global default
-- provider-specific reasoning levels for GPT-5.4, Claude Opus 4.6, Claude Opus 4.7, and Claude Haiku 4.5
+- provider-specific reasoning levels for GPT-5.4/GPT-5.5, Claude Opus 4.6, Claude Opus 4.7, and Claude Haiku 4.5
 - stable reasoning labels exposed to API clients
+
+### `reasoning-policy.test.ts`
+
+Standalone Node tests for effective model-selection precedence.
+
+**Current Coverage**:
+- explicit submitted selections win over stored thread defaults
+- stored thread selections are used when no model is submitted
+- invalid stored selections fall back to the service default
+- null explicit models and unsupported explicit reasoning are rejected
 
 ### `registry.ts`
 

@@ -12,102 +12,102 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 ### Defaults
 
-- [ ] service default model is `gpt-5.5`
-- [ ] service default reasoning is `low`
-- [ ] `/api/models` can report `default_reasoning_effort`
-- [ ] docs/examples no longer claim Claude Opus 4.6 is the default when env is omitted
+- [x] service default model is `gpt-5.5`
+- [x] service default reasoning is `low`
+- [x] `/api/models` can report `default_reasoning_effort`
+- [x] docs/examples no longer claim Claude Opus 4.6 is the default when env is omitted
 
 ### Schema And Migration
 
-- [ ] `thread.model_id` added to `service/src/db/schema.ts`
-- [ ] `thread.reasoning_effort` added to `service/src/db/schema.ts`
-- [ ] no user-profile preference columns added
-- [ ] `pnpm db:push` run or failure captured
-- [ ] `pnpm db:generate` run or failure captured
-- [ ] generated migration reviewed
+- [x] `thread.model_id` added to `service/src/db/schema.ts`
+- [x] `thread.reasoning_effort` added to `service/src/db/schema.ts`
+- [x] no user-profile preference columns added
+- [x] `pnpm db:push` run or failure captured
+- [x] `pnpm db:generate` run or failure captured
+- [x] generated migration reviewed
 
 ### Resolver
 
-- [ ] shared resolver implemented
-- [ ] explicit request wins
-- [ ] thread selection wins when no explicit request exists
-- [ ] service default wins when no thread selection exists
-- [ ] invalid stored thread selection falls back without destructive cleanup
-- [ ] omitted/null reasoning resolves to a concrete model default
-- [ ] resolver tests added
+- [x] shared resolver implemented
+- [x] explicit request wins
+- [x] thread selection wins when no explicit request exists
+- [x] service default wins when no thread selection exists
+- [x] invalid stored thread selection falls back without destructive cleanup
+- [x] omitted/null reasoning resolves to a concrete model default
+- [x] resolver tests added
 
 ## Phase 2: Thread API And Message Metadata
 
 ### API
 
-- [ ] `/api/models` returns `gpt-5.5` + `low` defaults
-- [ ] thread list returns stored/effective model fields
-- [ ] thread detail returns stored/effective model fields
-- [ ] `PATCH /api/threads/:thread_id/model-preference` implemented
-- [ ] PATCH route enforces thread ownership
-- [ ] PATCH route rejects `model: null`
-- [ ] thread creation always stores selection
-- [ ] message send resolves before agent start
-- [ ] message send updates thread selection for explicit requests
-- [ ] message send backfills old null-selection threads
+- [x] `/api/models` returns `gpt-5.5` + `low` defaults
+- [x] thread list returns stored/effective model fields
+- [x] thread detail returns stored/effective model fields
+- [x] `PATCH /api/threads/:thread_id/model-preference` implemented
+- [x] PATCH route enforces thread ownership
+- [x] PATCH route rejects `model: null`
+- [x] thread creation always stores selection
+- [x] message send resolves before agent start
+- [x] message send updates thread selection for explicit requests
+- [x] message send backfills old null-selection threads
 
 ### Metadata
 
-- [ ] user message metadata records effective model/reasoning
-- [ ] assistant message metadata records effective model/reasoning
-- [ ] tool message metadata records effective model/reasoning
-- [ ] metadata merges preserve `preferred_cwd`
-- [ ] metadata merges preserve terminal/tool fields
+- [x] user message metadata records effective model/reasoning
+- [x] assistant message metadata records effective model/reasoning
+- [x] tool message metadata records effective model/reasoning
+- [x] metadata merges preserve `preferred_cwd`
+- [x] metadata merges preserve terminal/tool fields
 
 ## Phase 3: Web Selector Persistence
 
-- [ ] web model/thread types updated
-- [ ] shared model-selection hook/helper added
-- [ ] new-thread selector initializes to service default
-- [ ] existing-thread selector initializes from thread effective selection
-- [ ] existing-thread selector changes call PATCH
-- [ ] new-thread submit sends model/reasoning to thread create
-- [ ] message submit keeps defensive model/reasoning payload
-- [ ] invalid reasoning is normalized only when necessary
-- [ ] refresh/remount no longer resets the selector
+- [x] web model/thread types updated
+- [x] shared model-selection hook/helper added
+- [x] new-thread selector initializes to service default
+- [x] existing-thread selector initializes from thread effective selection
+- [x] existing-thread selector changes call PATCH
+- [x] new-thread submit sends model/reasoning to thread create
+- [x] message submit keeps defensive model/reasoning payload
+- [x] invalid reasoning is normalized only when necessary
+- [x] refresh/remount no longer resets the selector
 
 ## Phase 4: Validation, Docs, And Mobile Handoff
 
 ### Validation
 
-- [ ] service tests run
-- [ ] service build run
-- [ ] service lint run
-- [ ] web build run if web changed
-- [ ] web lint run if web changed
-- [ ] `git diff --check` run
-- [ ] manual new-thread persistence check complete
-- [ ] manual existing-thread persistence check complete
+- [x] service tests run
+- [x] service build run
+- [x] service lint run
+- [x] web build run if web changed
+- [x] web lint run if web changed
+- [x] `git diff --check` run
+- [x] manual new-thread persistence check complete
+- [x] manual existing-thread persistence check complete
 - [ ] manual old-thread fallback/backfill check complete
 - [ ] message metadata inspected
 
 ### Docs And Specs
 
-- [ ] `service/src/db/db.spec.md` updated if DB schema changed
-- [ ] `service/drizzle/migrations/migrations.spec.md` updated if migration generated
-- [ ] `service/src/routes/routes.spec.md` updated if routes changed
-- [ ] `service/src/agent/agent.spec.md` updated if agent/transcript code changed
-- [ ] `service/src/llm/llm.spec.md` updated if catalog/default code changed
-- [ ] `web/src/lib/lib.spec.md` updated if web lib changed
-- [ ] `web/src/routes/$budId/budId.spec.md` updated if routes changed
-- [ ] `web/src/components/workbench/workbench.spec.md` updated if composer changed
-- [ ] `service/.env.example` updated
-- [ ] `service/README.md` updated
-- [ ] mobile handoff notes captured
+- [x] `service/src/db/db.spec.md` updated if DB schema changed
+- [x] `service/drizzle/migrations/migrations.spec.md` updated if migration generated
+- [x] `service/src/routes/routes.spec.md` updated if routes changed
+- [x] `service/src/agent/agent.spec.md` updated if agent/transcript code changed
+- [x] `service/src/llm/llm.spec.md` updated if catalog/default code changed
+- [x] `web/src/lib/lib.spec.md` updated if web lib changed
+- [x] `web/src/routes/$budId/budId.spec.md` updated if routes changed
+- [x] `web/src/components/workbench/workbench.spec.md` updated if composer changed
+- [x] `service/.env.example` updated
+- [x] `service/README.md` updated
+- [x] mobile handoff notes captured
 
 ## Overall Progress
 
 | Phase | Status | Notes |
 | --- | --- | --- |
-| 1 | Not Started | Service foundation |
-| 2 | Not Started | Thread APIs and metadata |
-| 3 | Not Started | Web adoption |
-| 4 | Not Started | Validation and docs |
+| 1 | Complete | Service default, schema, migration, and resolver are implemented and tested |
+| 2 | Complete | Thread APIs and message metadata are implemented and covered by service tests |
+| 3 | Complete | Web selector persistence is implemented, builds cleanly, and passed local manual persistence validation |
+| 4 | Mostly Complete | Automated validation passed; old-null-thread fallback and DB metadata inspection remain optional manual checks |
 
 ## Notes
 

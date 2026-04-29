@@ -8,7 +8,12 @@ import { threadTable } from "../db/schema.js";
 import type { TerminalSession, TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
-import type { CanonicalReasoningBlock, ResolvedModelReasoning } from "../llm/index.js";
+import type {
+  CanonicalReasoningBlock,
+  ModelSelectionSource,
+  ReasoningLevel,
+  ResolvedModelReasoning,
+} from "../llm/index.js";
 import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner } from "./model-runner.js";
@@ -57,11 +62,21 @@ export class AgentService {
     options?: {
       model?: string | null;
       reasoningEffort?: ReasoningEffortSetting | null;
+      modelSelectionSource?: ModelSelectionSource;
       ownerUserId?: string | null;
     },
   ): Promise<{ sessionId: string }> {
     const model = options?.model ?? config.defaultModel;
     const modelReasoning = this.modelRunner.resolveModelReasoning(model, options?.reasoningEffort);
+    const modelSelection = {
+      model: modelReasoning.entry?.id ?? model,
+      reasoningEffort: modelReasoning.reasoningLevel,
+      source: options?.modelSelectionSource ?? (options?.model ? "explicit_request" : "service_default"),
+    } satisfies {
+      model: string;
+      reasoningEffort: ReasoningLevel;
+      source: ModelSelectionSource;
+    };
     const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
     const turnId = ulid();
     this.runtime.startTurn(threadId, turnId);
@@ -77,6 +92,7 @@ export class AgentService {
         sessionId: session.sessionId,
         model,
         modelReasoning,
+        modelSelection,
         ownerUserId,
         controller,
       }).catch((err) => {
@@ -108,10 +124,15 @@ export class AgentService {
     sessionId: string;
     model: string;
     modelReasoning: ResolvedModelReasoning;
+    modelSelection: {
+      model: string;
+      reasoningEffort: ReasoningLevel;
+      source: ModelSelectionSource;
+    };
     ownerUserId?: string | null;
     controller: AbortController;
   }): Promise<void> {
-    const { threadId, turnId, sessionId, model, modelReasoning, ownerUserId, controller } = args;
+    const { threadId, turnId, sessionId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
     const conversation = await this.conversationLoader.load(threadId);
     this.debug("Starting agent run", {
       threadId,
@@ -188,6 +209,7 @@ export class AgentService {
             execution,
             clientId: toolClientId,
             timing,
+            modelSelection,
             ownerUserId,
           });
 
@@ -218,6 +240,7 @@ export class AgentService {
           message: directive.message,
           status: directive.status,
           clientId: assistantClientId,
+          modelSelection,
           ownerUserId,
         });
 

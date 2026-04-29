@@ -69,7 +69,7 @@ Shared browser API types plus narrow response normalization helpers.
 | Type | Description |
 |------|-------------|
 | `ApiBud` | Bud response (id, name, status, capabilities) |
-| `ApiThread` | Thread response (id, title, session info) |
+| `ApiThread` | Thread response (id, title, session info, stored/effective model selection) |
 | `ApiMessage` | Message response (`message_id`, `client_id`, role, content) |
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
 | `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, and `draft_assistant.client_id` |
@@ -116,7 +116,7 @@ Shared model-list loading for workbench routes.
 - Loads `/api/models`
 - Consumes catalog-backed product models directly
 - Preserves an existing selection when possible
-- Falls back to `default_model` or the first available model
+- Tracks `service_default_model`, falls back to `default_model` or the first available model, and exposes `default_reasoning_effort`
 - Exposes per-model reasoning options and defaults so routes do not hardcode provider behavior
 - Normalizes stale reasoning selections to the selected model's default level
 

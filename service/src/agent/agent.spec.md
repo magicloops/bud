@@ -115,7 +115,7 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 
 | Method | Purpose |
 |--------|---------|
-| `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, then spawns async agent flow and carries thread-owner stamping |
+| `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, then spawns async agent flow while carrying thread-owner stamping plus the resolved model-selection source |
 | `runAgentFlow(...)` | Main loop - delegate conversation/model/tool/transcript work across the extracted ownership seams |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 | `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
@@ -250,6 +250,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - stamp thread attention metadata for final attention-worthy assistant output
 - enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
 - add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
+- add the resolved `model`, `reasoning_effort`, and `model_selection_source` to assistant/tool `message.metadata`
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
 - advance runtime cursors only after the durable transcript boundary is visible
 
@@ -262,6 +263,8 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - Anthropic Haiku 4.5: `none`, `low`, `medium`, `high`
 
 Omitted `reasoning_effort` uses the selected model's catalog default, not the global env default.
+
+Thread/message routes now resolve the effective thread selection before starting the agent, so normal turns enter `AgentService.startUserMessage(...)` with a concrete model, reasoning effort, and source (`explicit_request`, `thread`, or `service_default`). Assistant and tool rows persist that selection metadata for later debugging and client reconciliation.
 
 **Cancellation**:
 
@@ -373,10 +376,10 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 ## Configuration Used
 
 From `../config.js`:
-- `config.defaultModel` - Product model to use when requests omit `model` (default: `claude-opus-4-6`)
+- `config.defaultModel` - Product model to use when requests omit `model` (default: `gpt-5.5`)
 - `config.agentMaxSteps` - Max tool calls per request (default: 30)
 - `config.agentMaxOutputTokens` - Max tokens per response (default: 128000)
-- `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `none`)
+- `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `low`)
 - `config.agentDebug` - Enable debug logging
 - `config.agentOpenaiDebug` - Log raw OpenAI responses
 

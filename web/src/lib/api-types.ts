@@ -58,6 +58,8 @@ export type ApiBud = {
   capabilities?: Record<string, unknown> | null
 }
 
+export type ApiReasoningLevel = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 export type ApiThread = {
   thread_id: string
   bud_id: string
@@ -71,6 +73,11 @@ export type ApiThread = {
   has_terminal_session?: boolean
   session_state?: string | null
   session_id?: string | null
+  model?: string | null
+  reasoning_effort?: ApiReasoningLevel | null
+  effective_model?: string | null
+  effective_reasoning_effort?: ApiReasoningLevel | null
+  model_selection_source?: 'thread' | 'service_default' | null
 }
 
 export type ApiMessage = {

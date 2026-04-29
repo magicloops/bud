@@ -42,7 +42,7 @@ Drizzle schema definitions. Defines all tables:
 | `budTable` | Registered devices | `budId`, `installationId`, `name`, `os`, `arch`, `capabilities`, `status`, `deviceSecret`, `createdByUserId` |
 | `enrollmentTokenTable` | Legacy one-time registration tokens retained for migration/debug compatibility; gateways no longer accept these for production enrollment | `tokenHash`, `expiresAt`, `consumedAt` |
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
-| `threadTable` | Conversations | `threadId`, `budId`, `title`, `lastActivityAt`, `messageCount`, `lastAttentionMessageId`, `lastAttentionMessageCreatedAt`, `lastAttentionKind`, `deletedAt`, `createdByUserId` |
+| `threadTable` | Conversations | `threadId`, `budId`, `title`, `modelId`, `reasoningEffort`, `lastActivityAt`, `messageCount`, `lastAttentionMessageId`, `lastAttentionMessageCreatedAt`, `lastAttentionKind`, `deletedAt`, `createdByUserId` |
 | `messageTable` | Chat messages | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
 | `threadReadStateTable` | Per-user thread read watermarks for unread/badge math | `threadId`, `userId`, `lastSeenMessageId`, `lastSeenMessageCreatedAt`, `lastSeenAt` |
 | `pushEndpointTable` | Owned mobile push endpoint registrations | `endpointId`, `userId`, `installationId`, `platform`, `provider`, `appId`, `token`, `enabled`, `invalidatedAt` |
@@ -220,7 +220,7 @@ budTable
 
 `drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0015`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, and add the Phase 4.3 `file_session` schema so migration-driven environments can reach the same schema shape as `schema.ts`.
+Checked-in migrations now run cleanly through `0016`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, and add nullable thread model-preference columns so migration-driven environments can reach the same schema shape as `schema.ts`.
 
 ## Ownership And Multi-Tenancy Support
 

@@ -3,6 +3,7 @@ import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../../auth/auth.js";
 import { db } from "../../db/client.js";
+import { providerRegistry } from "../../llm/index.js";
 import { registerThreadMessageRoutes } from "./messages.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
@@ -87,6 +88,8 @@ const ACCESS = {
     messageCount: 1,
     pinned: false,
     archived: false,
+    modelId: null,
+    reasoningEffort: null,
     deletedAt: null,
     tenantId: null,
     createdByUserId: "user-1",
@@ -255,4 +258,50 @@ test("POST /api/threads/:threadId/read returns updated=false for stale watermark
     last_seen_message_id: "44444444-4444-4444-8444-444444444444",
   });
   assert.equal(insertCalled, false);
+});
+
+test("POST /api/threads/:threadId/messages rejects invalid explicit reasoning before persistence", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const server = createServer();
+  await registerThreadMessageRoutes(
+    server,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+
+  const handler = server.routes.get("POST /api/threads/:threadId/messages");
+  assert.ok(handler, "expected create-message route to register");
+
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => ACCESS.thread as never);
+  mock.method(providerRegistry, "getProviderForModel", () => ({ name: "openai" }) as never);
+
+  let selectCalled = false;
+  mock.method(db, "select", () => {
+    selectCalled = true;
+    throw new Error("select should not be called for invalid model selection");
+  });
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: ACCESS.thread.threadId },
+    body: {
+      text: "hello",
+      model: "gpt-5.5",
+      reasoning_effort: "max",
+    },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.payload, {
+    error: "invalid_reasoning_effort",
+    message: "Reasoning effort max is not supported by gpt-5.5",
+    model: "gpt-5.5",
+    supported_values: ["none", "low", "medium", "high", "xhigh"],
+  });
+  assert.equal(selectCalled, false);
 });

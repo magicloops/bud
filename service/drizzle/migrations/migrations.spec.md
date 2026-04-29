@@ -129,6 +129,13 @@ Placeholder to ensure the directory exists in git.
 - Adds owner/state, Bud/state, thread, and audit-correlation indexes
 - Adds foreign keys to `bud`, `thread`, `bud_operation`, `bud_stream`, and `auth.user`
 
+### `0016_keen_wendigo.sql`
+
+**Thread model-preference persistence**:
+- Adds nullable `thread.model_id`
+- Adds nullable `thread.reasoning_effort`
+- Leaves historical threads valid while new writes persist the resolved concrete model/reasoning selection
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -139,7 +146,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0015` currently)
+- Snapshot files for each migration (`0000` through `0016` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -202,6 +209,9 @@ v14: Phase 4.1 localhost proxy session persistence
  │
  ▼
 v15: Phase 4.3 file session persistence
+ │
+ ▼
+v16: thread model-preference persistence
 ```
 
 ---

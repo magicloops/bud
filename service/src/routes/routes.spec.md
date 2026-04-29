@@ -90,6 +90,7 @@ Ownership-focused thread submodules:
 | `GET` | `/api/threads` | List the signed-in user's threads (optionally filtered by owned `bud_id`) |
 | `POST` | `/api/threads` | Create a new owned thread on an owned bud |
 | `GET` | `/api/threads/:thread_id` | Get owned thread details |
+| `PATCH` | `/api/threads/:thread_id/model-preference` | Persist the owned thread's concrete model/reasoning selection |
 | `DELETE` | `/api/threads/:thread_id` | Soft delete an owned thread |
 
 **Message Endpoints**:
@@ -117,8 +118,9 @@ Ownership-focused thread submodules:
 | `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
 
 **Validation Schemas** (Zod):
-- `CreateThreadSchema` - `bud_id` required, `title` optional
+- `CreateThreadSchema` - `bud_id` required, `title` optional, optional `model` / `reasoning_effort` accepted for initial thread preference persistence
 - `CreateMessageSchema` - `text` required, `client_id` optional UUID, `cwd`, `model`, and broad `reasoning_effort` optional; selected model/reasoning semantics are validated against the LLM catalog before an agent turn starts
+- `UpdateThreadModelPreferenceSchema` - optional raw `model` / `reasoning_effort` fields parsed before catalog validation; the route requires a non-null model and persists the resolved concrete pair
 - `MarkThreadReadSchema` - `last_seen_message_id` required UUID
 - `ThreadParamsSchema` - UUID validation
 - `MessagesQuerySchema` - `limit` plus exclusive `before` / `after` opaque cursors
@@ -237,13 +239,14 @@ Empty response at the beginning of history:
 
 **Context Sync Flow** (POST /messages):
 Before creating user message, validates the selected LLM model/reasoning pair and then checks for terminal state changes:
-1. Resolve `model` or service `DEFAULT_MODEL`
-2. Resolve optional `reasoning_effort` through the catalog-backed LLM reasoning policy
-3. Return `400 invalid_model` or `400 invalid_reasoning_effort` before duplicate handling, context sync, message insert, or agent start when the selection is unsupported
-4. If thread has active terminal session and no active agent run
-5. Call `contextSyncService.checkAndSync(sessionId, threadId, ownerUserId)`
-6. If state changed, a system message is injected before the user message
-7. This keeps the agent informed about terminal state transitions (e.g., REPL exit)
+1. Resolve explicit `model` / `reasoning_effort`, otherwise use the stored thread selection, otherwise the service default (`gpt-5.5` + `low`)
+2. Return `400 invalid_model` or `400 invalid_reasoning_effort` before duplicate handling, context sync, message insert, thread preference persistence, or agent start when the submitted selection is unsupported
+3. Duplicate owned `client_id` retries return the existing user message without mutating the thread preference
+4. Fresh explicit selections, missing old thread selections, and invalid stored selections update `thread.model_id` / `thread.reasoning_effort` to the resolved concrete pair
+5. If thread has active terminal session and no active agent run
+6. Call `contextSyncService.checkAndSync(sessionId, threadId, ownerUserId)`
+7. If state changed, a system message is injected before the user message
+8. This keeps the agent informed about terminal state transitions (e.g., REPL exit)
 
 **First-Message Title Flow** (POST /messages):
 - after the durable user row is written and the agent turn is successfully started, the route launches a fire-and-forget thread-title task
@@ -334,14 +337,14 @@ Route-level coverage for the catalog-backed model inventory.
 
 **Current Coverage**:
 - configured Anthropic/OpenAI providers return the sorted product catalog
-- response includes `default_model`
+- response includes `service_default_model`, `default_model`, and `default_reasoning_effort`
 - response includes per-model `reasoning` metadata
 - response omits a public `available` flag
 
 **Auth Notes**:
 - now uses the shared `requireViewer(...)` contract instead of remaining public
 - returns a normalized snake_case payload so web and mobile share one contract
-- top-level response includes `default_model`
+- top-level response includes `service_default_model`, `default_model`, and `default_reasoning_effort`
 - model entries are sourced from `service/src/llm/model-catalog.ts` and filtered to configured providers
 - model entries expose product `id`, `provider`, `provider_model`, `display_name`, `is_default`, capability limits, and model-specific `reasoning`
 - `reasoning.levels` is the client source of truth for valid `reasoning_effort` values
@@ -439,7 +442,9 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
       }
     }
   ],
-  "default_model": "claude-opus-4-6"
+  "service_default_model": "gpt-5.5",
+  "default_model": "gpt-5.5",
+  "default_reasoning_effort": "low"
 }
 ```
 
@@ -457,6 +462,11 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
   "message_count": 0,
   "pinned": false,
   "archived": false,
+  "model": "gpt-5.5",
+  "reasoning_effort": "low",
+  "effective_model": "gpt-5.5",
+  "effective_reasoning_effort": "low",
+  "model_selection_source": "thread",
   "has_unseen_attention": true,
   "last_attention_kind": "assistant_completed | human_input_requested | null",
   "has_terminal_session": true,

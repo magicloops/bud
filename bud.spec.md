@@ -98,6 +98,7 @@ pending → creating → ready ↔ active → idle → closed
 ```
 bud/
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
+├── PR_SUMMARY.md           # Current branch PR summary and validation handoff
 ├── git_loc_breakdown.py    # Repo-wide LOC analyzer that buckets code, config, markdown, and other tracked text while honoring Git ignore rules
 ├── test_git_loc_breakdown.py # Regression tests for the LOC analyzer's category and summary accounting
 │
@@ -362,7 +363,8 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 | `DATABASE_URL` | - | PostgreSQL connection string |
 | `OPENAI_API_KEY` | - | OpenAI API key |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key |
-| `DEFAULT_MODEL` | claude-opus-4-6 | Product model for agent requests that omit `model` |
+| `DEFAULT_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
+| `AGENT_REASONING_EFFORT` | low | Compatibility fallback reasoning effort for non-catalog model overrides |
 | `AGENT_MAX_STEPS` | 30 | Max tool calls per request |
 | `AGENT_DEBUG` | false | Enable agent debug logging |
 | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle after |

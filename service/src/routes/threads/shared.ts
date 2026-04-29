@@ -2,20 +2,16 @@ import { Buffer } from "node:buffer";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { and, eq, gt, lt, or } from "drizzle-orm";
 import { z } from "zod";
+import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { messageTable, threadTable } from "../../db/schema.js";
 import { getAuthorizedThread, requireViewer } from "../../auth/session.js";
-import { type ReasoningLevel } from "../../llm/index.js";
-
-const REASONING_LEVELS = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const satisfies [ReasoningLevel, ...ReasoningLevel[]];
+import {
+  isModelSelectionError,
+  resolveEffectiveModelSelection,
+  type EffectiveModelSelection,
+  type ReasoningLevel,
+} from "../../llm/index.js";
 
 type AuthorizedThreadAccess = {
   viewer: NonNullable<Awaited<ReturnType<typeof requireViewer>>>;
@@ -32,6 +28,11 @@ type SerializedThread = {
   message_count: number;
   pinned: boolean;
   archived: boolean;
+  model: string | null;
+  reasoning_effort: string | null;
+  effective_model: string;
+  effective_reasoning_effort: ReasoningLevel;
+  model_selection_source: "thread" | "service_default";
 };
 
 type SerializedMessage = {
@@ -46,15 +47,22 @@ type SerializedMessage = {
 
 export const CreateThreadSchema = z.object({
   bud_id: z.string().min(1),
-  title: z.string().optional()
+  title: z.string().optional(),
+  model: z.string().min(1).nullable().optional(),
+  reasoning_effort: z.string().min(1).nullable().optional(),
 });
 
 export const CreateMessageSchema = z.object({
   text: z.string().min(1),
   client_id: z.string().uuid().optional(),
   cwd: z.string().optional(),
-  model: z.string().optional(),
-  reasoning_effort: z.enum(REASONING_LEVELS).optional()
+  model: z.string().min(1).nullable().optional(),
+  reasoning_effort: z.string().min(1).nullable().optional(),
+});
+
+export const UpdateThreadModelPreferenceSchema = z.object({
+  model: z.string().min(1).nullable().optional(),
+  reasoning_effort: z.string().min(1).nullable().optional(),
 });
 
 export const MarkThreadReadSchema = z.object({
@@ -103,6 +111,7 @@ export const TerminalInputBodySchema = z.object({
 });
 
 export function serializeThread(row: typeof threadTable.$inferSelect): SerializedThread {
+  const modelSelection = serializeThreadModelSelection(row);
   return {
     thread_id: row.threadId,
     bud_id: row.budId,
@@ -112,8 +121,63 @@ export function serializeThread(row: typeof threadTable.$inferSelect): Serialize
     last_message_preview: row.lastMessagePreview,
     message_count: row.messageCount,
     pinned: row.pinned,
-    archived: row.archived
+    archived: row.archived,
+    ...modelSelection,
   };
+}
+
+export function serializeThreadModelSelection(row: {
+  modelId?: string | null;
+  reasoningEffort?: string | null;
+}): Pick<
+  SerializedThread,
+  | "model"
+  | "reasoning_effort"
+  | "effective_model"
+  | "effective_reasoning_effort"
+  | "model_selection_source"
+> {
+  const selection = resolveEffectiveModelSelection({
+    threadModel: row.modelId ?? null,
+    threadReasoning: row.reasoningEffort ?? null,
+    serviceDefaultModel: config.defaultModel,
+    validateAvailability: false,
+  });
+
+  return {
+    model: row.modelId ?? null,
+    reasoning_effort: row.reasoningEffort ?? null,
+    effective_model: selection.model,
+    effective_reasoning_effort: selection.reasoningEffort,
+    model_selection_source: selection.source === "thread" ? "thread" : "service_default",
+  };
+}
+
+export function toModelSelectionMetadata(
+  selection: Pick<EffectiveModelSelection, "model" | "reasoningEffort" | "source">,
+): Record<string, unknown> {
+  return {
+    model: selection.model,
+    reasoning_effort: selection.reasoningEffort,
+    model_selection_source: selection.source,
+  };
+}
+
+export function sendModelSelectionError(reply: FastifyReply, error: unknown): boolean {
+  if (!isModelSelectionError(error)) {
+    return false;
+  }
+
+  const bodyPayload: Record<string, unknown> = {
+    error: error.code,
+    message: error.message,
+    model: error.model,
+  };
+  if ("supportedValues" in error) {
+    bodyPayload.supported_values = error.supportedValues;
+  }
+  reply.code(400).send(bodyPayload);
+  return true;
 }
 
 export function serializeMessage(row: typeof messageTable.$inferSelect): SerializedMessage {

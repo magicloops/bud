@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, isNull } from "drizzle-orm";
+import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { terminalSessionTable, threadReadStateTable, threadTable } from "../../db/schema.js";
 import { getAuthorizedBud, requireViewer } from "../../auth/session.js";
@@ -10,9 +11,13 @@ import {
   CreateThreadSchema,
   ThreadListQuerySchema,
   ThreadParamsSchema,
+  UpdateThreadModelPreferenceSchema,
   requireAuthorizedThreadAccess,
+  sendModelSelectionError,
+  serializeThreadModelSelection,
   serializeThread,
 } from "./shared.js";
+import { resolveEffectiveModelSelection } from "../../llm/index.js";
 
 export async function registerThreadCoreRoutes(
   server: FastifyInstance,
@@ -43,6 +48,8 @@ export async function registerThreadCoreRoutes(
         messageCount: threadTable.messageCount,
         pinned: threadTable.pinned,
         archived: threadTable.archived,
+        modelId: threadTable.modelId,
+        reasoningEffort: threadTable.reasoningEffort,
         lastAttentionMessageId: threadTable.lastAttentionMessageId,
         lastAttentionMessageCreatedAt: threadTable.lastAttentionMessageCreatedAt,
         lastAttentionKind: threadTable.lastAttentionKind,
@@ -86,6 +93,7 @@ export async function registerThreadCoreRoutes(
       message_count: row.messageCount,
       pinned: row.pinned,
       archived: row.archived,
+      ...serializeThreadModelSelection(row),
       has_unseen_attention: hasUnseenAttention({
         lastAttentionMessageId: row.lastAttentionMessageId,
         lastAttentionMessageCreatedAt: row.lastAttentionMessageCreatedAt,
@@ -111,11 +119,28 @@ export async function registerThreadCoreRoutes(
       return;
     }
 
+    let initialSelection: ReturnType<typeof resolveEffectiveModelSelection>;
+    try {
+      initialSelection = resolveEffectiveModelSelection({
+        requestedModel:
+          Object.prototype.hasOwnProperty.call(body, "model") ? body.model : undefined,
+        requestedReasoning: body.reasoning_effort ?? null,
+        serviceDefaultModel: config.defaultModel,
+      });
+    } catch (err) {
+      if (sendModelSelectionError(reply, err)) {
+        return;
+      }
+      throw err;
+    }
+
     const [thread] = await db
       .insert(threadTable)
       .values({
         budId: body.bud_id,
         title: body.title ?? null,
+        modelId: initialSelection.model,
+        reasoningEffort: initialSelection.reasoningEffort,
         createdByUserId: viewer.userId,
       })
       .returning({ threadId: threadTable.threadId });
@@ -131,6 +156,41 @@ export async function registerThreadCoreRoutes(
     }
     const { thread } = access;
     reply.send(serializeThread(thread));
+  });
+
+  server.patch("/api/threads/:threadId/model-preference", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const body = UpdateThreadModelPreferenceSchema.parse(request.body ?? {});
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
+    let selection: ReturnType<typeof resolveEffectiveModelSelection>;
+    try {
+      selection = resolveEffectiveModelSelection({
+        requestedModel:
+          Object.prototype.hasOwnProperty.call(body, "model") ? body.model : null,
+        requestedReasoning: body.reasoning_effort ?? null,
+        serviceDefaultModel: config.defaultModel,
+      });
+    } catch (err) {
+      if (sendModelSelectionError(reply, err)) {
+        return;
+      }
+      throw err;
+    }
+
+    const [updated] = await db
+      .update(threadTable)
+      .set({
+        modelId: selection.model,
+        reasoningEffort: selection.reasoningEffort,
+      })
+      .where(eq(threadTable.threadId, params.threadId))
+      .returning();
+
+    reply.send(serializeThread(updated));
   });
 
   server.delete("/api/threads/:threadId", async (request, reply) => {

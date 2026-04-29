@@ -199,13 +199,13 @@ export const config = {
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   // Default model for agent (can be OpenAI or Anthropic)
-  defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "claude-opus-4-6",
+  defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.5",
   // Anthropic
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   anthropicTimeout: toNumber(process.env.ANTHROPIC_TIMEOUT_MS, 120000),
   agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 30),
   agentMaxOutputTokens: toNumber(process.env.AGENT_MAX_OUTPUT_TOKENS, 128000),
-  agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "none"),
+  agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "low"),
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
   agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI),

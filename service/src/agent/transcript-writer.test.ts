@@ -102,6 +102,11 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       finishedAt,
       durationMs: 3250,
     },
+    modelSelection: {
+      model: "gpt-5.5",
+      reasoningEffort: "low",
+      source: "explicit_request",
+    },
   });
 
   assert.equal(insertedValues.length, 1);
@@ -111,6 +116,9 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
     duration_ms: 3250,
+    model: "gpt-5.5",
+    reasoning_effort: "low",
+    model_selection_source: "explicit_request",
   });
 
   assert.equal(events.length, 2);
@@ -135,6 +143,9 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
     duration_ms: 3250,
+    model: "gpt-5.5",
+    reasoning_effort: "low",
+    model_selection_source: "explicit_request",
   });
 
   assert.deepEqual(result.payload, execution.payload);
@@ -143,5 +154,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
     duration_ms: 3250,
+    model: "gpt-5.5",
+    reasoning_effort: "low",
+    model_selection_source: "explicit_request",
   });
 });

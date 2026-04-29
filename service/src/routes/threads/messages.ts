@@ -5,13 +5,10 @@ import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { generateMessageClientId } from "../../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../../db/thread-metadata.js";
-import { messageTable, terminalSessionTable, threadReadStateTable } from "../../db/schema.js";
+import { messageTable, terminalSessionTable, threadReadStateTable, threadTable } from "../../db/schema.js";
 import type { ContextSyncService } from "../../terminal/context-sync-service.js";
 import { isMessageNewerThanWatermark } from "../../notifications/index.js";
-import {
-  isModelSelectionError,
-  resolveModelReasoning,
-} from "../../llm/index.js";
+import { resolveEffectiveModelSelection } from "../../llm/index.js";
 import {
   CreateMessageSchema,
   MarkThreadReadSchema,
@@ -24,7 +21,9 @@ import {
   newerThanMessageCursor,
   olderThanMessageCursor,
   requireAuthorizedThreadAccess,
+  sendModelSelectionError,
   serializeMessage,
+  toModelSelectionMetadata,
 } from "./shared.js";
 
 export async function registerThreadMessageRoutes(
@@ -182,21 +181,19 @@ export async function registerThreadMessageRoutes(
     const { thread, viewer } = access;
     const ownerUserId = thread.createdByUserId ?? viewer.userId;
     const effectiveClientId = body.client_id ?? generateMessageClientId();
-    const selectedModel = body.model ?? config.defaultModel;
+    const hasExplicitModel = Object.prototype.hasOwnProperty.call(body, "model");
+    let selection: ReturnType<typeof resolveEffectiveModelSelection>;
 
     try {
-      resolveModelReasoning(selectedModel, body.reasoning_effort ?? null, config.agentReasoningEffortDefault);
+      selection = resolveEffectiveModelSelection({
+        requestedModel: hasExplicitModel ? body.model : undefined,
+        requestedReasoning: body.reasoning_effort ?? null,
+        threadModel: thread.modelId,
+        threadReasoning: thread.reasoningEffort,
+        serviceDefaultModel: config.defaultModel,
+      });
     } catch (err) {
-      if (isModelSelectionError(err)) {
-        const bodyPayload: Record<string, unknown> = {
-          error: err.code,
-          message: err.message,
-          model: err.model,
-        };
-        if ("supportedValues" in err) {
-          bodyPayload.supported_values = err.supportedValues;
-        }
-        reply.code(400).send(bodyPayload);
+      if (sendModelSelectionError(reply, err)) {
         return;
       }
       throw err;
@@ -213,6 +210,21 @@ export async function registerThreadMessageRoutes(
         client_id: effectiveClientId,
       });
       return;
+    }
+
+    if (
+      selection.source === "explicit_request" ||
+      !thread.modelId ||
+      !thread.reasoningEffort ||
+      !selection.storedModelValid
+    ) {
+      await db
+        .update(threadTable)
+        .set({
+          modelId: selection.model,
+          reasoningEffort: selection.reasoningEffort,
+        })
+        .where(eq(threadTable.threadId, thread.threadId));
     }
 
     const session = await db.query.terminalSessionTable.findFirst({
@@ -248,7 +260,10 @@ export async function registerThreadMessageRoutes(
       }
     }
 
-    const metadata: Record<string, unknown> = body.cwd ? { preferred_cwd: body.cwd } : {};
+    const metadata: Record<string, unknown> = {
+      ...(body.cwd ? { preferred_cwd: body.cwd } : {}),
+      ...toModelSelectionMetadata(selection),
+    };
     let messageId: string;
 
     try {
@@ -291,8 +306,9 @@ export async function registerThreadMessageRoutes(
 
     try {
       await agentService.startUserMessage(thread.threadId, {
-        model: selectedModel,
-        reasoningEffort: body.reasoning_effort ?? null,
+        model: selection.model,
+        reasoningEffort: selection.reasoningEffort,
+        modelSelectionSource: selection.source,
         ownerUserId,
       });
 
