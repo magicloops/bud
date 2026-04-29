@@ -3,12 +3,15 @@
  */
 
 import type { FastifyInstance } from "fastify";
+import { config } from "../config.js";
 import {
   getDefaultModelEntryForProviders,
   getReasoningLevelOptions,
   listCatalogEntriesForProviders,
   providerRegistry,
+  resolveEffectiveModelSelection,
   type ModelCatalogEntry,
+  type ReasoningLevel,
 } from "../llm/index.js";
 import { requireViewer } from "../auth/session.js";
 
@@ -36,6 +39,34 @@ type ModelInfo = {
   };
 };
 
+type ModelsResponseDefaults = {
+  serviceDefaultModel: string | null;
+  defaultModel: string | null;
+  defaultReasoningEffort: ReasoningLevel | null;
+};
+
+function resolveModelsResponseDefaults(providerNames: string[]): ModelsResponseDefaults {
+  try {
+    const serviceDefault = resolveEffectiveModelSelection({
+      serviceDefaultModel: config.defaultModel,
+      validateAvailability: false,
+    });
+
+    return {
+      serviceDefaultModel: serviceDefault.model,
+      defaultModel: serviceDefault.model,
+      defaultReasoningEffort: serviceDefault.reasoningEffort,
+    };
+  } catch {
+    const fallback = getDefaultModelEntryForProviders(providerNames);
+    return {
+      serviceDefaultModel: null,
+      defaultModel: fallback?.id ?? null,
+      defaultReasoningEffort: fallback?.reasoning.defaultLevel ?? null,
+    };
+  }
+}
+
 export async function registerModelsRoutes(server: FastifyInstance): Promise<void> {
   /**
    * GET /api/models
@@ -48,13 +79,13 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
     }
 
     const providerNames = providerRegistry.listProviders();
-    const defaultEntry = getDefaultModelEntryForProviders(providerNames);
+    const defaults = resolveModelsResponseDefaults(providerNames);
     const models: ModelInfo[] = listCatalogEntriesForProviders(providerNames).map((entry) => ({
       id: entry.id,
       provider: entry.provider,
       provider_model: entry.providerModel,
       display_name: entry.displayName,
-      is_default: defaultEntry?.id === entry.id,
+      is_default: defaults.defaultModel === entry.id,
       capabilities: {
         vision: entry.capabilities.vision,
         tools: entry.capabilities.tools,
@@ -72,7 +103,9 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
 
     return reply.send({
       models,
-      default_model: defaultEntry?.id ?? null,
+      service_default_model: defaults.serviceDefaultModel,
+      default_model: defaults.defaultModel,
+      default_reasoning_effort: defaults.defaultReasoningEffort,
     });
   });
 }

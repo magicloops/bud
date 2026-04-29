@@ -42,6 +42,10 @@ Focused review of `terminal.send` submit/TUI behavior and the evidence needed to
 
 Review of the message lifecycle, canonical persistence, live stream IDs, `client_id` rollout, and client reconciliation behavior.
 
+### `persist-model-prefs-branch-review.md`
+
+Current branch review for the thread model-preference persistence work, separating generated migration/doc/test line count from runtime implementation size and identifying the small cleanup items that should be handled before or shortly after merge.
+
 ### `web-architecture-review-2026-04-20.md`
 
 Review of the web application architecture as of April 20, 2026.

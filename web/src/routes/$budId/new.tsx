@@ -39,9 +39,9 @@ function NewThreadView() {
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('none')
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
-  const { models, selectedModel, setSelectedModel } = useAvailableModels()
+  const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
 
   // Terminal state (no connection in "new thread" mode)
   const [terminalState] = useState<string>('idle')
@@ -56,8 +56,11 @@ function NewThreadView() {
   }
 
   useEffect(() => {
-    setReasoningEffort((current) => normalizeReasoningForModel(models, selectedModel, current))
-  }, [models, selectedModel])
+    setReasoningEffort((current) => {
+      const preferred = current === 'none' && defaultReasoningEffort ? defaultReasoningEffort : current
+      return normalizeReasoningForModel(models, selectedModel, preferred)
+    })
+  }, [defaultReasoningEffort, models, selectedModel])
 
   // Initialize xterm
   useEffect(() => {
@@ -131,7 +134,11 @@ function NewThreadView() {
       const threadResp = await apiFetch('/api/threads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bud_id: budId })
+        body: JSON.stringify({
+          bud_id: budId,
+          model: selectedModel || undefined,
+          reasoning_effort: selectedModel ? reasoningEffort : undefined
+        })
       })
       if (!threadResp.ok) {
         const body = await threadResp.json().catch(() => ({}))

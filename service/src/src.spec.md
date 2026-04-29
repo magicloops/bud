@@ -115,10 +115,10 @@ Environment-based configuration with defaults.
 | `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |
 | `googleClientSecret` | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
 | `openaiApiKey` | `OPENAI_API_KEY` | - | OpenAI API key |
-| `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | claude-opus-4-6 | Product model for agent requests that omit `model` |
+| `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 30 | Max tool calls per request |
 | `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Max tokens per response |
-| `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | none | Compatibility fallback for non-catalog model overrides |
+| `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | low | Compatibility fallback for non-catalog model overrides |
 | `runLogMaxBytes` | `RUN_LOG_MAX_BYTES` | 100MB | Max stored run logs |
 | `terminalIdleTimeoutMinutes` | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle |
 | `terminalIdleCleanupHours` | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions (`0` disables destructive cleanup) |

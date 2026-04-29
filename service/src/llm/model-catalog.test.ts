@@ -20,7 +20,7 @@ test("model catalog exposes the current default model lineup", () => {
     "gpt-5.4-nano",
     "gpt-5.5",
   ]);
-  assert.equal(getGlobalDefaultModelEntry().id, "claude-opus-4-6");
+  assert.equal(getGlobalDefaultModelEntry().id, "gpt-5.5");
 });
 
 test("model catalog captures provider-specific reasoning levels", () => {
@@ -32,6 +32,11 @@ test("model catalog captures provider-specific reasoning levels", () => {
   assert.ok(gpt54);
   assert.deepEqual(gpt54.reasoning.levels, ["none", "low", "medium", "high", "xhigh"]);
   assert.equal(gpt54.reasoning.defaultLevel, "none");
+
+  const gpt55 = getCatalogEntry("gpt-5.5");
+  assert.ok(gpt55);
+  assert.deepEqual(gpt55.reasoning.levels, ["none", "low", "medium", "high", "xhigh"]);
+  assert.equal(gpt55.reasoning.defaultLevel, "low");
 
   assert.ok(opus46);
   assert.deepEqual(opus46.reasoning.levels, ["low", "medium", "high", "max"]);

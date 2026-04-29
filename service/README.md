@@ -105,7 +105,8 @@ Auth and Bud claim testing do not require an LLM provider key, and the service n
 
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
-- `DEFAULT_MODEL` (defaults to `claude-opus-4-6`)
+- `DEFAULT_MODEL` (defaults to `gpt-5.5`)
+- `AGENT_REASONING_EFFORT` (defaults to `low`)
 - `OPENAI_MODEL`
 - `AGENT_MAX_STEPS`
 - `AGENT_DEBUG`

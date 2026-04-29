@@ -329,6 +329,8 @@ export const threadTable = pgTable(
     messageCount: integer("message_count").notNull().default(0),
     pinned: boolean("pinned").notNull().default(false),
     archived: boolean("archived").notNull().default(false),
+    modelId: text("model_id"),
+    reasoningEffort: text("reasoning_effort"),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     lastAttentionMessageId: uuid("last_attention_message_id"),
     lastAttentionMessageCreatedAt: timestamp("last_attention_message_created_at", {

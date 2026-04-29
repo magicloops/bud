@@ -12,6 +12,7 @@ import {
   serializeToolExecutionTiming,
 } from "./contracts.js";
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
+import type { ModelSelectionSource, ReasoningLevel } from "../llm/index.js";
 
 type PersistedAgentMessage = {
   messageId: string;
@@ -31,6 +32,12 @@ export type SerializedAgentMessage = {
   content: string;
   metadata: Record<string, unknown>;
   created_at: string;
+};
+
+type AgentMessageModelSelection = {
+  model: string;
+  reasoningEffort: ReasoningLevel;
+  source: ModelSelectionSource;
 };
 
 export class AgentTranscriptWriter {
@@ -81,13 +88,15 @@ export class AgentTranscriptWriter {
     execution: ExecutedTerminalTool;
     clientId: string;
     timing: ToolExecutionTiming;
+    modelSelection: AgentMessageModelSelection;
     ownerUserId?: string | null;
   }): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage; cursor: string }> {
-    const { threadId, turnId, execution, clientId, timing, ownerUserId } = args;
+    const { threadId, turnId, execution, clientId, timing, modelSelection, ownerUserId } = args;
     const serializedTiming = serializeToolExecutionTiming(timing);
     const persistedMetadata = {
       ...execution.payload,
       ...serializedTiming,
+      ...serializeModelSelectionMetadata(modelSelection),
     };
     const [toolMessage] = await db
       .insert(messageTable)
@@ -148,9 +157,10 @@ export class AgentTranscriptWriter {
     message: string;
     status: "succeeded" | "failed";
     clientId: string;
+    modelSelection: AgentMessageModelSelection;
     ownerUserId?: string | null;
   }): Promise<SerializedAgentMessage> {
-    const { threadId, turnId, message, status, clientId, ownerUserId } = args;
+    const { threadId, turnId, message, status, clientId, modelSelection, ownerUserId } = args;
     const assistantMessage = await db.transaction(async (tx) => {
       const [insertedMessage] = await tx
         .insert(messageTable)
@@ -161,7 +171,11 @@ export class AgentTranscriptWriter {
           displayRole: "Bud Agent",
           content: message,
           createdByUserId: ownerUserId ?? undefined,
-          metadata: { status, attention_kind: "assistant_completed" },
+          metadata: {
+            status,
+            attention_kind: "assistant_completed",
+            ...serializeModelSelectionMetadata(modelSelection),
+          },
         })
         .returning({
           messageId: messageTable.messageId,
@@ -267,4 +281,14 @@ export class AgentTranscriptWriter {
       created_at: message.createdAt.toISOString(),
     };
   }
+}
+
+function serializeModelSelectionMetadata(
+  selection: AgentMessageModelSelection,
+): Record<string, unknown> {
+  return {
+    model: selection.model,
+    reasoning_effort: selection.reasoningEffort,
+    model_selection_source: selection.source,
+  };
 }

@@ -27,6 +27,11 @@ const toThreadSummary = (thread: ApiThread): ThreadSummary => ({
   has_terminal_session: thread.has_terminal_session,
   session_state: thread.session_state,
   session_id: thread.session_id,
+  model: thread.model,
+  reasoning_effort: thread.reasoning_effort,
+  effective_model: thread.effective_model,
+  effective_reasoning_effort: thread.effective_reasoning_effort,
+  model_selection_source: thread.model_selection_source,
 })
 
 const mergeOptional = <T,>(incoming: T | undefined, existing: T | undefined) =>
@@ -47,6 +52,14 @@ const mergeThreadSummary = (
     has_terminal_session: mergeOptional(next.has_terminal_session, existing.has_terminal_session),
     session_state: mergeOptional(next.session_state, existing.session_state),
     session_id: mergeOptional(next.session_id, existing.session_id),
+    model: mergeOptional(next.model, existing.model),
+    reasoning_effort: mergeOptional(next.reasoning_effort, existing.reasoning_effort),
+    effective_model: mergeOptional(next.effective_model, existing.effective_model),
+    effective_reasoning_effort: mergeOptional(
+      next.effective_reasoning_effort,
+      existing.effective_reasoning_effort,
+    ),
+    model_selection_source: mergeOptional(next.model_selection_source, existing.model_selection_source),
   }
 }
 

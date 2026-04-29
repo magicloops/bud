@@ -152,7 +152,7 @@ loader: async ({ params }) => {
 - Explicit loader-level auth redirect handling via `toLoginRedirect(...)`
 - Fetches all buds and threads for current bud in parallel
 - Converts API responses to UI types (`BudProfile`, `ThreadSummary`)
-- Owns mutable thread-summary state so child routes can upsert canonical thread detail, apply streamed `thread.title` updates, and remove deleted rows without waiting for a parent-loader refresh
+- Owns mutable thread-summary state so child routes can upsert canonical thread detail, apply streamed `thread.title` updates, optimistically patch thread model preferences, and remove deleted rows without waiting for a parent-loader refresh
 - Applies bud accent color theming via CSS custom properties
 - Manages sessions modal state
 - Routes the Bud rail account-settings button into `/settings`
@@ -174,7 +174,7 @@ loader: async ({ params }) => {
 | `handleThreadDeleted()` | Navigate back to `/$budId` |
 | `handleNavigateToThread(threadId)` | Navigate to specific thread |
 | `upsertThreadSummary(thread)` | Merge canonical thread detail or stream-driven title updates into local Bud state |
-| `patchThreadSummary(threadId, patch)` | Apply targeted local mutations to an existing summary |
+| `patchThreadSummary(threadId, patch)` | Apply targeted local mutations such as model-preference changes to an existing summary |
 | `removeThreadSummary(threadId)` | Remove a thread row immediately after delete |
 
 **Theming**:
@@ -192,8 +192,8 @@ useEffect(() => {
 
 Nested routes for thread views:
 - `/$budId/` (index) - Redirect to most recent thread or `/new`
-- `/$budId/new` - New thread creation view using shared `WorkspaceShell`, catalog-backed model/reasoning loading, and browser-generated UUIDv7 `client_id` on first send
-- `/$budId/$threadId` - Existing thread conversation using the same shared shell plus `/messages` + `/agent/state` bootstrap, bounded-resume agent SSE, and `client_id`-first message reconciliation
+- `/$budId/new` - New thread creation view using shared `WorkspaceShell`, catalog-backed model/reasoning loading, initial thread preference persistence, and browser-generated UUIDv7 `client_id` on first send
+- `/$budId/$threadId` - Existing thread conversation using the same shared shell plus `/messages` + `/agent/state` bootstrap, bounded-resume agent SSE, persisted selector changes, and `client_id`-first message reconciliation
 
 ## Route Tree
 

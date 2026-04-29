@@ -15,11 +15,11 @@ Keeps browser-visible thread ownership checks explicit while splitting the old m
 
 ### `shared.ts`
 
-Shared Zod schemas, cursor helpers, serialization helpers, and ownership-aware thread lookup.
+Shared Zod schemas, cursor helpers, model-selection serialization/metadata helpers, and ownership-aware thread lookup.
 
 ### `core.ts`
 
-Thread list/create/read/delete routes.
+Thread list/create/read/delete routes plus `PATCH /api/threads/:threadId/model-preference` for owned model/reasoning selection persistence.
 
 ### `core.test.ts`
 
@@ -27,6 +27,8 @@ Focused route-handler coverage for thread-list serialization.
 
 **Current Coverage**:
 - `GET /api/threads` maps unread-attention state into `has_unseen_attention` and `last_attention_kind`
+- thread-list serialization includes stored/effective model-selection fields
+- `PATCH /api/threads/:threadId/model-preference` persists a validated concrete selection and rejects missing models
 
 ### `messages.ts`
 
@@ -39,6 +41,7 @@ Focused route-handler coverage for the thread read-watermark route.
 **Current Coverage**:
 - `POST /api/threads/:threadId/read` upserts the watermark when the seen message is newer
 - stale read-watermark updates return `updated: false` and do not rewrite the row
+- create-message rejects invalid explicit model/reasoning selections before duplicate lookup or persistence
 
 ### `agent.ts`
 
@@ -71,6 +74,7 @@ Regression test for the split thread-route registration surface.
 - every exported route module resolves thread ownership at the route boundary through `requireAuthorizedThreadAccess(...)`
 - SSE attach happens only after ownership is resolved
 - terminal routes still stamp and enforce the owning human through the terminal runtime
+- thread model-preference updates resolve through the same owned-thread boundary and return `404` for signed-in non-owners
 
 ---
 

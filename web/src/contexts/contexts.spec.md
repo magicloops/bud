@@ -31,7 +31,7 @@ Route-scoped shared state for the `/$budId` workbench layout.
 
 **Usage**:
 - `/$budId.tsx` provides the mutable thread-summary state
-- `/$budId/$threadId.tsx` consumes it to merge canonical thread detail and streamed `thread.title` updates into the thread list and top bar
+- `/$budId/$threadId.tsx` consumes it to merge canonical thread detail, streamed `thread.title` updates, and optimistic model-preference patches into the thread list and top bar
 
 ### `auth-session-context.tsx`
 

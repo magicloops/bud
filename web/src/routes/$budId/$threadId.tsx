@@ -71,7 +71,7 @@ function ThreadView() {
     agentState: initialAgentState,
     thread: initialThread,
   } = Route.useLoaderData()
-  const { threads, upsertThreadSummary } = useBudRouteContext()
+  const { threads, upsertThreadSummary, patchThreadSummary } = useBudRouteContext()
 
   // Thread panel visibility - from global context (shared across all buds/threads)
   const { threadPanelOpen, toggleThreadPanel } = useLayout()
@@ -84,13 +84,11 @@ function ThreadView() {
     initialAgentState.active ? 'streaming' : 'idle',
   )
   const [error, setError] = useState<string | null>(null)
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('none')
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
-  const { models, selectedModel, setSelectedModel } = useAvailableModels()
-  const handleModelChange = useCallback((nextModel: string) => {
-    setSelectedModel(nextModel)
-    setReasoningEffort((current) => normalizeReasoningForModel(models, nextModel, current))
-  }, [models, setSelectedModel])
+  const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
+  const initializedModelSelectionThreadRef = useRef<string | null>(null)
+  const persistModelSelectionSeqRef = useRef(0)
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
     return isAuthRedirectPending() || response?.status === 401
   }, [])
@@ -127,8 +125,39 @@ function ThreadView() {
   }, [initialAgentState, initialMessagePage])
 
   useEffect(() => {
-    setReasoningEffort((current) => normalizeReasoningForModel(models, selectedModel, current))
-  }, [models, selectedModel])
+    if (models.length === 0) {
+      return
+    }
+
+    if (initializedModelSelectionThreadRef.current !== initialThread.thread_id) {
+      const threadModel = initialThread.effective_model
+      if (threadModel && models.some((model) => model.id === threadModel)) {
+        setSelectedModel(threadModel)
+        setReasoningEffort(
+          normalizeReasoningForModel(
+            models,
+            threadModel,
+            initialThread.effective_reasoning_effort ?? defaultReasoningEffort ?? 'low',
+          ),
+        )
+        initializedModelSelectionThreadRef.current = initialThread.thread_id
+        return
+      }
+    }
+
+    setReasoningEffort((current) => {
+      const preferred = current === 'none' && defaultReasoningEffort ? defaultReasoningEffort : current
+      return normalizeReasoningForModel(models, selectedModel, preferred)
+    })
+  }, [
+    defaultReasoningEffort,
+    initialThread.effective_model,
+    initialThread.effective_reasoning_effort,
+    initialThread.thread_id,
+    models,
+    selectedModel,
+    setSelectedModel,
+  ])
 
   useEffect(() => {
     upsertThreadSummary(initialThread)
@@ -146,6 +175,11 @@ function ThreadView() {
         message_count: initialThread.message_count,
         pinned: initialThread.pinned,
         archived: initialThread.archived,
+        model: initialThread.model,
+        reasoning_effort: initialThread.reasoning_effort,
+        effective_model: initialThread.effective_model,
+        effective_reasoning_effort: initialThread.effective_reasoning_effort,
+        model_selection_source: initialThread.model_selection_source,
       }
     )
   }, [initialThread, threadId, threads])
@@ -176,6 +210,61 @@ function ThreadView() {
   const handleThreadTitleUpdate = useCallback((title: string) => {
     upsertThreadSummary({ ...initialThread, title })
   }, [initialThread, upsertThreadSummary])
+
+  const persistThreadModelSelection = useCallback(async (
+    nextModel: string,
+    nextReasoningEffort: ReasoningLevel,
+  ) => {
+    if (!nextModel) {
+      return
+    }
+
+    const sequence = persistModelSelectionSeqRef.current + 1
+    persistModelSelectionSeqRef.current = sequence
+    patchThreadSummary(threadId, {
+      model: nextModel,
+      reasoning_effort: nextReasoningEffort,
+      effective_model: nextModel,
+      effective_reasoning_effort: nextReasoningEffort,
+      model_selection_source: 'thread',
+    })
+
+    try {
+      const updatedThread = await apiFetchJson<ApiThread>(`/api/threads/${threadId}/model-preference`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: nextModel,
+          reasoning_effort: nextReasoningEffort,
+        }),
+      })
+
+      if (sequence !== persistModelSelectionSeqRef.current) {
+        return
+      }
+
+      upsertThreadSummary(updatedThread)
+    } catch (err) {
+      if (isAuthRedirectPending() || sequence !== persistModelSelectionSeqRef.current) {
+        return
+      }
+      setError(err instanceof Error ? err.message : 'Failed to update model preference')
+    }
+  }, [patchThreadSummary, threadId, upsertThreadSummary])
+
+  const handleModelChange = useCallback((nextModel: string) => {
+    const nextReasoningEffort = normalizeReasoningForModel(models, nextModel, reasoningEffort)
+    setSelectedModel(nextModel)
+    setReasoningEffort(nextReasoningEffort)
+    void persistThreadModelSelection(nextModel, nextReasoningEffort)
+  }, [models, persistThreadModelSelection, reasoningEffort, setSelectedModel])
+
+  const handleReasoningChange = useCallback((nextReasoningEffort: ReasoningLevel) => {
+    setReasoningEffort(nextReasoningEffort)
+    if (selectedModel) {
+      void persistThreadModelSelection(selectedModel, nextReasoningEffort)
+    }
+  }, [persistThreadModelSelection, selectedModel])
 
   const {
     ensureConnected: ensureAgentStreamConnected,
@@ -363,7 +452,7 @@ function ThreadView() {
           selectedModel={selectedModel}
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
-          onReasoningChange={setReasoningEffort}
+          onReasoningChange={handleReasoningChange}
         />
       )}
       debugPanel={(
