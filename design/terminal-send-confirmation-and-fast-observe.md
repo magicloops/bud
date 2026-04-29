@@ -216,8 +216,8 @@ The tool result and assistant prompt should no longer imply that sending input m
 
 Examples:
 
-- Good: "Attempted to send the prompt and observed Claude begin rendering output."
-- Good: "Attempted to send the prompt, but no visible screen change was observed after 200ms."
+- Good: "Send the prompt; observed Claude begin rendering output."
+- Good: "Send the prompt; no visible screen change was observed after 200ms."
 - Bad: "Sent the prompt and Claude is now working" when we only know tmux accepted the keystrokes.
 
 ### 5. Observed context should outrank inferred context

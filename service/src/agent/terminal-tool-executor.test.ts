@@ -104,7 +104,7 @@ test("execute keeps ctrl+c summaries conservative when no visible delta is obser
   assert.equal(execution.payload.wait_for, "settled");
   assert.equal(
     execution.summary,
-    "Attempted to send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
+    "Send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
   );
 });
 
@@ -295,5 +295,5 @@ test("execute rejects ambiguous terminal.send directives before touching the run
   assert.equal(sendCalls, 0);
   assert.equal(execution.result.error, "ambiguous_interaction");
   assert.equal(execution.result.submitted, false);
-  assert.equal(execution.summary, 'Attempted to send "pwd" and send key ctrl+c');
+  assert.equal(execution.summary, 'Send "pwd" and send key ctrl+c');
 });

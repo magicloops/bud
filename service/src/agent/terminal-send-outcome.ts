@@ -127,7 +127,7 @@ export function buildTerminalSendSummary(
   const fragments: string[] = [];
 
   if (typeof input.text === "string" && input.text.trim()) {
-    fragments.push(`send ${truncateSummary(JSON.stringify(input.text.trim()), 96)}`);
+    fragments.push(truncateSummary(JSON.stringify(input.text.trim()), 96));
   }
 
   if (input.submit === true) {
@@ -135,13 +135,15 @@ export function buildTerminalSendSummary(
   }
 
   if (input.key) {
-    fragments.push(`send key ${truncateSummary(input.key, 96)}`);
+    fragments.push(
+      fragments.length > 0
+        ? `send key ${truncateSummary(input.key, 96)}`
+        : `key ${truncateSummary(input.key, 96)}`,
+    );
   }
 
   const action =
-    fragments.length > 0
-      ? `Attempted to ${fragments.join(" and ")}`
-      : "Attempted to send interactive input";
+    fragments.length > 0 ? buildSendAction(fragments) : "Send interactive input";
 
   if (!delta) {
     if (readinessTrigger === "timeout") {
@@ -218,4 +220,12 @@ function truncateSummary(text: string, maxChars: number): string {
     return text;
   }
   return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function buildSendAction(fragments: string[]): string {
+  if (fragments.length === 1 && fragments[0] === "press Enter") {
+    return "Press Enter";
+  }
+
+  return `Send ${fragments.join(" and ")}`;
 }

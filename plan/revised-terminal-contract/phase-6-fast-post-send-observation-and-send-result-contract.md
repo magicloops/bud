@@ -121,8 +121,8 @@ Replace overly strong summaries such as:
 
 with evidence-based summaries such as:
 
-- "Attempted to send the prompt; no visible change observed after 1000ms"
-- "Attempted to send the prompt; observed Claude begin rendering output"
+- "Send the prompt; no visible change observed after 1000ms"
+- "Send the prompt; observed Claude begin rendering output"
 
 ### Task 5: Persist the richer send metadata
 

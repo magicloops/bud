@@ -274,5 +274,5 @@
   - either require evidence of screen change before claiming success
   - or attach an immediate observation so the agent can verify what actually happened
 - Soften agent/tool-result wording until the confirmation signal exists.
-  - `Sent "..." and pressed Enter` should likely become something closer to `Attempted to send ...`
+  - `Sent "..." and pressed Enter` should likely become an evidence-based direct summary such as `Send "..." and press Enter; no visible delta observed`
   - follow-up hints should not imply the task is underway unless there is observed evidence

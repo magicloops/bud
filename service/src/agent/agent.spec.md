@@ -179,7 +179,7 @@ Small helper module for interpreting `terminal.send` evidence.
 **Responsibilities**:
 - derive send acceptance states from the settled/default send result delta
 - derive optional next-step state from acceptance, readiness, and observed/inferred context
-- build conservative tool summaries such as "Attempted to send ...; no visible delta observed"
+- build direct tool summaries such as "Send ...; no visible delta observed"
 - keep the send-summary logic separate from the larger agent loop
 
 ### `terminal-send-outcome.test.ts`

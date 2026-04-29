@@ -76,7 +76,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       callId: "call-1",
     },
     args: { text: "pwd", submit: true, wait_for: "settled" },
-    summary: 'Attempted to send "pwd"',
+    summary: 'Send "pwd"',
     outputTruncationReason: null,
     result: {
       kind: "interaction_ack",
@@ -91,7 +91,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       text: "pwd",
       submit: true,
       wait_for: "settled",
-      summary: 'Attempted to send "pwd"',
+      summary: 'Send "pwd"',
       kind: "interaction_ack",
       readiness: { ready: true, confidence: 0.9, trigger: "settled" },
       submitted: true,

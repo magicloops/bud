@@ -44,7 +44,7 @@ test("buildTerminalSendSummary describes unchanged screens conservatively", () =
 
   assert.equal(
     summary,
-    'Attempted to send "Please review src/main.rs" and press Enter; no visible delta observed',
+    'Send "Please review src/main.rs" and press Enter; no visible delta observed',
   );
 });
 
@@ -66,7 +66,7 @@ test("buildTerminalSendSummary calls out timeout when settled wait expires", () 
 
   assert.equal(
     summary,
-    'Attempted to send "npm test" and press Enter; observed terminal activity before timing out',
+    'Send "npm test" and press Enter; observed terminal activity before timing out',
   );
 });
 
@@ -87,7 +87,7 @@ test("buildTerminalSendSummary describes single semantic key gestures", () => {
 
   assert.equal(
     summary,
-    "Attempted to send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
+    "Send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
   );
 });
 
