@@ -241,6 +241,89 @@ What would confirm it:
   2. this specific Anthropic request shape failing
   3. a silent early exit with no instrumentation
 
+## 2026-04-29 Follow-up
+
+A later review found a concrete implementation drift from [plan/thread-title-generation/implementation-spec.md](../plan/thread-title-generation/implementation-spec.md): `resolveThreadTitleModel()` chose `config.defaultModel` first and then fell back through all registered provider models, even though the plan required Anthropic `claude-haiku-4-5` only.
+
+That meant environments with OpenAI configured, or with a slow/default frontier model configured, could send title generation through a model that was never intended for this path and still had only the title path's 8s timeout and 24-token output budget.
+
+Patch direction:
+
+- Resolve only `claude-haiku-4-5` for thread titles.
+- Return `null` when Anthropic/Haiku is unavailable instead of falling back to OpenAI or another provider.
+- Add structured logs for eligibility skips, unavailable Haiku, title model candidates, invalid generated output, conditional update misses, and successful persistence.
+- Keep the root `TODO.md` follow-up for a future fast OpenAI title model/provider-selection policy so OpenAI-only users can still get generated titles.
+
+Focused verification command run after the patch:
+
+```bash
+pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/agent/thread-title-service.test.ts
+```
+
+Exact failure:
+
+```text
+TAP version 13
+# Subtest: normalizeGeneratedThreadTitle trims labels and punctuation
+ok 1 - normalizeGeneratedThreadTitle trims labels and punctuation
+# Subtest: normalizeGeneratedThreadTitle preserves longer titles
+ok 2 - normalizeGeneratedThreadTitle preserves longer titles
+# Subtest: normalizeGeneratedThreadTitle accepts short titles
+ok 3 - normalizeGeneratedThreadTitle accepts short titles
+# Subtest: collectResponse accumulates streamed title text deltas
+ok 4 - collectResponse accumulates streamed title text deltas
+# Subtest: resolveThreadTitleModel uses Anthropic Haiku 4.5 when Anthropic is configured
+ok 5 - resolveThreadTitleModel uses Anthropic Haiku 4.5 when Anthropic is configured
+# Subtest: resolveThreadTitleModel does not fall back to OpenAI when Anthropic is unavailable
+ok 6 - resolveThreadTitleModel does not fall back to OpenAI when Anthropic is unavailable
+# Subtest: generateTitle invokes Anthropic Haiku 4.5
+not ok 7 - generateTitle invokes Anthropic Haiku 4.5
+  error: "Cannot read properties of undefined (reading 'logger')"
+  stack: |-
+    generateTitle (/Users/adam/bud/service/src/agent/thread-title-service.ts:258:12)
+    async TestContext.<anonymous> (/Users/adam/bud/service/src/agent/thread-title-service.test.ts:149:18)
+# Subtest: generateTitle returns null when Anthropic is not configured
+not ok 8 - generateTitle returns null when Anthropic is not configured
+  error: "Cannot read properties of undefined (reading 'logger')"
+  stack: |-
+    generateTitle (/Users/adam/bud/service/src/agent/thread-title-service.ts:218:12)
+    TestContext.<anonymous> (/Users/adam/bud/service/src/agent/thread-title-service.test.ts:166:22)
+1..8
+# tests 8
+# pass 6
+# fail 2
+```
+
+The test harness was then fixed by binding the reflected private `generateTitle` method to the `ThreadTitleService` instance before invoking it. Rerunning the same command passed:
+
+```text
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+```
+
+The first service build after that exposed a TypeScript-only control-flow issue in the test:
+
+```text
+src/agent/thread-title-service.test.ts(150,34): error TS2339: Property 'model' does not exist on type 'never'.
+src/agent/thread-title-service.test.ts(151,34): error TS2339: Property 'toolChoice' does not exist on type 'never'.
+src/agent/thread-title-service.test.ts(152,38): error TS2339: Property 'reasoning' does not exist on type 'never'.
+```
+
+The test was adjusted to capture `ModelConfig` values in an array, which gives TypeScript a stable non-null indexed value after asserting one invocation. Final verification:
+
+```bash
+pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/agent/thread-title-service.test.ts
+pnpm --dir /Users/adam/bud/service build
+```
+
+Both commands passed.
+
 ---
 
 ## Proposed Fix

@@ -1,6 +1,5 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
-import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { messageTable, threadTable } from "../db/schema.js";
 import {
@@ -38,6 +37,14 @@ type GenerateThreadTitleInput = {
   userMessageText: string;
 };
 
+type TitleEligibility =
+  | { eligible: true }
+  | {
+      eligible: false;
+      reason: "thread_not_found" | "thread_already_titled" | "not_first_user_message";
+      firstUserMessageId?: string | null;
+    };
+
 const normalizeWhitespace = (value: string) => value.replace(/\s+/g, " ").trim();
 
 function extractResponseText(response: CanonicalResponse): string {
@@ -49,27 +56,12 @@ function extractResponseText(response: CanonicalResponse): string {
 }
 
 export function resolveThreadTitleModel(): string | null {
-  const candidates = [
-    config.defaultModel,
-    THREAD_TITLE_MODEL,
-    ...providerRegistry.listModels(),
-  ];
-  const seen = new Set<string>();
-
-  for (const candidate of candidates) {
-    if (!candidate || seen.has(candidate)) {
-      continue;
-    }
-    seen.add(candidate);
-    try {
-      providerRegistry.getProviderForModel(candidate);
-      return candidate;
-    } catch {
-      continue;
-    }
+  try {
+    providerRegistry.getProviderForModel(THREAD_TITLE_MODEL);
+    return THREAD_TITLE_MODEL;
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
 export function normalizeGeneratedThreadTitle(candidate: string): string | null {
@@ -116,16 +108,33 @@ export class ThreadTitleService {
 
   async maybeGenerateFromFirstUserMessage(input: GenerateThreadTitleInput): Promise<void> {
     const { threadId, userMessageId, userMessageText } = input;
-    const shouldGenerate = await this.isFirstUserMessageWithoutTitle(threadId, userMessageId);
+    const eligibility = await this.getTitleEligibility(threadId, userMessageId);
 
-    if (!shouldGenerate) {
+    if (!eligibility.eligible) {
+      const logPayload = {
+        threadId,
+        messageId: userMessageId,
+        reason: eligibility.reason,
+        firstUserMessageId: eligibility.firstUserMessageId,
+        component: "thread_title",
+      };
+      if (eligibility.reason === "thread_already_titled") {
+        this.logger.debug(logPayload, "Skipping thread title generation");
+      } else {
+        this.logger.info(logPayload, "Skipping thread title generation");
+      }
       return;
     }
+
+    this.logger.info(
+      { threadId, messageId: userMessageId, model: THREAD_TITLE_MODEL, component: "thread_title" },
+      "Generating thread title",
+    );
 
     const title = await this.generateTitle(userMessageText);
     if (!title) {
       this.logger.warn(
-        { threadId, messageId: userMessageId, component: "thread_title" },
+        { threadId, messageId: userMessageId, model: THREAD_TITLE_MODEL, component: "thread_title" },
         "Skipping empty or invalid generated thread title",
       );
       return;
@@ -133,6 +142,10 @@ export class ThreadTitleService {
 
     const persisted = await this.persistThreadTitle(threadId, title);
     if (!persisted) {
+      this.logger.warn(
+        { threadId, messageId: userMessageId, title, component: "thread_title" },
+        "Thread title persistence skipped because thread title was already set",
+      );
       return;
     }
 
@@ -157,18 +170,28 @@ export class ThreadTitleService {
     );
   }
 
-  private async isFirstUserMessageWithoutTitle(
+  private async getTitleEligibility(
     threadId: string,
     userMessageId: string,
-  ): Promise<boolean> {
+  ): Promise<TitleEligibility> {
     const [thread] = await db
       .select({ title: threadTable.title })
       .from(threadTable)
       .where(eq(threadTable.threadId, threadId))
       .limit(1);
 
-    if (!thread || thread.title !== null) {
-      return false;
+    if (!thread) {
+      return {
+        eligible: false,
+        reason: "thread_not_found",
+      };
+    }
+
+    if (thread.title !== null) {
+      return {
+        eligible: false,
+        reason: "thread_already_titled",
+      };
     }
 
     const [firstMessage] = await db
@@ -178,12 +201,24 @@ export class ThreadTitleService {
       .orderBy(asc(messageTable.createdAt), asc(messageTable.messageId))
       .limit(1);
 
-    return firstMessage?.messageId === userMessageId;
+    if (firstMessage?.messageId !== userMessageId) {
+      return {
+        eligible: false,
+        reason: "not_first_user_message",
+        firstUserMessageId: firstMessage?.messageId ?? null,
+      };
+    }
+
+    return { eligible: true };
   }
 
   private async generateTitle(userMessageText: string): Promise<string | null> {
     const model = resolveThreadTitleModel();
     if (!model) {
+      this.logger.warn(
+        { model: THREAD_TITLE_MODEL, component: "thread_title" },
+        "Skipping thread title generation because Anthropic Haiku 4.5 is unavailable",
+      );
       return null;
     }
 
@@ -218,7 +253,19 @@ export class ThreadTitleService {
         ? await provider.invokeSync(messages, [], modelConfig, controller.signal)
         : await this.collectResponse(provider.invoke(messages, [], modelConfig, controller.signal));
 
-      return normalizeGeneratedThreadTitle(extractResponseText(response));
+      const rawTitle = extractResponseText(response);
+      const normalizedTitle = normalizeGeneratedThreadTitle(rawTitle);
+      this.logger.info(
+        {
+          rawTitle,
+          normalizedTitle,
+          model,
+          resolvedModel,
+          component: "thread_title",
+        },
+        "Thread title model returned candidate",
+      );
+      return normalizedTitle;
     } finally {
       clearTimeout(timeout);
     }

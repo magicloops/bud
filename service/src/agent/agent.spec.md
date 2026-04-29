@@ -291,28 +291,29 @@ Best-effort thread-title generation for the first durable user message.
 
 **Responsibilities**:
 - confirm the just-written user row is still the canonical first user message on the thread
-- choose a usable title model from the configured default, the preferred fast title model, or any other registered provider model
+- use Anthropic `claude-haiku-4-5` as the only title-generation model
 - sanitize the model output into a plain-text title
 - persist the title with a conditional `thread.title IS NULL` update
 - emit `thread.title` on the existing agent SSE channel and advance the shared runtime cursor
 
 **Notes**:
 - runs fire-and-forget after `AgentService.startUserMessage(...)` succeeds, so the assistant turn is never blocked on title generation
-- if no provider is configured, the chosen model is unavailable, the model times out, or another request wins the conditional update first, the thread simply keeps its existing title state
+- if the Anthropic provider is not configured, Haiku is unavailable, the model times out, model output is invalid, or another request wins the conditional update first, the thread simply keeps its existing title state
+- logs eligibility skips, unavailable Haiku, model title candidates, invalid generated output, conditional update misses, and successful persistence under the `thread_title` component
 - normalization now accepts any non-empty cleaned model title rather than rejecting 1-2 word outputs, so concise titles like `Bugfix` or `Assistant Introduction` persist as-is
 - the emitted payload is `{ thread_id, title, source, updated_at }`, where `source` is currently `generated_first_user_message`
 - streamed title reconstruction now updates the active text block through a locally narrowed `text` reference so canonical non-text blocks remain type-safe during `tsc`
 
 ### `thread-title-service.test.ts`
 
-Standalone Node tests for title normalization, model fallback selection, provider-less handling, and streamed title text accumulation.
+Standalone Node tests for title normalization, Anthropic-Haiku-only model selection, provider-less handling, and streamed title text accumulation.
 
 **Current Coverage**:
 - generated titles strip labels and trailing punctuation
 - longer descriptive titles remain intact
 - short 1-2 word titles remain valid
-- configured-default and fallback title-model selection behave as expected
-- provider-less title generation returns `null` instead of throwing
+- title model selection requires configured Anthropic Haiku 4.5 and does not fall back to OpenAI-only availability
+- provider-less and Anthropic-less title generation returns `null` instead of throwing
 - streamed title-response collection keeps accumulating `text_delta` chunks through a narrowed text block instead of widening back to the full canonical content union
 
 ## Events Emitted

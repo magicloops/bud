@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { config } from "../config.js";
-import { providerRegistry, type LLMProvider } from "../llm/index.js";
+import { providerRegistry, type LLMProvider, type ModelConfig } from "../llm/index.js";
 import {
   ThreadTitleService,
   normalizeGeneratedThreadTitle,
@@ -55,6 +54,13 @@ function makeProvider(name: string, supportedModels: readonly string[]): LLMProv
   };
 }
 
+function resetTitleTestProviders(): void {
+  providerRegistry.unregister("anthropic");
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("thread-title-default");
+  providerRegistry.unregister("thread-title-fallback");
+}
+
 test("normalizeGeneratedThreadTitle trims labels and punctuation", () => {
   assert.equal(
     normalizeGeneratedThreadTitle('Title: "Fix OAuth Callback Flow."'),
@@ -93,38 +99,68 @@ test("collectResponse accumulates streamed title text deltas", async () => {
   assert.deepEqual(response.content, [{ type: "text", text: "Fix deploy" }]);
 });
 
-test("resolveThreadTitleModel prefers the configured default model when available", () => {
-  const provider = makeProvider("thread-title-default", [
-    providerRegistry.resolveModelAlias(config.defaultModel),
-  ]);
+test("resolveThreadTitleModel uses Anthropic Haiku 4.5 when Anthropic is configured", () => {
+  resetTitleTestProviders();
+  const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
 
   providerRegistry.register(provider);
 
   try {
-    assert.equal(resolveThreadTitleModel(), config.defaultModel);
+    assert.equal(resolveThreadTitleModel(), "claude-haiku-4-5");
   } finally {
-    providerRegistry.unregister(provider.name);
+    resetTitleTestProviders();
   }
 });
 
-test("resolveThreadTitleModel falls back to another registered model when preferred models are unavailable", () => {
-  const provider = makeProvider("thread-title-fallback", ["gpt-5.2-2025-12-11"]);
+test("resolveThreadTitleModel does not fall back to OpenAI when Anthropic is unavailable", () => {
+  resetTitleTestProviders();
+  const provider = makeProvider("openai", ["gpt-5.5"]);
 
   providerRegistry.register(provider);
 
   try {
-    assert.equal(resolveThreadTitleModel(), "gpt-5.2-2025-12-11");
+    assert.equal(resolveThreadTitleModel(), null);
   } finally {
-    providerRegistry.unregister(provider.name);
+    resetTitleTestProviders();
   }
 });
 
-test("generateTitle returns null when no providers are registered", async () => {
-  providerRegistry.unregister("openai");
-  providerRegistry.unregister("anthropic");
+test("generateTitle invokes Anthropic Haiku 4.5", async () => {
+  resetTitleTestProviders();
+  const receivedConfigs: ModelConfig[] = [];
+  const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
+  provider.invokeSync = async (_messages, _tools, modelConfig) => {
+    receivedConfigs.push(modelConfig);
+    return {
+      id: "title-response",
+      content: [{ type: "text", text: "Fix Deploy Script" }],
+      stopReason: "end_turn",
+    };
+  };
+
+  providerRegistry.register(provider);
+
+  try {
+    const service = new ThreadTitleService({} as never, makeLogger());
+    const generateTitle = Reflect.get(service, "generateTitle").bind(service) as (
+      firstUserMessage: string,
+    ) => Promise<string | null>;
+
+    assert.equal(await generateTitle("Fix the broken deploy script"), "Fix Deploy Script");
+    assert.equal(receivedConfigs.length, 1);
+    assert.equal(receivedConfigs[0].model, "claude-haiku-4-5-20251001");
+    assert.equal(receivedConfigs[0].toolChoice, "none");
+    assert.deepEqual(receivedConfigs[0].reasoning, { enabled: false });
+  } finally {
+    resetTitleTestProviders();
+  }
+});
+
+test("generateTitle returns null when Anthropic is not configured", async () => {
+  resetTitleTestProviders();
 
   const service = new ThreadTitleService({} as never, makeLogger());
-  const generateTitle = Reflect.get(service, "generateTitle") as (
+  const generateTitle = Reflect.get(service, "generateTitle").bind(service) as (
     firstUserMessage: string,
   ) => Promise<string | null>;
 
