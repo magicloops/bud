@@ -6,16 +6,26 @@ import type { ExecutedTerminalTool } from "./contracts.js";
 
 function createRuntimeRecorder() {
   const events: Array<{ threadId: string; event: string; data: Record<string, unknown> }> = [];
+  const pendingTools: Array<{
+    threadId: string;
+    pendingTool: Record<string, unknown>;
+    cursor: string;
+  }> = [];
 
   return {
     events,
+    pendingTools,
     runtime: {
       emit(threadId: string, event: { event: string; data: Record<string, unknown> }) {
         events.push({ threadId, event: event.event, data: event.data });
         return `${event.event}-cursor`;
       },
-      setPendingTool() {
-        // noop
+      setPendingTool(
+        threadId: string,
+        pendingTool: Record<string, unknown>,
+        cursor: string,
+      ) {
+        pendingTools.push({ threadId, pendingTool, cursor });
       },
       markThinking() {
         // noop
@@ -55,7 +65,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   }) as never);
   mock.method(db, "execute", async () => []);
 
-  const { runtime, events } = createRuntimeRecorder();
+  const { runtime, events, pendingTools } = createRuntimeRecorder();
   const writer = new AgentTranscriptWriter(runtime as never);
   const execution: ExecutedTerminalTool = {
     directive: {
@@ -65,7 +75,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       submit: true,
       callId: "call-1",
     },
-    args: { text: "pwd", submit: true },
+    args: { text: "pwd", submit: true, wait_for: "settled" },
     summary: 'Attempted to send "pwd"',
     outputTruncationReason: null,
     result: {
@@ -80,6 +90,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       call_id: "call-1",
       text: "pwd",
       submit: true,
+      wait_for: "settled",
       summary: 'Attempted to send "pwd"',
       kind: "interaction_ack",
       readiness: { ready: true, confidence: 0.9, trigger: "settled" },
@@ -91,7 +102,13 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   const startedAt = new Date("2026-04-21T19:00:01.000Z");
   const finishedAt = new Date("2026-04-21T19:00:04.250Z");
 
-  writer.emitToolCall("thread-1", "turn-1", execution.directive, "tool-client-1", startedAt);
+  const emittedToolCall = writer.emitToolCall(
+    "thread-1",
+    "turn-1",
+    execution.directive,
+    "tool-client-1",
+    startedAt,
+  );
   const result = await writer.recordToolResult({
     threadId: "thread-1",
     turnId: "turn-1",
@@ -122,6 +139,12 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   });
 
   assert.equal(events.length, 2);
+  assert.deepEqual(emittedToolCall.modelArgs, { text: "pwd", submit: true });
+  assert.deepEqual(emittedToolCall.clientArgs, {
+    text: "pwd",
+    submit: true,
+    wait_for: "settled",
+  });
   assert.deepEqual(events[0], {
     threadId: "thread-1",
     event: "agent.tool_call",
@@ -130,10 +153,23 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { text: "pwd", submit: true, wait_for: "settled" },
       started_at: "2026-04-21T19:00:01.000Z",
     },
   });
+  assert.deepEqual(pendingTools, [
+    {
+      threadId: "thread-1",
+      pendingTool: {
+        client_id: "tool-client-1",
+        call_id: "call-1",
+        name: "terminal.send",
+        args: { text: "pwd", submit: true, wait_for: "settled" },
+        started_at: "2026-04-21T19:00:01.000Z",
+      },
+      cursor: "agent.tool_call-cursor",
+    },
+  ]);
   assert.equal(events[1]?.event, "agent.tool_result");
   assert.equal(events[1]?.data.started_at, "2026-04-21T19:00:01.000Z");
   assert.equal(events[1]?.data.finished_at, "2026-04-21T19:00:04.250Z");

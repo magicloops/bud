@@ -7,7 +7,7 @@ import { isKnownReplProgram } from "../terminal/known-programs.js";
 import { buildTerminalSendSummary } from "./terminal-send-outcome.js";
 import {
   DEFAULT_READINESS_HINTS,
-  buildToolArgs,
+  buildEffectiveToolArgs,
   serializeTerminalDelta,
   type AgentToolCallDirective,
   type ExecutedTerminalTool,
@@ -42,7 +42,7 @@ export class TerminalToolExecutor {
     directive: AgentToolCallDirective,
   ): Promise<ExecutedTerminalTool> {
     const result = await this.executeDirective(threadId, directive);
-    const args = buildToolArgs(directive);
+    const args = buildEffectiveToolArgs(directive);
     const summary = this.buildToolSummary(directive, result);
     const outputTruncationReason = this.getToolOutputTruncationReason(directive, result);
 

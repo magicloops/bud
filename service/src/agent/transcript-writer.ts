@@ -5,6 +5,7 @@ import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js
 import { ulid } from "ulid";
 import { eq } from "drizzle-orm";
 import {
+  buildEffectiveToolArgs,
   buildToolArgs,
   type AgentToolCallDirective,
   type ExecutedTerminalTool,
@@ -53,8 +54,13 @@ export class AgentTranscriptWriter {
     directive: AgentToolCallDirective,
     clientId: string,
     startedAt: Date,
-  ): { args: Record<string, unknown>; cursor: string } {
-    const args = buildToolArgs(directive);
+  ): {
+    modelArgs: Record<string, unknown>;
+    clientArgs: Record<string, unknown>;
+    cursor: string;
+  } {
+    const modelArgs = buildToolArgs(directive);
+    const clientArgs = buildEffectiveToolArgs(directive);
     const cursor = this.runtime.emit(threadId, {
       event: "agent.tool_call",
       data: {
@@ -62,7 +68,7 @@ export class AgentTranscriptWriter {
         client_id: clientId,
         call_id: directive.callId,
         name: directive.tool,
-        args,
+        args: clientArgs,
         started_at: startedAt.toISOString(),
       },
     });
@@ -73,13 +79,13 @@ export class AgentTranscriptWriter {
         client_id: clientId,
         call_id: directive.callId,
         name: directive.tool,
-        args,
+        args: clientArgs,
         started_at: startedAt.toISOString(),
       },
       cursor,
     );
 
-    return { args, cursor };
+    return { modelArgs, clientArgs, cursor };
   }
 
   async recordToolResult(args: {

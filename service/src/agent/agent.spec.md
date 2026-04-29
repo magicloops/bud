@@ -40,6 +40,7 @@ Shared agent-facing tool/result contracts.
 **Responsibilities**:
 - define the normalized `terminal.send` / `terminal.observe` directive unions used across the split agent seams
 - centralize readiness defaults plus tool-argument serialization
+- expose effective client-facing wait modes for terminal tools (`terminal.send` defaults to `wait_for: "settled"`, `terminal.observe` defaults to `wait_for: "none"`)
 - normalize legacy wait/key inputs reused during transcript replay and model-tool parsing
 
 ### `contracts.test.ts`
@@ -165,6 +166,7 @@ startUserMessage()
 - model-facing terminal tool schemas no longer advertise `timeout_ms`; the service owns effective timeout policy and ignores legacy model-supplied timeout values during normal agent tool execution.
 - model-facing terminal tool schemas no longer advertise compatibility-only `shell_ready`; the public `wait_for` set is `none`, `changed`, and `settled`.
 - settled `terminal.send` and `terminal.observe(wait_for: "settled")` requests now receive the one-hour service-owned wait budget before dispatching to Bud, while non-settled modes keep shorter budgets.
+- client-facing tool-call args now include the effective `wait_for` mode even when the model omitted it, so web/mobile can detect settled terminal waits directly from `agent.tool_call.args` or `/agent/state.pending_tool.args`.
 - human terminal interrupts reject the currently pending terminal wait as `interrupted`; `TerminalToolExecutor` turns that into a conservative tool result with `readiness.trigger: "error"` so the model regains control without treating the original command as completed.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
@@ -245,7 +247,7 @@ Direct tests for the extracted terminal tool executor.
 Transcript persistence and runtime-emission ownership extracted from `AgentService`.
 
 **Responsibilities**:
-- emit `agent.tool_call` and synchronize `/agent/state.pending_tool`, including the tool `started_at` timestamp
+- emit `agent.tool_call` and synchronize `/agent/state.pending_tool`, including the tool `started_at` timestamp and effective client-facing terminal `wait_for` args
 - persist assistant/tool transcript rows with stable `client_id`
 - stamp thread attention metadata for final attention-worthy assistant output
 - enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
@@ -341,6 +343,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `call_id` on `agent.tool_call` / `agent.tool_result` matches the persisted tool row `metadata.call_id`
 - `client_id` on `agent.tool_call` / `agent.tool_result` matches `/agent/state.pending_tool.client_id` and the later persisted tool row
 - `/agent/state.pending_tool.started_at` matches `agent.tool_call.started_at`, so reconnecting clients can show elapsed time for long pending waits
+- `/agent/state.pending_tool.args.wait_for` and `agent.tool_call.args.wait_for` expose the effective terminal wait mode, including implicit `terminal.send` settled waits and implicit `terminal.observe` non-waits
 - `started_at` on `agent.tool_call` is the service-side tool-start timestamp captured immediately before execution begins
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
 - tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop

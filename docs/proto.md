@@ -364,6 +364,7 @@ Rejected file opens use the same frame with `accepted: false` and a typed `error
 - Returns the current best-effort in-flight runtime snapshot for the authorized viewer
 - Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
+- For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
 
 ### 3.3 Agent SSE Stream
 
@@ -1048,6 +1049,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository..." }`
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
+  - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
 - `agent.message`
@@ -1099,6 +1101,7 @@ Rules:
 - `id:` on the agent stream is the opaque resume cursor
 - keep-alive heartbeats are valid SSE events even when no replayable data exists
 - first-party clients should key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`
+- first-party clients should use `agent.tool_call.args.wait_for` or `/agent/state.pending_tool.args.wait_for` to detect settled terminal waits instead of inferring long-running terminal progress from elapsed time
 - completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
 
@@ -1231,6 +1234,7 @@ Service: otherwise emit agent.resync_required
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
+  - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits
   - settled `terminal_send` and `terminal_observe(wait_for:"settled")` now use a service-owned one-hour timeout budget, while non-settled waits keep shorter defaults
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
   - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument

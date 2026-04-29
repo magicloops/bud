@@ -151,6 +151,26 @@ export function buildToolArgs(
   }
 }
 
+export function getEffectiveToolWaitFor(
+  directive: AgentToolCallDirective,
+): TerminalWaitFor {
+  switch (directive.tool) {
+    case "terminal.send":
+      return directive.waitFor ?? "settled";
+    case "terminal.observe":
+      return directive.waitFor ?? "none";
+  }
+}
+
+export function buildEffectiveToolArgs(
+  directive: AgentToolCallDirective,
+): Record<string, unknown> {
+  return {
+    ...buildToolArgs(directive),
+    wait_for: getEffectiveToolWaitFor(directive),
+  };
+}
+
 export function serializeTerminalDelta(
   delta?: TerminalDelta | null,
 ): Record<string, unknown> | null {
