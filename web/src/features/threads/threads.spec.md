@@ -79,6 +79,7 @@ Agent SSE ownership for the existing-thread route.
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
+- pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly
 
 **Exports**:

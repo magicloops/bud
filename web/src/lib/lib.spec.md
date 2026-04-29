@@ -72,7 +72,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiThread` | Thread response (id, title, session info, stored/effective model selection) |
 | `ApiMessage` | Message response (`message_id`, `client_id`, role, content) |
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
-| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, and `draft_assistant.client_id` |
+| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, `pending_tool.args.wait_for`, and `draft_assistant.client_id` |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 | `ApiDeviceAuthFlow` / `ApiDeviceAuthApproval` | Device-claim browser contracts |
@@ -89,6 +89,7 @@ Safely extracts the behavior-oriented capability fields the browser actually car
 
 Tool transcript note:
 - tool rows still expose generic `metadata: Record<string, unknown>`, and completed canonical tool rows may now include additive timing fields such as `started_at`, `finished_at`, and `duration_ms` inside that metadata object
+- terminal tool rows and live pending-tool snapshots expose the effective `wait_for` value so clients can detect settled waits without elapsed-time heuristics
 
 ### `route-auth.ts`
 

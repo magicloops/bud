@@ -100,6 +100,8 @@ test("execute keeps ctrl+c summaries conservative when no visible delta is obser
   assert.equal(execution.result.contextAfter?.mode, "repl");
   assert.equal(execution.result.contextAfter?.program, "python");
   assert.equal(execution.result.contextAfter?.source, "inferred");
+  assert.equal(execution.args.wait_for, "settled");
+  assert.equal(execution.payload.wait_for, "settled");
   assert.equal(
     execution.summary,
     "Attempted to send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
@@ -169,6 +171,8 @@ test("execute ignores model-supplied timeout_ms for terminal.observe", async () 
   });
 
   assert.equal(execution.result.kind, "observation");
+  assert.equal(execution.args.wait_for, "settled");
+  assert.equal(execution.payload.wait_for, "settled");
   assert.deepEqual(execution.result.delta, {
     changed: true,
     text: "done",

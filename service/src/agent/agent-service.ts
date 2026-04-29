@@ -164,7 +164,7 @@ export class AgentService {
         if (toolCall) {
           const toolClientId = generateMessageClientId();
           const startedAt = new Date();
-          const { args: toolArgs } = this.transcriptWriter.emitToolCall(
+          const { modelArgs: toolArgs, clientArgs } = this.transcriptWriter.emitToolCall(
             threadId,
             turnId,
             toolCall,
@@ -176,7 +176,7 @@ export class AgentService {
             sessionId,
             threadId,
             tool: toolCall.tool,
-            args: toolArgs,
+            args: clientArgs,
             callId: toolCall.callId,
           });
 
