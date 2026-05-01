@@ -7,6 +7,7 @@ type WorkspaceShellProps = {
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
   status: 'idle' | 'dispatching' | 'streaming'
+  fileViewLabel?: string | null
   leftPane: ReactNode
   rightPane: ReactNode
   composer: ReactNode
@@ -19,6 +20,7 @@ export function WorkspaceShell({
   onViewChange,
   onToggleThreads,
   status,
+  fileViewLabel = null,
   leftPane,
   rightPane,
   composer,
@@ -32,6 +34,7 @@ export function WorkspaceShell({
         onViewChange={onViewChange}
         onToggleThreads={onToggleThreads}
         status={status}
+        fileViewLabel={fileViewLabel}
       />
       <div className="flex flex-1 overflow-hidden">
         {leftPane}

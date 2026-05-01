@@ -82,6 +82,7 @@ Ownership-focused thread submodules:
 - read-watermark updates for unread-attention state
 - agent state/stream/cancel
 - terminal create/ensure/input/history/stream
+- user-clicked file viewer session creation
 
 **Thread Endpoints**:
 
@@ -103,6 +104,12 @@ Ownership-focused thread submodules:
 | `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
+
+**Thread File Viewer Endpoint**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/threads/:thread_id/files/open` | Create a short-lived owned file session from a user-clicked relative path in the thread transcript |
 
 **Terminal Endpoints** (Thread-Scoped):
 
@@ -127,6 +134,7 @@ Ownership-focused thread submodules:
 - `TerminalEnsureBodySchema` - Optional `shell`, `cwd`, `cols`, `rows`
 - `TerminalResizeBodySchema` - Required `cols`, `rows`
 - `TerminalInputBodySchema` - Required `input`
+- `OpenThreadFileBodySchema` - Required relative `path`, optional source metadata, optional line/column, and first-pass `viewer_intent: "preview"`
 
 **Message History Contract**:
 - `GET /api/threads/:thread_id/messages` now returns an envelope: `{ messages, page }`
@@ -262,6 +270,7 @@ Before creating user message, validates the selected LLM model/reasoning pair an
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
 - terminal interrupt is authorized at the same thread boundary as terminal input/stream/history and returns `404 no_terminal_session` when no active owned session exists
+- thread file-open is authorized at the same thread boundary, derives the Bud from the owned thread, creates `file_session.created_by_user_id` for the acting viewer, and returns `404 thread_not_found` for signed-in non-owners
 - thread SSE routes send an initial heartbeat frame on empty-buffer/live-only attaches so the HTTP response stays in SSE mode even before the first real event arrives
 - `POST /api/threads` now returns `{ thread_id }`
 - `POST /api/threads/:thread_id/messages` now accepts optional `client_id`

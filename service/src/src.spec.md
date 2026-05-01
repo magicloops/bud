@@ -162,7 +162,7 @@ Push notification helpers covering unread attention math, APNs delivery, and out
 
 ### `routes/` → [routes.spec.md](./routes/routes.spec.md)
 
-REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, and split thread/message/agent/terminal modules, all enforcing per-user ownership across browser-facing resources.
+REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, and split thread/message/agent/terminal/file-viewer modules, all enforcing per-user ownership across browser-facing resources.
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 

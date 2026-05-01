@@ -53,6 +53,7 @@ test("split thread route modules register the expected unique endpoint set", asy
     "PATCH /api/threads/:threadId/model-preference",
     "POST /api/threads",
     "POST /api/threads/:threadId/cancel",
+    "POST /api/threads/:threadId/files/open",
     "POST /api/threads/:threadId/messages",
     "POST /api/threads/:threadId/read",
     "POST /api/threads/:threadId/terminal",

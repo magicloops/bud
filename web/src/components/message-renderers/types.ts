@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import type { FilePathCandidate, OpenFileSource } from '@/lib/file-paths'
 
 /**
  * Props passed to tool content renderers.
@@ -13,12 +14,18 @@ export type ToolContentRendererProps = {
  */
 export type ToolContentRenderer = ComponentType<ToolContentRendererProps>
 
+export type MessageFileActionContext = {
+  source: OpenFileSource
+  onOpenFileCandidate: (candidate: FilePathCandidate) => void
+}
+
 /**
  * Props passed to message content renderers (for roles like user, assistant).
  * These render the full message content, not just tool-specific summaries.
  */
 export type MessageContentRendererProps = {
   content: string
+  fileActions?: MessageFileActionContext
 }
 
 /**

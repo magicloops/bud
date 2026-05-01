@@ -76,6 +76,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 | `ApiDeviceAuthFlow` / `ApiDeviceAuthApproval` | Device-claim browser contracts |
+| `ApiFileSession` / `ApiOpenThreadFileResponse` | File-viewer session and thread-open response contracts |
 
 **Capability Normalization**:
 ```typescript
@@ -127,6 +128,24 @@ Small message helper module.
 
 **Exports**:
 - `generateMessageClientId()` - browser UUIDv7 generator for optimistic/new-thread sends
+
+### `file-paths.ts`
+
+Conservative first-pass parser for user-clickable file references in rendered assistant Markdown.
+
+**Exports**:
+- `parseFilePathCandidate(input, sourceSurface)` - returns a workspace-relative path candidate with optional line/column metadata or `null`
+- `FilePathCandidate` - parsed path plus source surface (`markdown_link`, `inline_code`, or future `plain_text`)
+- `OpenFileCandidate` / `OpenFileSource` - click payload sent to the thread file-open route
+
+**Behavior**:
+- accepts relative file-like paths, leading `./`, known file names such as `README`, and known source/doc extensions
+- parses `:line`, `:line:column`, and `#Lline` / `#Lline-Lend`
+- rejects absolute, home, parent traversal, Windows/backslash, URL, email, NUL, directory, and low-confidence non-file forms
+
+### `file-paths.test.ts`
+
+Node-runner coverage for accepted relative paths, line/column extraction, and unsafe/false-positive rejection.
 
 ### `terminal-data.ts`
 

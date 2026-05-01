@@ -591,6 +591,67 @@ Request body:
 }
 ```
 
+Thread file-viewer open:
+
+- URL: `POST /api/threads/:thread_id/files/open`
+- Authenticated viewer required
+- `thread_id` must belong to the viewer; signed-in non-owners receive `404`
+- the service derives `bud_id` from the owned thread and ignores any client-supplied Bud identity
+- first pass accepts only workspace-relative path strings; absolute paths are deferred until a daemon-owned resolve step exists
+- `path` may include `:line`, `:line:column`, or `#Lline` / `#Lline-Lend` metadata
+- created sessions use `root_key: "workspace"`, permissions `["stat", "read", "range"]`, the default short TTL, and `max_bytes: 1048576`
+- source metadata is display/audit metadata only; opening a file remains user-initiated and does not grant the agent file-read authority
+
+Request body:
+
+```json
+{
+  "path": "./service/src/files/file-session.ts:42:7",
+  "source": {
+    "kind": "assistant_message",
+    "message_id": "22222222-2222-4222-8222-222222222222",
+    "client_id": "33333333-3333-4333-8333-333333333333"
+  },
+  "viewer_intent": "preview"
+}
+```
+
+Response:
+
+```json
+{
+  "file_session": {
+    "file_session_id": "fs_01H...",
+    "bud_id": "b_01H...",
+    "thread_id": "11111111-1111-4111-8111-111111111111",
+    "root": { "key": "workspace" },
+    "path": {
+      "raw_path": "./service/src/files/file-session.ts:42:7",
+      "relative_path": "service/src/files/file-session.ts"
+    },
+    "permissions": ["stat", "read", "range"],
+    "state": "ready",
+    "file_url": "https://service.example/api/files/fs_01H...",
+    "max_bytes": 1048576,
+    "expires_at": "2026-05-01T20:15:00.000Z",
+    "display_metadata": {
+      "raw_path": "./service/src/files/file-session.ts:42:7",
+      "line": 42,
+      "column": 7,
+      "viewer_intent": "preview"
+    }
+  },
+  "viewer": {
+    "suggested_kind": "code",
+    "language": "typescript",
+    "display_name": "file-session.ts",
+    "line": 42,
+    "column": 7,
+    "max_display_bytes": 1048576
+  }
+}
+```
+
 Additional routes:
 
 - `GET /api/buds/:bud_id/file-sessions` lists owned file sessions for an owned Bud
@@ -1209,6 +1270,7 @@ Service: otherwise emit agent.resync_required
 - browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
 - browser proxy-session reads, revokes, and edge attaches must authorize `proxy_session.created_by_user_id` before checking or opening daemon streams
 - browser file-session reads, revokes, and edge attaches must authorize `file_session.created_by_user_id` before checking or opening daemon streams
+- thread file-viewer opens must authorize the owning thread before creating `file_session` rows, derive the Bud from that thread, and stamp `file_session.created_by_user_id` with the acting viewer
 - localhost proxy sessions must deny non-`127.0.0.1` targets at the service boundary; the daemon re-checks local policy before any local HTTP side effect
 - localhost proxy streams require an authenticated data-plane carrier with `localhost_http_proxy` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
@@ -1235,6 +1297,7 @@ Service: otherwise emit agent.resync_required
   - opt-in `BudData.Attach` carries daemon terminal output over HTTP/2 data when configured
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
+  - thread-scoped file-viewer opens create 1 MiB, relative-path-only file sessions from explicit user clicks in assistant messages
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits

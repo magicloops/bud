@@ -59,6 +59,7 @@ New thread creation view - allows users to start a new conversation.
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
+- The shared `ViewMode` type includes `file`, but new-thread mode does not surface the file toggle because no opened file exists yet
 - Top bar title remains the static `New Thread`
 
 **State**:
@@ -139,7 +140,14 @@ loader: async ({ params }) => {
    - Reuses `useAvailableModels()` so model fetching/default selection and per-model reasoning normalization match the new-thread flow
    - Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
    - Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
-   - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, and `ThreadTerminalPane`
+   - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, `useFileViewer(...)`, `ThreadTerminalPane`, and `FileViewerPane`
+
+8. **File Viewer**
+   - Assistant message file actions call `useFileViewer(...)` only after a user click
+   - `POST /api/threads/:threadId/files/open` creates the short-lived session, then the hook fetches `HEAD` and `GET` through the existing `/api/files/:fileSessionId` edge
+   - Opening a file switches the right pane to `file` mode; close returns to `terminal`
+   - Repeated clicks reuse ready non-expired entries, while reload and expired entries create a fresh audited session
+   - The first pass supports Markdown, source/code, and unknown UTF-8 text; binary/image/PDF preview and line scrolling remain follow-ups
 
 **State**:
 ```typescript
@@ -147,7 +155,7 @@ loader: async ({ params }) => {
 status: 'idle' | 'dispatching' | 'streaming'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
-viewMode: 'terminal' | 'web'
+viewMode: 'terminal' | 'web' | 'file'
 terminalMenuOpen: boolean
 
 // Feature-hook state exposed to the route
@@ -156,6 +164,7 @@ terminalConnection: 'connected' | 'reconnecting' | 'offline' | 'disconnected'
 terminalReadiness: { ready, confidence, trigger, hints }
 terminalHasOutput: boolean
 terminalOutputTruncated: boolean
+activeFileEntry: FileViewerEntry | null
 ```
 
 **Terminal Event Handling**:
@@ -194,6 +203,7 @@ From `@/lib/api-types` / `@/lib/terminal-data`:
 | `@/contexts/layout-context` | Thread panel toggle |
 | `@/contexts/bud-status-context` | Bud online status |
 | `@/features/threads/*` | Extracted transcript, agent-stream, and terminal session hooks |
+| `@/lib/file-paths` | File-open candidate payload type |
 | `@/lib/transport`, `@/lib/api-types`, `@/lib/messages`, `@/lib/models`, `@/lib/auth-redirect` | Split API/runtime helpers |
 | `lucide-react` | Icons |
 

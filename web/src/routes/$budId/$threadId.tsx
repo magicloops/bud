@@ -15,8 +15,10 @@ import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline } from '@/components/workbench/chat-timeline'
 import { ThinkingIndicator } from '@/components/workbench/thinking-indicator'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
+import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { DebugPanel } from '@/components/debug-panel'
 import { useAgentStream } from '@/features/threads/use-agent-stream'
+import { useFileViewer } from '@/features/threads/use-file-viewer'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
 import {
@@ -34,6 +36,8 @@ import {
   type ReasoningLevel,
 } from '@/lib/models'
 import type { ApiAgentState, ApiMessagePage, ApiThread } from '@/lib/api-types'
+import type { OpenFileCandidate } from '@/lib/file-paths'
+import type { ViewMode } from '@/components/workbench/workspace-top-bar'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
 import { useBudStatus } from '@/contexts/bud-status-context'
@@ -85,7 +89,7 @@ function ThreadView() {
   )
   const [error, setError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
-  const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
+  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
   const initializedModelSelectionThreadRef = useRef<string | null>(null)
   const persistModelSelectionSeqRef = useRef(0)
@@ -118,6 +122,16 @@ function ThreadView() {
     shouldAbortForUnauthorized,
   })
   const agentStreamCursorSetterRef = useRef<(cursor: string | null) => void>(() => {})
+  const {
+    activeEntry: activeFileEntry,
+    openFileCandidate,
+    reloadActiveFile,
+    closeFileViewer,
+  } = useFileViewer({
+    threadId,
+    onError: (message) => setError(message),
+    shouldAbortForUnauthorized,
+  })
 
   // Update messages when loader data changes
   useEffect(() => {
@@ -266,6 +280,17 @@ function ThreadView() {
     }
   }, [persistThreadModelSelection, selectedModel])
 
+  const handleOpenFile = useCallback((candidate: OpenFileCandidate) => {
+    setError(null)
+    setViewMode('file')
+    void openFileCandidate(candidate)
+  }, [openFileCandidate])
+
+  const handleCloseFileViewer = useCallback(() => {
+    closeFileViewer()
+    setViewMode('terminal')
+  }, [closeFileViewer])
+
   const {
     ensureConnected: ensureAgentStreamConnected,
     setStreamCursor: setAgentStreamCursor,
@@ -410,6 +435,7 @@ function ThreadView() {
       onViewChange={setViewMode}
       onToggleThreads={toggleThreadPanel}
       status={status}
+      fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
         <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
           <ChatTimeline
@@ -419,27 +445,36 @@ function ThreadView() {
             isLoadingOlderMessages={isLoadingOlderMessages}
             onLoadOlderMessages={loadOlderMessages}
             scrollContainerRef={chatScrollRef}
+            onOpenFile={handleOpenFile}
           />
           <ThinkingIndicator isVisible={status !== 'idle'} />
         </div>
       )}
       rightPane={(
-        <ThreadTerminalPane
-          error={error}
-          status={status}
-          terminalConnection={terminalConnection}
-          terminalHasOutput={terminalHasOutput}
-          terminalOutputTruncated={terminalOutputTruncated}
-          terminalPaneRef={terminalPaneRef}
-          terminalReadiness={terminalReadiness}
-          terminalScrolledToTop={terminalScrolledToTop}
-          terminalState={terminalState}
-          viewMode={viewMode}
-          showDisconnectOverlay={showDisconnectOverlay}
-          onCancelAgentTurn={cancelAgentTurn}
-          onFocusTerminal={focusTerminal}
-          onInterruptTerminal={sendTerminalCtrlC}
-        />
+        viewMode === 'file' ? (
+          <FileViewerPane
+            entry={activeFileEntry}
+            onClose={handleCloseFileViewer}
+            onReload={reloadActiveFile}
+          />
+        ) : (
+          <ThreadTerminalPane
+            error={error}
+            status={status}
+            terminalConnection={terminalConnection}
+            terminalHasOutput={terminalHasOutput}
+            terminalOutputTruncated={terminalOutputTruncated}
+            terminalPaneRef={terminalPaneRef}
+            terminalReadiness={terminalReadiness}
+            terminalScrolledToTop={terminalScrolledToTop}
+            terminalState={terminalState}
+            viewMode={viewMode}
+            showDisconnectOverlay={showDisconnectOverlay}
+            onCancelAgentTurn={cancelAgentTurn}
+            onFocusTerminal={focusTerminal}
+            onInterruptTerminal={sendTerminalCtrlC}
+          />
+        )
       )}
       composer={(
         <CommandComposer

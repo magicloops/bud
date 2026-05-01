@@ -19,6 +19,7 @@ import {
   useAvailableModels,
   type ReasoningLevel,
 } from '@/lib/models'
+import type { ViewMode } from '@/components/workbench/workspace-top-bar'
 import { generateMessageClientId } from '@/lib/messages'
 import { apiFetch } from '@/lib/transport'
 import type { Terminal } from 'xterm'
@@ -40,7 +41,7 @@ function NewThreadView() {
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
-  const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
+  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
 
   // Terminal state (no connection in "new thread" mode)

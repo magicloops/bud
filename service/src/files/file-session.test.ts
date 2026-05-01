@@ -4,6 +4,7 @@ import {
   normalizeFileRelativePath,
   normalizeFileRootKey,
   normalizeFileSessionPermissions,
+  parseViewerFilePath,
   resolveFileTransportStatus,
 } from "./file-session.js";
 import {
@@ -31,6 +32,39 @@ test("file path validation normalizes safe root-relative POSIX paths", () => {
   assert.throws(() => normalizeFileRelativePath("../secrets"), /parent-directory/);
   assert.throws(() => normalizeFileRelativePath("src/../secrets"), /parent-directory/);
   assert.throws(() => normalizeFileRelativePath("C:\\Users\\adam"), /POSIX-style/);
+});
+
+test("viewer file path parsing extracts relative paths and location metadata", () => {
+  assert.deepEqual(parseViewerFilePath("README.md"), {
+    rawPath: "README.md",
+    relativePath: "README.md",
+  });
+  assert.deepEqual(parseViewerFilePath("./src//index.ts:12:4"), {
+    rawPath: "./src//index.ts:12:4",
+    relativePath: "src/index.ts",
+    line: 12,
+    column: 4,
+  });
+  assert.deepEqual(parseViewerFilePath("web/src/lib/api.ts#L42-L48"), {
+    rawPath: "web/src/lib/api.ts#L42-L48",
+    relativePath: "web/src/lib/api.ts",
+    line: 42,
+  });
+  assert.deepEqual(parseViewerFilePath("web/src/lib/api.ts:12", { line: 50 }), {
+    rawPath: "web/src/lib/api.ts:12",
+    relativePath: "web/src/lib/api.ts",
+    line: 50,
+  });
+});
+
+test("viewer file path parsing rejects out-of-scope forms", () => {
+  assert.throws(() => parseViewerFilePath("/etc/passwd"), /root-relative/);
+  assert.throws(() => parseViewerFilePath("~/secrets.txt"), /root-relative/);
+  assert.throws(() => parseViewerFilePath("../outside.txt"), /parent-directory/);
+  assert.throws(() => parseViewerFilePath("service/../outside.txt"), /parent-directory/);
+  assert.throws(() => parseViewerFilePath("C:/Users/adam/file.txt"), /POSIX-style/);
+  assert.throws(() => parseViewerFilePath("https://example.com/file.ts"), /URLs/);
+  assert.throws(() => parseViewerFilePath("src/"), /Directory paths/);
 });
 
 test("file permission validation normalizes implied read/stat permissions", () => {

@@ -14,12 +14,14 @@ File session helpers and route-facing contracts.
 
 - validates the initial file root as `workspace` only
 - validates paths as POSIX-style root-relative paths with no absolute, drive-prefix, backslash, NUL, or parent-directory traversal segments
+- parses product-viewer path strings from assistant output, including optional `:line`, `:line:column`, and `#Lline` metadata while keeping the first pass relative-only
 - normalizes file permissions, defaulting to `stat`, `read`, and `range`
 - resolves whether the Bud has an active WebSocket/HTTP2 data-plane carrier with `file_read` negotiated
 - creates owned `file_session` rows with TTL, configurable default max-byte limit, audit correlation id, display metadata, and transport degraded state
+- applies a 1 MiB `VIEWER_FILE_SESSION_MAX_BYTES` ceiling for user-clicked file previews
 - records `file.session_create` and `file.session_revoke` audit events
 - reads and lists sessions with SQL owner filters
-- serializes the stable browser REST response shape, including carrier health, candidate transports, and selection reason for operator debugging
+- serializes the stable browser REST response shape, including `path.raw_path` for viewer-created sessions, carrier health, candidate transports, and selection reason for operator debugging
 
 ### `file-edge.ts`
 
@@ -50,7 +52,7 @@ In-memory bridge between daemon `file_open_result` / generic stream frames and o
 
 ### `file-session.test.ts`
 
-Focused unit coverage for root/path validation, permission normalization, carrier-neutral transport readiness checks, and selected-carrier health metadata.
+Focused unit coverage for root/path validation, product-viewer path parsing, permission normalization, carrier-neutral transport readiness checks, and selected-carrier health metadata.
 
 ### `file-runtime.test.ts`
 
@@ -66,7 +68,7 @@ Focused unit coverage for open-result delivery and response-body chunk handling.
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Later file work still needs configurable daemon roots, product file-viewer adoption, and UI coverage for denied/expired/offline states.
+- Later file work still needs configurable daemon roots, absolute path resolution, binary/image/PDF preview expansion, and broader UI coverage for denied/expired/offline states.
 
 ---
 

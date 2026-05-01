@@ -38,10 +38,12 @@ Shared markdown renderer using `react-markdown` with:
 - Line breaks (`remark-breaks`)
 - Syntax highlighting (`react-syntax-highlighter` with `oneDark` theme)
 - External links open in new tabs
+- When `fileActions` are supplied, local Markdown links and inline-code path candidates render explicit file-open controls; external links and low-confidence inline code remain inert/normal
 
 **Code Block Handling**:
 - Fenced code blocks (````lang`) use `CodeBlock` component with syntax highlighting and copy button on hover
 - Inline code uses `InlineCode` component with click-to-copy; long code wraps instead of truncating for proper baseline alignment
+- Inline file candidates keep the copyable code treatment and add a separate open-file button, so rendering never opens a file session by itself
 
 **Styling**:
 - Uses Tailwind Typography (`prose`) classes

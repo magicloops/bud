@@ -59,6 +59,25 @@ Node-runner coverage for transcript reconciliation rules.
 - latest-bootstrap preservation of older history/cursors
 - turn finalization cleanup semantics
 
+### `use-file-viewer.ts`
+
+Thread-scoped file viewer state and fetch flow for user-clicked transcript paths.
+
+**Responsibilities**:
+- create file sessions through `POST /api/threads/:threadId/files/open`
+- keep file entries keyed by workspace-relative path so repeated clicks can route back to a valid existing entry
+- recreate missing/expired sessions, including reload actions
+- fetch file metadata with `HEAD` before `GET`
+- enforce the 1 MiB display cap client-side from metadata and fetched bytes
+- decode UTF-8, sniff unsupported binary content, and select Markdown/code/text rendering hints
+- map edge response failures into viewer statuses (`invalid_path`, `not_found`, `denied`, `too_large`, `expired`, `offline`, `content_changed`, `unsupported_binary`, `error`)
+
+**Exports**:
+- `useFileViewer(...)`
+- `FileViewerEntry`
+- `FileViewerKind`
+- `FileViewerStatus`
+
 ## Dependencies
 
 | Import | Purpose |
@@ -66,7 +85,8 @@ Node-runner coverage for transcript reconciliation rules.
 | `react` | Hook state, refs, memoization |
 | `@/lib/transport` | Paginated message fetch |
 | `@/lib/messages` | Optimistic `client_id` generation |
-| `@/lib/api-types` | Thread message and agent-state contracts |
+| `@/lib/api-types` | Thread message, agent-state, and file-viewer contracts |
+| `@/lib/file-paths` | File-open candidate payload types |
 
 ### `use-agent-stream.ts`
 
@@ -136,6 +156,7 @@ Terminal session/xterm ownership for the existing-thread route.
 - Add deeper hook/integration coverage for transcript reconciliation flows beyond the extracted pure helper tests
 - Add deeper hook/integration coverage for agent-stream heartbeat timeout, reconnect, and explicit resync-required behavior
 - Add deeper hook/integration coverage for terminal reconnect/recovery behavior beyond the shared timing policy tests
+- Add component/hook integration coverage for the file viewer open/reuse/error paths beyond parser and service-route tests
 
 ---
 

@@ -85,6 +85,7 @@ Message list with auto-scroll and collapsible messages.
 - Tool content renderers for specialized display
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
 - The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
+- Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render
 
 **Note**: Renders only the scrollable message area. Parent component provides the container wrapper.
 
@@ -140,6 +141,7 @@ Shared frame for the two workbench routes.
 **Props**:
 - `title`
 - `view` / `onViewChange`
+- optional `fileViewLabel`
 - `onToggleThreads`
 - `status`
 - `leftPane`
@@ -150,6 +152,17 @@ Shared frame for the two workbench routes.
 **Purpose**:
 - Keeps `/$budId/new` and `/$budId/$threadId` on the same top-bar / split-pane / composer structure
 - Reduces divergence between the new-thread workspace and existing-thread workspace while larger runtime decomposition is still pending
+
+### `file-viewer-pane.tsx`
+
+Presentation component for the thread file viewer right-pane mode.
+
+**Purpose**:
+- renders create/load/ready/error states from `useFileViewer(...)`
+- presents Markdown, source/code, and plain UTF-8 text files
+- handles too-large, unsupported-binary, not-found, denied, expired, offline, content-changed, and generic error states
+- provides close, reload, copy path, and copy content controls
+- stays presentation-only: session creation and file fetch flow live in `web/src/features/threads/use-file-viewer.ts`
 
 ### `thread-terminal-pane.tsx`
 
@@ -172,12 +185,13 @@ Header bar with workspace title and view toggle.
 **View Modes**:
 - `terminal` - Terminal emulator view
 - `web` - Web view (placeholder)
+- `file` - Thread file viewer pane for user-clicked transcript paths
 
 **Components**:
 - Thread panel toggle (hamburger menu)
 - Title display (`New Thread` for compose mode, otherwise the current thread title or `Untitled thread`)
 - Status indicator (Idle/Dispatching/Streaming)
-- View mode toggle buttons
+- View mode toggle buttons; the file toggle appears only when an active file is available
 - Exports the shared `ViewMode` union used by `workspace-shell.tsx`
 
 ## Dependencies
