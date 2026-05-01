@@ -14,7 +14,7 @@ Each provider implements the `LLMProvider` interface, handling:
 
 ### `openai.ts`
 
-OpenAI provider using the Responses API (~650 lines).
+OpenAI provider using the Responses API (~795 lines).
 
 **Supported Models** (dated versions in `supportedModels`):
 | Model | Type | Notes |
@@ -31,7 +31,12 @@ Public product IDs and capability limits are owned by `model-catalog.ts`; the pr
 - **Reasoning support**: GPT-5 series with `reasoning.effort` (`none` omits reasoning, other supported values pass through including `xhigh`)
 - **Strict mode tools**: All tools use `strict: true` for reliable schema adherence
 - **Multi-turn reasoning**: Preserves reasoning blocks via `providerData` for tool loops
+- **Encrypted reasoning replay**: Requests `reasoning.encrypted_content` so durable same-provider replay has the provider payload needed for reasoning continuity
+- **Ordered output reconstruction**: Uses OpenAI `output_index` / `content_index` to preserve text, reasoning, and function-call ordering instead of assuming text lives at the first output item
+- **Multiple function calls**: Tracks function calls by output item id/index and emits every completed tool call
+- **Cache telemetry**: Maps `input_tokens_details.cached_tokens` into canonical usage
 - **Response diagnostics**: Attaches the raw `response.completed` payload to `message_done.providerData` so agent parse failures can log the actual OpenAI result
+- **Terminal serial policy**: Sends `parallel_tool_calls: false` so terminal tool execution stays deterministic
 - **Temperature handling**: Automatically sets `undefined` for reasoning models
 
 **Message Transformation**:
@@ -61,7 +66,7 @@ This allows tool definitions to use clean standard JSON Schema while ensuring Op
 | `response.created` | `message_start` |
 | `response.completed` | `message_done` with OpenAI `providerData` |
 | `response.failed` | `error` |
-| `response.output_text.delta` | `text_delta` |
+| `response.output_text.delta` | `text_delta` using provider output/content indexes |
 | `response.function_call_arguments.delta` | `tool_use_delta` |
 | `response.function_call_arguments.done` | `tool_use_done` using the `call_id` and `name` captured from `response.output_item.added` |
 | `response.reasoning_summary_text.delta` | `reasoning_delta` |
@@ -89,7 +94,7 @@ This allows tool definitions to use clean standard JSON Schema while ensuring Op
 
 ### `anthropic.ts`
 
-Anthropic provider using the Messages API (~650 lines).
+Anthropic provider using the Messages API (~730 lines).
 
 **Supported Models**:
 | Model | Type | Notes |
@@ -107,6 +112,9 @@ Anthropic provider using the Messages API (~650 lines).
 - **Manual thinking**: Haiku 4.5 and legacy fallback can still use `thinking.budget_tokens`
 - **Interleaved thinking**: Claude 4 adaptive mode handles interleaved thinking without a beta header; manual fallback can still use the interleaved-thinking beta header
 - **Signature preservation**: Thinking blocks include cryptographic signatures for multi-turn
+- **Redacted thinking preservation**: `redacted_thinking` blocks are retained as provider-only reasoning blocks for future same-provider continuation
+- **Provider-specific tool choice**: Omits `tool_choice` when no tools are sent and lowers canonical `"none"` to Anthropic's no-tool choice when tools are present
+- **Cache telemetry**: Maps Anthropic cache creation/read token counters into canonical usage
 - **Standard JSON Schema**: Tools use canonical schema directly (no transformation needed)
 
 **Message Transformation**:
@@ -119,6 +127,7 @@ Anthropic provider using the Messages API (~650 lines).
 | Tool use | `{ type: "tool_use", id, name, input }` content block |
 | Tool result | `{ type: "tool_result", tool_use_id, content }` content block in user message |
 | Reasoning | `{ type: "thinking", thinking, signature }` content block |
+| Redacted reasoning | `{ type: "redacted_thinking", ... }` content block |
 
 **Mid-Conversation System Messages**:
 Context sync injects system messages between user messages to inform the agent about terminal state changes. Since Anthropic doesn't support mid-conversation system messages, these are transformed to user messages with a `[System Note]` prefix. The transformation logic checks if a system message appears after any non-system message.
@@ -140,11 +149,12 @@ Budget calculation is used for Haiku 4.5 manual thinking and legacy fallback onl
 | `message_stop` | `message_done` |
 | `content_block_start` (text) | `content_start` |
 | `content_block_start` (thinking) | `reasoning_start` |
+| `content_block_start` (redacted_thinking) | `reasoning_start` |
 | `content_block_start` (tool_use) | `tool_use_start` |
 | `thinking_delta` | `reasoning_delta` |
 | `text_delta` | `text_delta` |
 | `input_json_delta` | `tool_use_delta` |
-| `content_block_stop` | `reasoning_done` / `tool_use_done` / `content_done` |
+| `content_block_stop` | `reasoning_done` / `reasoning_redacted` / `tool_use_done` / `content_done` |
 
 **Public Methods**:
 | Method | Description |
@@ -175,11 +185,16 @@ Direct request-shape tests for provider lowering without live API calls.
 
 **Current Coverage**:
 - OpenAI `xhigh` sends `reasoning.effort` and `none` omits reasoning
+- OpenAI requests encrypted reasoning content and disables parallel tool calls
 - OpenAI streamed function calls preserve `call_id` and tool name from output-item metadata when arguments finish
+- OpenAI streamed mixed text/tool/text output preserves provider order and cached-token usage
+- OpenAI assistant-history reconstruction keeps reasoning/text/tool/text order when building the next Responses input
 - OpenAI completed stream events preserve provider payload diagnostics
 - Anthropic Opus 4.7 sends adaptive thinking with omitted display and `output_config.effort`
 - Anthropic Opus 4.6 sends adaptive thinking with summarized display and `output_config.effort`
 - Anthropic Haiku 4.5 uses manual `thinking.budget_tokens`
+- Anthropic omits `tool_choice` with no tools and lowers canonical no-tool requests when tools are present
+- Anthropic streamed redacted thinking and cache token counters are preserved
 
 ## Provider Comparison
 

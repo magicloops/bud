@@ -58,6 +58,16 @@ export {
   type ModelSelectionSource,
   type ResolvedModelReasoning,
 } from "./reasoning-policy.js";
+export {
+  buildRequestMode,
+  canonicalBlockFromLedgerItem,
+  createCanonicalAssistantMessageFromLedger,
+  createLlmCallId,
+  loadProviderLedgerMessages,
+  recordLlmCall,
+  recordLlmToolResultItem,
+  type LlmCallRequestMode,
+} from "./provider-ledger.js";
 
 // Provider interface
 export type { LLMProvider } from "./provider.js";

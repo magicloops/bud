@@ -19,6 +19,7 @@ Message/transcript ownership for the existing-thread route.
 - create and reconcile optimistic user messages
 - apply runtime pending-tool and draft-assistant overlays
 - reconcile canonical assistant/tool messages from the agent stream
+- keep visible assistant draft text in the timeline when a tool call arrives, so text streamed before or between tool calls is not removed while waiting for the persisted assistant row
 - clear per-turn synthetic rows when a turn finishes or fails
 
 **Exports**:
@@ -78,6 +79,7 @@ Agent SSE ownership for the existing-thread route.
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
+- accept `agent.message` for both intermediate assistant text segments and final assistant rows
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
 - pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly

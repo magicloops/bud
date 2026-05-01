@@ -195,3 +195,67 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     model_selection_source: "explicit_request",
   });
 });
+
+test("assistant text segments are persisted before tool calls without finalizing the turn", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const insertedValues: Array<Record<string, unknown>> = [];
+  mock.method(db, "insert", () => ({
+    values(values: Record<string, unknown>) {
+      insertedValues.push(values);
+      return {
+        returning() {
+          return [
+            {
+              messageId: "message-assistant-1",
+              clientId: values.clientId,
+              role: values.role,
+              displayRole: values.displayRole,
+              content: values.content,
+              metadata: values.metadata,
+              createdAt: new Date("2026-04-21T20:00:05.000Z"),
+            },
+          ];
+        },
+      };
+    },
+  }) as never);
+  mock.method(db, "execute", async () => []);
+
+  const { runtime, events } = createRuntimeRecorder();
+  const writer = new AgentTranscriptWriter(runtime as never);
+
+  const result = await writer.recordAssistantTextSegment({
+    threadId: "thread-1",
+    turnId: "turn-1",
+    message: "I will inspect the terminal first.",
+    clientId: "assistant-client-1",
+    segmentKind: "intermediate",
+    followedByToolCall: true,
+    llmCallId: "llm-call-1",
+    modelSelection: {
+      model: "gpt-5.5",
+      reasoningEffort: "medium",
+      source: "service_default",
+    },
+  });
+
+  assert.equal(insertedValues.length, 1);
+  assert.deepEqual(insertedValues[0]?.metadata, {
+    status: "succeeded",
+    turn_id: "turn-1",
+    segment_kind: "intermediate",
+    llm_call_id: "llm-call-1",
+    followed_by_tool_call: true,
+    model: "gpt-5.5",
+    reasoning_effort: "medium",
+    model_selection_source: "service_default",
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.event, "agent.message");
+  assert.equal(events[0]?.data.text, "I will inspect the terminal first.");
+  assert.equal((events[0]?.data.message as Record<string, unknown>).message_id, "message-assistant-1");
+  assert.equal(result.message_id, "message-assistant-1");
+});

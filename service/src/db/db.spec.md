@@ -44,6 +44,8 @@ Drizzle schema definitions. Defines all tables:
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
 | `threadTable` | Conversations | `threadId`, `budId`, `title`, `modelId`, `reasoningEffort`, `lastActivityAt`, `messageCount`, `lastAttentionMessageId`, `lastAttentionMessageCreatedAt`, `lastAttentionKind`, `deletedAt`, `createdByUserId` |
 | `messageTable` | Chat messages | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
+| `llmCallTable` | Provider invocation ledger for same-provider replay and cache diagnostics | `llmCallId`, `threadId`, `turnId`, `stepIndex`, `provider`, `model`, `requestMode`, `providerResponseId`, `usage`, `cacheMetadata`, `createdByUserId` |
+| `llmCallItemTable` | Ordered provider input/output items attached to an LLM call | `llmCallItemId`, `llmCallId`, `threadId`, `direction`, `role`, `kind`, `sequence`, `toolCallId`, `canonicalPayload`, `providerPayload`, `visibility`, `messageId` |
 | `threadReadStateTable` | Per-user thread read watermarks for unread/badge math | `threadId`, `userId`, `lastSeenMessageId`, `lastSeenMessageCreatedAt`, `lastSeenAt` |
 | `pushEndpointTable` | Owned mobile push endpoint registrations | `endpointId`, `userId`, `installationId`, `platform`, `provider`, `appId`, `token`, `enabled`, `invalidatedAt` |
 | `pushNotificationOutboxTable` | Durable push delivery queue | `notificationId`, `userId`, `threadId`, `messageId`, `kind`, `status`, `dedupeKey`, `collapseKey`, `attemptCount`, `nextAttemptAt` |
@@ -131,6 +133,11 @@ const byteaColumn = customType<{ data: Buffer }>({
 - `thread_deleted_idx` - Soft delete filtering
 - `message_thread_idx` - Messages by thread
 - `message_client_id_idx` - Final unique index on `message.client_id`
+- `llm_call_thread_step_idx` - Provider calls by thread/turn/step
+- `llm_call_provider_idx` - Provider-ledger diagnostics by provider/time
+- `llm_call_item_call_sequence_idx` - Unique ordered item sequence per call and direction
+- `llm_call_item_thread_created_idx` - Provider items by thread/time
+- `llm_call_item_tool_call_idx` / `llm_call_item_message_idx` - Tool/message joins for diagnostics
 - `run_thread_idx` - Runs by thread + started_at
 - `bud_installation_id_idx` - Device continuity lookup by stable installation identity
 - `device_auth_flow_installation_idx` / `device_auth_flow_status_idx` - Claim lookup, expiry, and polling
@@ -198,6 +205,9 @@ budTable
     ├── 1:N ──► threadTable
     │              │
     │              ├── 1:N ──► messageTable
+    │              ├── 1:N ──► llmCallTable ──► llmCallItemTable
+    │              │                                  │
+    │              │                                  └── N:1 ──► messageTable (optional visible-row link)
     │              ├── 1:N ──► threadReadStateTable
     │              ├── 1:N ──► pushNotificationOutboxTable
     │              │
@@ -220,11 +230,16 @@ budTable
 
 `drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0016`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, and add nullable thread model-preference columns so migration-driven environments can reach the same schema shape as `schema.ts`.
+Checked-in migrations now run cleanly through `0017`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, and add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes.
 
 ## Ownership And Multi-Tenancy Support
 
 Browser-facing ownership is now enforced through `createdByUserId` across the Bud/thread/message/terminal-session surfaces, with human terminal input additionally recorded in `terminalSessionInputLog.userId`.
+
+LLM provider-ledger rows follow thread ownership:
+- `llm_call.created_by_user_id` inherits the owning thread/user for the provider invocation
+- `llm_call_item.created_by_user_id` inherits the same owner for ordered provider items
+- visible text items may link to product `message` rows, while reasoning and provider payloads remain service-only and are not returned by browser message routes
 
 Push-specific ownership follows the same rule:
 - `thread_read_state.user_id` is the viewer whose badge/read state is being tracked

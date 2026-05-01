@@ -433,6 +433,92 @@ export const messageTable = pgTable(
   })
 );
 
+export const llmCallTable = pgTable(
+  "llm_call",
+  {
+    llmCallId: text("llm_call_id").primaryKey(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threadTable.threadId, { onDelete: "cascade" }),
+    turnId: text("turn_id").notNull(),
+    stepIndex: integer("step_index").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    requestMode: text("request_mode").notNull(),
+    providerResponseId: text("provider_response_id"),
+    status: text("status").notNull().default("completed"),
+    inputFingerprint: text("input_fingerprint"),
+    toolConfigFingerprint: text("tool_config_fingerprint"),
+    promptCacheKey: text("prompt_cache_key"),
+    usage: jsonb("usage").$type<Record<string, unknown>>(),
+    cacheMetadata: jsonb("cache_metadata").$type<Record<string, unknown>>(),
+    error: jsonb("error").$type<Record<string, unknown>>(),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    threadStepIdx: index("llm_call_thread_step_idx").on(
+      table.threadId,
+      table.turnId,
+      table.stepIndex,
+    ),
+    providerIdx: index("llm_call_provider_idx").on(table.provider, table.createdAt),
+    statusIdx: index("llm_call_status_idx").on(table.status, table.createdAt),
+  }),
+);
+
+export const llmCallItemTable = pgTable(
+  "llm_call_item",
+  {
+    llmCallItemId: text("llm_call_item_id").primaryKey(),
+    llmCallId: text("llm_call_id")
+      .notNull()
+      .references(() => llmCallTable.llmCallId, { onDelete: "cascade" }),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threadTable.threadId, { onDelete: "cascade" }),
+    direction: text("direction").notNull(),
+    role: text("role"),
+    kind: text("kind").notNull(),
+    sequence: integer("sequence").notNull(),
+    providerOutputIndex: integer("provider_output_index"),
+    providerContentIndex: integer("provider_content_index"),
+    providerItemId: text("provider_item_id"),
+    toolCallId: text("tool_call_id"),
+    text: text("text"),
+    canonicalPayload: jsonb("canonical_payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    providerPayload: jsonb("provider_payload")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    visibility: text("visibility").notNull().default("provider_only"),
+    messageId: uuid("message_id").references(() => messageTable.messageId, {
+      onDelete: "set null",
+    }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    callSequenceIdx: uniqueIndex("llm_call_item_call_sequence_idx").on(
+      table.llmCallId,
+      table.direction,
+      table.sequence,
+    ),
+    threadCreatedIdx: index("llm_call_item_thread_created_idx").on(
+      table.threadId,
+      table.createdAt,
+    ),
+    toolCallIdx: index("llm_call_item_tool_call_idx").on(table.toolCallId),
+    messageIdx: index("llm_call_item_message_idx").on(table.messageId),
+  }),
+);
+
 export const pushNotificationOutboxTable = pgTable(
   "push_notification_outbox",
   {

@@ -8,6 +8,12 @@
   - Follow up on the 2-4s first-visible-token gap documented in [debug/llm-first-visible-token-latency.md](./debug/llm-first-visible-token-latency.md).
   - New-thread testing showed roughly 1s responses, so prioritize provider-side prompt/cache behavior, context size, max-output defaults, and instrumentation before assuming a local service bottleneck.
   - Add timing logs for provider request dispatch, first raw stream event, first reasoning event, first text delta, and stream completion so UX progress indicators can distinguish real provider latency from hidden reasoning/tool activity.
+- **OpenAI prompt cache key policy**
+  - Decide whether Bud should set OpenAI `prompt_cache_key` on Responses API requests before implementing it.
+  - Document the key granularity and privacy boundary, including provider/model/thread/user/Bud scoping, avoiding raw prompt or PII material in keys, and whether supported cache-retention controls should be used.
+- **Live LLM provider smoke tests**
+  - Add opt-in live OpenAI and Anthropic smoke tests following [design/live-llm-provider-smoke-tests.md](./design/live-llm-provider-smoke-tests.md).
+  - Keep these outside the default unit/CI path; use them for provider contract drift, SDK upgrades, high-risk adapter changes, and advisory cache telemetry.
 - **Thread title provider fallback**
   - Thread title generation currently only uses Anthropic Haiku 4.5.
   - Explore a fast OpenAI title-generation model and provider-selection policy so users who bring only an OpenAI key, only an Anthropic key, or both still get reliable thread titles.

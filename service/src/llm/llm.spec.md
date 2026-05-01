@@ -67,7 +67,7 @@ Canonical type definitions for the abstraction layer (~265 lines).
 | `CanonicalStreamEvent` | Union of all stream events (message, text, tool, reasoning) |
 | `message_done.providerData` | Optional provider completion payload for response diagnostics |
 | `CanonicalStopReason` | `"end_turn" \| "tool_use" \| "max_tokens" \| "stop_sequence" \| "error"` |
-| `TokenUsage` | Token counts including reasoning tokens |
+| `TokenUsage` | Token counts including reasoning tokens plus provider cache token counters |
 
 **Configuration Types**:
 | Type | Description |
@@ -146,6 +146,28 @@ Standalone Node tests for effective model-selection precedence.
 - invalid stored selections fall back to the service default
 - null explicit models and unsupported explicit reasoning are rejected
 
+### `provider-ledger.ts`
+
+Durable provider-call ledger helpers for same-provider reconstruction and cache diagnostics.
+
+**Responsibilities**:
+- create stable `llm_call` identifiers
+- persist one `llm_call` row per provider invocation
+- persist ordered `llm_call_item` rows for output text, reasoning, redacted reasoning, tool calls, and tool results
+- mark provider-only reasoning payloads separately from browser-visible product text
+- record cache telemetry derived from provider usage blocks
+- reconstruct canonical assistant messages from same-provider ledger items before falling back to product transcript rows
+
+Provider-native payloads are service-internal. Browser message routes continue to read from the `message` table and do not expose `llm_call_item.provider_payload`.
+
+### `provider-ledger.test.ts`
+
+Standalone tests for provider-ledger persistence/reconstruction helpers.
+
+**Current Coverage**:
+- `recordLlmCall()` stores every output block plus cache metadata
+- redacted Anthropic thinking reconstructs as provider-only canonical reasoning
+
 ### `registry.ts`
 
 `ProviderRegistry` singleton for model-to-provider resolution (~130 lines).
@@ -184,7 +206,7 @@ Catalog entries are preferred for product IDs. Legacy aliases remain as hidden c
 
 Barrel exports and provider initialization.
 
-**Exports**: All canonical types, catalog helpers, reasoning policy helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`
+**Exports**: All canonical types, catalog helpers, reasoning policy helpers, provider-ledger helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`
 
 **`initializeProviders()`**: Called at startup to register providers based on config:
 ```typescript
@@ -232,6 +254,8 @@ for await (const event of provider.invoke(messages, tools, {
 **Current Agent Usage**:
 - `AgentService` now uses provider `invoke()` streams as the primary path for chat turns.
 - The agent reconstructs a `CanonicalResponse` from streamed text/tool/reasoning events after also forwarding assistant draft text to browser clients over SSE.
+- Every provider invocation is recorded in the provider ledger before tool execution or final success emission, including provider output items, reasoning payloads, usage, and cache counters.
+- Same-provider conversation loading uses durable ledger items for assistant output blocks so reasoning, redacted reasoning, and tool calls survive service restarts. Provider switches use the existing canonical product transcript projection.
 - Providers may attach raw completion payloads as `providerData`; the agent uses those only for diagnostics when a response cannot be parsed into text or a tool call.
 - `invokeSync()` remains an optional adapter capability, but it is no longer the main chat-agent path in this repo.
 

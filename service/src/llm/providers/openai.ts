@@ -116,6 +116,7 @@ export class OpenAIProvider implements LLMProvider {
       effort: config.reasoning.effort ?? "medium",
       summary: config.reasoning.summaryLevel ?? "auto",
     };
+    (params as unknown as Record<string, unknown>).include = ["reasoning.encrypted_content"];
   }
 
   /**
@@ -136,6 +137,7 @@ export class OpenAIProvider implements LLMProvider {
       input,
       tools: openaiTools.length > 0 ? openaiTools : undefined,
       tool_choice: this.transformToolChoice(config.toolChoice),
+      parallel_tool_calls: false,
       max_output_tokens: config.maxOutputTokens,
       // GPT-5 series doesn't support temperature/top_p
       temperature: isReasoning ? undefined : config.temperature,
@@ -178,6 +180,7 @@ export class OpenAIProvider implements LLMProvider {
       input,
       tools: openaiTools.length > 0 ? openaiTools : undefined,
       tool_choice: this.transformToolChoice(config.toolChoice),
+      parallel_tool_calls: false,
       max_output_tokens: config.maxOutputTokens,
       temperature: isReasoning ? undefined : config.temperature,
       top_p: isReasoning ? undefined : config.topP,
@@ -246,44 +249,29 @@ export class OpenAIProvider implements LLMProvider {
 
       if (msg.role === "assistant") {
         const blocks = this.normalizeContent(msg.content);
-        const textBlocks = blocks.filter(b => b.type === "text");
-        const toolUses = blocks.filter(b => b.type === "tool_use");
-        const reasoningBlocks = blocks.filter(
-          b => b.type === "reasoning" || b.type === "reasoning_redacted"
-        );
 
-        // Pass back reasoning items for multi-turn (GPT-5)
-        for (const reasoning of reasoningBlocks) {
-          if (
-            reasoning.type === "reasoning" &&
-            reasoning.providerData?.provider === "openai"
-          ) {
-            items.push(reasoning.providerData.payload as OpenAIInputItem);
-          }
-        }
-
-        // Text content - for assistant messages, use simple string content
-        // The OpenAI Responses API input format differs from output format
-        if (textBlocks.length > 0) {
-          const text = textBlocks
-            .map(b => (b as { type: "text"; text: string }).text)
-            .join("\n");
-          items.push({
-            type: "message",
-            role: "assistant",
-            content: text,
-          });
-        }
-
-        // Tool calls
-        for (const tool of toolUses) {
-          if (tool.type === "tool_use") {
-            items.push({
-              type: "function_call",
-              call_id: tool.id,
-              name: tool.name,
-              arguments: JSON.stringify(tool.input),
-            });
+        for (const block of blocks) {
+          switch (block.type) {
+            case "reasoning":
+              if (block.providerData?.provider === "openai") {
+                items.push(block.providerData.payload as OpenAIInputItem);
+              }
+              break;
+            case "text":
+              items.push({
+                type: "message",
+                role: "assistant",
+                content: block.text,
+              });
+              break;
+            case "tool_use":
+              items.push({
+                type: "function_call",
+                call_id: block.id,
+                name: block.name,
+                arguments: JSON.stringify(block.input),
+              });
+              break;
           }
         }
       }
@@ -398,18 +386,68 @@ export class OpenAIProvider implements LLMProvider {
   private async *transformStream(
     stream: AsyncIterable<OpenAI.Responses.ResponseStreamEvent>
   ): AsyncIterable<CanonicalStreamEvent> {
-    let contentIndex = 0;
+    let fallbackIndex = 0;
     let currentReasoning: {
-      id: string;
-      summaryParts: string[];
-      rawItem: unknown;
-    } | null = null;
-    let currentToolCall: {
       index: number;
+      id?: string;
+      summaryParts: string[];
+    } | null = null;
+
+    const toolCalls = new Map<string, {
+      index: number;
+      itemId?: string;
       id: string;
       name: string;
       args: string;
-    } | null = null;
+    }>();
+
+    const nextFallbackIndex = () => {
+      const index = 1_000_000 + fallbackIndex;
+      fallbackIndex += 1;
+      return index;
+    };
+
+    const eventRecord = (event: unknown): Record<string, unknown> =>
+      event && typeof event === "object" ? event as Record<string, unknown> : {};
+
+    const outputIndexFor = (event: unknown): number | undefined => {
+      const record = eventRecord(event);
+      return typeof record.output_index === "number" ? record.output_index : undefined;
+    };
+
+    const contentIndexFor = (event: unknown): number => {
+      const record = eventRecord(event);
+      return typeof record.content_index === "number" ? record.content_index : 0;
+    };
+
+    const orderedIndexFor = (event: unknown): number => {
+      const outputIndex = outputIndexFor(event);
+      if (typeof outputIndex === "number") {
+        return outputIndex * 1000 + contentIndexFor(event);
+      }
+      return nextFallbackIndex();
+    };
+
+    const toolKeyFor = (event: unknown): string | null => {
+      const record = eventRecord(event);
+      if (typeof record.item_id === "string") {
+        return record.item_id;
+      }
+      const outputIndex = outputIndexFor(event);
+      return typeof outputIndex === "number" ? `output:${outputIndex}` : null;
+    };
+
+    const findToolCall = (event: unknown) => {
+      const key = toolKeyFor(event);
+      if (key && toolCalls.has(key)) {
+        return toolCalls.get(key);
+      }
+      const outputIndex = outputIndexFor(event);
+      if (typeof outputIndex === "number") {
+        return toolCalls.get(`output:${outputIndex}`);
+      }
+      return undefined;
+    };
 
     for await (const event of stream) {
       switch (event.type) {
@@ -422,13 +460,7 @@ export class OpenAIProvider implements LLMProvider {
           yield {
             type: "message_done",
             stop_reason: this.mapStopReason(event.response.status ?? "completed"),
-            usage: event.response.usage ? {
-              input_tokens: event.response.usage.input_tokens,
-              output_tokens: event.response.usage.output_tokens,
-              reasoning_tokens: (event.response.usage as unknown as Record<string, unknown>).output_tokens_details
-                ? ((event.response.usage as unknown as Record<string, unknown>).output_tokens_details as Record<string, number>).reasoning_tokens
-                : undefined,
-            } : undefined,
+            usage: this.transformUsage(event.response.usage),
             providerData: {
               provider: "openai",
               payload: event.response,
@@ -455,29 +487,41 @@ export class OpenAIProvider implements LLMProvider {
         // Output item handling (including reasoning)
         case "response.output_item.added":
           if ((event.item as unknown as Record<string, unknown>).type === "reasoning") {
+            const item = event.item as unknown as Record<string, unknown>;
             currentReasoning = {
-              id: (event.item as unknown as Record<string, string>).id,
+              index: event.output_index * 1000,
+              id: typeof item.id === "string" ? item.id : undefined,
               summaryParts: [],
-              rawItem: event.item,
             };
             yield {
               type: "reasoning_start",
-              index: event.output_index,
-              id: (event.item as unknown as Record<string, string>).id,
+              index: currentReasoning.index,
+              id: currentReasoning.id,
             };
           } else if ((event.item as unknown as Record<string, unknown>).type === "function_call") {
-            const item = event.item as unknown as Record<string, string>;
-            currentToolCall = {
-              index: event.output_index,
-              id: item.call_id,
-              name: item.name,
+            const item = event.item as unknown as Record<string, unknown>;
+            const itemId = typeof item.id === "string" ? item.id : undefined;
+            const callId = typeof item.call_id === "string" ? item.call_id : null;
+            const name = typeof item.name === "string" ? item.name : null;
+            if (!callId || !name) {
+              break;
+            }
+            const toolCall = {
+              index: event.output_index * 1000,
+              itemId,
+              id: callId,
+              name,
               args: "",
             };
+            toolCalls.set(`output:${event.output_index}`, toolCall);
+            if (itemId) {
+              toolCalls.set(itemId, toolCall);
+            }
             yield {
               type: "tool_use_start",
-              index: event.output_index,
-              id: item.call_id,
-              name: item.name,
+              index: toolCall.index,
+              id: toolCall.id,
+              name: toolCall.name,
             };
           }
           break;
@@ -494,7 +538,7 @@ export class OpenAIProvider implements LLMProvider {
             };
             yield {
               type: "reasoning_done",
-              index: event.output_index,
+              index: currentReasoning.index,
               block,
             };
             currentReasoning = null;
@@ -505,18 +549,20 @@ export class OpenAIProvider implements LLMProvider {
         case "response.content_part.added":
           yield {
             type: "content_start",
-            index: contentIndex,
-            content_type: (event.part as unknown as Record<string, unknown>).type === "output_text" ? "text" : "tool_use",
+            index: orderedIndexFor(event),
+            content_type:
+              (event.part as unknown as Record<string, unknown>).type === "output_text"
+                ? "text"
+                : "tool_use",
           };
           break;
 
         case "response.output_text.delta":
-          yield { type: "text_delta", index: contentIndex, delta: event.delta };
+          yield { type: "text_delta", index: orderedIndexFor(event), delta: event.delta };
           break;
 
         case "response.output_text.done":
-          yield { type: "content_done", index: contentIndex };
-          contentIndex++;
+          yield { type: "content_done", index: orderedIndexFor(event) };
           break;
 
         // Reasoning summary streaming
@@ -525,14 +571,15 @@ export class OpenAIProvider implements LLMProvider {
             currentReasoning.summaryParts.push(event.delta);
             yield {
               type: "reasoning_delta",
-              index: event.output_index,
+              index: currentReasoning.index,
               delta: event.delta,
             };
           }
           break;
 
         // Tool call streaming
-        case "response.function_call_arguments.delta":
+        case "response.function_call_arguments.delta": {
+          const currentToolCall = findToolCall(event);
           if (currentToolCall) {
             currentToolCall.args += event.delta;
             yield {
@@ -542,8 +589,10 @@ export class OpenAIProvider implements LLMProvider {
             };
           }
           break;
+        }
 
-        case "response.function_call_arguments.done":
+        case "response.function_call_arguments.done": {
+          const currentToolCall = findToolCall(event);
           if (currentToolCall) {
             const argumentsJson =
               typeof event.arguments === "string" ? event.arguments : currentToolCall.args;
@@ -554,9 +603,16 @@ export class OpenAIProvider implements LLMProvider {
               name: currentToolCall.name,
               input: JSON.parse(argumentsJson),
             };
-            currentToolCall = null;
+            if (currentToolCall.itemId) {
+              toolCalls.delete(currentToolCall.itemId);
+            }
+            const outputIndex = outputIndexFor(event);
+            if (typeof outputIndex === "number") {
+              toolCalls.delete(`output:${outputIndex}`);
+            }
           }
           break;
+        }
       }
     }
   }
@@ -572,7 +628,7 @@ export class OpenAIProvider implements LLMProvider {
       output?: unknown[];
       output_text?: string | string[];
       status?: string;
-      usage?: { input_tokens: number; output_tokens: number };
+      usage?: unknown;
     };
 
     const content: CanonicalContentBlock[] = [];
@@ -638,10 +694,7 @@ export class OpenAIProvider implements LLMProvider {
       id: resp.id,
       content,
       stopReason: this.mapStopReason(resp.status ?? "completed"),
-      usage: resp.usage ? {
-        input_tokens: resp.usage.input_tokens,
-        output_tokens: resp.usage.output_tokens,
-      } : undefined,
+      usage: this.transformUsage(resp.usage),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       providerData: {
         provider: "openai",
@@ -686,6 +739,33 @@ export class OpenAIProvider implements LLMProvider {
       case "failed": return "error";
       default: return "end_turn";
     }
+  }
+
+  private transformUsage(usage: unknown): CanonicalResponse["usage"] {
+    if (!usage || typeof usage !== "object") {
+      return undefined;
+    }
+    const record = usage as Record<string, unknown>;
+    const outputDetails = record.output_tokens_details &&
+      typeof record.output_tokens_details === "object"
+      ? record.output_tokens_details as Record<string, unknown>
+      : null;
+    const inputDetails = record.input_tokens_details &&
+      typeof record.input_tokens_details === "object"
+      ? record.input_tokens_details as Record<string, unknown>
+      : null;
+    return {
+      input_tokens: typeof record.input_tokens === "number" ? record.input_tokens : 0,
+      output_tokens: typeof record.output_tokens === "number" ? record.output_tokens : 0,
+      reasoning_tokens:
+        typeof outputDetails?.reasoning_tokens === "number"
+          ? outputDetails.reasoning_tokens
+          : undefined,
+      cached_input_tokens:
+        typeof inputDetails?.cached_tokens === "number"
+          ? inputDetails.cached_tokens
+          : undefined,
+    };
   }
 
   private normalizeContent(content: string | CanonicalContentBlock[]): CanonicalContentBlock[] {

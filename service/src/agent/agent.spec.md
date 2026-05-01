@@ -59,6 +59,8 @@ Conversation-building ownership extracted from `AgentService`.
 **Responsibilities**:
 - seed the canonical system prompt
 - load persisted thread messages into canonical provider input order
+- load same-provider provider-ledger assistant output blocks when a target provider is known
+- skip duplicate product assistant rows whose `metadata.llm_call_id` is already represented by provider-ledger output
 - normalize historical tool rows, including legacy `terminal.interrupt` replay and `screen_stable` wait values
 - preserve user preferred-cwd hints during replay
 
@@ -68,6 +70,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 
 **Current Coverage**:
 - preferred-cwd metadata is appended to user messages
+- same-provider reconstruction can prefer durable provider-ledger assistant blocks over product assistant rows
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`
 - stored `screen_stable` waits replay as canonical `settled`
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
@@ -126,7 +129,8 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 startUserMessage()
     └─► runAgentFlow() [async]
            │
-           ├─► conversationLoader.load()
+           ├─► resolve provider for selected model
+           ├─► conversationLoader.load(provider)
            │
            └─► LOOP (max steps):
                   │
@@ -134,14 +138,19 @@ startUserMessage()
                   │
                   ├─► emit agent.message_start / delta / done (text responses only)
                   ├─► update `/agent/state` cursor + draft snapshot in lockstep
+                  ├─► persist visible intermediate assistant text when output also contains tools
+                  ├─► persist provider output ledger for text/reasoning/tool-call items
                   │
-                  ├─► modelRunner.extractToolCall()
+                  ├─► modelRunner.extractToolCalls()
                   │      │
-                  │      ├─► tool_call found → transcriptWriter.emitToolCall()
+                  │      ├─► tool calls found → for each provider-ordered call:
+                  │      │                  └─► transcriptWriter.emitToolCall()
                   │      │                  └─► toolExecutor.execute()
                   │      │                  └─► transcriptWriter.recordToolResult()
+                  │      │                  └─► persist provider tool-result item
                   │      │
                   │      └─► no tool → modelRunner.parseFinalResponse()
+                  │                    └─► persist provider output ledger
                   │                    └─► transcriptWriter.recordFinalAssistant()
                   │                    └─► reset `/agent/state` to idle after final durable state
                   │
@@ -152,9 +161,11 @@ startUserMessage()
 - The agent no longer asks the model to wrap final answers in JSON.
 - Provider `invoke()` streams are now the primary path; `AgentService` reconstructs a `CanonicalResponse` from provider text/tool/reasoning events.
 - Draft assistant text is emitted live over SSE via `agent.message_start`, `agent.message_delta`, and `agent.message_done`.
-- The persisted assistant transcript row is still created only once the turn resolves, then emitted as `agent.message`.
+- Visible assistant text in a response that also contains tool calls is now persisted as an intermediate assistant transcript row before tool execution and emitted as `agent.message`.
+- Final persisted assistant rows are still emitted as `agent.message` once the turn resolves.
 - Assistant/tool `client_id` values are now allocated before the first live runtime/SSE event that refers to them, and the persisted assistant/tool rows reuse those same values at insert time.
-- Reasoning blocks are preserved inside the in-memory conversation on tool-call loops so providers that require multi-turn reasoning context do not lose those items.
+- Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
+- Multiple provider tool calls are parsed and executed serially in provider output order for the current terminal-tool-only agent.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
@@ -200,6 +211,7 @@ Standalone Node tests for `AgentService` orchestration behavior.
 
 **Current Coverage**:
 - `cancelThread()` aborts the active turn and rejects any pending terminal waits for that thread
+- final no-tool responses record exactly one provider-ledger `llm_call` row before final assistant persistence
 
 ### `model-runner.ts`
 
@@ -210,6 +222,8 @@ Model invocation ownership extracted from `AgentService`.
 - resolve model-specific reasoning through `llm/reasoning-policy.ts`, using catalog defaults and rejecting unsupported combinations before provider invocation
 - consume provider `invoke()` streams and emit draft assistant runtime events
 - reconstruct canonical responses and normalize provider tool-call payloads
+- keep text blocks before and between tool calls in canonical output order
+- expose all parsed tool calls through `extractToolCalls()` while retaining `extractToolCall()` as a first-call compatibility helper
 - throw structured `AgentModelResponseError` diagnostics when a completed response cannot be parsed into final text or a tool call
 
 ### `model-runner.test.ts`
@@ -219,6 +233,7 @@ Direct tests for the extracted model runner.
 **Current Coverage**:
 - reasoning-effort normalization follows selected model policy, including Claude 4.6/4.7 and GPT-5.4 differences
 - terminal tool schemas advertise only public `wait_for` modes and omit `timeout_ms`
+- streamed text blocks around multiple tool calls are retained in provider order
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
 - empty final responses include bounded canonical/provider response diagnostics on the thrown error
 
@@ -249,6 +264,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 **Responsibilities**:
 - emit `agent.tool_call` and synchronize `/agent/state.pending_tool`, including the tool `started_at` timestamp and effective client-facing terminal `wait_for` args
 - persist assistant/tool transcript rows with stable `client_id`
+- persist intermediate assistant text segments that precede or appear between tool calls
 - stamp thread attention metadata for final attention-worthy assistant output
 - enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
 - add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
@@ -285,6 +301,7 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 
 **Current Coverage**:
 - tool timing is emitted on `agent.tool_call` / `agent.tool_result`
+- intermediate assistant text segments persist with `segment_kind` / `llm_call_id` metadata and emit `agent.message` without finalizing the turn
 - canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
 
 ### `thread-title-service.ts`
@@ -351,6 +368,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
 - `message.client_id` is the same stable public identity already exposed on the top-level assistant/tool runtime and stream payloads
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
+- `agent.message` may represent an intermediate visible text segment before later tool calls; successful final turn status still arrives separately as `final`
 - `thread.title` shares the same SSE frame-id cursor space as the agent events, so bounded resume covers title changes without opening a second stream
 - `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
 - replay resume is keyed off the SSE frame `id:` / runtime cursor rather than the JSON payload

@@ -195,6 +195,8 @@ export type TokenUsage = {
   output_tokens: number;
   /** Reasoning/thinking tokens (if applicable) */
   reasoning_tokens?: number;
+  /** Cached input tokens (OpenAI prompt caching) */
+  cached_input_tokens?: number;
   /** Cache-related token counts (Anthropic) */
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;

@@ -1,0 +1,31 @@
+# Progress Checklist: Fortify LLM Call Handling
+
+- [x] Create the `plan/fortify-llm-call-handling/` folder and plan documents
+- [x] Add the new plan folder to the root `bud.spec.md` documentation index
+- [x] Phase 0: Add provider fixtures for OpenAI mixed output and Anthropic thinking/tool streams
+- [x] Phase 0: Add current-failure tests for dropped text before and between tool calls
+- [x] Phase 0: Capture cache telemetry baseline
+- [x] Phase 1: Add provider ledger schema to `service/src/db/schema.ts`
+- [x] Phase 1: Run local `db:push`
+- [x] Phase 1: Generate checked-in Drizzle migration
+- [x] Phase 1: Add provider ledger persistence helpers
+- [x] Phase 2: Fix OpenAI output ordering and multiple function-call parsing
+- [x] Phase 2: Preserve OpenAI reasoning payloads for manual context replay
+- [x] Phase 2: Parse Anthropic `redacted_thinking` in stream and non-stream paths
+- [x] Phase 2: Fix provider-specific `ToolChoice` lowering
+- [x] Phase 3: Refactor agent loop to process ordered output blocks rather than tool-first branching
+- [x] Phase 3: Persist all provider output items before tool execution
+- [x] Phase 3: Add same-provider provider-native reconstruction
+- [x] Phase 3: Add provider-switch canonical fallback reconstruction
+- [x] Phase 3: Execute multiple terminal tool calls serially in provider order
+- [x] Phase 4: Persist visible assistant text segments before and between tool calls
+- [x] Phase 4: Stop removing assistant drafts when tool calls arrive
+- [x] Phase 4: Reconcile streamed text with persisted message rows by stable `client_id`
+- [x] Phase 5: Record OpenAI cached-token telemetry and reconstruction mode
+- [x] Phase 5: Document Anthropic cache-control strategy
+- [ ] Phase 5: Add degraded reconstruction diagnostics
+- [x] Phase 6: Update protocol docs and all affected specs
+- [x] Phase 6: Run focused service tests
+- [x] Phase 6: Run focused web tests
+- [ ] Phase 6: Complete manual validation checklist
+- [x] Phase 6: Record any remaining reasoning-UI work as a future product plan

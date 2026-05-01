@@ -9,15 +9,21 @@ import type { TerminalSession, TerminalSessionManager } from "../runtime/termina
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import type {
-  CanonicalReasoningBlock,
+  CanonicalContentBlock,
   ModelSelectionSource,
   ReasoningLevel,
   ResolvedModelReasoning,
 } from "../llm/index.js";
+import {
+  buildRequestMode,
+  createLlmCallId,
+  recordLlmCall,
+  recordLlmToolResultItem,
+} from "../llm/index.js";
 import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner } from "./model-runner.js";
-import { buildToolExecutionTiming, toolNameForConversation } from "./contracts.js";
+import { buildToolExecutionTiming } from "./contracts.js";
 import { TerminalToolExecutor } from "./terminal-tool-executor.js";
 import { AgentTranscriptWriter } from "./transcript-writer.js";
 
@@ -133,11 +139,13 @@ export class AgentService {
     controller: AbortController;
   }): Promise<void> {
     const { threadId, turnId, sessionId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
-    const conversation = await this.conversationLoader.load(threadId);
+    const providerName = this.modelRunner.resolveProviderName(model);
+    const conversation = await this.conversationLoader.load(threadId, { provider: providerName });
     this.debug("Starting agent run", {
       threadId,
       sessionId,
       model,
+      provider: providerName,
       entries: conversation.length,
       reasoningEffort: modelReasoning.reasoningLevel,
     });
@@ -159,76 +167,113 @@ export class AgentService {
             modelReasoning,
             controller.signal,
           );
+        const llmCallId = createLlmCallId();
+        const visibleText = collectVisibleText(response.content);
+        const toolCalls = this.modelRunner.extractToolCalls(response);
+        let assistantMessageId: string | null = null;
 
-        const toolCall = this.modelRunner.extractToolCall(response);
-        if (toolCall) {
-          const toolClientId = generateMessageClientId();
-          const startedAt = new Date();
-          const { modelArgs: toolArgs, clientArgs } = this.transcriptWriter.emitToolCall(
+        if (toolCalls.length > 0 && visibleText.trim().length > 0) {
+          const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
+          const assistantMessage = await this.transcriptWriter.recordAssistantTextSegment({
             threadId,
             turnId,
-            toolCall,
-            toolClientId,
-            startedAt,
-          );
-
-          this.debug("Dispatching tool call", {
-            sessionId,
-            threadId,
-            tool: toolCall.tool,
-            args: clientArgs,
-            callId: toolCall.callId,
-          });
-
-          const reasoningBlocks = response.content.filter(
-            (
-              block,
-            ): block is CanonicalReasoningBlock =>
-              block.type === "reasoning" || block.type === "reasoning_redacted",
-          );
-
-          conversation.push({
-            role: "assistant",
-            content: [
-              ...reasoningBlocks,
-              {
-                type: "tool_use",
-                id: toolCall.callId,
-                name: toolNameForConversation(toolCall.tool),
-                input: toolArgs,
-              },
-            ],
-          });
-
-          const execution = await this.toolExecutor.execute(threadId, toolCall);
-          const finishedAt = new Date();
-          const timing = buildToolExecutionTiming(startedAt, finishedAt);
-          const { payload } = await this.transcriptWriter.recordToolResult({
-            threadId,
-            turnId,
-            execution,
-            clientId: toolClientId,
-            timing,
+            message: visibleText,
+            clientId: assistantClientId,
+            segmentKind: "intermediate",
+            followedByToolCall: true,
+            llmCallId,
             modelSelection,
             ownerUserId,
           });
+          assistantMessageId = assistantMessage.message_id;
+        }
 
-          if (toolCall.tool !== "terminal.observe" && this.contextSyncService) {
-            await this.contextSyncService.refreshSnapshot(sessionId);
-          }
+        await recordLlmCall({
+          llmCallId,
+          threadId,
+          turnId,
+          stepIndex: steps,
+          provider: providerName,
+          model: modelReasoning.providerModel,
+          requestMode: buildRequestMode(providerName),
+          providerResponseId: response.id,
+          output: response.content,
+          usage: response.usage,
+          assistantMessageId,
+          ownerUserId,
+        });
 
+        if (toolCalls.length > 0) {
           conversation.push({
-            role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: toolCall.callId,
-                content: JSON.stringify(payload),
-              },
-            ],
+            role: "assistant",
+            content: response.content,
           });
 
-          steps += 1;
+          const toolResultBlocks: CanonicalContentBlock[] = [];
+
+          for (const toolCall of toolCalls) {
+            const toolClientId = generateMessageClientId();
+            const startedAt = new Date();
+            const { clientArgs } = this.transcriptWriter.emitToolCall(
+              threadId,
+              turnId,
+              toolCall,
+              toolClientId,
+              startedAt,
+            );
+
+            this.debug("Dispatching tool call", {
+              sessionId,
+              threadId,
+              tool: toolCall.tool,
+              args: clientArgs,
+              callId: toolCall.callId,
+            });
+
+            const execution = await this.toolExecutor.execute(threadId, toolCall);
+            const finishedAt = new Date();
+            const timing = buildToolExecutionTiming(startedAt, finishedAt);
+            const { payload, message } = await this.transcriptWriter.recordToolResult({
+              threadId,
+              turnId,
+              execution,
+              clientId: toolClientId,
+              timing,
+              modelSelection,
+              ownerUserId,
+              llmCallId,
+            });
+
+            await recordLlmToolResultItem({
+              llmCallId,
+              threadId,
+              sequence: response.content.length + toolResultBlocks.length,
+              toolCallId: toolCall.callId,
+              content: JSON.stringify(payload),
+              payload,
+              messageId: message.message_id,
+              ownerUserId,
+            });
+
+            if (toolCall.tool !== "terminal.observe" && this.contextSyncService) {
+              await this.contextSyncService.refreshSnapshot(sessionId);
+            }
+
+            toolResultBlocks.push({
+              type: "tool_result",
+              tool_use_id: toolCall.callId,
+              content: JSON.stringify(payload),
+            });
+          }
+
+          if (toolResultBlocks.length > 0) {
+            conversation.push({
+              role: "user",
+              content: toolResultBlocks,
+            });
+          }
+
+          steps += toolCalls.length;
           continue;
         }
 
@@ -242,6 +287,7 @@ export class AgentService {
           clientId: assistantClientId,
           modelSelection,
           ownerUserId,
+          llmCallId,
         });
 
         this.runtime.finishTurn(threadId);
@@ -361,4 +407,11 @@ export class AgentService {
     }
     this.logger.info({ ...meta, component: "agent" }, message);
   }
+}
+
+function collectVisibleText(content: CanonicalContentBlock[]): string {
+  return content
+    .filter((block): block is Extract<CanonicalContentBlock, { type: "text" }> => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
 }

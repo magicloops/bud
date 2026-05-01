@@ -237,6 +237,90 @@ test("invokeModel carries provider diagnostics from message_done", async (t) => 
   });
 });
 
+test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register(
+    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+      { type: "message_start", id: "resp_interleaved" },
+      { type: "content_start", index: 0, content_type: "text" },
+      { type: "text_delta", index: 0, delta: "before tool" },
+      { type: "content_done", index: 0 },
+      {
+        type: "tool_use_done",
+        index: 1,
+        id: "call_observe",
+        name: "terminal_observe",
+        input: { view: "screen" },
+      },
+      { type: "content_start", index: 2, content_type: "text" },
+      { type: "text_delta", index: 2, delta: "between tools" },
+      { type: "content_done", index: 2 },
+      {
+        type: "tool_use_done",
+        index: 3,
+        id: "call_send",
+        name: "terminal_send",
+        input: { text: "pwd", submit: true },
+      },
+      { type: "message_done", stop_reason: "tool_use" },
+    ]),
+  );
+
+  t.after(() => {
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const runtime = createRuntime();
+  const runner = new AgentModelRunner(
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const { response, assistantClientId, provider, providerModel } = await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    runner.resolveModelReasoning("gpt-5.4"),
+  );
+
+  assert.equal(provider, "openai");
+  assert.equal(providerModel, "gpt-5.4-2026-03-05");
+  assert.ok(assistantClientId);
+  assert.deepEqual(response.content, [
+    { type: "text", text: "before tool" },
+    {
+      type: "tool_use",
+      id: "call_observe",
+      name: "terminal_observe",
+      input: { view: "screen" },
+    },
+    { type: "text", text: "between tools" },
+    {
+      type: "tool_use",
+      id: "call_send",
+      name: "terminal_send",
+      input: { text: "pwd", submit: true },
+    },
+  ]);
+  assert.deepEqual(
+    runner.extractToolCalls(response).map((directive) => directive.callId),
+    ["call_observe", "call_send"],
+  );
+});
+
 test("extractToolCall normalizes legacy keys arrays to canonical semantic key strings", () => {
   const runner = new AgentModelRunner(
     createRuntime() as never,

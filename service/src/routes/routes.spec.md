@@ -154,6 +154,7 @@ Ownership-focused thread submodules:
 - those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
 - embedded canonical tool rows now expose the same timing fields under `message.metadata`, while tool `message.content` remains the replay payload without timing-only fields
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
+- `agent.message` may now arrive for an intermediate visible assistant text segment before later tool calls; the embedded `message.metadata.segment_kind` distinguishes `intermediate` from `final`
 - `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
 - no-cursor attaches are live-only; they do not replay buffered `agent.*` or `final`
 - bounded replay can resume from `after=<cursor>`, the standard `Last-Event-ID` header, or the optional `last_event_id` query parameter

@@ -2,7 +2,12 @@ import { ulid } from "ulid";
 import { asc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messageTable } from "../db/schema.js";
-import type { CanonicalMessage } from "../llm/index.js";
+import {
+  createCanonicalAssistantMessageFromLedger,
+  loadProviderLedgerMessages,
+  type CanonicalMessage,
+  type CanonicalProviderId,
+} from "../llm/index.js";
 import type { TerminalObservationView } from "../terminal/types.js";
 import {
   buildToolArgs,
@@ -115,28 +120,80 @@ export function createCanonicalTextMessage(
 }
 
 export class AgentConversationLoader {
-  async load(threadId: string): Promise<CanonicalMessage[]> {
+  async load(
+    threadId: string,
+    options?: { provider?: CanonicalProviderId | null },
+  ): Promise<CanonicalMessage[]> {
     const messages: CanonicalMessage[] = [
       createCanonicalTextMessage("system", AGENT_SYSTEM_PROMPT),
     ];
 
     const rows = await db
       .select({
+        messageId: messageTable.messageId,
         role: messageTable.role,
         content: messageTable.content,
         metadata: messageTable.metadata,
+        createdAt: messageTable.createdAt,
       })
       .from(messageTable)
       .where(eq(messageTable.threadId, threadId))
       .orderBy(asc(messageTable.createdAt));
 
-    for (const row of rows) {
-      if (row.role === "tool") {
-        const directive = this.parseStoredToolDirective(row.content);
-        if (!directive) {
-          continue;
-        }
+    if (!options?.provider) {
+      for (const row of rows) {
+        this.appendStoredMessage(messages, row, { toolUseFromProviderLedger: false });
+      }
+      return messages;
+    }
 
+    const ledgerMessages = await loadProviderLedgerMessages(threadId, options.provider);
+    const ledgerCallIds = new Set(ledgerMessages.map((message) => message.llmCallId));
+    const timeline = [
+      ...rows.map((row) => ({ type: "message" as const, createdAt: row.createdAt, row })),
+      ...ledgerMessages.map((ledger) => ({
+        type: "ledger" as const,
+        createdAt: ledger.createdAt,
+        ledger,
+      })),
+    ].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+
+    for (const item of timeline) {
+      if (item.type === "ledger") {
+        messages.push(createCanonicalAssistantMessageFromLedger(item.ledger.content));
+        continue;
+      }
+
+      const metadata = (item.row.metadata ?? {}) as Record<string, unknown>;
+      const llmCallId = typeof metadata.llm_call_id === "string" ? metadata.llm_call_id : null;
+      if (item.row.role === "assistant" && llmCallId && ledgerCallIds.has(llmCallId)) {
+        continue;
+      }
+
+      this.appendStoredMessage(messages, item.row, {
+        toolUseFromProviderLedger: Boolean(llmCallId && ledgerCallIds.has(llmCallId)),
+      });
+    }
+
+    return messages;
+  }
+
+  private appendStoredMessage(
+    messages: CanonicalMessage[],
+    row: {
+      role: string;
+      content: string;
+      metadata: unknown;
+    },
+    options: { toolUseFromProviderLedger: boolean },
+  ): void {
+    if (row.role === "tool") {
+      const directive = this.parseStoredToolDirective(row.content);
+      if (!directive) {
+        return;
+      }
+
+      if (!options.toolUseFromProviderLedger) {
         messages.push({
           role: "assistant",
           content: [
@@ -148,44 +205,42 @@ export class AgentConversationLoader {
             },
           ],
         });
-
-        messages.push({
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: directive.callId,
-              content: row.content,
-            },
-          ],
-        });
-        continue;
       }
 
-      if (row.role === "assistant") {
-        messages.push(createCanonicalTextMessage("assistant", row.content));
-        continue;
-      }
-
-      if (row.role === "user") {
-        const metadata = (row.metadata ?? {}) as Record<string, unknown>;
-        const preferredCwd =
-          typeof metadata.preferred_cwd === "string" && metadata.preferred_cwd
-            ? metadata.preferred_cwd
-            : undefined;
-        const content = preferredCwd
-          ? `${row.content}\n\n[Preferred CWD: ${preferredCwd}]`
-          : row.content;
-        messages.push(createCanonicalTextMessage("user", content));
-        continue;
-      }
-
-      if (row.role === "system") {
-        messages.push(createCanonicalTextMessage("system", row.content));
-      }
+      messages.push({
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: directive.callId,
+            content: row.content,
+          },
+        ],
+      });
+      return;
     }
 
-    return messages;
+    if (row.role === "assistant") {
+      messages.push(createCanonicalTextMessage("assistant", row.content));
+      return;
+    }
+
+    if (row.role === "user") {
+      const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+      const preferredCwd =
+        typeof metadata.preferred_cwd === "string" && metadata.preferred_cwd
+          ? metadata.preferred_cwd
+          : undefined;
+      const content = preferredCwd
+        ? `${row.content}\n\n[Preferred CWD: ${preferredCwd}]`
+        : row.content;
+      messages.push(createCanonicalTextMessage("user", content));
+      return;
+    }
+
+    if (row.role === "system") {
+      messages.push(createCanonicalTextMessage("system", row.content));
+    }
   }
 
   private parseStoredToolDirective(raw: string): AgentToolCallDirective | null {
