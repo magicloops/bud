@@ -574,6 +574,10 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/swappable-transport/phase-8-optional-transport-upgrades.md](./plan/swappable-transport/phase-8-optional-transport-upgrades.md) | Optional carrier phase covering HTTP/2 gRPC adapter retention, future QUIC data-plane support, health scoring, and fallback validation after the WebSocket baseline is correct |
 | [plan/swappable-transport/progress-checklist.md](./plan/swappable-transport/progress-checklist.md) | Running implementation checklist for the WebSocket-first swappable-transport pivot |
 | [plan/swappable-transport/validation-checklist.md](./plan/swappable-transport/validation-checklist.md) | Validation checklist for WebSocket-first terminal, file, proxy, ownership, limit, and optional carrier parity testing |
+| [plan/file-viewer/file-viewer.spec.md](./plan/file-viewer/file-viewer.spec.md) | Folder spec for the phased user-initiated file viewer productization plan, covering the thread open route, web path actions, web viewer, mobile handoff, and deferred absolute-path/binary preview work |
+| [plan/file-viewer/implementation-spec.md](./plan/file-viewer/implementation-spec.md) | Parent implementation spec for the web-first, mobile-compatible file viewer workflow built on the existing file-session foundation |
+| [plan/file-viewer/progress-checklist.md](./plan/file-viewer/progress-checklist.md) | Running implementation checklist for the file viewer rollout |
+| [plan/file-viewer/validation-checklist.md](./plan/file-viewer/validation-checklist.md) | Validation checklist for the file viewer backend route, web parser/actions, web viewer states, real-daemon smoke, and mobile handoff |
 | [plan/mobile-auth/phase-2-deferred-validation-checklist.md](./plan/mobile-auth/phase-2-deferred-validation-checklist.md) | Deferred runtime-validation checklist for the hosted mobile OAuth flow while prototype work proceeds into the API-contract phase |
 | [plan/deploy/validation-checklist.md](./plan/deploy/validation-checklist.md) | Release-gate checklist for the prototype Render deployment, covering public-origin auth, Bud claim/bootstrap, SSE, WebSockets, DB/migration posture, mobile bundle publication, and the post-validation platform decision |
 | [plan/deploy/cloudflare-front-door-runbook.md](./plan/deploy/cloudflare-front-door-runbook.md) | Operator runbook for the default Cloudflare-in-front-of-Render staging shape, including the route-scoped Worker used to proxy service-owned paths to Render, the forwarded-header/no-store expectations for auth/SSE/WebSocket traffic, deploy order, rollback entry points, and the note that production may still move to a cleaner edge-routing provider |
@@ -694,6 +698,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
 | [design/render-deployment-review-and-topology-options.md](./design/render-deployment-review-and-topology-options.md) | Deployment review of the current web/service/Bud topology for a first production-like Render rollout, including current codebase gaps, Render-specific constraints, and cloud-agnostic infrastructure options |
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
+| [design/file-serving-user-initiated-viewer.md](./design/file-serving-user-initiated-viewer.md) | Web-first, mobile-compatible design for user-initiated host file viewing from clicked path references, building on the network-upgrade file-session foundation |
 | [design/terminal-session-lifecycle-and-thread-uniqueness.md](./design/terminal-session-lifecycle-and-thread-uniqueness.md) | Review of the current terminal session lifecycle, why the thread-id uniqueness bug predates the mobile-auth branch, and the recommended fix direction |
 | [design/terminal-command-and-interaction-contract.md](./design/terminal-command-and-interaction-contract.md) | Design for separating shell command execution, interactive terminal input, and explicit observation so the model no longer encodes `\n` for shell commands and no longer treats post-exec capture as a normal follow-up |
 | [design/terminal-send-confirmation-and-fast-observe.md](./design/terminal-send-confirmation-and-fast-observe.md) | Design for restoring send-plus-proof behavior to TUIs and REPLs by giving `terminal.send` a default fast post-send observation, replacing blind `screen_stable` waits with a `settled` model, and separating transport success from observed program response |
@@ -709,4 +714,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-30*
+*Last updated: 2026-05-01*
