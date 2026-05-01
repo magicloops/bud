@@ -1053,7 +1053,8 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
 - `agent.message`
-  - includes `turn_id`, `client_id`, and the persisted canonical assistant `message`
+  - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
+  - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
 - `thread.title`
   - `{ "thread_id": "uuid", "title": "Short Title", "source": "generated_first_user_message", "updated_at": "..." }`
 - `agent.resync_required`
@@ -1101,6 +1102,7 @@ Rules:
 - `id:` on the agent stream is the opaque resume cursor
 - keep-alive heartbeats are valid SSE events even when no replayable data exists
 - first-party clients should key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`
+- first-party clients must not remove a visible assistant draft just because an `agent.tool_call` arrives; text before or between tool calls is persisted as an assistant `agent.message`
 - first-party clients should use `agent.tool_call.args.wait_for` or `/agent/state.pending_tool.args.wait_for` to detect settled terminal waits instead of inferring long-running terminal progress from elapsed time
 - completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
@@ -1234,6 +1236,7 @@ Service: otherwise emit agent.resync_required
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
+  - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits
   - settled `terminal_send` and `terminal_observe(wait_for:"settled")` now use a service-owned one-hour timeout budget, while non-settled waits keep shorter defaults
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented

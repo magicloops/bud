@@ -213,9 +213,7 @@ export function useThreadMessages({
       metadata: { tool: name, call_id: callId, turn_id: turnId, pending: true, ...argsObj },
     }
 
-    setMessages((prev) =>
-      upsertMessage(removeDraftAssistantMessageForTurn(prev, turnId), pendingMessage),
-    )
+    setMessages((prev) => upsertMessage(prev, pendingMessage))
   }, [])
 
   const applyToolResultMessage = useCallback((message: ApiMessage) => {

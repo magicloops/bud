@@ -96,13 +96,15 @@ export class AgentTranscriptWriter {
     timing: ToolExecutionTiming;
     modelSelection: AgentMessageModelSelection;
     ownerUserId?: string | null;
+    llmCallId?: string | null;
   }): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage; cursor: string }> {
-    const { threadId, turnId, execution, clientId, timing, modelSelection, ownerUserId } = args;
+    const { threadId, turnId, execution, clientId, timing, modelSelection, ownerUserId, llmCallId } = args;
     const serializedTiming = serializeToolExecutionTiming(timing);
     const persistedMetadata = {
       ...execution.payload,
       ...serializedTiming,
       ...serializeModelSelectionMetadata(modelSelection),
+      ...(llmCallId ? { llm_call_id: llmCallId } : {}),
     };
     const [toolMessage] = await db
       .insert(messageTable)
@@ -165,8 +167,9 @@ export class AgentTranscriptWriter {
     clientId: string;
     modelSelection: AgentMessageModelSelection;
     ownerUserId?: string | null;
+    llmCallId?: string | null;
   }): Promise<SerializedAgentMessage> {
-    const { threadId, turnId, message, status, clientId, modelSelection, ownerUserId } = args;
+    const { threadId, turnId, message, status, clientId, modelSelection, ownerUserId, llmCallId } = args;
     const assistantMessage = await db.transaction(async (tx) => {
       const [insertedMessage] = await tx
         .insert(messageTable)
@@ -179,6 +182,9 @@ export class AgentTranscriptWriter {
           createdByUserId: ownerUserId ?? undefined,
           metadata: {
             status,
+            turn_id: turnId,
+            segment_kind: "final",
+            ...(llmCallId ? { llm_call_id: llmCallId } : {}),
             attention_kind: "assistant_completed",
             ...serializeModelSelectionMetadata(modelSelection),
           },
@@ -273,6 +279,74 @@ export class AgentTranscriptWriter {
       },
     });
 
+    return serializedMessage;
+  }
+
+  async recordAssistantTextSegment(args: {
+    threadId: string;
+    turnId: string;
+    message: string;
+    clientId: string;
+    segmentKind: "intermediate" | "final";
+    modelSelection: AgentMessageModelSelection;
+    ownerUserId?: string | null;
+    llmCallId?: string | null;
+    followedByToolCall?: boolean;
+  }): Promise<SerializedAgentMessage> {
+    const {
+      threadId,
+      turnId,
+      message,
+      clientId,
+      segmentKind,
+      modelSelection,
+      ownerUserId,
+      llmCallId,
+      followedByToolCall,
+    } = args;
+    const [insertedMessage] = await db
+      .insert(messageTable)
+      .values({
+        clientId,
+        threadId,
+        role: "assistant",
+        displayRole: "Bud Agent",
+        content: message,
+        createdByUserId: ownerUserId ?? undefined,
+        metadata: {
+          status: "succeeded",
+          turn_id: turnId,
+          segment_kind: segmentKind,
+          ...(llmCallId ? { llm_call_id: llmCallId } : {}),
+          ...(followedByToolCall ? { followed_by_tool_call: true } : {}),
+          ...serializeModelSelectionMetadata(modelSelection),
+        },
+      })
+      .returning({
+        messageId: messageTable.messageId,
+        clientId: messageTable.clientId,
+        role: messageTable.role,
+        displayRole: messageTable.displayRole,
+        content: messageTable.content,
+        metadata: messageTable.metadata,
+        createdAt: messageTable.createdAt,
+      });
+
+    await recordThreadMessageMetadata(threadId, message);
+
+    const serializedMessage = this.serializePersistedMessage(insertedMessage);
+    const cursor = this.runtime.emit(threadId, {
+      event: "agent.message",
+      data: {
+        turn_id: turnId,
+        client_id: clientId,
+        message_id: serializedMessage.message_id,
+        text: message,
+        message: serializedMessage,
+      },
+    });
+
+    this.runtime.clearDraftAssistant(threadId, cursor);
     return serializedMessage;
   }
 

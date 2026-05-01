@@ -7,6 +7,7 @@ import {
   providerRegistry,
   type CanonicalContentBlock,
   type CanonicalMessage,
+  type CanonicalProviderId,
   type CanonicalReasoningBlock,
   type CanonicalResponse,
   type CanonicalStopReason,
@@ -27,6 +28,8 @@ import {
 type StreamedModelResponse = {
   response: CanonicalResponse;
   assistantClientId: string | null;
+  provider: CanonicalProviderId;
+  providerModel: string;
 };
 
 const MODEL_RESPONSE_TEXT_PREVIEW_CHARS = 4_000;
@@ -161,6 +164,11 @@ export class AgentModelRunner {
     return resolveModelReasoning(model, requested, this.defaultReasoningEffort);
   }
 
+  resolveProviderName(model: string): CanonicalProviderId {
+    const provider = providerRegistry.getProviderForModel(model);
+    return provider.name as CanonicalProviderId;
+  }
+
   async invokeModel(
     threadId: string,
     turnId: string,
@@ -180,6 +188,7 @@ export class AgentModelRunner {
     });
 
     const provider = providerRegistry.getProviderForModel(model);
+    const providerName = provider.name as CanonicalProviderId;
 
     const modelConfig: ModelConfig = {
       model: providerModel,
@@ -192,6 +201,7 @@ export class AgentModelRunner {
     const reasoningBlocks = new Map<number, CanonicalReasoningBlock>();
     const toolCallsByIndex = new Map<number, CanonicalToolCall>();
     const pendingTextPrefixes = new Map<number, string>();
+    const seenTextIndexes = new Set<number>();
 
     let responseId: string | null = null;
     let stopReason: CanonicalStopReason = "end_turn";
@@ -253,12 +263,20 @@ export class AgentModelRunner {
           break;
         case "content_start":
           if (event.content_type === "text") {
-            pendingTextPrefixes.set(event.index, textBlockCount > 0 ? "\n" : "");
-            textBlockCount += 1;
+            if (!seenTextIndexes.has(event.index)) {
+              pendingTextPrefixes.set(event.index, textBlockCount > 0 ? "\n" : "");
+              seenTextIndexes.add(event.index);
+              textBlockCount += 1;
+            }
           }
           break;
         case "text_delta": {
-          const prefix = pendingTextPrefixes.get(event.index);
+          let prefix = pendingTextPrefixes.get(event.index);
+          if (prefix === undefined && !seenTextIndexes.has(event.index)) {
+            prefix = textBlockCount > 0 ? "\n" : "";
+            seenTextIndexes.add(event.index);
+            textBlockCount += 1;
+          }
           if (prefix !== undefined) {
             pendingTextPrefixes.delete(event.index);
             emitAssistantDraftDelta(prefix);
@@ -348,6 +366,8 @@ export class AgentModelRunner {
     return {
       response,
       assistantClientId,
+      provider: providerName,
+      providerModel,
     };
   }
 
@@ -382,12 +402,21 @@ export class AgentModelRunner {
   }
 
   extractToolCall(response: CanonicalResponse): AgentToolCallDirective | null {
+    return this.extractToolCalls(response)[0] ?? null;
+  }
+
+  extractToolCalls(response: CanonicalResponse): AgentToolCallDirective[] {
     const toolCalls = response.toolCalls;
     if (!toolCalls || toolCalls.length === 0) {
-      return null;
+      return [];
     }
 
-    const toolCall = toolCalls[0];
+    return toolCalls
+      .map((toolCall) => this.extractToolCallDirective(toolCall))
+      .filter((directive): directive is AgentToolCallDirective => Boolean(directive));
+  }
+
+  private extractToolCallDirective(toolCall: CanonicalToolCall): AgentToolCallDirective | null {
     const args = toolCall.input;
 
     switch (toolCall.name) {

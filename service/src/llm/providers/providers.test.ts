@@ -64,6 +64,8 @@ test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async
     effort: "xhigh",
     summary: "auto",
   });
+  assert.deepEqual(capturedParams[0].include, ["reasoning.encrypted_content"]);
+  assert.equal(capturedParams[0].parallel_tool_calls, false);
   assert.equal("reasoning" in capturedParams[1], false);
 });
 
@@ -208,6 +210,211 @@ test("OpenAI provider preserves function call name and call_id from streamed ite
   });
 });
 
+test("OpenAI provider preserves text between multiple streamed tool calls", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async () =>
+    (async function* stream() {
+      yield { type: "response.created", response: { id: "resp_multi_tool" } };
+      yield {
+        type: "response.content_part.added",
+        output_index: 0,
+        content_index: 0,
+        part: { type: "output_text" },
+      };
+      yield {
+        type: "response.output_text.delta",
+        output_index: 0,
+        content_index: 0,
+        delta: "before tool",
+      };
+      yield {
+        type: "response.output_text.done",
+        output_index: 0,
+        content_index: 0,
+      };
+      yield {
+        type: "response.output_item.added",
+        output_index: 1,
+        item: {
+          id: "fc_first",
+          type: "function_call",
+          call_id: "call_first",
+          name: "terminal_observe",
+        },
+      };
+      yield {
+        type: "response.function_call_arguments.done",
+        item_id: "fc_first",
+        output_index: 1,
+        arguments: JSON.stringify({ view: "screen" }),
+      };
+      yield {
+        type: "response.content_part.added",
+        output_index: 2,
+        content_index: 0,
+        part: { type: "output_text" },
+      };
+      yield {
+        type: "response.output_text.delta",
+        output_index: 2,
+        content_index: 0,
+        delta: "between tools",
+      };
+      yield {
+        type: "response.output_text.done",
+        output_index: 2,
+        content_index: 0,
+      };
+      yield {
+        type: "response.output_item.added",
+        output_index: 3,
+        item: {
+          id: "fc_second",
+          type: "function_call",
+          call_id: "call_second",
+          name: "terminal_send",
+        },
+      };
+      yield {
+        type: "response.function_call_arguments.done",
+        item_id: "fc_second",
+        output_index: 3,
+        arguments: JSON.stringify({ text: "pwd", submit: true }),
+      };
+      yield {
+        type: "response.completed",
+        response: {
+          id: "resp_multi_tool",
+          status: "completed",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            input_tokens_details: {
+              cached_tokens: 7,
+            },
+            output_tokens_details: {
+              reasoning_tokens: 2,
+            },
+          },
+        },
+      };
+    })();
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  })) {
+    events.push(event);
+  }
+
+  const contentAndTools = events.filter((event) =>
+    event.type === "text_delta" || event.type === "tool_use_done"
+  );
+  assert.deepEqual(
+    contentAndTools.map((event) =>
+      event.type === "text_delta" ? event.delta : event.id
+    ),
+    ["before tool", "call_first", "between tools", "call_second"],
+  );
+
+  const done = events.find((event) => event.type === "message_done");
+  assert.ok(done);
+  assert.deepEqual(done.usage, {
+    input_tokens: 10,
+    output_tokens: 5,
+    reasoning_tokens: 2,
+    cached_input_tokens: 7,
+  });
+});
+
+test("OpenAI provider sends assistant history in canonical block order", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const capturedParams: Record<string, unknown>[] = [];
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(params: Record<string, unknown>): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async (params) => {
+    capturedParams.push(params);
+    return emptyStream();
+  };
+
+  await drain(provider.invoke([
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "reasoning",
+          text: "summary",
+          providerData: {
+            provider: "openai",
+            payload: {
+              type: "reasoning",
+              id: "rs_order",
+            },
+          },
+        },
+        { type: "text", text: "before" },
+        {
+          type: "tool_use",
+          id: "call_first",
+          name: "terminal_observe",
+          input: { view: "screen" },
+        },
+        { type: "text", text: "between" },
+        {
+          type: "tool_use",
+          id: "call_second",
+          name: "terminal_send",
+          input: { text: "pwd", submit: true },
+        },
+      ],
+    },
+  ], [], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  }));
+
+  const input = capturedParams[0].input as Array<Record<string, unknown>>;
+  assert.deepEqual(
+    input.map((item) => {
+      if (item.type === "message") {
+        return `message:${item.content}`;
+      }
+      if (item.type === "function_call") {
+        return `tool:${item.call_id}`;
+      }
+      return `${item.type}:${item.id}`;
+    }),
+    [
+      "reasoning:rs_order",
+      "message:before",
+      "tool:call_first",
+      "message:between",
+      "tool:call_second",
+    ],
+  );
+});
+
 test("Anthropic provider lowers adaptive effort models without manual budgets", async () => {
   const provider = new AnthropicProvider("test-key");
   const capturedParams: Record<string, unknown>[] = [];
@@ -292,4 +499,331 @@ test("Anthropic provider keeps Haiku 4.5 on manual thinking budgets", async () =
     budget_tokens: 4096,
   });
   assert.equal("output_config" in haikuParams, false);
+});
+
+test("Anthropic provider omits tool_choice without tools and maps none when tools exist", async () => {
+  const provider = new AnthropicProvider("test-key");
+  const capturedParams: Record<string, unknown>[] = [];
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(params: Record<string, unknown>): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = (params) => {
+    capturedParams.push(params);
+    return emptyStream();
+  };
+
+  await drain(provider.invoke(messages, [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+    toolChoice: "none",
+  }));
+
+  await drain(provider.invoke(messages, [
+    {
+      name: "terminal_send",
+      description: "Send terminal input",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  ], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+    toolChoice: "none",
+  }));
+
+  assert.equal("tool_choice" in capturedParams[0], false);
+  assert.deepEqual(capturedParams[1].tool_choice, { type: "none" });
+});
+
+test("Anthropic provider preserves signed thinking blocks for replay", async () => {
+  const provider = new AnthropicProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(params: Record<string, unknown>): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = () => {
+    const stream = (async function* stream() {
+      yield {
+        type: "message_start",
+        message: {
+          id: "msg_thinking",
+        },
+      };
+      yield {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "thinking",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "thinking_delta",
+          thinking: "Check the terminal state.",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "signature_delta",
+          signature: "sig-part-1",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "signature_delta",
+          signature: "sig-part-2",
+        },
+      };
+      yield {
+        type: "content_block_stop",
+        index: 0,
+      };
+      yield {
+        type: "message_stop",
+      };
+    })() as unknown as AsyncIterable<unknown> & {
+      finalMessage(): Promise<Record<string, unknown>>;
+    };
+    stream.finalMessage = async () => ({
+      stop_reason: "end_turn",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 6,
+      },
+    });
+    return stream;
+  };
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  })) {
+    events.push(event);
+  }
+
+  const thinking = events.find((event) => event.type === "reasoning_done");
+  assert.ok(thinking);
+  assert.deepEqual(thinking.block, {
+    type: "reasoning",
+    text: "Check the terminal state.",
+    providerData: {
+      provider: "anthropic",
+      payload: {
+        type: "thinking",
+        thinking: "Check the terminal state.",
+        signature: "sig-part-1sig-part-2",
+      },
+    },
+  });
+
+  const capturedParams: Record<string, unknown>[] = [];
+  providerWithClient.client.messages.stream = (params) => {
+    capturedParams.push(params);
+    return emptyStream();
+  };
+
+  await drain(provider.invoke([
+    {
+      role: "assistant",
+      content: [thinking.block],
+    },
+  ], [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  }));
+
+  const replayMessages = capturedParams[0].messages as Array<{ content: unknown[] }>;
+  assert.deepEqual(replayMessages[0]?.content, [
+    {
+      type: "thinking",
+      thinking: "Check the terminal state.",
+      signature: "sig-part-1sig-part-2",
+    },
+  ]);
+});
+
+test("Anthropic provider preserves text and tool-use provider order", async () => {
+  const provider = new AnthropicProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = () => {
+    const stream = (async function* stream() {
+      yield { type: "message_start", message: { id: "msg_order" } };
+      yield {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text" },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "before tool" },
+      };
+      yield { type: "content_block_stop", index: 0 };
+      yield {
+        type: "content_block_start",
+        index: 1,
+        content_block: {
+          type: "tool_use",
+          id: "toolu_1",
+          name: "terminal_observe",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 1,
+        delta: {
+          type: "input_json_delta",
+          partial_json: JSON.stringify({ view: "screen" }),
+        },
+      };
+      yield { type: "content_block_stop", index: 1 };
+      yield {
+        type: "content_block_start",
+        index: 2,
+        content_block: { type: "text" },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 2,
+        delta: { type: "text_delta", text: "after tool" },
+      };
+      yield { type: "content_block_stop", index: 2 };
+      yield { type: "message_stop" };
+    })() as unknown as AsyncIterable<unknown> & {
+      finalMessage(): Promise<Record<string, unknown>>;
+    };
+    stream.finalMessage = async () => ({
+      stop_reason: "tool_use",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 6,
+      },
+    });
+    return stream;
+  };
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  })) {
+    events.push(event);
+  }
+
+  const contentAndTools = events.filter((event) =>
+    event.type === "text_delta" || event.type === "tool_use_done"
+  );
+  assert.deepEqual(
+    contentAndTools.map((event) =>
+      event.type === "text_delta" ? event.delta : event.id
+    ),
+    ["before tool", "toolu_1", "after tool"],
+  );
+});
+
+test("Anthropic provider preserves redacted thinking blocks and cache usage", async () => {
+  const provider = new AnthropicProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = () => {
+    const events = [
+      {
+        type: "message_start",
+        message: {
+          id: "msg_redacted",
+        },
+      },
+      {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "redacted_thinking",
+          data: "encrypted-thinking",
+        },
+      },
+      {
+        type: "content_block_stop",
+        index: 0,
+      },
+      {
+        type: "message_stop",
+      },
+    ];
+    const stream = (async function* stream() {
+      yield* events;
+    })() as unknown as AsyncIterable<unknown> & {
+      finalMessage(): Promise<Record<string, unknown>>;
+    };
+    stream.finalMessage = async () => ({
+      stop_reason: "end_turn",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 6,
+        cache_creation_input_tokens: 4,
+        cache_read_input_tokens: 8,
+      },
+    });
+    return stream;
+  };
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  })) {
+    events.push(event);
+  }
+
+  const redacted = events.find((event) => event.type === "reasoning_redacted");
+  assert.ok(redacted);
+  assert.deepEqual(redacted.block, {
+    type: "reasoning_redacted",
+    providerData: {
+      provider: "anthropic",
+      payload: {
+        type: "redacted_thinking",
+        data: "encrypted-thinking",
+      },
+    },
+  });
+
+  const done = events.find((event) => event.type === "message_done");
+  assert.ok(done);
+  assert.deepEqual(done.usage, {
+    input_tokens: 12,
+    output_tokens: 6,
+    cache_creation_input_tokens: 4,
+    cache_read_input_tokens: 8,
+  });
 });

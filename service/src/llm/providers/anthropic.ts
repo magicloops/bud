@@ -230,12 +230,14 @@ export class AnthropicProvider implements LLMProvider {
       system: systemPrompt || undefined,
       messages: anthropicMessages,
       tools: anthropicTools.length > 0 ? anthropicTools : undefined,
-      tool_choice: this.transformToolChoice(config.toolChoice),
       max_tokens: maxTokens,
       temperature: usesAdaptiveThinking ? undefined : config.temperature,
       top_p: usesAdaptiveThinking ? undefined : config.topP,
       stream: true,
     };
+    if (anthropicTools.length > 0) {
+      params.tool_choice = this.transformToolChoice(config.toolChoice);
+    }
 
     this.applyReasoningConfig(params, config);
 
@@ -269,12 +271,14 @@ export class AnthropicProvider implements LLMProvider {
       system: systemPrompt || undefined,
       messages: anthropicMessages,
       tools: anthropicTools.length > 0 ? anthropicTools : undefined,
-      tool_choice: this.transformToolChoice(config.toolChoice),
       max_tokens: maxTokens,
       temperature: usesAdaptiveThinking ? undefined : config.temperature,
       top_p: usesAdaptiveThinking ? undefined : config.topP,
       stream: true,
     };
+    if (anthropicTools.length > 0) {
+      params.tool_choice = this.transformToolChoice(config.toolChoice);
+    }
 
     this.applyReasoningConfig(params, config);
 
@@ -428,7 +432,7 @@ export class AnthropicProvider implements LLMProvider {
     choice?: ModelConfig["toolChoice"]
   ): Anthropic.MessageCreateParams["tool_choice"] {
     if (!choice || choice === "auto") return { type: "auto" };
-    if (choice === "none") return { type: "auto" }; // Anthropic doesn't have "none"
+    if (choice === "none") return { type: "none" } as Anthropic.MessageCreateParams["tool_choice"];
     if (choice === "required") return { type: "any" };
     return { type: "tool", name: choice.name };
   }
@@ -445,6 +449,11 @@ export class AnthropicProvider implements LLMProvider {
       index: number;
       text: string;
       signature?: string;
+    } | null = null;
+
+    let currentRedactedThinking: {
+      index: number;
+      payload: unknown;
     } | null = null;
 
     let currentToolUse: {
@@ -466,22 +475,28 @@ export class AnthropicProvider implements LLMProvider {
           yield {
             type: "message_done",
             stop_reason: this.mapStopReason(finalMessage.stop_reason),
-            usage: {
-              input_tokens: finalMessage.usage.input_tokens,
-              output_tokens: finalMessage.usage.output_tokens,
-            },
+            usage: this.transformUsage(finalMessage.usage),
           };
           break;
         }
 
         // Content blocks
         case "content_block_start": {
-          const blockType = event.content_block.type;
+          const blockType = (event.content_block as unknown as { type?: string }).type;
 
           if (blockType === "thinking") {
             currentThinking = {
               index: event.index,
               text: "",
+            };
+            yield {
+              type: "reasoning_start",
+              index: event.index,
+            };
+          } else if (blockType === "redacted_thinking") {
+            currentRedactedThinking = {
+              index: event.index,
+              payload: event.content_block,
             };
             yield {
               type: "reasoning_start",
@@ -573,6 +588,19 @@ export class AnthropicProvider implements LLMProvider {
               block: thinkingBlock,
             };
             currentThinking = null;
+          } else if (currentRedactedThinking && currentRedactedThinking.index === event.index) {
+            yield {
+              type: "reasoning_redacted",
+              index: event.index,
+              block: {
+                type: "reasoning_redacted",
+                providerData: {
+                  provider: "anthropic",
+                  payload: currentRedactedThinking.payload,
+                },
+              },
+            };
+            currentRedactedThinking = null;
           } else if (currentToolUse && currentToolUse.index === event.index) {
             yield {
               type: "tool_use_done",
@@ -622,6 +650,14 @@ export class AnthropicProvider implements LLMProvider {
             payload: block,
           },
         });
+      } else if ((block as unknown as { type?: string }).type === "redacted_thinking") {
+        content.push({
+          type: "reasoning_redacted",
+          providerData: {
+            provider: "anthropic",
+            payload: block,
+          },
+        });
       }
     }
 
@@ -629,10 +665,7 @@ export class AnthropicProvider implements LLMProvider {
       id: response.id,
       content,
       stopReason: this.mapStopReason(response.stop_reason),
-      usage: {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-      },
+      usage: this.transformUsage(response.usage),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     };
   }
@@ -651,6 +684,22 @@ export class AnthropicProvider implements LLMProvider {
       case "stop_sequence": return "stop_sequence";
       default: return "end_turn";
     }
+  }
+
+  private transformUsage(usage: Anthropic.Message["usage"]): CanonicalResponse["usage"] {
+    const usageRecord = usage as unknown as Record<string, unknown>;
+    return {
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      cache_creation_input_tokens:
+        typeof usageRecord.cache_creation_input_tokens === "number"
+          ? usageRecord.cache_creation_input_tokens
+          : undefined,
+      cache_read_input_tokens:
+        typeof usageRecord.cache_read_input_tokens === "number"
+          ? usageRecord.cache_read_input_tokens
+          : undefined,
+    };
   }
 
   private normalizeContent(

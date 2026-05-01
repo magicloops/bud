@@ -14,6 +14,10 @@ Current review folder for the active network-upgrade branch after the branch piv
 
 ## Files
 
+### `fortify-llm-call-handling-branch-review.md`
+
+Current branch review for the LLM call-handling fortification work. Compares the tracked branch against `origin/main`, calls out remaining provider-ledger replay/cache correctness risks, summarizes validation evidence, and notes worktree files that should stay out of the PR unless intentional.
+
 ### `network-upgrade.md`
 
 Review of the proposed WebSocket-to-HTTP/2-gRPC/QUIC transport upgrade. Compares the reference transport goals against the current daemon, service, web, and DB implementation, then recommends a bounded phased migration through protobuf envelopes, durable operation/stream state, HTTP/2 control/data, proxy/file sessions, optional QUIC, and WebSocket fallback cleanup.

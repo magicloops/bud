@@ -136,6 +136,14 @@ Placeholder to ensure the directory exists in git.
 - Adds nullable `thread.reasoning_effort`
 - Leaves historical threads valid while new writes persist the resolved concrete model/reasoning selection
 
+### `0017_married_invaders.sql`
+
+**LLM provider ledger**:
+- Creates `llm_call` for one row per provider invocation, including thread/turn/step, provider/model/request mode, provider response id, status, usage, cache metadata, and ownership stamps
+- Creates `llm_call_item` for ordered provider input/output items with canonical and provider payload JSON, visibility classification, tool-call ids, and optional product-message links
+- Adds foreign keys to `thread`, `message`, and `llm_call`
+- Adds provider diagnostics, call-sequence, thread-created, tool-call, and message-link indexes
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -146,7 +154,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0016` currently)
+- Snapshot files for each migration (`0000` through `0017` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -212,6 +220,9 @@ v15: Phase 4.3 file session persistence
  │
  ▼
 v16: thread model-preference persistence
+ │
+ ▼
+v17: LLM provider-call and ordered-item ledger
 ```
 
 ---
