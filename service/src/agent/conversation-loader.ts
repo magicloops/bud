@@ -5,8 +5,11 @@ import { messageTable } from "../db/schema.js";
 import {
   createCanonicalAssistantMessageFromLedger,
   loadProviderLedgerMessages,
+  loadProviderLedgerThreadDiagnostics,
   type CanonicalMessage,
   type CanonicalProviderId,
+  type LlmReconstructionDiagnostics,
+  type ProviderLedgerThreadDiagnostics,
 } from "../llm/index.js";
 import type { TerminalObservationView } from "../terminal/types.js";
 import {
@@ -16,6 +19,19 @@ import {
   toolNameForConversation,
   type AgentToolCallDirective,
 } from "./contracts.js";
+
+type StoredMessageRow = {
+  messageId: string;
+  role: string;
+  content: string;
+  metadata: unknown;
+  createdAt: Date;
+};
+
+export type LoadedConversation = {
+  messages: CanonicalMessage[];
+  reconstruction: LlmReconstructionDiagnostics;
+};
 
 export const AGENT_SYSTEM_PROMPT = `
 You are Bud Agent, coordinating terminal access to a user's machine.
@@ -124,29 +140,46 @@ export class AgentConversationLoader {
     threadId: string,
     options?: { provider?: CanonicalProviderId | null },
   ): Promise<CanonicalMessage[]> {
+    return (await this.loadInternal(threadId, options, false)).messages;
+  }
+
+  async loadWithDiagnostics(
+    threadId: string,
+    options?: { provider?: CanonicalProviderId | null },
+  ): Promise<LoadedConversation> {
+    return this.loadInternal(threadId, options, true);
+  }
+
+  private async loadInternal(
+    threadId: string,
+    options: { provider?: CanonicalProviderId | null } | undefined,
+    includeDiagnostics: boolean,
+  ): Promise<LoadedConversation> {
     const messages: CanonicalMessage[] = [
       createCanonicalTextMessage("system", AGENT_SYSTEM_PROMPT),
     ];
 
-    const rows = await db
-      .select({
-        messageId: messageTable.messageId,
-        role: messageTable.role,
-        content: messageTable.content,
-        metadata: messageTable.metadata,
-        createdAt: messageTable.createdAt,
-      })
-      .from(messageTable)
-      .where(eq(messageTable.threadId, threadId))
-      .orderBy(asc(messageTable.createdAt));
+    const rows = await this.loadStoredRows(threadId);
 
     if (!options?.provider) {
       for (const row of rows) {
         this.appendStoredMessage(messages, row, { toolUseFromProviderLedger: false });
       }
-      return messages;
+      return {
+        messages,
+        reconstruction: buildReconstructionDiagnostics({
+          targetProvider: null,
+          rows,
+          ledgerMessages: [],
+          ledgerSummary: emptyProviderLedgerThreadDiagnostics(),
+          canonicalFallbackMessageCount: countModelTranscriptRows(rows),
+        }),
+      };
     }
 
+    const ledgerSummary = includeDiagnostics
+      ? await loadProviderLedgerThreadDiagnostics(threadId)
+      : emptyProviderLedgerThreadDiagnostics();
     const ledgerMessages = await loadProviderLedgerMessages(threadId, options.provider);
     const ledgerCallIds = new Set(ledgerMessages.map((message) => message.llmCallId));
     const timeline = [
@@ -158,6 +191,7 @@ export class AgentConversationLoader {
       })),
     ].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
 
+    let canonicalFallbackMessageCount = 0;
     for (const item of timeline) {
       if (item.type === "ledger") {
         messages.push(createCanonicalAssistantMessageFromLedger(item.ledger.content));
@@ -170,12 +204,40 @@ export class AgentConversationLoader {
         continue;
       }
 
+      const toolUseFromProviderLedger = Boolean(llmCallId && ledgerCallIds.has(llmCallId));
+      if (isModelTranscriptRow(item.row) && !toolUseFromProviderLedger) {
+        canonicalFallbackMessageCount += 1;
+      }
+
       this.appendStoredMessage(messages, item.row, {
-        toolUseFromProviderLedger: Boolean(llmCallId && ledgerCallIds.has(llmCallId)),
+        toolUseFromProviderLedger,
       });
     }
 
-    return messages;
+    return {
+      messages,
+      reconstruction: buildReconstructionDiagnostics({
+        targetProvider: options.provider,
+        rows,
+        ledgerMessages,
+        ledgerSummary,
+        canonicalFallbackMessageCount,
+      }),
+    };
+  }
+
+  private async loadStoredRows(threadId: string): Promise<StoredMessageRow[]> {
+    return db
+      .select({
+        messageId: messageTable.messageId,
+        role: messageTable.role,
+        content: messageTable.content,
+        metadata: messageTable.metadata,
+        createdAt: messageTable.createdAt,
+      })
+      .from(messageTable)
+      .where(eq(messageTable.threadId, threadId))
+      .orderBy(asc(messageTable.createdAt));
   }
 
   private appendStoredMessage(
@@ -307,4 +369,104 @@ export class AgentConversationLoader {
       ? value
       : undefined;
   }
+}
+
+function buildReconstructionDiagnostics(args: {
+  targetProvider: CanonicalProviderId | null;
+  rows: StoredMessageRow[];
+  ledgerMessages: Array<{ content: unknown[] }>;
+  ledgerSummary: ProviderLedgerThreadDiagnostics;
+  canonicalFallbackMessageCount: number;
+}): LlmReconstructionDiagnostics {
+  const sourceProviders = sortedProviders(args.ledgerSummary.providerCallCounts);
+  const providerNativeCallCount = args.ledgerMessages.length;
+  const providerNativeOutputItemCount = args.ledgerMessages.reduce(
+    (count, message) => count + message.content.length,
+    0,
+  );
+  const targetProvider = args.targetProvider;
+  const targetProviderCallCount = targetProvider
+    ? args.ledgerSummary.providerCallCounts[targetProvider] ?? 0
+    : 0;
+  const switchedFromProviders = targetProvider
+    ? sourceProviders.filter((provider) => provider !== targetProvider)
+    : [];
+  const omittedProviderOnlyItemCount = switchedFromProviders.reduce(
+    (count, provider) =>
+      count + (args.ledgerSummary.providerOnlyOutputItemCounts[provider] ?? 0),
+    0,
+  );
+  const hasPriorModelRows = countModelTranscriptRows(args.rows) > 0;
+  const degradedReasons: string[] = [];
+
+  if (targetProvider && switchedFromProviders.length > 0) {
+    degradedReasons.push("provider_switch_canonical_fallback");
+  }
+  if (targetProvider && targetProviderCallCount === 0 && hasPriorModelRows) {
+    degradedReasons.push("missing_provider_ledger");
+  }
+  if (args.canonicalFallbackMessageCount > 0) {
+    degradedReasons.push("canonical_fallback_messages");
+  }
+  if (omittedProviderOnlyItemCount > 0) {
+    degradedReasons.push("provider_only_items_omitted");
+  }
+
+  const mode = reconstructionMode({
+    targetProvider,
+    providerNativeCallCount,
+    hasPriorModelRows,
+    degradedReasons,
+  });
+
+  return {
+    mode,
+    targetProvider,
+    degraded: degradedReasons.length > 0,
+    degradedReasons,
+    sourceProviders,
+    providerNativeCallCount,
+    providerNativeOutputItemCount,
+    canonicalFallbackMessageCount: args.canonicalFallbackMessageCount,
+    omittedProviderOnlyItemCount,
+    providerCallCounts: args.ledgerSummary.providerCallCounts,
+    providerOnlyOutputItemCounts: args.ledgerSummary.providerOnlyOutputItemCounts,
+  };
+}
+
+function reconstructionMode(args: {
+  targetProvider: CanonicalProviderId | null;
+  providerNativeCallCount: number;
+  hasPriorModelRows: boolean;
+  degradedReasons: string[];
+}): LlmReconstructionDiagnostics["mode"] {
+  if (!args.targetProvider || (!args.hasPriorModelRows && args.providerNativeCallCount === 0)) {
+    return "canonical_only";
+  }
+  if (args.providerNativeCallCount > 0) {
+    return args.degradedReasons.length > 0 ? "mixed_degraded" : "provider_native";
+  }
+  return "canonical_fallback";
+}
+
+function emptyProviderLedgerThreadDiagnostics(): ProviderLedgerThreadDiagnostics {
+  return {
+    providerCallCounts: {},
+    outputItemCounts: {},
+    providerOnlyOutputItemCounts: {},
+  };
+}
+
+function sortedProviders(
+  counts: Partial<Record<CanonicalProviderId, number>>,
+): CanonicalProviderId[] {
+  return (["openai", "anthropic"] as const).filter((provider) => (counts[provider] ?? 0) > 0);
+}
+
+function countModelTranscriptRows(rows: StoredMessageRow[]): number {
+  return rows.filter(isModelTranscriptRow).length;
+}
+
+function isModelTranscriptRow(row: StoredMessageRow): boolean {
+  return row.role === "assistant" || row.role === "tool";
 }

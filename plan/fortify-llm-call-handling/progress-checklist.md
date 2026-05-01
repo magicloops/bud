@@ -23,9 +23,9 @@
 - [x] Phase 4: Reconcile streamed text with persisted message rows by stable `client_id`
 - [x] Phase 5: Record OpenAI cached-token telemetry and reconstruction mode
 - [x] Phase 5: Document Anthropic cache-control strategy
-- [ ] Phase 5: Add degraded reconstruction diagnostics
+- [x] Phase 5: Add degraded reconstruction diagnostics
 - [x] Phase 6: Update protocol docs and all affected specs
 - [x] Phase 6: Run focused service tests
 - [x] Phase 6: Run focused web tests
-- [ ] Phase 6: Complete manual validation checklist
+- [x] Phase 6: Complete manual validation checklist
 - [x] Phase 6: Record any remaining reasoning-UI work as a future product plan

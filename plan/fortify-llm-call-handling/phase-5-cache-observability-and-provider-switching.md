@@ -1,7 +1,7 @@
 # Phase 5: Cache Observability And Provider Switching
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Planned
+**Status**: Implemented for reconstruction diagnostics; `prompt_cache_key` policy is deferred to [../../TODO.md](../../TODO.md)
 
 ---
 
@@ -65,11 +65,11 @@ The provider ledger should make same-provider reconstruction stable enough for c
 
 ## Acceptance Criteria
 
-- [ ] OpenAI calls record cached-token metrics where available.
-- [ ] Same-provider reconstruction mode is visible in logs or call metadata.
-- [ ] Provider-switch fallback is explicit and does not attempt reasoning translation.
-- [ ] Anthropic cache-control policy is documented and tested at the request-shape level.
-- [ ] Cache misses can be investigated without inspecting browser-visible transcript rows.
+- [x] OpenAI calls record cached-token metrics where available.
+- [x] Same-provider reconstruction mode is visible in logs or call metadata.
+- [x] Provider-switch fallback is explicit and does not attempt reasoning translation.
+- [x] Anthropic cache-control policy is documented and tested at the request-shape level.
+- [x] Cache misses can be investigated without inspecting browser-visible transcript rows.
 
 ## Risks
 

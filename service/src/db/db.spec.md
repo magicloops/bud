@@ -44,7 +44,7 @@ Drizzle schema definitions. Defines all tables:
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
 | `threadTable` | Conversations | `threadId`, `budId`, `title`, `modelId`, `reasoningEffort`, `lastActivityAt`, `messageCount`, `lastAttentionMessageId`, `lastAttentionMessageCreatedAt`, `lastAttentionKind`, `deletedAt`, `createdByUserId` |
 | `messageTable` | Chat messages | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
-| `llmCallTable` | Provider invocation ledger for same-provider replay and cache diagnostics | `llmCallId`, `threadId`, `turnId`, `stepIndex`, `provider`, `model`, `requestMode`, `providerResponseId`, `usage`, `cacheMetadata`, `createdByUserId` |
+| `llmCallTable` | Provider invocation ledger for same-provider replay, cache diagnostics, and reconstruction-mode metadata | `llmCallId`, `threadId`, `turnId`, `stepIndex`, `provider`, `model`, `requestMode`, `providerResponseId`, `usage`, `cacheMetadata`, `createdByUserId` |
 | `llmCallItemTable` | Ordered provider input/output items attached to an LLM call | `llmCallItemId`, `llmCallId`, `threadId`, `direction`, `role`, `kind`, `sequence`, `toolCallId`, `canonicalPayload`, `providerPayload`, `visibility`, `messageId` |
 | `threadReadStateTable` | Per-user thread read watermarks for unread/badge math | `threadId`, `userId`, `lastSeenMessageId`, `lastSeenMessageCreatedAt`, `lastSeenAt` |
 | `pushEndpointTable` | Owned mobile push endpoint registrations | `endpointId`, `userId`, `installationId`, `platform`, `provider`, `appId`, `token`, `enabled`, `invalidatedAt` |

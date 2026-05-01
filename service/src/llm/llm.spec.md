@@ -155,7 +155,8 @@ Durable provider-call ledger helpers for same-provider reconstruction and cache 
 - persist one `llm_call` row per provider invocation
 - persist ordered `llm_call_item` rows for output text, reasoning, redacted reasoning, tool calls, and tool results
 - mark provider-only reasoning payloads separately from browser-visible product text
-- record cache telemetry derived from provider usage blocks
+- record cache telemetry derived from provider usage blocks plus reconstruction-mode diagnostics
+- summarize provider-ledger coverage for a thread so provider switches and canonical fallback ranges are explicit
 - reconstruct canonical assistant messages from same-provider ledger items before falling back to product transcript rows
 
 Provider-native payloads are service-internal. Browser message routes continue to read from the `message` table and do not expose `llm_call_item.provider_payload`.
@@ -166,6 +167,8 @@ Standalone tests for provider-ledger persistence/reconstruction helpers.
 
 **Current Coverage**:
 - `recordLlmCall()` stores every output block plus cache metadata
+- `recordLlmCall()` stores reconstruction mode, fallback counts, omitted provider-only counts, and source-provider counts in call metadata
+- provider-ledger thread diagnostics count provider-native calls, output items, and provider-only output items by provider
 - redacted Anthropic thinking reconstructs as provider-only canonical reasoning
 
 ### `registry.ts`

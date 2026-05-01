@@ -61,6 +61,18 @@ test("final no-tool response records exactly one LLM call", async (t) => {
   }) as never);
 
   const runtimeEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
+  const loggerEvents: Array<{ message: string; meta: Record<string, unknown> }> = [];
+  const logger = {
+    info(meta: Record<string, unknown>, message: string) {
+      loggerEvents.push({ meta, message });
+    },
+    warn() {
+      // noop
+    },
+    error() {
+      // noop
+    },
+  };
   const runtime = {
     markThinking() {
       // noop
@@ -76,14 +88,33 @@ test("final no-tool response records exactly one LLM call", async (t) => {
   const service = new AgentService(
     {} as never,
     runtime as never,
-    createLogger() as never,
+    logger as never,
     false,
     false,
   );
 
   Reflect.set(service, "conversationLoader", {
-    async load() {
-      return [];
+    async loadWithDiagnostics() {
+      return {
+        messages: [],
+        reconstruction: {
+          mode: "canonical_fallback",
+          targetProvider: "openai",
+          degraded: true,
+          degradedReasons: ["provider_switch_canonical_fallback"],
+          sourceProviders: ["anthropic"],
+          providerNativeCallCount: 0,
+          providerNativeOutputItemCount: 0,
+          canonicalFallbackMessageCount: 2,
+          omittedProviderOnlyItemCount: 1,
+          providerCallCounts: {
+            anthropic: 1,
+          },
+          providerOnlyOutputItemCounts: {
+            anthropic: 1,
+          },
+        },
+      };
     },
   });
   Reflect.set(service, "modelRunner", {
@@ -173,4 +204,25 @@ test("final no-tool response records exactly one LLM call", async (t) => {
   );
   assert.equal(llmCallRows.length, 1);
   assert.equal(llmCallRows[0]?.providerResponseId, "resp-final");
+  assert.deepEqual(llmCallRows[0]?.cacheMetadata, {
+    reconstruction_mode: "canonical_fallback",
+    reconstruction_degraded: true,
+    reconstruction_target_provider: "openai",
+    reconstruction_source_providers: ["anthropic"],
+    reconstruction_provider_native_call_count: 0,
+    reconstruction_provider_native_output_item_count: 0,
+    reconstruction_canonical_fallback_message_count: 2,
+    reconstruction_omitted_provider_only_item_count: 1,
+    reconstruction_degraded_reasons: ["provider_switch_canonical_fallback"],
+    reconstruction_provider_call_counts: {
+      anthropic: 1,
+    },
+    reconstruction_provider_only_output_item_counts: {
+      anthropic: 1,
+    },
+  });
+  assert.equal(
+    loggerEvents.some((event) => event.message === "LLM conversation reconstruction degraded"),
+    true,
+  );
 });

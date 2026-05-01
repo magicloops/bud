@@ -64,9 +64,13 @@ export {
   createCanonicalAssistantMessageFromLedger,
   createLlmCallId,
   loadProviderLedgerMessages,
+  loadProviderLedgerThreadDiagnostics,
   recordLlmCall,
   recordLlmToolResultItem,
   type LlmCallRequestMode,
+  type LlmReconstructionDiagnostics,
+  type LlmReconstructionMode,
+  type ProviderLedgerThreadDiagnostics,
 } from "./provider-ledger.js";
 
 // Provider interface

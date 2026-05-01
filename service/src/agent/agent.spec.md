@@ -60,6 +60,7 @@ Conversation-building ownership extracted from `AgentService`.
 - seed the canonical system prompt
 - load persisted thread messages into canonical provider input order
 - load same-provider provider-ledger assistant output blocks when a target provider is known
+- return reconstruction diagnostics that distinguish provider-native replay, canonical fallback, mixed degraded replay, omitted provider-only items, and provider switches
 - skip duplicate product assistant rows whose `metadata.llm_call_id` is already represented by provider-ledger output
 - normalize historical tool rows, including legacy `terminal.interrupt` replay and `screen_stable` wait values
 - preserve user preferred-cwd hints during replay
@@ -71,6 +72,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 **Current Coverage**:
 - preferred-cwd metadata is appended to user messages
 - same-provider reconstruction can prefer durable provider-ledger assistant blocks over product assistant rows
+- provider switches are reconstructed through canonical transcript fallback with explicit degradation diagnostics
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`
 - stored `screen_stable` waits replay as canonical `settled`
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
@@ -166,6 +168,7 @@ startUserMessage()
 - Assistant/tool `client_id` values are now allocated before the first live runtime/SSE event that refers to them, and the persisted assistant/tool rows reuse those same values at insert time.
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
 - Multiple provider tool calls are parsed and executed serially in provider output order for the current terminal-tool-only agent.
+- Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.

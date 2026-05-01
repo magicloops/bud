@@ -233,3 +233,166 @@ test("load prefers same-provider ledger output over duplicate assistant product 
     },
   ]);
 });
+
+test("loadWithDiagnostics marks provider switches as canonical fallback degradation", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  let selectCalls = 0;
+  mock.method(db, "select", () => {
+    selectCalls += 1;
+
+    if (selectCalls === 1) {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                async orderBy() {
+                  return [
+                    {
+                      messageId: "message-user-1",
+                      role: "user",
+                      content: "Continue",
+                      metadata: null,
+                      createdAt: new Date("2026-04-30T10:00:00.000Z"),
+                    },
+                    {
+                      messageId: "message-assistant-1",
+                      role: "assistant",
+                      content: "I checked it.",
+                      metadata: { llm_call_id: "llm-call-anthropic" },
+                      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                    },
+                    {
+                      messageId: "message-tool-1",
+                      role: "tool",
+                      content: JSON.stringify({
+                        tool: "terminal.observe",
+                        call_id: "call-observe-1",
+                        view: "screen",
+                      }),
+                      metadata: { llm_call_id: "llm-call-anthropic" },
+                      createdAt: new Date("2026-04-30T10:00:02.000Z"),
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+
+    if (selectCalls === 2) {
+      return {
+        from() {
+          return {
+            innerJoin() {
+              return {
+                async where() {
+                  return [
+                    {
+                      provider: "anthropic",
+                      llmCallId: "llm-call-anthropic",
+                      itemDirection: "output",
+                      itemVisibility: "provider_only",
+                    },
+                    {
+                      provider: "anthropic",
+                      llmCallId: "llm-call-anthropic",
+                      itemDirection: "output",
+                      itemVisibility: "product_text",
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+
+    return {
+      from() {
+        return {
+          innerJoin() {
+            return {
+              where() {
+                return {
+                  async orderBy() {
+                    return [];
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+  });
+
+  const loader = new AgentConversationLoader();
+  const { messages, reconstruction } = await loader.loadWithDiagnostics("thread-1", {
+    provider: "openai",
+  });
+
+  assert.deepEqual(messages.slice(1), [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "I checked it." }],
+    },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "call-observe-1",
+          name: "terminal_observe",
+          input: { view: "screen" },
+        },
+      ],
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "call-observe-1",
+          content: JSON.stringify({
+            tool: "terminal.observe",
+            call_id: "call-observe-1",
+            view: "screen",
+          }),
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual(reconstruction, {
+    mode: "canonical_fallback",
+    targetProvider: "openai",
+    degraded: true,
+    degradedReasons: [
+      "provider_switch_canonical_fallback",
+      "missing_provider_ledger",
+      "canonical_fallback_messages",
+      "provider_only_items_omitted",
+    ],
+    sourceProviders: ["anthropic"],
+    providerNativeCallCount: 0,
+    providerNativeOutputItemCount: 0,
+    canonicalFallbackMessageCount: 2,
+    omittedProviderOnlyItemCount: 1,
+    providerCallCounts: {
+      anthropic: 1,
+    },
+    providerOnlyOutputItemCounts: {
+      anthropic: 1,
+    },
+  });
+});

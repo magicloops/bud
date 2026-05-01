@@ -194,6 +194,8 @@ Direct request-shape tests for provider lowering without live API calls.
 - Anthropic Opus 4.6 sends adaptive thinking with summarized display and `output_config.effort`
 - Anthropic Haiku 4.5 uses manual `thinking.budget_tokens`
 - Anthropic omits `tool_choice` with no tools and lowers canonical no-tool requests when tools are present
+- Anthropic streamed signed thinking preserves the complete thinking text/signature payload and replays it into the next provider request
+- Anthropic streamed text/tool/text blocks preserve provider content order
 - Anthropic streamed redacted thinking and cache token counters are preserved
 
 ## Provider Comparison

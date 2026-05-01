@@ -542,6 +542,210 @@ test("Anthropic provider omits tool_choice without tools and maps none when tool
   assert.deepEqual(capturedParams[1].tool_choice, { type: "none" });
 });
 
+test("Anthropic provider preserves signed thinking blocks for replay", async () => {
+  const provider = new AnthropicProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(params: Record<string, unknown>): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = () => {
+    const stream = (async function* stream() {
+      yield {
+        type: "message_start",
+        message: {
+          id: "msg_thinking",
+        },
+      };
+      yield {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "thinking",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "thinking_delta",
+          thinking: "Check the terminal state.",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "signature_delta",
+          signature: "sig-part-1",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "signature_delta",
+          signature: "sig-part-2",
+        },
+      };
+      yield {
+        type: "content_block_stop",
+        index: 0,
+      };
+      yield {
+        type: "message_stop",
+      };
+    })() as unknown as AsyncIterable<unknown> & {
+      finalMessage(): Promise<Record<string, unknown>>;
+    };
+    stream.finalMessage = async () => ({
+      stop_reason: "end_turn",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 6,
+      },
+    });
+    return stream;
+  };
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  })) {
+    events.push(event);
+  }
+
+  const thinking = events.find((event) => event.type === "reasoning_done");
+  assert.ok(thinking);
+  assert.deepEqual(thinking.block, {
+    type: "reasoning",
+    text: "Check the terminal state.",
+    providerData: {
+      provider: "anthropic",
+      payload: {
+        type: "thinking",
+        thinking: "Check the terminal state.",
+        signature: "sig-part-1sig-part-2",
+      },
+    },
+  });
+
+  const capturedParams: Record<string, unknown>[] = [];
+  providerWithClient.client.messages.stream = (params) => {
+    capturedParams.push(params);
+    return emptyStream();
+  };
+
+  await drain(provider.invoke([
+    {
+      role: "assistant",
+      content: [thinking.block],
+    },
+  ], [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  }));
+
+  const replayMessages = capturedParams[0].messages as Array<{ content: unknown[] }>;
+  assert.deepEqual(replayMessages[0]?.content, [
+    {
+      type: "thinking",
+      thinking: "Check the terminal state.",
+      signature: "sig-part-1sig-part-2",
+    },
+  ]);
+});
+
+test("Anthropic provider preserves text and tool-use provider order", async () => {
+  const provider = new AnthropicProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = () => {
+    const stream = (async function* stream() {
+      yield { type: "message_start", message: { id: "msg_order" } };
+      yield {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text" },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "before tool" },
+      };
+      yield { type: "content_block_stop", index: 0 };
+      yield {
+        type: "content_block_start",
+        index: 1,
+        content_block: {
+          type: "tool_use",
+          id: "toolu_1",
+          name: "terminal_observe",
+        },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 1,
+        delta: {
+          type: "input_json_delta",
+          partial_json: JSON.stringify({ view: "screen" }),
+        },
+      };
+      yield { type: "content_block_stop", index: 1 };
+      yield {
+        type: "content_block_start",
+        index: 2,
+        content_block: { type: "text" },
+      };
+      yield {
+        type: "content_block_delta",
+        index: 2,
+        delta: { type: "text_delta", text: "after tool" },
+      };
+      yield { type: "content_block_stop", index: 2 };
+      yield { type: "message_stop" };
+    })() as unknown as AsyncIterable<unknown> & {
+      finalMessage(): Promise<Record<string, unknown>>;
+    };
+    stream.finalMessage = async () => ({
+      stop_reason: "tool_use",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 6,
+      },
+    });
+    return stream;
+  };
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  })) {
+    events.push(event);
+  }
+
+  const contentAndTools = events.filter((event) =>
+    event.type === "text_delta" || event.type === "tool_use_done"
+  );
+  assert.deepEqual(
+    contentAndTools.map((event) =>
+      event.type === "text_delta" ? event.delta : event.id
+    ),
+    ["before tool", "toolu_1", "after tool"],
+  );
+});
+
 test("Anthropic provider preserves redacted thinking blocks and cache usage", async () => {
   const provider = new AnthropicProvider("test-key");
   const providerWithClient = provider as unknown as {

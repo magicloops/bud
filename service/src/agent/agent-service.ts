@@ -140,7 +140,11 @@ export class AgentService {
   }): Promise<void> {
     const { threadId, turnId, sessionId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
     const providerName = this.modelRunner.resolveProviderName(model);
-    const conversation = await this.conversationLoader.load(threadId, { provider: providerName });
+    const loadedConversation = await this.conversationLoader.loadWithDiagnostics(threadId, {
+      provider: providerName,
+    });
+    const conversation = loadedConversation.messages;
+    const reconstruction = loadedConversation.reconstruction;
     this.debug("Starting agent run", {
       threadId,
       sessionId,
@@ -148,7 +152,21 @@ export class AgentService {
       provider: providerName,
       entries: conversation.length,
       reasoningEffort: modelReasoning.reasoningLevel,
+      reconstructionMode: reconstruction.mode,
     });
+    if (reconstruction.degraded) {
+      this.logger.info(
+        {
+          threadId,
+          sessionId,
+          provider: providerName,
+          model,
+          component: "agent",
+          reconstruction,
+        },
+        "LLM conversation reconstruction degraded",
+      );
+    }
 
     try {
       let steps = 0;
@@ -201,6 +219,7 @@ export class AgentService {
           usage: response.usage,
           assistantMessageId,
           ownerUserId,
+          reconstruction,
         });
 
         if (toolCalls.length > 0) {

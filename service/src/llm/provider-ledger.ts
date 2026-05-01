@@ -14,6 +14,26 @@ export type LlmCallRequestMode = "openai_responses" | "anthropic_messages";
 
 export type LlmCallVisibility = "provider_only" | "product_text" | "tool";
 
+export type LlmReconstructionMode =
+  | "canonical_only"
+  | "provider_native"
+  | "canonical_fallback"
+  | "mixed_degraded";
+
+export type LlmReconstructionDiagnostics = {
+  mode: LlmReconstructionMode;
+  targetProvider: CanonicalProviderId | null;
+  degraded: boolean;
+  degradedReasons: string[];
+  sourceProviders: CanonicalProviderId[];
+  providerNativeCallCount: number;
+  providerNativeOutputItemCount: number;
+  canonicalFallbackMessageCount: number;
+  omittedProviderOnlyItemCount: number;
+  providerCallCounts: Partial<Record<CanonicalProviderId, number>>;
+  providerOnlyOutputItemCounts: Partial<Record<CanonicalProviderId, number>>;
+};
+
 export type RecordLlmCallArgs = {
   llmCallId?: string;
   threadId: string;
@@ -28,6 +48,7 @@ export type RecordLlmCallArgs = {
   ownerUserId?: string | null;
   assistantMessageId?: string | null;
   promptCacheKey?: string | null;
+  reconstruction?: LlmReconstructionDiagnostics | null;
 };
 
 export type RecordLlmToolResultItemArgs = {
@@ -43,9 +64,15 @@ export type RecordLlmToolResultItemArgs = {
 
 type LlmCallItemRow = typeof llmCallItemTable.$inferSelect;
 
+export type ProviderLedgerThreadDiagnostics = {
+  providerCallCounts: Partial<Record<CanonicalProviderId, number>>;
+  outputItemCounts: Partial<Record<CanonicalProviderId, number>>;
+  providerOnlyOutputItemCounts: Partial<Record<CanonicalProviderId, number>>;
+};
+
 export async function recordLlmCall(args: RecordLlmCallArgs): Promise<{ llmCallId: string }> {
   const llmCallId = args.llmCallId ?? ulid();
-  const cacheMetadata = cacheMetadataFromUsage(args.usage);
+  const cacheMetadata = cacheMetadataFromUsage(args.usage, args.reconstruction);
 
   await db.insert(llmCallTable).values({
     llmCallId,
@@ -155,6 +182,48 @@ export async function loadProviderLedgerMessages(
       createdAt: value.createdAt,
       content: value.content,
     }));
+}
+
+export async function loadProviderLedgerThreadDiagnostics(
+  threadId: string,
+): Promise<ProviderLedgerThreadDiagnostics> {
+  const rows = await db
+    .select({
+      provider: llmCallTable.provider,
+      llmCallId: llmCallTable.llmCallId,
+      itemDirection: llmCallItemTable.direction,
+      itemVisibility: llmCallItemTable.visibility,
+    })
+    .from(llmCallTable)
+    .innerJoin(llmCallItemTable, eq(llmCallItemTable.llmCallId, llmCallTable.llmCallId))
+    .where(eq(llmCallTable.threadId, threadId));
+
+  const callIdsByProvider: Partial<Record<CanonicalProviderId, Set<string>>> = {};
+  const outputItemCounts: Partial<Record<CanonicalProviderId, number>> = {};
+  const providerOnlyOutputItemCounts: Partial<Record<CanonicalProviderId, number>> = {};
+
+  for (const row of rows) {
+    if (!isCanonicalProviderId(row.provider)) {
+      continue;
+    }
+
+    callIdsByProvider[row.provider] ??= new Set<string>();
+    callIdsByProvider[row.provider]?.add(row.llmCallId);
+
+    if (row.itemDirection === "output") {
+      outputItemCounts[row.provider] = (outputItemCounts[row.provider] ?? 0) + 1;
+      if (row.itemVisibility === "provider_only") {
+        providerOnlyOutputItemCounts[row.provider] =
+          (providerOnlyOutputItemCounts[row.provider] ?? 0) + 1;
+      }
+    }
+  }
+
+  return {
+    providerCallCounts: countSets(callIdsByProvider),
+    outputItemCounts,
+    providerOnlyOutputItemCounts,
+  };
 }
 
 export function canonicalBlockFromLedgerItem(row: Pick<
@@ -322,20 +391,37 @@ function reasoningBlockFromPayload(
   };
 }
 
-function cacheMetadataFromUsage(usage?: TokenUsage): Record<string, unknown> | null {
-  if (!usage) {
-    return null;
-  }
-
+function cacheMetadataFromUsage(
+  usage?: TokenUsage,
+  reconstruction?: LlmReconstructionDiagnostics | null,
+): Record<string, unknown> | null {
   const metadata: Record<string, unknown> = {};
-  if (typeof usage.cached_input_tokens === "number") {
+  if (typeof usage?.cached_input_tokens === "number") {
     metadata.openai_cached_input_tokens = usage.cached_input_tokens;
   }
-  if (typeof usage.cache_creation_input_tokens === "number") {
+  if (typeof usage?.cache_creation_input_tokens === "number") {
     metadata.anthropic_cache_creation_input_tokens = usage.cache_creation_input_tokens;
   }
-  if (typeof usage.cache_read_input_tokens === "number") {
+  if (typeof usage?.cache_read_input_tokens === "number") {
     metadata.anthropic_cache_read_input_tokens = usage.cache_read_input_tokens;
+  }
+  if (reconstruction) {
+    metadata.reconstruction_mode = reconstruction.mode;
+    metadata.reconstruction_degraded = reconstruction.degraded;
+    metadata.reconstruction_target_provider = reconstruction.targetProvider;
+    metadata.reconstruction_source_providers = reconstruction.sourceProviders;
+    metadata.reconstruction_provider_native_call_count =
+      reconstruction.providerNativeCallCount;
+    metadata.reconstruction_provider_native_output_item_count =
+      reconstruction.providerNativeOutputItemCount;
+    metadata.reconstruction_canonical_fallback_message_count =
+      reconstruction.canonicalFallbackMessageCount;
+    metadata.reconstruction_omitted_provider_only_item_count =
+      reconstruction.omittedProviderOnlyItemCount;
+    metadata.reconstruction_degraded_reasons = reconstruction.degradedReasons;
+    metadata.reconstruction_provider_call_counts = reconstruction.providerCallCounts;
+    metadata.reconstruction_provider_only_output_item_counts =
+      reconstruction.providerOnlyOutputItemCounts;
   }
   return Object.keys(metadata).length > 0 ? metadata : null;
 }
@@ -347,6 +433,23 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCanonicalProviderId(value: string): value is CanonicalProviderId {
+  return value === "openai" || value === "anthropic";
+}
+
+function countSets(
+  sets: Partial<Record<CanonicalProviderId, Set<string>>>,
+): Partial<Record<CanonicalProviderId, number>> {
+  const counts: Partial<Record<CanonicalProviderId, number>> = {};
+  for (const provider of ["openai", "anthropic"] as const) {
+    const count = sets[provider]?.size ?? 0;
+    if (count > 0) {
+      counts[provider] = count;
+    }
+  }
+  return counts;
 }
 
 export function buildRequestMode(provider: CanonicalProviderId): LlmCallRequestMode {
