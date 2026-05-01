@@ -142,6 +142,8 @@ export class AgentService {
     const providerName = this.modelRunner.resolveProviderName(model);
     const loadedConversation = await this.conversationLoader.loadWithDiagnostics(threadId, {
       provider: providerName,
+      targetModel: modelReasoning.providerModel,
+      targetReasoning: modelReasoning.reasoning,
     });
     const conversation = loadedConversation.messages;
     const reconstruction = loadedConversation.reconstruction;

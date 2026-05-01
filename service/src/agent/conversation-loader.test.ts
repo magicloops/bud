@@ -159,6 +159,8 @@ test("load prefers same-provider ledger output over duplicate assistant product 
                       {
                         llmCallId: "llm-call-1",
                         createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                        model: "gpt-5.5",
+                        requestMode: "openai_responses",
                         itemKind: "text",
                         itemDirection: "output",
                         itemSequence: 0,
@@ -171,6 +173,8 @@ test("load prefers same-provider ledger output over duplicate assistant product 
                       {
                         llmCallId: "llm-call-1",
                         createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                        model: "gpt-5.5",
+                        requestMode: "openai_responses",
                         itemKind: "tool_use",
                         itemDirection: "output",
                         itemSequence: 1,
@@ -289,19 +293,21 @@ test("loadWithDiagnostics marks provider switches as canonical fallback degradat
       return {
         from() {
           return {
-            innerJoin() {
+            leftJoin() {
               return {
                 async where() {
                   return [
                     {
                       provider: "anthropic",
                       llmCallId: "llm-call-anthropic",
+                      status: "completed",
                       itemDirection: "output",
                       itemVisibility: "provider_only",
                     },
                     {
                       provider: "anthropic",
                       llmCallId: "llm-call-anthropic",
+                      status: "completed",
                       itemDirection: "output",
                       itemVisibility: "product_text",
                     },
@@ -394,5 +400,393 @@ test("loadWithDiagnostics marks provider switches as canonical fallback degradat
     providerOnlyOutputItemCounts: {
       anthropic: 1,
     },
+  });
+});
+
+test("loadWithDiagnostics keeps compatible Anthropic thinking replay provider-native", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  let selectCalls = 0;
+  mock.method(db, "select", () => {
+    selectCalls += 1;
+
+    if (selectCalls === 1) {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                async orderBy() {
+                  return [
+                    {
+                      messageId: "message-user-1",
+                      role: "user",
+                      content: "Continue",
+                      metadata: null,
+                      createdAt: new Date("2026-04-30T10:00:00.000Z"),
+                    },
+                    {
+                      messageId: "message-assistant-1",
+                      role: "assistant",
+                      content: "Visible plan.",
+                      metadata: { llm_call_id: "llm-call-anthropic" },
+                      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+
+    if (selectCalls === 2) {
+      return {
+        from() {
+          return {
+            leftJoin() {
+              return {
+                async where() {
+                  return [
+                    {
+                      provider: "anthropic",
+                      llmCallId: "llm-call-anthropic",
+                      status: "completed",
+                      itemDirection: "output",
+                      itemVisibility: "provider_only",
+                    },
+                    {
+                      provider: "anthropic",
+                      llmCallId: "llm-call-anthropic",
+                      status: "completed",
+                      itemDirection: "output",
+                      itemVisibility: "product_text",
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+
+    return {
+      from() {
+        return {
+          innerJoin() {
+            return {
+              where() {
+                return {
+                  async orderBy() {
+                    return [
+                      {
+                        llmCallId: "llm-call-anthropic",
+                        createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                        model: "claude-sonnet-4-6",
+                        requestMode: "anthropic_messages",
+                        itemKind: "reasoning",
+                        itemDirection: "output",
+                        itemSequence: 0,
+                        canonicalPayload: {
+                          type: "reasoning",
+                          text: "Think first.",
+                          providerData: {
+                            provider: "anthropic",
+                            payload: {
+                              type: "thinking",
+                              thinking: "Think first.",
+                              signature: "sig-1",
+                            },
+                          },
+                        },
+                        providerPayload: {
+                          type: "thinking",
+                          thinking: "Think first.",
+                          signature: "sig-1",
+                        },
+                      },
+                      {
+                        llmCallId: "llm-call-anthropic",
+                        createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                        model: "claude-sonnet-4-6",
+                        requestMode: "anthropic_messages",
+                        itemKind: "text",
+                        itemDirection: "output",
+                        itemSequence: 1,
+                        canonicalPayload: {
+                          type: "text",
+                          text: "Visible plan.",
+                        },
+                        providerPayload: {},
+                      },
+                    ];
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+  });
+
+  const loader = new AgentConversationLoader();
+  const { messages, reconstruction } = await loader.loadWithDiagnostics("thread-1", {
+    provider: "anthropic",
+    targetModel: "claude-sonnet-4-6",
+    targetReasoning: { enabled: true, effort: "medium", summaryLevel: "auto" },
+  });
+
+  assert.deepEqual(messages.slice(1), [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "reasoning",
+          text: "Think first.",
+          providerData: {
+            provider: "anthropic",
+            payload: {
+              type: "thinking",
+              thinking: "Think first.",
+              signature: "sig-1",
+            },
+          },
+        },
+        { type: "text", text: "Visible plan." },
+      ],
+    },
+  ]);
+  assert.deepEqual(reconstruction, {
+    mode: "provider_native",
+    targetProvider: "anthropic",
+    targetModel: "claude-sonnet-4-6",
+    targetReasoning: { enabled: true, effort: "medium", summaryLevel: "auto" },
+    degraded: false,
+    degradedReasons: [],
+    sourceProviders: ["anthropic"],
+    providerNativeCallCount: 1,
+    providerNativeOutputItemCount: 2,
+    canonicalFallbackMessageCount: 0,
+    omittedProviderOnlyItemCount: 0,
+    providerCallCounts: {
+      anthropic: 1,
+    },
+    providerOnlyOutputItemCounts: {
+      anthropic: 1,
+    },
+  });
+});
+
+test("loadWithDiagnostics falls back when Anthropic thinking replay is incompatible", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  let selectCalls = 0;
+  mock.method(db, "select", () => {
+    selectCalls += 1;
+
+    if (selectCalls === 1) {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                async orderBy() {
+                  return [
+                    {
+                      messageId: "message-user-1",
+                      role: "user",
+                      content: "Continue",
+                      metadata: null,
+                      createdAt: new Date("2026-04-30T10:00:00.000Z"),
+                    },
+                    {
+                      messageId: "message-assistant-1",
+                      role: "assistant",
+                      content: "Visible plan.",
+                      metadata: { llm_call_id: "llm-call-anthropic" },
+                      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+
+    if (selectCalls === 2) {
+      return {
+        from() {
+          return {
+            leftJoin() {
+              return {
+                async where() {
+                  return [
+                    {
+                      provider: "anthropic",
+                      llmCallId: "llm-call-anthropic",
+                      status: "completed",
+                      itemDirection: "output",
+                      itemVisibility: "provider_only",
+                    },
+                    {
+                      provider: "anthropic",
+                      llmCallId: "llm-call-anthropic",
+                      status: "completed",
+                      itemDirection: "output",
+                      itemVisibility: "provider_only",
+                    },
+                    {
+                      provider: "anthropic",
+                      llmCallId: "llm-call-anthropic",
+                      status: "completed",
+                      itemDirection: "output",
+                      itemVisibility: "product_text",
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    }
+
+    return {
+      from() {
+        return {
+          innerJoin() {
+            return {
+              where() {
+                return {
+                  async orderBy() {
+                    return [
+                      {
+                        llmCallId: "llm-call-anthropic",
+                        createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                        model: "claude-sonnet-4-6",
+                        requestMode: "anthropic_messages",
+                        itemKind: "reasoning",
+                        itemDirection: "output",
+                        itemSequence: 0,
+                        canonicalPayload: {
+                          type: "reasoning",
+                          text: "Think first.",
+                          providerData: {
+                            provider: "anthropic",
+                            payload: {
+                              type: "thinking",
+                              thinking: "Think first.",
+                              signature: "sig-1",
+                            },
+                          },
+                        },
+                        providerPayload: {
+                          type: "thinking",
+                          thinking: "Think first.",
+                          signature: "sig-1",
+                        },
+                      },
+                      {
+                        llmCallId: "llm-call-anthropic",
+                        createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                        model: "claude-sonnet-4-6",
+                        requestMode: "anthropic_messages",
+                        itemKind: "reasoning_redacted",
+                        itemDirection: "output",
+                        itemSequence: 1,
+                        canonicalPayload: {
+                          type: "reasoning_redacted",
+                          providerData: {
+                            provider: "anthropic",
+                            payload: {
+                              type: "redacted_thinking",
+                              data: "canonical",
+                            },
+                          },
+                        },
+                        providerPayload: {
+                          type: "redacted_thinking",
+                          data: "provider",
+                        },
+                      },
+                      {
+                        llmCallId: "llm-call-anthropic",
+                        createdAt: new Date("2026-04-30T10:00:01.000Z"),
+                        model: "claude-sonnet-4-6",
+                        requestMode: "anthropic_messages",
+                        itemKind: "text",
+                        itemDirection: "output",
+                        itemSequence: 2,
+                        canonicalPayload: {
+                          type: "text",
+                          text: "Visible plan.",
+                        },
+                        providerPayload: {},
+                      },
+                    ];
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+  });
+
+  const loader = new AgentConversationLoader();
+  const { messages, reconstruction } = await loader.loadWithDiagnostics("thread-1", {
+    provider: "anthropic",
+    targetModel: "claude-haiku-4-5-20251001",
+    targetReasoning: { enabled: false },
+  });
+
+  assert.deepEqual(messages.slice(1), [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Visible plan." }],
+    },
+  ]);
+  assert.deepEqual(reconstruction, {
+    mode: "canonical_fallback",
+    targetProvider: "anthropic",
+    targetModel: "claude-haiku-4-5-20251001",
+    targetReasoning: { enabled: false },
+    degraded: true,
+    degradedReasons: [
+      "same_provider_incompatible_reasoning",
+      "canonical_fallback_messages",
+      "provider_only_items_omitted",
+    ],
+    sourceProviders: ["anthropic"],
+    providerNativeCallCount: 0,
+    providerNativeOutputItemCount: 0,
+    canonicalFallbackMessageCount: 1,
+    omittedProviderOnlyItemCount: 2,
+    providerCallCounts: {
+      anthropic: 1,
+    },
+    providerOnlyOutputItemCounts: {
+      anthropic: 2,
+    },
+    sameProviderIncompatibleCallCount: 1,
+    sameProviderIncompatibleOutputItemCount: 3,
   });
 });

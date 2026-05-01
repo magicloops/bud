@@ -7,6 +7,7 @@ import type {
   CanonicalMessage,
   CanonicalProviderId,
   CanonicalReasoningBlock,
+  ReasoningConfig,
   TokenUsage,
 } from "./types.js";
 
@@ -23,6 +24,8 @@ export type LlmReconstructionMode =
 export type LlmReconstructionDiagnostics = {
   mode: LlmReconstructionMode;
   targetProvider: CanonicalProviderId | null;
+  targetModel?: string | null;
+  targetReasoning?: ReasoningConfig | null;
   degraded: boolean;
   degradedReasons: string[];
   sourceProviders: CanonicalProviderId[];
@@ -32,6 +35,10 @@ export type LlmReconstructionDiagnostics = {
   omittedProviderOnlyItemCount: number;
   providerCallCounts: Partial<Record<CanonicalProviderId, number>>;
   providerOnlyOutputItemCounts: Partial<Record<CanonicalProviderId, number>>;
+  sameProviderIncompatibleCallCount?: number;
+  sameProviderIncompatibleOutputItemCount?: number;
+  itemlessCompletedCallCounts?: Partial<Record<CanonicalProviderId, number>>;
+  outputlessCompletedCallCounts?: Partial<Record<CanonicalProviderId, number>>;
 };
 
 export type RecordLlmCallArgs = {
@@ -68,28 +75,21 @@ export type ProviderLedgerThreadDiagnostics = {
   providerCallCounts: Partial<Record<CanonicalProviderId, number>>;
   outputItemCounts: Partial<Record<CanonicalProviderId, number>>;
   providerOnlyOutputItemCounts: Partial<Record<CanonicalProviderId, number>>;
+  itemlessCompletedCallCounts?: Partial<Record<CanonicalProviderId, number>>;
+  outputlessCompletedCallCounts?: Partial<Record<CanonicalProviderId, number>>;
+};
+
+export type ProviderLedgerMessage = {
+  createdAt: Date;
+  llmCallId: string;
+  model: string;
+  requestMode: LlmCallRequestMode;
+  content: CanonicalContentBlock[];
 };
 
 export async function recordLlmCall(args: RecordLlmCallArgs): Promise<{ llmCallId: string }> {
   const llmCallId = args.llmCallId ?? ulid();
   const cacheMetadata = cacheMetadataFromUsage(args.usage, args.reconstruction);
-
-  await db.insert(llmCallTable).values({
-    llmCallId,
-    threadId: args.threadId,
-    turnId: args.turnId,
-    stepIndex: args.stepIndex,
-    provider: args.provider,
-    model: args.model,
-    requestMode: args.requestMode,
-    providerResponseId: args.providerResponseId ?? undefined,
-    status: "completed",
-    usage: args.usage ? jsonRecord(args.usage) : undefined,
-    cacheMetadata: cacheMetadata ? jsonRecord(cacheMetadata) : undefined,
-    promptCacheKey: args.promptCacheKey ?? undefined,
-    completedAt: new Date(),
-    createdByUserId: args.ownerUserId ?? undefined,
-  });
 
   const items = args.output.map((block, index) =>
     buildOutputItemValue({
@@ -103,9 +103,28 @@ export async function recordLlmCall(args: RecordLlmCallArgs): Promise<{ llmCallI
     }),
   );
 
-  if (items.length > 0) {
-    await db.insert(llmCallItemTable).values(items);
-  }
+  await db.transaction(async (tx) => {
+    await tx.insert(llmCallTable).values({
+      llmCallId,
+      threadId: args.threadId,
+      turnId: args.turnId,
+      stepIndex: args.stepIndex,
+      provider: args.provider,
+      model: args.model,
+      requestMode: args.requestMode,
+      providerResponseId: args.providerResponseId ?? undefined,
+      status: "completed",
+      usage: args.usage ? jsonRecord(args.usage) : undefined,
+      cacheMetadata: cacheMetadata ? jsonRecord(cacheMetadata) : undefined,
+      promptCacheKey: args.promptCacheKey ?? undefined,
+      completedAt: new Date(),
+      createdByUserId: args.ownerUserId ?? undefined,
+    });
+
+    if (items.length > 0) {
+      await tx.insert(llmCallItemTable).values(items);
+    }
+  });
 
   return { llmCallId };
 }
@@ -138,11 +157,13 @@ export async function recordLlmToolResultItem(
 export async function loadProviderLedgerMessages(
   threadId: string,
   provider: CanonicalProviderId,
-): Promise<Array<{ createdAt: Date; llmCallId: string; content: CanonicalContentBlock[] }>> {
+): Promise<ProviderLedgerMessage[]> {
   const rows = await db
     .select({
       llmCallId: llmCallTable.llmCallId,
       createdAt: llmCallTable.createdAt,
+      model: llmCallTable.model,
+      requestMode: llmCallTable.requestMode,
       itemKind: llmCallItemTable.kind,
       itemDirection: llmCallItemTable.direction,
       itemSequence: llmCallItemTable.sequence,
@@ -154,13 +175,23 @@ export async function loadProviderLedgerMessages(
     .where(and(eq(llmCallTable.threadId, threadId), eq(llmCallTable.provider, provider)))
     .orderBy(asc(llmCallTable.createdAt), asc(llmCallItemTable.sequence));
 
-  const grouped = new Map<string, { createdAt: Date; content: CanonicalContentBlock[] }>();
+  const grouped = new Map<
+    string,
+    {
+      createdAt: Date;
+      model: string;
+      requestMode: LlmCallRequestMode;
+      content: CanonicalContentBlock[];
+    }
+  >();
   for (const row of rows) {
     if (!row.llmCallId) {
       continue;
     }
     const group = grouped.get(row.llmCallId) ?? {
       createdAt: row.createdAt,
+      model: row.model,
+      requestMode: parseRequestMode(row.requestMode),
       content: [],
     };
     grouped.set(row.llmCallId, group);
@@ -180,6 +211,8 @@ export async function loadProviderLedgerMessages(
     .map(([llmCallId, value]) => ({
       llmCallId,
       createdAt: value.createdAt,
+      model: value.model,
+      requestMode: value.requestMode,
       content: value.content,
     }));
 }
@@ -191,14 +224,28 @@ export async function loadProviderLedgerThreadDiagnostics(
     .select({
       provider: llmCallTable.provider,
       llmCallId: llmCallTable.llmCallId,
+      status: llmCallTable.status,
       itemDirection: llmCallItemTable.direction,
       itemVisibility: llmCallItemTable.visibility,
     })
     .from(llmCallTable)
-    .innerJoin(llmCallItemTable, eq(llmCallItemTable.llmCallId, llmCallTable.llmCallId))
+    .leftJoin(llmCallItemTable, eq(llmCallItemTable.llmCallId, llmCallTable.llmCallId))
     .where(eq(llmCallTable.threadId, threadId));
 
-  const callIdsByProvider: Partial<Record<CanonicalProviderId, Set<string>>> = {};
+  const callSummariesByProvider: Partial<
+    Record<
+      CanonicalProviderId,
+      Map<
+        string,
+        {
+          status: string;
+          totalItemCount: number;
+          outputItemCount: number;
+          providerOnlyOutputItemCount: number;
+        }
+      >
+    >
+  > = {};
   const outputItemCounts: Partial<Record<CanonicalProviderId, number>> = {};
   const providerOnlyOutputItemCounts: Partial<Record<CanonicalProviderId, number>> = {};
 
@@ -207,12 +254,30 @@ export async function loadProviderLedgerThreadDiagnostics(
       continue;
     }
 
-    callIdsByProvider[row.provider] ??= new Set<string>();
-    callIdsByProvider[row.provider]?.add(row.llmCallId);
+    callSummariesByProvider[row.provider] ??= new Map();
+    const providerSummaries = callSummariesByProvider[row.provider];
+    if (!providerSummaries) {
+      continue;
+    }
+    const callSummary = providerSummaries.get(row.llmCallId) ?? {
+      status: row.status,
+      totalItemCount: 0,
+      outputItemCount: 0,
+      providerOnlyOutputItemCount: 0,
+    };
+    providerSummaries.set(row.llmCallId, callSummary);
+
+    if (!row.itemDirection) {
+      continue;
+    }
+
+    callSummary.totalItemCount += 1;
 
     if (row.itemDirection === "output") {
+      callSummary.outputItemCount += 1;
       outputItemCounts[row.provider] = (outputItemCounts[row.provider] ?? 0) + 1;
       if (row.itemVisibility === "provider_only") {
+        callSummary.providerOnlyOutputItemCount += 1;
         providerOnlyOutputItemCounts[row.provider] =
           (providerOnlyOutputItemCounts[row.provider] ?? 0) + 1;
       }
@@ -220,9 +285,10 @@ export async function loadProviderLedgerThreadDiagnostics(
   }
 
   return {
-    providerCallCounts: countSets(callIdsByProvider),
+    providerCallCounts: countMaps(callSummariesByProvider),
     outputItemCounts,
     providerOnlyOutputItemCounts,
+    ...completedCallIntegrityCounts(callSummariesByProvider),
   };
 }
 
@@ -409,6 +475,12 @@ function cacheMetadataFromUsage(
     metadata.reconstruction_mode = reconstruction.mode;
     metadata.reconstruction_degraded = reconstruction.degraded;
     metadata.reconstruction_target_provider = reconstruction.targetProvider;
+    if (reconstruction.targetModel !== undefined) {
+      metadata.reconstruction_target_model = reconstruction.targetModel;
+    }
+    if (reconstruction.targetReasoning !== undefined) {
+      metadata.reconstruction_target_reasoning = reconstruction.targetReasoning;
+    }
     metadata.reconstruction_source_providers = reconstruction.sourceProviders;
     metadata.reconstruction_provider_native_call_count =
       reconstruction.providerNativeCallCount;
@@ -422,6 +494,22 @@ function cacheMetadataFromUsage(
     metadata.reconstruction_provider_call_counts = reconstruction.providerCallCounts;
     metadata.reconstruction_provider_only_output_item_counts =
       reconstruction.providerOnlyOutputItemCounts;
+    if (typeof reconstruction.sameProviderIncompatibleCallCount === "number") {
+      metadata.reconstruction_same_provider_incompatible_call_count =
+        reconstruction.sameProviderIncompatibleCallCount;
+    }
+    if (typeof reconstruction.sameProviderIncompatibleOutputItemCount === "number") {
+      metadata.reconstruction_same_provider_incompatible_output_item_count =
+        reconstruction.sameProviderIncompatibleOutputItemCount;
+    }
+    if (reconstruction.itemlessCompletedCallCounts) {
+      metadata.reconstruction_itemless_completed_call_counts =
+        reconstruction.itemlessCompletedCallCounts;
+    }
+    if (reconstruction.outputlessCompletedCallCounts) {
+      metadata.reconstruction_outputless_completed_call_counts =
+        reconstruction.outputlessCompletedCallCounts;
+    }
   }
   return Object.keys(metadata).length > 0 ? metadata : null;
 }
@@ -439,17 +527,69 @@ function isCanonicalProviderId(value: string): value is CanonicalProviderId {
   return value === "openai" || value === "anthropic";
 }
 
-function countSets(
-  sets: Partial<Record<CanonicalProviderId, Set<string>>>,
+function parseRequestMode(value: string): LlmCallRequestMode {
+  return value === "openai_responses" || value === "anthropic_messages"
+    ? value
+    : "openai_responses";
+}
+
+function countMaps(
+  maps: Partial<Record<CanonicalProviderId, Map<string, unknown>>>,
 ): Partial<Record<CanonicalProviderId, number>> {
   const counts: Partial<Record<CanonicalProviderId, number>> = {};
   for (const provider of ["openai", "anthropic"] as const) {
-    const count = sets[provider]?.size ?? 0;
+    const count = maps[provider]?.size ?? 0;
     if (count > 0) {
       counts[provider] = count;
     }
   }
   return counts;
+}
+
+function completedCallIntegrityCounts(
+  summariesByProvider: Partial<
+    Record<
+      CanonicalProviderId,
+      Map<
+        string,
+        {
+          status: string;
+          totalItemCount: number;
+          outputItemCount: number;
+        }
+      >
+    >
+  >,
+): Pick<
+  ProviderLedgerThreadDiagnostics,
+  "itemlessCompletedCallCounts" | "outputlessCompletedCallCounts"
+> {
+  const itemlessCompletedCallCounts: Partial<Record<CanonicalProviderId, number>> = {};
+  const outputlessCompletedCallCounts: Partial<Record<CanonicalProviderId, number>> = {};
+
+  for (const provider of ["openai", "anthropic"] as const) {
+    for (const summary of summariesByProvider[provider]?.values() ?? []) {
+      if (summary.status !== "completed") {
+        continue;
+      }
+      if (summary.totalItemCount === 0) {
+        itemlessCompletedCallCounts[provider] =
+          (itemlessCompletedCallCounts[provider] ?? 0) + 1;
+      } else if (summary.outputItemCount === 0) {
+        outputlessCompletedCallCounts[provider] =
+          (outputlessCompletedCallCounts[provider] ?? 0) + 1;
+      }
+    }
+  }
+
+  return {
+    ...(Object.keys(itemlessCompletedCallCounts).length > 0
+      ? { itemlessCompletedCallCounts }
+      : {}),
+    ...(Object.keys(outputlessCompletedCallCounts).length > 0
+      ? { outputlessCompletedCallCounts }
+      : {}),
+  };
 }
 
 export function buildRequestMode(provider: CanonicalProviderId): LlmCallRequestMode {

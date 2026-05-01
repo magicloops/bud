@@ -53,6 +53,9 @@ test("final no-tool response records exactly one LLM call", async (t) => {
   });
 
   const insertedValues: unknown[] = [];
+  mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) =>
+    callback({ insert: db.insert.bind(db) } as never)
+  );
   mock.method(db, "insert", () => ({
     values(values: unknown) {
       insertedValues.push(values);

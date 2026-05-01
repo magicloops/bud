@@ -29,3 +29,10 @@
 - [x] Phase 6: Run focused web tests
 - [x] Phase 6: Complete manual validation checklist
 - [x] Phase 6: Record any remaining reasoning-UI work as a future product plan
+- [x] Phase 7: Pass current target model/reasoning settings into conversation reconstruction
+- [x] Phase 7: Gate Anthropic provider-native replay on reasoning compatibility
+- [x] Phase 7: Add degraded metadata for same-provider incompatible Anthropic replay
+- [x] Phase 7: Add Anthropic fixture tests for compatible and incompatible thinking replay
+- [x] Phase 8: Wrap `llm_call` and initial `llm_call_item` writes in one transaction
+- [x] Phase 8: Make provider-ledger diagnostics expose itemless completed calls
+- [x] Phase 8: Add rollback and itemless-call diagnostics tests

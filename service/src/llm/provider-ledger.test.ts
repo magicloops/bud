@@ -13,6 +13,9 @@ test("recordLlmCall persists all provider output items and cache metadata", asyn
   });
 
   const insertedValues: unknown[] = [];
+  mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) =>
+    callback({ insert: db.insert.bind(db) } as never)
+  );
   mock.method(db, "insert", () => ({
     values(values: unknown) {
       insertedValues.push(values);
@@ -113,6 +116,49 @@ test("recordLlmCall persists all provider output items and cache metadata", asyn
   assert.equal(itemValues[2]?.toolCallId, "call-1");
 });
 
+test("recordLlmCall rolls back call row when output item insertion fails", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const committedValues: unknown[] = [];
+  mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) => {
+    const stagedValues: unknown[] = [];
+    const tx = {
+      insert() {
+        return {
+          values(values: unknown) {
+            if (Array.isArray(values)) {
+              throw new Error("item insert failed");
+            }
+            stagedValues.push(values);
+            return {};
+          },
+        };
+      },
+    };
+
+    await callback(tx as never);
+    committedValues.push(...stagedValues);
+  });
+
+  await assert.rejects(
+    recordLlmCall({
+      llmCallId: "llm-call-rollback",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      stepIndex: 0,
+      provider: "openai",
+      model: "gpt-5.5",
+      requestMode: "openai_responses",
+      output: [{ type: "text", text: "visible text" }],
+    }),
+    /item insert failed/,
+  );
+
+  assert.deepEqual(committedValues, []);
+});
+
 test("loadProviderLedgerThreadDiagnostics summarizes provider-native and omitted provider-only items", async (t) => {
   t.after(() => {
     mock.restoreAll();
@@ -121,31 +167,35 @@ test("loadProviderLedgerThreadDiagnostics summarizes provider-native and omitted
   mock.method(db, "select", () => ({
     from() {
       return {
-        innerJoin() {
+        leftJoin() {
           return {
             async where() {
               return [
                 {
                   provider: "openai",
                   llmCallId: "llm-call-openai",
+                  status: "completed",
                   itemDirection: "output",
                   itemVisibility: "provider_only",
                 },
                 {
                   provider: "openai",
                   llmCallId: "llm-call-openai",
+                  status: "completed",
                   itemDirection: "output",
                   itemVisibility: "product_text",
                 },
                 {
                   provider: "anthropic",
                   llmCallId: "llm-call-anthropic",
+                  status: "completed",
                   itemDirection: "output",
                   itemVisibility: "provider_only",
                 },
                 {
                   provider: "anthropic",
                   llmCallId: "llm-call-anthropic",
+                  status: "completed",
                   itemDirection: "input",
                   itemVisibility: "tool",
                 },
@@ -170,6 +220,58 @@ test("loadProviderLedgerThreadDiagnostics summarizes provider-native and omitted
     },
     providerOnlyOutputItemCounts: {
       openai: 1,
+      anthropic: 1,
+    },
+  });
+});
+
+test("loadProviderLedgerThreadDiagnostics reports itemless and outputless completed calls", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        leftJoin() {
+          return {
+            async where() {
+              return [
+                {
+                  provider: "openai",
+                  llmCallId: "llm-call-itemless",
+                  status: "completed",
+                  itemDirection: null,
+                  itemVisibility: null,
+                },
+                {
+                  provider: "anthropic",
+                  llmCallId: "llm-call-outputless",
+                  status: "completed",
+                  itemDirection: "input",
+                  itemVisibility: "tool",
+                },
+              ];
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const diagnostics = await loadProviderLedgerThreadDiagnostics("thread-1");
+
+  assert.deepEqual(diagnostics, {
+    providerCallCounts: {
+      openai: 1,
+      anthropic: 1,
+    },
+    outputItemCounts: {},
+    providerOnlyOutputItemCounts: {},
+    itemlessCompletedCallCounts: {
+      openai: 1,
+    },
+    outputlessCompletedCallCounts: {
       anthropic: 1,
     },
   });

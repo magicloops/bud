@@ -240,6 +240,8 @@ LLM provider-ledger rows follow thread ownership:
 - `llm_call.created_by_user_id` inherits the owning thread/user for the provider invocation
 - `llm_call_item.created_by_user_id` inherits the same owner for ordered provider items
 - visible text items may link to product `message` rows, while reasoning and provider payloads remain service-only and are not returned by browser message routes
+- the initial `llm_call` row and output `llm_call_item` rows are written in one transaction so completed provider calls are not left without replay items
+- provider-ledger diagnostics count completed call rows even when no item rows are present, surfacing itemless/outputless call states instead of hiding them behind item joins
 
 Push-specific ownership follows the same rule:
 - `thread_read_state.user_id` is the viewer whose badge/read state is being tracked

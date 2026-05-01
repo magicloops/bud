@@ -70,3 +70,18 @@ Manual validation completed externally on web and mobile as far as the current b
 - [x] Service specs updated
 - [x] Web specs updated
 - [x] `bud.spec.md` updated
+
+## Pre-Merge Review Follow-Ups
+
+Anthropic replay compatibility:
+
+- [x] Thinking-enabled Anthropic ledger replay into thinking-enabled Anthropic request remains provider-native
+- [x] Thinking-enabled Anthropic ledger replay into no-thinking Anthropic request falls back canonically
+- [x] Redacted-thinking Anthropic ledger replay into incompatible Anthropic request falls back canonically
+- [x] Same-provider incompatible fallback is distinguishable from cross-provider fallback in logs and metadata
+
+Provider-ledger atomicity:
+
+- [x] Failed output item insertion rolls back the corresponding `llm_call` row
+- [x] Provider-ledger diagnostics report itemless completed calls
+- [x] Outputless completed provider calls are surfaced as diagnostics; no legitimate zero-output replay path is currently treated as valid

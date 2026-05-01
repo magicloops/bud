@@ -12,6 +12,8 @@
 **Phase 4**: [phase-4-product-transcript-and-ui.md](./phase-4-product-transcript-and-ui.md)
 **Phase 5**: [phase-5-cache-observability-and-provider-switching.md](./phase-5-cache-observability-and-provider-switching.md)
 **Phase 6**: [phase-6-validation-docs-and-rollout.md](./phase-6-validation-docs-and-rollout.md)
+**Phase 7**: [phase-7-anthropic-replay-compatibility.md](./phase-7-anthropic-replay-compatibility.md)
+**Phase 8**: [phase-8-provider-ledger-atomicity.md](./phase-8-provider-ledger-atomicity.md)
 
 ---
 
@@ -93,6 +95,8 @@ Specifically:
 | 4 | [phase-4-product-transcript-and-ui.md](./phase-4-product-transcript-and-ui.md) | High | Persist visible assistant text and stop deleting drafts when tool calls arrive |
 | 5 | [phase-5-cache-observability-and-provider-switching.md](./phase-5-cache-observability-and-provider-switching.md) | High | Add cache telemetry and explicit same-provider vs provider-switching replay policy |
 | 6 | [phase-6-validation-docs-and-rollout.md](./phase-6-validation-docs-and-rollout.md) | High | Complete tests, docs, migrations, and manual validation |
+| 7 | [phase-7-anthropic-replay-compatibility.md](./phase-7-anthropic-replay-compatibility.md) | High | Gate Anthropic provider-native replay on model/reasoning compatibility |
+| 8 | [phase-8-provider-ledger-atomicity.md](./phase-8-provider-ledger-atomicity.md) | High | Make provider-ledger call/item writes atomic and expose itemless-call diagnostics |
 
 ## Expected Files And Areas
 

@@ -60,7 +60,9 @@ Conversation-building ownership extracted from `AgentService`.
 - seed the canonical system prompt
 - load persisted thread messages into canonical provider input order
 - load same-provider provider-ledger assistant output blocks when a target provider is known
+- gate Anthropic reasoning-bearing provider-ledger replay on the current target model and reasoning config
 - return reconstruction diagnostics that distinguish provider-native replay, canonical fallback, mixed degraded replay, omitted provider-only items, and provider switches
+- return same-provider incompatibility diagnostics when Anthropic thinking/redacted-thinking blocks are omitted for canonical fallback
 - skip duplicate product assistant rows whose `metadata.llm_call_id` is already represented by provider-ledger output
 - normalize historical tool rows, including legacy `terminal.interrupt` replay and `screen_stable` wait values
 - preserve user preferred-cwd hints during replay
@@ -132,7 +134,7 @@ startUserMessage()
     └─► runAgentFlow() [async]
            │
            ├─► resolve provider for selected model
-           ├─► conversationLoader.load(provider)
+           ├─► conversationLoader.load(provider, target model/reasoning)
            │
            └─► LOOP (max steps):
                   │
@@ -167,6 +169,7 @@ startUserMessage()
 - Final persisted assistant rows are still emitted as `agent.message` once the turn resolves.
 - Assistant/tool `client_id` values are now allocated before the first live runtime/SSE event that refers to them, and the persisted assistant/tool rows reuse those same values at insert time.
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
+- Anthropic thinking and redacted-thinking blocks are replayed provider-natively only when the next Anthropic model/reasoning request is compatible; incompatible same-provider ranges fall back to canonical visible transcript rows with explicit degradation metadata.
 - Multiple provider tool calls are parsed and executed serially in provider output order for the current terminal-tool-only agent.
 - Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.

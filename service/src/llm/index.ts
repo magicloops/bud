@@ -70,6 +70,7 @@ export {
   type LlmCallRequestMode,
   type LlmReconstructionDiagnostics,
   type LlmReconstructionMode,
+  type ProviderLedgerMessage,
   type ProviderLedgerThreadDiagnostics,
 } from "./provider-ledger.js";
 

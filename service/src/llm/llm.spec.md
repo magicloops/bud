@@ -154,9 +154,10 @@ Durable provider-call ledger helpers for same-provider reconstruction and cache 
 - create stable `llm_call` identifiers
 - persist one `llm_call` row per provider invocation
 - persist ordered `llm_call_item` rows for output text, reasoning, redacted reasoning, tool calls, and tool results
+- write the `llm_call` row and initial output `llm_call_item` rows atomically for each provider invocation
 - mark provider-only reasoning payloads separately from browser-visible product text
 - record cache telemetry derived from provider usage blocks plus reconstruction-mode diagnostics
-- summarize provider-ledger coverage for a thread so provider switches and canonical fallback ranges are explicit
+- summarize provider-ledger coverage for a thread so provider switches, same-provider replay incompatibilities, itemless completed calls, and canonical fallback ranges are explicit
 - reconstruct canonical assistant messages from same-provider ledger items before falling back to product transcript rows
 
 Provider-native payloads are service-internal. Browser message routes continue to read from the `message` table and do not expose `llm_call_item.provider_payload`.
@@ -259,6 +260,7 @@ for await (const event of provider.invoke(messages, tools, {
 - The agent reconstructs a `CanonicalResponse` from streamed text/tool/reasoning events after also forwarding assistant draft text to browser clients over SSE.
 - Every provider invocation is recorded in the provider ledger before tool execution or final success emission, including provider output items, reasoning payloads, usage, and cache counters.
 - Same-provider conversation loading uses durable ledger items for assistant output blocks so reasoning, redacted reasoning, and tool calls survive service restarts. Provider switches use the existing canonical product transcript projection.
+- Anthropic same-provider loading now checks the current target model and reasoning config before replaying signed `thinking` or `redacted_thinking` provider blocks; incompatible ranges use canonical fallback and persist `same_provider_incompatible_reasoning` diagnostics in call metadata.
 - Providers may attach raw completion payloads as `providerData`; the agent uses those only for diagnostics when a response cannot be parsed into text or a tool call.
 - `invokeSync()` remains an optional adapter capability, but it is no longer the main chat-agent path in this repo.
 

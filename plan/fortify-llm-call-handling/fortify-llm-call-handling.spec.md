@@ -93,6 +93,24 @@ Finalization phase covering:
 - manual end-to-end validation
 - rollout and fallback posture
 
+### `phase-7-anthropic-replay-compatibility.md`
+
+Implemented pre-merge follow-up phase from the branch review covering:
+
+- Anthropic same-provider replay compatibility checks
+- reasoning-bearing ledger fallback when current request settings are incompatible
+- structured degradation metadata for same-provider incompatibility
+- fixture coverage for signed and redacted thinking transitions
+
+### `phase-8-provider-ledger-atomicity.md`
+
+Implemented pre-merge follow-up phase from the branch review covering:
+
+- atomic `llm_call` plus initial `llm_call_item` writes
+- diagnostics for itemless completed calls
+- rollback tests for provider-ledger item insert failures
+- explicit handling for legitimate zero-output provider responses
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
