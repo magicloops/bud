@@ -451,13 +451,7 @@ function ThreadView() {
         </div>
       )}
       rightPane={(
-        viewMode === 'file' ? (
-          <FileViewerPane
-            entry={activeFileEntry}
-            onClose={handleCloseFileViewer}
-            onReload={reloadActiveFile}
-          />
-        ) : (
+        <div className="relative flex flex-1 overflow-hidden">
           <ThreadTerminalPane
             error={error}
             status={status}
@@ -468,13 +462,22 @@ function ThreadView() {
             terminalReadiness={terminalReadiness}
             terminalScrolledToTop={terminalScrolledToTop}
             terminalState={terminalState}
-            viewMode={viewMode}
+            viewMode={viewMode === 'web' ? 'web' : 'terminal'}
             showDisconnectOverlay={showDisconnectOverlay}
             onCancelAgentTurn={cancelAgentTurn}
             onFocusTerminal={focusTerminal}
             onInterruptTerminal={sendTerminalCtrlC}
           />
-        )
+          {viewMode === 'file' && (
+            <div className="absolute inset-0 z-20 flex">
+              <FileViewerPane
+                entry={activeFileEntry}
+                onClose={handleCloseFileViewer}
+                onReload={reloadActiveFile}
+              />
+            </div>
+          )}
+        </div>
       )}
       composer={(
         <CommandComposer

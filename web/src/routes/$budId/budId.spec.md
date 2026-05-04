@@ -146,6 +146,7 @@ loader: async ({ params }) => {
    - Assistant message file actions call `useFileViewer(...)` only after a user click
    - `POST /api/threads/:threadId/files/open` creates the short-lived session, then the hook fetches `HEAD` and `GET` through the existing `/api/files/:fileSessionId` edge
    - Opening a file switches the right pane to `file` mode; close returns to `terminal`
+   - File mode preserves the mounted `ThreadTerminalPane` underneath an overlay so the xterm DOM instance is not destroyed while previewing files
    - Repeated clicks reuse ready non-expired entries, while reload and expired entries create a fresh audited session
    - The first pass supports Markdown, source/code, and unknown UTF-8 text; binary/image/PDF preview and line scrolling remain follow-ups
 
