@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   Check,
   Copy,
-  FileText,
+  Link as LinkIcon,
   Loader2,
   RefreshCw,
   X,
@@ -92,18 +92,6 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
     entry?.status === 'loading_metadata' ||
     entry?.status === 'loading_content'
   const canCopyContent = entry?.status === 'ready' && typeof entry.content === 'string'
-  const title = entry?.display_name ?? entry?.relative_path ?? 'File viewer'
-
-  const metaDetails = useMemo(() => {
-    if (!entry) {
-      return ''
-    }
-    const pieces = [
-      entry.metadata?.size !== undefined ? formatBytes(entry.metadata.size) : null,
-      entry.line ? `L${entry.line}${entry.column ? `:${entry.column}` : ''}` : null,
-    ].filter(Boolean)
-    return pieces.join('  /  ')
-  }, [entry])
 
   const copyValue = useCallback(async (kind: 'path' | 'content', value: string | undefined) => {
     if (!value) {
@@ -123,6 +111,53 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden border-l-2 border-black bg-background">
+      <div className="absolute right-3 top-3 z-20 flex items-center gap-1">
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          onClick={() => copyValue('path', entry?.relative_path)}
+          disabled={!entry}
+          title={copied === 'path' ? 'Copied path' : 'Copy path'}
+          aria-label="Copy file path"
+          className="cursor-pointer rounded-md bg-transparent text-muted-foreground hover:bg-background/80 hover:text-foreground focus-visible:bg-background/80"
+        >
+          {copied === 'path' ? <Check className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          onClick={() => copyValue('content', entry?.content)}
+          disabled={!canCopyContent}
+          title="Copy content"
+          className="cursor-pointer rounded-md bg-transparent text-muted-foreground hover:bg-background/80 hover:text-foreground focus-visible:bg-background/80"
+        >
+          {copied === 'content' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          onClick={onReload}
+          disabled={!entry || isLoading}
+          title="Reload"
+          className="cursor-pointer rounded-md bg-transparent text-muted-foreground hover:bg-background/80 hover:text-foreground focus-visible:bg-background/80"
+        >
+          <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          onClick={onClose}
+          title="Close file viewer"
+          className="cursor-pointer rounded-md bg-transparent text-muted-foreground hover:bg-background/80 hover:text-foreground focus-visible:bg-background/80"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {!entry ? (
           <StateMessage status="idle" />
@@ -135,72 +170,6 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
             loading={isLoading}
           />
         )}
-      </div>
-
-      <div className="flex min-h-16 items-center justify-between border-t-4 border-black bg-card px-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="truncate font-mono text-sm font-semibold">{title}</p>
-          </div>
-          {entry && (
-            <div className="flex min-w-0 items-center gap-1 text-[11px] font-mono text-muted-foreground">
-              <button
-                type="button"
-                onClick={() => copyValue('path', entry.relative_path)}
-                title={copied === 'path' ? 'Copied path' : 'Copy path'}
-                aria-label="Copy file path"
-                className={cn(
-                  'min-w-0 cursor-pointer truncate text-left underline-offset-2 transition hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  copied === 'path' &&
-                    'text-green-600 hover:text-green-600 dark:text-green-400 dark:hover:text-green-400',
-                )}
-              >
-                {entry.relative_path}
-              </button>
-              {copied === 'path' && (
-                <span className="shrink-0 text-green-600 dark:text-green-400">Copied</span>
-              )}
-              {metaDetails && (
-                <span className="shrink-0">/ {metaDetails}</span>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="outline"
-            onClick={() => copyValue('content', entry?.content)}
-            disabled={!canCopyContent}
-            title="Copy content"
-            className="rounded-lg border-2 border-black"
-          >
-            {copied === 'content' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="outline"
-            onClick={onReload}
-            disabled={!entry || isLoading}
-            title="Reload"
-            className="rounded-lg border-2 border-black"
-          >
-            <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
-          </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="outline"
-            onClick={onClose}
-            title="Close file viewer"
-            className="rounded-lg border-2 border-black"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
       </div>
     </div>
   )
@@ -261,14 +230,4 @@ function StateMessage({
       </div>
     </div>
   )
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
-  }
-  if (bytes >= 1024) {
-    return `${(bytes / 1024).toFixed(1)} KiB`
-  }
-  return `${bytes} B`
 }
