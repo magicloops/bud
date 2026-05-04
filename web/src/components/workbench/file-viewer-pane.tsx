@@ -94,12 +94,11 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
   const canCopyContent = entry?.status === 'ready' && typeof entry.content === 'string'
   const title = entry?.display_name ?? entry?.relative_path ?? 'File viewer'
 
-  const metaLine = useMemo(() => {
+  const metaDetails = useMemo(() => {
     if (!entry) {
       return ''
     }
     const pieces = [
-      entry.relative_path,
       entry.metadata?.size !== undefined ? formatBytes(entry.metadata.size) : null,
       entry.line ? `L${entry.line}${entry.column ? `:${entry.column}` : ''}` : null,
     ].filter(Boolean)
@@ -123,29 +122,52 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
   }, [])
 
   return (
-    <div className="relative flex flex-1 flex-col overflow-hidden border-l-4 border-black bg-background">
-      <div className="flex min-h-16 items-center justify-between border-b-4 border-black bg-card px-4">
+    <div className="relative flex flex-1 flex-col overflow-hidden border-l-2 border-black bg-background">
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        {!entry ? (
+          <StateMessage status="idle" />
+        ) : entry.status === 'ready' ? (
+          <ReadyContent entry={entry} />
+        ) : (
+          <StateMessage
+            status={entry.status}
+            message={entry.error_message}
+            loading={isLoading}
+          />
+        )}
+      </div>
+
+      <div className="flex min-h-16 items-center justify-between border-t-4 border-black bg-card px-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <p className="truncate font-mono text-sm font-semibold">{title}</p>
           </div>
-          {metaLine && (
-            <p className="truncate text-[11px] font-mono text-muted-foreground">{metaLine}</p>
+          {entry && (
+            <div className="flex min-w-0 items-center gap-1 text-[11px] font-mono text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => copyValue('path', entry.relative_path)}
+                title={copied === 'path' ? 'Copied path' : 'Copy path'}
+                aria-label="Copy file path"
+                className={cn(
+                  'min-w-0 cursor-pointer truncate text-left underline-offset-2 transition hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  copied === 'path' &&
+                    'text-green-600 hover:text-green-600 dark:text-green-400 dark:hover:text-green-400',
+                )}
+              >
+                {entry.relative_path}
+              </button>
+              {copied === 'path' && (
+                <span className="shrink-0 text-green-600 dark:text-green-400">Copied</span>
+              )}
+              {metaDetails && (
+                <span className="shrink-0">/ {metaDetails}</span>
+              )}
+            </div>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="outline"
-            onClick={() => copyValue('path', entry?.relative_path)}
-            disabled={!entry}
-            title="Copy path"
-            className="rounded-lg border-2 border-black"
-          >
-            {copied === 'path' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          </Button>
           <Button
             type="button"
             size="icon-sm"
@@ -179,20 +201,6 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
             <X className="h-4 w-4" />
           </Button>
         </div>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto p-4">
-        {!entry ? (
-          <StateMessage status="idle" />
-        ) : entry.status === 'ready' ? (
-          <ReadyContent entry={entry} />
-        ) : (
-          <StateMessage
-            status={entry.status}
-            message={entry.error_message}
-            loading={isLoading}
-          />
-        )}
       </div>
     </div>
   )

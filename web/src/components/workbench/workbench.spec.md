@@ -161,7 +161,8 @@ Presentation component for the thread file viewer right-pane mode.
 - renders create/load/ready/error states from `useFileViewer(...)`
 - presents Markdown, source/code, and plain UTF-8 text files
 - handles too-large, unsupported-binary, not-found, denied, expired, offline, content-changed, and generic error states
-- provides close, reload, copy path, and copy content controls
+- provides close, reload, copy-content controls, and pointer/hover/copy feedback on the displayed click-to-copy path text
+- places the file identity/action header at the bottom of the pane for the current UI experiment
 - in the existing-thread route, renders as an overlay above the still-mounted terminal pane so xterm is preserved while files are open
 - stays presentation-only: session creation and file fetch flow live in `web/src/features/threads/use-file-viewer.ts`
 
