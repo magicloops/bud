@@ -942,7 +942,16 @@ impl BudApp {
             }
             "file_open" => {
                 let frame: FileOpenFrame = serde_json::from_str(text)?;
-                self.file_manager.handle_open(frame, sender.clone());
+                let terminal_cwd = match frame.terminal_session_id.as_deref() {
+                    Some(session_id) => {
+                        self.terminal_manager
+                            .fresh_pane_cwd_for_session(session_id)
+                            .await
+                    }
+                    None => None,
+                };
+                self.file_manager
+                    .handle_open(frame, sender.clone(), terminal_cwd);
             }
             "stream_credit" => {
                 let frame: StreamCreditFrame = serde_json::from_str(text)?;

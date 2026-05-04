@@ -113,10 +113,11 @@ Daemon-side Phase 4.2 localhost HTTP proxy adapter.
 Daemon-side Phase 4.4 workspace file adapter.
 
 - validates `file_open` requests against local workspace/root/path policy
+- uses the thread terminal pane cwd as the first relative-path candidate when service provides terminal context
 - rejects symlinks, non-regular files, root escapes, and over-limit reads
 - supports stat, full read, and single byte-range read modes
 - computes and checks file content identity
-- returns `file_open_result` accept/reject metadata on control
+- returns `file_open_result` accept/reject metadata on control, including accepted-open resolution metadata
 - streams file bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
 

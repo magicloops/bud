@@ -306,6 +306,7 @@ test("encodes file open frames as typed protobuf payloads", () => {
     operation_id: "op_test",
     stream_id: "st_test",
     file_session_id: "fs_test",
+    terminal_session_id: "sess_test",
     stream_type: "file_read",
     root_key: "workspace",
     relative_path: "src/index.ts",

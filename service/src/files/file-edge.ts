@@ -1,10 +1,10 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ulid } from "ulid";
 import type { Viewer } from "../auth/session.js";
 import { config, PROTO_VERSION } from "../config.js";
 import { db } from "../db/client.js";
-import { fileSessionTable } from "../db/schema.js";
+import { fileSessionTable, terminalSessionTable } from "../db/schema.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import {
   getActiveDataPlaneSessionForBud,
@@ -108,6 +108,7 @@ export async function openFileEdgeStream(args: {
   }
   const operationId = `op_${ulid()}`;
   const streamId = `st_${ulid()}`;
+  const terminalSessionId = await resolveThreadTerminalSessionId(args.session);
 
   await daemonStateStore.createOperation({
     operationId,
@@ -116,12 +117,14 @@ export async function openFileEdgeStream(args: {
     trafficClass: "bulk",
     state: "offered",
     threadId: args.session.threadId,
+    terminalSessionId,
     deviceSessionId: args.transportStatus.deviceSessionId,
     transportSessionId: args.transportStatus.controlTransportSessionId,
     request: {
       file_session_id: args.session.fileSessionId,
       root_key: args.session.rootKey,
       relative_path: args.session.relativePath,
+      ...(terminalSessionId ? { terminal_session_id: terminalSessionId } : {}),
       mode,
       ...(range.rangeStart !== undefined ? { range_start: range.rangeStart } : {}),
       ...(range.rangeEnd !== undefined ? { range_end: range.rangeEnd } : {}),
@@ -160,6 +163,7 @@ export async function openFileEdgeStream(args: {
       audit_correlation_id: args.session.auditCorrelationId,
       root_key: args.session.rootKey,
       relative_path: args.session.relativePath,
+      ...(terminalSessionId ? { terminal_session_id: terminalSessionId } : {}),
       mode,
       transport_kind: dataTracker.transportKind,
       control_transport_session_id: args.transportStatus.controlTransportSessionId,
@@ -452,6 +456,7 @@ export async function openFileEdgeStream(args: {
       operation_id: operationId,
       stream_id: streamId,
       file_session_id: args.session.fileSessionId,
+      ...(terminalSessionId ? { terminal_session_id: terminalSessionId } : {}),
       stream_type: FILE_READ_STREAM_TYPE,
       root_key: args.session.rootKey,
       relative_path: args.session.relativePath,
@@ -738,6 +743,26 @@ function parseSingleRange(value: unknown): FileRange {
     rangeStart: start,
     ...(end !== null ? { rangeEnd: end } : {}),
   };
+}
+
+async function resolveThreadTerminalSessionId(session: FileSessionRow): Promise<string | null> {
+  if (!session.threadId) {
+    return null;
+  }
+
+  const [row] = await db
+    .select({ sessionId: terminalSessionTable.sessionId })
+    .from(terminalSessionTable)
+    .where(
+      and(
+        eq(terminalSessionTable.threadId, session.threadId),
+        eq(terminalSessionTable.budId, session.budId),
+        isNull(terminalSessionTable.closedAt),
+      ),
+    )
+    .limit(1);
+
+  return row?.sessionId ?? null;
 }
 
 function parseSafeInteger(value: string): number | null {

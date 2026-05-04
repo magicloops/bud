@@ -182,7 +182,7 @@ Phase 4.2 localhost proxy helpers for strict target/method validation, carrier-n
 
 ### `files/` → [files/files.spec.md](./files/files.spec.md)
 
-Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, carrier-neutral data-plane readiness checks, owned `file_session` persistence, daemon `file_open` dispatch, and bounded stat/read/range response streaming over the selected WebSocket/HTTP2 carrier.
+Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, carrier-neutral data-plane readiness checks, owned `file_session` persistence, thread terminal-session context on daemon `file_open` dispatch, and bounded stat/read/range response streaming over the selected WebSocket/HTTP2 carrier.
 
 ### `grpc/` → [grpc.spec.md](./grpc/grpc.spec.md)
 

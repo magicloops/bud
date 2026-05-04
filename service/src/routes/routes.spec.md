@@ -414,6 +414,7 @@ Phase 4.4 file session and daemon-backed file edge routes.
 - file sessions report degraded state when no active carrier has `file_read` support
 - file transport payloads include selected-carrier health and skipped candidate reasons so operators can diagnose WebSocket/H2/QUIC fallback without route-specific branches
 - ready sessions support `HEAD`, full `GET`, and single-byte-range `GET` by sending `file_open` over the selected control side and streaming bytes from the selected data-plane carrier
+- thread-scoped file sessions include the active thread terminal session id on `file_open` when available, letting the daemon try tmux pane-cwd resolution before workspace-root fallback
 - file reads enforce owner checks before stream registration plus per-Bud concurrency, max bytes, chunk/credit, idle, and TTL limits
 - daemon re-checks workspace root/path, symlink, regular-file, max-byte, and content-identity policy before sending bytes
 

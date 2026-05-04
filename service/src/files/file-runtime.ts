@@ -19,6 +19,8 @@ const FileOpenResultSchema = EnvelopeSchema.extend({
   status_code: z.number().int().min(100).max(599).optional(),
   headers: z.record(z.string()).optional().default({}),
   content_identity: z.record(z.unknown()).optional(),
+  resolved_against: z.string().optional(),
+  resolved_relative_path: z.string().optional(),
   size: z.number().int().nonnegative().optional(),
   error: FileOpenErrorSchema.optional(),
 });

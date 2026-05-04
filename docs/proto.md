@@ -311,6 +311,7 @@ File open request (Service → Bud on control):
   "operation_id": "op_01H...",
   "stream_id": "st_01H...",
   "file_session_id": "fs_01H...",
+  "terminal_session_id": "sess_01H...",
   "stream_type": "file_read",
   "root_key": "workspace",
   "relative_path": "src/index.ts",
@@ -351,10 +352,14 @@ File open result (Bud → Service on control):
     "size": 4096,
     "modified_ms": 1777132800000
   },
+  "resolved_against": "terminal_cwd",
+  "resolved_relative_path": "service/src/index.ts",
   "size": 4096,
   "ext": {}
 }
 ```
+
+When `terminal_session_id` is present, the daemon may query that tmux pane's current directory once and try the `pane_current_path + relative_path` candidate before falling back to the daemon workspace root. Both candidates remain constrained by canonical workspace-root policy. `resolved_against` is optional metadata and currently one of `terminal_cwd` or `workspace`; `resolved_relative_path` is the canonical workspace-relative path actually served.
 
 Rejected file opens use the same frame with `accepted: false` and a typed `error` object. Common file error codes include `POLICY_DENIED`, `UNSUPPORTED_ROOT`, `UNSAFE_PATH`, `UNSAFE_FILE_TYPE`, `SYMLINK_DENIED`, `FILE_NOT_FOUND`, `RANGE_NOT_SATISFIABLE`, `FILE_TOO_LARGE`, `CONTENT_CHANGED`, and `LOCAL_READ_FAILED`.
 
@@ -601,6 +606,7 @@ Thread file-viewer open:
 - `path` may include `:line`, `:line:column`, or `#Lline` / `#Lline-Lend` metadata
 - created sessions use `root_key: "workspace"`, permissions `["stat", "read", "range"]`, the default short TTL, and `max_bytes: 1048576`
 - source metadata is display/audit metadata only; opening a file remains user-initiated and does not grant the agent file-read authority
+- file reads for thread-created sessions include the active thread terminal session id when one exists, allowing the daemon to resolve relative links against the tmux pane cwd first and workspace root second
 
 Request body:
 

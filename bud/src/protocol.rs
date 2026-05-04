@@ -211,6 +211,7 @@ pub struct FileOpenFrame {
     pub operation_id: String,
     pub stream_id: String,
     pub file_session_id: String,
+    pub terminal_session_id: Option<String>,
     pub stream_type: String,
     pub root_key: String,
     pub relative_path: String,

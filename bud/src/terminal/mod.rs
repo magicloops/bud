@@ -187,6 +187,11 @@ where
         inner.delivered_captures.clear();
         inner.sender = None;
     }
+
+    pub async fn fresh_pane_cwd_for_session(&self, session_id: &str) -> Option<String> {
+        let session_name = self.backend.session_name(session_id);
+        self.backend.pane_cwd(&session_name).await.ok()
+    }
 }
 
 pub fn probe_tmux() -> bool {
