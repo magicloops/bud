@@ -93,6 +93,7 @@ Automated and manual validation checklist for the backend route, web parser/acti
 - [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md) - WebSocket-first transport foundation that file viewing builds on
 - [../swappable-transport/validation-checklist.md](../swappable-transport/validation-checklist.md) - existing file/proxy foundation validation notes
 - [../../docs/proto.md](../../docs/proto.md) - REST/SSE and daemon-service protocol documentation
+- [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md) - mobile client handoff for the file-viewer product contract
 - [../../service/src/files/files.spec.md](../../service/src/files/files.spec.md) - service file-session foundation spec
 - [../../service/src/routes/routes.spec.md](../../service/src/routes/routes.spec.md) - service route-family spec
 - [../../web/src/src.spec.md](../../web/src/src.spec.md) - web source overview spec

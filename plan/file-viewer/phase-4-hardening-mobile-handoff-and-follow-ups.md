@@ -51,7 +51,7 @@ Negative smokes to add where possible:
 
 ## Mobile Handoff
 
-Capture the mobile-ready contract in `reference/` if the iOS team needs a standalone handoff.
+Capture the mobile-ready contract in [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md).
 
 Minimum handoff content:
 
@@ -105,7 +105,7 @@ Update:
 - `service/src/files/files.spec.md`
 - `service/src/routes/routes.spec.md`
 - affected web specs
-- optional `reference/IOS_FILE_VIEWER_HANDOFF.md` or equivalent
+- [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md)
 - [../../bud.spec.md](../../bud.spec.md)
 - this plan's progress and validation checklists
 

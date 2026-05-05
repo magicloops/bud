@@ -78,6 +78,38 @@ Thread-scoped file viewer state and fetch flow for user-clicked transcript paths
 - `FileViewerKind`
 - `FileViewerStatus`
 
+### `file-viewer-state.ts`
+
+Pure file-viewer state helpers shared by the hook and tests.
+
+**Responsibilities**:
+- derive stable workspace file-viewer keys
+- build pending/session/reused entries
+- map HTTP response codes to viewer statuses
+- parse HEAD metadata
+- decode UTF-8, detect likely binary content, choose viewer kind/language, and format byte limits
+
+### `file-viewer-flow.ts`
+
+Pure async file-viewer flow used by `use-file-viewer.ts`.
+
+**Responsibilities**:
+- lazily call `POST /api/threads/:threadId/files/open` only on explicit open requests
+- reuse valid ready entries without new network calls
+- run `HEAD` before `GET`
+- enforce display caps before and after content fetch
+- map file-edge failures and binary/text states into `FileViewerEntry` updates
+
+### `file-viewer-flow.test.ts`
+
+Node-runner coverage for the file-viewer open/fetch flow.
+
+**Coverage**:
+- session creation followed by `HEAD` then `GET`
+- valid ready entry reuse without network calls
+- metadata over-cap state without content fetch
+- binary detection and HTTP-status-to-viewer-state mapping
+
 ## Dependencies
 
 | Import | Purpose |
@@ -156,7 +188,7 @@ Terminal session/xterm ownership for the existing-thread route.
 - Add deeper hook/integration coverage for transcript reconciliation flows beyond the extracted pure helper tests
 - Add deeper hook/integration coverage for agent-stream heartbeat timeout, reconnect, and explicit resync-required behavior
 - Add deeper hook/integration coverage for terminal reconnect/recovery behavior beyond the shared timing policy tests
-- Add component/hook integration coverage for the file viewer open/reuse/error paths beyond parser and service-route tests
+- Add browser-level visual regression coverage for terminal/file-viewer overlay, header, and xterm geometry behavior
 
 ---
 

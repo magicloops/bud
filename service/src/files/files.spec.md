@@ -39,6 +39,7 @@ Browser-facing file edge implementation.
 - fails and resets durable state when carrier send throws or when an accepted daemon open-result omits the required HTTP status code
 - records stream-open and service/daemon denial audit events with selected carrier metadata
 - sanitizes response headers before sending them to the browser
+- exposes pure frame/request builders so tests can verify optional `terminal_session_id` propagation without standing up the data-plane runtime
 
 ### `file-runtime.ts`
 
@@ -59,6 +60,14 @@ Focused unit coverage for root/path validation, product-viewer path parsing, per
 ### `file-runtime.test.ts`
 
 Focused unit coverage for open-result delivery and response-body chunk handling.
+
+### `file-edge.test.ts`
+
+Focused unit coverage for file-edge request/frame assembly.
+
+**Coverage**:
+- includes `terminal_session_id` in durable operation metadata and daemon `file_open` frames when terminal context is available
+- omits terminal context and expected content identity when unavailable
 
 ## Dependencies
 

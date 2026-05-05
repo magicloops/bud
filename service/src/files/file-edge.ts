@@ -46,6 +46,56 @@ type FileRange =
   | { ok: true; rangeStart?: number; rangeEnd?: number; rangeSuffixBytes?: number }
   | { ok: false; message: string };
 
+type AcceptedFileRange = Extract<FileRange, { ok: true }>;
+
+type FileOpenRequestArgs = {
+  session: FileSessionRow;
+  terminalSessionId: string | null;
+  mode: FileOpenMode;
+  range: AcceptedFileRange;
+};
+
+export function buildFileOpenOperationRequest(args: FileOpenRequestArgs): Record<string, unknown> {
+  return {
+    file_session_id: args.session.fileSessionId,
+    root_key: args.session.rootKey,
+    relative_path: args.session.relativePath,
+    ...terminalSessionField(args.terminalSessionId),
+    mode: args.mode,
+    ...fileRangeFields(args.range),
+  };
+}
+
+export function buildFileOpenControlFrame(args: FileOpenRequestArgs & {
+  operationId: string;
+  streamId: string;
+  messageId: string;
+  sentAt: number;
+  initialCreditBytes: number;
+  maxChunkBytes: number;
+}): Record<string, unknown> {
+  return {
+    proto: PROTO_VERSION,
+    type: "file_open",
+    id: args.messageId,
+    ts: args.sentAt,
+    ext: {},
+    operation_id: args.operationId,
+    stream_id: args.streamId,
+    file_session_id: args.session.fileSessionId,
+    ...terminalSessionField(args.terminalSessionId),
+    stream_type: FILE_READ_STREAM_TYPE,
+    root_key: args.session.rootKey,
+    relative_path: args.session.relativePath,
+    mode: args.mode,
+    ...fileRangeFields(args.range),
+    ...(args.session.contentIdentity ? { expected_content_identity: args.session.contentIdentity } : {}),
+    max_bytes: args.session.maxBytes,
+    initial_credit_bytes: args.initialCreditBytes,
+    max_chunk_bytes: args.maxChunkBytes,
+  };
+}
+
 export async function openFileEdgeStream(args: {
   viewer: Viewer;
   session: FileSessionRow;
@@ -120,16 +170,12 @@ export async function openFileEdgeStream(args: {
     terminalSessionId,
     deviceSessionId: args.transportStatus.deviceSessionId,
     transportSessionId: args.transportStatus.controlTransportSessionId,
-    request: {
-      file_session_id: args.session.fileSessionId,
-      root_key: args.session.rootKey,
-      relative_path: args.session.relativePath,
-      ...(terminalSessionId ? { terminal_session_id: terminalSessionId } : {}),
+    request: buildFileOpenOperationRequest({
+      session: args.session,
+      terminalSessionId,
       mode,
-      ...(range.rangeStart !== undefined ? { range_start: range.rangeStart } : {}),
-      ...(range.rangeEnd !== undefined ? { range_end: range.rangeEnd } : {}),
-      ...(range.rangeSuffixBytes !== undefined ? { range_suffix_bytes: range.rangeSuffixBytes } : {}),
-    },
+      range,
+    }),
     createdByUserId: args.viewer.userId,
   });
   await daemonStateStore.createStream({
@@ -447,28 +493,18 @@ export async function openFileEdgeStream(args: {
   let openSendError: unknown = null;
   let sent = false;
   try {
-    sent = sendDataPlaneControlFrame(dataTracker, {
-      proto: PROTO_VERSION,
-      type: "file_open",
-      id: `msg_${ulid()}`,
-      ts: Date.now(),
-      ext: {},
-      operation_id: operationId,
-      stream_id: streamId,
-      file_session_id: args.session.fileSessionId,
-      ...(terminalSessionId ? { terminal_session_id: terminalSessionId } : {}),
-      stream_type: FILE_READ_STREAM_TYPE,
-      root_key: args.session.rootKey,
-      relative_path: args.session.relativePath,
+    sent = sendDataPlaneControlFrame(dataTracker, buildFileOpenControlFrame({
+      session: args.session,
+      terminalSessionId,
       mode,
-      ...(range.rangeStart !== undefined ? { range_start: range.rangeStart } : {}),
-      ...(range.rangeEnd !== undefined ? { range_end: range.rangeEnd } : {}),
-      ...(range.rangeSuffixBytes !== undefined ? { range_suffix_bytes: range.rangeSuffixBytes } : {}),
-      ...(args.session.contentIdentity ? { expected_content_identity: args.session.contentIdentity } : {}),
-      max_bytes: args.session.maxBytes,
-      initial_credit_bytes: dataTracker.initialCreditBytes,
-      max_chunk_bytes: dataTracker.maxChunkBytes,
-    });
+      range,
+      operationId,
+      streamId,
+      messageId: `msg_${ulid()}`,
+      sentAt: Date.now(),
+      initialCreditBytes: dataTracker.initialCreditBytes,
+      maxChunkBytes: dataTracker.maxChunkBytes,
+    }));
   } catch (err) {
     openSendError = err;
   }
@@ -742,6 +778,18 @@ function parseSingleRange(value: unknown): FileRange {
     ok: true,
     rangeStart: start,
     ...(end !== null ? { rangeEnd: end } : {}),
+  };
+}
+
+function terminalSessionField(terminalSessionId: string | null): Record<string, string> {
+  return terminalSessionId ? { terminal_session_id: terminalSessionId } : {};
+}
+
+function fileRangeFields(range: AcceptedFileRange): Record<string, number> {
+  return {
+    ...(range.rangeStart !== undefined ? { range_start: range.rangeStart } : {}),
+    ...(range.rangeEnd !== undefined ? { range_end: range.rangeEnd } : {}),
+    ...(range.rangeSuffixBytes !== undefined ? { range_suffix_bytes: range.rangeSuffixBytes } : {}),
   };
 }
 

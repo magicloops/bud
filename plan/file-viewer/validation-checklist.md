@@ -55,7 +55,7 @@
 - [x] User messages do not expose first-pass file actions.
 - [x] System/tool messages do not expose first-pass file actions.
 - [x] Rendering messages does not call the open route.
-- [ ] Clicking a file action calls the open route exactly once.
+- [x] Clicking a file action calls the open route exactly once.
 - [x] Click payload includes raw path.
 - [x] Click payload includes line/column when parsed.
 - [x] Click payload includes message id/client id when available.
@@ -85,13 +85,13 @@
 
 ## Real-Daemon Smoke
 
-- [ ] Service starts with WebSocket baseline.
-- [ ] Bud daemon connects and advertises file capability.
-- [ ] A known workspace-relative file can be opened from an assistant response.
-- [ ] File session is created only after click.
-- [ ] `HEAD` succeeds.
-- [ ] `GET` succeeds.
-- [ ] The file renders in web.
+- [x] Service starts with WebSocket baseline.
+- [x] Bud daemon connects and advertises file capability.
+- [x] A known workspace-relative file can be opened from an assistant response.
+- [x] File session is created only after click.
+- [x] `HEAD` succeeds.
+- [x] `GET` succeeds.
+- [x] The file renders in web.
 - [ ] Path outside workspace is rejected.
 - [ ] Symlink or non-regular file is rejected where practical.
 - [ ] Too-large file shows too-large viewer state.
@@ -122,4 +122,6 @@
 ## Verification Notes
 
 - Code-level verification completed with focused service route/parser tests, the web test suite, and service/web production builds.
-- Real-daemon smoke and browser click-path manual validation remain open.
+- Web happy-path validation is complete against a real Bud flow.
+- Remaining real-daemon smoke items are negative edge cases: outside-workspace denial, symlink/non-regular denial, too-large state, and daemon-offline state.
+- Mobile handoff is captured in [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md).

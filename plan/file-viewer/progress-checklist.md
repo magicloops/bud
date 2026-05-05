@@ -28,7 +28,7 @@
 - [x] Ensure message render never creates file sessions
 - [x] Wire source message id/client id into click payloads
 - [x] Call the thread open route from click actions
-- [ ] Add renderer/action tests
+- [x] Add renderer/action tests
 - [x] Update web specs
 
 ## Phase 3: Web File Viewer And Fetch Flow
@@ -47,22 +47,22 @@
 - [x] Handle not found, denied, expired, offline, too-large, content-changed, binary, and generic error states
 - [x] Add close, reload, copy path, and copy content controls
 - [x] Decide whether Markdown preview recursive file links ship now
-- [ ] Add viewer tests
+- [x] Add viewer tests
 - [x] Update web specs
 
 ## Phase 4: Hardening, Mobile Handoff, And Follow-Ups
 
-- [ ] Run real-daemon happy-path smoke
+- [x] Run real-daemon happy-path smoke
 - [ ] Validate path outside workspace denial
 - [ ] Validate symlink/non-regular/directory denial where practical
 - [ ] Validate too-large file behavior
 - [ ] Validate offline/carrier unavailable behavior
-- [ ] Capture mobile route contract handoff if needed
+- [x] Capture mobile route contract handoff if needed
 - [x] Record final plain-text detection decision
 - [x] Record final viewer state/tab-readiness decision
 - [x] Record recursive Markdown link decision
-- [ ] Scope absolute path support follow-up
-- [ ] Scope binary/image/PDF viewer follow-ups
+- [x] Scope absolute path support follow-up
+- [x] Scope binary/image/PDF viewer follow-ups
 - [x] Update protocol/root docs and all affected specs
 
 ## Implementation Notes
@@ -70,3 +70,5 @@
 - Plain-text detection does not ship in the first pass; only Markdown links and inline-code candidates expose actions.
 - File viewer state is keyed by workspace-relative path and keeps a future tab-compatible `entries_by_key` shape.
 - Markdown files opened in the viewer render normally, but recursive file links inside previewed Markdown are deferred.
+- Mobile handoff is captured in [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md).
+- Web happy-path validation is complete; remaining unchecked Phase 4 items are negative policy/offline/large-file smokes rather than blockers for the validated web product flow.

@@ -19,7 +19,7 @@
 - [x] Add optional terminal context to service `file_open`
 - [x] Add context to durable operation/audit metadata
 - [x] Update service runtime schema for optional result metadata
-- [ ] Add service tests for frames with and without terminal context
+- [x] Add service tests for frames with and without terminal context
 - [x] Add service tests for result metadata parsing
 - [x] Update service file spec
 
