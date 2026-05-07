@@ -50,7 +50,7 @@ export async function openFileViewerCandidateFlow(args: {
     return
   }
 
-  const key = fileViewerKey(args.candidate.relative_path)
+  const key = fileViewerKey(args.candidate.relative_path, args.candidate.source)
   const existing = args.stateAccess.getState().entries_by_key[key]
   if (!args.forceNewSession && shouldReuseFileViewerEntry(existing)) {
     args.stateAccess.setState((current) => ({

@@ -97,6 +97,24 @@
 - [ ] Too-large file shows too-large viewer state.
 - [ ] Daemon offline/carrier unavailable maps to viewer offline state.
 
+## Historic CWD Preservation
+
+- [x] Bud terminal send results report optional `host_cwd`.
+- [x] Bud terminal observe results report optional `host_cwd`.
+- [x] Service caches `terminal_status.info.cwd` and terminal result `host_cwd` on the terminal session.
+- [x] Service updates cached cwd before resolving terminal tool promises.
+- [x] User and assistant messages are stamped with `metadata.path_context` when cached cwd exists.
+- [x] Terminal tool messages are stamped with `metadata.path_context_before` and `metadata.path_context_after`.
+- [x] Thread file-open loads source-message path context only from the same authorized thread.
+- [x] Thread file-open ignores missing or foreign source-message context without revealing cross-thread existence.
+- [x] File edge sends daemon `resolution_hint` only from server-side file-session display metadata.
+- [x] Daemon hinted opens resolve message-time cwd before workspace root.
+- [x] Daemon hinted opens skip click-time tmux cwd.
+- [x] Daemon invalid/outside hints fall back directly to workspace root.
+- [x] Contextless opens retain terminal-cwd-first behavior.
+- [x] Manual web validation confirmed an old assistant-message file link still opens after the thread changes project directories.
+- [x] Web viewer reuse keying accounts for `source.message_id`.
+
 ## Mobile Handoff
 
 - [x] Handoff documents `POST /api/threads/:thread_id/files/open`.
@@ -109,6 +127,7 @@
 - [x] Handoff includes status-code-to-UI-state guidance.
 - [x] Handoff includes line/column metadata behavior.
 - [x] Handoff includes session reuse guidance.
+- [x] Handoff documents message-time cwd behavior and source-message reuse guidance.
 
 ## Documentation
 
@@ -121,7 +140,16 @@
 
 ## Verification Notes
 
-- Code-level verification completed with focused service route/parser tests, the web test suite, and service/web production builds.
+- Code-level verification completed with focused service route/parser tests, focused service runtime/agent/file/proto tests, focused daemon tests, and the service production build.
+- Phase 5 verification commands completed successfully:
+  - `cargo test` from `/Users/adam/bud/bud`
+  - `pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/proto/wire.test.ts src/runtime/terminal/request-dispatcher.test.ts src/runtime/terminal-session-manager.test.ts src/agent/transcript-writer.test.ts src/files/file-edge.test.ts src/routes/threads/files.test.ts`
+  - `pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/routes/threads/messages.test.ts`
+  - `pnpm --dir /Users/adam/bud/service build`
+  - `pnpm --dir /Users/adam/bud/web exec node --experimental-strip-types --test src/features/threads/file-viewer-flow.test.ts`
+  - `pnpm --dir /Users/adam/bud/web build`
+  - `git diff --check`
 - Web happy-path validation is complete against a real Bud flow.
+- Historic cwd project-switch validation is complete against the web flow.
 - Remaining real-daemon smoke items are negative edge cases: outside-workspace denial, symlink/non-regular denial, too-large state, and daemon-offline state.
 - Mobile handoff is captured in [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md).

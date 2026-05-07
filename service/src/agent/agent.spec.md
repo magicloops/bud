@@ -168,6 +168,7 @@ startUserMessage()
 - Visible assistant text in a response that also contains tool calls is now persisted as an intermediate assistant transcript row before tool execution and emitted as `agent.message`.
 - Final persisted assistant rows are still emitted as `agent.message` once the turn resolves.
 - Assistant/tool `client_id` values are now allocated before the first live runtime/SSE event that refers to them, and the persisted assistant/tool rows reuse those same values at insert time.
+- Assistant rows are stamped with cached terminal cwd `path_context` when available; terminal tool rows are stamped with `path_context_before` and `path_context_after`.
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
 - Anthropic thinking and redacted-thinking blocks are replayed provider-natively only when the next Anthropic model/reasoning request is compatible; incompatible same-provider ranges fall back to canonical visible transcript rows with explicit degradation metadata.
 - Multiple provider tool calls are parsed and executed serially in provider output order for the current terminal-tool-only agent.
@@ -275,6 +276,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
 - add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
 - add the resolved `model`, `reasoning_effort`, and `model_selection_source` to assistant/tool `message.metadata`
+- add cached cwd path context to assistant rows and before/after path context to terminal tool rows
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
 - advance runtime cursors only after the durable transcript boundary is visible
 
@@ -309,6 +311,7 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 - tool timing is emitted on `agent.tool_call` / `agent.tool_result`
 - intermediate assistant text segments persist with `segment_kind` / `llm_call_id` metadata and emit `agent.message` without finalizing the turn
 - canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
+- canonical assistant/tool rows receive cached cwd path context metadata when available
 
 ### `thread-title-service.ts`
 
@@ -371,6 +374,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
 - tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop
 - canonical persisted tool rows expose the same timing fields under `message.metadata`, while `message.content` remains the replay payload and intentionally does not gain timing-only fields
+- canonical persisted terminal tool rows may expose `path_context_before` / `path_context_after` under `message.metadata`; assistant rows may expose `path_context`
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
 - `message.client_id` is the same stable public identity already exposed on the top-level assistant/tool runtime and stream payloads
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives

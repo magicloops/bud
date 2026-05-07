@@ -99,7 +99,7 @@ Ownership-focused thread submodules:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
-| `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync), triggers agent |
+| `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync and cached cwd path context when available), triggers agent |
 | `POST` | `/api/threads/:thread_id/read` | Advance the viewer's read watermark to a specific owned transcript row |
 | `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
@@ -109,7 +109,7 @@ Ownership-focused thread submodules:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads/:thread_id/files/open` | Create a short-lived owned file session from a user-clicked relative path in the thread transcript |
+| `POST` | `/api/threads/:thread_id/files/open` | Create a short-lived owned file session from a user-clicked relative path in the thread transcript, copying trusted source-message path context when present |
 
 **Terminal Endpoints** (Thread-Scoped):
 
@@ -161,6 +161,7 @@ Ownership-focused thread submodules:
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
 - those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
 - embedded canonical tool rows now expose the same timing fields under `message.metadata`, while tool `message.content` remains the replay payload without timing-only fields
+- terminal tool rows may include `message.metadata.path_context_before` and `message.metadata.path_context_after`; assistant/user rows may include `message.metadata.path_context`
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `agent.message` may now arrive for an intermediate visible assistant text segment before later tool calls; the embedded `message.metadata.segment_kind` distinguishes `intermediate` from `final`
 - `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
@@ -414,7 +415,8 @@ Phase 4.4 file session and daemon-backed file edge routes.
 - file sessions report degraded state when no active carrier has `file_read` support
 - file transport payloads include selected-carrier health and skipped candidate reasons so operators can diagnose WebSocket/H2/QUIC fallback without route-specific branches
 - ready sessions support `HEAD`, full `GET`, and single-byte-range `GET` by sending `file_open` over the selected control side and streaming bytes from the selected data-plane carrier
-- thread-scoped file sessions include the active thread terminal session id on `file_open` when available, letting the daemon try tmux pane-cwd resolution before workspace-root fallback
+- thread-scoped file sessions include the active thread terminal session id on `file_open` when available, letting the daemon try tmux pane-cwd resolution before workspace-root fallback for unhinted opens
+- thread-scoped file sessions include a `resolution_hint` on `file_open` when the clicked source message has server-stamped path context, letting the daemon prefer message-time cwd over click-time cwd
 - file reads enforce owner checks before stream registration plus per-Bud concurrency, max bytes, chunk/credit, idle, and TTL limits
 - daemon re-checks workspace root/path, symlink, regular-file, max-byte, and content-identity policy before sending bytes
 

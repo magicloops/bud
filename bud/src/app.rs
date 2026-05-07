@@ -942,13 +942,19 @@ impl BudApp {
             }
             "file_open" => {
                 let frame: FileOpenFrame = serde_json::from_str(text)?;
-                let terminal_cwd = match frame.terminal_session_id.as_deref() {
-                    Some(session_id) => {
+                let has_resolution_hint = frame
+                    .resolution_hint
+                    .as_ref()
+                    .is_some_and(|hint| hint.kind == "host_cwd" && hint.host_cwd.is_some());
+                let terminal_cwd = match (has_resolution_hint, frame.terminal_session_id.as_deref())
+                {
+                    (true, _) => None,
+                    (false, Some(session_id)) => {
                         self.terminal_manager
                             .fresh_pane_cwd_for_session(session_id)
                             .await
                     }
-                    None => None,
+                    (false, None) => None,
                 };
                 self.file_manager
                     .handle_open(frame, sender.clone(), terminal_cwd);

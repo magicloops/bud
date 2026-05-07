@@ -22,6 +22,7 @@ const DEFAULT_INITIAL_CREDIT_BYTES: u64 = 1024 * 1024;
 const DEFAULT_MAX_CHUNK_BYTES: usize = 16 * 1024;
 const DEFAULT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CHUNK_BYTES_LIMIT: usize = 1024 * 1024;
+const RESOLVED_AGAINST_MESSAGE_CWD: &str = "message_cwd";
 const RESOLVED_AGAINST_TERMINAL_CWD: &str = "terminal_cwd";
 const RESOLVED_AGAINST_WORKSPACE: &str = "workspace";
 
@@ -262,8 +263,20 @@ impl FileManager {
         let relative = validate_relative_path(&frame.relative_path)
             .map_err(|err| FileOpenRejection::new("UNSAFE_PATH", err.to_string(), false))?;
 
+        let has_message_cwd_hint = frame
+            .resolution_hint
+            .as_ref()
+            .is_some_and(|hint| hint.kind == "host_cwd");
+
         let mut candidates = Vec::with_capacity(2);
-        if let Some(candidate) = self.terminal_cwd_candidate(terminal_cwd, &relative).await {
+        if has_message_cwd_hint {
+            if let Some(candidate) = self.message_cwd_candidate(frame, &relative).await {
+                candidates.push(candidate);
+            }
+        } else if let Some(candidate) = self
+            .cwd_candidate(terminal_cwd, &relative, RESOLVED_AGAINST_TERMINAL_CWD)
+            .await
+        {
             candidates.push(candidate);
         }
         candidates.push(FileCandidate {
@@ -286,12 +299,27 @@ impl FileManager {
             .unwrap_or_else(|| FileOpenRejection::new("FILE_NOT_FOUND", "file not found", false)))
     }
 
-    async fn terminal_cwd_candidate(
+    async fn message_cwd_candidate(
         &self,
-        terminal_cwd: Option<&str>,
+        frame: &FileOpenFrame,
         relative: &Path,
     ) -> Option<FileCandidate> {
-        let cwd = terminal_cwd?;
+        let hint = frame.resolution_hint.as_ref()?;
+        self.cwd_candidate(
+            hint.host_cwd.as_deref(),
+            relative,
+            RESOLVED_AGAINST_MESSAGE_CWD,
+        )
+        .await
+    }
+
+    async fn cwd_candidate(
+        &self,
+        cwd: Option<&str>,
+        relative: &Path,
+        resolved_against: &'static str,
+    ) -> Option<FileCandidate> {
+        let cwd = cwd?;
         let cwd_path = PathBuf::from(cwd);
         if !cwd_path.is_absolute() {
             return None;
@@ -302,7 +330,7 @@ impl FileManager {
         }
         Some(FileCandidate {
             path: canonical_cwd.join(relative),
-            resolved_against: RESOLVED_AGAINST_TERMINAL_CWD,
+            resolved_against,
         })
     }
 
@@ -753,7 +781,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::protocol::Envelope;
+    use crate::protocol::{Envelope, FileOpenResolutionHint};
 
     use super::*;
 
@@ -773,6 +801,7 @@ mod tests {
             stream_type: FILE_READ_STREAM_TYPE.into(),
             root_key: WORKSPACE_ROOT_KEY.into(),
             relative_path: "src/lib.rs".into(),
+            resolution_hint: None,
             mode: "read".into(),
             range_start: None,
             range_end: None,
@@ -822,6 +851,72 @@ mod tests {
         assert_eq!(response.resolved_relative_path, "service/src/lib.rs");
         assert_eq!(response.body.as_slice(), b"cwd");
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn resolves_message_cwd_before_terminal_cwd_and_workspace_root() {
+        let workspace = temp_workspace("message-cwd-first");
+        let workspace_file = workspace.join("src/lib.rs");
+        let message_cwd_file = workspace.join("service/src/lib.rs");
+        let terminal_cwd_file = workspace.join("web/src/lib.rs");
+        fs::create_dir_all(workspace_file.parent().unwrap()).unwrap();
+        fs::create_dir_all(message_cwd_file.parent().unwrap()).unwrap();
+        fs::create_dir_all(terminal_cwd_file.parent().unwrap()).unwrap();
+        fs::write(&workspace_file, b"workspace").unwrap();
+        fs::write(&message_cwd_file, b"message").unwrap();
+        fs::write(&terminal_cwd_file, b"terminal").unwrap();
+
+        let manager = FileManager::new(workspace.clone());
+        let mut hinted_frame = frame();
+        hinted_frame.resolution_hint = Some(FileOpenResolutionHint {
+            kind: "host_cwd".into(),
+            host_cwd: Some(workspace.join("service").to_string_lossy().into_owned()),
+            source_message_id: Some("22222222-2222-4222-8222-222222222222".into()),
+        });
+        let terminal_cwd = workspace.join("web").to_string_lossy().into_owned();
+        let response = manager
+            .read_file_response(&hinted_frame, Some(&terminal_cwd))
+            .await
+            .expect("read response");
+
+        assert_eq!(response.resolved_against, RESOLVED_AGAINST_MESSAGE_CWD);
+        assert_eq!(response.resolved_relative_path, "service/src/lib.rs");
+        assert_eq!(response.body.as_slice(), b"message");
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn message_cwd_hint_skips_terminal_cwd_when_hint_is_outside_workspace() {
+        let workspace = temp_workspace("message-cwd-outside");
+        let outside = temp_workspace("message-cwd-outside-root");
+        let workspace_file = workspace.join("src/lib.rs");
+        let terminal_cwd_file = workspace.join("service/src/lib.rs");
+        let outside_file = outside.join("src/lib.rs");
+        fs::create_dir_all(workspace_file.parent().unwrap()).unwrap();
+        fs::create_dir_all(terminal_cwd_file.parent().unwrap()).unwrap();
+        fs::create_dir_all(outside_file.parent().unwrap()).unwrap();
+        fs::write(&workspace_file, b"workspace").unwrap();
+        fs::write(&terminal_cwd_file, b"terminal").unwrap();
+        fs::write(&outside_file, b"outside").unwrap();
+
+        let manager = FileManager::new(workspace.clone());
+        let mut hinted_frame = frame();
+        hinted_frame.resolution_hint = Some(FileOpenResolutionHint {
+            kind: "host_cwd".into(),
+            host_cwd: Some(outside.to_string_lossy().into_owned()),
+            source_message_id: None,
+        });
+        let terminal_cwd = workspace.join("service").to_string_lossy().into_owned();
+        let response = manager
+            .read_file_response(&hinted_frame, Some(&terminal_cwd))
+            .await
+            .expect("read response");
+
+        assert_eq!(response.resolved_against, RESOLVED_AGAINST_WORKSPACE);
+        assert_eq!(response.resolved_relative_path, "src/lib.rs");
+        assert_eq!(response.body.as_slice(), b"workspace");
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[tokio::test]

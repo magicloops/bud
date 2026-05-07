@@ -80,13 +80,20 @@ const extensionLanguageMap = new Map<string, string>([
   ['.yml', 'yaml'],
 ])
 
-export function fileViewerKey(relativePath: string): string {
-  return `workspace:${relativePath}`
+export function fileViewerKey(
+  relativePath: string,
+  source?: OpenFileCandidate['source'],
+): string {
+  const baseKey = `workspace:${relativePath}`
+  if (source?.kind === 'assistant_message' && source.message_id) {
+    return `${baseKey}:source_message:${source.message_id}`
+  }
+  return baseKey
 }
 
 export function createPendingFileEntry(candidate: OpenFileCandidate): FileViewerEntry {
   return {
-    key: fileViewerKey(candidate.relative_path),
+    key: fileViewerKey(candidate.relative_path, candidate.source),
     raw_path: candidate.raw_path,
     relative_path: candidate.relative_path,
     ...(candidate.line ? { line: candidate.line } : {}),

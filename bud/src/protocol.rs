@@ -205,6 +205,14 @@ pub struct ProxyOpenFrame {
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
+pub struct FileOpenResolutionHint {
+    pub kind: String,
+    pub host_cwd: Option<String>,
+    pub source_message_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct FileOpenFrame {
     #[serde(flatten)]
     pub envelope: Envelope,
@@ -215,6 +223,7 @@ pub struct FileOpenFrame {
     pub stream_type: String,
     pub root_key: String,
     pub relative_path: String,
+    pub resolution_hint: Option<FileOpenResolutionHint>,
     pub mode: String,
     pub range_start: Option<u64>,
     pub range_end: Option<u64>,

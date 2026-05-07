@@ -260,8 +260,10 @@ export async function registerThreadMessageRoutes(
       }
     }
 
+    const pathContext = await agentService.getPathContextForThread(thread.threadId);
     const metadata: Record<string, unknown> = {
       ...(body.cwd ? { preferred_cwd: body.cwd } : {}),
+      ...(pathContext ? { path_context: pathContext } : {}),
       ...toModelSelectionMetadata(selection),
     };
     let messageId: string;

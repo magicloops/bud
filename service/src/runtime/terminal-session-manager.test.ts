@@ -102,3 +102,35 @@ test("observed shell readiness clears pending repl context and updates latest re
     quiet_for_ms: 1500,
   });
 });
+
+test("getPathContextForSession returns cached cwd metadata without daemon access", async () => {
+  const manager = createManager();
+  Reflect.set(manager, "sessionStore", {
+    async getSession(sessionId: string) {
+      assert.equal(sessionId, "sess_test");
+      return {
+        sessionId,
+        threadId: "thread-1",
+        budId: "bud-1",
+        instanceId: null,
+        state: "ready",
+        cols: 200,
+        rows: 50,
+        cwd: "/Users/adam/bud/service",
+        createdAt: new Date("2026-05-01T19:00:00.000Z"),
+        startedAt: null,
+        lastActivityAt: new Date("2026-05-01T20:00:00.000Z"),
+        outputLogBytes: 0,
+      };
+    },
+  });
+
+  assert.deepEqual(await manager.getPathContextForSession("sess_test"), {
+    schema: "terminal_cwd_v1",
+    source: "terminal_runtime_cache",
+    reported_by: "tmux_pane_current_path",
+    terminal_session_id: "sess_test",
+    host_cwd: "/Users/adam/bud/service",
+    captured_at: "2026-05-01T20:00:00.000Z",
+  });
+});

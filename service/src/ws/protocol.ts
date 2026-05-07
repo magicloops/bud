@@ -126,7 +126,8 @@ export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   changed: z.boolean().nullable().optional(),
   truncated: z.boolean().nullable().optional(),
   readiness: ReadinessSchema,
-  error: z.string().nullable()
+  error: z.string().nullable(),
+  host_cwd: z.string().optional()
 });
 
 export const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
@@ -143,7 +144,8 @@ export const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
     .nullable()
     .optional(),
   readiness: ReadinessSchema,
-  error: z.string().nullable()
+  error: z.string().nullable(),
+  host_cwd: z.string().optional()
 });
 
 export const ErrorFrameSchema = EnvelopeSchema.extend({

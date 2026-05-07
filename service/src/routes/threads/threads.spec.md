@@ -33,7 +33,7 @@ Focused route-handler coverage for thread-list serialization.
 
 ### `messages.ts`
 
-Thread message history, read-watermark, and create/send routes, including pre-flight context sync and first-message title kickoff.
+Thread message history, read-watermark, and create/send routes, including pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available.
 
 ### `messages.test.ts`
 
@@ -57,6 +57,7 @@ Thread-scoped file viewer route for `POST /api/threads/:threadId/files/open`.
 - accepts only first-pass workspace-relative path candidates
 - rejects absolute, home, parent traversal, Windows, URL, NUL, empty, and directory path forms
 - parses optional line/column metadata and carries it into display metadata and viewer hints
+- loads the clicked source message by authorized thread/user and copies trusted `metadata.path_context` into file-session display metadata
 - creates a viewer-owned `file_session` with `root_key: "workspace"`, `stat/read/range` permissions, the default short TTL, and a 1 MiB preview byte cap
 - stores click source metadata such as assistant `message_id` / `client_id` when supplied by the UI
 

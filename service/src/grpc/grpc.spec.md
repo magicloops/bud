@@ -19,7 +19,7 @@ Opt-in grpc-js server for daemon control streams.
 - authenticates daemon `hello` / `hello_proof` traffic with the device-secret challenge flow and the dev-only `DEV_BUD_TOKEN_BYPASS` token path
 - registers durable `device_session` and `transport_session` rows with `transport_kind = "h2_grpc"`
 - registers durable/session trackers before sending `hello_ack`, so post-auth frames cannot arrive before the service can route them
-- handles heartbeat, reconnect reconciliation, and terminal result/status/output frames
+- handles heartbeat, reconnect reconciliation, and terminal result/status/output frames, including optional terminal result `host_cwd` persistence
 - handles daemon `proxy_open_result` and `file_open_result` frames and delivers them to the proxy/file runtime bridges
 - records Bud online/offline transitions through the same terminal manager side effects used by WebSocket
 - starts process-local gateway drain and ends active gRPC streams during service shutdown, with a short force-shutdown fallback

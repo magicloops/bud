@@ -46,6 +46,7 @@ Top-level daemon orchestrator.
 - routing inbound server frames to the run or terminal subsystems
 - routing Phase 4.2 `proxy_open` requests to the localhost proxy adapter
 - routing Phase 4.4 `file_open` requests to the workspace file adapter
+- skips the fresh tmux pane cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
 - routing WebSocket-received `stream_credit`, `stream_reset`, and `stream_close` frames to the file/proxy managers
 - capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames
 
@@ -62,6 +63,7 @@ Bud <-> service frame definitions and protocol validation.
 
 - defines `Envelope`, handshake frames, `RunFrame`, and all `terminal_*` inbound frames
 - `TerminalSendFrame` now treats `key` as the canonical single-gesture non-text input field while still deserializing the old plural `keys` alias for rollout compatibility
+- `FileOpenFrame` accepts an optional `resolution_hint` so service-created file sessions can prefer message-time cwd without a click-time tmux query
 - keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
 - exposes `validate_inbound_envelope_proto(...)` so the app layer rejects mismatched inbound protocol versions before dispatch
 
@@ -70,6 +72,7 @@ Bud <-> service frame definitions and protocol validation.
 Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 
 - encodes active terminal/control frame bodies under typed protobuf oneof payload tags with direct protobuf fields
+- carries optional `host_cwd` fields on typed `terminal_send_result` and `terminal_observe_result` payloads
 - encodes core stream lifecycle frames under typed payload tags with direct protobuf fields so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
 - keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and pre-cutover fixture coverage
 - decodes protobuf envelopes back to JSON text before handing off to existing frame handlers
@@ -114,6 +117,7 @@ Daemon-side Phase 4.4 workspace file adapter.
 
 - validates `file_open` requests against local workspace/root/path policy
 - uses the thread terminal pane cwd as the first relative-path candidate when service provides terminal context
+- uses a server-provided message-time cwd resolution hint before terminal cwd, and skips terminal cwd entirely for hinted requests whose cwd is invalid or outside the workspace
 - rejects symlinks, non-regular files, root escapes, and over-limit reads
 - supports stat, full read, and single byte-range read modes
 - computes and checks file content identity
@@ -349,9 +353,11 @@ High-value local tests now live next to the extracted abstractions:
   - ctrl-key normalization
   - CRLF low-level input splitting
   - fake-backend `terminal_send` flow
+  - result payloads include daemon-observed pane cwd when available
   - settled send echo preservation, prompt readiness, weak-capture conservatism, and timeout delta behavior
 - `terminal/observe.rs`
   - fake-backend `terminal_observe` delta flow
+  - result payloads include daemon-observed pane cwd when available
   - settled observe weak-capture readiness conservatism
   - unsupported `terminal_observe(view:"delta", wait_for:"shell_ready")` validation
 - `terminal/readiness.rs`

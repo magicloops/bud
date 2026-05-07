@@ -88,6 +88,7 @@ export type ObserveResult = {
   truncated?: boolean;
   readiness: ReadinessAssessment;
   error?: string;
+  hostCwd?: string;
 };
 
 export type ObserveResponsePayload = {
@@ -100,6 +101,7 @@ export type ObserveResponsePayload = {
   truncated?: boolean | null;
   readiness: ReadinessAssessment;
   error: string | null;
+  hostCwd?: string;
 };
 
 export type SendInteraction = {
@@ -116,6 +118,7 @@ export type SendResult = {
   delta?: TerminalDelta | null;
   readiness: ReadinessAssessment;
   error?: string;
+  hostCwd?: string;
 };
 
 export type SendResultPayload = {
@@ -124,6 +127,7 @@ export type SendResultPayload = {
   delta?: TerminalDeltaMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
+  hostCwd?: string;
 };
 
 type PendingObserve = {
@@ -148,6 +152,7 @@ type TerminalRequestDispatcherDeps = {
   getLatestReadiness: (sessionId: string) => ReadinessAssessment | null;
   getLastOffset: (sessionId: string) => number;
   storeReadinessAssessment: (sessionId: string, assessment: ReadinessAssessment) => void;
+  storeHostCwd?: (sessionId: string, hostCwd: string) => Promise<void>;
   emitReadyEvent: (sessionId: string, assessment: ReadinessAssessment) => void;
   sendFrameToBud: (budId: string, payload: Record<string, unknown>) => boolean;
   summarizeContextForLog: (context: TerminalContext) => Record<string, unknown>;
@@ -475,12 +480,15 @@ export class TerminalRequestDispatcher {
     }
   }
 
-  handleObserveResult(sessionId: string, payload: ObserveResponsePayload): void {
+  async handleObserveResult(sessionId: string, payload: ObserveResponsePayload): Promise<void> {
     const pending = this.pendingObserves.get(payload.requestId);
     const observeState = this.recentObserveStates.get(payload.requestId) ?? pending?.state;
     const output = Buffer.from(payload.output, "base64").toString("utf-8");
     const outputSummary = this.deps.summarizeObservedOutput(output);
     const latencyMs = observeState ? Date.now() - observeState.startedAt : undefined;
+    if (payload.hostCwd) {
+      await this.storeHostCwd(sessionId, payload.hostCwd);
+    }
 
     if (!pending) {
       if (observeState?.timedOutAt) {
@@ -562,13 +570,17 @@ export class TerminalRequestDispatcher {
       changed: typeof payload.changed === "boolean" ? payload.changed : undefined,
       truncated: typeof payload.truncated === "boolean" ? payload.truncated : undefined,
       readiness: payload.readiness,
+      ...(payload.hostCwd ? { hostCwd: payload.hostCwd } : {}),
     });
   }
 
-  handleSendResult(sessionId: string, payload: SendResultPayload): void {
+  async handleSendResult(sessionId: string, payload: SendResultPayload): Promise<void> {
     const pending = this.pendingSends.get(payload.requestId);
     const sendState = this.recentSendStates.get(payload.requestId) ?? pending?.state;
     const latencyMs = sendState ? Date.now() - sendState.startedAt : undefined;
+    if (payload.hostCwd) {
+      await this.storeHostCwd(sessionId, payload.hostCwd);
+    }
     if (!pending) {
       if (sendState?.timedOutAt) {
         this.deps.logger.warn(
@@ -656,7 +668,8 @@ export class TerminalRequestDispatcher {
             truncated: payload.delta.truncated,
           }
         : null,
-      readiness: payload.readiness
+      readiness: payload.readiness,
+      ...(payload.hostCwd ? { hostCwd: payload.hostCwd } : {}),
     });
   }
 
@@ -738,6 +751,21 @@ export class TerminalRequestDispatcher {
       },
       "Rejected pending terminal observe request"
     );
+  }
+
+  private async storeHostCwd(sessionId: string, hostCwd: string): Promise<void> {
+    if (!hostCwd.trim() || !this.deps.storeHostCwd) {
+      return;
+    }
+
+    try {
+      await this.deps.storeHostCwd(sessionId, hostCwd);
+    } catch (err) {
+      this.deps.logger.warn(
+        { err, sessionId, component: "terminal_request_dispatcher" },
+        "Failed to persist terminal cwd from result",
+      );
+    }
   }
 
   private logPendingSendRejected(state: SendDebugState, errorMessage: string): void {

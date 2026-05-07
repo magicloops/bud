@@ -4,7 +4,7 @@ Implementation planning documents for the first product pass of user-initiated h
 
 ## Purpose
 
-This folder turns [../../design/file-serving-user-initiated-viewer.md](../../design/file-serving-user-initiated-viewer.md) into a phased implementation spec.
+This folder turns [../../design/file-serving-user-initiated-viewer.md](../../design/file-serving-user-initiated-viewer.md) into a phased implementation spec and now tracks follow-on work for preserving message-time cwd context in file-viewer links.
 
 The plan assumes:
 
@@ -16,6 +16,7 @@ The plan assumes:
 - the web client is the reference implementation, while the backend route is mobile-ready from day one
 - the first viewer display cap is 1 MiB
 - binary, image, PDF, directory, and absolute-path support remain follow-on viewer/resolver work
+- historic file-link stability should use daemon-reported message-time `host_cwd` metadata before click-time tmux cwd when source-message context is available
 
 ## Files
 
@@ -76,6 +77,28 @@ Hardening and handoff phase covering:
 - recursive Markdown file references if straightforward
 - follow-up resolver and viewer expansions
 
+### `phase-5-historic-cwd-preservation.md`
+
+Follow-on implementation phase covering:
+
+- daemon `host_cwd` emission on terminal send/observe results
+- service-side latest cwd persistence through `terminal_session.cwd`
+- transcript `path_context` stamping for user, assistant, and tool messages
+- source-message path-context lookup in the thread file-open route
+- `file_open.resolution_hint` propagation to the daemon
+- message-time cwd resolution before workspace-root fallback
+- mixed-version rollout, tests, and spec updates
+
+### `phase-6-source-aware-web-reuse.md`
+
+Minimal web hardening phase covering:
+
+- source-message-aware file-viewer entry keys
+- preserving valid-session reuse for repeated clicks on the same source message
+- avoiding cross-project reuse for identical relative paths from different
+  assistant messages
+- focused web flow tests and spec/checklist updates
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the file viewer rollout.
@@ -87,6 +110,7 @@ Automated and manual validation checklist for the backend route, web parser/acti
 ## Dependencies
 
 - [../../design/file-serving-user-initiated-viewer.md](../../design/file-serving-user-initiated-viewer.md) - product design and fixed decisions for user-initiated file viewing
+- [../../design/file-viewer-historic-cwd-preservation.md](../../design/file-viewer-historic-cwd-preservation.md) - design for preserving message-time cwd context on transcript file links
 - [../../design/network-upgrade-file-serving-productization.md](../../design/network-upgrade-file-serving-productization.md) - original file-serving productization design context
 - [../../design/network-upgrade-web-serving-productization.md](../../design/network-upgrade-web-serving-productization.md) - adjacent localhost web-serving productization context
 - [../../design/network-upgrade-quic-transport.md](../../design/network-upgrade-quic-transport.md) - deferred optional transport context
@@ -94,6 +118,10 @@ Automated and manual validation checklist for the backend route, web parser/acti
 - [../swappable-transport/validation-checklist.md](../swappable-transport/validation-checklist.md) - existing file/proxy foundation validation notes
 - [../../docs/proto.md](../../docs/proto.md) - REST/SSE and daemon-service protocol documentation
 - [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md) - mobile client handoff for the file-viewer product contract
+- [../../bud/src/terminal/terminal.spec.md](../../bud/src/terminal/terminal.spec.md) - daemon terminal cwd reporting used by historic file-link context
+- [../../bud/src/files/files.spec.md](../../bud/src/files/files.spec.md) - daemon file-serving resolver behavior
+- [../../service/src/runtime/runtime.spec.md](../../service/src/runtime/runtime.spec.md) - terminal runtime cwd cache and request dispatch contracts
+- [../../service/src/agent/agent.spec.md](../../service/src/agent/agent.spec.md) - transcript persistence and tool-result metadata contracts
 - [../../service/src/files/files.spec.md](../../service/src/files/files.spec.md) - service file-session foundation spec
 - [../../service/src/routes/routes.spec.md](../../service/src/routes/routes.spec.md) - service route-family spec
 - [../../web/src/src.spec.md](../../web/src/src.spec.md) - web source overview spec

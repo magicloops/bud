@@ -10,6 +10,20 @@ test("file open request and frame include terminal context when available", () =
   const session = createFileSessionRow({
     threadId: "11111111-1111-4111-8111-111111111111",
     contentIdentity: { size: 100, modified_ms: 1777132800000 },
+    displayMetadata: {
+      source: {
+        kind: "assistant_message",
+        message_id: "22222222-2222-4222-8222-222222222222",
+      },
+      path_context: {
+        schema: "terminal_cwd_v1",
+        source: "terminal_runtime_cache",
+        reported_by: "tmux_pane_current_path",
+        terminal_session_id: "bud-bud-1-thread-11111111-1111-4111-8111-111111111111",
+        host_cwd: "/Users/adam/bud/service",
+        captured_at: "2026-05-05T19:30:00.000Z",
+      },
+    },
   });
 
   assert.deepEqual(
@@ -24,6 +38,11 @@ test("file open request and frame include terminal context when available", () =
       root_key: "workspace",
       relative_path: "service/src/file.ts",
       terminal_session_id: "bud-bud-1-thread-11111111-1111-4111-8111-111111111111",
+      resolution_hint: {
+        kind: "host_cwd",
+        host_cwd: "/Users/adam/bud/service",
+        source_message_id: "22222222-2222-4222-8222-222222222222",
+      },
       mode: "range",
       range_start: 10,
       range_end: 20,
@@ -56,6 +75,11 @@ test("file open request and frame include terminal context when available", () =
       stream_type: "file_read",
       root_key: "workspace",
       relative_path: "service/src/file.ts",
+      resolution_hint: {
+        kind: "host_cwd",
+        host_cwd: "/Users/adam/bud/service",
+        source_message_id: "22222222-2222-4222-8222-222222222222",
+      },
       mode: "range",
       range_start: 10,
       range_end: 20,
@@ -104,6 +128,7 @@ test("file open request and frame omit terminal context when unavailable", () =>
 function createFileSessionRow(overrides: {
   threadId: string | null;
   contentIdentity: Record<string, unknown> | null;
+  displayMetadata?: Record<string, unknown>;
 }): FileSessionRow {
   return {
     fileSessionId: "fs_test",
@@ -117,7 +142,7 @@ function createFileSessionRow(overrides: {
     maxBytes: 1024 * 1024,
     state: "ready",
     contentIdentity: overrides.contentIdentity,
-    displayMetadata: {},
+    displayMetadata: overrides.displayMetadata ?? {},
     auditCorrelationId: "fc_test",
     expiresAt: new Date("2026-05-05T20:00:00.000Z"),
     revokedAt: null,

@@ -134,6 +134,32 @@ test("thread file-open route creates a viewer-scoped file session", async (t) =>
   t.after(() => mock.restoreAll());
   mock.method(auth.api, "getSession", async () => SESSION as never);
   mock.method(db.query.threadTable, "findFirst", async () => THREAD as never);
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            limit() {
+              return Promise.resolve([
+                {
+                  metadata: {
+                    path_context: {
+                      schema: "terminal_cwd_v1",
+                      source: "terminal_runtime_cache",
+                      reported_by: "tmux_pane_current_path",
+                      terminal_session_id: "sess_test",
+                      host_cwd: "/Users/adam/bud/service",
+                      captured_at: "2026-05-01T20:00:00.000Z",
+                    },
+                  },
+                },
+              ]);
+            },
+          };
+        },
+      };
+    },
+  }) as never);
 
   let insertedSession: Record<string, unknown> | null = null;
   mock.method(db, "transaction", (async (callback: (tx: unknown) => Promise<unknown>) => {
@@ -196,6 +222,14 @@ test("thread file-open route creates a viewer-scoped file session", async (t) =>
   assert.equal(capturedSession.relativePath, "service/src/files/file-session.ts");
   assert.equal(capturedSession.maxBytes, 1024 * 1024);
   assert.deepEqual(capturedSession.permissions, ["stat", "read", "range"]);
+  assert.deepEqual((capturedSession.displayMetadata as Record<string, unknown>).path_context, {
+    schema: "terminal_cwd_v1",
+    source: "terminal_runtime_cache",
+    reported_by: "tmux_pane_current_path",
+    terminal_session_id: "sess_test",
+    host_cwd: "/Users/adam/bud/service",
+    captured_at: "2026-05-01T20:00:00.000Z",
+  });
 
   const payload = response.payload as {
     file_session: {
@@ -203,7 +237,11 @@ test("thread file-open route creates a viewer-scoped file session", async (t) =>
       bud_id: string;
       max_bytes: number;
       path: { raw_path: string; relative_path: string };
-      display_metadata: { line: number; column: number };
+      display_metadata: {
+        line: number;
+        column: number;
+        path_context: Record<string, unknown>;
+      };
     };
     viewer: { suggested_kind: string; language: string; line: number; column: number };
   };
@@ -214,6 +252,7 @@ test("thread file-open route creates a viewer-scoped file session", async (t) =>
   assert.equal(payload.file_session.path.relative_path, "service/src/files/file-session.ts");
   assert.equal(payload.file_session.display_metadata.line, 42);
   assert.equal(payload.file_session.display_metadata.column, 7);
+  assert.equal(payload.file_session.display_metadata.path_context.host_cwd, "/Users/adam/bud/service");
   assert.equal(payload.viewer.suggested_kind, "code");
   assert.equal(payload.viewer.language, "typescript");
   assert.equal(payload.viewer.line, 42);

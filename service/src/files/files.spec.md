@@ -30,7 +30,8 @@ Browser-facing file edge implementation.
 - authorizes an owned file session before opening daemon work
 - supports `HEAD`, full `GET`, and single `Range` `GET`
 - creates durable `bud_operation` and `bud_stream` rows for each file request
-- attaches the active thread terminal session id, when one exists, so the daemon can try tmux pane-cwd resolution before workspace-root fallback
+- attaches the active thread terminal session id, when one exists, so unhinted daemon requests can try tmux pane-cwd resolution before workspace-root fallback
+- sends a `resolution_hint.kind = "host_cwd"` object when the file session display metadata carries trusted message-time path context
 - enforces per-Bud file stream concurrency, per-stream idle/TTL limits, max chunk/credit windows, and the file-session byte ceiling
 - sends `file_open` metadata over the selected carrier's control side
 - streams daemon file chunks from the selected data-plane carrier into the Fastify reply body
@@ -39,7 +40,7 @@ Browser-facing file edge implementation.
 - fails and resets durable state when carrier send throws or when an accepted daemon open-result omits the required HTTP status code
 - records stream-open and service/daemon denial audit events with selected carrier metadata
 - sanitizes response headers before sending them to the browser
-- exposes pure frame/request builders so tests can verify optional `terminal_session_id` propagation without standing up the data-plane runtime
+- exposes pure frame/request builders so tests can verify optional `terminal_session_id` and message-cwd `resolution_hint` propagation without standing up the data-plane runtime
 
 ### `file-runtime.ts`
 
@@ -67,6 +68,7 @@ Focused unit coverage for file-edge request/frame assembly.
 
 **Coverage**:
 - includes `terminal_session_id` in durable operation metadata and daemon `file_open` frames when terminal context is available
+- includes `resolution_hint` in durable operation metadata and daemon `file_open` frames when server-side path context exists on the file session
 - omits terminal context and expected content identity when unavailable
 
 ## Dependencies

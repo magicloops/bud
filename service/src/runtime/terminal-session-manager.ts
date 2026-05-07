@@ -56,6 +56,15 @@ type TerminalReadyPayload = {
   assessment: ReadinessAssessment;
 };
 
+export type TerminalPathContext = {
+  schema: "terminal_cwd_v1";
+  source: "terminal_runtime_cache";
+  reported_by: "tmux_pane_current_path";
+  terminal_session_id: string;
+  host_cwd: string;
+  captured_at: string;
+};
+
 export type { SessionState, TerminalSession } from "./terminal/session-types.js";
 export type {
   ObserveOptions,
@@ -94,6 +103,7 @@ export class TerminalSessionManager {
       storeReadinessAssessment: (sessionId, assessment) => {
         this.runtimeState.storeReadinessAssessment(sessionId, assessment);
       },
+      storeHostCwd: (sessionId, hostCwd) => this.sessionStore.updateCwd(sessionId, hostCwd),
       emitReadyEvent: (sessionId, assessment) => {
         this.events.emit(sessionId, {
           event: "terminal.ready",
@@ -135,6 +145,24 @@ export class TerminalSessionManager {
 
   async getSession(sessionId: string): Promise<TerminalSession | null> {
     return this.sessionStore.getSession(sessionId);
+  }
+
+  async getPathContextForSession(sessionId: string): Promise<TerminalPathContext | null> {
+    const session = await this.sessionStore.getSession(sessionId);
+    if (!session?.cwd) {
+      return null;
+    }
+
+    return buildTerminalPathContext(session);
+  }
+
+  async getPathContextForThread(threadId: string): Promise<TerminalPathContext | null> {
+    const session = await this.sessionStore.getSessionForThread(threadId);
+    if (!session?.cwd) {
+      return null;
+    }
+
+    return buildTerminalPathContext(session);
   }
 
   async ensureSession(sessionId: string): Promise<{ ok: boolean; resumed: boolean; created?: boolean; error?: string }> {
@@ -320,12 +348,12 @@ export class TerminalSessionManager {
     });
   }
 
-  handleObserveResult(sessionId: string, payload: ObserveResponsePayload): void {
-    this.requestDispatcher.handleObserveResult(sessionId, payload);
+  async handleObserveResult(sessionId: string, payload: ObserveResponsePayload): Promise<void> {
+    await this.requestDispatcher.handleObserveResult(sessionId, payload);
   }
 
-  handleSendResult(sessionId: string, payload: SendResultPayload): void {
-    this.requestDispatcher.handleSendResult(sessionId, payload);
+  async handleSendResult(sessionId: string, payload: SendResultPayload): Promise<void> {
+    await this.requestDispatcher.handleSendResult(sessionId, payload);
   }
 
   getSessionContext(sessionId: string): ReturnType<TerminalRuntimeState["getSessionContext"]> {
@@ -678,4 +706,15 @@ export class TerminalSessionManager {
   private debug(message: string, meta?: Record<string, unknown>) {
     this.logger.info({ ...meta, component: "terminal_session_manager" }, message);
   }
+}
+
+function buildTerminalPathContext(session: TerminalSession): TerminalPathContext {
+  return {
+    schema: "terminal_cwd_v1",
+    source: "terminal_runtime_cache",
+    reported_by: "tmux_pane_current_path",
+    terminal_session_id: session.sessionId,
+    host_cwd: session.cwd ?? "",
+    captured_at: (session.lastActivityAt ?? session.startedAt ?? session.createdAt).toISOString(),
+  };
 }

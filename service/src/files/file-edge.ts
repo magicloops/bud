@@ -48,6 +48,12 @@ type FileRange =
 
 type AcceptedFileRange = Extract<FileRange, { ok: true }>;
 
+type FileOpenResolutionHint = {
+  kind: "host_cwd";
+  host_cwd: string;
+  source_message_id?: string;
+};
+
 type FileOpenRequestArgs = {
   session: FileSessionRow;
   terminalSessionId: string | null;
@@ -61,6 +67,7 @@ export function buildFileOpenOperationRequest(args: FileOpenRequestArgs): Record
     root_key: args.session.rootKey,
     relative_path: args.session.relativePath,
     ...terminalSessionField(args.terminalSessionId),
+    ...resolutionHintField(args.session),
     mode: args.mode,
     ...fileRangeFields(args.range),
   };
@@ -87,6 +94,7 @@ export function buildFileOpenControlFrame(args: FileOpenRequestArgs & {
     stream_type: FILE_READ_STREAM_TYPE,
     root_key: args.session.rootKey,
     relative_path: args.session.relativePath,
+    ...resolutionHintField(args.session),
     mode: args.mode,
     ...fileRangeFields(args.range),
     ...(args.session.contentIdentity ? { expected_content_identity: args.session.contentIdentity } : {}),
@@ -783,6 +791,49 @@ function parseSingleRange(value: unknown): FileRange {
 
 function terminalSessionField(terminalSessionId: string | null): Record<string, string> {
   return terminalSessionId ? { terminal_session_id: terminalSessionId } : {};
+}
+
+function resolutionHintField(session: FileSessionRow): Record<string, FileOpenResolutionHint> {
+  const hint = resolutionHintForSession(session);
+  return hint ? { resolution_hint: hint } : {};
+}
+
+function resolutionHintForSession(session: FileSessionRow): FileOpenResolutionHint | null {
+  const metadata = session.displayMetadata;
+  if (!isRecord(metadata)) {
+    return null;
+  }
+  const pathContext = metadata.path_context;
+  if (!isRecord(pathContext)) {
+    return null;
+  }
+  if (
+    pathContext.schema !== "terminal_cwd_v1" ||
+    pathContext.source !== "terminal_runtime_cache" ||
+    pathContext.reported_by !== "tmux_pane_current_path"
+  ) {
+    return null;
+  }
+  const hostCwd = typeof pathContext.host_cwd === "string" ? pathContext.host_cwd.trim() : "";
+  if (!hostCwd) {
+    return null;
+  }
+
+  const source = isRecord(metadata.source) ? metadata.source : null;
+  const sourceMessageId =
+    typeof source?.message_id === "string" && source.message_id.trim()
+      ? source.message_id
+      : undefined;
+
+  return {
+    kind: "host_cwd",
+    host_cwd: hostCwd,
+    ...(sourceMessageId ? { source_message_id: sourceMessageId } : {}),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function fileRangeFields(range: AcceptedFileRange): Record<string, number> {

@@ -49,11 +49,13 @@ export type TerminalWaitFor =
 | `TerminalStatusMessage` | ← Bud | Session state report |
 | `TerminalOutputMessage` | ← Bud | Output chunk with byte offset |
 | `TerminalReadyMessage` | ← Bud | Readiness assessment |
-| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Primary send-first terminal input with settled-by-default output quiescence and additive delta evidence |
-| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit delta/screen/history observation |
+| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Primary send-first terminal input with settled-by-default output quiescence, additive delta evidence, and optional daemon-reported cwd |
+| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit delta/screen/history observation with optional daemon-reported cwd |
 | `TerminalDelta` / `TerminalDeltaMessage` | Internal / Wire | Minimal additive delta payload for send/observe |
 
 `TerminalStatusMessage.info` now carries backend-neutral runtime facts such as `pid`, `cwd`, `cols`, `rows`, and `output_log_bytes`; tmux session identity is no longer part of the normal service/browser contract.
+
+`TerminalSendResultMessage.host_cwd` and `TerminalObserveResultMessage.host_cwd` are optional result-time cwd reports from the daemon; the runtime caches them on `terminal_session.cwd` for message-time file path resolution.
 
 **Readiness Types**:
 
@@ -102,6 +104,7 @@ export interface TerminalSendResultMessage extends TerminalEnvelope {
   delta?: TerminalDeltaMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
+  host_cwd?: string;
 }
 
 export interface TerminalObserveMessage extends TerminalEnvelope {

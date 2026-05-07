@@ -419,7 +419,20 @@ where
                 .await;
         }
 
-        let payload = json!({
+        let host_cwd = match self.backend.pane_cwd(&handle.session_name).await {
+            Ok(cwd) => Some(cwd),
+            Err(err) => {
+                warn!(
+                    request_id = request_id,
+                    session_id = session_id,
+                    error = %err,
+                    "terminal_send pane cwd query failed"
+                );
+                None
+            }
+        };
+
+        let mut payload = json!({
             "proto": TERMINAL_PROTO_VERSION,
             "type": "terminal_send_result",
             "id": new_message_id(),
@@ -435,6 +448,11 @@ where
             "readiness": readiness,
             "error": Value::Null,
         });
+        if let Some(cwd) = host_cwd {
+            if let Some(object) = payload.as_object_mut() {
+                object.insert("host_cwd".to_string(), Value::String(cwd));
+            }
+        }
         send_transport_frame(&sender, payload)?;
 
         info!(
@@ -793,6 +811,10 @@ mod tests {
         assert_eq!(
             payload.get("submitted").and_then(Value::as_bool),
             Some(true)
+        );
+        assert_eq!(
+            payload.get("host_cwd").and_then(Value::as_str),
+            Some("/tmp")
         );
         let delta = payload
             .get("delta")

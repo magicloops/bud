@@ -83,6 +83,7 @@ test("round-trips terminal result frames with typed protobuf fields", () => {
       trigger: "prompt",
     },
     error: null,
+    host_cwd: "/Users/adam/bud",
   };
 
   const bytes = encodeLegacyJsonFrame(frame);

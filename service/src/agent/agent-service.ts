@@ -5,7 +5,11 @@ import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
 import { threadTable } from "../db/schema.js";
-import type { TerminalSession, TerminalSessionManager } from "../runtime/terminal-session-manager.js";
+import type {
+  TerminalPathContext,
+  TerminalSession,
+  TerminalSessionManager,
+} from "../runtime/terminal-session-manager.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import type {
@@ -124,6 +128,13 @@ export class AgentService {
     return this.cancellations.has(threadId);
   }
 
+  async getPathContextForThread(threadId: string): Promise<TerminalPathContext | null> {
+    const manager = this.terminalSessionManager as {
+      getPathContextForThread?: (threadId: string) => Promise<TerminalPathContext | null>;
+    };
+    return manager.getPathContextForThread?.(threadId) ?? null;
+  }
+
   private async runAgentFlow(args: {
     threadId: string;
     turnId: string;
@@ -194,6 +205,7 @@ export class AgentService {
 
         if (toolCalls.length > 0 && visibleText.trim().length > 0) {
           const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
+          const pathContext = await this.getPathContextForSession(sessionId);
           const assistantMessage = await this.transcriptWriter.recordAssistantTextSegment({
             threadId,
             turnId,
@@ -204,6 +216,7 @@ export class AgentService {
             llmCallId,
             modelSelection,
             ownerUserId,
+            pathContext,
           });
           assistantMessageId = assistantMessage.message_id;
         }
@@ -251,9 +264,11 @@ export class AgentService {
               callId: toolCall.callId,
             });
 
+            const pathContextBefore = await this.getPathContextForSession(sessionId);
             const execution = await this.toolExecutor.execute(threadId, toolCall);
             const finishedAt = new Date();
             const timing = buildToolExecutionTiming(startedAt, finishedAt);
+            const pathContextAfter = await this.getPathContextForSession(sessionId);
             const { payload, message } = await this.transcriptWriter.recordToolResult({
               threadId,
               turnId,
@@ -263,6 +278,8 @@ export class AgentService {
               modelSelection,
               ownerUserId,
               llmCallId,
+              pathContextBefore,
+              pathContextAfter,
             });
 
             await recordLlmToolResultItem({
@@ -300,6 +317,7 @@ export class AgentService {
 
         const directive = this.modelRunner.parseFinalResponse(response);
         const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
+        const pathContext = await this.getPathContextForSession(sessionId);
         await this.transcriptWriter.recordFinalAssistant({
           threadId,
           turnId,
@@ -309,6 +327,7 @@ export class AgentService {
           modelSelection,
           ownerUserId,
           llmCallId,
+          pathContext,
         });
 
         this.runtime.finishTurn(threadId);
@@ -420,6 +439,13 @@ export class AgentService {
     }
 
     return session;
+  }
+
+  private async getPathContextForSession(sessionId: string): Promise<TerminalPathContext | null> {
+    const manager = this.terminalSessionManager as {
+      getPathContextForSession?: (sessionId: string) => Promise<TerminalPathContext | null>;
+    };
+    return manager.getPathContextForSession?.(sessionId) ?? null;
   }
 
   private debug(message: string, meta?: Record<string, unknown>): void {

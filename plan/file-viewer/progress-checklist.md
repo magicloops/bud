@@ -65,10 +65,41 @@
 - [x] Scope binary/image/PDF viewer follow-ups
 - [x] Update protocol/root docs and all affected specs
 
+## Phase 5: Historic CWD Preservation
+
+- [x] Add optional daemon `host_cwd` emission on terminal send results
+- [x] Add optional daemon `host_cwd` emission on terminal observe results
+- [x] Cache daemon-reported cwd in the service terminal runtime
+- [x] Stamp user and assistant messages with `metadata.path_context` when cached cwd exists
+- [x] Stamp terminal tool messages with `metadata.path_context_before` and `metadata.path_context_after`
+- [x] Load same-thread source-message path context in the thread file-open route
+- [x] Store trusted source-message path context in file-session display metadata
+- [x] Send daemon `file_open.resolution_hint` from server-side path context
+- [x] Prefer message-time cwd over click-time cwd for context-bearing daemon file opens
+- [x] Keep contextless/pre-rollout opens on terminal-cwd-first behavior
+- [x] Add focused daemon and service tests for cwd caching, metadata stamping, resolver hints, and hinted daemon resolution
+- [x] Validate old assistant-message links after changing project directories in one thread
+- [x] Update protocol, design, plan, handoff, and spec documentation
+
+## Merge Readiness
+
+- [x] Web file-viewer happy path validated against a real Bud flow
+- [x] Foreground TUI tmux `pane_current_path` behavior validated well enough for first pass
+- [x] Historic cwd project-switch flow validated on web
+- [x] Mobile handoff updated for message-time cwd behavior
+- [x] Protocol/spec docs updated for `host_cwd`, `path_context`, `resolution_hint`, and `message_cwd`
+- [x] Focused Rust daemon tests passed
+- [x] Focused service route/runtime/agent/file/proto tests passed
+- [x] Service production build passed
+- [x] Patch web viewer reuse keys so same relative paths from different `source.message_id` values cannot reuse the wrong existing file session
+- [x] Focused web file-viewer flow test passed after source-aware keying change
+- [x] Web production build passed after source-aware keying change
+- [ ] Stage/commit the branch, excluding unrelated untracked local scratch files
+
 ## Implementation Notes
 
 - Plain-text detection does not ship in the first pass; only Markdown links and inline-code candidates expose actions.
-- File viewer state is keyed by workspace-relative path and keeps a future tab-compatible `entries_by_key` shape.
+- File viewer state is keyed by workspace-relative path plus assistant `source.message_id` when available, and keeps a future tab-compatible `entries_by_key` shape. Contextless opens keep the original workspace-relative key.
 - Markdown files opened in the viewer render normally, but recursive file links inside previewed Markdown are deferred.
 - Mobile handoff is captured in [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md).
 - Web happy-path validation is complete; remaining unchecked Phase 4 items are negative policy/offline/large-file smokes rather than blockers for the validated web product flow.

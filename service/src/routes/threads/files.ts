@@ -1,5 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { db } from "../../db/client.js";
+import { messageTable } from "../../db/schema.js";
 import {
   DEFAULT_FILE_SESSION_TTL_SECONDS,
   DEFAULT_FILE_ROOT_KEY,
@@ -102,9 +105,15 @@ export async function registerThreadFileRoutes(server: FastifyInstance): Promise
       throw err;
     }
 
+    const pathContext = await loadSourceMessagePathContext({
+      threadId: thread.threadId,
+      viewerUserId: viewer.userId,
+      source: bodyResult.data.source,
+    });
     const displayMetadata = compactRecord({
       raw_path: parsedPath.rawPath,
       source: bodyResult.data.source,
+      path_context: pathContext,
       line: parsedPath.line,
       column: parsedPath.column,
       viewer_intent: bodyResult.data.viewer_intent,
@@ -139,6 +148,56 @@ function compactRecord(value: Record<string, unknown>): Record<string, unknown> 
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
   );
+}
+
+async function loadSourceMessagePathContext(args: {
+  threadId: string;
+  viewerUserId: string;
+  source: z.infer<typeof OpenThreadFileBodySchema>["source"] | undefined;
+}): Promise<Record<string, unknown> | undefined> {
+  const messageId = args.source?.message_id;
+  if (!messageId) {
+    return undefined;
+  }
+
+  const [message] = await db
+    .select({ metadata: messageTable.metadata })
+    .from(messageTable)
+    .where(
+      and(
+        eq(messageTable.threadId, args.threadId),
+        eq(messageTable.createdByUserId, args.viewerUserId),
+        eq(messageTable.messageId, messageId),
+      ),
+    )
+    .limit(1);
+
+  return extractTerminalPathContext(message?.metadata);
+}
+
+function extractTerminalPathContext(metadata: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(metadata)) {
+    return undefined;
+  }
+  const pathContext = metadata.path_context;
+  if (!isRecord(pathContext)) {
+    return undefined;
+  }
+  if (
+    pathContext.schema !== "terminal_cwd_v1" ||
+    pathContext.source !== "terminal_runtime_cache" ||
+    pathContext.reported_by !== "tmux_pane_current_path" ||
+    typeof pathContext.terminal_session_id !== "string" ||
+    typeof pathContext.host_cwd !== "string" ||
+    typeof pathContext.captured_at !== "string"
+  ) {
+    return undefined;
+  }
+  return pathContext;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildViewerHint(args: {

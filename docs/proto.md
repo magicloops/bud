@@ -315,6 +315,11 @@ File open request (Service → Bud on control):
   "stream_type": "file_read",
   "root_key": "workspace",
   "relative_path": "src/index.ts",
+  "resolution_hint": {
+    "kind": "host_cwd",
+    "host_cwd": "/Users/adam/bud/service",
+    "source_message_id": "22222222-2222-4222-8222-222222222222"
+  },
   "mode": "range",
   "range_start": 0,
   "range_end": 1023,
@@ -352,14 +357,16 @@ File open result (Bud → Service on control):
     "size": 4096,
     "modified_ms": 1777132800000
   },
-  "resolved_against": "terminal_cwd",
+  "resolved_against": "message_cwd",
   "resolved_relative_path": "service/src/index.ts",
   "size": 4096,
   "ext": {}
 }
 ```
 
-When `terminal_session_id` is present, the daemon may query that tmux pane's current directory once and try the `pane_current_path + relative_path` candidate before falling back to the daemon workspace root. Both candidates remain constrained by canonical workspace-root policy. `resolved_against` is optional metadata and currently one of `terminal_cwd` or `workspace`; `resolved_relative_path` is the canonical workspace-relative path actually served.
+`resolution_hint` is optional and service-created; browsers do not submit cwd hints. When present with `kind: "host_cwd"`, Bud attempts the relative path against that message-time cwd first, but only if the cwd canonicalizes inside the workspace root. Hinted requests do not fall back to click-time terminal cwd; invalid or out-of-workspace hints fall back directly to the workspace root candidate.
+
+For contextless opens, when `terminal_session_id` is present, the daemon may query that tmux pane's current directory once and try the `pane_current_path + relative_path` candidate before falling back to the daemon workspace root. Both candidates remain constrained by canonical workspace-root policy. `resolved_against` is optional metadata and currently one of `message_cwd`, `terminal_cwd`, or `workspace`; `resolved_relative_path` is the canonical workspace-relative path actually served.
 
 Rejected file opens use the same frame with `accepted: false` and a typed `error` object. Common file error codes include `POLICY_DENIED`, `UNSUPPORTED_ROOT`, `UNSAFE_PATH`, `UNSAFE_FILE_TYPE`, `SYMLINK_DENIED`, `FILE_NOT_FOUND`, `RANGE_NOT_SATISFIABLE`, `FILE_TOO_LARGE`, `CONTENT_CHANGED`, and `LOCAL_READ_FAILED`.
 
@@ -606,7 +613,9 @@ Thread file-viewer open:
 - `path` may include `:line`, `:line:column`, or `#Lline` / `#Lline-Lend` metadata
 - created sessions use `root_key: "workspace"`, permissions `["stat", "read", "range"]`, the default short TTL, and `max_bytes: 1048576`
 - source metadata is display/audit metadata only; opening a file remains user-initiated and does not grant the agent file-read authority
-- file reads for thread-created sessions include the active thread terminal session id when one exists, allowing the daemon to resolve relative links against the tmux pane cwd first and workspace root second
+- when `source.message_id` belongs to the same authorized thread and that message has server-stamped `metadata.path_context`, the service copies that context into the file session and sends a daemon `resolution_hint`
+- context-bearing reads prefer message-time cwd, then workspace root; they do not fall back to click-time terminal cwd
+- contextless or pre-rollout reads include the active thread terminal session id when one exists, allowing the daemon to resolve relative links against the tmux pane cwd first and workspace root second
 
 Request body:
 
@@ -1066,11 +1075,14 @@ Rules:
     "trigger": "settled"
   },
   "error": null,
+  "host_cwd": "/Users/adam/bud/service",
   "ext": {}
 }
 ```
 
 If a human interrupt rejects an older pending send wait, the service records a conservative tool result for the agent with `error: "interrupted"` and `readiness.trigger: "error"`. This is not a Bud wire-frame change; it is the service-side result shape used when the pending request promise is rejected before a matching `terminal_send_result` arrives.
+
+`host_cwd` is optional and reports the daemon-observed tmux pane cwd at result time. The service caches it on the terminal session before resolving pending terminal tool promises, then stamps message metadata with a `terminal_cwd_v1` path context for future file-link opens.
 
 ### 6.6 `terminal_observe_result` (Bud → Service)
 
@@ -1094,6 +1106,7 @@ If a human interrupt rejects an older pending send wait, the service records a c
     "trigger": "changed"
   },
   "error": null,
+  "host_cwd": "/Users/adam/bud/service",
   "ext": {}
 }
 ```
@@ -1119,9 +1132,11 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
+  - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
 - `agent.message`
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
+  - assistant and user messages may carry `message.metadata.path_context` with `schema: "terminal_cwd_v1"`; file-open routes use this server-side metadata when creating a file session from a clicked message link
 - `thread.title`
   - `{ "thread_id": "uuid", "title": "Short Title", "source": "generated_first_user_message", "updated_at": "..." }`
 - `agent.resync_required`

@@ -149,6 +149,7 @@ export class TerminalSessionStore {
         output_log_bytes?: number;
         started_at?: string;
         last_activity_at?: string;
+        cwd?: string;
       };
     }
   ): Promise<void> {
@@ -160,10 +161,18 @@ export class TerminalSessionStore {
         state: payload.state,
         cols: payload.info?.cols ?? undefined,
         rows: payload.info?.rows ?? undefined,
+        cwd: payload.info?.cwd ?? undefined,
         startedAt: payload.info?.started_at ? new Date(payload.info.started_at) : undefined,
         lastActivityAt: payload.info?.last_activity_at ? new Date(payload.info.last_activity_at) : now,
         outputLogBytes: payload.info?.output_log_bytes ?? undefined
       })
+      .where(eq(terminalSessionTable.sessionId, sessionId));
+  }
+
+  async updateCwd(sessionId: string, cwd: string): Promise<void> {
+    await db
+      .update(terminalSessionTable)
+      .set({ cwd, lastActivityAt: new Date() })
       .where(eq(terminalSessionTable.sessionId, sessionId));
   }
 
@@ -238,6 +247,7 @@ export class TerminalSessionStore {
       state: row.state as TerminalSession["state"],
       cols: row.cols,
       rows: row.rows,
+      cwd: row.cwd,
       createdAt: row.createdAt,
       startedAt: row.startedAt,
       lastActivityAt: row.lastActivityAt,

@@ -102,6 +102,75 @@ test('openFileViewerCandidateFlow reuses an unexpired ready session without netw
   assert.equal(entry?.line, 8)
 })
 
+test('openFileViewerCandidateFlow does not reuse a ready entry from a different source message', async () => {
+  const firstSource = {
+    kind: 'assistant_message' as const,
+    message_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  }
+  const secondSource = {
+    kind: 'assistant_message' as const,
+    message_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  }
+  const relativePath = 'src/index.ts'
+  const firstKey = fileViewerKey(relativePath, firstSource)
+  const secondKey = fileViewerKey(relativePath, secondSource)
+  const { stateAccess, getState, setState } = createStateHarness()
+  setState(() => ({
+    active_key: null,
+    entries_by_key: {
+      [firstKey]: {
+        key: firstKey,
+        raw_path: relativePath,
+        relative_path: relativePath,
+        source: firstSource,
+        file_session_id: 'fs_existing',
+        file_url: '/api/files/fs_existing',
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        status: 'ready',
+        content: 'from first message\n',
+        viewer_kind: 'code',
+      },
+    },
+  }))
+
+  let openCalls = 0
+  await openFileViewerCandidateFlow({
+    threadId: 'thread-1',
+    candidate: {
+      raw_path: relativePath,
+      relative_path: relativePath,
+      source: secondSource,
+    },
+    stateAccess,
+    transport: createTransport({
+      open: async () => {
+        openCalls += 1
+        return createOpenResponse({
+          rawPath: relativePath,
+          relativePath,
+        })
+      },
+      fetch: async (_url, init) => {
+        if (init.method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: { 'content-length': '20', 'content-type': 'text/typescript' },
+          })
+        }
+        return new Response('from second message\n', { status: 200 })
+      },
+    }),
+    onError: assert.fail,
+  })
+
+  assert.equal(openCalls, 1)
+  assert.equal(getState().entries_by_key[firstKey]?.file_session_id, 'fs_existing')
+  const activeEntry = getActiveEntry(getState())
+  assert.equal(activeEntry?.key, secondKey)
+  assert.equal(activeEntry?.file_session_id, 'fs_test')
+  assert.equal(activeEntry?.content, 'from second message\n')
+})
+
 test('loadFileViewerSessionContent stops after HEAD when metadata exceeds the display cap', async () => {
   const { stateAccess, getState } = createStateHarness()
   const response = createOpenResponse({ maxDisplayBytes: 16 })
@@ -204,8 +273,9 @@ function createCandidate(): OpenFileCandidate {
 }
 
 function createOpenResponse(
-  options: { maxDisplayBytes?: number } = {},
+  options: { maxDisplayBytes?: number; rawPath?: string; relativePath?: string } = {},
 ): ApiOpenThreadFileResponse {
+  const relativePath = options.relativePath ?? 'service/src/file-viewer.ts'
   return {
     file_session: {
       file_session_id: 'fs_test',
@@ -213,8 +283,8 @@ function createOpenResponse(
       thread_id: 'thread-1',
       root: { key: 'workspace' },
       path: {
-        raw_path: 'service/src/file-viewer.ts:12',
-        relative_path: 'service/src/file-viewer.ts',
+        raw_path: options.rawPath ?? 'service/src/file-viewer.ts:12',
+        relative_path: relativePath,
       },
       permissions: ['stat', 'read', 'range'],
       state: 'ready',
@@ -225,7 +295,7 @@ function createOpenResponse(
     viewer: {
       suggested_kind: 'code',
       language: 'typescript',
-      display_name: 'file-viewer.ts',
+      display_name: relativePath.split('/').at(-1) ?? relativePath,
       line: 12,
       max_display_bytes: options.maxDisplayBytes ?? 1024 * 1024,
     },

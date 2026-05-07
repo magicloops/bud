@@ -247,6 +247,7 @@ message TerminalSendResult {
   bytes delta_json = 4;
   bytes readiness_json = 5;
   string error = 6;
+  string host_cwd = 7;
   bytes frame_json = 99;
 }
 
@@ -271,6 +272,7 @@ message TerminalObserveResult {
   bool truncated = 8;
   bytes readiness_json = 9;
   string error = 10;
+  string host_cwd = 11;
   bytes frame_json = 99;
 }
 

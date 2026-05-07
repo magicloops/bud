@@ -65,7 +65,7 @@ Thread-scoped file viewer state and fetch flow for user-clicked transcript paths
 
 **Responsibilities**:
 - create file sessions through `POST /api/threads/:threadId/files/open`
-- keep file entries keyed by workspace-relative path so repeated clicks can route back to a valid existing entry
+- keep file entries keyed by workspace-relative path plus assistant source message id when available, so repeated same-message clicks can route back to a valid existing entry without reusing another message's historic cwd context
 - recreate missing/expired sessions, including reload actions
 - fetch file metadata with `HEAD` before `GET`
 - enforce the 1 MiB display cap client-side from metadata and fetched bytes
@@ -83,7 +83,7 @@ Thread-scoped file viewer state and fetch flow for user-clicked transcript paths
 Pure file-viewer state helpers shared by the hook and tests.
 
 **Responsibilities**:
-- derive stable workspace file-viewer keys
+- derive stable workspace file-viewer keys, including source-message identity when available
 - build pending/session/reused entries
 - map HTTP response codes to viewer statuses
 - parse HEAD metadata
@@ -95,7 +95,7 @@ Pure async file-viewer flow used by `use-file-viewer.ts`.
 
 **Responsibilities**:
 - lazily call `POST /api/threads/:threadId/files/open` only on explicit open requests
-- reuse valid ready entries without new network calls
+- reuse valid ready entries without new network calls when the source-aware key matches
 - run `HEAD` before `GET`
 - enforce display caps before and after content fetch
 - map file-edge failures and binary/text states into `FileViewerEntry` updates
@@ -107,6 +107,7 @@ Node-runner coverage for the file-viewer open/fetch flow.
 **Coverage**:
 - session creation followed by `HEAD` then `GET`
 - valid ready entry reuse without network calls
+- same relative path from a different source message creates a fresh session
 - metadata over-cap state without content fetch
 - binary detection and HTTP-status-to-viewer-state mapping
 

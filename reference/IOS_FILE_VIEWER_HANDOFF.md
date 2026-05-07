@@ -1,9 +1,9 @@
 # iOS File Viewer Backend Handoff
 
-**Status:** Web validated, mobile-ready contract  
-**Last Updated:** 2026-05-05  
-**Audience:** Backend and iOS  
-**Related docs:** `plan/file-viewer/implementation-spec.md`, `plan/improve-file-cwd/implementation-spec.md`, `design/file-serving-user-initiated-viewer.md`, `design/daemon-owned-file-path-resolution.md`, `docs/proto.md`
+**Status:** Web validated, mobile-ready contract
+**Last Updated:** 2026-05-06
+**Audience:** Backend and iOS
+**Related docs:** `plan/file-viewer/implementation-spec.md`, `plan/file-viewer/phase-5-historic-cwd-preservation.md`, `plan/improve-file-cwd/implementation-spec.md`, `design/file-serving-user-initiated-viewer.md`, `design/daemon-owned-file-path-resolution.md`, `design/file-viewer-historic-cwd-preservation.md`, `docs/proto.md`
 
 ## Summary
 
@@ -26,7 +26,8 @@ Current first pass:
 - user-clicked files only; the agent does not get file-read authority
 - assistant-message file references only
 - workspace-relative path inputs only
-- current terminal directory first, Bud workspace fallback, with no new mobile request fields
+- message-time cwd first when `source.message_id` has server-stamped path context; otherwise current terminal directory first; Bud workspace fallback in both cases
+- no mobile-supplied cwd or path-context request fields
 - 1 MiB display cap
 - Markdown, source/code, and plain text previews
 - binary, image, PDF, directory, and large-file viewers deferred
@@ -67,6 +68,10 @@ Request:
 ```
 
 `source` is display/audit metadata only. It does not authorize the read.
+When `source.message_id` belongs to the same authorized thread, the service uses
+it to load server-stamped message path context for historic cwd stability.
+Mobile should include `source.message_id` whenever opening from a persisted
+assistant message.
 
 Allowed `source.kind` values:
 
@@ -112,6 +117,14 @@ Response `201`:
       },
       "line": 42,
       "column": 7,
+      "path_context": {
+        "schema": "terminal_cwd_v1",
+        "source": "terminal_runtime_cache",
+        "reported_by": "tmux_pane_current_path",
+        "terminal_session_id": "bud-b_123-thread-11111111-1111-4111-8111-111111111111",
+        "host_cwd": "/Users/adam/bud/service",
+        "captured_at": "2026-05-06T18:15:00.000Z"
+      },
       "viewer_intent": "preview"
     }
   },
@@ -204,14 +217,33 @@ Parser guidance:
 
 ## Current Directory Resolution
 
-Mobile does not need to send cwd or terminal context.
+Mobile does not send cwd or terminal context.
 
-For thread-created file sessions, the service includes the active thread terminal session id when it sends daemon `file_open`. The daemon then tries:
+When the open request includes a same-thread `source.message_id` and that
+message has server-stamped `metadata.path_context`, the service copies that
+context into `file_session.display_metadata.path_context` and sends daemon
+`file_open.resolution_hint`.
+
+For context-bearing opens, the daemon tries:
+
+1. path relative to the message-time `host_cwd`
+2. path relative to the Bud workspace root
+
+Context-bearing opens do not fall back to the click-time tmux cwd. If the stored
+hint is invalid, outside the workspace root, or missing the file, the daemon
+falls back directly to workspace-root resolution.
+
+For contextless or pre-rollout opens, the service includes the active thread
+terminal session id when it sends daemon `file_open`. The daemon then tries:
 
 1. path relative to the fresh tmux pane current directory
 2. path relative to the Bud workspace root
 
-If no terminal session exists, the pane cwd is unavailable, the cwd is outside the workspace root, or the file is missing from the cwd candidate, the daemon falls back to workspace-root resolution. The API does not expose raw absolute cwd.
+If no terminal session exists, the pane cwd is unavailable, the cwd is outside the workspace root, or the file is missing from the cwd candidate, the daemon falls back to workspace-root resolution.
+
+`display_metadata.path_context.host_cwd` is diagnostic/backend context. Clients
+should treat it as opaque metadata and should not display it by default or feed
+it back to the open route.
 
 ## UI State Mapping
 
@@ -235,7 +267,13 @@ Recommended mobile state mapping:
 
 ## Session Reuse
 
-Use the normalized relative path as the stable key, for example:
+Use a stable viewer key that includes source-message context when available:
+
+```text
+workspace:service/src/files/file-session.ts:source_message:22222222-2222-4222-8222-222222222222
+```
+
+For contextless opens, a normalized relative-path key is still sufficient:
 
 ```text
 workspace:service/src/files/file-session.ts
@@ -247,6 +285,7 @@ Recommended behavior:
 - if the session is expired, revoked, missing, or the user taps reload, call the open route again
 - if a future tabbed viewer exists, clicking an already-open file should select that tab
 - keep line/column on the entry so future scroll/highlight behavior can be added without changing the backend contract
+- avoid reusing a ready entry from a different `source.message_id`; the same relative path can point at different files after a thread changes projects
 
 ## Validation Checklist
 
@@ -262,6 +301,8 @@ Before mobile marks the feature done:
 - Reload creates a fresh session and re-fetches bytes.
 - Closing the viewer returns to the prior thread surface.
 - `src/...` paths work after the terminal has `cd`'d into a project subdirectory.
+- An old assistant-message file link still opens after the same thread changes to another project directory.
+- The viewer does not reuse an existing session from a different `source.message_id` when the relative path is the same.
 - Absolute, home-relative, traversal, URL, and Windows paths are inert or show invalid-path behavior.
 - Too-large, denied, missing, expired, offline, and binary states render distinctly.
 - Copy path and copy content behavior are explicit and do not overlap.
