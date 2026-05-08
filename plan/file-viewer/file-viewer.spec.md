@@ -99,6 +99,11 @@ Minimal web hardening phase covering:
   assistant messages
 - focused web flow tests and spec/checklist updates
 
+### `pr-summary.md`
+
+PR handoff summary for the branch, including changed surfaces, verification,
+remaining follow-ups, and branch notes compared to `origin/main`.
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the file viewer rollout.

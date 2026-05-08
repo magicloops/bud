@@ -94,6 +94,7 @@
 - [x] Patch web viewer reuse keys so same relative paths from different `source.message_id` values cannot reuse the wrong existing file session
 - [x] Focused web file-viewer flow test passed after source-aware keying change
 - [x] Web production build passed after source-aware keying change
+- [x] Create PR summary doc comparing branch scope to `origin/main`
 - [ ] Stage/commit the branch, excluding unrelated untracked local scratch files
 
 ## Implementation Notes
