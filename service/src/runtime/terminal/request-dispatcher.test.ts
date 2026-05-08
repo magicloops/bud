@@ -38,6 +38,7 @@ function createSession(sessionId = "sess_test"): TerminalSession {
     state: "pending",
     cols: 200,
     rows: 50,
+    cwd: null,
     createdAt: new Date("2026-01-01T00:00:00Z"),
     startedAt: null,
     lastActivityAt: null,
@@ -52,6 +53,7 @@ function createDispatcher(
   options: {
     getLastOffset?: () => number;
     getLatestReadiness?: () => Record<string, unknown> | null;
+    storeHostCwd?: (sessionId: string, hostCwd: string) => Promise<void>;
   } = {},
 ) {
   return new TerminalRequestDispatcher({
@@ -71,6 +73,7 @@ function createDispatcher(
     storeReadinessAssessment() {
       // noop
     },
+    ...(options.storeHostCwd ? { storeHostCwd: options.storeHostCwd } : {}),
     emitReadyEvent() {
       // noop
     },
@@ -251,6 +254,52 @@ test("interrupt send rejects older pending waits without rejecting itself", asyn
 
   const interruptResult = await interruptSend;
   assert.equal(interruptResult.submitted, true);
+});
+
+test("terminal result host cwd is stored before resolving a pending send", async () => {
+  const sentFrames: Record<string, unknown>[] = [];
+  const stored: Array<{ sessionId: string; hostCwd: string }> = [];
+  const dispatcher = createDispatcher(createSession(), sentFrames, [], {
+    async storeHostCwd(sessionId, hostCwd) {
+      stored.push({ sessionId, hostCwd });
+    },
+  });
+
+  const sendPromise = dispatcher.sendInteraction("sess_test", {
+    text: "pwd",
+    submit: true,
+  });
+
+  await waitForPendingRegistration();
+  await dispatcher.handleSendResult("sess_test", {
+    requestId: sentFrames[0]?.request_id as string,
+    submitted: true,
+    delta: null,
+    readiness: {
+      ready: true,
+      confidence: 0.95,
+      trigger: "settled",
+      hints: {
+        looks_like_prompt: true,
+        looks_like_confirmation: false,
+        looks_like_password: false,
+        looks_like_pager: false,
+        looks_like_error: false,
+        may_still_be_processing: false,
+      },
+    },
+    error: null,
+    hostCwd: "/Users/adam/bud/service",
+  });
+
+  const result = await sendPromise;
+  assert.deepEqual(stored, [
+    {
+      sessionId: "sess_test",
+      hostCwd: "/Users/adam/bud/service",
+    },
+  ]);
+  assert.equal(result.hostCwd, "/Users/adam/bud/service");
 });
 
 test("settled send rejection logs wait state and output activity", async () => {

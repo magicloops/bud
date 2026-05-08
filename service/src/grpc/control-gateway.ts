@@ -653,7 +653,7 @@ class GrpcControlConnection {
       );
       return;
     }
-    this.terminalSessionManager.handleObserveResult(result.data.session_id, {
+    await this.terminalSessionManager.handleObserveResult(result.data.session_id, {
       requestId: result.data.request_id,
       view: result.data.view,
       output: result.data.output,
@@ -663,6 +663,7 @@ class GrpcControlConnection {
       truncated: result.data.truncated ?? undefined,
       readiness,
       error: result.data.error,
+      ...(result.data.host_cwd ? { hostCwd: result.data.host_cwd } : {}),
     });
   }
 
@@ -686,12 +687,13 @@ class GrpcControlConnection {
       );
       return;
     }
-    this.terminalSessionManager.handleSendResult(result.data.session_id, {
+    await this.terminalSessionManager.handleSendResult(result.data.session_id, {
       requestId: result.data.request_id,
       submitted: result.data.submitted,
       delta: result.data.delta ?? null,
       readiness,
       error: result.data.error,
+      ...(result.data.host_cwd ? { hostCwd: result.data.host_cwd } : {}),
     });
   }
 

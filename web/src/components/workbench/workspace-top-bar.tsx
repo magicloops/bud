@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { Menu, Monitor, TerminalIcon } from 'lucide-react'
+import { FileText, Menu, Monitor, TerminalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-export type ViewMode = 'terminal' | 'web'
+export type ViewMode = 'terminal' | 'web' | 'file'
 
 type WorkspaceTopBarProps = {
   title: string
@@ -11,6 +11,7 @@ type WorkspaceTopBarProps = {
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
   status: 'idle' | 'dispatching' | 'streaming'
+  fileViewLabel?: string | null
 }
 
 export function WorkspaceTopBar({
@@ -18,7 +19,8 @@ export function WorkspaceTopBar({
   view,
   onViewChange,
   onToggleThreads,
-  status
+  status,
+  fileViewLabel = null,
 }: WorkspaceTopBarProps) {
   return (
     <div className="flex h-16 items-center justify-between border-b-4 border-black px-6" style={{ backgroundColor: 'var(--chat-bg)' }}>
@@ -47,6 +49,11 @@ export function WorkspaceTopBar({
         <ViewToggleButton active={view === 'web'} onClick={() => onViewChange('web')} icon={<Monitor className="mr-2 h-4 w-4" />}>
           Web view
         </ViewToggleButton>
+        {(fileViewLabel || view === 'file') && (
+          <ViewToggleButton active={view === 'file'} onClick={() => onViewChange('file')} icon={<FileText className="mr-2 h-4 w-4" />}>
+            {fileViewLabel ?? 'File'}
+          </ViewToggleButton>
+        )}
       </div>
     </div>
   )

@@ -311,9 +311,15 @@ File open request (Service → Bud on control):
   "operation_id": "op_01H...",
   "stream_id": "st_01H...",
   "file_session_id": "fs_01H...",
+  "terminal_session_id": "sess_01H...",
   "stream_type": "file_read",
   "root_key": "workspace",
   "relative_path": "src/index.ts",
+  "resolution_hint": {
+    "kind": "host_cwd",
+    "host_cwd": "/Users/adam/bud/service",
+    "source_message_id": "22222222-2222-4222-8222-222222222222"
+  },
   "mode": "range",
   "range_start": 0,
   "range_end": 1023,
@@ -351,10 +357,16 @@ File open result (Bud → Service on control):
     "size": 4096,
     "modified_ms": 1777132800000
   },
+  "resolved_against": "message_cwd",
+  "resolved_relative_path": "service/src/index.ts",
   "size": 4096,
   "ext": {}
 }
 ```
+
+`resolution_hint` is optional and service-created; browsers do not submit cwd hints. When present with `kind: "host_cwd"`, Bud attempts the relative path against that message-time cwd first, but only if the cwd canonicalizes inside the workspace root. Hinted requests do not fall back to click-time terminal cwd; invalid or out-of-workspace hints fall back directly to the workspace root candidate.
+
+For contextless opens, when `terminal_session_id` is present, the daemon may query that tmux pane's current directory once and try the `pane_current_path + relative_path` candidate before falling back to the daemon workspace root. Both candidates remain constrained by canonical workspace-root policy. `resolved_against` is optional metadata and currently one of `message_cwd`, `terminal_cwd`, or `workspace`; `resolved_relative_path` is the canonical workspace-relative path actually served.
 
 Rejected file opens use the same frame with `accepted: false` and a typed `error` object. Common file error codes include `POLICY_DENIED`, `UNSUPPORTED_ROOT`, `UNSAFE_PATH`, `UNSAFE_FILE_TYPE`, `SYMLINK_DENIED`, `FILE_NOT_FOUND`, `RANGE_NOT_SATISFIABLE`, `FILE_TOO_LARGE`, `CONTENT_CHANGED`, and `LOCAL_READ_FAILED`.
 
@@ -588,6 +600,70 @@ Request body:
   "ttl_seconds": 900,
   "thread_id": "uuid optional",
   "display_metadata": {}
+}
+```
+
+Thread file-viewer open:
+
+- URL: `POST /api/threads/:thread_id/files/open`
+- Authenticated viewer required
+- `thread_id` must belong to the viewer; signed-in non-owners receive `404`
+- the service derives `bud_id` from the owned thread and ignores any client-supplied Bud identity
+- first pass accepts only workspace-relative path strings; absolute paths are deferred until a daemon-owned resolve step exists
+- `path` may include `:line`, `:line:column`, or `#Lline` / `#Lline-Lend` metadata
+- created sessions use `root_key: "workspace"`, permissions `["stat", "read", "range"]`, the default short TTL, and `max_bytes: 1048576`
+- source metadata is display/audit metadata only; opening a file remains user-initiated and does not grant the agent file-read authority
+- when `source.message_id` belongs to the same authorized thread and that message has server-stamped `metadata.path_context`, the service copies that context into the file session and sends a daemon `resolution_hint`
+- context-bearing reads prefer message-time cwd, then workspace root; they do not fall back to click-time terminal cwd
+- contextless or pre-rollout reads include the active thread terminal session id when one exists, allowing the daemon to resolve relative links against the tmux pane cwd first and workspace root second
+
+Request body:
+
+```json
+{
+  "path": "./service/src/files/file-session.ts:42:7",
+  "source": {
+    "kind": "assistant_message",
+    "message_id": "22222222-2222-4222-8222-222222222222",
+    "client_id": "33333333-3333-4333-8333-333333333333"
+  },
+  "viewer_intent": "preview"
+}
+```
+
+Response:
+
+```json
+{
+  "file_session": {
+    "file_session_id": "fs_01H...",
+    "bud_id": "b_01H...",
+    "thread_id": "11111111-1111-4111-8111-111111111111",
+    "root": { "key": "workspace" },
+    "path": {
+      "raw_path": "./service/src/files/file-session.ts:42:7",
+      "relative_path": "service/src/files/file-session.ts"
+    },
+    "permissions": ["stat", "read", "range"],
+    "state": "ready",
+    "file_url": "https://service.example/api/files/fs_01H...",
+    "max_bytes": 1048576,
+    "expires_at": "2026-05-01T20:15:00.000Z",
+    "display_metadata": {
+      "raw_path": "./service/src/files/file-session.ts:42:7",
+      "line": 42,
+      "column": 7,
+      "viewer_intent": "preview"
+    }
+  },
+  "viewer": {
+    "suggested_kind": "code",
+    "language": "typescript",
+    "display_name": "file-session.ts",
+    "line": 42,
+    "column": 7,
+    "max_display_bytes": 1048576
+  }
 }
 ```
 
@@ -999,11 +1075,14 @@ Rules:
     "trigger": "settled"
   },
   "error": null,
+  "host_cwd": "/Users/adam/bud/service",
   "ext": {}
 }
 ```
 
 If a human interrupt rejects an older pending send wait, the service records a conservative tool result for the agent with `error: "interrupted"` and `readiness.trigger: "error"`. This is not a Bud wire-frame change; it is the service-side result shape used when the pending request promise is rejected before a matching `terminal_send_result` arrives.
+
+`host_cwd` is optional and reports the daemon-observed tmux pane cwd at result time. The service caches it on the terminal session before resolving pending terminal tool promises, then stamps message metadata with a `terminal_cwd_v1` path context for future file-link opens.
 
 ### 6.6 `terminal_observe_result` (Bud → Service)
 
@@ -1027,6 +1106,7 @@ If a human interrupt rejects an older pending send wait, the service records a c
     "trigger": "changed"
   },
   "error": null,
+  "host_cwd": "/Users/adam/bud/service",
   "ext": {}
 }
 ```
@@ -1052,9 +1132,11 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
+  - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
 - `agent.message`
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
+  - assistant and user messages may carry `message.metadata.path_context` with `schema: "terminal_cwd_v1"`; file-open routes use this server-side metadata when creating a file session from a clicked message link
 - `thread.title`
   - `{ "thread_id": "uuid", "title": "Short Title", "source": "generated_first_user_message", "updated_at": "..." }`
 - `agent.resync_required`
@@ -1209,6 +1291,7 @@ Service: otherwise emit agent.resync_required
 - browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
 - browser proxy-session reads, revokes, and edge attaches must authorize `proxy_session.created_by_user_id` before checking or opening daemon streams
 - browser file-session reads, revokes, and edge attaches must authorize `file_session.created_by_user_id` before checking or opening daemon streams
+- thread file-viewer opens must authorize the owning thread before creating `file_session` rows, derive the Bud from that thread, and stamp `file_session.created_by_user_id` with the acting viewer
 - localhost proxy sessions must deny non-`127.0.0.1` targets at the service boundary; the daemon re-checks local policy before any local HTTP side effect
 - localhost proxy streams require an authenticated data-plane carrier with `localhost_http_proxy` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
@@ -1235,6 +1318,7 @@ Service: otherwise emit agent.resync_required
   - opt-in `BudData.Attach` carries daemon terminal output over HTTP/2 data when configured
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
+  - thread-scoped file-viewer opens create 1 MiB, relative-path-only file sessions from explicit user clicks in assistant messages
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits

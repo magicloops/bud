@@ -15,11 +15,11 @@ Splits the old all-in-one terminal session manager into narrower internal owners
 
 ### `session-types.ts`
 
-Shared `SessionState` and `TerminalSession` types for the terminal runtime.
+Shared `SessionState` and `TerminalSession` types for the terminal runtime, including the cached daemon-reported `cwd` used by file-viewer path context.
 
 ### `session-store.ts`
 
-Database-backed session-record lifecycle, including `ensureSessionRecordForThread(...)` as the single concurrency-safe first-use session boundary. It receives the daemon transport router so session ensure/resume checks do not depend on `ws/gateway` directly.
+Database-backed session-record lifecycle, including `ensureSessionRecordForThread(...)` as the single concurrency-safe first-use session boundary. It receives the daemon transport router so session ensure/resume checks do not depend on `ws/gateway` directly. It also persists `terminal_session.cwd` from terminal status and terminal send/observe result metadata.
 
 ### `request-dispatcher.ts`
 
@@ -31,6 +31,7 @@ Also owns terminal wait timeout policy for request-response send/observe calls:
 - the model-facing schema advertises only `none`, `changed`, and `settled`; compatibility-only modes such as `shell_ready` can still pass through this lower dispatcher while old payload support remains enabled.
 - local request timeouts use the Bud timeout plus a small grace window so normal results do not orphan before the daemon reply arrives.
 - send and observe pending state tracks output activity while the request is in flight, including latest output offset and output event count.
+- send and observe result handlers persist optional `hostCwd` before resolving pending request promises, so transcript writers can read the latest cached cwd after tool completion.
 - human interrupt sends can reject older pending waits as `interrupted` while excluding the new `ctrl+c` send request, avoiding an orphaned interrupt result.
 - rejection/timeout/result logs include request id, wait mode, elapsed timing, output activity, and current readiness trigger/confidence summaries for long settled waits.
 

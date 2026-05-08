@@ -58,6 +58,8 @@ Keep it current as we verify behavior locally and as Phase 4/5 work changes the 
 - [ ] A second user cannot post messages to another user’s thread.
 - [ ] A second user cannot attach to another user’s terminal SSE stream.
 - [ ] A second user cannot send terminal input, interrupt, or resize requests to another user’s thread.
+- [ ] A second user cannot create file-viewer sessions through another user’s thread.
+- [ ] A second user cannot read, fetch, or revoke another user’s file sessions.
 - [ ] A second user cannot see another user’s run history.
 
 ### Ownership Stamping
@@ -67,6 +69,7 @@ Keep it current as we verify behavior locally and as Phase 4/5 work changes the 
 - [ ] New run rows have the correct `created_by_user_id`.
 - [ ] New terminal session rows have the correct `created_by_user_id`.
 - [ ] New terminal input log rows record the acting human `user_id`.
+- [ ] New file viewer `file_session` rows have the correct `created_by_user_id`.
 
 ### Second-User Verification Pass
 

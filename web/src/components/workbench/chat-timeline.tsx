@@ -5,13 +5,14 @@ import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 import type { ApiMessage } from '@/lib/api-types'
+import type { FilePathCandidate, OpenFileCandidate } from '@/lib/file-paths'
 
 const MAX_MESSAGE_HEIGHT = 500
 type JsonViewComponent = typeof import('@microlink/react-json-view').default
 
 export type ChatMessage = Pick<
   ApiMessage,
-  'client_id' | 'role' | 'display_role' | 'content' | 'created_at' | 'metadata'
+  'message_id' | 'client_id' | 'role' | 'display_role' | 'content' | 'created_at' | 'metadata'
 >
 
 let jsonViewComponentPromise: Promise<JsonViewComponent> | null = null
@@ -36,6 +37,7 @@ type ChatTimelineProps = {
   isLoadingOlderMessages?: boolean
   onLoadOlderMessages?: (() => void) | null
   scrollContainerRef?: MutableRefObject<HTMLDivElement | null>
+  onOpenFile?: (candidate: OpenFileCandidate) => void
 }
 
 const ChatTimelineComponent = ({
@@ -45,6 +47,7 @@ const ChatTimelineComponent = ({
   isLoadingOlderMessages = false,
   onLoadOlderMessages = null,
   scrollContainerRef,
+  onOpenFile,
 }: ChatTimelineProps) => {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const shouldStickRef = useRef(true)
@@ -143,6 +146,7 @@ const ChatTimelineComponent = ({
           systemColor={systemColor}
           JsonView={JsonView}
           ensureJsonViewLoaded={ensureJsonViewLoaded}
+          onOpenFile={onOpenFile}
         />
       ))}
     </div>
@@ -157,6 +161,7 @@ type ChatTimelineMessageProps = {
   systemColor: string
   JsonView: JsonViewComponent | null
   ensureJsonViewLoaded: () => void
+  onOpenFile?: (candidate: OpenFileCandidate) => void
 }
 
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
@@ -164,6 +169,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   systemColor,
   JsonView,
   ensureJsonViewLoaded,
+  onOpenFile,
 }: ChatTimelineMessageProps) {
   const [isPayloadExpanded, setIsPayloadExpanded] = useState(false)
   const [isMessageExpanded, setIsMessageExpanded] = useState(false)
@@ -181,6 +187,28 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const toolName = (payload?.tool as string | undefined) ?? (message.display_role || 'Tool')
   const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
   const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
+  const fileActions = isAssistant && onOpenFile
+    ? {
+        source: {
+          kind: 'assistant_message' as const,
+          message_id: message.message_id,
+          client_id: message.client_id,
+        },
+        onOpenFileCandidate: (candidate: FilePathCandidate) => {
+          onOpenFile({
+            raw_path: candidate.raw_path,
+            relative_path: candidate.relative_path,
+            ...(candidate.line ? { line: candidate.line } : {}),
+            ...(candidate.column ? { column: candidate.column } : {}),
+            source: {
+              kind: 'assistant_message',
+              message_id: message.message_id,
+              client_id: message.client_id,
+            },
+          })
+        },
+      }
+    : undefined
   const timeLabel = new Date(message.created_at).toLocaleTimeString()
   const backgroundColor = isUser ? 'var(--chat-message)' : undefined
   const assistantBackground = isAssistant || isTool ? 'var(--chat-message)' : undefined
@@ -316,7 +344,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded-sm bg-current align-middle" />
     </div>
   ) : RoleContentRenderer ? (
-    <RoleContentRenderer content={message.content} />
+    <RoleContentRenderer content={message.content} fileActions={fileActions} />
   ) : (
     <p>{message.content}</p>
   )

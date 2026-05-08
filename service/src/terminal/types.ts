@@ -156,6 +156,7 @@ export interface TerminalSendResultMessage extends TerminalEnvelope {
   delta?: TerminalDeltaMessage | null;
   readiness: ReadinessAssessment;
   error: string | null;
+  host_cwd?: string;
 }
 
 export interface TerminalObserveMessage extends TerminalEnvelope {
@@ -180,6 +181,7 @@ export interface TerminalObserveResultMessage extends TerminalEnvelope {
   truncated?: boolean | null;
   readiness: ReadinessAssessment;
   error: string | null;
+  host_cwd?: string;
 }
 
 // Command stack tracking types

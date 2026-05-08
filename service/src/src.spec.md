@@ -146,7 +146,7 @@ Better Auth runtime integration plus session/profile/ownership helpers used by a
 
 ### `agent/` → [agent.spec.md](./agent/agent.spec.md)
 
-Agent orchestration for tool-calling loops using the LLM provider abstraction, now split into conversation-loading, model-running, terminal-tool execution, transcript-writing, and cancellation ownership units.
+Agent orchestration for tool-calling loops using the LLM provider abstraction, now split into conversation-loading, model-running, terminal-tool execution, transcript-writing, cached cwd path-context stamping, and cancellation ownership units.
 
 ### `llm/` → [llm.spec.md](./llm/llm.spec.md)
 
@@ -162,11 +162,11 @@ Push notification helpers covering unread attention math, APNs delivery, and out
 
 ### `routes/` → [routes.spec.md](./routes/routes.spec.md)
 
-REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, and split thread/message/agent/terminal modules, all enforcing per-user ownership across browser-facing resources.
+REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, and split thread/message/agent/terminal/file-viewer modules, all enforcing per-user ownership across browser-facing resources.
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 
-Runtime managers for terminal sessions, extracted terminal-runtime ownership units, generic event buses, the dedicated agent runtime snapshot/resume store, and Phase 1 daemon operation/stream persistence helpers.
+Runtime managers for terminal sessions, cached daemon cwd path context, extracted terminal-runtime ownership units, generic event buses, the dedicated agent runtime snapshot/resume store, and Phase 1 daemon operation/stream persistence helpers.
 
 ### `terminal/` → [terminal.spec.md](./terminal/terminal.spec.md)
 
@@ -182,7 +182,7 @@ Phase 4.2 localhost proxy helpers for strict target/method validation, carrier-n
 
 ### `files/` → [files/files.spec.md](./files/files.spec.md)
 
-Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, carrier-neutral data-plane readiness checks, owned `file_session` persistence, daemon `file_open` dispatch, and bounded stat/read/range response streaming over the selected WebSocket/HTTP2 carrier.
+Phase 4.4 file-session helpers and HTTP edge runtime for strict root-relative path validation, file permission normalization, carrier-neutral data-plane readiness checks, owned `file_session` persistence, thread terminal-session context and message-time cwd hints on daemon `file_open` dispatch, and bounded stat/read/range response streaming over the selected WebSocket/HTTP2 carrier.
 
 ### `grpc/` → [grpc.spec.md](./grpc/grpc.spec.md)
 

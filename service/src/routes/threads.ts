@@ -5,6 +5,7 @@ import type { TerminalSessionManager } from "../runtime/terminal-session-manager
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import { registerThreadAgentRoutes } from "./threads/agent.js";
 import { registerThreadCoreRoutes } from "./threads/core.js";
+import { registerThreadFileRoutes } from "./threads/files.js";
 import { registerThreadMessageRoutes } from "./threads/messages.js";
 export { registerThreadTerminalRoutes } from "./threads/terminal.js";
 
@@ -19,4 +20,5 @@ export async function registerThreadRoutes(
   await registerThreadCoreRoutes(server, terminalSessionManager);
   await registerThreadMessageRoutes(server, agentService, contextSyncService, threadTitleService);
   await registerThreadAgentRoutes(server, agentService, agentRuntime);
+  await registerThreadFileRoutes(server);
 }

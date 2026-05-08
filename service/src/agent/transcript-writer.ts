@@ -14,6 +14,7 @@ import {
 } from "./contracts.js";
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
 import type { ModelSelectionSource, ReasoningLevel } from "../llm/index.js";
+import type { TerminalPathContext } from "../runtime/terminal-session-manager.js";
 
 type PersistedAgentMessage = {
   messageId: string;
@@ -97,14 +98,29 @@ export class AgentTranscriptWriter {
     modelSelection: AgentMessageModelSelection;
     ownerUserId?: string | null;
     llmCallId?: string | null;
+    pathContextBefore?: TerminalPathContext | null;
+    pathContextAfter?: TerminalPathContext | null;
   }): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage; cursor: string }> {
-    const { threadId, turnId, execution, clientId, timing, modelSelection, ownerUserId, llmCallId } = args;
+    const {
+      threadId,
+      turnId,
+      execution,
+      clientId,
+      timing,
+      modelSelection,
+      ownerUserId,
+      llmCallId,
+      pathContextBefore,
+      pathContextAfter,
+    } = args;
     const serializedTiming = serializeToolExecutionTiming(timing);
     const persistedMetadata = {
       ...execution.payload,
       ...serializedTiming,
       ...serializeModelSelectionMetadata(modelSelection),
       ...(llmCallId ? { llm_call_id: llmCallId } : {}),
+      ...(pathContextBefore ? { path_context_before: pathContextBefore } : {}),
+      ...(pathContextAfter ? { path_context_after: pathContextAfter } : {}),
     };
     const [toolMessage] = await db
       .insert(messageTable)
@@ -168,8 +184,19 @@ export class AgentTranscriptWriter {
     modelSelection: AgentMessageModelSelection;
     ownerUserId?: string | null;
     llmCallId?: string | null;
+    pathContext?: TerminalPathContext | null;
   }): Promise<SerializedAgentMessage> {
-    const { threadId, turnId, message, status, clientId, modelSelection, ownerUserId, llmCallId } = args;
+    const {
+      threadId,
+      turnId,
+      message,
+      status,
+      clientId,
+      modelSelection,
+      ownerUserId,
+      llmCallId,
+      pathContext,
+    } = args;
     const assistantMessage = await db.transaction(async (tx) => {
       const [insertedMessage] = await tx
         .insert(messageTable)
@@ -185,6 +212,7 @@ export class AgentTranscriptWriter {
             turn_id: turnId,
             segment_kind: "final",
             ...(llmCallId ? { llm_call_id: llmCallId } : {}),
+            ...(pathContext ? { path_context: pathContext } : {}),
             attention_kind: "assistant_completed",
             ...serializeModelSelectionMetadata(modelSelection),
           },
@@ -292,6 +320,7 @@ export class AgentTranscriptWriter {
     ownerUserId?: string | null;
     llmCallId?: string | null;
     followedByToolCall?: boolean;
+    pathContext?: TerminalPathContext | null;
   }): Promise<SerializedAgentMessage> {
     const {
       threadId,
@@ -303,6 +332,7 @@ export class AgentTranscriptWriter {
       ownerUserId,
       llmCallId,
       followedByToolCall,
+      pathContext,
     } = args;
     const [insertedMessage] = await db
       .insert(messageTable)
@@ -319,6 +349,7 @@ export class AgentTranscriptWriter {
           segment_kind: segmentKind,
           ...(llmCallId ? { llm_call_id: llmCallId } : {}),
           ...(followedByToolCall ? { followed_by_tool_call: true } : {}),
+          ...(pathContext ? { path_context: pathContext } : {}),
           ...serializeModelSelectionMetadata(modelSelection),
         },
       })

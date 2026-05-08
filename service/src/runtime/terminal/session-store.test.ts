@@ -63,6 +63,7 @@ test("ensureSessionRecordForThread returns the concurrent winner after an active
           state: "pending",
           cols: 200,
           rows: 50,
+          cwd: null,
           createdAt: new Date("2026-01-01T00:00:00Z"),
           startedAt: null,
           lastActivityAt: null,

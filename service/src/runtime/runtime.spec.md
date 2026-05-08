@@ -133,6 +133,8 @@ Thread-scoped terminal session composition root.
 | `createSessionForThread(threadId, budId, createdByUserId?)` | Compatibility wrapper over `ensureSessionRecordForThread(...)` |
 | `getSessionForThread(threadId)` | Get the active (non-closed) session |
 | `getSession(sessionId)` | Get by ID |
+| `getPathContextForSession(sessionId)` | Return cached daemon cwd as `terminal_cwd_v1` metadata when available |
+| `getPathContextForThread(threadId)` | Return cached daemon cwd for the active thread session without querying Bud |
 | `ensureSession(sessionId)` | Send `terminal_ensure` to bud |
 | `sendInput(sessionId, data, options)` | Send input with optional readiness waiting and user audit metadata |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
@@ -146,8 +148,8 @@ Thread-scoped terminal session composition root.
 | `handleTerminalStatus(sessionId, payload)` | Bud reports session state |
 | `handleTerminalOutput(sessionId, payload)` | Store and broadcast output |
 | `handleTerminalReady(sessionId, payload)` | Readiness assessment received |
-| `handleObserveResult(sessionId, payload)` | Observe result received |
-| `handleSendResult(sessionId, payload)` | Send result received |
+| `handleObserveResult(sessionId, payload)` | Observe result received; persists optional daemon-reported `hostCwd` before resolving a pending observe |
+| `handleSendResult(sessionId, payload)` | Send result received; persists optional daemon-reported `hostCwd` before resolving a pending send |
 | `startIdleChecks()` / `stopIdleChecks()` | Periodic idle-state management; destructive cleanup runs only when explicitly configured |
 | `rejectPendingRequestsForThread(threadId, errorMessage)` | Reject in-flight terminal waits for the active thread session |
 | `rejectPendingRequestsForBud(budId, errorMessage)` | Reject in-flight terminal waits for all active sessions on an offline Bud |
@@ -201,7 +203,8 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `sendInteraction()` now defaults to `waitFor: "settled"` and resolves settled waits to the service-owned one-hour timeout before dispatching to Bud
 - `sendInteraction()` still accepts `observeAfterMs`, but only uses the default `1000ms` fast-capture behavior when `waitFor: "none"` is requested explicitly
 - `sendInteraction()` now treats interactive input as a single gesture and emits canonical `key` values such as `ctrl+c`; the older `interaction.keys` array is accepted only as a one-entry compatibility alias
-- `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, readiness, and conservative timeout summaries
+- `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, readiness, optional `hostCwd`, and conservative timeout summaries
+- terminal result `hostCwd` values update `terminal_session.cwd`; message writers read the cached value later and do not query the daemon when stamping message metadata
 - pending send and observe rejections now log request id, wait mode, elapsed time, latest output offset, output event count, and current readiness summary for long-wait diagnostics
 - `observeTerminal(waitFor: "settled")` uses the same one-hour settled budget as `sendInteraction()`, while non-settled observe modes keep the shorter default or trusted explicit timeout
 - `observeTerminal()` now gives the daemon timeout budget plus a local `1000ms` grace window so normal results do not orphan as quickly

@@ -436,6 +436,7 @@ fn encode_field_level_payload(frame_type: &str, frame: &Value) -> Result<Option<
             write_optional_json_bytes(&mut out, 4, frame.get("delta"))?;
             write_optional_json_bytes(&mut out, 5, frame.get("readiness"))?;
             write_optional_nullable_string(&mut out, 6, frame.get("error"));
+            write_optional_string(&mut out, 7, string_value(frame, "host_cwd"));
         }
         "terminal_observe" => {
             write_optional_string(&mut out, 1, string_value(frame, "session_id"));
@@ -456,6 +457,7 @@ fn encode_field_level_payload(frame_type: &str, frame: &Value) -> Result<Option<
             write_optional_bool(&mut out, 8, bool_value(frame, "truncated"));
             write_optional_json_bytes(&mut out, 9, frame.get("readiness"))?;
             write_optional_nullable_string(&mut out, 10, frame.get("error"));
+            write_optional_string(&mut out, 11, string_value(frame, "host_cwd"));
         }
         "terminal_output" => {
             write_optional_string(&mut out, 1, string_value(frame, "session_id"));
@@ -1287,6 +1289,11 @@ fn read_terminal_send_result_field(
             );
         }
         6 => insert_string(frame, "error", reader.read_string_for_wire_type(wire_type)?),
+        7 => insert_string(
+            frame,
+            "host_cwd",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
         _ => reader.skip(wire_type)?,
     }
     Ok(())
@@ -1376,6 +1383,11 @@ fn read_terminal_observe_result_field(
             );
         }
         10 => insert_string(frame, "error", reader.read_string_for_wire_type(wire_type)?),
+        11 => insert_string(
+            frame,
+            "host_cwd",
+            reader.read_string_for_wire_type(wire_type)?,
+        ),
         _ => reader.skip(wire_type)?,
     }
     Ok(())
@@ -2292,7 +2304,8 @@ mod tests {
                 "confidence": 0.94,
                 "trigger": "prompt"
             },
-            "error": null
+            "error": null,
+            "host_cwd": "/Users/adam/bud"
         });
 
         let bytes = encode_legacy_json_frame(&frame).expect("encode frame");

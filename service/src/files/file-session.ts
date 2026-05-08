@@ -30,6 +30,7 @@ export const DEFAULT_FILE_SESSION_MAX_BYTES = Math.min(
   config.fileSessionDefaultMaxBytes,
   MAX_FILE_SESSION_MAX_BYTES,
 );
+export const VIEWER_FILE_SESSION_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_FILE_ROOT_KEY = "workspace";
 export const FILE_SESSION_ROOT_KEYS = ["workspace"] as const;
 export const FILE_SESSION_PERMISSIONS = ["stat", "read", "range"] as const;
@@ -96,6 +97,13 @@ export class FileSessionValidationError extends Error {
   }
 }
 
+export type ParsedViewerFilePath = {
+  rawPath: string;
+  relativePath: string;
+  line?: number;
+  column?: number;
+};
+
 export function normalizeFileRootKey(rootKey: string): string {
   const normalized = rootKey.trim();
   if (!fileRootKeySet.has(normalized)) {
@@ -144,6 +152,81 @@ export function normalizeFileRelativePath(input: string): string {
   }
 
   return parts.join("/");
+}
+
+export function parseViewerFilePath(
+  input: string,
+  options: { line?: number; column?: number } = {},
+): ParsedViewerFilePath {
+  const rawPath = input.trim();
+  if (!rawPath) {
+    throw new FileSessionValidationError("empty_file_path", "File path must not be empty");
+  }
+  if (rawPath.includes("\0")) {
+    throw new FileSessionValidationError("invalid_file_path", "File path must not contain NUL bytes");
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawPath) || /^mailto:/i.test(rawPath)) {
+    throw new FileSessionValidationError("invalid_file_path", "URLs are not supported file paths");
+  }
+  if (/^[a-zA-Z]:([/\\]|$)/.test(rawPath)) {
+    throw new FileSessionValidationError(
+      "invalid_file_path",
+      "File path must use POSIX-style relative separators",
+    );
+  }
+
+  let candidatePath = rawPath;
+  let parsedLine: number | undefined;
+  let parsedColumn: number | undefined;
+
+  const hashLineMatch = /^(?<path>.+?)#L(?<line>\d+)(?:-L?\d+)?$/i.exec(candidatePath);
+  if (hashLineMatch?.groups) {
+    candidatePath = hashLineMatch.groups.path;
+    parsedLine = parsePositiveInteger(hashLineMatch.groups.line, "line");
+  } else {
+    const colonLineColumnMatch = /^(?<path>.+):(?<line>\d+):(?<column>\d+)$/.exec(candidatePath);
+    const colonLineMatch = /^(?<path>.+):(?<line>\d+)$/.exec(candidatePath);
+    const match = colonLineColumnMatch ?? colonLineMatch;
+    if (match?.groups) {
+      candidatePath = match.groups.path;
+      parsedLine = parsePositiveInteger(match.groups.line, "line");
+      if (match.groups.column) {
+        parsedColumn = parsePositiveInteger(match.groups.column, "column");
+      }
+    }
+  }
+
+  if (candidatePath.trim().endsWith("/")) {
+    throw new FileSessionValidationError("invalid_file_path", "Directory paths are not supported");
+  }
+
+  const relativePath = normalizeFileRelativePath(candidatePath);
+  const explicitLine = options.line !== undefined ? validatePositiveInteger(options.line, "line") : undefined;
+  const explicitColumn =
+    options.column !== undefined ? validatePositiveInteger(options.column, "column") : undefined;
+  const line = explicitLine ?? parsedLine;
+  const column = explicitColumn ?? parsedColumn;
+
+  return {
+    rawPath,
+    relativePath,
+    ...(line !== undefined ? { line } : {}),
+    ...(column !== undefined ? { column } : {}),
+  };
+}
+
+function parsePositiveInteger(value: string, label: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new FileSessionValidationError("invalid_file_path", `File ${label} must be a positive integer`);
+  }
+  return validatePositiveInteger(Number(value), label);
+}
+
+function validatePositiveInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new FileSessionValidationError("invalid_file_path", `File ${label} must be a positive integer`);
+  }
+  return value;
 }
 
 export function normalizeFileSessionPermissions(permissions?: string[]): FileSessionPermission[] {
@@ -397,6 +480,10 @@ export function serializeFileSession(
       key: session.rootKey,
     },
     path: {
+      raw_path:
+        typeof session.displayMetadata?.raw_path === "string"
+          ? session.displayMetadata.raw_path
+          : null,
       relative_path: session.relativePath,
     },
     permissions: session.permissions,

@@ -38,7 +38,7 @@ export type TerminalReadinessAssessment = {
   }
 }
 
-type TerminalViewMode = 'terminal' | 'web'
+type TerminalViewMode = 'terminal' | 'web' | 'file'
 
 type QueueTerminalInput = (text: string, options?: { flushImmediately?: boolean }) => void
 

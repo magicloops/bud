@@ -101,6 +101,19 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   };
   const startedAt = new Date("2026-04-21T19:00:01.000Z");
   const finishedAt = new Date("2026-04-21T19:00:04.250Z");
+  const pathContextBefore = {
+    schema: "terminal_cwd_v1",
+    source: "terminal_runtime_cache",
+    reported_by: "tmux_pane_current_path",
+    terminal_session_id: "sess_test",
+    host_cwd: "/Users/adam/bud",
+    captured_at: "2026-04-21T19:00:00.000Z",
+  } as const;
+  const pathContextAfter = {
+    ...pathContextBefore,
+    host_cwd: "/Users/adam/bud/service",
+    captured_at: "2026-04-21T19:00:04.000Z",
+  } as const;
 
   const emittedToolCall = writer.emitToolCall(
     "thread-1",
@@ -124,6 +137,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       reasoningEffort: "low",
       source: "explicit_request",
     },
+    pathContextBefore,
+    pathContextAfter,
   });
 
   assert.equal(insertedValues.length, 1);
@@ -136,6 +151,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     model: "gpt-5.5",
     reasoning_effort: "low",
     model_selection_source: "explicit_request",
+    path_context_before: pathContextBefore,
+    path_context_after: pathContextAfter,
   });
 
   assert.equal(events.length, 2);
@@ -182,6 +199,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     model: "gpt-5.5",
     reasoning_effort: "low",
     model_selection_source: "explicit_request",
+    path_context_before: pathContextBefore,
+    path_context_after: pathContextAfter,
   });
 
   assert.deepEqual(result.payload, execution.payload);
@@ -193,6 +212,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     model: "gpt-5.5",
     reasoning_effort: "low",
     model_selection_source: "explicit_request",
+    path_context_before: pathContextBefore,
+    path_context_after: pathContextAfter,
   });
 });
 

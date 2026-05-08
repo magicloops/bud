@@ -45,9 +45,12 @@ type ToolContentRenderer = ComponentType<ToolContentRendererProps>
 ```typescript
 type MessageContentRendererProps = {
   content: string
+  fileActions?: MessageFileActionContext
 }
 type MessageContentRenderer = ComponentType<MessageContentRendererProps>
 ```
+
+`MessageFileActionContext` lets parent routes attach explicit user-click handlers for parsed file references. Renderers receive candidate metadata and source message identity but must not open sessions while rendering.
 
 ## Subfolders
 

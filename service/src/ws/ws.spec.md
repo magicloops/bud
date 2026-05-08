@@ -88,8 +88,8 @@ Browser/Client                 Service                      Bud Daemon
 | `TerminalStatusSchema` | Terminal state changes |
 | `TerminalOutputSchema` | Terminal output chunks |
 | `TerminalReadySchema` | Readiness assessments |
-| `TerminalObserveResultSchema` | Delta-first observe results with explicit screen/history modes |
-| `TerminalSendResultSchema` | Send-first acknowledgements with settled-by-default timing, additive delta, and timeout-aware readiness |
+| `TerminalObserveResultSchema` | Delta-first observe results with explicit screen/history modes plus optional daemon-reported `host_cwd` |
+| `TerminalSendResultSchema` | Send-first acknowledgements with settled-by-default timing, additive delta, timeout-aware readiness, and optional daemon-reported `host_cwd` |
 | `ReconnectReportSchema` | Daemon journal summary used after reconnect for operation/stream reconciliation |
 
 `TerminalStatusSchema` still tolerates deprecated `info.tmux_session` from older daemons during rollout, but the gateway no longer treats tmux session identity as part of the normal terminal contract.
@@ -215,8 +215,8 @@ The gateway also rejects `hello` frames that do not advertise `bud_envelope.vers
 | `terminal_status` | `terminalSessionManager.handleStatus()` |
 | `terminal_output` | `terminalSessionManager.handleOutput()` |
 | `terminal_ready` | `terminalSessionManager.handleTerminalReady()` with the parsed readiness assessment |
-| `terminal_observe_result` | `terminalSessionManager.handleObserveResult()` |
-| `terminal_send_result` | `terminalSessionManager.handleSendResult()` with optional additive `delta` (`changed`, `text`, `truncated`) plus settled/timeout readiness assessment |
+| `terminal_observe_result` | `terminalSessionManager.handleObserveResult()` with optional `host_cwd` persistence |
+| `terminal_send_result` | `terminalSessionManager.handleSendResult()` with optional additive `delta` (`changed`, `text`, `truncated`) plus settled/timeout readiness assessment and optional `host_cwd` persistence |
 | `reconnect_report` | `DaemonStateStore.reconcileReconnectReport()` then `reconciliation_decision` reply |
 | `stream_data` / `stream_credit` / `stream_reset` / `stream_close` | shared data-plane runtime dispatch |
 | `proxy_open_result` | proxy runtime open-result delivery |

@@ -8,9 +8,9 @@ export interface TerminalSession {
   state: SessionState;
   cols: number;
   rows: number;
+  cwd: string | null;
   createdAt: Date;
   startedAt: Date | null;
   lastActivityAt: Date | null;
   outputLogBytes: number;
 }
-

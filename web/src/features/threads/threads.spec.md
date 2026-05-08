@@ -59,6 +59,58 @@ Node-runner coverage for transcript reconciliation rules.
 - latest-bootstrap preservation of older history/cursors
 - turn finalization cleanup semantics
 
+### `use-file-viewer.ts`
+
+Thread-scoped file viewer state and fetch flow for user-clicked transcript paths.
+
+**Responsibilities**:
+- create file sessions through `POST /api/threads/:threadId/files/open`
+- keep file entries keyed by workspace-relative path plus assistant source message id when available, so repeated same-message clicks can route back to a valid existing entry without reusing another message's historic cwd context
+- recreate missing/expired sessions, including reload actions
+- fetch file metadata with `HEAD` before `GET`
+- enforce the 1 MiB display cap client-side from metadata and fetched bytes
+- decode UTF-8, sniff unsupported binary content, and select Markdown/code/text rendering hints
+- map edge response failures into viewer statuses (`invalid_path`, `not_found`, `denied`, `too_large`, `expired`, `offline`, `content_changed`, `unsupported_binary`, `error`)
+
+**Exports**:
+- `useFileViewer(...)`
+- `FileViewerEntry`
+- `FileViewerKind`
+- `FileViewerStatus`
+
+### `file-viewer-state.ts`
+
+Pure file-viewer state helpers shared by the hook and tests.
+
+**Responsibilities**:
+- derive stable workspace file-viewer keys, including source-message identity when available
+- build pending/session/reused entries
+- map HTTP response codes to viewer statuses
+- parse HEAD metadata
+- decode UTF-8, detect likely binary content, choose viewer kind/language, and format byte limits
+
+### `file-viewer-flow.ts`
+
+Pure async file-viewer flow used by `use-file-viewer.ts`.
+
+**Responsibilities**:
+- lazily call `POST /api/threads/:threadId/files/open` only on explicit open requests
+- reuse valid ready entries without new network calls when the source-aware key matches
+- run `HEAD` before `GET`
+- enforce display caps before and after content fetch
+- map file-edge failures and binary/text states into `FileViewerEntry` updates
+
+### `file-viewer-flow.test.ts`
+
+Node-runner coverage for the file-viewer open/fetch flow.
+
+**Coverage**:
+- session creation followed by `HEAD` then `GET`
+- valid ready entry reuse without network calls
+- same relative path from a different source message creates a fresh session
+- metadata over-cap state without content fetch
+- binary detection and HTTP-status-to-viewer-state mapping
+
 ## Dependencies
 
 | Import | Purpose |
@@ -66,7 +118,8 @@ Node-runner coverage for transcript reconciliation rules.
 | `react` | Hook state, refs, memoization |
 | `@/lib/transport` | Paginated message fetch |
 | `@/lib/messages` | Optimistic `client_id` generation |
-| `@/lib/api-types` | Thread message and agent-state contracts |
+| `@/lib/api-types` | Thread message, agent-state, and file-viewer contracts |
+| `@/lib/file-paths` | File-open candidate payload types |
 
 ### `use-agent-stream.ts`
 
@@ -136,6 +189,7 @@ Terminal session/xterm ownership for the existing-thread route.
 - Add deeper hook/integration coverage for transcript reconciliation flows beyond the extracted pure helper tests
 - Add deeper hook/integration coverage for agent-stream heartbeat timeout, reconnect, and explicit resync-required behavior
 - Add deeper hook/integration coverage for terminal reconnect/recovery behavior beyond the shared timing policy tests
+- Add browser-level visual regression coverage for terminal/file-viewer overlay, header, and xterm geometry behavior
 
 ---
 

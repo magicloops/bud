@@ -10,7 +10,7 @@ Provides explicit feature ownership seams so route files can compose behavior in
 
 ### `threads/` → [threads/threads.spec.md](./threads/threads.spec.md)
 
-Thread-scoped browser runtime logic extracted from `/$budId/$threadId`.
+Thread-scoped browser runtime logic extracted from `/$budId/$threadId`, including transcript reconciliation, agent/terminal streaming, terminal session ownership, and the file viewer open/fetch state machine.
 
 ## Notes
 

@@ -1,10 +1,10 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ulid } from "ulid";
 import type { Viewer } from "../auth/session.js";
 import { config, PROTO_VERSION } from "../config.js";
 import { db } from "../db/client.js";
-import { fileSessionTable } from "../db/schema.js";
+import { fileSessionTable, terminalSessionTable } from "../db/schema.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import {
   getActiveDataPlaneSessionForBud,
@@ -45,6 +45,64 @@ type FileOpenMode = "stat" | "read" | "range";
 type FileRange =
   | { ok: true; rangeStart?: number; rangeEnd?: number; rangeSuffixBytes?: number }
   | { ok: false; message: string };
+
+type AcceptedFileRange = Extract<FileRange, { ok: true }>;
+
+type FileOpenResolutionHint = {
+  kind: "host_cwd";
+  host_cwd: string;
+  source_message_id?: string;
+};
+
+type FileOpenRequestArgs = {
+  session: FileSessionRow;
+  terminalSessionId: string | null;
+  mode: FileOpenMode;
+  range: AcceptedFileRange;
+};
+
+export function buildFileOpenOperationRequest(args: FileOpenRequestArgs): Record<string, unknown> {
+  return {
+    file_session_id: args.session.fileSessionId,
+    root_key: args.session.rootKey,
+    relative_path: args.session.relativePath,
+    ...terminalSessionField(args.terminalSessionId),
+    ...resolutionHintField(args.session),
+    mode: args.mode,
+    ...fileRangeFields(args.range),
+  };
+}
+
+export function buildFileOpenControlFrame(args: FileOpenRequestArgs & {
+  operationId: string;
+  streamId: string;
+  messageId: string;
+  sentAt: number;
+  initialCreditBytes: number;
+  maxChunkBytes: number;
+}): Record<string, unknown> {
+  return {
+    proto: PROTO_VERSION,
+    type: "file_open",
+    id: args.messageId,
+    ts: args.sentAt,
+    ext: {},
+    operation_id: args.operationId,
+    stream_id: args.streamId,
+    file_session_id: args.session.fileSessionId,
+    ...terminalSessionField(args.terminalSessionId),
+    stream_type: FILE_READ_STREAM_TYPE,
+    root_key: args.session.rootKey,
+    relative_path: args.session.relativePath,
+    ...resolutionHintField(args.session),
+    mode: args.mode,
+    ...fileRangeFields(args.range),
+    ...(args.session.contentIdentity ? { expected_content_identity: args.session.contentIdentity } : {}),
+    max_bytes: args.session.maxBytes,
+    initial_credit_bytes: args.initialCreditBytes,
+    max_chunk_bytes: args.maxChunkBytes,
+  };
+}
 
 export async function openFileEdgeStream(args: {
   viewer: Viewer;
@@ -108,6 +166,7 @@ export async function openFileEdgeStream(args: {
   }
   const operationId = `op_${ulid()}`;
   const streamId = `st_${ulid()}`;
+  const terminalSessionId = await resolveThreadTerminalSessionId(args.session);
 
   await daemonStateStore.createOperation({
     operationId,
@@ -116,17 +175,15 @@ export async function openFileEdgeStream(args: {
     trafficClass: "bulk",
     state: "offered",
     threadId: args.session.threadId,
+    terminalSessionId,
     deviceSessionId: args.transportStatus.deviceSessionId,
     transportSessionId: args.transportStatus.controlTransportSessionId,
-    request: {
-      file_session_id: args.session.fileSessionId,
-      root_key: args.session.rootKey,
-      relative_path: args.session.relativePath,
+    request: buildFileOpenOperationRequest({
+      session: args.session,
+      terminalSessionId,
       mode,
-      ...(range.rangeStart !== undefined ? { range_start: range.rangeStart } : {}),
-      ...(range.rangeEnd !== undefined ? { range_end: range.rangeEnd } : {}),
-      ...(range.rangeSuffixBytes !== undefined ? { range_suffix_bytes: range.rangeSuffixBytes } : {}),
-    },
+      range,
+    }),
     createdByUserId: args.viewer.userId,
   });
   await daemonStateStore.createStream({
@@ -160,6 +217,7 @@ export async function openFileEdgeStream(args: {
       audit_correlation_id: args.session.auditCorrelationId,
       root_key: args.session.rootKey,
       relative_path: args.session.relativePath,
+      ...(terminalSessionId ? { terminal_session_id: terminalSessionId } : {}),
       mode,
       transport_kind: dataTracker.transportKind,
       control_transport_session_id: args.transportStatus.controlTransportSessionId,
@@ -443,27 +501,18 @@ export async function openFileEdgeStream(args: {
   let openSendError: unknown = null;
   let sent = false;
   try {
-    sent = sendDataPlaneControlFrame(dataTracker, {
-      proto: PROTO_VERSION,
-      type: "file_open",
-      id: `msg_${ulid()}`,
-      ts: Date.now(),
-      ext: {},
-      operation_id: operationId,
-      stream_id: streamId,
-      file_session_id: args.session.fileSessionId,
-      stream_type: FILE_READ_STREAM_TYPE,
-      root_key: args.session.rootKey,
-      relative_path: args.session.relativePath,
+    sent = sendDataPlaneControlFrame(dataTracker, buildFileOpenControlFrame({
+      session: args.session,
+      terminalSessionId,
       mode,
-      ...(range.rangeStart !== undefined ? { range_start: range.rangeStart } : {}),
-      ...(range.rangeEnd !== undefined ? { range_end: range.rangeEnd } : {}),
-      ...(range.rangeSuffixBytes !== undefined ? { range_suffix_bytes: range.rangeSuffixBytes } : {}),
-      ...(args.session.contentIdentity ? { expected_content_identity: args.session.contentIdentity } : {}),
-      max_bytes: args.session.maxBytes,
-      initial_credit_bytes: dataTracker.initialCreditBytes,
-      max_chunk_bytes: dataTracker.maxChunkBytes,
-    });
+      range,
+      operationId,
+      streamId,
+      messageId: `msg_${ulid()}`,
+      sentAt: Date.now(),
+      initialCreditBytes: dataTracker.initialCreditBytes,
+      maxChunkBytes: dataTracker.maxChunkBytes,
+    }));
   } catch (err) {
     openSendError = err;
   }
@@ -738,6 +787,81 @@ function parseSingleRange(value: unknown): FileRange {
     rangeStart: start,
     ...(end !== null ? { rangeEnd: end } : {}),
   };
+}
+
+function terminalSessionField(terminalSessionId: string | null): Record<string, string> {
+  return terminalSessionId ? { terminal_session_id: terminalSessionId } : {};
+}
+
+function resolutionHintField(session: FileSessionRow): Record<string, FileOpenResolutionHint> {
+  const hint = resolutionHintForSession(session);
+  return hint ? { resolution_hint: hint } : {};
+}
+
+function resolutionHintForSession(session: FileSessionRow): FileOpenResolutionHint | null {
+  const metadata = session.displayMetadata;
+  if (!isRecord(metadata)) {
+    return null;
+  }
+  const pathContext = metadata.path_context;
+  if (!isRecord(pathContext)) {
+    return null;
+  }
+  if (
+    pathContext.schema !== "terminal_cwd_v1" ||
+    pathContext.source !== "terminal_runtime_cache" ||
+    pathContext.reported_by !== "tmux_pane_current_path"
+  ) {
+    return null;
+  }
+  const hostCwd = typeof pathContext.host_cwd === "string" ? pathContext.host_cwd.trim() : "";
+  if (!hostCwd) {
+    return null;
+  }
+
+  const source = isRecord(metadata.source) ? metadata.source : null;
+  const sourceMessageId =
+    typeof source?.message_id === "string" && source.message_id.trim()
+      ? source.message_id
+      : undefined;
+
+  return {
+    kind: "host_cwd",
+    host_cwd: hostCwd,
+    ...(sourceMessageId ? { source_message_id: sourceMessageId } : {}),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function fileRangeFields(range: AcceptedFileRange): Record<string, number> {
+  return {
+    ...(range.rangeStart !== undefined ? { range_start: range.rangeStart } : {}),
+    ...(range.rangeEnd !== undefined ? { range_end: range.rangeEnd } : {}),
+    ...(range.rangeSuffixBytes !== undefined ? { range_suffix_bytes: range.rangeSuffixBytes } : {}),
+  };
+}
+
+async function resolveThreadTerminalSessionId(session: FileSessionRow): Promise<string | null> {
+  if (!session.threadId) {
+    return null;
+  }
+
+  const [row] = await db
+    .select({ sessionId: terminalSessionTable.sessionId })
+    .from(terminalSessionTable)
+    .where(
+      and(
+        eq(terminalSessionTable.threadId, session.threadId),
+        eq(terminalSessionTable.budId, session.budId),
+        isNull(terminalSessionTable.closedAt),
+      ),
+    )
+    .limit(1);
+
+  return row?.sessionId ?? null;
 }
 
 function parseSafeInteger(value: string): number | null {

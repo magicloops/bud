@@ -23,6 +23,8 @@ test("file runtime receives open results and streams chunks", async () => {
     status_code: 206,
     headers: { "content-range": "bytes 0-4/10" },
     content_identity: { size: 10, modified_ms: 1777132800000 },
+    resolved_against: "terminal_cwd",
+    resolved_relative_path: "service/src/file.ts",
     size: 10,
   });
 
@@ -30,6 +32,8 @@ test("file runtime receives open results and streams chunks", async () => {
   const open = await openPromise;
   assert.equal(open.status_code, 206);
   assert.deepEqual(open.content_identity, { size: 10, modified_ms: 1777132800000 });
+  assert.equal(open.resolved_against, "terminal_cwd");
+  assert.equal(open.resolved_relative_path, "service/src/file.ts");
 
   const chunks: Buffer[] = [];
   runtime.body.on("data", (chunk: Buffer) => chunks.push(chunk));

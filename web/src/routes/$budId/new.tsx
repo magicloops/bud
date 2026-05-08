@@ -19,6 +19,7 @@ import {
   useAvailableModels,
   type ReasoningLevel,
 } from '@/lib/models'
+import type { ViewMode } from '@/components/workbench/workspace-top-bar'
 import { generateMessageClientId } from '@/lib/messages'
 import { apiFetch } from '@/lib/transport'
 import type { Terminal } from 'xterm'
@@ -40,7 +41,7 @@ function NewThreadView() {
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
-  const [viewMode, setViewMode] = useState<'terminal' | 'web'>('terminal')
+  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
 
   // Terminal state (no connection in "new thread" mode)
@@ -190,7 +191,7 @@ function NewThreadView() {
         </div>
       )}
       rightPane={(
-        <div className="relative flex flex-1 flex-col overflow-hidden border-l-4 border-black bg-black">
+        <div className="relative flex flex-1 flex-col overflow-hidden border-l-2 border-black bg-black">
           {viewMode === 'web' && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-muted/30 p-8 text-center">
               <div className="rounded-2xl border-4 border-black bg-card px-10 py-8 shadow-[6px_6px_0px_rgba(0,0,0,1)]">

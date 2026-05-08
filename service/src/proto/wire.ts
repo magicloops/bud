@@ -634,6 +634,7 @@ function encodeFieldLevelPayload(frameType: string, frame: Record<string, unknow
       writeOptionalJsonBytes(chunks, 4, frame.delta);
       writeOptionalJsonBytes(chunks, 5, frame.readiness);
       writeOptionalNullableString(chunks, 6, frame.error);
+      writeOptionalString(chunks, 7, stringField(frame, "host_cwd"));
       break;
     case "terminal_observe":
       writeOptionalString(chunks, 1, stringField(frame, "session_id"));
@@ -654,6 +655,7 @@ function encodeFieldLevelPayload(frameType: string, frame: Record<string, unknow
       writeOptionalBool(chunks, 8, booleanField(frame, "truncated"));
       writeOptionalJsonBytes(chunks, 9, frame.readiness);
       writeOptionalNullableString(chunks, 10, frame.error);
+      writeOptionalString(chunks, 11, stringField(frame, "host_cwd"));
       break;
     case "terminal_output":
       writeOptionalString(chunks, 1, stringField(frame, "session_id"));
@@ -1130,6 +1132,7 @@ function readTerminalSendResultField(frame: Record<string, unknown>, reader: Pro
   else if (fieldNumber === 4) frame.delta = parseJsonBytes(reader.readBytesForWireType(wireType));
   else if (fieldNumber === 5) frame.readiness = parseJsonBytes(reader.readBytesForWireType(wireType));
   else if (fieldNumber === 6) frame.error = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 7) frame.host_cwd = reader.readStringForWireType(wireType);
   else reader.skip(wireType);
 }
 
@@ -1154,6 +1157,7 @@ function readTerminalObserveResultField(frame: Record<string, unknown>, reader: 
   else if (fieldNumber === 8) frame.truncated = reader.readVarintForWireType(wireType) !== 0n;
   else if (fieldNumber === 9) frame.readiness = parseJsonBytes(reader.readBytesForWireType(wireType));
   else if (fieldNumber === 10) frame.error = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 11) frame.host_cwd = reader.readStringForWireType(wireType);
   else reader.skip(wireType);
 }
 

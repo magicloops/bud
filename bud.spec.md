@@ -69,7 +69,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
 | **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one active terminal session at a time. |
 | **Message** | A chat message with role (user/assistant/tool/system), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system messages inherit thread ownership. |
-| **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps. |
+| **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps, and cached daemon-reported cwd for file-link resolution. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
 
 ### Session States
@@ -332,7 +332,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 3. Service calls the selected LLM provider with thread context
 4. Model returns tool_call: terminal.send({ text: "ls -la", submit: true })
 5. Service sends `terminal_send` to the daemon
-6. Daemon submits the input in tmux and returns `terminal_send_result` with readiness and delta
+6. Daemon submits the input in tmux and returns `terminal_send_result` with readiness, delta, and optional `host_cwd`
 7. Service decides whether follow-up observation is needed, then calls the selected provider with result
 8. Model returns final response
 9. Service stores assistant message, emits SSE events
@@ -519,6 +519,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md) | Current backend handoff for the shipped agent-stream contract, covering `/agent/state`, opaque resume cursors, bounded catch-up, explicit `agent.resync_required`, and the `client_id`-first mobile reconciliation model |
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md) | Current fixtures for the shipped agent-stream contract, covering passive open, active-turn bootstrap, bounded cursor resume, explicit resync, idle-to-active cursor races, and `client_id`-first identity projection |
 | [reference/IOS_LLM_MODELS_HANDOFF.md](./reference/IOS_LLM_MODELS_HANDOFF.md) | iOS handoff for the catalog-backed `/api/models` contract, model-specific reasoning controls, and message-send model selection semantics |
+| [reference/IOS_FILE_VIEWER_HANDOFF.md](./reference/IOS_FILE_VIEWER_HANDOFF.md) | iOS handoff for the user-initiated file viewer contract, covering thread-scoped open, file edge reads, relative path parsing, terminal-cwd-first resolution, UI states, and deferred viewer expansions |
 | [IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md](./IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md) | Focused follow-up handoff for iOS covering the completed `client_id` rollout, the final Stage B/staging status, and the rule that mobile should key optimistic, runtime, stream, and canonical rows directly by `client_id` from the first stream event |
 | [reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md) | Reference handoff from the mobile team describing the original hosted-claim redirect gap, the requested callback contract, and the backend/web decisions needed for smooth app re-entry after claim approval |
 | [reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_VALIDATION_HANDOFF.md) | Reference validation runbook for the iOS team covering the hosted Bud-claim callback flow, local prerequisites, expected success/error payloads, and the exact manual test matrix to run |
@@ -574,6 +575,12 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/swappable-transport/phase-8-optional-transport-upgrades.md](./plan/swappable-transport/phase-8-optional-transport-upgrades.md) | Optional carrier phase covering HTTP/2 gRPC adapter retention, future QUIC data-plane support, health scoring, and fallback validation after the WebSocket baseline is correct |
 | [plan/swappable-transport/progress-checklist.md](./plan/swappable-transport/progress-checklist.md) | Running implementation checklist for the WebSocket-first swappable-transport pivot |
 | [plan/swappable-transport/validation-checklist.md](./plan/swappable-transport/validation-checklist.md) | Validation checklist for WebSocket-first terminal, file, proxy, ownership, limit, and optional carrier parity testing |
+| [plan/file-viewer/file-viewer.spec.md](./plan/file-viewer/file-viewer.spec.md) | Folder spec for the phased user-initiated file viewer productization plan, covering the thread open route, web path actions, web viewer, mobile handoff, historic cwd preservation, and deferred absolute-path/binary preview work |
+| [plan/file-viewer/implementation-spec.md](./plan/file-viewer/implementation-spec.md) | Parent implementation spec for the web-first, mobile-compatible file viewer workflow built on the existing file-session foundation |
+| [plan/file-viewer/progress-checklist.md](./plan/file-viewer/progress-checklist.md) | Running implementation checklist for the file viewer rollout |
+| [plan/file-viewer/validation-checklist.md](./plan/file-viewer/validation-checklist.md) | Validation checklist for the file viewer backend route, web parser/actions, web viewer states, real-daemon smoke, and mobile handoff |
+| [plan/improve-file-cwd/improve-file-cwd.spec.md](./plan/improve-file-cwd/improve-file-cwd.spec.md) | Folder spec for the narrowed file-viewer cwd improvement plan, using tmux `pane_current_path` before workspace fallback |
+| [plan/improve-file-cwd/implementation-spec.md](./plan/improve-file-cwd/implementation-spec.md) | Phased implementation spec for current-terminal-directory-first file viewer resolution, including tmux validation, service context propagation, daemon cwd-first resolution, and diagnostics |
 | [plan/mobile-auth/phase-2-deferred-validation-checklist.md](./plan/mobile-auth/phase-2-deferred-validation-checklist.md) | Deferred runtime-validation checklist for the hosted mobile OAuth flow while prototype work proceeds into the API-contract phase |
 | [plan/deploy/validation-checklist.md](./plan/deploy/validation-checklist.md) | Release-gate checklist for the prototype Render deployment, covering public-origin auth, Bud claim/bootstrap, SSE, WebSockets, DB/migration posture, mobile bundle publication, and the post-validation platform decision |
 | [plan/deploy/cloudflare-front-door-runbook.md](./plan/deploy/cloudflare-front-door-runbook.md) | Operator runbook for the default Cloudflare-in-front-of-Render staging shape, including the route-scoped Worker used to proxy service-owned paths to Render, the forwarded-header/no-store expectations for auth/SSE/WebSocket traffic, deploy order, rollback entry points, and the note that production may still move to a cleaner edge-routing provider |
@@ -694,6 +701,10 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
 | [design/render-deployment-review-and-topology-options.md](./design/render-deployment-review-and-topology-options.md) | Deployment review of the current web/service/Bud topology for a first production-like Render rollout, including current codebase gaps, Render-specific constraints, and cloud-agnostic infrastructure options |
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
+| [design/file-serving-user-initiated-viewer.md](./design/file-serving-user-initiated-viewer.md) | Web-first, mobile-compatible design for user-initiated host file viewing from clicked path references, building on the network-upgrade file-session foundation |
+| [design/daemon-owned-file-path-resolution.md](./design/daemon-owned-file-path-resolution.md) | Target design for the narrow daemon-owned file path resolution slice, trying tmux `pane_current_path` before workspace-relative file opens while deferring absolute paths, search, and broader policy roots |
+| [design/file-viewer-historic-cwd-preservation.md](./design/file-viewer-historic-cwd-preservation.md) | Design for preserving message-time path context so historic file links keep resolving after a thread switches projects or directories |
+| [design/file-viewer-path-roots-and-thread-cwd.md](./design/file-viewer-path-roots-and-thread-cwd.md) | Superseded option-comparison design for file viewer path roots, retained for current implementation findings around workspace roots, terminal cwd, and service-side cwd risks |
 | [design/terminal-session-lifecycle-and-thread-uniqueness.md](./design/terminal-session-lifecycle-and-thread-uniqueness.md) | Review of the current terminal session lifecycle, why the thread-id uniqueness bug predates the mobile-auth branch, and the recommended fix direction |
 | [design/terminal-command-and-interaction-contract.md](./design/terminal-command-and-interaction-contract.md) | Design for separating shell command execution, interactive terminal input, and explicit observation so the model no longer encodes `\n` for shell commands and no longer treats post-exec capture as a normal follow-up |
 | [design/terminal-send-confirmation-and-fast-observe.md](./design/terminal-send-confirmation-and-fast-observe.md) | Design for restoring send-plus-proof behavior to TUIs and REPLs by giving `terminal.send` a default fast post-send observation, replacing blind `screen_stable` waits with a `settled` model, and separating transport success from observed program response |
@@ -709,4 +720,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-04-30*
+*Last updated: 2026-05-06*

@@ -122,6 +122,50 @@ export type ApiAgentState = {
   updated_at: string
 }
 
+export type ApiFileSession = {
+  file_session_id: string
+  bud_id: string
+  thread_id: string | null
+  operation_id?: string | null
+  active_stream_id?: string | null
+  root: {
+    key: string
+  }
+  path: {
+    raw_path?: string | null
+    relative_path: string
+  }
+  permissions: string[]
+  state: 'ready' | 'unavailable' | 'revoked' | 'expired'
+  file_url: string
+  max_bytes: number
+  content_identity?: Record<string, unknown> | null
+  expires_at: string
+  revoked_at?: string | null
+  audit_correlation_id?: string
+  display_metadata?: Record<string, unknown>
+  transport?: Record<string, unknown> | null
+  degraded?: {
+    available: false
+    code: string
+    message: string
+  } | null
+  created_at?: string
+  updated_at?: string
+}
+
+export type ApiOpenThreadFileResponse = {
+  file_session: ApiFileSession
+  viewer: {
+    suggested_kind: 'markdown' | 'code' | 'text' | 'unknown'
+    language?: string
+    display_name: string
+    line?: number
+    column?: number
+    max_display_bytes: number
+  }
+}
+
 export function normalizeCapabilities(caps: unknown): {
   sessions: boolean
   terminal: boolean

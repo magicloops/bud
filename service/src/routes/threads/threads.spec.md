@@ -10,6 +10,7 @@ Keeps browser-visible thread ownership checks explicit while splitting the old m
 - read-watermark updates for unread-attention state
 - agent state/stream/cancel
 - terminal create/ensure/input/history/stream
+- user-clicked file viewer session creation
 
 ## Files
 
@@ -32,7 +33,7 @@ Focused route-handler coverage for thread-list serialization.
 
 ### `messages.ts`
 
-Thread message history, read-watermark, and create/send routes, including pre-flight context sync and first-message title kickoff.
+Thread message history, read-watermark, and create/send routes, including pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available.
 
 ### `messages.test.ts`
 
@@ -46,6 +47,19 @@ Focused route-handler coverage for the thread read-watermark route.
 ### `agent.ts`
 
 Agent runtime routes for `/agent/state`, `/agent/stream`, and `/cancel`.
+
+### `files.ts`
+
+Thread-scoped file viewer route for `POST /api/threads/:threadId/files/open`.
+
+**Behavior**:
+- authorizes through `requireAuthorizedThreadAccess(...)` and derives `budId` from the owned thread
+- accepts only first-pass workspace-relative path candidates
+- rejects absolute, home, parent traversal, Windows, URL, NUL, empty, and directory path forms
+- parses optional line/column metadata and carries it into display metadata and viewer hints
+- loads the clicked source message by authorized thread/user and copies trusted `metadata.path_context` into file-session display metadata
+- creates a viewer-owned `file_session` with `root_key: "workspace"`, `stat/read/range` permissions, the default short TTL, and a 1 MiB preview byte cap
+- stores click source metadata such as assistant `message_id` / `client_id` when supplied by the UI
 
 ### `terminal.ts`
 
@@ -61,12 +75,22 @@ Focused route-handler coverage for the terminal interrupt route.
 - owned terminal interrupt returns dispatch metadata from the terminal manager
 - missing active sessions return `404 no_terminal_session`
 
+### `files.test.ts`
+
+Focused route-handler coverage for the thread file-open route.
+
+**Current Coverage**:
+- unauthenticated requests return `401`
+- signed-in non-owner thread requests return `404`
+- owned requests create viewer-scoped file sessions with thread ownership, viewer byte cap, permissions, path metadata, and viewer hints
+- unsupported absolute path forms return `400 invalid_file_path`
+
 ### `registration.test.ts`
 
 Regression test for the split thread-route registration surface.
 
 **Current Coverage**:
-- the split core/message/agent/terminal modules register the expected endpoint set
+- the split core/message/agent/terminal/file modules register the expected endpoint set
 - route registration remains duplicate-free after the decomposition
 
 ## Ownership Notes
@@ -74,6 +98,7 @@ Regression test for the split thread-route registration surface.
 - every exported route module resolves thread ownership at the route boundary through `requireAuthorizedThreadAccess(...)`
 - SSE attach happens only after ownership is resolved
 - terminal routes still stamp and enforce the owning human through the terminal runtime
+- file viewer session creation stamps the acting viewer on `file_session.created_by_user_id` and never trusts a client-supplied Bud id
 - thread model-preference updates resolve through the same owned-thread boundary and return `404` for signed-in non-owners
 
 ---
