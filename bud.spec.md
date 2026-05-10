@@ -701,6 +701,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
 | [design/render-deployment-review-and-topology-options.md](./design/render-deployment-review-and-topology-options.md) | Deployment review of the current web/service/Bud topology for a first production-like Render rollout, including current codebase gaps, Render-specific constraints, and cloud-agnostic infrastructure options |
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
+| [design/web-serving-preview-domain-architecture.md](./design/web-serving-preview-domain-architecture.md) | Architecture options and recommendation for production-grade localhost web serving through durable Bud-scoped proxied sites on a dedicated domain such as `bud.show`, including private owner auth, future sharing modes, local dev setup, wildcard host routing, WebSocket/HMR support, gateway extraction, and transport choices |
+| [design/web-serving-productization-plan.md](./design/web-serving-productization-plan.md) | Productization plan and supersession note for evolving the original thread Web view spike into durable Bud-scoped proxied sites, including product routes, agent tools, UI state, private owner auth, and validation |
 | [design/file-serving-user-initiated-viewer.md](./design/file-serving-user-initiated-viewer.md) | Web-first, mobile-compatible design for user-initiated host file viewing from clicked path references, building on the network-upgrade file-session foundation |
 | [design/daemon-owned-file-path-resolution.md](./design/daemon-owned-file-path-resolution.md) | Target design for the narrow daemon-owned file path resolution slice, trying tmux `pane_current_path` before workspace-relative file opens while deferring absolute paths, search, and broader policy roots |
 | [design/file-viewer-historic-cwd-preservation.md](./design/file-viewer-historic-cwd-preservation.md) | Design for preserving message-time path context so historic file links keep resolving after a thread switches projects or directories |
@@ -720,4 +722,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-06*
+*Last updated: 2026-05-10*
