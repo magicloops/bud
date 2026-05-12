@@ -33,11 +33,11 @@ use crate::identity::{
 use crate::journal::{load_journal, DaemonJournal};
 use crate::proto_wire::{decode_bud_frame, encode_bud_frame};
 use crate::protocol::{
-    validate_inbound_envelope_proto, Envelope, ErrorFrame, FileOpenFrame, HelloAckFrame,
-    HelloChallengeFrame, ProxyOpenFrame, RunFrame, StreamCloseFrame, StreamCreditFrame,
-    StreamDataFrame, StreamResetFrame, TerminalCloseFrame, TerminalEnsureFrame, TerminalInputFrame,
-    TerminalObserveFrame, TerminalResizeFrame, TerminalSendFrame, DEFAULT_HEARTBEAT_SEC,
-    PROTO_VERSION, TERMINAL_PROTO_VERSION,
+    validate_inbound_envelope_proto, Envelope, ErrorFrame, FileOpenFrame, FileResolveFrame,
+    HelloAckFrame, HelloChallengeFrame, ProxyOpenFrame, RunFrame, StreamCloseFrame,
+    StreamCreditFrame, StreamDataFrame, StreamResetFrame, TerminalCloseFrame, TerminalEnsureFrame,
+    TerminalInputFrame, TerminalObserveFrame, TerminalResizeFrame, TerminalSendFrame,
+    DEFAULT_HEARTBEAT_SEC, PROTO_VERSION, TERMINAL_PROTO_VERSION,
 };
 use crate::proxy::ProxyManager;
 use crate::run::RunExecutor;
@@ -959,6 +959,10 @@ impl BudApp {
                 self.file_manager
                     .handle_open(frame, sender.clone(), terminal_cwd);
             }
+            "file_resolve" => {
+                let frame: FileResolveFrame = serde_json::from_str(text)?;
+                self.file_manager.handle_resolve(frame, sender.clone());
+            }
             "stream_credit" => {
                 let frame: StreamCreditFrame = serde_json::from_str(text)?;
                 tracing::debug!(
@@ -1269,7 +1273,10 @@ impl BudApp {
             "files": {
                 "workspace_read": stream_frames_supported,
                 "roots": ["workspace"],
-                "permissions": ["stat", "read", "range"]
+                "permissions": ["stat", "read", "range"],
+                "resolve": {
+                    "absolute_posix": true
+                }
             },
         })
     }

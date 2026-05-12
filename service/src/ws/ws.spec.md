@@ -221,6 +221,7 @@ The gateway also rejects `hello` frames that do not advertise `bud_envelope.vers
 | `stream_data` / `stream_credit` / `stream_reset` / `stream_close` | shared data-plane runtime dispatch |
 | `proxy_open_result` | proxy runtime open-result delivery |
 | `file_open_result` | file runtime open-result delivery |
+| `file_resolve_result` | metadata-only file resolve delivery for absolute POSIX open preflight |
 
 Database-backed enrollment-token validation is disabled on the gateway. The only token path is the exact `DEV_BUD_TOKEN_BYPASS` local bypass; normal onboarding uses browser-mediated device claim.
 
@@ -240,7 +241,7 @@ Bud's `hello` frame includes capabilities:
     stream_frames?: true;
   };
   proxy?: { localhost_http?: true };
-  files?: { workspace_read?: true };
+  files?: { workspace_read?: true; resolve?: { absolute_posix?: true } };
 }
 ```
 

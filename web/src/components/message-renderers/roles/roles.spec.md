@@ -39,6 +39,7 @@ Shared markdown renderer using `react-markdown` with:
 - Syntax highlighting (`react-syntax-highlighter` with `oneDark` theme)
 - External links open in new tabs
 - When `fileActions` are supplied, local Markdown links and inline-code path candidates render explicit file-open controls; external links and low-confidence inline code remain inert/normal
+- The renderer can restrict allowed file path kinds and render unsupported local links inert, which lets Markdown file previews open absolute POSIX links without letting relative preview links navigate to same-origin 404s
 - Long local file paths and link labels wrap inside the message bubble so the file-open control remains visible instead of forcing horizontal scroll
 
 **Code Block Handling**:
@@ -61,11 +62,12 @@ Pure helper seam for the Markdown renderer's file-open affordances.
 
 **Exports**:
 - `getMarkdownLinkFileCandidate(...)`
+- `getMarkdownLinkAction(...)`
 - `getInlineCodeFileCandidate(...)`
 - `createFileOpenClickHandler(...)`
 
 **Coverage**:
-- `markdown-file-actions.test.ts` verifies local Markdown links and inline-code file candidates, ignores external/low-confidence forms, and proves click handlers are lazy until invoked
+- `markdown-file-actions.test.ts` verifies local Markdown links, absolute POSIX links, inert preview-local links, inline-code file candidates, external/unsafe forms, and proves click handlers are lazy until invoked
 
 ## Dependencies
 

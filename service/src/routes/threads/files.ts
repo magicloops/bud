@@ -1,8 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
+import { ulid } from "ulid";
 import { z } from "zod";
 import { db } from "../../db/client.js";
 import { messageTable } from "../../db/schema.js";
+import {
+  authorizedBudSupportsAbsoluteFileResolve,
+  sendFileResolveRequest,
+  type FileResolveError,
+  type FileResolveResultFrame,
+} from "../../files/file-resolve.js";
 import {
   DEFAULT_FILE_SESSION_TTL_SECONDS,
   DEFAULT_FILE_ROOT_KEY,
@@ -11,7 +18,11 @@ import {
   VIEWER_FILE_SESSION_MAX_BYTES,
   createFileSession,
   parseViewerFilePath,
+  resolveFileTransportStatus,
   serializeFileSession,
+  serializeFileTransportStatus,
+  type FileTransportStatus,
+  type ParsedViewerFilePath,
 } from "../../files/file-session.js";
 import {
   ThreadParamsSchema,
@@ -88,7 +99,7 @@ export async function registerThreadFileRoutes(server: FastifyInstance): Promise
     }
 
     const { thread, viewer } = access;
-    let parsedPath: ReturnType<typeof parseViewerFilePath>;
+    let parsedPath: ParsedViewerFilePath;
     try {
       parsedPath = parseViewerFilePath(bodyResult.data.path, {
         line: bodyResult.data.line,
@@ -105,15 +116,37 @@ export async function registerThreadFileRoutes(server: FastifyInstance): Promise
       throw err;
     }
 
-    const pathContext = await loadSourceMessagePathContext({
-      threadId: thread.threadId,
-      viewerUserId: viewer.userId,
-      source: bodyResult.data.source,
-    });
+    const absoluteResolve =
+      parsedPath.kind === "absolute_posix"
+        ? await resolveAbsoluteViewerFilePath({
+            budId: thread.budId,
+            viewerUserId: viewer.userId,
+            requestedPath: parsedPath.requestedPath,
+          })
+        : null;
+
+    if (absoluteResolve && !absoluteResolve.ok) {
+      return reply.status(absoluteResolve.status).send(absoluteResolve.body);
+    }
+
+    const relativePath =
+      parsedPath.kind === "absolute_posix"
+        ? absoluteResolve!.result.resolved_relative_path
+        : parsedPath.relativePath;
+    const pathContext =
+      parsedPath.kind === "relative"
+        ? await loadSourceMessagePathContext({
+            threadId: thread.threadId,
+            viewerUserId: viewer.userId,
+            source: bodyResult.data.source,
+          })
+        : undefined;
     const displayMetadata = compactRecord({
       raw_path: parsedPath.rawPath,
       source: bodyResult.data.source,
       path_context: pathContext,
+      requested_path_kind: parsedPath.kind,
+      resolved_against: absoluteResolve?.result.resolved_against,
       line: parsedPath.line,
       column: parsedPath.column,
       viewer_intent: bodyResult.data.viewer_intent,
@@ -124,24 +157,162 @@ export async function registerThreadFileRoutes(server: FastifyInstance): Promise
       budId: thread.budId,
       body: {
         root_key: DEFAULT_FILE_ROOT_KEY,
-        relative_path: parsedPath.relativePath,
+        relative_path: relativePath,
         permissions: [...FILE_SESSION_PERMISSIONS],
         max_bytes: VIEWER_FILE_SESSION_MAX_BYTES,
         ttl_seconds: DEFAULT_FILE_SESSION_TTL_SECONDS,
         thread_id: thread.threadId,
         display_metadata: displayMetadata,
       },
+      transportStatus: absoluteResolve?.transportStatus,
+      initialContentIdentity: absoluteResolve?.result.content_identity,
     });
 
     return reply.status(201).send({
       file_session: serializeFileSession(result.session, result.transportStatus),
       viewer: buildViewerHint({
-        relativePath: parsedPath.relativePath,
+        relativePath,
         line: parsedPath.line,
         column: parsedPath.column,
       }),
     });
   });
+}
+
+type AbsoluteResolveOutcome =
+  | {
+      ok: true;
+      result: AcceptedFileResolveResult;
+      transportStatus: Extract<FileTransportStatus, { available: true }>;
+    }
+  | {
+      ok: false;
+      status: number;
+      body: Record<string, unknown>;
+    };
+
+type AcceptedFileResolveResult = FileResolveResultFrame & {
+  accepted: true;
+  root_key: string;
+  resolved_against: string;
+  resolved_relative_path: string;
+  content_identity: Record<string, unknown>;
+  size: number;
+};
+
+async function resolveAbsoluteViewerFilePath(args: {
+  budId: string;
+  viewerUserId: string;
+  requestedPath: string;
+}): Promise<AbsoluteResolveOutcome> {
+  const transportStatus = resolveFileTransportStatus(args.budId);
+  if (!transportStatus.available) {
+    return {
+      ok: false,
+      status: 424,
+      body: {
+        error: transportStatus.code ?? "FILE_TRANSPORT_UNAVAILABLE",
+        message: transportStatus.message ?? "File transport is not currently usable",
+        transport: serializeFileTransportStatus(transportStatus),
+      },
+    };
+  }
+
+  const supportsResolve = await authorizedBudSupportsAbsoluteFileResolve({
+    budId: args.budId,
+    viewerUserId: args.viewerUserId,
+  });
+  if (!supportsResolve) {
+    return {
+      ok: false,
+      status: 424,
+      body: {
+        error: "FILE_RESOLVE_UNAVAILABLE",
+        message: "Bud does not support absolute file path resolution",
+        transport: serializeFileTransportStatus(transportStatus),
+      },
+    };
+  }
+
+  const operationId = `op_${ulid()}`;
+  let frame: FileResolveResultFrame;
+  try {
+    frame = await sendFileResolveRequest({
+      budId: args.budId,
+      operationId,
+      requestedPath: args.requestedPath,
+      maxBytes: VIEWER_FILE_SESSION_MAX_BYTES,
+    });
+  } catch (err) {
+    const timedOut = err instanceof Error && /timed out/i.test(err.message);
+    return {
+      ok: false,
+      status: timedOut ? 504 : 424,
+      body: {
+        error: timedOut ? "FILE_RESOLVE_TIMEOUT" : "FILE_RESOLVE_UNAVAILABLE",
+        message: err instanceof Error ? err.message : "File resolve failed",
+        transport: serializeFileTransportStatus(transportStatus),
+      },
+    };
+  }
+
+  if (!frame.accepted) {
+    const error = frame.error ?? {
+      code: "FILE_RESOLVE_REJECTED",
+      message: "Bud rejected the file path",
+      retryable: false,
+    };
+    return {
+      ok: false,
+      status: statusForFileResolveError(error),
+      body: {
+        error: error.code.toLowerCase(),
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable ?? false,
+      },
+    };
+  }
+
+  if (
+    frame.root_key !== DEFAULT_FILE_ROOT_KEY ||
+    frame.requested_path_kind !== "absolute_posix" ||
+    frame.resolved_against !== "absolute_path" ||
+    !frame.resolved_relative_path ||
+    !frame.content_identity ||
+    typeof frame.size !== "number"
+  ) {
+    return {
+      ok: false,
+      status: 502,
+      body: {
+        error: "invalid_file_resolve_result",
+        message: "Bud returned an incomplete file resolve result",
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    result: frame as AcceptedFileResolveResult,
+    transportStatus,
+  };
+}
+
+function statusForFileResolveError(error: FileResolveError): number {
+  switch (error.code) {
+    case "FILE_NOT_FOUND":
+      return 404;
+    case "POLICY_DENIED":
+    case "UNSAFE_PATH":
+    case "SYMLINK_DENIED":
+    case "UNSAFE_FILE_TYPE":
+      return 403;
+    case "LOCAL_READ_FAILED":
+      return 502;
+    default:
+      return error.retryable ? 503 : 403;
+  }
 }
 
 function compactRecord(value: Record<string, unknown>): Record<string, unknown> {

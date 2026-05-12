@@ -300,6 +300,55 @@ Localhost proxy open result (Bud → Service on control):
 
 Rejected proxy opens use the same frame with `accepted: false` and a typed `error` object.
 
+File resolve request (Service → Bud on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "file_resolve",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "root_key": "workspace",
+  "requested_path": "/Users/adam/bud/docs/proto.md",
+  "requested_path_kind": "absolute_posix",
+  "max_bytes": 1048576,
+  "ext": {}
+}
+```
+
+File resolve result (Bud → Service on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "file_resolve_result",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "accepted": true,
+  "root_key": "workspace",
+  "requested_path_kind": "absolute_posix",
+  "resolved_against": "absolute_path",
+  "resolved_relative_path": "docs/proto.md",
+  "content_identity": {
+    "size": 4096,
+    "modified_ms": 1777132800000
+  },
+  "size": 4096,
+  "ext": {}
+}
+```
+
+`file_resolve` is metadata-only. The service uses it before creating a
+thread-scoped file session for absolute POSIX user-clicked paths. Bud
+canonicalizes the requested path, rejects symlinks, directories, non-regular
+files, and paths outside the `workspace` policy root, then returns the
+workspace-relative target that the service may persist. Rejected file resolves
+use `accepted: false` and the same typed `error` object shape as file opens.
+The service requires normal `file_read` data-plane availability before sending
+the preflight so a successful open can immediately proceed to `HEAD` / `GET`.
+
 File open request (Service → Bud on control):
 
 ```json
@@ -333,6 +382,10 @@ File open request (Service → Bud on control):
   "ext": {}
 }
 ```
+
+`expected_content_identity` is only sent for `mode: "range"` when the session has
+a stored identity. Normal file-preview `stat` and full `read` requests should
+open the current file contents; they do not pin to an older session identity.
 
 File open result (Bud → Service on control):
 
@@ -368,7 +421,11 @@ File open result (Bud → Service on control):
 
 For contextless opens, when `terminal_session_id` is present, the daemon may query that tmux pane's current directory once and try the `pane_current_path + relative_path` candidate before falling back to the daemon workspace root. Both candidates remain constrained by canonical workspace-root policy. `resolved_against` is optional metadata and currently one of `message_cwd`, `terminal_cwd`, or `workspace`; `resolved_relative_path` is the canonical workspace-relative path actually served.
 
-Rejected file opens use the same frame with `accepted: false` and a typed `error` object. Common file error codes include `POLICY_DENIED`, `UNSUPPORTED_ROOT`, `UNSAFE_PATH`, `UNSAFE_FILE_TYPE`, `SYMLINK_DENIED`, `FILE_NOT_FOUND`, `RANGE_NOT_SATISFIABLE`, `FILE_TOO_LARGE`, `CONTENT_CHANGED`, and `LOCAL_READ_FAILED`.
+Rejected file opens and resolves use the same frame-family shape with
+`accepted: false` and a typed `error` object. Common file error codes include
+`POLICY_DENIED`, `UNSUPPORTED_ROOT`, `UNSAFE_PATH`, `UNSAFE_FILE_TYPE`,
+`SYMLINK_DENIED`, `FILE_NOT_FOUND`, `RANGE_NOT_SATISFIABLE`,
+`FILE_TOO_LARGE`, `CONTENT_CHANGED`, and `LOCAL_READ_FAILED`.
 
 ### 3.2 Agent Runtime Snapshot
 
@@ -609,10 +666,11 @@ Thread file-viewer open:
 - Authenticated viewer required
 - `thread_id` must belong to the viewer; signed-in non-owners receive `404`
 - the service derives `bud_id` from the owned thread and ignores any client-supplied Bud identity
-- first pass accepts only workspace-relative path strings; absolute paths are deferred until a daemon-owned resolve step exists
+- accepts workspace-relative path strings and daemon-preflighted absolute POSIX path strings when the Bud advertises `files.resolve.absolute_posix`
 - `path` may include `:line`, `:line:column`, or `#Lline` / `#Lline-Lend` metadata
 - created sessions use `root_key: "workspace"`, permissions `["stat", "read", "range"]`, the default short TTL, and `max_bytes: 1048576`
 - source metadata is display/audit metadata only; opening a file remains user-initiated and does not grant the agent file-read authority
+- absolute POSIX opens call daemon `file_resolve` before session creation; accepted results are stored as normal workspace-relative file sessions with `display_metadata.requested_path_kind = "absolute_posix"` and `display_metadata.resolved_against = "absolute_path"`
 - when `source.message_id` belongs to the same authorized thread and that message has server-stamped `metadata.path_context`, the service copies that context into the file session and sends a daemon `resolution_hint`
 - context-bearing reads prefer message-time cwd, then workspace root; they do not fall back to click-time terminal cwd
 - contextless or pre-rollout reads include the active thread terminal session id when one exists, allowing the daemon to resolve relative links against the tmux pane cwd first and workspace root second
@@ -675,7 +733,7 @@ Additional routes:
 - `HEAD /api/files/:file_session_id` authorizes `stat` and returns daemon stat headers through `file_open`
 - `GET /api/files/:file_session_id` authorizes `read` and streams the file through daemon `file_open` plus the selected data-plane carrier
 - `GET /api/files/:file_session_id` with a single `Range: bytes=start-end`, `bytes=start-`, or `bytes=-suffix` header authorizes `range` and returns `206` when the daemon accepts the range
-- unsafe daemon paths, symlinks, non-regular files, out-of-range reads, over-limit reads, and content identity changes fail closed with typed errors
+- unsafe daemon paths, symlinks, non-regular files, out-of-range reads, over-limit reads, stale byte-range content identity, and during-read content identity changes fail closed with typed errors
 
 ---
 
@@ -752,7 +810,10 @@ Dev-only token bypass example:
     "files": {
       "workspace_read": true,
       "roots": ["workspace"],
-      "permissions": ["stat", "read", "range"]
+      "permissions": ["stat", "read", "range"],
+      "resolve": {
+        "absolute_posix": true
+      }
     }
   },
   "ext": {}
@@ -794,7 +855,10 @@ Reconnect example:
     "files": {
       "workspace_read": true,
       "roots": ["workspace"],
-      "permissions": ["stat", "read", "range"]
+      "permissions": ["stat", "read", "range"],
+      "resolve": {
+        "absolute_posix": true
+      }
     }
   },
   "ext": {}
@@ -1295,7 +1359,7 @@ Service: otherwise emit agent.resync_required
 - localhost proxy sessions must deny non-`127.0.0.1` targets at the service boundary; the daemon re-checks local policy before any local HTTP side effect
 - localhost proxy streams require an authenticated data-plane carrier with `localhost_http_proxy` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
-- file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, and content-identity policy before sending bytes
+- file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, range content-identity, and during-read identity policy before sending bytes
 - future QUIC data sessions must attach with a short-lived token bound to the active authenticated Bud, device session, control transport session, allowed endpoint candidates, and allowed stream families; token issuance/attach is not part of the active WebSocket/HTTP2 protocol yet
 - push endpoint registrations and unread/read watermarks are user-owned resources; normal client-directed reads and deletes are scoped to the authenticated owner
 - the push registration route may additionally server-side reclaim the same provider token or reused installation id from stale prior ownership so a logged-out account cannot keep receiving notifications for a device now registered by another user
@@ -1318,7 +1382,7 @@ Service: otherwise emit agent.resync_required
   - opt-in `BudData.Attach` carries daemon terminal output over HTTP/2 data when configured
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
-  - thread-scoped file-viewer opens create 1 MiB, relative-path-only file sessions from explicit user clicks in assistant messages
+  - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits

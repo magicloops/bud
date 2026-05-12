@@ -81,6 +81,42 @@
 - [x] Validate old assistant-message links after changing project directories in one thread
 - [x] Update protocol, design, plan, handoff, and spec documentation
 
+## Phase 7: Absolute POSIX Path Opens
+
+- [x] Add daemon `file_resolve` control frame handling
+- [x] Add daemon absolute POSIX resolver under workspace policy
+- [x] Return `resolved_against: "absolute_path"`, resolved relative path, size, and content identity
+- [x] Advertise `files.resolve.absolute_posix` in daemon capabilities
+- [x] Add protobuf payload tags for `file_resolve` / `file_resolve_result`
+- [x] Add service pending-result bridge for `file_resolve_result`
+- [x] Classify absolute POSIX paths in the viewer path parser
+- [x] Require file-read transport availability before absolute preflight
+- [x] Require daemon absolute-resolve capability before absolute preflight
+- [x] Create normalized file sessions from daemon-approved resolve metadata
+- [x] Persist preflight content identity on absolute sessions
+- [x] Preserve `source.kind = "markdown_preview"` and raw path metadata
+- [x] Map outside-root denials to `403` and in-root missing files to `404`
+- [x] Update protocol, specs, plan, and iOS backend response docs
+
+## Phase 7d: Web Absolute Path Candidates
+
+- [x] Extend web file candidate types to distinguish relative and absolute POSIX paths
+- [x] Parse high-confidence absolute POSIX assistant-message candidates
+- [x] Keep app-relative URLs such as `/settings` out of file-open actions
+- [x] Send raw absolute paths to the existing thread file-open route
+- [x] Add pending and canonical keying for daemon-normalized absolute opens
+- [x] Update web parser/flow tests and affected specs
+
+## Phase 7e: Web Markdown Preview Links
+
+- [x] Pass file-open actions into Markdown file previews
+- [x] Open absolute POSIX preview links with `source.kind = "markdown_preview"`
+- [x] Preserve original assistant message ids when available
+- [x] Keep external links as external anchors
+- [x] Render unsafe or unsupported local preview links without same-origin 404 navigation
+- [x] Add parser/action/flow tests and specs
+- [ ] Manually validate web Markdown-preview absolute link behavior against a real Bud
+
 ## Merge Readiness
 
 - [x] Web file-viewer happy path validated against a real Bud flow

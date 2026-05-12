@@ -12,7 +12,9 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::task;
 use tracing::warn;
 
-use crate::protocol::{FileOpenFrame, StreamCreditFrame, StreamResetFrame, PROTO_VERSION};
+use crate::protocol::{
+    FileOpenFrame, FileResolveFrame, StreamCreditFrame, StreamResetFrame, PROTO_VERSION,
+};
 use crate::transport::{send_transport_frame, TransportSender};
 use crate::util::{new_message_id, now_millis};
 
@@ -25,6 +27,7 @@ const MAX_CHUNK_BYTES_LIMIT: usize = 1024 * 1024;
 const RESOLVED_AGAINST_MESSAGE_CWD: &str = "message_cwd";
 const RESOLVED_AGAINST_TERMINAL_CWD: &str = "terminal_cwd";
 const RESOLVED_AGAINST_WORKSPACE: &str = "workspace";
+const RESOLVED_AGAINST_ABSOLUTE_PATH: &str = "absolute_path";
 
 #[derive(Clone)]
 pub struct FileManager {
@@ -45,6 +48,15 @@ struct FileReadResponse {
     resolved_relative_path: String,
     size: u64,
     body: Vec<u8>,
+}
+
+struct FileResolveResponse {
+    root_key: &'static str,
+    requested_path_kind: &'static str,
+    content_identity: Value,
+    resolved_against: &'static str,
+    resolved_relative_path: String,
+    size: u64,
 }
 
 struct ResolvedFile {
@@ -84,6 +96,15 @@ impl FileManager {
         task::spawn_local(async move {
             if let Err(err) = manager.run_file(frame, sender, terminal_cwd).await {
                 warn!(error = %err, "file read stream task failed");
+            }
+        });
+    }
+
+    pub fn handle_resolve(&self, frame: FileResolveFrame, sender: TransportSender) {
+        let manager = self.clone();
+        task::spawn_local(async move {
+            if let Err(err) = manager.run_file_resolve(frame, sender).await {
+                warn!(error = %err, "file resolve task failed");
             }
         });
     }
@@ -141,6 +162,29 @@ impl FileManager {
                 error = %err,
                 "file read stream ended with error"
             );
+        }
+        Ok(())
+    }
+
+    async fn run_file_resolve(
+        &self,
+        frame: FileResolveFrame,
+        sender: TransportSender,
+    ) -> Result<()> {
+        if let Err(err) = validate_file_resolve_frame(&frame) {
+            send_file_resolve_rejected(&sender, &frame, "UNSAFE_PATH", &err.to_string(), false)?;
+            return Ok(());
+        }
+
+        match self.resolve_absolute_file(&frame).await {
+            Ok(response) => send_file_resolve_accepted(&sender, &frame, &response)?,
+            Err(rejection) => send_file_resolve_rejected(
+                &sender,
+                &frame,
+                rejection.code,
+                &rejection.message,
+                rejection.retryable,
+            )?,
         }
         Ok(())
     }
@@ -299,6 +343,39 @@ impl FileManager {
             .unwrap_or_else(|| FileOpenRejection::new("FILE_NOT_FOUND", "file not found", false)))
     }
 
+    async fn resolve_absolute_file(
+        &self,
+        frame: &FileResolveFrame,
+    ) -> std::result::Result<FileResolveResponse, FileOpenRejection> {
+        let candidate_path = validate_absolute_posix_path(&frame.requested_path)
+            .map_err(|err| FileOpenRejection::new("UNSAFE_PATH", err.to_string(), false))?;
+        if !candidate_path.starts_with(self.workspace_root.as_path()) {
+            return Err(FileOpenRejection::new(
+                "POLICY_DENIED",
+                "path is outside the Bud file-viewer scope",
+                false,
+            ));
+        }
+
+        let resolved = self
+            .resolve_candidate(FileCandidate {
+                path: candidate_path,
+                resolved_against: RESOLVED_AGAINST_ABSOLUTE_PATH,
+            })
+            .await?;
+        let metadata = tokio::fs::metadata(&resolved.path)
+            .await
+            .map_err(|err| FileOpenRejection::new("LOCAL_READ_FAILED", err.to_string(), true))?;
+        Ok(FileResolveResponse {
+            root_key: WORKSPACE_ROOT_KEY,
+            requested_path_kind: "absolute_posix",
+            content_identity: content_identity(&metadata),
+            resolved_against: resolved.resolved_against,
+            resolved_relative_path: resolved.resolved_relative_path,
+            size: metadata.len(),
+        })
+    }
+
     async fn message_cwd_candidate(
         &self,
         frame: &FileOpenFrame,
@@ -446,6 +523,20 @@ pub fn validate_file_open_frame(frame: &FileOpenFrame) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_file_resolve_frame(frame: &FileResolveFrame) -> Result<()> {
+    if frame.root_key != WORKSPACE_ROOT_KEY {
+        bail!("unsupported file root: {}", frame.root_key);
+    }
+    if frame.requested_path_kind != "absolute_posix" {
+        bail!(
+            "unsupported requested path kind: {}",
+            frame.requested_path_kind
+        );
+    }
+    validate_absolute_posix_path(&frame.requested_path)?;
+    Ok(())
+}
+
 fn validate_relative_path(input: &str) -> Result<PathBuf> {
     if input.is_empty() || input.starts_with('/') || input.starts_with('~') || input.contains('\0')
     {
@@ -469,6 +560,60 @@ fn validate_relative_path(input: &str) -> Result<PathBuf> {
         bail!("file path must not be empty");
     }
     Ok(output)
+}
+
+fn validate_absolute_posix_path(input: &str) -> Result<PathBuf> {
+    if input.is_empty() || input.contains('\0') {
+        bail!("file path must not be empty or contain NUL bytes");
+    }
+    if input.starts_with("~") {
+        bail!("home-relative file paths are not supported");
+    }
+    if input.contains('\\') {
+        bail!("file path must use POSIX separators");
+    }
+    if input.ends_with('/') {
+        bail!("directory paths are not supported");
+    }
+    if is_url_like_path(input) || is_windows_drive_path(input) {
+        bail!("unsupported file path syntax");
+    }
+    if !input.starts_with('/') {
+        bail!("file path must be absolute POSIX syntax");
+    }
+
+    let mut output = PathBuf::from("/");
+    for component in Path::new(input).components() {
+        match component {
+            Component::RootDir => {}
+            Component::CurDir => {}
+            Component::Normal(value) => output.push(value),
+            Component::ParentDir => {
+                output.pop();
+                if output.as_os_str().is_empty() {
+                    output.push("/");
+                }
+            }
+            Component::Prefix(_) => bail!("file path must use POSIX separators"),
+        }
+    }
+
+    if output == PathBuf::from("/") {
+        bail!("file path must point to a file");
+    }
+    Ok(output)
+}
+
+fn is_url_like_path(input: &str) -> bool {
+    input
+        .find(':')
+        .is_some_and(|index| input[..index].contains(|ch: char| ch.is_ascii_alphabetic()))
+        && (input.contains("://") || input.to_ascii_lowercase().starts_with("mailto:"))
+}
+
+fn is_windows_drive_path(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn path_to_posix_string(path: &Path) -> String {
@@ -727,6 +872,57 @@ fn send_file_open_rejected(
     )
 }
 
+fn send_file_resolve_accepted(
+    sender: &TransportSender,
+    frame: &FileResolveFrame,
+    response: &FileResolveResponse,
+) -> Result<()> {
+    send_transport_frame(
+        sender,
+        json!({
+            "proto": PROTO_VERSION,
+            "type": "file_resolve_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "operation_id": frame.operation_id,
+            "accepted": true,
+            "root_key": response.root_key,
+            "requested_path_kind": response.requested_path_kind,
+            "resolved_against": response.resolved_against,
+            "resolved_relative_path": response.resolved_relative_path,
+            "content_identity": response.content_identity,
+            "size": response.size,
+        }),
+    )
+}
+
+fn send_file_resolve_rejected(
+    sender: &TransportSender,
+    frame: &FileResolveFrame,
+    code: &str,
+    message: &str,
+    retryable: bool,
+) -> Result<()> {
+    send_transport_frame(
+        sender,
+        json!({
+            "proto": PROTO_VERSION,
+            "type": "file_resolve_result",
+            "id": new_message_id(),
+            "ts": now_millis(),
+            "ext": {},
+            "operation_id": frame.operation_id,
+            "accepted": false,
+            "error": {
+                "code": code,
+                "message": message,
+                "retryable": retryable
+            }
+        }),
+    )
+}
+
 fn send_stream_data(
     sender: &TransportSender,
     frame: &FileOpenFrame,
@@ -813,6 +1009,23 @@ mod tests {
         }
     }
 
+    fn resolve_frame(path: String) -> FileResolveFrame {
+        FileResolveFrame {
+            envelope: Envelope {
+                kind: "file_resolve".into(),
+                proto: PROTO_VERSION.into(),
+                id: "msg_resolve_test".into(),
+                ts: 0,
+                ext: Value::Null,
+            },
+            operation_id: "op_resolve_test".into(),
+            root_key: WORKSPACE_ROOT_KEY.into(),
+            requested_path: path,
+            requested_path_kind: "absolute_posix".into(),
+            max_bytes: Some(1024),
+        }
+    }
+
     #[test]
     fn validates_workspace_read_policy() {
         assert!(validate_file_open_frame(&frame()).is_ok());
@@ -828,6 +1041,120 @@ mod tests {
         let mut bad_range = frame();
         bad_range.mode = "range".into();
         assert!(validate_file_open_frame(&bad_range).is_err());
+    }
+
+    #[test]
+    fn validates_absolute_file_resolve_policy() {
+        let workspace = temp_workspace("absolute-policy");
+        let frame = resolve_frame(workspace.join("src/lib.rs").to_string_lossy().into_owned());
+        assert!(validate_file_resolve_frame(&frame).is_ok());
+
+        let mut unsupported_kind = frame.clone();
+        unsupported_kind.requested_path_kind = "relative".into();
+        assert!(validate_file_resolve_frame(&unsupported_kind).is_err());
+
+        let mut relative = frame.clone();
+        relative.requested_path = "src/lib.rs".into();
+        assert!(validate_file_resolve_frame(&relative).is_err());
+
+        let mut windows = frame.clone();
+        windows.requested_path = "C:/Users/adam/file.txt".into();
+        assert!(validate_file_resolve_frame(&windows).is_err());
+
+        let mut url = frame;
+        url.requested_path = "https://example.com/file.ts".into();
+        assert!(validate_file_resolve_frame(&url).is_err());
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn resolves_absolute_posix_file_under_workspace() {
+        let workspace = temp_workspace("absolute-under-root");
+        let target = workspace.join("docs/proto.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, b"hello").unwrap();
+
+        let manager = FileManager::new(workspace.clone());
+        let response = manager
+            .resolve_absolute_file(&resolve_frame(target.to_string_lossy().into_owned()))
+            .await
+            .expect("resolve response");
+
+        assert_eq!(response.root_key, WORKSPACE_ROOT_KEY);
+        assert_eq!(response.requested_path_kind, "absolute_posix");
+        assert_eq!(response.resolved_against, RESOLVED_AGAINST_ABSOLUTE_PATH);
+        assert_eq!(response.resolved_relative_path, "docs/proto.md");
+        assert_eq!(response.size, 5);
+        assert_eq!(
+            response
+                .content_identity
+                .get("size")
+                .and_then(Value::as_u64),
+            Some(5)
+        );
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn rejects_absolute_posix_file_outside_workspace() {
+        let workspace = temp_workspace("absolute-outside-root");
+        let outside = temp_workspace("absolute-outside-target");
+        let target = outside.join("secret.txt");
+        fs::write(&target, b"secret").unwrap();
+
+        let manager = FileManager::new(workspace.clone());
+        let result = manager
+            .resolve_absolute_file(&resolve_frame(target.to_string_lossy().into_owned()))
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(FileOpenRejection {
+                code: "POLICY_DENIED",
+                ..
+            })
+        ));
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[tokio::test]
+    async fn rejects_absolute_directory_and_symlink() {
+        let workspace = temp_workspace("absolute-unsafe-types");
+        let directory = workspace.join("docs");
+        let real_file = workspace.join("real.md");
+        let symlink = workspace.join("link.md");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&real_file, b"real").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_file, &symlink).unwrap();
+
+        let manager = FileManager::new(workspace.clone());
+        let directory_result = manager
+            .resolve_absolute_file(&resolve_frame(directory.to_string_lossy().into_owned()))
+            .await;
+        assert!(matches!(
+            directory_result,
+            Err(FileOpenRejection {
+                code: "UNSAFE_FILE_TYPE",
+                ..
+            })
+        ));
+
+        #[cfg(unix)]
+        {
+            let symlink_result = manager
+                .resolve_absolute_file(&resolve_frame(symlink.to_string_lossy().into_owned()))
+                .await;
+            assert!(matches!(
+                symlink_result,
+                Err(FileOpenRejection {
+                    code: "SYMLINK_DENIED",
+                    ..
+                })
+            ));
+        }
+        let _ = fs::remove_dir_all(workspace);
     }
 
     #[tokio::test]

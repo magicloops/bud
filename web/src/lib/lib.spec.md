@@ -131,21 +131,25 @@ Small message helper module.
 
 ### `file-paths.ts`
 
-Conservative first-pass parser for user-clickable file references in rendered assistant Markdown.
+Conservative parser for user-clickable file references in rendered assistant
+Markdown and Markdown file previews.
 
 **Exports**:
-- `parseFilePathCandidate(input, sourceSurface)` - returns a workspace-relative path candidate with optional line/column metadata or `null`
-- `FilePathCandidate` - parsed path plus source surface (`markdown_link`, `inline_code`, or future `plain_text`)
+- `parseFilePathCandidate(input, sourceSurface)` - returns a relative or absolute POSIX path candidate with optional line/column metadata or `null`
+- `FilePathCandidate` - parsed path union plus source surface (`markdown_link`, `inline_code`, or future `plain_text`)
 - `OpenFileCandidate` / `OpenFileSource` - click payload sent to the thread file-open route
+- `filePathCandidateDisplayPath(...)` and `toOpenFileCandidate(...)` - helpers for renderer labels and source-stamped open payloads
 
 **Behavior**:
 - accepts relative file-like paths, leading `./`, known file names such as `README`, and known source/doc extensions
+- accepts high-confidence absolute POSIX paths such as `/Users/adam/bud/README.md` when they have file-like signals
 - parses `:line`, `:line:column`, and `#Lline` / `#Lline-Lend`
-- rejects absolute, home, parent traversal, Windows/backslash, URL, email, NUL, directory, and low-confidence non-file forms
+- rejects app-like slash paths, home, parent traversal, Windows/backslash, URL, email, NUL, directory, and low-confidence non-file forms
 
 ### `file-paths.test.ts`
 
-Node-runner coverage for accepted relative paths, line/column extraction, and unsafe/false-positive rejection.
+Node-runner coverage for accepted relative and absolute POSIX paths,
+line/column extraction, and unsafe/false-positive rejection.
 
 ### `terminal-data.ts`
 

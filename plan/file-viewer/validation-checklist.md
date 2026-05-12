@@ -26,8 +26,8 @@
 - [x] Parses `README.md:12:4`.
 - [x] Parses `README.md#L12`.
 - [x] Parses `README.md#L12-L20` as first-line metadata.
-- [x] Rejects `/etc/passwd`.
-- [x] Rejects `/Users/adam/bud/README.md` in the first pass.
+- [x] Classifies absolute POSIX paths such as `/Users/adam/bud/README.md` for daemon preflight.
+- [x] Preserves line/column metadata on absolute POSIX paths where parsed.
 - [x] Rejects `~/secrets.txt`.
 - [x] Rejects `../outside.txt`.
 - [x] Rejects `service/../outside.txt`.
@@ -47,7 +47,8 @@
 - [x] Parser trims safe surrounding punctuation.
 - [x] Parser preserves raw display path for metadata.
 - [x] Parser normalizes leading `./`.
-- [x] Parser rejects absolute, home, parent traversal, Windows, URL, email, and NUL forms.
+- [x] Parser accepts high-confidence absolute POSIX file candidates.
+- [x] Parser rejects app-like slash paths, home, parent traversal, Windows, URL, email, and NUL forms.
 
 ## Message Actions
 
@@ -76,7 +77,8 @@
 - [x] Denial response shows denied state.
 - [x] Expired/revoked session shows expired state.
 - [x] Offline/carrier unavailable response shows offline state.
-- [x] Content identity/range mismatch shows content-changed state when available.
+- [x] Range content-identity mismatch shows content-changed state when available.
+- [x] Content-changed file-edge response creates one fresh session and retries once.
 - [x] Generic failures show recoverable error state.
 - [x] Reload re-fetches with a valid session.
 - [x] Close returns to terminal or prior mode.
@@ -115,12 +117,44 @@
 - [x] Manual web validation confirmed an old assistant-message file link still opens after the thread changes project directories.
 - [x] Web viewer reuse keying accounts for `source.message_id`.
 
+## Absolute POSIX Path Opens
+
+- [x] Bud advertises `files.resolve.absolute_posix`.
+- [x] Bud handles metadata-only `file_resolve` requests.
+- [x] Bud rejects absolute POSIX paths outside the workspace root with `POLICY_DENIED`.
+- [x] Bud rejects symlinks and directories before serving bytes.
+- [x] Bud accepted resolve responses include `resolved_against: "absolute_path"`.
+- [x] Bud accepted resolve responses include workspace-relative `resolved_relative_path`.
+- [x] Bud accepted resolve responses include size and content identity.
+- [x] Service requires file-read transport availability before absolute preflight.
+- [x] Service requires daemon absolute-resolve capability before absolute preflight.
+- [x] Service maps daemon outside-root denial to `403`.
+- [x] Service maps in-root missing files to `404`.
+- [x] Service creates sessions from daemon-approved relative paths only.
+- [x] Service persists preflight content identity on absolute sessions.
+- [x] Service stores `requested_path_kind: "absolute_posix"` and `resolved_against: "absolute_path"` in display metadata.
+- [x] `source.kind = "markdown_preview"` remains accepted.
+- [x] Protobuf and JSON compatibility payloads cover `file_resolve` / `file_resolve_result`.
+
+## Web Absolute And Markdown Preview Links
+
+- [x] Web parser accepts high-confidence absolute POSIX assistant-message candidates.
+- [x] Web parser rejects app-relative paths such as `/settings` and `/api/threads`.
+- [x] Web open flow sends raw absolute paths to the thread file-open route.
+- [x] Web open flow moves successful absolute opens to the backend-normalized workspace key.
+- [x] Markdown previews pass file-open actions into `MarkdownContent`.
+- [x] Absolute POSIX links inside Markdown previews open with `source.kind = "markdown_preview"`.
+- [x] External web links inside Markdown previews remain external anchors.
+- [x] Unsafe protocol links inside Markdown previews are not clickable.
+- [x] Unsupported local/relative Markdown-preview links do not navigate to same-origin web-app 404s.
+- [ ] Long absolute Markdown-preview links wrap without hiding the file action.
+
 ## Mobile Handoff
 
 - [x] Handoff documents `POST /api/threads/:thread_id/files/open`.
 - [x] Handoff documents `HEAD` and `GET` file edge routes.
 - [x] Handoff documents auth and non-owner behavior.
-- [x] Handoff documents relative-path-only first-pass scope.
+- [x] Handoff documents relative-path and daemon-preflighted absolute POSIX scope.
 - [x] Handoff includes request and response examples.
 - [x] Handoff includes parser rules.
 - [x] Handoff includes 1 MiB display cap.
@@ -128,6 +162,7 @@
 - [x] Handoff includes line/column metadata behavior.
 - [x] Handoff includes session reuse guidance.
 - [x] Handoff documents message-time cwd behavior and source-message reuse guidance.
+- [x] Handoff documents Markdown-preview absolute POSIX link behavior.
 
 ## Documentation
 
@@ -147,6 +182,17 @@
   - `pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/routes/threads/messages.test.ts`
   - `pnpm --dir /Users/adam/bud/service build`
   - `pnpm --dir /Users/adam/bud/web exec node --experimental-strip-types --test src/features/threads/file-viewer-flow.test.ts`
+  - `pnpm --dir /Users/adam/bud/web build`
+  - `git diff --check`
+- Phase 7 verification commands completed successfully:
+  - `cargo fmt --check` from `/Users/adam/bud/bud`
+  - `cargo test files::` from `/Users/adam/bud/bud`
+  - `pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/files/file-session.test.ts src/proto/wire.test.ts src/routes/threads/files.test.ts`
+  - `pnpm --dir /Users/adam/bud/service exec tsc --noEmit`
+  - `pnpm --dir /Users/adam/bud/web exec node --experimental-strip-types --test src/lib/file-paths.test.ts src/components/message-renderers/roles/markdown-file-actions.test.ts src/features/threads/file-viewer-flow.test.ts`
+  - `pnpm --dir /Users/adam/bud/web test`
+  - `pnpm --dir /Users/adam/bud/web exec tsc -b`
+  - `pnpm --dir /Users/adam/bud/web lint`
   - `pnpm --dir /Users/adam/bud/web build`
   - `git diff --check`
 - Web happy-path validation is complete against a real Bud flow.

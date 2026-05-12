@@ -97,12 +97,21 @@ export class FileSessionValidationError extends Error {
   }
 }
 
-export type ParsedViewerFilePath = {
-  rawPath: string;
-  relativePath: string;
-  line?: number;
-  column?: number;
-};
+export type ParsedViewerFilePath =
+  | {
+      kind: "relative";
+      rawPath: string;
+      relativePath: string;
+      line?: number;
+      column?: number;
+    }
+  | {
+      kind: "absolute_posix";
+      rawPath: string;
+      requestedPath: string;
+      line?: number;
+      column?: number;
+    };
 
 export function normalizeFileRootKey(rootKey: string): string {
   const normalized = rootKey.trim();
@@ -200,14 +209,25 @@ export function parseViewerFilePath(
     throw new FileSessionValidationError("invalid_file_path", "Directory paths are not supported");
   }
 
-  const relativePath = normalizeFileRelativePath(candidatePath);
   const explicitLine = options.line !== undefined ? validatePositiveInteger(options.line, "line") : undefined;
   const explicitColumn =
     options.column !== undefined ? validatePositiveInteger(options.column, "column") : undefined;
   const line = explicitLine ?? parsedLine;
   const column = explicitColumn ?? parsedColumn;
 
+  if (candidatePath.startsWith("/")) {
+    return {
+      kind: "absolute_posix",
+      rawPath,
+      requestedPath: candidatePath,
+      ...(line !== undefined ? { line } : {}),
+      ...(column !== undefined ? { column } : {}),
+    };
+  }
+
+  const relativePath = normalizeFileRelativePath(candidatePath);
   return {
+    kind: "relative",
     rawPath,
     relativePath,
     ...(line !== undefined ? { line } : {}),
@@ -303,6 +323,7 @@ export async function createFileSession(args: {
   budId: string;
   body: CreateFileSessionBody;
   transportStatus?: FileTransportStatus;
+  initialContentIdentity?: Record<string, unknown>;
 }): Promise<{ session: FileSessionRow; transportStatus: FileTransportStatus }> {
   const rootKey = normalizeFileRootKey(args.body.root_key);
   const relativePath = normalizeFileRelativePath(args.body.relative_path);
@@ -325,6 +346,7 @@ export async function createFileSession(args: {
         permissions,
         maxBytes: args.body.max_bytes,
         state: transportStatus.available ? "ready" : "unavailable",
+        contentIdentity: args.initialContentIdentity ?? undefined,
         displayMetadata: args.body.display_metadata,
         auditCorrelationId,
         expiresAt,
@@ -348,6 +370,7 @@ export async function createFileSession(args: {
         max_bytes: args.body.max_bytes,
         state: transportStatus.available ? "ready" : "unavailable",
         transport: serializeFileTransportStatus(transportStatus),
+        content_identity: args.initialContentIdentity ?? null,
       },
     });
 

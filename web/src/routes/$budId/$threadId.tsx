@@ -474,6 +474,7 @@ function ThreadView() {
                 entry={activeFileEntry}
                 onClose={handleCloseFileViewer}
                 onReload={reloadActiveFile}
+                onOpenMarkdownPreviewFile={handleOpenFile}
               />
             </div>
           )}

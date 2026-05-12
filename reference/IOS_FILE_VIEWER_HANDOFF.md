@@ -1,16 +1,16 @@
 # iOS File Viewer Backend Handoff
 
-**Status:** Web validated, mobile-ready contract
-**Last Updated:** 2026-05-06
+**Status:** Web validated, mobile-ready contract with Phase 7 absolute POSIX support
+**Last Updated:** 2026-05-11
 **Audience:** Backend and iOS
-**Related docs:** `plan/file-viewer/implementation-spec.md`, `plan/file-viewer/phase-5-historic-cwd-preservation.md`, `plan/improve-file-cwd/implementation-spec.md`, `design/file-serving-user-initiated-viewer.md`, `design/daemon-owned-file-path-resolution.md`, `design/file-viewer-historic-cwd-preservation.md`, `docs/proto.md`
+**Related docs:** `plan/file-viewer/implementation-spec.md`, `plan/file-viewer/phase-5-historic-cwd-preservation.md`, `plan/file-viewer/phase-7-absolute-path-opens.md`, `reference/IOS_FILE_VIEWER_MARKDOWN_PREVIEW_LINKS_BACKEND_RESPONSE.md`, `plan/improve-file-cwd/implementation-spec.md`, `design/file-serving-user-initiated-viewer.md`, `design/daemon-owned-file-path-resolution.md`, `design/file-viewer-historic-cwd-preservation.md`, `docs/proto.md`
 
 ## Summary
 
-The file viewer is a user-initiated workflow for opening file paths referenced in assistant messages. Mobile should use the thread-scoped product route, then read bytes through the existing file edge:
+The file viewer is a user-initiated workflow for opening file paths referenced in assistant messages and file previews. Mobile should use the thread-scoped product route, then read bytes through the existing file edge:
 
 ```text
-assistant message path -> user taps file action
+assistant message path or preview link -> user taps file action
   -> POST /api/threads/:thread_id/files/open
   -> HEAD /api/files/:file_session_id
   -> GET /api/files/:file_session_id
@@ -24,8 +24,9 @@ Do not use the Bud-scoped low-level file-session create route for this product f
 Current first pass:
 
 - user-clicked files only; the agent does not get file-read authority
-- assistant-message file references only
-- workspace-relative path inputs only
+- assistant-message file references for the first message-renderer pass
+- workspace-relative path inputs
+- absolute POSIX path inputs when the connected Bud supports daemon `file_resolve`
 - message-time cwd first when `source.message_id` has server-stamped path context; otherwise current terminal directory first; Bud workspace fallback in both cases
 - no mobile-supplied cwd or path-context request fields
 - 1 MiB display cap
@@ -35,9 +36,9 @@ Current first pass:
 
 Deferred:
 
-- absolute paths and `~/...`
+- home-relative `~/...`
 - basename search or disambiguation
-- recursive clickable file links inside opened Markdown previews
+- relative clickable file links inside opened Markdown previews, such as `./next.md` or `../README.md`
 - server-assisted path detection
 - structured file-reference message metadata
 
@@ -142,7 +143,7 @@ Response `201`:
 Notes:
 
 - `file_session.file_url` is the URL to use for `HEAD` and `GET`.
-- The open route validates path shape and creates a short-lived session. File existence and local policy failures normally surface during `HEAD` / `GET`.
+- The open route validates path shape and creates a short-lived session. Relative file existence and local policy failures normally surface during `HEAD` / `GET`; absolute POSIX paths are preflighted by daemon `file_resolve` before session creation.
 - Sessions currently use a 15 minute TTL.
 
 ## File Edge Reads
@@ -186,7 +187,7 @@ Expected behavior:
 
 ## Path Rules
 
-Accepted first-pass forms:
+Accepted forms:
 
 - `README.md`
 - `service/src/files/file-session.ts`
@@ -195,10 +196,10 @@ Accepted first-pass forms:
 - `README.md:12:4`
 - `README.md#L12`
 - `README.md#L12-L20`
+- `/Users/adam/bud/README.md` when daemon policy allows the resolved file
 
-Rejected first-pass forms:
+Rejected forms:
 
-- absolute POSIX paths such as `/Users/adam/bud/README.md`
 - home-relative paths such as `~/secrets.txt`
 - parent traversal such as `../outside.txt` or `service/../outside.txt`
 - Windows drive paths
@@ -207,6 +208,16 @@ Rejected first-pass forms:
 - email addresses
 - NUL bytes
 - directory paths ending in `/`
+
+Absolute POSIX notes:
+
+- Mobile should preserve the raw absolute path in the open request.
+- The service does not prove containment locally. It sends daemon `file_resolve`
+  and creates a session only from the daemon-approved `relative_path`.
+- Absolute paths outside the daemon file-viewer scope return denied / `403`.
+- Missing absolute paths under the allowed root return not found / `404`.
+- Existing directories, symlinks, and non-regular files are denied or reported
+  unsupported by daemon policy.
 
 Parser guidance:
 
@@ -253,13 +264,13 @@ Recommended mobile state mapping:
 | --- | --- |
 | `400` from open route | Invalid path |
 | `401` | Auth/session expired; follow app auth handling |
-| `403` from file edge | Denied/outside scope |
+| `403` from open route or file edge | Denied/outside scope |
 | `404` from open route | Thread inaccessible or missing |
 | `404` from file edge | File/session not found |
 | `410` | Session expired or revoked; create a fresh session on retry |
 | `413` | File too large |
-| `409` | Content changed; create a fresh session on retry |
-| `416` | Range/content mismatch if using range reads |
+| `409` | Content changed during read, or stale content identity for a range read; create a fresh session on retry |
+| `416` | Unsatisfiable byte range if using range reads |
 | `424` or `503` | Bud/file transport offline |
 | `504` | File open timed out; retryable error |
 | invalid UTF-8 or NUL text | Unsupported binary |
@@ -286,6 +297,7 @@ Recommended behavior:
 - if a future tabbed viewer exists, clicking an already-open file should select that tab
 - keep line/column on the entry so future scroll/highlight behavior can be added without changing the backend contract
 - avoid reusing a ready entry from a different `source.message_id`; the same relative path can point at different files after a thread changes projects
+- for absolute POSIX opens, use the response `root.key + relative_path` as the normalized cache/display identity; `source.message_id` is optional for reuse because the daemon has already resolved the absolute path to a stable workspace-relative target
 
 ## Validation Checklist
 
@@ -303,7 +315,9 @@ Before mobile marks the feature done:
 - `src/...` paths work after the terminal has `cd`'d into a project subdirectory.
 - An old assistant-message file link still opens after the same thread changes to another project directory.
 - The viewer does not reuse an existing session from a different `source.message_id` when the relative path is the same.
-- Absolute, home-relative, traversal, URL, and Windows paths are inert or show invalid-path behavior.
+- Absolute POSIX links under the allowed root open normally after backend support is deployed.
+- Absolute POSIX links outside the allowed root show denied/outside-scope behavior.
+- Home-relative, traversal, URL, and Windows paths are inert or show invalid-path behavior.
 - Too-large, denied, missing, expired, offline, and binary states render distinctly.
 - Copy path and copy content behavior are explicit and do not overlap.
 
