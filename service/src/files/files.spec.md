@@ -4,7 +4,7 @@ Service-side file-session and file-stream bridge for Phase 4 of the daemon netwo
 
 ## Purpose
 
-This folder owns browser-created file sessions and the HTTP edge-to-daemon stream bridge for read-only file access. File sessions are user-owned, Bud-scoped, short-lived, root-relative, revocable, auditable, and fail closed unless the Bud has an active data-plane carrier with `file_read` support.
+This folder owns browser-created file sessions, daemon absolute-path preflight, and the HTTP edge-to-daemon stream bridge for read-only file access. File sessions are user-owned, Bud-scoped, short-lived, root-relative after daemon normalization, revocable, auditable, and fail closed unless the Bud has an active data-plane carrier with `file_read` support.
 
 ## Files
 
@@ -14,14 +14,24 @@ File session helpers and route-facing contracts.
 
 - validates the initial file root as `workspace` only
 - validates paths as POSIX-style root-relative paths with no absolute, drive-prefix, backslash, NUL, or parent-directory traversal segments
-- parses product-viewer path strings from assistant output, including optional `:line`, `:line:column`, and `#Lline` metadata while keeping the first pass relative-only
+- parses product-viewer path strings from assistant output, including optional `:line`, `:line:column`, and `#Lline` metadata, classifying either relative paths or absolute POSIX paths for daemon preflight
 - normalizes file permissions, defaulting to `stat`, `read`, and `range`
 - resolves whether the Bud has an active WebSocket/HTTP2 data-plane carrier with `file_read` negotiated
-- creates owned `file_session` rows with TTL, configurable default max-byte limit, audit correlation id, display metadata, and transport degraded state
+- creates owned `file_session` rows with TTL, configurable default max-byte limit, optional initial content identity, audit correlation id, display metadata, and transport degraded state
 - applies a 1 MiB `VIEWER_FILE_SESSION_MAX_BYTES` ceiling for user-clicked file previews
 - records `file.session_create` and `file.session_revoke` audit events
 - reads and lists sessions with SQL owner filters
 - serializes the stable browser REST response shape, including `path.raw_path` for viewer-created sessions, carrier health, candidate transports, and selection reason for operator debugging
+
+### `file-resolve.ts`
+
+Metadata-only daemon absolute-path preflight bridge.
+
+- builds `file_resolve` control frames for absolute POSIX user-clicked paths
+- waits for daemon `file_resolve_result` frames by `operation_id`
+- validates resolve result shape before route code creates a file session
+- checks stored Bud capabilities for `files.resolve.absolute_posix`
+- exposes a pure capability helper for tests and rollout gating
 
 ### `file-edge.ts`
 
@@ -36,6 +46,7 @@ Browser-facing file edge implementation.
 - sends `file_open` metadata over the selected carrier's control side
 - streams daemon file chunks from the selected data-plane carrier into the Fastify reply body
 - stores daemon-provided `content_identity` back onto the file session
+- sends `expected_content_identity` only for byte-range reads, so normal preview `HEAD` and full `GET` requests open the current file contents even when an older session identity is stale
 - maps daemon open rejection, timeout, transport loss, and client close to typed HTTP/durable states
 - fails and resets durable state when carrier send throws or when an accepted daemon open-result omits the required HTTP status code
 - records stream-open and service/daemon denial audit events with selected carrier metadata
@@ -69,19 +80,20 @@ Focused unit coverage for file-edge request/frame assembly.
 **Coverage**:
 - includes `terminal_session_id` in durable operation metadata and daemon `file_open` frames when terminal context is available
 - includes `resolution_hint` in durable operation metadata and daemon `file_open` frames when server-side path context exists on the file session
-- omits terminal context and expected content identity when unavailable
+- omits terminal context when unavailable and omits expected content identity for non-range preview reads
 
 ## Dependencies
 
 - [../db/db.spec.md](../db/db.spec.md) - `file_session` schema and audit rows
 - [../routes/routes.spec.md](../routes/routes.spec.md) - REST route registration and browser-visible behavior
 - [../transport/transport.spec.md](../transport/transport.spec.md) - data-plane carrier selection and stream runtime
+- [../ws/ws.spec.md](../ws/ws.spec.md) - daemon `file_resolve_result` control-frame delivery
 - [../../../plan/swappable-transport/phase-1-carrier-neutral-data-plane-runtime.md](../../../plan/swappable-transport/phase-1-carrier-neutral-data-plane-runtime.md) - carrier-neutral runtime sequencing
 
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Later file work still needs configurable daemon roots, absolute path resolution, binary/image/PDF preview expansion, and broader UI coverage for denied/expired/offline states.
+- Later file work still needs configurable daemon roots, parent-file-relative Markdown links, binary/image/PDF preview expansion, and broader UI coverage for denied/expired/offline states.
 
 ---
 

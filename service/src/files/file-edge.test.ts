@@ -125,6 +125,43 @@ test("file open request and frame omit terminal context when unavailable", () =>
   assert.equal(frame.mode, "stat");
 });
 
+test("file open frame only pins content identity for range reads", () => {
+  const session = createFileSessionRow({
+    threadId: null,
+    contentIdentity: { size: 100, modified_ms: 1777132800000 },
+  });
+
+  for (const mode of ["stat", "read"] as const) {
+    const frame = buildFileOpenControlFrame({
+      session,
+      terminalSessionId: null,
+      mode,
+      range: { ok: true },
+      operationId: `op_${mode}`,
+      streamId: `st_${mode}`,
+      messageId: `msg_${mode}`,
+      sentAt: 1777132800000,
+      initialCreditBytes: 65536,
+      maxChunkBytes: 16384,
+    });
+    assert.equal("expected_content_identity" in frame, false);
+  }
+
+  const rangeFrame = buildFileOpenControlFrame({
+    session,
+    terminalSessionId: null,
+    mode: "range",
+    range: { ok: true, rangeStart: 10, rangeEnd: 20 },
+    operationId: "op_range",
+    streamId: "st_range",
+    messageId: "msg_range",
+    sentAt: 1777132800000,
+    initialCreditBytes: 65536,
+    maxChunkBytes: 16384,
+  });
+  assert.deepEqual(rangeFrame.expected_content_identity, { size: 100, modified_ms: 1777132800000 });
+});
+
 function createFileSessionRow(overrides: {
   threadId: string | null;
   contentIdentity: Record<string, unknown> | null;

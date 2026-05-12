@@ -54,11 +54,15 @@ Thread-scoped file viewer route for `POST /api/threads/:threadId/files/open`.
 
 **Behavior**:
 - authorizes through `requireAuthorizedThreadAccess(...)` and derives `budId` from the owned thread
-- accepts only first-pass workspace-relative path candidates
-- rejects absolute, home, parent traversal, Windows, URL, NUL, empty, and directory path forms
+- accepts workspace-relative path candidates and absolute POSIX candidates
+- rejects home, parent traversal, Windows, URL, NUL, empty, backslash, and directory path forms at the service boundary
+- requires file-read transport availability and daemon `files.resolve.absolute_posix` capability before absolute POSIX preflight
+- sends daemon `file_resolve` for absolute POSIX inputs and creates sessions only from daemon-approved workspace-relative results
 - parses optional line/column metadata and carries it into display metadata and viewer hints
 - loads the clicked source message by authorized thread/user and copies trusted `metadata.path_context` into file-session display metadata
+- omits message-time path context for absolute POSIX opens because the absolute candidate resolves through daemon policy rather than cwd context
 - creates a viewer-owned `file_session` with `root_key: "workspace"`, `stat/read/range` permissions, the default short TTL, and a 1 MiB preview byte cap
+- persists daemon preflight content identity on absolute POSIX sessions
 - stores click source metadata such as assistant `message_id` / `client_id` when supplied by the UI
 
 ### `terminal.ts`
@@ -83,7 +87,9 @@ Focused route-handler coverage for the thread file-open route.
 - unauthenticated requests return `401`
 - signed-in non-owner thread requests return `404`
 - owned requests create viewer-scoped file sessions with thread ownership, viewer byte cap, permissions, path metadata, and viewer hints
-- unsupported absolute path forms return `400 invalid_file_path`
+- absolute POSIX opens call daemon preflight and persist resolved metadata
+- unsupported URL-style path forms return `400 invalid_file_path`
+- daemon outside-root absolute denials return `403`
 
 ### `registration.test.ts`
 

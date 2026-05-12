@@ -20,7 +20,7 @@ Opt-in grpc-js server for daemon control streams.
 - registers durable `device_session` and `transport_session` rows with `transport_kind = "h2_grpc"`
 - registers durable/session trackers before sending `hello_ack`, so post-auth frames cannot arrive before the service can route them
 - handles heartbeat, reconnect reconciliation, and terminal result/status/output frames, including optional terminal result `host_cwd` persistence
-- handles daemon `proxy_open_result` and `file_open_result` frames and delivers them to the proxy/file runtime bridges
+- handles daemon `proxy_open_result`, `file_open_result`, and `file_resolve_result` frames and delivers them to the proxy/file runtime bridges
 - records Bud online/offline transitions through the same terminal manager side effects used by WebSocket
 - starts process-local gateway drain and ends active gRPC streams during service shutdown, with a short force-shutdown fallback
 - explicitly finalizes active gRPC trackers during gateway shutdown so durable `device_session` / `transport_session` rows close before DB pools stop
@@ -59,7 +59,7 @@ Adapter between proto-loader message objects and the service's existing JSON-sha
 - encodes outbound daemon frames as typed `BudEnvelope` oneof payloads carrying transitional `frame_json`
 - decodes inbound `LegacyJsonPayload` or typed `frame_json` payloads back to `Record<string, unknown>`
 - stamps gRPC transport metadata as `TRANSPORT_KIND_H2_GRPC` or `TRANSPORT_KIND_H2_DATA`
-- remains the bounded gRPC proto-loader compatibility bridge while WebSocket binary frames move active terminal/control and core stream lifecycle payloads to direct protobuf fields
+- remains the bounded gRPC proto-loader compatibility bridge while WebSocket binary frames move active terminal/control and core stream lifecycle payloads to direct protobuf fields; file resolve frames are mapped through typed payload tags with transitional `frame_json`
 
 ### `envelope-codec.test.ts`
 

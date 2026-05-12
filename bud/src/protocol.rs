@@ -234,6 +234,18 @@ pub struct FileOpenFrame {
     pub max_chunk_bytes: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct FileResolveFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub operation_id: String,
+    pub root_key: String,
+    pub requested_path: String,
+    pub requested_path_kind: String,
+    pub max_bytes: Option<u64>,
+}
+
 pub fn validate_inbound_envelope_proto(envelope: &Envelope) -> Result<()> {
     let expected = if envelope.kind.starts_with("terminal_") {
         TERMINAL_PROTO_VERSION

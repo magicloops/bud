@@ -46,6 +46,7 @@ Top-level daemon orchestrator.
 - routing inbound server frames to the run or terminal subsystems
 - routing Phase 4.2 `proxy_open` requests to the localhost proxy adapter
 - routing Phase 4.4 `file_open` requests to the workspace file adapter
+- routing Phase 7 `file_resolve` requests to the workspace file adapter for metadata-only absolute POSIX preflight
 - skips the fresh tmux pane cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
 - routing WebSocket-received `stream_credit`, `stream_reset`, and `stream_close` frames to the file/proxy managers
 - capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames
@@ -64,6 +65,7 @@ Bud <-> service frame definitions and protocol validation.
 - defines `Envelope`, handshake frames, `RunFrame`, and all `terminal_*` inbound frames
 - `TerminalSendFrame` now treats `key` as the canonical single-gesture non-text input field while still deserializing the old plural `keys` alias for rollout compatibility
 - `FileOpenFrame` accepts an optional `resolution_hint` so service-created file sessions can prefer message-time cwd without a click-time tmux query
+- `FileResolveFrame` carries metadata-only absolute POSIX file preflight requests before service-side file-session creation
 - keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
 - exposes `validate_inbound_envelope_proto(...)` so the app layer rejects mismatched inbound protocol versions before dispatch
 
@@ -115,13 +117,13 @@ Daemon-side Phase 4.2 localhost HTTP proxy adapter.
 
 Daemon-side Phase 4.4 workspace file adapter.
 
-- validates `file_open` requests against local workspace/root/path policy
+- validates `file_open` and `file_resolve` requests against local workspace/root/path policy
 - uses the thread terminal pane cwd as the first relative-path candidate when service provides terminal context
 - uses a server-provided message-time cwd resolution hint before terminal cwd, and skips terminal cwd entirely for hinted requests whose cwd is invalid or outside the workspace
 - rejects symlinks, non-regular files, root escapes, and over-limit reads
 - supports stat, full read, and single byte-range read modes
 - computes and checks file content identity
-- returns `file_open_result` accept/reject metadata on control, including accepted-open resolution metadata
+- returns `file_open_result` and `file_resolve_result` accept/reject metadata on control, including accepted-open/resolve resolution metadata
 - streams file bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
 

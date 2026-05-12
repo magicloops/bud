@@ -12,6 +12,7 @@ import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable } from "../db/schema.js";
 import { handleFileOpenResult } from "../files/file-runtime.js";
+import { handleFileResolveResult as handleFileResolveRuntimeResult } from "../files/file-resolve.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import { handleProxyOpenResult } from "../proxy/proxy-runtime.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
@@ -281,6 +282,9 @@ class GrpcControlConnection {
         break;
       case "file_open_result":
         await this.handleFileOpenResult(frame);
+        break;
+      case "file_resolve_result":
+        await this.handleFileResolveResult(frame);
         break;
       default:
         this.logger.warn(
@@ -573,6 +577,27 @@ class GrpcControlConnection {
         component: "grpc_control_gateway",
       },
       "Handled file_open_result frame",
+    );
+  }
+
+  private async handleFileResolveResult(raw: unknown): Promise<void> {
+    const frame = handleFileResolveRuntimeResult(raw);
+    if (!frame) {
+      this.logger.warn(
+        { component: "grpc_control_gateway" },
+        "Invalid file_resolve_result frame",
+      );
+      return;
+    }
+    this.logger.debug?.(
+      {
+        operationId: frame.operation_id,
+        accepted: frame.accepted,
+        resolvedAgainst: frame.resolved_against ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "grpc_control_gateway",
+      },
+      "Handled file_resolve_result frame",
     );
   }
 

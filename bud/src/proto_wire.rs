@@ -1908,6 +1908,8 @@ fn payload_field_for_frame_type(frame_type: &str) -> Option<u32> {
         "proxy_open_result" => 177,
         "file_open" => 178,
         "file_open_result" => 179,
+        "file_resolve" => 180,
+        "file_resolve_result" => 181,
         _ => return None,
     })
 }
@@ -1944,6 +1946,8 @@ fn frame_type_for_payload_field(field_number: u32) -> Option<&'static str> {
         177 => "proxy_open_result",
         178 => "file_open",
         179 => "file_open_result",
+        180 => "file_resolve",
+        181 => "file_resolve_result",
         _ => return None,
     })
 }

@@ -5,7 +5,8 @@ import {
   createOpenThreadFileRequestBody,
   createPendingFileEntry,
   decodeFileText,
-  fileViewerKey,
+  fileViewerCandidateKey,
+  fileViewerResolvedKey,
   formatFileViewerBytes,
   isLikelyBinaryText,
   languageForFilePath,
@@ -15,6 +16,7 @@ import {
   shouldReuseFileViewerEntry,
   statusForFileResponseCode,
   type FileViewerEntry,
+  type FileViewerStatus,
   type FileViewerState,
 } from './file-viewer-state.ts'
 
@@ -45,50 +47,43 @@ export async function openFileViewerCandidateFlow(args: {
   transport: FileViewerFlowTransport
   onError: (message: string) => void
 }): Promise<void> {
-  if (!args.threadId) {
+  const threadId = args.threadId
+  if (!threadId) {
     args.onError('No thread selected')
     return
   }
 
-  const key = fileViewerKey(args.candidate.relative_path, args.candidate.source)
-  const existing = args.stateAccess.getState().entries_by_key[key]
-  if (!args.forceNewSession && shouldReuseFileViewerEntry(existing)) {
+  const key = fileViewerCandidateKey(args.candidate)
+  const reusableEntry = !args.forceNewSession
+    ? findReusableFileViewerEntry(args.stateAccess.getState(), args.candidate, key)
+    : null
+  if (reusableEntry) {
     args.stateAccess.setState((current) => ({
       ...current,
-      active_key: key,
+      active_key: reusableEntry.key,
       entries_by_key: {
         ...current.entries_by_key,
-        [key]: reusedFileViewerEntry(existing, args.candidate),
+        [reusableEntry.key]: reusedFileViewerEntry(reusableEntry.entry, args.candidate),
       },
     }))
     return
   }
 
-  const pendingEntry = createPendingFileEntry(args.candidate)
-  args.stateAccess.updateEntry(key, () => pendingEntry)
-
   try {
-    const response = await args.transport.openThreadFile(
-      args.threadId,
-      createOpenThreadFileRequestBody(args.candidate),
-    )
-    const sessionEntry = sessionFileViewerEntry(
-      pendingEntry,
-      response,
-      args.candidate.raw_path,
-    )
-    args.stateAccess.updateEntry(key, () => sessionEntry)
-    await loadFileViewerSessionContent({
+    await openAndLoadFileViewerCandidate(
+      {
+        threadId,
+        candidate: args.candidate,
+        stateAccess: args.stateAccess,
+        transport: args.transport,
+      },
       key,
-      response,
-      baseEntry: sessionEntry,
-      stateAccess: args.stateAccess,
-      transport: args.transport,
-    })
+    )
   } catch (error) {
     if (isResponseLikeApiError(error) && error.status === 401) {
       return
     }
+    const pendingEntry = createPendingFileEntry(args.candidate)
     const status = isResponseLikeApiError(error)
       ? statusForFileResponseCode(error.status)
       : 'error'
@@ -104,6 +99,57 @@ export async function openFileViewerCandidateFlow(args: {
   }
 }
 
+async function openAndLoadFileViewerCandidate(
+  args: {
+    threadId: string
+    candidate: OpenFileCandidate
+    stateAccess: FileViewerFlowStateAccess
+    transport: FileViewerFlowTransport
+  },
+  key: string,
+): Promise<void> {
+  let attempt = 0
+  while (attempt < 2) {
+    const pendingEntry = createPendingFileEntry(args.candidate)
+    args.stateAccess.updateEntry(key, () => pendingEntry)
+    const response = await args.transport.openThreadFile(
+      args.threadId,
+      createOpenThreadFileRequestBody(args.candidate),
+    )
+    const sessionEntry = sessionFileViewerEntry(
+      pendingEntry,
+      response,
+      args.candidate.raw_path,
+    )
+    const resolvedKey = fileViewerResolvedKey(
+      response.file_session.path.relative_path,
+      args.candidate,
+    )
+    args.stateAccess.setState((current) => {
+      const nextEntries = { ...current.entries_by_key }
+      if (resolvedKey !== key) {
+        delete nextEntries[key]
+      }
+      nextEntries[resolvedKey] = { ...sessionEntry, key: resolvedKey }
+      return {
+        active_key: resolvedKey,
+        entries_by_key: nextEntries,
+      }
+    })
+    const status = await loadFileViewerSessionContent({
+      key: resolvedKey,
+      response,
+      baseEntry: { ...sessionEntry, key: resolvedKey },
+      stateAccess: args.stateAccess,
+      transport: args.transport,
+    })
+    if (status !== 'content_changed') {
+      return
+    }
+    attempt += 1
+  }
+}
+
 export async function loadFileViewerSessionContent(args: {
   key: string
   response: ApiOpenThreadFileResponse
@@ -113,9 +159,10 @@ export async function loadFileViewerSessionContent(args: {
     FileViewerFlowTransport,
     'fetchFile' | 'shouldAbortForUnauthorized' | 'readResponseErrorMessage'
   >
-}): Promise<void> {
+}): Promise<FileViewerStatus> {
   const session = args.response.file_session
   const viewer = args.response.viewer
+  const relativePath = args.baseEntry.relative_path ?? session.path.relative_path
 
   args.stateAccess.updateEntry(args.key, (entry) => ({
     ...(entry ?? args.baseEntry),
@@ -128,11 +175,10 @@ export async function loadFileViewerSessionContent(args: {
     redirectOnUnauthorized: false,
   })
   if (args.transport.shouldAbortForUnauthorized(headResponse)) {
-    return
+    return args.baseEntry.status
   }
   if (!headResponse.ok) {
-    await applyFileViewerResponseError(args.key, headResponse, args.stateAccess, args.transport)
-    return
+    return applyFileViewerResponseError(args.key, headResponse, args.stateAccess, args.transport)
   }
 
   const metadata = metadataFromFileHead(headResponse)
@@ -144,7 +190,7 @@ export async function loadFileViewerSessionContent(args: {
       status: 'too_large',
       error_message: `File is larger than ${formatFileViewerBytes(maxDisplayBytes)}.`,
     }))
-    return
+    return 'too_large'
   }
 
   args.stateAccess.updateEntry(args.key, (entry) => ({
@@ -159,11 +205,10 @@ export async function loadFileViewerSessionContent(args: {
     redirectOnUnauthorized: false,
   })
   if (args.transport.shouldAbortForUnauthorized(getResponse)) {
-    return
+    return args.baseEntry.status
   }
   if (!getResponse.ok) {
-    await applyFileViewerResponseError(args.key, getResponse, args.stateAccess, args.transport)
-    return
+    return applyFileViewerResponseError(args.key, getResponse, args.stateAccess, args.transport)
   }
 
   const bytes = await getResponse.arrayBuffer()
@@ -173,7 +218,7 @@ export async function loadFileViewerSessionContent(args: {
       status: 'too_large',
       error_message: `File is larger than ${formatFileViewerBytes(maxDisplayBytes)}.`,
     }))
-    return
+    return 'too_large'
   }
 
   const content = decodeFileText(bytes)
@@ -183,11 +228,11 @@ export async function loadFileViewerSessionContent(args: {
       status: 'unsupported_binary',
       error_message: 'This file is not text-readable in the first viewer pass.',
     }))
-    return
+    return 'unsupported_binary'
   }
 
   const viewerKind = chooseFileViewerKind(
-    args.baseEntry.relative_path,
+    relativePath,
     viewer.suggested_kind,
     content,
   )
@@ -197,10 +242,31 @@ export async function loadFileViewerSessionContent(args: {
     status: 'ready',
     content,
     viewer_kind: viewerKind,
-    language: viewer.language ?? languageForFilePath(args.baseEntry.relative_path),
+    language: viewer.language ?? languageForFilePath(relativePath),
     display_name: viewer.display_name,
     error_message: undefined,
   }))
+  return 'ready'
+}
+
+function findReusableFileViewerEntry(
+  state: FileViewerState,
+  candidate: OpenFileCandidate,
+  key: string,
+): { key: string; entry: FileViewerEntry } | null {
+  const preferred = state.entries_by_key[key]
+  if (shouldReuseFileViewerEntry(preferred)) {
+    return { key, entry: preferred }
+  }
+  if (candidate.path_kind !== 'absolute_posix') {
+    return null
+  }
+  for (const [entryKey, entry] of Object.entries(state.entries_by_key)) {
+    if (entry.raw_path === candidate.raw_path && shouldReuseFileViewerEntry(entry)) {
+      return { key: entryKey, entry }
+    }
+  }
+  return null
 }
 
 async function applyFileViewerResponseError(
@@ -208,18 +274,22 @@ async function applyFileViewerResponseError(
   response: Response,
   stateAccess: Pick<FileViewerFlowStateAccess, 'updateEntry'>,
   transport: Pick<FileViewerFlowTransport, 'readResponseErrorMessage'>,
-) {
+): Promise<FileViewerStatus> {
   const message = await transport.readResponseErrorMessage(response, `HTTP ${response.status}`)
+  const status = statusForFileResponseCode(response.status)
   stateAccess.updateEntry(key, (entry) => ({
     ...(entry ?? {
       key,
       raw_path: key,
+      path_kind: 'relative',
+      display_path: key,
       relative_path: key,
       status: 'error',
     }),
-    status: statusForFileResponseCode(response.status),
+    status,
     error_message: message,
   }))
+  return status
 }
 
 function isResponseLikeApiError(error: unknown): error is { status: number } {

@@ -148,6 +148,8 @@ loader: async ({ params }) => {
    - Opening a file switches the right pane to `file` mode; close returns to `terminal`
    - File mode preserves the mounted `ThreadTerminalPane` underneath an overlay so the xterm DOM instance is not destroyed while previewing files
    - Repeated clicks reuse ready non-expired entries, while reload and expired entries create a fresh audited session
+   - Absolute POSIX candidates are supported by the web open flow and normalize to the backend-returned workspace-relative session path
+   - Markdown previews can open absolute POSIX links with `source.kind = "markdown_preview"` while unsupported local/relative preview links stay inert
    - The first pass supports Markdown, source/code, and unknown UTF-8 text; binary/image/PDF preview and line scrolling remain follow-ups
 
 **State**:

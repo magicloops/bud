@@ -10,6 +10,7 @@ import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable } from "../db/schema.js";
 import { handleFileOpenResult as handleFileOpenRuntimeResult } from "../files/file-runtime.js";
+import { handleFileResolveResult as handleFileResolveRuntimeResult } from "../files/file-resolve.js";
 import { decodeBudFrame, encodeBudFrame, UnsupportedBudEnvelopePayloadError } from "../proto/wire.js";
 import { handleProxyOpenResult as handleProxyOpenRuntimeResult } from "../proxy/proxy-runtime.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
@@ -209,6 +210,9 @@ export class BudConnection {
         break;
       case "file_open_result":
         await this.handleFileOpenResult(parsed);
+        break;
+      case "file_resolve_result":
+        await this.handleFileResolveResult(parsed);
         break;
       default:
         this.server.log.warn({ type: envelope.data.type }, "Unhandled WS frame type");
@@ -672,6 +676,24 @@ export class BudConnection {
         component: "ws_gateway",
       },
       "Handled file_open_result frame",
+    );
+  }
+
+  private async handleFileResolveResult(raw: unknown): Promise<void> {
+    const frame = handleFileResolveRuntimeResult(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid file_resolve_result frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        operationId: frame.operation_id,
+        accepted: frame.accepted,
+        resolvedAgainst: frame.resolved_against ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled file_resolve_result frame",
     );
   }
 

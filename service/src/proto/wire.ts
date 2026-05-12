@@ -52,6 +52,8 @@ const TYPED_PAYLOAD_FIELD_BY_FRAME_TYPE: Record<string, number> = {
   proxy_open_result: 177,
   file_open: 178,
   file_open_result: 179,
+  file_resolve: 180,
+  file_resolve_result: 181,
 };
 
 const FRAME_TYPE_BY_TYPED_PAYLOAD_FIELD = new Map(
