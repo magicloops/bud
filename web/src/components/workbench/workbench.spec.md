@@ -160,8 +160,10 @@ Presentation component for the thread file viewer right-pane mode.
 **Purpose**:
 - renders create/load/ready/error states from `useFileViewer(...)`
 - presents Markdown, source/code, and plain UTF-8 text files
+- passes file-open actions into ready Markdown previews so absolute POSIX links can open through the file viewer with `source.kind = "markdown_preview"`
+- keeps unsupported local/relative Markdown-preview links inert instead of navigating to same-origin web-app 404s
 - handles too-large, unsupported-binary, not-found, denied, expired, offline, content-changed, and generic error states
-- renders a compact bottom header on the app background surface with filename-as-copy-path plus quiet full-opacity copy-content, reload, and close icon controls
+- renders a compact top header on the app background surface with filename-as-copy-path plus quiet full-opacity copy-content, reload, and close icon controls
 - in the existing-thread route, renders as an overlay above the still-mounted terminal pane so xterm is preserved while files are open
 - stays presentation-only: session creation and file fetch flow live in `web/src/features/threads/use-file-viewer.ts`
 

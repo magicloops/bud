@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { MarkdownContent } from '@/components/message-renderers/roles/markdown-content'
 import { CodeBlock } from '@/components/ui/code-block'
+import { toOpenFileCandidate, type OpenFileCandidate } from '@/lib/file-paths'
 import { cn } from '@/lib/utils'
 import type { FileViewerEntry } from '@/features/threads/use-file-viewer'
 
@@ -18,6 +19,7 @@ type FileViewerPaneProps = {
   entry: FileViewerEntry | null
   onClose: () => void
   onReload: () => void
+  onOpenMarkdownPreviewFile?: (candidate: OpenFileCandidate) => void
 }
 
 const statusCopy: Record<string, { title: string; message: string }> = {
@@ -39,7 +41,7 @@ const statusCopy: Record<string, { title: string; message: string }> = {
   },
   invalid_path: {
     title: 'Unsupported path',
-    message: 'This first pass only opens workspace-relative file paths.',
+    message: 'This path format is not supported by the file viewer.',
   },
   not_found: {
     title: 'File not found',
@@ -75,7 +77,12 @@ const statusCopy: Record<string, { title: string; message: string }> = {
   },
 }
 
-export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps) {
+export function FileViewerPane({
+  entry,
+  onClose,
+  onReload,
+  onOpenMarkdownPreviewFile,
+}: FileViewerPaneProps) {
   const [copied, setCopied] = useState<'path' | 'content' | null>(null)
   const copyResetRef = useRef<number | null>(null)
 
@@ -93,8 +100,9 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
     entry?.status === 'loading_content'
   const canCopyContent = entry?.status === 'ready' && typeof entry.content === 'string'
   const displayName = entry
-    ? entry.display_name ?? getFilename(entry.relative_path)
+    ? entry.display_name ?? getFilename(entry.relative_path ?? entry.display_path)
     : 'File viewer'
+  const copyPath = entry ? entry.relative_path ?? entry.raw_path : undefined
 
   const copyValue = useCallback(async (kind: 'path' | 'content', value: string | undefined) => {
     if (!value) {
@@ -114,28 +122,14 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden border-l-2 border-black bg-background">
-      <div className="min-h-0 flex-1 overflow-auto p-4">
-        {!entry ? (
-          <StateMessage status="idle" />
-        ) : entry.status === 'ready' ? (
-          <ReadyContent entry={entry} />
-        ) : (
-          <StateMessage
-            status={entry.status}
-            message={entry.error_message}
-            loading={isLoading}
-          />
-        )}
-      </div>
-
-      <div className="flex h-10 items-center justify-between gap-3 border-t-2 border-black bg-background px-3">
+      <div className="flex h-10 items-center justify-between gap-3 border-b-2 border-black bg-background px-3">
         <div className="flex min-w-0 items-center gap-2 font-mono">
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
           {entry ? (
             <button
               type="button"
-              onClick={() => copyValue('path', entry.relative_path)}
-              title={copied === 'path' ? 'Copied path' : `Copy ${entry.relative_path}`}
+              onClick={() => copyValue('path', copyPath)}
+              title={copied === 'path' ? 'Copied path' : `Copy ${copyPath}`}
               aria-label="Copy file path"
               className={cn(
                 'min-w-0 cursor-pointer truncate text-left text-sm font-semibold underline-offset-2 transition hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -187,19 +181,59 @@ export function FileViewerPane({ entry, onClose, onReload }: FileViewerPaneProps
           </Button>
         </div>
       </div>
+
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        {!entry ? (
+          <StateMessage status="idle" />
+        ) : entry.status === 'ready' ? (
+          <ReadyContent
+            entry={entry}
+            onOpenMarkdownPreviewFile={onOpenMarkdownPreviewFile}
+          />
+        ) : (
+          <StateMessage
+            status={entry.status}
+            message={entry.error_message}
+            loading={isLoading}
+          />
+        )}
+      </div>
     </div>
   )
 }
 
-function ReadyContent({ entry }: { entry: FileViewerEntry }) {
+function ReadyContent({
+  entry,
+  onOpenMarkdownPreviewFile,
+}: {
+  entry: FileViewerEntry
+  onOpenMarkdownPreviewFile?: (candidate: OpenFileCandidate) => void
+}) {
   if (!entry.content) {
     return <StateMessage status="error" message="File content is empty or unavailable." />
   }
 
   if (entry.viewer_kind === 'markdown') {
+    const previewSource = {
+      kind: 'markdown_preview' as const,
+      ...(entry.source?.message_id ? { message_id: entry.source.message_id } : {}),
+      ...(entry.source?.client_id ? { client_id: entry.source.client_id } : {}),
+    }
     return (
       <div className="mx-auto max-w-4xl">
-        <MarkdownContent content={entry.content} />
+        <MarkdownContent
+          content={entry.content}
+          inertLocalLinks
+          allowedFilePathKinds={['absolute_posix']}
+          fileActions={onOpenMarkdownPreviewFile
+            ? {
+                source: previewSource,
+                onOpenFileCandidate: (candidate) => {
+                  onOpenMarkdownPreviewFile(toOpenFileCandidate(candidate, previewSource))
+                },
+              }
+            : undefined}
+        />
       </div>
     )
   }

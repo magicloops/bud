@@ -68,7 +68,9 @@ test('openFileViewerCandidateFlow reuses an unexpired ready session without netw
     entries_by_key: {
       [key]: {
         key,
+        path_kind: 'relative',
         raw_path: 'README.md',
+        display_path: 'README.md',
         relative_path: 'README.md',
         file_session_id: 'fs_existing',
         file_url: '/api/files/fs_existing',
@@ -83,6 +85,7 @@ test('openFileViewerCandidateFlow reuses an unexpired ready session without netw
   await openFileViewerCandidateFlow({
     threadId: 'thread-1',
     candidate: {
+      path_kind: 'relative',
       raw_path: 'README.md:8',
       relative_path: 'README.md',
       line: 8,
@@ -120,7 +123,9 @@ test('openFileViewerCandidateFlow does not reuse a ready entry from a different 
     entries_by_key: {
       [firstKey]: {
         key: firstKey,
+        path_kind: 'relative',
         raw_path: relativePath,
+        display_path: relativePath,
         relative_path: relativePath,
         source: firstSource,
         file_session_id: 'fs_existing',
@@ -137,6 +142,7 @@ test('openFileViewerCandidateFlow does not reuse a ready entry from a different 
   await openFileViewerCandidateFlow({
     threadId: 'thread-1',
     candidate: {
+      path_kind: 'relative',
       raw_path: relativePath,
       relative_path: relativePath,
       source: secondSource,
@@ -169,6 +175,95 @@ test('openFileViewerCandidateFlow does not reuse a ready entry from a different 
   assert.equal(activeEntry?.key, secondKey)
   assert.equal(activeEntry?.file_session_id, 'fs_test')
   assert.equal(activeEntry?.content, 'from second message\n')
+})
+
+test('openFileViewerCandidateFlow normalizes absolute opens to backend workspace keys', async () => {
+  const { stateAccess, getState } = createStateHarness()
+  const calls: string[] = []
+  const candidate: OpenFileCandidate = {
+    path_kind: 'absolute_posix',
+    raw_path: '/Users/adam/bud/docs/proto.md',
+    requested_path: '/Users/adam/bud/docs/proto.md',
+    display_path: '/Users/adam/bud/docs/proto.md',
+    source: { kind: 'markdown_preview' },
+  }
+
+  await openFileViewerCandidateFlow({
+    threadId: 'thread-1',
+    candidate,
+    stateAccess,
+    transport: createTransport({
+      calls,
+      open: async (_threadId, body) => {
+        calls.push(`POST:${JSON.stringify(body)}`)
+        return createOpenResponse({
+          rawPath: '/Users/adam/bud/docs/proto.md',
+          relativePath: 'docs/proto.md',
+        })
+      },
+      fetch: async (_url, init) => {
+        calls.push(init.method ?? 'GET')
+        if (init.method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: { 'content-length': '9', 'content-type': 'text/markdown' },
+          })
+        }
+        return new Response('# Proto\n', { status: 200 })
+      },
+    }),
+    onError: assert.fail,
+  })
+
+  assert.match(calls[0] ?? '', /"path":"\/Users\/adam\/bud\/docs\/proto.md"/)
+  assert.equal(getState().entries_by_key['absolute_posix:/Users/adam/bud/docs/proto.md'], undefined)
+  const activeEntry = getActiveEntry(getState())
+  assert.equal(activeEntry?.key, 'workspace:docs/proto.md')
+  assert.equal(activeEntry?.relative_path, 'docs/proto.md')
+  assert.equal(activeEntry?.raw_path, '/Users/adam/bud/docs/proto.md')
+  assert.equal(activeEntry?.content, '# Proto\n')
+})
+
+test('openFileViewerCandidateFlow retries once when a session reports content changed', async () => {
+  const { stateAccess, getState } = createStateHarness()
+  const candidate = createCandidate()
+  let openCalls = 0
+  let headCalls = 0
+
+  await openFileViewerCandidateFlow({
+    threadId: 'thread-1',
+    candidate,
+    stateAccess,
+    transport: createTransport({
+      open: async () => {
+        openCalls += 1
+        return createOpenResponse()
+      },
+      fetch: async (_url, init) => {
+        if (init.method === 'HEAD') {
+          headCalls += 1
+          if (headCalls === 1) {
+            return new Response(JSON.stringify({ error: 'content_changed' }), {
+              status: 409,
+              headers: { 'content-type': 'application/json' },
+            })
+          }
+          return new Response(null, {
+            status: 200,
+            headers: { 'content-length': '24', 'content-type': 'text/typescript' },
+          })
+        }
+        return new Response('export const fresh = true\n', { status: 200 })
+      },
+    }),
+    onError: assert.fail,
+  })
+
+  assert.equal(openCalls, 2)
+  assert.equal(headCalls, 2)
+  const activeEntry = getActiveEntry(getState())
+  assert.equal(activeEntry?.status, 'ready')
+  assert.equal(activeEntry?.content, 'export const fresh = true\n')
 })
 
 test('loadFileViewerSessionContent stops after HEAD when metadata exceeds the display cap', async () => {
@@ -261,6 +356,7 @@ function getActiveEntry(state: FileViewerState) {
 
 function createCandidate(): OpenFileCandidate {
   return {
+    path_kind: 'relative',
     raw_path: 'service/src/file-viewer.ts:12',
     relative_path: 'service/src/file-viewer.ts',
     line: 12,

@@ -36,29 +36,38 @@ test("file path validation normalizes safe root-relative POSIX paths", () => {
 
 test("viewer file path parsing extracts relative paths and location metadata", () => {
   assert.deepEqual(parseViewerFilePath("README.md"), {
+    kind: "relative",
     rawPath: "README.md",
     relativePath: "README.md",
   });
   assert.deepEqual(parseViewerFilePath("./src//index.ts:12:4"), {
+    kind: "relative",
     rawPath: "./src//index.ts:12:4",
     relativePath: "src/index.ts",
     line: 12,
     column: 4,
   });
   assert.deepEqual(parseViewerFilePath("web/src/lib/api.ts#L42-L48"), {
+    kind: "relative",
     rawPath: "web/src/lib/api.ts#L42-L48",
     relativePath: "web/src/lib/api.ts",
     line: 42,
   });
   assert.deepEqual(parseViewerFilePath("web/src/lib/api.ts:12", { line: 50 }), {
+    kind: "relative",
     rawPath: "web/src/lib/api.ts:12",
     relativePath: "web/src/lib/api.ts",
     line: 50,
   });
+  assert.deepEqual(parseViewerFilePath("/Users/adam/bud/docs/proto.md:12"), {
+    kind: "absolute_posix",
+    rawPath: "/Users/adam/bud/docs/proto.md:12",
+    requestedPath: "/Users/adam/bud/docs/proto.md",
+    line: 12,
+  });
 });
 
 test("viewer file path parsing rejects out-of-scope forms", () => {
-  assert.throws(() => parseViewerFilePath("/etc/passwd"), /root-relative/);
   assert.throws(() => parseViewerFilePath("~/secrets.txt"), /root-relative/);
   assert.throws(() => parseViewerFilePath("../outside.txt"), /parent-directory/);
   assert.throws(() => parseViewerFilePath("service/../outside.txt"), /parent-directory/);

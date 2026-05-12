@@ -1,12 +1,24 @@
 export type FilePathSourceSurface = 'markdown_link' | 'inline_code' | 'plain_text'
 
-export type FilePathCandidate = {
+type FilePathCandidateBase = {
   raw_path: string
-  relative_path: string
   line?: number
   column?: number
   source_surface: FilePathSourceSurface
 }
+
+export type RelativeFilePathCandidate = FilePathCandidateBase & {
+  path_kind: 'relative'
+  relative_path: string
+}
+
+export type AbsolutePosixFilePathCandidate = FilePathCandidateBase & {
+  path_kind: 'absolute_posix'
+  requested_path: string
+  display_path: string
+}
+
+export type FilePathCandidate = RelativeFilePathCandidate | AbsolutePosixFilePathCandidate
 
 export type OpenFileSource = {
   kind: 'assistant_message' | 'markdown_preview' | 'unknown'
@@ -18,11 +30,9 @@ export type OpenFileSource = {
   }
 }
 
-export type OpenFileCandidate = {
-  raw_path: string
-  relative_path: string
-  line?: number
-  column?: number
+type WithoutSourceSurface<T> = T extends unknown ? Omit<T, 'source_surface'> : never
+
+export type OpenFileCandidate = WithoutSourceSurface<FilePathCandidate> & {
   source: OpenFileSource
 }
 
@@ -57,6 +67,7 @@ const knownExtensions = new Set([
   '.lock',
   '.log',
   '.md',
+  '.markdown',
   '.mdx',
   '.mjs',
   '.py',
@@ -130,17 +141,63 @@ export function parseFilePathCandidate(
     return null
   }
 
+  if (rawPath.startsWith('/')) {
+    const requestedPath = normalizeAbsolutePosixPath(rawPath)
+    if (!requestedPath || !looksLikeFilePath(requestedPath.slice(1), Boolean(line))) {
+      return null
+    }
+    return {
+      path_kind: 'absolute_posix',
+      raw_path: rawInput,
+      requested_path: requestedPath,
+      display_path: requestedPath,
+      ...(line ? { line } : {}),
+      ...(column ? { column } : {}),
+      source_surface: sourceSurface,
+    }
+  }
+
   const relativePath = normalizeRelativeFilePath(rawPath)
   if (!relativePath || !looksLikeFilePath(relativePath, Boolean(line))) {
     return null
   }
 
   return {
+    path_kind: 'relative',
     raw_path: rawInput,
     relative_path: relativePath,
     ...(line ? { line } : {}),
     ...(column ? { column } : {}),
     source_surface: sourceSurface,
+  }
+}
+
+export function filePathCandidateDisplayPath(candidate: FilePathCandidate | OpenFileCandidate): string {
+  return candidate.path_kind === 'relative' ? candidate.relative_path : candidate.display_path
+}
+
+export function toOpenFileCandidate(
+  candidate: FilePathCandidate,
+  source: OpenFileSource,
+): OpenFileCandidate {
+  if (candidate.path_kind === 'relative') {
+    return {
+      path_kind: 'relative',
+      raw_path: candidate.raw_path,
+      relative_path: candidate.relative_path,
+      ...(candidate.line ? { line: candidate.line } : {}),
+      ...(candidate.column ? { column: candidate.column } : {}),
+      source,
+    }
+  }
+  return {
+    path_kind: 'absolute_posix',
+    raw_path: candidate.raw_path,
+    requested_path: candidate.requested_path,
+    display_path: candidate.display_path,
+    ...(candidate.line ? { line: candidate.line } : {}),
+    ...(candidate.column ? { column: candidate.column } : {}),
+    source,
   }
 }
 
@@ -162,6 +219,26 @@ function normalizeRelativeFilePath(input: string): string | null {
   }
 
   return parts.length > 0 ? parts.join('/') : null
+}
+
+function normalizeAbsolutePosixPath(input: string): string | null {
+  const trimmed = input.trim()
+  if (!trimmed || !trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.startsWith('~')) {
+    return null
+  }
+
+  const parts: string[] = []
+  for (const part of trimmed.split('/')) {
+    if (!part || part === '.') {
+      continue
+    }
+    if (part === '..') {
+      return null
+    }
+    parts.push(part)
+  }
+
+  return parts.length > 0 ? `/${parts.join('/')}` : null
 }
 
 function looksLikeFilePath(relativePath: string, hasLineSuffix: boolean): boolean {

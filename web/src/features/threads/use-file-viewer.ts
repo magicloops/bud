@@ -106,13 +106,24 @@ export function useFileViewer({
       return
     }
     void openFileCandidate(
-      {
-        raw_path: activeEntry.raw_path,
-        relative_path: activeEntry.relative_path,
-        ...(activeEntry.line ? { line: activeEntry.line } : {}),
-        ...(activeEntry.column ? { column: activeEntry.column } : {}),
-        source: activeEntry.source ?? { kind: 'unknown' },
-      },
+      activeEntry.path_kind === 'absolute_posix'
+        ? {
+            path_kind: 'absolute_posix',
+            raw_path: activeEntry.raw_path,
+            requested_path: activeEntry.requested_path ?? activeEntry.raw_path,
+            display_path: activeEntry.display_path,
+            ...(activeEntry.line ? { line: activeEntry.line } : {}),
+            ...(activeEntry.column ? { column: activeEntry.column } : {}),
+            source: activeEntry.source ?? { kind: 'unknown' },
+          }
+        : {
+            path_kind: 'relative',
+            raw_path: activeEntry.raw_path,
+            relative_path: activeEntry.relative_path ?? activeEntry.display_path,
+            ...(activeEntry.line ? { line: activeEntry.line } : {}),
+            ...(activeEntry.column ? { column: activeEntry.column } : {}),
+            source: activeEntry.source ?? { kind: 'unknown' },
+          },
       { forceNewSession: true },
     )
   }, [openFileCandidate])

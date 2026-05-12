@@ -3,6 +3,13 @@ import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../../auth/auth.js";
 import { db } from "../../db/client.js";
+import { handleFileResolveResult } from "../../files/file-resolve.js";
+import {
+  dataPlaneSessions,
+  registerActiveDataPlaneSessionTracker,
+  type DataPlaneSessionTracker,
+} from "../../transport/data-plane-router.js";
+import { daemonTransportRouter } from "../../transport/composite-daemon-router.js";
 import { registerThreadFileRoutes } from "./files.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
@@ -90,6 +97,45 @@ const THREAD = {
   createdByUserId: "user-1",
   createdAt: new Date("2026-05-01T20:00:00.000Z"),
 };
+
+const BUD_WITH_FILE_RESOLVE = {
+  budId: "bud-1",
+  createdByUserId: "user-1",
+  capabilities: {
+    files: {
+      workspace_read: true,
+      roots: ["workspace"],
+      permissions: ["stat", "read", "range"],
+      resolve: { absolute_posix: true },
+    },
+  },
+};
+
+function makeDataPlaneTracker(streams: string[]): DataPlaneSessionTracker {
+  return {
+    budId: "bud-1",
+    deviceSessionId: "ds_1",
+    controlTransportSessionId: "ts_ws",
+    transportSessionId: "ts_ws",
+    transportKind: "websocket",
+    role: "control_data",
+    drainState: "active",
+    lastSeenAt: Date.now(),
+    streams: new Set(streams),
+    framesReceived: 0,
+    bytesReceived: 0,
+    runtimeStreams: new Map(),
+    maxChunkBytes: 16 * 1024,
+    initialCreditBytes: 1024 * 1024,
+    maxInFlightBytes: 1024 * 1024,
+    sendFrame() {
+      // noop
+    },
+    isActive() {
+      return true;
+    },
+  };
+}
 
 test("thread file-open route rejects unauthenticated requests", async (t) => {
   t.after(() => mock.restoreAll());
@@ -259,6 +305,168 @@ test("thread file-open route creates a viewer-scoped file session", async (t) =>
   assert.equal(payload.viewer.column, 7);
 });
 
+test("thread file-open route resolves absolute POSIX paths through the daemon", async (t) => {
+  t.after(() => {
+    dataPlaneSessions.clear();
+    mock.restoreAll();
+  });
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => THREAD as never);
+  mock.method(db.query.budTable, "findFirst", async () => BUD_WITH_FILE_RESOLVE as never);
+  registerActiveDataPlaneSessionTracker(makeDataPlaneTracker(["file_read"]));
+
+  let resolveFrame: Record<string, unknown> | null = null;
+  mock.method(daemonTransportRouter, "sendFrameToBud", (_budId: string, frame: Record<string, unknown>) => {
+    resolveFrame = frame;
+    queueMicrotask(() => {
+      handleFileResolveResult({
+        proto: "0.1",
+        type: "file_resolve_result",
+        id: "msg_file_resolve_result",
+        ts: Date.now(),
+        ext: {},
+        operation_id: frame.operation_id,
+        accepted: true,
+        root_key: "workspace",
+        requested_path_kind: "absolute_posix",
+        resolved_against: "absolute_path",
+        resolved_relative_path: "docs/proto.md",
+        content_identity: { size: 4096, modified_ms: 1777132800000 },
+        size: 4096,
+      });
+    });
+    return true;
+  });
+
+  let insertedSession: Record<string, unknown> | null = null;
+  mock.method(db, "transaction", (async (callback: (tx: unknown) => Promise<unknown>) => {
+    const tx = {
+      insert() {
+        return {
+          values(values: Record<string, unknown>) {
+            if ("fileSessionId" in values) {
+              insertedSession = values;
+              return {
+                returning: async () => [
+                  {
+                    ...values,
+                    operationId: null,
+                    activeStreamId: null,
+                    contentIdentity: values.contentIdentity ?? null,
+                    revokedAt: null,
+                    revokedByUserId: null,
+                    revokeReason: null,
+                    tenantId: null,
+                    createdAt: new Date("2026-05-01T20:00:00.000Z"),
+                    updatedAt: new Date("2026-05-01T20:00:00.000Z"),
+                  },
+                ],
+              };
+            }
+            return Promise.resolve();
+          },
+        };
+      },
+    };
+    return callback(tx);
+  }) as never);
+
+  const server = createServer();
+  await registerThreadFileRoutes(server);
+
+  const handler = server.handlers.get("POST /api/threads/:threadId/files/open");
+  assert.ok(handler);
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: THREAD.threadId },
+    body: {
+      path: "/Users/adam/bud/docs/proto.md:12",
+      source: {
+        kind: "markdown_preview",
+        message_id: "22222222-2222-4222-8222-222222222222",
+        client_id: "33333333-3333-4333-8333-333333333333",
+      },
+    },
+  });
+
+  assert.equal(response.statusCode, 201);
+  const capturedResolveFrame = resolveFrame as Record<string, unknown> | null;
+  assert.ok(capturedResolveFrame);
+  assert.equal(capturedResolveFrame.type, "file_resolve");
+  assert.equal(capturedResolveFrame.requested_path, "/Users/adam/bud/docs/proto.md");
+  assert.equal(capturedResolveFrame.requested_path_kind, "absolute_posix");
+
+  const capturedSession = insertedSession as Record<string, unknown> | null;
+  assert.ok(capturedSession);
+  assert.equal(capturedSession.relativePath, "docs/proto.md");
+  assert.deepEqual(capturedSession.contentIdentity, { size: 4096, modified_ms: 1777132800000 });
+  assert.equal((capturedSession.displayMetadata as Record<string, unknown>).requested_path_kind, "absolute_posix");
+  assert.equal((capturedSession.displayMetadata as Record<string, unknown>).resolved_against, "absolute_path");
+
+  const payload = response.payload as {
+    file_session: {
+      path: { raw_path: string; relative_path: string };
+      content_identity: Record<string, unknown>;
+      display_metadata: Record<string, unknown>;
+    };
+    viewer: { display_name: string; suggested_kind: string; line: number };
+  };
+  assert.equal(payload.file_session.path.raw_path, "/Users/adam/bud/docs/proto.md:12");
+  assert.equal(payload.file_session.path.relative_path, "docs/proto.md");
+  assert.deepEqual(payload.file_session.content_identity, { size: 4096, modified_ms: 1777132800000 });
+  assert.equal(payload.file_session.display_metadata.resolved_against, "absolute_path");
+  assert.equal(payload.viewer.display_name, "proto.md");
+  assert.equal(payload.viewer.suggested_kind, "markdown");
+  assert.equal(payload.viewer.line, 12);
+});
+
+test("thread file-open route maps daemon absolute path denial to 403", async (t) => {
+  t.after(() => {
+    dataPlaneSessions.clear();
+    mock.restoreAll();
+  });
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => THREAD as never);
+  mock.method(db.query.budTable, "findFirst", async () => BUD_WITH_FILE_RESOLVE as never);
+  mock.method(db, "transaction", async () => {
+    throw new Error("transaction should not run for denied resolve");
+  });
+  registerActiveDataPlaneSessionTracker(makeDataPlaneTracker(["file_read"]));
+  mock.method(daemonTransportRouter, "sendFrameToBud", (_budId: string, frame: Record<string, unknown>) => {
+    queueMicrotask(() => {
+      handleFileResolveResult({
+        proto: "0.1",
+        type: "file_resolve_result",
+        id: "msg_file_resolve_result",
+        ts: Date.now(),
+        ext: {},
+        operation_id: frame.operation_id,
+        accepted: false,
+        error: {
+          code: "POLICY_DENIED",
+          message: "path is outside the Bud file-viewer scope",
+          retryable: false,
+        },
+      });
+    });
+    return true;
+  });
+
+  const server = createServer();
+  await registerThreadFileRoutes(server);
+
+  const handler = server.handlers.get("POST /api/threads/:threadId/files/open");
+  assert.ok(handler);
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: THREAD.threadId },
+    body: { path: "/Users/adam/secrets.txt" },
+  });
+
+  assert.equal(response.statusCode, 403);
+  assert.equal((response.payload as { code: string }).code, "POLICY_DENIED");
+});
+
 test("thread file-open route rejects unsupported path forms", async (t) => {
   t.after(() => mock.restoreAll());
   mock.method(auth.api, "getSession", async () => SESSION as never);
@@ -272,7 +480,7 @@ test("thread file-open route rejects unsupported path forms", async (t) => {
 
   const response = await invokeRoute(handler, {
     params: { threadId: THREAD.threadId },
-    body: { path: "/Users/adam/bud/README.md" },
+    body: { path: "https://example.com/file.ts" },
   });
 
   assert.equal(response.statusCode, 400);

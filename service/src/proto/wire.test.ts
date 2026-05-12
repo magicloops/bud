@@ -324,6 +324,47 @@ test("encodes file open frames as typed protobuf payloads", () => {
   assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
 });
 
+test("encodes file resolve frames as typed protobuf payloads", () => {
+  const frame = {
+    proto: "0.1",
+    type: "file_resolve",
+    id: "msg_file_resolve",
+    ts: 1777132800000,
+    ext: {},
+    operation_id: "op_test",
+    root_key: "workspace",
+    requested_path: "/Users/adam/bud/docs/proto.md",
+    requested_path_kind: "absolute_posix",
+    max_bytes: 1048576,
+  };
+  const bytes = encodeLegacyJsonFrame(frame, { transportKind: "h2_grpc" });
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "file_resolve");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});
+
+test("encodes file resolve result frames as typed protobuf payloads", () => {
+  const frame = {
+    proto: "0.1",
+    type: "file_resolve_result",
+    id: "msg_file_resolve_result",
+    ts: 1777132800000,
+    ext: {},
+    operation_id: "op_test",
+    accepted: true,
+    root_key: "workspace",
+    requested_path_kind: "absolute_posix",
+    resolved_against: "absolute_path",
+    resolved_relative_path: "docs/proto.md",
+    content_identity: { size: 4096, modified_ms: 1777132800000 },
+    size: 4096,
+  };
+  const bytes = encodeLegacyJsonFrame(frame, { transportKind: "h2_grpc" });
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "file_resolve_result");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});
+
 test("tolerates unknown protobuf fields", () => {
   const bytes = Buffer.concat([
     Buffer.from(fixture.binary_base64, "base64"),

@@ -65,12 +65,14 @@ Thread-scoped file viewer state and fetch flow for user-clicked transcript paths
 
 **Responsibilities**:
 - create file sessions through `POST /api/threads/:threadId/files/open`
-- keep file entries keyed by workspace-relative path plus assistant source message id when available, so repeated same-message clicks can route back to a valid existing entry without reusing another message's historic cwd context
+- keep relative file entries keyed by workspace-relative path plus assistant source message id when available, so repeated same-message clicks can route back to a valid existing entry without reusing another message's historic cwd context
+- key absolute POSIX opens by raw requested path while pending, then move successful opens to the daemon-normalized workspace-relative key returned by the backend
 - recreate missing/expired sessions, including reload actions
 - fetch file metadata with `HEAD` before `GET`
 - enforce the 1 MiB display cap client-side from metadata and fetched bytes
 - decode UTF-8, sniff unsupported binary content, and select Markdown/code/text rendering hints
 - map edge response failures into viewer statuses (`invalid_path`, `not_found`, `denied`, `too_large`, `expired`, `offline`, `content_changed`, `unsupported_binary`, `error`)
+- create one fresh session and retry when the daemon reports `content_changed`, such as a file mutating during read
 
 **Exports**:
 - `useFileViewer(...)`
@@ -84,6 +86,7 @@ Pure file-viewer state helpers shared by the hook and tests.
 
 **Responsibilities**:
 - derive stable workspace file-viewer keys, including source-message identity when available
+- derive pending keys for absolute POSIX opens before backend normalization
 - build pending/session/reused entries
 - map HTTP response codes to viewer statuses
 - parse HEAD metadata
@@ -96,7 +99,9 @@ Pure async file-viewer flow used by `use-file-viewer.ts`.
 **Responsibilities**:
 - lazily call `POST /api/threads/:threadId/files/open` only on explicit open requests
 - reuse valid ready entries without new network calls when the source-aware key matches
+- move successful absolute POSIX opens from raw pending keys to backend-normalized workspace keys
 - run `HEAD` before `GET`
+- retry once with a fresh file session when `HEAD` or `GET` reports `content_changed`
 - enforce display caps before and after content fetch
 - map file-edge failures and binary/text states into `FileViewerEntry` updates
 
@@ -108,6 +113,8 @@ Node-runner coverage for the file-viewer open/fetch flow.
 - session creation followed by `HEAD` then `GET`
 - valid ready entry reuse without network calls
 - same relative path from a different source message creates a fresh session
+- absolute POSIX opens send raw paths and normalize to backend workspace keys
+- content-changed responses create one fresh session and retry the read path
 - metadata over-cap state without content fetch
 - binary detection and HTTP-status-to-viewer-state mapping
 

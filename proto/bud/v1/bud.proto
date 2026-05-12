@@ -58,6 +58,8 @@ message BudEnvelope {
     ProxyOpenResult proxy_open_result = 177;
     FileOpen file_open = 178;
     FileOpenResult file_open_result = 179;
+    FileResolve file_resolve = 180;
+    FileResolveResult file_resolve_result = 181;
   }
 }
 
@@ -427,5 +429,27 @@ message FileOpenResult {
   bytes content_identity_json = 6;
   uint64 size = 7;
   BudError error = 8;
+  bytes frame_json = 99;
+}
+
+message FileResolve {
+  string operation_id = 1;
+  string root_key = 2;
+  string requested_path = 3;
+  string requested_path_kind = 4;
+  uint64 max_bytes = 5;
+  bytes frame_json = 99;
+}
+
+message FileResolveResult {
+  string operation_id = 1;
+  bool accepted = 2;
+  string root_key = 3;
+  string requested_path_kind = 4;
+  string resolved_against = 5;
+  string resolved_relative_path = 6;
+  bytes content_identity_json = 7;
+  uint64 size = 8;
+  BudError error = 9;
   bytes frame_json = 99;
 }

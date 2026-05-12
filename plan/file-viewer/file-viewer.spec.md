@@ -4,18 +4,20 @@ Implementation planning documents for the first product pass of user-initiated h
 
 ## Purpose
 
-This folder turns [../../design/file-serving-user-initiated-viewer.md](../../design/file-serving-user-initiated-viewer.md) into a phased implementation spec and now tracks follow-on work for preserving message-time cwd context in file-viewer links.
+This folder turns [../../design/file-serving-user-initiated-viewer.md](../../design/file-serving-user-initiated-viewer.md) into a phased implementation spec and now tracks follow-on work for preserving message-time cwd context, source-aware reuse, and absolute-path Markdown-preview links in file-viewer flows.
 
 The plan assumes:
 
 - the existing daemon/service file-session foundation is the byte-serving primitive
 - web and mobile clients use service-owned REST routes, never daemon-direct file reads
 - the first product pass is user-initiated and does not add an agent file-read tool
-- first-pass path support is workspace-relative only
+- initial assistant-message path support is workspace-relative; Phase 7 adds
+  daemon-preflighted absolute POSIX path opens for user-clicked viewer flows
 - line and column hints are carried as metadata but do not drive first-pass scroll or highlight behavior
 - the web client is the reference implementation, while the backend route is mobile-ready from day one
 - the first viewer display cap is 1 MiB
-- binary, image, PDF, directory, and absolute-path support remain follow-on viewer/resolver work
+- binary, image, PDF, and directory support remain follow-on viewer work
+- absolute POSIX path opens are implemented through daemon-owned resolution work
 - historic file-link stability should use daemon-reported message-time `host_cwd` metadata before click-time tmux cwd when source-message context is available
 
 ## Files
@@ -99,6 +101,68 @@ Minimal web hardening phase covering:
   assistant messages
 - focused web flow tests and spec/checklist updates
 
+### `phase-7-absolute-path-opens.md`
+
+Parent decision record for implemented daemon-owned absolute POSIX path opens,
+covering:
+
+- absolute Markdown-preview link inputs
+- daemon canonicalization and allowed-root policy enforcement
+- service preflight resolution before creating normalized viewer file sessions
+- expected mobile cache/display behavior and error mappings
+- accepted defaults for `file_resolve`, transport requirements, content identity
+  persistence, metadata surfacing, denied/not-found semantics, and filesystem
+  case behavior
+
+### `phase-7a-daemon-file-resolve-frame.md`
+
+Daemon/protocol sub-phase covering:
+
+- metadata-only `file_resolve` control frame
+- absolute POSIX resolver behavior under existing workspace policy
+- daemon capability signaling and mixed-version handling
+- resolver error codes and daemon tests
+
+### `phase-7b-service-absolute-preflight.md`
+
+Service sub-phase covering:
+
+- absolute POSIX parser classification in the thread open route
+- file transport availability checks before preflight
+- daemon `file_resolve` request handling
+- normalized file-session creation from daemon-approved metadata
+- content identity persistence, range-only identity pinning, display metadata,
+  error mapping, and tests
+
+### `phase-7c-client-contract-and-rollout.md`
+
+Client contract and rollout sub-phase covering:
+
+- mobile Markdown-preview link behavior after backend support ships
+- cache/display key guidance for absolute opens
+- rollout gating for mixed backend versions
+- validation checklist for mobile, backend, and web compatibility
+
+### `phase-7d-web-absolute-path-candidates.md`
+
+Web follow-on phase covering:
+
+- absolute POSIX file-path candidate parsing in assistant messages
+- a relative/absolute union candidate model
+- pending and canonical file-viewer keying for daemon-normalized absolute opens
+- route-body compatibility with the existing thread file-open endpoint
+- focused parser and file-viewer flow tests
+
+### `phase-7e-web-markdown-preview-links.md`
+
+Web follow-on phase covering:
+
+- clickable absolute POSIX links inside opened Markdown previews
+- `source.kind = "markdown_preview"` source metadata
+- safe `react-markdown` link interception through owned component overrides
+- external, unsafe, unsupported local, and deferred relative-link behavior
+- component, flow, and manual validation expectations
+
 ### `pr-summary.md`
 
 PR handoff summary for the branch, including changed surfaces, verification,
@@ -123,6 +187,7 @@ Automated and manual validation checklist for the backend route, web parser/acti
 - [../swappable-transport/validation-checklist.md](../swappable-transport/validation-checklist.md) - existing file/proxy foundation validation notes
 - [../../docs/proto.md](../../docs/proto.md) - REST/SSE and daemon-service protocol documentation
 - [../../reference/IOS_FILE_VIEWER_HANDOFF.md](../../reference/IOS_FILE_VIEWER_HANDOFF.md) - mobile client handoff for the file-viewer product contract
+- [../../reference/IOS_FILE_VIEWER_MARKDOWN_PREVIEW_LINKS_BACKEND_RESPONSE.md](../../reference/IOS_FILE_VIEWER_MARKDOWN_PREVIEW_LINKS_BACKEND_RESPONSE.md) - backend answers for mobile Markdown-preview link handling and absolute-path expectations
 - [../../bud/src/terminal/terminal.spec.md](../../bud/src/terminal/terminal.spec.md) - daemon terminal cwd reporting used by historic file-link context
 - [../../bud/src/files/files.spec.md](../../bud/src/files/files.spec.md) - daemon file-serving resolver behavior
 - [../../service/src/runtime/runtime.spec.md](../../service/src/runtime/runtime.spec.md) - terminal runtime cwd cache and request dispatch contracts
@@ -135,7 +200,8 @@ Automated and manual validation checklist for the backend route, web parser/acti
 
 ## TODOs / Technical Debt
 
-- Absolute host-path support is intentionally deferred until a safe workspace-root stripping feature or daemon-owned `file_resolve` frame is designed.
+- Backend absolute POSIX host-path support is implemented in [phase-7-absolute-path-opens.md](./phase-7-absolute-path-opens.md); web absolute candidate and Markdown-preview link handling are scoped in [phase-7d-web-absolute-path-candidates.md](./phase-7d-web-absolute-path-candidates.md) and [phase-7e-web-markdown-preview-links.md](./phase-7e-web-markdown-preview-links.md).
+- `~/...`, Windows paths, search, relative Markdown-preview links, and multi-root policy remain deferred.
 - True chunk-by-chunk daemon file reading should land before increasing the 1 MiB viewer display cap.
 - Binary, image, PDF, and directory viewers are follow-on expansions, not first-pass requirements.
 - Server-assisted path detection and structured file-reference message metadata remain future options if client parsing proves too inconsistent.

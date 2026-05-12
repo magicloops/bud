@@ -5,7 +5,7 @@ import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
 import type { ApiMessage } from '@/lib/api-types'
-import type { FilePathCandidate, OpenFileCandidate } from '@/lib/file-paths'
+import { toOpenFileCandidate, type FilePathCandidate, type OpenFileCandidate } from '@/lib/file-paths'
 
 const MAX_MESSAGE_HEIGHT = 500
 type JsonViewComponent = typeof import('@microlink/react-json-view').default
@@ -195,17 +195,11 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
           client_id: message.client_id,
         },
         onOpenFileCandidate: (candidate: FilePathCandidate) => {
-          onOpenFile({
-            raw_path: candidate.raw_path,
-            relative_path: candidate.relative_path,
-            ...(candidate.line ? { line: candidate.line } : {}),
-            ...(candidate.column ? { column: candidate.column } : {}),
-            source: {
-              kind: 'assistant_message',
-              message_id: message.message_id,
-              client_id: message.client_id,
-            },
-          })
+          onOpenFile(toOpenFileCandidate(candidate, {
+            kind: 'assistant_message',
+            message_id: message.message_id,
+            client_id: message.client_id,
+          }))
         },
       }
     : undefined

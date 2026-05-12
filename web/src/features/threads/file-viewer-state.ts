@@ -1,5 +1,8 @@
 import type { ApiOpenThreadFileResponse } from '../../lib/api-types.ts'
-import type { OpenFileCandidate } from '../../lib/file-paths.ts'
+import {
+  filePathCandidateDisplayPath,
+  type OpenFileCandidate,
+} from '../../lib/file-paths.ts'
 
 export type FileViewerStatus =
   | 'idle'
@@ -21,8 +24,11 @@ export type FileViewerKind = 'markdown' | 'code' | 'text'
 
 export type FileViewerEntry = {
   key: string
+  path_kind: OpenFileCandidate['path_kind']
   raw_path: string
-  relative_path: string
+  display_path: string
+  relative_path?: string
+  requested_path?: string
   line?: number
   column?: number
   source?: OpenFileCandidate['source']
@@ -91,16 +97,37 @@ export function fileViewerKey(
   return baseKey
 }
 
+export function fileViewerCandidateKey(candidate: OpenFileCandidate): string {
+  if (candidate.path_kind === 'absolute_posix') {
+    return `absolute_posix:${candidate.requested_path}`
+  }
+  return fileViewerKey(candidate.relative_path, candidate.source)
+}
+
+export function fileViewerResolvedKey(
+  relativePath: string,
+  candidate: OpenFileCandidate,
+): string {
+  return fileViewerKey(
+    relativePath,
+    candidate.path_kind === 'relative' ? candidate.source : undefined,
+  )
+}
+
 export function createPendingFileEntry(candidate: OpenFileCandidate): FileViewerEntry {
+  const displayPath = filePathCandidateDisplayPath(candidate)
   return {
-    key: fileViewerKey(candidate.relative_path, candidate.source),
+    key: fileViewerCandidateKey(candidate),
+    path_kind: candidate.path_kind,
     raw_path: candidate.raw_path,
-    relative_path: candidate.relative_path,
+    display_path: displayPath,
+    ...(candidate.path_kind === 'relative' ? { relative_path: candidate.relative_path } : {}),
+    ...(candidate.path_kind === 'absolute_posix' ? { requested_path: candidate.requested_path } : {}),
     ...(candidate.line ? { line: candidate.line } : {}),
     ...(candidate.column ? { column: candidate.column } : {}),
     source: candidate.source,
     status: 'creating_session',
-    display_name: candidate.relative_path.split('/').at(-1) ?? candidate.relative_path,
+    display_name: displayPath.split('/').at(-1) ?? displayPath,
   }
 }
 
@@ -120,9 +147,13 @@ export function reusedFileViewerEntry(
   existing: FileViewerEntry,
   candidate: OpenFileCandidate,
 ): FileViewerEntry {
+  const displayPath = filePathCandidateDisplayPath(candidate)
   return {
     ...existing,
     raw_path: candidate.raw_path,
+    path_kind: candidate.path_kind,
+    display_path: existing.relative_path ?? displayPath,
+    ...(candidate.path_kind === 'absolute_posix' ? { requested_path: candidate.requested_path } : {}),
     ...(candidate.line ? { line: candidate.line } : { line: undefined }),
     ...(candidate.column ? { column: candidate.column } : { column: undefined }),
     source: candidate.source,
@@ -147,8 +178,10 @@ export function sessionFileViewerEntry(
   const session = response.file_session
   return {
     ...pendingEntry,
+    path_kind: pendingEntry.path_kind,
     raw_path: session.path.raw_path ?? fallbackRawPath,
     relative_path: session.path.relative_path,
+    display_path: session.path.relative_path,
     file_session_id: session.file_session_id,
     file_url: session.file_url,
     expires_at: session.expires_at,

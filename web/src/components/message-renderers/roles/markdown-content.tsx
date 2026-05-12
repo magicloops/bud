@@ -5,12 +5,19 @@ import remarkBreaks from 'remark-breaks'
 import { FileText } from 'lucide-react'
 import { InlineCode } from '@/components/ui/inline-code'
 import { CodeBlock } from '@/components/ui/code-block'
+import { filePathCandidateDisplayPath } from '@/lib/file-paths'
 import type { MessageContentRendererProps } from '../types'
 import {
+  type AllowedFilePathKind,
   createFileOpenClickHandler,
+  getMarkdownLinkAction,
   getInlineCodeFileCandidate,
-  getMarkdownLinkFileCandidate,
 } from './markdown-file-actions'
+
+type MarkdownContentProps = MessageContentRendererProps & {
+  inertLocalLinks?: boolean
+  allowedFilePathKinds?: readonly AllowedFilePathKind[]
+}
 
 /**
  * Shared markdown renderer for assistant and user messages.
@@ -19,7 +26,9 @@ import {
 export const MarkdownContent = memo(function MarkdownContent({
   content,
   fileActions,
-}: MessageContentRendererProps) {
+  inertLocalLinks = false,
+  allowedFilePathKinds,
+}: MarkdownContentProps) {
   if (!content) return null
 
   return (
@@ -34,8 +43,11 @@ export const MarkdownContent = memo(function MarkdownContent({
               return <CodeBlock code={code} language={match[1]} />
             }
             const inlineText = String(children)
-            const fileCandidate = getInlineCodeFileCandidate(inlineText, fileActions)
+            const fileCandidate = getInlineCodeFileCandidate(inlineText, fileActions, {
+              allowedPathKinds: allowedFilePathKinds,
+            })
             if (fileActions && fileCandidate) {
+              const displayPath = filePathCandidateDisplayPath(fileCandidate)
               return (
                 <span className="align-baseline [overflow-wrap:anywhere]">
                   <InlineCode className="max-w-full [overflow-wrap:anywhere]">{children}</InlineCode>
@@ -43,8 +55,8 @@ export const MarkdownContent = memo(function MarkdownContent({
                     type="button"
                     onClick={createFileOpenClickHandler(fileActions, fileCandidate)}
                     className="ml-1 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-border bg-background align-text-bottom text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                    title={`Open ${fileCandidate.relative_path}`}
-                    aria-label={`Open ${fileCandidate.relative_path}`}
+                    title={`Open ${displayPath}`}
+                    aria-label={`Open ${displayPath}`}
                   >
                     <FileText className="h-3 w-3" />
                   </button>
@@ -57,24 +69,35 @@ export const MarkdownContent = memo(function MarkdownContent({
             <div className="my-4">{children}</div>
           ),
           a: ({ href, children }) => {
-            const fileCandidate = getMarkdownLinkFileCandidate(href, fileActions)
-            if (fileActions && fileCandidate) {
+            const linkAction = getMarkdownLinkAction(href, fileActions, {
+              inertLocalLinks,
+              allowedPathKinds: allowedFilePathKinds,
+            })
+            if (fileActions && linkAction.kind === 'file') {
+              const displayPath = filePathCandidateDisplayPath(linkAction.candidate)
               return (
                 <button
                   type="button"
-                  onClick={createFileOpenClickHandler(fileActions, fileCandidate)}
+                  onClick={createFileOpenClickHandler(fileActions, linkAction.candidate)}
                   className="inline-flex max-w-full cursor-pointer flex-wrap items-baseline gap-x-1 text-left align-baseline text-accent underline underline-offset-2 transition hover:text-accent/80"
-                  title={`Open ${fileCandidate.relative_path}`}
-                  aria-label={`Open ${fileCandidate.relative_path}`}
+                  title={`Open ${displayPath}`}
+                  aria-label={`Open ${displayPath}`}
                 >
                   <FileText className="h-3.5 w-3.5 shrink-0" />
                   <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{children}</span>
                 </button>
               )
             }
+            if (linkAction.kind !== 'external') {
+              return (
+                <span className="text-muted-foreground underline decoration-dotted underline-offset-2">
+                  {children}
+                </span>
+              )
+            }
             return (
               <a
-                href={href}
+                href={linkAction.href}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-accent underline underline-offset-2 hover:text-accent/80"

@@ -97,7 +97,7 @@ export function buildFileOpenControlFrame(args: FileOpenRequestArgs & {
     ...resolutionHintField(args.session),
     mode: args.mode,
     ...fileRangeFields(args.range),
-    ...(args.session.contentIdentity ? { expected_content_identity: args.session.contentIdentity } : {}),
+    ...expectedContentIdentityField(args.session, args.mode),
     max_bytes: args.session.maxBytes,
     initial_credit_bytes: args.initialCreditBytes,
     max_chunk_bytes: args.maxChunkBytes,
@@ -796,6 +796,16 @@ function terminalSessionField(terminalSessionId: string | null): Record<string, 
 function resolutionHintField(session: FileSessionRow): Record<string, FileOpenResolutionHint> {
   const hint = resolutionHintForSession(session);
   return hint ? { resolution_hint: hint } : {};
+}
+
+function expectedContentIdentityField(
+  session: FileSessionRow,
+  mode: FileOpenMode,
+): Record<string, Record<string, unknown>> {
+  if (mode !== "range" || !session.contentIdentity) {
+    return {};
+  }
+  return { expected_content_identity: session.contentIdentity };
 }
 
 function resolutionHintForSession(session: FileSessionRow): FileOpenResolutionHint | null {

@@ -109,7 +109,7 @@ Ownership-focused thread submodules:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads/:thread_id/files/open` | Create a short-lived owned file session from a user-clicked relative path in the thread transcript, copying trusted source-message path context when present |
+| `POST` | `/api/threads/:thread_id/files/open` | Create a short-lived owned file session from a user-clicked relative or daemon-resolved absolute POSIX path in the thread transcript, copying trusted source-message path context for relative opens when present |
 
 **Terminal Endpoints** (Thread-Scoped):
 
@@ -134,7 +134,7 @@ Ownership-focused thread submodules:
 - `TerminalEnsureBodySchema` - Optional `shell`, `cwd`, `cols`, `rows`
 - `TerminalResizeBodySchema` - Required `cols`, `rows`
 - `TerminalInputBodySchema` - Required `input`
-- `OpenThreadFileBodySchema` - Required relative `path`, optional source metadata, optional line/column, and first-pass `viewer_intent: "preview"`
+- `OpenThreadFileBodySchema` - Required file `path`, optional source metadata, optional line/column, and first-pass `viewer_intent: "preview"`; relative paths use message-time cwd hints when available, while absolute POSIX paths are daemon-preflighted before session creation
 
 **Message History Contract**:
 - `GET /api/threads/:thread_id/messages` now returns an envelope: `{ messages, page }`
@@ -271,7 +271,7 @@ Before creating user message, validates the selected LLM model/reasoning pair an
 - terminal input writes `terminal_session_input_log.user_id` for human-originated input
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
 - terminal interrupt is authorized at the same thread boundary as terminal input/stream/history and returns `404 no_terminal_session` when no active owned session exists
-- thread file-open is authorized at the same thread boundary, derives the Bud from the owned thread, creates `file_session.created_by_user_id` for the acting viewer, and returns `404 thread_not_found` for signed-in non-owners
+- thread file-open is authorized at the same thread boundary, derives the Bud from the owned thread, creates `file_session.created_by_user_id` for the acting viewer, daemon-preflights absolute POSIX paths before DB session creation, and returns `404 thread_not_found` for signed-in non-owners
 - thread SSE routes send an initial heartbeat frame on empty-buffer/live-only attaches so the HTTP response stays in SSE mode even before the first real event arrives
 - `POST /api/threads` now returns `{ thread_id }`
 - `POST /api/threads/:thread_id/messages` now accepts optional `client_id`
@@ -418,7 +418,7 @@ Phase 4.4 file session and daemon-backed file edge routes.
 - thread-scoped file sessions include the active thread terminal session id on `file_open` when available, letting the daemon try tmux pane-cwd resolution before workspace-root fallback for unhinted opens
 - thread-scoped file sessions include a `resolution_hint` on `file_open` when the clicked source message has server-stamped path context, letting the daemon prefer message-time cwd over click-time cwd
 - file reads enforce owner checks before stream registration plus per-Bud concurrency, max bytes, chunk/credit, idle, and TTL limits
-- daemon re-checks workspace root/path, symlink, regular-file, max-byte, and content-identity policy before sending bytes
+- daemon re-checks workspace root/path, symlink, regular-file, max-byte, range content-identity, and during-read identity policy before sending bytes
 
 ### `files.test.ts`
 
