@@ -579,6 +579,10 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/file-viewer/implementation-spec.md](./plan/file-viewer/implementation-spec.md) | Parent implementation spec for the web-first, mobile-compatible file viewer workflow built on the existing file-session foundation |
 | [plan/file-viewer/progress-checklist.md](./plan/file-viewer/progress-checklist.md) | Running implementation checklist for the file viewer rollout |
 | [plan/file-viewer/validation-checklist.md](./plan/file-viewer/validation-checklist.md) | Validation checklist for the file viewer backend route, web parser/actions, web viewer states, real-daemon smoke, and mobile handoff |
+| [plan/web-proxy/web-proxy.spec.md](./plan/web-proxy/web-proxy.spec.md) | Folder spec for the phased durable web proxy implementation plan, covering Bud-owned proxied sites, `bud.show` gateway auth, web/mobile surfaces, HTTP/WebSocket fidelity, agent tools, and deferred sharing/gateway extraction |
+| [plan/web-proxy/implementation-spec.md](./plan/web-proxy/implementation-spec.md) | Parent implementation spec for private owner-only local web proxying through durable Bud-scoped endpoint hosts, including product contracts, schema, auth/cookie decisions, rollout phases, and security invariants |
+| [plan/web-proxy/progress-checklist.md](./plan/web-proxy/progress-checklist.md) | Running implementation checklist for the durable web proxy rollout |
+| [plan/web-proxy/validation-checklist.md](./plan/web-proxy/validation-checklist.md) | Validation checklist for web proxy ownership, target safety, gateway auth, HTTP fidelity, WebSocket/HMR, web/mobile clients, agent tools, local development, and production deployment |
 | [plan/improve-file-cwd/improve-file-cwd.spec.md](./plan/improve-file-cwd/improve-file-cwd.spec.md) | Folder spec for the narrowed file-viewer cwd improvement plan, using tmux `pane_current_path` before workspace fallback |
 | [plan/improve-file-cwd/implementation-spec.md](./plan/improve-file-cwd/implementation-spec.md) | Phased implementation spec for current-terminal-directory-first file viewer resolution, including tmux validation, service context propagation, daemon cwd-first resolution, and diagnostics |
 | [plan/mobile-auth/phase-2-deferred-validation-checklist.md](./plan/mobile-auth/phase-2-deferred-validation-checklist.md) | Deferred runtime-validation checklist for the hosted mobile OAuth flow while prototype work proceeds into the API-contract phase |
@@ -722,4 +726,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-10*
+*Last updated: 2026-05-12*
