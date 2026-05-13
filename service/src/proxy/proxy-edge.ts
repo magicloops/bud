@@ -5,7 +5,7 @@ import { ulid } from "ulid";
 import type { Viewer } from "../auth/session.js";
 import { config, PROTO_VERSION } from "../config.js";
 import { db } from "../db/client.js";
-import { proxySessionTable } from "../db/schema.js";
+import { proxiedSiteTable, proxySessionTable } from "../db/schema.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import {
   getActiveDataPlaneSessionForBud,
@@ -15,6 +15,7 @@ import {
   sendDataPlaneFrame,
 } from "../transport/data-plane-router.js";
 import { LOCALHOST_PROXY_STREAM_TYPE, type ProxySessionRow, type ProxyTransportStatus } from "./proxy-session.js";
+import type { ProxiedSiteRow } from "./proxied-site.js";
 import {
   ProxyRuntimeStream,
   deleteProxyRuntimeStream,
@@ -51,6 +52,56 @@ export async function openProxyEdgeStream(args: {
   request: FastifyRequest;
   reply: FastifyReply;
 }): Promise<FastifyReply> {
+  return openLocalhostProxyEdgeStream(args);
+}
+
+export async function openProxiedSiteEdgeStream(args: {
+  viewer: Viewer;
+  site: ProxiedSiteRow;
+  transportStatus: Extract<ProxyTransportStatus, { available: true }>;
+  request: FastifyRequest;
+  reply: FastifyReply;
+}): Promise<FastifyReply> {
+  return openLocalhostProxyEdgeStream({
+    viewer: args.viewer,
+    session: {
+      proxySessionId: args.site.proxiedSiteId,
+      budId: args.site.budId,
+      threadId: null,
+      operationId: args.site.operationId,
+      activeStreamId: args.site.activeStreamId,
+      targetHost: args.site.targetHost,
+      targetPort: args.site.targetPort,
+      allowedMethods: ["GET", "HEAD"],
+      state: "ready",
+      displayMetadata: args.site.displayMetadata,
+      auditCorrelationId: args.site.auditCorrelationId,
+      expiresAt: args.site.expiresAt,
+      revokedAt: null,
+      revokedByUserId: null,
+      revokeReason: null,
+      tenantId: args.site.tenantId,
+      createdByUserId: args.site.createdByUserId,
+      createdAt: args.site.createdAt,
+      updatedAt: args.site.updatedAt,
+    },
+    proxiedSite: args.site,
+    transportStatus: args.transportStatus,
+    request: args.request,
+    reply: args.reply,
+    targetPath: proxiedSiteTargetPath(args.request.url),
+  });
+}
+
+async function openLocalhostProxyEdgeStream(args: {
+  viewer: Viewer;
+  session: ProxySessionRow;
+  proxiedSite?: ProxiedSiteRow;
+  transportStatus: Extract<ProxyTransportStatus, { available: true }>;
+  request: FastifyRequest;
+  reply: FastifyReply;
+  targetPath?: string;
+}): Promise<FastifyReply> {
   const method = args.request.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
     return args.reply.status(501).send({
@@ -72,6 +123,15 @@ export async function openProxyEdgeStream(args: {
       message: "Bud data-plane carrier detached before proxy request could start",
     });
   }
+  const resourceAuditData = args.proxiedSite
+    ? {
+        proxied_site_id: args.proxiedSite.proxiedSiteId,
+        audit_correlation_id: args.proxiedSite.auditCorrelationId,
+      }
+    : {
+        proxy_session_id: args.session.proxySessionId,
+        audit_correlation_id: args.session.auditCorrelationId,
+      };
 
   const daemonStateStore = new DaemonStateStore();
   const capacity = checkDataPlaneRuntimeStreamCapacity({
@@ -88,8 +148,7 @@ export async function openProxyEdgeStream(args: {
       eventData: {
         denied_by: "service",
         reason: "concurrent_stream_limit",
-        proxy_session_id: args.session.proxySessionId,
-        audit_correlation_id: args.session.auditCorrelationId,
+        ...resourceAuditData,
         active_streams: capacity.activeStreams,
         max_concurrent_streams: config.dataPlaneMaxConcurrentProxyStreamsPerBud,
         transport_kind: dataTracker.transportKind,
@@ -104,7 +163,7 @@ export async function openProxyEdgeStream(args: {
   }
   const operationId = `op_${ulid()}`;
   const streamId = `st_${ulid()}`;
-  const targetPath = proxyTargetPath(args.request.url, args.session.proxySessionId);
+  const targetPath = args.targetPath ?? proxyTargetPath(args.request.url, args.session.proxySessionId);
 
   await daemonStateStore.createOperation({
     operationId,
@@ -116,7 +175,7 @@ export async function openProxyEdgeStream(args: {
     deviceSessionId: args.transportStatus.deviceSessionId,
     transportSessionId: args.transportStatus.controlTransportSessionId,
     request: {
-      proxy_session_id: args.session.proxySessionId,
+      ...resourceAuditData,
       method,
       target_host: args.session.targetHost,
       target_port: args.session.targetPort,
@@ -135,14 +194,26 @@ export async function openProxyEdgeStream(args: {
     transportSessionId: args.transportStatus.dataTransportSessionId,
     createdByUserId: args.viewer.userId,
   });
-  await db
-    .update(proxySessionTable)
-    .set({
-      operationId,
-      activeStreamId: streamId,
-      updatedAt: new Date(),
-    })
-    .where(eq(proxySessionTable.proxySessionId, args.session.proxySessionId));
+  if (args.proxiedSite) {
+    await db
+      .update(proxiedSiteTable)
+      .set({
+        operationId,
+        activeStreamId: streamId,
+        lastAccessedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(proxiedSiteTable.proxiedSiteId, args.proxiedSite.proxiedSiteId));
+  } else {
+    await db
+      .update(proxySessionTable)
+      .set({
+        operationId,
+        activeStreamId: streamId,
+        updatedAt: new Date(),
+      })
+      .where(eq(proxySessionTable.proxySessionId, args.session.proxySessionId));
+  }
   await daemonStateStore.appendAuditEvent({
     eventType: "proxy.stream_open",
     budId: args.session.budId,
@@ -151,8 +222,7 @@ export async function openProxyEdgeStream(args: {
     streamId,
     createdByUserId: args.viewer.userId,
     eventData: {
-      proxy_session_id: args.session.proxySessionId,
-      audit_correlation_id: args.session.auditCorrelationId,
+      ...resourceAuditData,
       method,
       path: targetPath,
       target_host: args.session.targetHost,
@@ -188,14 +258,25 @@ export async function openProxyEdgeStream(args: {
     dataTracker.runtimeStreams.delete(streamId);
     args.request.raw.off("aborted", onClientClosed);
     args.reply.raw.off("close", onClientClosed);
-    void db
-      .update(proxySessionTable)
-      .set({
-        activeStreamId: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(proxySessionTable.activeStreamId, streamId))
-      .catch(() => null);
+    if (args.proxiedSite) {
+      void db
+        .update(proxiedSiteTable)
+        .set({
+          activeStreamId: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(proxiedSiteTable.activeStreamId, streamId))
+        .catch(() => null);
+    } else {
+      void db
+        .update(proxySessionTable)
+        .set({
+          activeStreamId: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(proxySessionTable.activeStreamId, streamId))
+        .catch(() => null);
+    }
   };
   runtime = new ProxyRuntimeStream(streamId, operationId, cleanup, {
     maxReceivedBytes: config.proxySessionMaxResponseBytes,
@@ -233,8 +314,7 @@ export async function openProxyEdgeStream(args: {
           denied_by: "service",
           reason,
           error,
-          proxy_session_id: args.session.proxySessionId,
-          audit_correlation_id: args.session.auditCorrelationId,
+          ...resourceAuditData,
           transport_kind: dataTracker.transportKind,
           data_transport_session_id: dataTracker.transportSessionId ?? null,
         },
@@ -351,8 +431,7 @@ export async function openProxyEdgeStream(args: {
               denied_by: "service",
               reason: "response_consumer_failed",
               error,
-              proxy_session_id: args.session.proxySessionId,
-              audit_correlation_id: args.session.auditCorrelationId,
+              ...resourceAuditData,
               transport_kind: dataTracker.transportKind,
               data_transport_session_id: dataTracker.transportSessionId ?? null,
             },
@@ -482,8 +561,7 @@ export async function openProxyEdgeStream(args: {
         denied_by: "service",
         reason: openSendError ? "carrier_send_failed" : "carrier_refused_open",
         error,
-        proxy_session_id: args.session.proxySessionId,
-        audit_correlation_id: args.session.auditCorrelationId,
+        ...resourceAuditData,
         transport_kind: dataTracker.transportKind,
         data_transport_session_id: dataTracker.transportSessionId ?? null,
       },
@@ -566,8 +644,7 @@ export async function openProxyEdgeStream(args: {
         denied_by: "daemon",
         reason: "open_rejected",
         error,
-        proxy_session_id: args.session.proxySessionId,
-        audit_correlation_id: args.session.auditCorrelationId,
+        ...resourceAuditData,
         transport_kind: dataTracker.transportKind,
         data_transport_session_id: dataTracker.transportSessionId ?? null,
       },
@@ -613,8 +690,7 @@ export async function openProxyEdgeStream(args: {
           denied_by: "daemon",
           reason: "invalid_open_result",
           error,
-          proxy_session_id: args.session.proxySessionId,
-          audit_correlation_id: args.session.auditCorrelationId,
+          ...resourceAuditData,
           transport_kind: dataTracker.transportKind,
           data_transport_session_id: dataTracker.transportSessionId ?? null,
         },
@@ -690,6 +766,11 @@ function proxyTargetPath(rawUrl: string, proxySessionId: string): string {
   const path = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : "/";
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedPath}${url.search}`;
+}
+
+function proxiedSiteTargetPath(rawUrl: string): string {
+  const url = new URL(rawUrl, "http://bud.local");
+  return `${url.pathname || "/"}${url.search}`;
 }
 
 function sanitizeRequestHeaders(headers: IncomingHttpHeaders): Record<string, string> {

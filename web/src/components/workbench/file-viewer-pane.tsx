@@ -121,7 +121,7 @@ export function FileViewerPane({
   }, [])
 
   return (
-    <div className="relative flex flex-1 flex-col overflow-hidden border-l-2 border-black bg-background">
+    <div className="relative flex flex-1 flex-col overflow-hidden bg-background">
       <div className="flex h-10 items-center justify-between gap-3 border-b-2 border-black bg-background px-3">
         <div className="flex min-w-0 items-center gap-2 font-mono">
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />

@@ -2,153 +2,94 @@
 
 ## Objective
 
-Support browser WebSocket upgrades through `bud.show` so modern dev servers and
-apps can use HMR and app-level real-time connections. Vite HMR is the first
-acceptance target.
+Support browser WebSocket upgrades through `bud.show` / `proxy.localhost` so
+modern dev servers and app-level real-time connections work through the Bud
+daemon. Vite HMR is the first full-fidelity acceptance target.
 
-## Scope
+This phase is now split into smaller sub-phases because WebSocket/HMR touches
+the browser gateway, service auth, daemon protocol, daemon local networking,
+stream lifecycle, and frontend/product diagnostics.
 
-- Add gateway WebSocket upgrade handling for authorized endpoint hosts.
-- Bridge browser WebSockets to daemon proxy WebSocket sessions.
-- Add daemon local WebSocket client support to loopback targets.
-- Preserve path, query, subprotocols, binary/text frames, close codes, and
-  ping/pong behavior where possible.
-- Add limits, idle timeouts, and cleanup on disconnect/disable.
-- Add Vite HMR smoke validation.
+## Why Split This Phase
+
+The HTTP proxy spike proved that owner-private endpoint-host routing works for
+normal `GET`/`HEAD` traffic. The Vite dev-server test showed the next blocker is
+not another HTTP transport issue; it is missing browser WebSocket upgrade
+support and missing HMR diagnostics.
+
+Splitting Phase 5 lets us:
+
+- harden current reset/authorization visibility before adding new protocol
+  surface
+- land daemon protocol and local WebSocket support independently from browser
+  upgrade routing
+- validate the service browser bridge with simple echo tests before Vite HMR
+- keep Phase 4 HTTP bodies/cookies separate from the HMR-critical path
+
+## Sub-Phases
+
+| Sub-phase | Outcome | Primary Proof |
+| --- | --- | --- |
+| [Phase 5 Prep](./phase-5-prep-observability-and-hardening.md) | Current HTTP proxy reset/auth behavior is diagnosable and unsupported HMR is explicit. | Reset error codes are visible; gateway auth tests cover no-stream-before-auth. |
+| [Phase 5a](./phase-5a-protocol-and-daemon-websocket-bridge.md) | Service and daemon have a WebSocket proxy protocol and daemon local loopback WS adapter. | Local daemon WS echo bridge can be driven without browser gateway upgrade. |
+| [Phase 5b](./phase-5b-gateway-upgrade-and-browser-bridge.md) | Proxy endpoint hosts accept authorized browser upgrades and bridge frames to daemon WS sessions. | Browser-to-local echo server works for text, binary, and close semantics. |
+| [Phase 5c](./phase-5c-vite-hmr-validation-and-product-hardening.md) | Vite HMR works and product/deployment behavior is hardened. | Vite component edit updates without manual reload through the proxied endpoint. |
+
+## Recommended Sequence
+
+Do Phase 5 before Phase 4 HTTP body/cookie work.
+
+Reasoning:
+
+- HMR is a hard blocker for the core local-development workflow.
+- `vite preview` already validates that simple HTTP traffic can work.
+- Request bodies and local-app cookies are important for interactive apps, but
+  they do not fix Vite dev mode.
+- WebSocket support adds new daemon protocol and gateway lifecycle concepts that
+  should be validated before expanding HTTP method/body complexity.
+
+## Cross-Phase Design Direction
+
+Prefer message-oriented WebSocket proxy frames over forcing browser WebSocket
+traffic through the existing HTTP `stream_data` response-byte contract.
+
+Reasons:
+
+- WebSockets are bidirectional and message-framed, not unidirectional HTTP
+  response streams.
+- Text/binary distinction, close code/reason, and ping/pong behavior matter.
+- Existing `stream_data` receive-offset validation is useful for file/HTTP
+  byte streams but awkward for full-duplex WebSocket message semantics.
+- A dedicated frame family keeps auth, limits, and cleanup explicit.
+
+The final frame names can change during Phase 5a, but the conceptual frame
+family should include:
+
+- open request
+- open result
+- message frame, preserving text vs binary
+- close frame, preserving code/reason where supported
+- error/reset frame
+- optional ping/pong frames if the chosen libraries do not handle them cleanly
 
 ## Non-Goals
 
 - No public sharing.
 - No arbitrary upstream hosts.
 - No full local HTTPS or WSS-to-local-HTTPS requirement.
+- No request-body or local-app cookie expansion; those remain Phase 4.
 - No guarantee that every framework-specific HMR mode works in this phase.
-
-## Gateway Flow
-
-For a browser upgrade request:
-
-1. Resolve endpoint host to `proxied_site`.
-2. Validate viewer cookie and owner access before accepting the upgrade.
-3. Verify Bud daemon is connected and advertises WebSocket proxy capability.
-4. Allocate a proxy WebSocket stream ID.
-5. Ask daemon to open a local WebSocket to target host/port/path/query.
-6. Bridge browser frames and daemon frames bidirectionally.
-7. Close both sides on disable, expiry, Bud disconnect, idle timeout, or
-   browser disconnect.
-
-## Target Behavior
-
-Preserve:
-
-- path and query, for example `/@vite/client` and HMR socket paths
-- `Sec-WebSocket-Protocol` when safe
-- text frames
-- binary frames
-- close codes and close reasons, subject to framework limitations
-- ping/pong or keepalive behavior
-
-Strip:
-
-- Bud credentials
-- proxy viewer cookies before local target
-- hop-by-hop headers not required for the local upgrade
-- unknown proxy authorization headers
-
-Host behavior:
-
-- Default upstream `Host` remains target host/port.
-- Preserve `Origin` only if local-dev compatibility requires it. Otherwise
-  consider rewriting origin to the endpoint host. This is a phase-start
-  security/compatibility decision because dev servers differ in origin checks.
-
-## Daemon Protocol Work
-
-Add WebSocket proxy frames, for example:
-
-- `proxy_ws_open`
-- `proxy_ws_opened`
-- `proxy_ws_frame`
-- `proxy_ws_ping`
-- `proxy_ws_pong`
-- `proxy_ws_close`
-- `proxy_ws_error`
-
-Frame requirements:
-
-- Include `proxied_site_id` or request/session ID as appropriate.
-- Use `snake_case` fields.
-- Preserve binary/text distinction.
-- Support backpressure or bounded queues so one slow side cannot exhaust
-  memory.
-- Include cancellation semantics when either side closes.
-
-## Limits
-
-Suggested defaults:
-
-- Per-site WebSocket connections: 16.
-- Per-Bud WebSocket connections: 64.
-- Idle timeout: 10 minutes without app or protocol activity, configurable.
-- Open timeout: 10 seconds.
-- Max frame size: align with chosen Rust/websocket libraries and service memory
-  limits.
-
-## Vite Acceptance Target
-
-Validation app:
-
-- Run a Vite dev server on the daemon host.
-- Create a proxied site for the Vite port.
-- Open the endpoint host in Chrome.
-- Confirm initial HTML, `/@vite/client`, module assets, and HMR socket connect.
-- Edit a component and confirm the page updates without manual reload.
-
-Known follow-up target:
-
-- Next.js HMR can be validated after Vite works because it may have different
-  paths and dev-server assumptions.
-
-## Error Handling
-
-Browser-facing errors:
-
-- Unauthorized upgrade: reject before upgrade if possible.
-- Bud offline: `503` or close with product-safe reason after upgrade if state
-  changes.
-- Site disabled/expired: close active sockets.
-- Local connection refused: product-safe close/error, logged with local target
-  metadata.
-
-Logging:
-
-- Log endpoint host, proxied site ID, Bud ID, method/path, and error code.
-- Do not log cookies, grants, request bodies, or WebSocket payloads.
-
-## Tests
-
-Add tests for:
-
-- Unauthorized WebSocket request does not allocate daemon state.
-- Authorized WebSocket connects to local loopback test server.
-- Text and binary frames round-trip.
-- Close codes propagate.
-- Site disable closes active sockets.
-- Bud disconnect closes active sockets.
-- Per-site and per-Bud limits are enforced.
-- Reserved cookies and Bud credentials are stripped.
-- Vite HMR smoke test passes in supported local/dev environment.
-
-## Spec Files To Update During Implementation
-
-- `docs/proto.md`
-- `service/src/proxy/proxy.spec.md`
-- `bud/src/src.spec.md`
-- relevant runtime/connection specs for limits and cleanup
+- No QUIC/HTTP/3 dependency.
 
 ## Acceptance Criteria
 
-- Vite HMR works through a private owner-only `bud.show` endpoint in Chrome.
+Phase 5 is complete when:
+
+- Vite HMR works through a private owner-only endpoint host in Chrome.
 - App-level WebSocket echo tests pass for text and binary frames.
 - Unauthorized upgrade attempts are rejected before daemon state allocation.
-- Active sockets close promptly on disable, expiry, or daemon disconnect.
+- Active sockets close promptly on site disable, expiry, browser close, or
+  daemon disconnect.
+- Per-site and per-Bud WebSocket limits are enforced.
 - Protocol docs describe WebSocket proxy frames and lifecycle.
+- Progress and validation checklists are updated.

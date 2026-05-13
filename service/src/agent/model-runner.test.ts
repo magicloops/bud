@@ -165,8 +165,14 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
 
   const sendTool = capturedTools.find((tool) => tool.name === "terminal_send");
   const observeTool = capturedTools.find((tool) => tool.name === "terminal_observe");
+  const webViewOpenTool = capturedTools.find((tool) => tool.name === "web_view_open");
+  const webViewCloseTool = capturedTools.find((tool) => tool.name === "web_view_close");
+  const webViewListTool = capturedTools.find((tool) => tool.name === "web_view_list");
   assert.ok(sendTool);
   assert.ok(observeTool);
+  assert.ok(webViewOpenTool);
+  assert.ok(webViewCloseTool);
+  assert.ok(webViewListTool);
 
   const sendProperties = sendTool.parameters.properties as Record<string, unknown>;
   const observeProperties = observeTool.parameters.properties as Record<string, unknown>;
@@ -179,6 +185,16 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.deepEqual(
     (observeProperties.wait_for as { enum?: unknown }).enum,
     ["none", "changed", "settled"],
+  );
+  assert.deepEqual(webViewOpenTool.parameters.required, ["target_port"]);
+  const webViewOpenProperties = webViewOpenTool.parameters.properties as Record<string, unknown>;
+  assert.match(
+    (webViewOpenProperties.target_host as { description?: string }).description ?? "",
+    /Defaults to localhost/,
+  );
+  assert.match(
+    (webViewOpenProperties.target_host as { description?: string }).description ?? "",
+    /preserve that exact host/,
   );
 });
 
@@ -355,6 +371,70 @@ test("extractToolCall normalizes legacy keys arrays to canonical semantic key st
     timeoutMs: undefined,
     callId: "call_send_legacy",
   });
+});
+
+test("extractToolCalls parses web view tool directives", () => {
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const directives = runner.extractToolCalls({
+    id: "resp_web_view_tools",
+    content: [],
+    stopReason: "tool_use",
+    toolCalls: [
+      {
+        id: "call_web_open",
+        name: "web_view_open",
+        input: {
+          target_host: "localhost",
+          target_port: 3000,
+          path: "/dashboard",
+          title: "Dashboard",
+        },
+      },
+      {
+        id: "call_web_close",
+        name: "web_view_close",
+        input: {
+          proxied_site_id: "site_test",
+          disable: true,
+        },
+      },
+      {
+        id: "call_web_list",
+        name: "web_view_list",
+        input: {},
+      },
+    ],
+  });
+
+  assert.deepEqual(directives, [
+    {
+      type: "tool_call",
+      tool: "web_view.open",
+      targetHost: "localhost",
+      targetPort: 3000,
+      path: "/dashboard",
+      title: "Dashboard",
+      callId: "call_web_open",
+    },
+    {
+      type: "tool_call",
+      tool: "web_view.close",
+      proxiedSiteId: "site_test",
+      disable: true,
+      callId: "call_web_close",
+    },
+    {
+      type: "tool_call",
+      tool: "web_view.list",
+      callId: "call_web_list",
+    },
+  ]);
 });
 
 test("parseFinalResponse includes bounded model response diagnostics on empty output", () => {

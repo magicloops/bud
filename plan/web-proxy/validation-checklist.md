@@ -4,8 +4,8 @@
 
 - [ ] Owner can create a proxied site for their Bud.
 - [ ] Owner can list only their Bud's proxied sites.
-- [ ] Signed-in non-owner gets `404` for another user's proxied site.
-- [ ] Unauthenticated API caller gets `401`.
+- [x] Signed-in non-owner gets `404` for another user's proxied site.
+- [x] Unauthenticated API caller gets `401`.
 - [ ] Thread attach derives Bud from authorized thread.
 - [ ] Thread cannot attach another user's proxied site.
 - [ ] Gateway resolves endpoint host to site before auth.
@@ -14,11 +14,11 @@
 
 ## Target Safety
 
-- [ ] `127.0.0.1` target is accepted.
-- [ ] `::1` target is accepted.
-- [ ] Exact `localhost` target is accepted.
+- [x] `127.0.0.1` target is accepted.
+- [x] `::1` target is accepted.
+- [x] Exact `localhost` target is accepted.
 - [ ] `localhost` resolves only to loopback addresses on daemon.
-- [ ] LAN addresses are rejected.
+- [x] LAN addresses are rejected.
 - [ ] Metadata service addresses are rejected.
 - [ ] Arbitrary hostnames are rejected.
 - [ ] Unix sockets and file paths are rejected.
@@ -30,7 +30,7 @@
 - [ ] Viewer grant expires quickly.
 - [ ] Viewer grant is one-time use.
 - [ ] Bootstrap host must match endpoint host.
-- [ ] Viewer cookie max age is 7 days.
+- [x] Viewer cookie max age is 7 days.
 - [ ] Viewer cookie refresh/update window is roughly 1 day.
 - [ ] Viewer cookie is host-only for the endpoint host.
 - [ ] Viewer cookie is `HttpOnly`.
@@ -39,6 +39,17 @@
 - [ ] Iframe fallback to top-level opening works when cookie access is blocked.
 - [ ] Local app cannot overwrite reserved gateway cookie names.
 - [ ] `bud.dev` cookies are never forwarded upstream.
+
+## Diagnostics And Capability Surfacing
+
+- [ ] Current proxy reset logs include canonical error code, stream id, site id,
+  Bud id, transport kind, and request path.
+- [ ] Daemon reset logs include inbound error code and stream id.
+- [ ] Proxy logs omit grants, cookies, request bodies, and response bodies.
+- [ ] API/tool/UI state can report WebSocket/HMR unsupported before Phase 5
+  runtime support lands.
+- [ ] Gateway auth failures, disabled sites, and expired sites are rejected before
+  daemon stream allocation.
 
 ## HTTP Proxy Fidelity
 
@@ -114,7 +125,16 @@
 - [ ] `proxy.localhost` route works where supported.
 - [ ] `nip.io` fallback route works where supported.
 - [ ] HTTP-only local development path is documented.
-- [ ] Optional HTTPS recipe is documented later when required.
+- [ ] Optional mkcert+Caddy HTTPS recipe is documented.
+- [ ] HTTPS local app route works at `https://app.bud.localhost`.
+- [ ] HTTPS local API/SSE route works at `https://api.bud.localhost`.
+- [ ] HTTPS local Bud WebSocket route works at `wss://api.bud.localhost/ws`.
+- [ ] HTTPS local proxy endpoint hosts work at
+  `https://<slug>.proxy.bud.localhost`.
+- [ ] HTTPS local iframe bootstrap sends a `SameSite=None; Secure` viewer
+  cookie on the redirected clean request.
+- [ ] Root README/getting-started docs explain when to use HTTP vs HTTPS local
+  development.
 
 ## Production Deployment
 

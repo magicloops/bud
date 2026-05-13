@@ -74,7 +74,7 @@ Main source code:
 - `server.ts` - Entry point
 - `config.ts` - Environment configuration
 - `auth/` - Better Auth integration and session helpers
-- `agent/` - LLM integration with extracted conversation/model/tool/transcript ownership seams
+- `agent/` - LLM integration with extracted conversation/model/terminal-tool/web-view-tool/transcript ownership seams
 - `db/` - Database layer
 - `notifications/` - Push notification helpers, APNs provider, and async outbox worker
 - `routes/` - HTTP endpoints, with split thread submodules under `routes/threads/`
@@ -82,7 +82,7 @@ Main source code:
 - `terminal/` - Terminal types
 - `grpc/` - Opt-in grpc-js daemon control gateway and envelope adapter
 - `proto/` - Network-upgrade envelope helpers and typed protobuf WebSocket carrier codec
-- `proxy/` - Phase 4.2 localhost proxy session validation, persistence helpers, transport readiness checks, daemon open dispatch, and GET/HEAD streaming bridge
+- `proxy/` - Phase 4.2 localhost proxy session validation plus product proxied-site resources, viewer grants/cookies, transport readiness checks, daemon open dispatch, and GET/HEAD streaming bridge
 - `files/` - Phase 4.4 file session validation, persistence helpers, transport readiness checks, daemon open dispatch, and stat/read/range streaming bridge
 - `transport/` - Daemon transport router interface, explicit carrier policy, composite gRPC/WebSocket adapters, gateway drain helper, optional-carrier health metadata, and selected/skipped carrier observability for file/proxy data-plane work
 - `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
@@ -144,6 +144,16 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `GET` | `/api/proxy-sessions/:id` | Read one owned proxy session |
 | `DELETE` | `/api/proxy-sessions/:id` | Revoke one owned proxy session |
 | `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:id/*` | Authorize a proxy edge request; stream GET/HEAD through the daemon over the selected data-plane carrier; fail closed for unsupported methods or missing transport |
+| `POST` | `/api/buds/:id/proxied-sites` | Create or reuse an owned durable proxied site for a Bud loopback web server |
+| `GET` | `/api/buds/:id/proxied-sites` | List owned proxied sites for a Bud |
+| `GET` | `/api/proxied-sites/:id` | Read one owned proxied site |
+| `PATCH` | `/api/proxied-sites/:id` | Rename, update path, enable, or disable one owned proxied site |
+| `DELETE` | `/api/proxied-sites/:id` | Disable one owned proxied site |
+| `GET` | `/api/threads/:id/web-view` | Read the current owned thread web-view attachment |
+| `POST` | `/api/threads/:id/web-view/attach` | Attach an owned proxied site to a thread |
+| `DELETE` | `/api/threads/:id/web-view` | Detach the current thread web view |
+| `POST` | `/api/proxied-sites/:id/viewer-grants` | Mint a one-time private proxy-domain viewer bootstrap URL |
+| `GET/HEAD` | `/*` on configured proxy endpoint hosts | Bootstrap viewer cookies and stream authorized proxied-site traffic through the daemon |
 | `POST` | `/api/buds/:id/file-sessions` | Create a short-lived owned file session for a workspace-relative path |
 | `GET` | `/api/buds/:id/file-sessions` | List owned file sessions for a Bud |
 | `GET` | `/api/file-sessions/:id` | Read one owned file session |

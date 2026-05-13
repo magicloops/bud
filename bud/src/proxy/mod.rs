@@ -7,6 +7,7 @@ use base64::Engine;
 use reqwest::header::{HeaderName, HeaderValue};
 use reqwest::{Client, Method, Url};
 use serde_json::{json, Value};
+use tokio::net::lookup_host;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task;
 use tracing::warn;
@@ -119,6 +120,10 @@ impl ProxyManager {
         credit_rx: &mut mpsc::UnboundedReceiver<ProxyStreamEvent>,
     ) -> Result<()> {
         let url = proxy_url(&frame)?;
+        if let Err(err) = validate_loopback_resolution(&frame.target_host, frame.target_port).await {
+            send_proxy_open_rejected(&sender, &frame, "POLICY_DENIED", &err.to_string(), false)?;
+            return Ok(());
+        }
         let method = method_for_proxy_open(&frame)?;
         let mut request = client.request(method.clone(), url);
         for (name, value) in sanitize_request_headers(frame.headers.as_ref()) {
@@ -208,8 +213,8 @@ pub fn validate_proxy_open_frame(frame: &ProxyOpenFrame) -> Result<()> {
     if frame.stream_type != LOCALHOST_PROXY_STREAM_TYPE {
         bail!("unsupported proxy stream type: {}", frame.stream_type);
     }
-    if frame.target_host != "127.0.0.1" {
-        bail!("proxy target host must be 127.0.0.1");
+    if !matches!(frame.target_host.as_str(), "127.0.0.1" | "::1" | "localhost") {
+        bail!("proxy target host must be 127.0.0.1, ::1, or localhost");
     }
     method_for_proxy_open(frame)?;
     if !frame.path.starts_with('/') {
@@ -227,11 +232,36 @@ fn method_for_proxy_open(frame: &ProxyOpenFrame) -> Result<Method> {
 }
 
 fn proxy_url(frame: &ProxyOpenFrame) -> Result<Url> {
+    let host = match frame.target_host.as_str() {
+        "::1" => "[::1]",
+        other => other,
+    };
     Url::parse(&format!(
-        "http://127.0.0.1:{}{}",
-        frame.target_port, frame.path
+        "http://{}:{}{}",
+        host, frame.target_port, frame.path
     ))
     .map_err(|err| err.into())
+}
+
+async fn validate_loopback_resolution(host: &str, port: u16) -> Result<()> {
+    match host {
+        "127.0.0.1" | "::1" => Ok(()),
+        "localhost" => {
+            let mut addrs = lookup_host((host, port)).await?;
+            let mut saw_addr = false;
+            for addr in addrs.by_ref() {
+                saw_addr = true;
+                if !addr.ip().is_loopback() {
+                    bail!("localhost resolved to non-loopback address {}", addr.ip());
+                }
+            }
+            if !saw_addr {
+                bail!("localhost did not resolve to any address");
+            }
+            Ok(())
+        }
+        other => bail!("unsupported proxy target host: {}", other),
+    }
 }
 
 async fn wait_for_credit(
@@ -443,8 +473,16 @@ mod tests {
     fn validates_loopback_get_or_head_only() {
         assert!(validate_proxy_open_frame(&frame()).is_ok());
 
+        let mut localhost = frame();
+        localhost.target_host = "localhost".into();
+        assert!(validate_proxy_open_frame(&localhost).is_ok());
+
+        let mut ipv6_loopback = frame();
+        ipv6_loopback.target_host = "::1".into();
+        assert!(validate_proxy_open_frame(&ipv6_loopback).is_ok());
+
         let mut non_loopback = frame();
-        non_loopback.target_host = "localhost".into();
+        non_loopback.target_host = "10.0.0.1".into();
         assert!(validate_proxy_open_frame(&non_loopback).is_err());
 
         let mut unsupported_method = frame();

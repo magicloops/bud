@@ -4,7 +4,9 @@ Utility functions and shared helpers.
 
 ## Purpose
 
-Provides common utilities for API communication, browser auth, route auth redirects, model loading, terminal input/data handling, theming, and class name management.
+Provides common utilities for API communication, browser auth, route auth
+redirects, model loading, terminal input/data handling, proxied web-view
+contracts, theming, and class name management.
 
 ## Files
 
@@ -77,6 +79,10 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 | `ApiDeviceAuthFlow` / `ApiDeviceAuthApproval` | Device-claim browser contracts |
 | `ApiFileSession` / `ApiOpenThreadFileResponse` | File-viewer session and thread-open response contracts |
+| `ApiProxyTransport` | Browser-visible proxy data-plane availability and health summary |
+| `ApiProxiedSite` / `ApiProxiedSiteListResponse` | Durable Bud-owned proxied-site contracts |
+| `ApiThreadWebView` / `ApiThreadWebViewResponse` | Current thread web-view attachment contract |
+| `ApiViewerGrantResponse` | One-time hosted-auth bootstrap URL for private proxied sites |
 
 **Capability Normalization**:
 ```typescript
@@ -91,6 +97,8 @@ Safely extracts the behavior-oriented capability fields the browser actually car
 Tool transcript note:
 - tool rows still expose generic `metadata: Record<string, unknown>`, and completed canonical tool rows may now include additive timing fields such as `started_at`, `finished_at`, and `duration_ms` inside that metadata object
 - terminal tool rows and live pending-tool snapshots expose the effective `wait_for` value so clients can detect settled waits without elapsed-time heuristics
+- web-view tool rows may expose a `web_view` runtime payload instead of
+  terminal `output`/`readiness` fields
 
 ### `route-auth.ts`
 

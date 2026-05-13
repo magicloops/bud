@@ -1,10 +1,10 @@
 # proxy
 
-Browser-facing localhost proxy runtime for Phase 4 of the daemon network upgrade.
+Browser-facing localhost proxy runtime for Phase 4 of the daemon network upgrade and the product web-proxy gateway.
 
 ## Purpose
 
-This folder owns service-side localhost proxy sessions and the Phase 4.2 GET/HEAD streaming bridge. Browser-created proxy sessions are user-owned, Bud-scoped, short-lived, localhost-only, revocable, auditable, and fail closed unless the Bud has an active data-plane carrier with localhost proxy support.
+This folder owns service-side localhost proxy sessions, durable product proxied-site helpers, and the GET/HEAD streaming bridge. Browser-created proxy sessions are user-owned, Bud-scoped, short-lived, localhost-only, revocable, auditable, and fail closed unless the Bud has an active data-plane carrier with localhost proxy support. Product proxied sites are longer-lived owner-private resources with generated endpoint hosts and cookie-backed viewer access.
 
 ## Files
 
@@ -20,6 +20,20 @@ Proxy session helpers and route-facing contracts.
 - reads and lists sessions with SQL owner filters
 - serializes the stable browser REST response shape, including carrier health, candidate transports, and selection reason for operator debugging
 
+### `proxied-site.ts`
+
+Product web-proxy resource helpers and route-facing contracts.
+
+- validates product proxy targets as `127.0.0.1`, `::1`, or exact `localhost`
+- defaults product proxied-site creation to exact `localhost` when callers omit
+  `target_host`
+- allocates generated-friendly endpoint hosts beneath the configured proxy base domain
+- creates or reuses owned durable `proxied_site` rows with soft TTL renewal metadata
+- reads, lists, updates, disables, attaches, and detaches proxied sites with SQL owner filters
+- creates short-lived one-time viewer grants and hashed endpoint-host viewer sessions
+- builds host-only `HttpOnly` viewer cookies with 7-day max age and roughly 1-day Better Auth refresh checks
+- serializes the stable product response shape consumed by the web view tab and agent web-view tools
+
 ### `proxy-edge.ts`
 
 Browser-facing proxy edge implementation.
@@ -34,6 +48,7 @@ Browser-facing proxy edge implementation.
 - fails and resets durable state when carrier send throws or when an accepted daemon open-result omits the required HTTP status code
 - records stream-open and service/daemon denial audit events with selected carrier metadata
 - sanitizes request and response headers
+- also opens durable `proxied_site` requests by adapting the product resource into the existing daemon `proxy_open` stream contract
 
 ### `proxy-runtime.ts`
 
@@ -49,13 +64,17 @@ In-memory bridge between daemon `proxy_open_result` / generic stream frames and 
 
 Focused unit coverage for target validation, method normalization, carrier-neutral transport readiness checks, and selected-carrier health metadata.
 
+### `proxied-site.test.ts`
+
+Focused unit coverage for product target/path validation, endpoint host generation, and viewer cookie parsing.
+
 ### `proxy-runtime.test.ts`
 
 Focused unit coverage for open-result delivery and response-body chunk handling.
 
 ## Dependencies
 
-- [../db/db.spec.md](../db/db.spec.md) - `proxy_session` schema and audit rows
+- [../db/db.spec.md](../db/db.spec.md) - `proxy_session`, `proxied_site`, `thread_web_view`, viewer grant/session schema, and audit rows
 - [../routes/routes.spec.md](../routes/routes.spec.md) - REST route registration and browser-visible behavior
 - [../transport/transport.spec.md](../transport/transport.spec.md) - data-plane carrier selection and stream runtime
 - [../../../plan/swappable-transport/phase-1-carrier-neutral-data-plane-runtime.md](../../../plan/swappable-transport/phase-1-carrier-neutral-data-plane-runtime.md) - carrier-neutral runtime sequencing
@@ -63,7 +82,7 @@ Focused unit coverage for open-result delivery and response-body chunk handling.
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Later proxy work still needs request bodies/non-GET methods, product web proxy validation, optional browser WebSocket upgrade policy, and public hardening of device credentials before external exposure.
+- Later proxy work still needs request bodies/non-GET methods, endpoint-host local app cookies, optional browser WebSocket/HMR upgrade policy, and public hardening before broader external exposure.
 
 ---
 

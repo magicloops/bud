@@ -49,7 +49,7 @@ Top-level daemon orchestrator.
 - routing Phase 7 `file_resolve` requests to the workspace file adapter for metadata-only absolute POSIX preflight
 - skips the fresh tmux pane cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
 - routing WebSocket-received `stream_credit`, `stream_reset`, and `stream_close` frames to the file/proxy managers
-- capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames
+- capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames; proxy target-host capabilities advertise exact `localhost`, `127.0.0.1`, and `::1` with `localhost` as the default target host
 
 **Key types**:
 
@@ -108,7 +108,9 @@ tonic/prost adapter for the Phase 3 daemon data client.
 Daemon-side Phase 4.2 localhost HTTP proxy adapter.
 
 - validates `proxy_open` requests against local loopback/method policy
-- performs no-redirect `http://127.0.0.1:<port>` requests
+- performs no-redirect `http://<loopback-host>:<port>` requests for
+  `127.0.0.1`, `::1`, or exact `localhost`
+- revalidates `localhost` resolution as loopback before opening a local request
 - returns `proxy_open_result` accept/reject metadata on control
 - streams response bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`

@@ -127,6 +127,69 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "web_view_open",
+    description:
+      "Open or reuse a browser web view for an HTTP server running on the Bud host loopback interface, then attach it to the current thread.",
+    parameters: {
+      type: "object",
+      properties: {
+        target_port: {
+          type: "integer",
+          minimum: 1,
+          maximum: 65535,
+          description: "Loopback port where the local web server is listening.",
+        },
+        target_host: {
+          type: "string",
+          enum: ["127.0.0.1", "localhost", "::1"],
+          description:
+            "Loopback host. Defaults to localhost when omitted. If the user names localhost, 127.0.0.1, or ::1 explicitly, preserve that exact host.",
+        },
+        path: {
+          type: "string",
+          description: "Absolute path to open on the local app. Defaults to /.",
+        },
+        title: {
+          type: "string",
+          description: "Short display name for the proxied site.",
+        },
+      },
+      required: ["target_port"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "web_view_close",
+    description:
+      "Detach the current thread web view. Optionally disable the proxied site when the user asked to stop exposing it.",
+    parameters: {
+      type: "object",
+      properties: {
+        proxied_site_id: {
+          type: "string",
+          description: "Optional proxied site id to close. Defaults to the current thread web view.",
+        },
+        disable: {
+          type: "boolean",
+          description: "When true, disable the proxied site in addition to detaching it.",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "web_view_list",
+    description:
+      "List owned proxied web views for this Bud and identify the current thread attachment.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export class AgentModelRunner {
@@ -446,6 +509,34 @@ export class AgentModelRunner {
           timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
           callId: toolCall.id,
         };
+      case "web_view_open":
+        if (typeof args.target_port !== "number") {
+          return null;
+        }
+        return {
+          type: "tool_call",
+          tool: "web_view.open",
+          targetHost: parseWebViewTargetHost(args.target_host),
+          targetPort: args.target_port,
+          path: typeof args.path === "string" ? args.path : undefined,
+          title: typeof args.title === "string" ? args.title : undefined,
+          callId: toolCall.id,
+        };
+      case "web_view_close":
+        return {
+          type: "tool_call",
+          tool: "web_view.close",
+          proxiedSiteId:
+            typeof args.proxied_site_id === "string" ? args.proxied_site_id : undefined,
+          disable: args.disable === true,
+          callId: toolCall.id,
+        };
+      case "web_view_list":
+        return {
+          type: "tool_call",
+          tool: "web_view.list",
+          callId: toolCall.id,
+        };
       default:
         return null;
     }
@@ -595,4 +686,11 @@ function truncateText(value: string, maxChars: number): string {
     return value;
   }
   return `${value.slice(0, maxChars)}... [truncated ${value.length - maxChars} chars]`;
+}
+
+function parseWebViewTargetHost(value: unknown): "127.0.0.1" | "localhost" | "::1" | undefined {
+  if (value === "127.0.0.1" || value === "localhost" || value === "::1") {
+    return value;
+  }
+  return undefined;
 }

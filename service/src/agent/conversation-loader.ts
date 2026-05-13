@@ -54,6 +54,9 @@ Tools:
 - {"type":"tool_call","tool":"terminal.send","text":"q"}
 - {"type":"tool_call","tool":"terminal.send","key":"ctrl+c"}
 - {"type":"tool_call","tool":"terminal.observe","lines":-50,"wait_for":"settled"}
+- {"type":"tool_call","tool":"web_view.open","target_host":"localhost","target_port":5173,"path":"/"}
+- {"type":"tool_call","tool":"web_view.close"}
+- {"type":"tool_call","tool":"web_view.list"}
 
 Tool Responses:
 All terminal tools return a JSON result containing:
@@ -64,6 +67,7 @@ All terminal tools return a JSON result containing:
 - terminal.send timeout still returns the latest visible delta and readiness; treat trigger:"timeout" as partial progress, not proof of completion
 - terminal.observe defaults to view:"delta" and returns delta in output; use view:"screen" or view:"history" for broader context
 - The service owns terminal wait timeout policy. Choose wait_for behavior, not timeout_ms values.
+Web view tools return JSON with kind:"web_view", the proxied site metadata, current thread attachment, and proxy transport status.
 
 Guidelines:
 - terminal.send is the primary terminal input tool for both shell commands and interactive programs.
@@ -89,6 +93,11 @@ Guidelines:
   - If context_after.mode is "repl" and the delta shows the UI is asking for more input, another terminal.send is reasonable
   - If context_after.mode is "shell", another terminal.send is the normal way to run the next shell command
 - If you need to interrupt the foreground program, use terminal.send with key:"ctrl+c". Send it again if the program or TUI still has not exited.
+- Use web_view.open when a local web server is already running or you have just started one and the user would benefit from viewing it.
+- For web_view.open, preserve the user's loopback host exactly when they name one: use target_host:"localhost" for localhost, target_host:"127.0.0.1" for 127.0.0.1, and target_host:"::1" for ::1. Do not substitute 127.0.0.1 for localhost.
+- If the user gives only a port for web_view.open, omit target_host; the service defaults to localhost.
+- Use web_view.list before opening a duplicate if you are unsure whether the current Bud already has a matching web view.
+- Use web_view.close to detach the current thread web view. Only set disable:true when the user explicitly wants the proxied site stopped.
 - Use the hints object to understand terminal state:
   - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
   - looks_like_confirmation: Waiting for y/n or yes/no response
@@ -338,6 +347,12 @@ export class AgentConversationLoader {
         wait_for?: unknown;
         lines?: number;
         view?: string;
+        target_host?: string;
+        target_port?: number;
+        path?: string;
+        title?: string;
+        proxied_site_id?: string;
+        disable?: boolean;
       };
 
       const callId =
@@ -376,6 +391,34 @@ export class AgentConversationLoader {
             key: "ctrl+c",
             callId,
           };
+        case "web_view.open":
+          if (typeof payload.target_port !== "number") {
+            return null;
+          }
+          return {
+            type: "tool_call",
+            tool: "web_view.open",
+            targetHost: this.parseWebViewTargetHost(payload.target_host),
+            targetPort: payload.target_port,
+            path: typeof payload.path === "string" ? payload.path : undefined,
+            title: typeof payload.title === "string" ? payload.title : undefined,
+            callId,
+          };
+        case "web_view.close":
+          return {
+            type: "tool_call",
+            tool: "web_view.close",
+            proxiedSiteId:
+              typeof payload.proxied_site_id === "string" ? payload.proxied_site_id : undefined,
+            disable: payload.disable === true,
+            callId,
+          };
+        case "web_view.list":
+          return {
+            type: "tool_call",
+            tool: "web_view.list",
+            callId,
+          };
         default:
           return null;
       }
@@ -386,6 +429,12 @@ export class AgentConversationLoader {
 
   private parseObservationView(value: unknown): TerminalObservationView | undefined {
     return value === "delta" || value === "screen" || value === "history"
+      ? value
+      : undefined;
+  }
+
+  private parseWebViewTargetHost(value: unknown): "127.0.0.1" | "localhost" | "::1" | undefined {
+    return value === "127.0.0.1" || value === "localhost" || value === "::1"
       ? value
       : undefined;
   }

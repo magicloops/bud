@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -75,6 +75,7 @@ export const MarkdownContent = memo(function MarkdownContent({
             })
             if (fileActions && linkAction.kind === 'file') {
               const displayPath = filePathCandidateDisplayPath(linkAction.candidate)
+              const label = reactNodeText(children) || displayPath
               return (
                 <button
                   type="button"
@@ -84,7 +85,7 @@ export const MarkdownContent = memo(function MarkdownContent({
                   aria-label={`Open ${displayPath}`}
                 >
                   <FileText className="h-3.5 w-3.5 shrink-0" />
-                  <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{children}</span>
+                  <span className="min-w-0 max-w-full [overflow-wrap:anywhere]">{label}</span>
                 </button>
               )
             }
@@ -113,3 +114,13 @@ export const MarkdownContent = memo(function MarkdownContent({
     </div>
   )
 })
+
+function reactNodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node)
+  }
+  if (Array.isArray(node)) {
+    return node.map(reactNodeText).join('')
+  }
+  return ''
+}

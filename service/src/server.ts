@@ -17,6 +17,7 @@ import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
 import { registerMeRoutes } from "./routes/me.js";
 import { registerProxyRoutes } from "./routes/proxy.js";
 import { registerFileRoutes } from "./routes/files.js";
+import { registerProxiedSiteRoutes } from "./routes/proxied-sites.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 import { PushNotificationWorker } from "./notifications/index.js";
 import { startGrpcControlGateway } from "./grpc/control-gateway.js";
@@ -145,6 +146,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerBudRoutes(server, terminalSessionManager);
   await registerProxyRoutes(server);
   await registerFileRoutes(server);
+  await registerProxiedSiteRoutes(server);
   await registerThreadRoutes(
     server,
     agentService,

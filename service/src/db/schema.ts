@@ -850,6 +850,166 @@ export const proxySessionTable = pgTable(
   }),
 );
 
+export const proxiedSiteTable = pgTable(
+  "proxied_site",
+  {
+    proxiedSiteId: text("proxied_site_id").primaryKey(),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    operationId: text("operation_id").references(() => budOperationTable.operationId, {
+      onDelete: "set null",
+    }),
+    activeStreamId: text("active_stream_id").references(() => budStreamTable.streamId, {
+      onDelete: "set null",
+    }),
+    displayName: text("display_name").notNull(),
+    slug: text("slug").notNull(),
+    endpointHost: text("endpoint_host").notNull(),
+    targetScheme: text("target_scheme").notNull().default("http"),
+    targetHost: text("target_host").notNull(),
+    targetPort: integer("target_port").notNull(),
+    defaultPath: text("default_path").notNull().default("/"),
+    accessPolicy: text("access_policy").notNull().default("private_owner"),
+    enabled: boolean("enabled").notNull().default(true),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    disabledByUserId: text("disabled_by_user_id").references(() => authUserTable.id, {
+      onDelete: "set null",
+    }),
+    disableReason: text("disable_reason"),
+    displayMetadata: jsonb("display_metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    auditCorrelationId: text("audit_correlation_id").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastAccessedAt: timestamp("last_accessed_at", { withTimezone: true }),
+    lastRenewedAt: timestamp("last_renewed_at", { withTimezone: true }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    endpointHostIdx: uniqueIndex("proxied_site_endpoint_host_idx").on(table.endpointHost),
+    ownerIdx: index("proxied_site_owner_idx").on(table.createdByUserId, table.budId),
+    budEnabledIdx: index("proxied_site_bud_enabled_idx").on(
+      table.budId,
+      table.enabled,
+      table.expiresAt,
+    ),
+    reuseIdx: index("proxied_site_reuse_idx").on(
+      table.budId,
+      table.createdByUserId,
+      table.targetHost,
+      table.targetPort,
+      table.defaultPath,
+    ),
+    auditCorrelationIdx: index("proxied_site_audit_correlation_idx").on(table.auditCorrelationId),
+  }),
+);
+
+export const threadWebViewTable = pgTable(
+  "thread_web_view",
+  {
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threadTable.threadId, { onDelete: "cascade" }),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    proxiedSiteId: text("proxied_site_id")
+      .notNull()
+      .references(() => proxiedSiteTable.proxiedSiteId, { onDelete: "cascade" }),
+    selectedPath: text("selected_path"),
+    attachedByUserId: text("attached_by_user_id").references(() => authUserTable.id, {
+      onDelete: "set null",
+    }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.threadId], name: "thread_web_view_pkey" }),
+    siteIdx: index("thread_web_view_site_idx").on(table.proxiedSiteId, table.updatedAt),
+    ownerIdx: index("thread_web_view_owner_idx").on(table.createdByUserId, table.updatedAt),
+  }),
+);
+
+export const proxiedSiteViewerGrantTable = pgTable(
+  "proxied_site_viewer_grant",
+  {
+    viewerGrantId: text("viewer_grant_id").primaryKey(),
+    proxiedSiteId: text("proxied_site_id")
+      .notNull()
+      .references(() => proxiedSiteTable.proxiedSiteId, { onDelete: "cascade" }),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    authSessionId: text("auth_session_id").references(() => authSessionTable.id, {
+      onDelete: "set null",
+    }),
+    grantHash: text("grant_hash").notNull(),
+    redirectPath: text("redirect_path").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    hashIdx: uniqueIndex("proxied_site_viewer_grant_hash_idx").on(table.grantHash),
+    siteIdx: index("proxied_site_viewer_grant_site_idx").on(
+      table.proxiedSiteId,
+      table.expiresAt,
+    ),
+    userIdx: index("proxied_site_viewer_grant_user_idx").on(table.userId, table.createdAt),
+  }),
+);
+
+export const proxiedSiteViewerSessionTable = pgTable(
+  "proxied_site_viewer_session",
+  {
+    viewerSessionId: text("viewer_session_id").primaryKey(),
+    proxiedSiteId: text("proxied_site_id")
+      .notNull()
+      .references(() => proxiedSiteTable.proxiedSiteId, { onDelete: "cascade" }),
+    budId: text("bud_id")
+      .notNull()
+      .references(() => budTable.budId, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    authSessionId: text("auth_session_id").references(() => authSessionTable.id, {
+      onDelete: "set null",
+    }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    lastRefreshedAt: timestamp("last_refreshed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("proxied_site_viewer_session_token_idx").on(table.tokenHash),
+    siteUserIdx: index("proxied_site_viewer_session_site_user_idx").on(
+      table.proxiedSiteId,
+      table.userId,
+      table.expiresAt,
+    ),
+    authSessionIdx: index("proxied_site_viewer_session_auth_session_idx").on(
+      table.authSessionId,
+    ),
+  }),
+);
+
 export const fileSessionTable = pgTable(
   "file_session",
   {

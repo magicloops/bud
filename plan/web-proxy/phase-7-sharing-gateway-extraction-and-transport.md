@@ -4,8 +4,10 @@
 
 Document the expansion path after private owner-only proxying is stable. This
 phase is intentionally deferred, but it frames how to add sharing, friendly
-slugs, gateway scaling, QUIC/HTTP/3, and local HTTPS without invalidating the
-earlier product model.
+slugs, gateway scaling, and QUIC/HTTP/3 without invalidating the earlier
+product model. Local HTTPS is now tracked separately in
+`phase-8-local-https-dev.md` because embedded proxy-cookie parity has become an
+immediate developer workflow need.
 
 ## Scope
 
@@ -14,7 +16,6 @@ earlier product model.
 - Gateway extraction from the service process.
 - Horizontal scaling and sticky routing.
 - QUIC/HTTP/3 transport options.
-- Optional local HTTPS setup for development.
 - Custom domains or team/shared Bud access later.
 
 ## Non-Goals For Earlier Phases
@@ -123,17 +124,9 @@ Future path:
 
 ## Local HTTPS
 
-Deferred options:
-
-- HTTP-only default plus docs.
-- Checked-in local reverse proxy config.
-- `mkcert` plus Caddy for full local HTTPS and secure-cookie testing.
-
-Recommendation:
-
-- Keep HTTP-only local setup for initial development.
-- Add an optional Caddy/mkcert recipe when browser cookie or service-worker
-  behavior requires local HTTPS validation.
+Local HTTPS parity is no longer tracked here. See
+`phase-8-local-https-dev.md` for the mkcert+Caddy plan, README/getting-started
+updates, and secure-cookie validation workflow.
 
 ## Production Deployment Checklist
 

@@ -26,7 +26,38 @@ export type AgentToolCallDirective =
       waitFor?: TerminalWaitFor;
       timeoutMs?: number;
       callId: string;
+    }
+  | {
+      type: "tool_call";
+      tool: "web_view.open";
+      targetHost?: "127.0.0.1" | "localhost" | "::1";
+      targetPort: number;
+      path?: string;
+      title?: string;
+      callId: string;
+    }
+  | {
+      type: "tool_call";
+      tool: "web_view.close";
+      proxiedSiteId?: string;
+      disable?: boolean;
+      callId: string;
+    }
+  | {
+      type: "tool_call";
+      tool: "web_view.list";
+      callId: string;
     };
+
+export type TerminalToolCallDirective = Extract<
+  AgentToolCallDirective,
+  { tool: "terminal.send" | "terminal.observe" }
+>;
+
+export type WebViewToolCallDirective = Extract<
+  AgentToolCallDirective,
+  { tool: "web_view.open" | "web_view.close" | "web_view.list" }
+>;
 
 export type AgentFinalDirective = {
   type: "final";
@@ -58,13 +89,36 @@ export type TerminalCallResult = {
 };
 
 export type ExecutedTerminalTool = {
-  directive: AgentToolCallDirective;
+  directive: TerminalToolCallDirective;
   args: Record<string, unknown>;
   summary: string;
   outputTruncationReason: "bud_runtime_limit" | "service_backfill_limit" | null;
   result: TerminalCallResult;
   payload: Record<string, unknown>;
 };
+
+export type WebViewCallResult = {
+  kind: "web_view";
+  action: "open" | "close" | "list";
+  proxiedSite?: Record<string, unknown> | null;
+  proxiedSites?: Record<string, unknown>[];
+  webView?: Record<string, unknown> | null;
+  transport?: Record<string, unknown> | null;
+  disabled?: boolean;
+  detached?: boolean;
+  error?: string;
+};
+
+export type ExecutedWebViewTool = {
+  directive: WebViewToolCallDirective;
+  args: Record<string, unknown>;
+  summary: string;
+  outputTruncationReason: null;
+  result: WebViewCallResult;
+  payload: Record<string, unknown>;
+};
+
+export type ExecutedAgentTool = ExecutedTerminalTool | ExecutedWebViewTool;
 
 export type ToolExecutionTiming = {
   startedAt: Date;
@@ -83,13 +137,25 @@ export const DEFAULT_READINESS_HINTS: ReadinessHints = {
 
 export function toolNameForConversation(
   tool: AgentToolCallDirective["tool"],
-): "terminal_send" | "terminal_observe" {
+): "terminal_send" | "terminal_observe" | "web_view_open" | "web_view_close" | "web_view_list" {
   switch (tool) {
     case "terminal.send":
       return "terminal_send";
     case "terminal.observe":
       return "terminal_observe";
+    case "web_view.open":
+      return "web_view_open";
+    case "web_view.close":
+      return "web_view_close";
+    case "web_view.list":
+      return "web_view_list";
   }
+}
+
+export function isTerminalToolDirective(
+  directive: AgentToolCallDirective,
+): directive is TerminalToolCallDirective {
+  return directive.tool === "terminal.send" || directive.tool === "terminal.observe";
 }
 
 export function parseWaitForArg(value: unknown): TerminalWaitFor | undefined {
@@ -148,11 +214,25 @@ export function buildToolArgs(
         ...(directive.view ? { view: directive.view } : {}),
         ...(directive.waitFor ? { wait_for: directive.waitFor } : {}),
       };
+    case "web_view.open":
+      return {
+        ...(directive.targetHost ? { target_host: directive.targetHost } : {}),
+        target_port: directive.targetPort,
+        ...(directive.path ? { path: directive.path } : {}),
+        ...(directive.title ? { title: directive.title } : {}),
+      };
+    case "web_view.close":
+      return {
+        ...(directive.proxiedSiteId ? { proxied_site_id: directive.proxiedSiteId } : {}),
+        ...(directive.disable === true ? { disable: true } : {}),
+      };
+    case "web_view.list":
+      return {};
   }
 }
 
 export function getEffectiveToolWaitFor(
-  directive: AgentToolCallDirective,
+  directive: TerminalToolCallDirective,
 ): TerminalWaitFor {
   switch (directive.tool) {
     case "terminal.send":
@@ -165,6 +245,9 @@ export function getEffectiveToolWaitFor(
 export function buildEffectiveToolArgs(
   directive: AgentToolCallDirective,
 ): Record<string, unknown> {
+  if (!isTerminalToolDirective(directive)) {
+    return buildToolArgs(directive);
+  }
   return {
     ...buildToolArgs(directive),
     wait_for: getEffectiveToolWaitFor(directive),

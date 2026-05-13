@@ -23,8 +23,13 @@ Related plan docs:
 - `plan/web-proxy/phase-3-web-and-mobile-client-surfaces.md`
 - `plan/web-proxy/phase-4-http-fidelity-request-bodies-and-cookies.md`
 - `plan/web-proxy/phase-5-websocket-hmr.md`
+- `plan/web-proxy/phase-5-prep-observability-and-hardening.md`
+- `plan/web-proxy/phase-5a-protocol-and-daemon-websocket-bridge.md`
+- `plan/web-proxy/phase-5b-gateway-upgrade-and-browser-bridge.md`
+- `plan/web-proxy/phase-5c-vite-hmr-validation-and-product-hardening.md`
 - `plan/web-proxy/phase-6-agent-tools-and-generated-ui.md`
 - `plan/web-proxy/phase-7-sharing-gateway-extraction-and-transport.md`
+- `plan/web-proxy/phase-8-local-https-dev.md`
 
 ## Objective
 
@@ -293,20 +298,29 @@ the update window has elapsed.
 | 2 | Private `bud.show` gateway | Owner can load simple `GET`/`HEAD` local web pages through endpoint hosts. |
 | 3 | Web and mobile surfaces | Workbench and iOS can open sites, recover from auth restrictions, and manage attachments. |
 | 4 | HTTP fidelity | Forms, mutation APIs, redirects, local app cookies, and larger app assets work. |
-| 5 | WebSocket/HMR | Vite-style HMR and app WebSocket connections work through the daemon. |
+| 5 Prep | Observability and hardening | Current HTTP proxy reset/auth behavior is diagnosable before WebSocket support expands the protocol surface. |
+| 5a | Protocol and daemon WS bridge | Service and daemon can open and exchange messages with local loopback WebSocket targets. |
+| 5b | Gateway/browser WS bridge | Authorized endpoint-host browser WebSockets bridge to daemon WebSocket sessions. |
+| 5c | Vite HMR validation | Vite-style HMR works and product/deployment states are hardened. |
 | 6 | Agent tools and generated UI | The assistant can open/reuse/detach web views as a product-level capability. |
 | 7 | Expansion path | Sharing, friendly slugs, gateway extraction, HTTP/3, and local HTTPS have a concrete path. |
+
+Current execution note: because `vite preview` validates the simple HTTP path
+and Vite dev mode is blocked on WebSocket/HMR support, run Phase 5 Prep through
+Phase 5c before returning to the broader Phase 4 HTTP fidelity work.
 
 ## Rollout Strategy
 
 1. Ship Phase 1 behind service-only feature flags or internal API access.
 2. Enable Phase 2 for internal/dev Bud owners with private access only.
 3. Add web and iOS client surfaces in Phase 3, still private owner-only.
-4. Increase fidelity in Phases 4 and 5 based on real local-dev apps, using Vite
-   as the first full-fidelity acceptance target.
-5. Expose agent tools after product routes and client fallback behavior are
+4. Increase fidelity with the split Phase 5 WebSocket/HMR path first, using
+   Vite as the first full-fidelity acceptance target.
+5. Return to Phase 4 HTTP bodies, mutation APIs, redirects, and local-app
+   cookies after HMR is stable.
+6. Expose agent tools after product routes and client fallback behavior are
    reliable enough that the assistant does not strand users in broken iframes.
-6. Defer public sharing, password protection, and separate gateway deployment
+7. Defer public sharing, password protection, and separate gateway deployment
    until private owner proxying is stable.
 
 ## Impacted Contracts

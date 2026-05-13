@@ -240,12 +240,17 @@ Bud's `hello` frame includes capabilities:
     websocket_binary: true;
     stream_frames?: true;
   };
-  proxy?: { localhost_http?: true };
+  proxy?: {
+    localhost_http?: true;
+    methods?: string[];
+    default_target_host?: "localhost";
+    target_hosts?: string[];
+  };
   files?: { workspace_read?: true; resolve?: { absolute_posix?: true } };
 }
 ```
 
-The gateway still tolerates deprecated tmux-shaped hello fields from older daemons during rollout, but it now strips those compatibility fields before persisting `bud.capabilities`.
+The gateway still tolerates deprecated tmux-shaped hello fields from older daemons during rollout, but it now strips those compatibility fields before persisting `bud.capabilities`. Only `proxy.localhost_http` is used for stream-family negotiation today; proxy method/host/default metadata is retained as advertised capability context for product surfaces.
 
 ## Configuration Used
 

@@ -279,6 +279,12 @@ Localhost proxy open request (Service → Bud on control):
 }
 ```
 
+`target_host` is loopback-only and may be `127.0.0.1`, `::1`, or exact
+`localhost`. Durable product web views reuse this same daemon frame family; in
+that path `proxy_session_id` may carry the durable `proxied_site_id` for
+wire-compatibility while the service owns browser auth, endpoint-host routing,
+and product lifecycle state.
+
 Localhost proxy open result (Bud → Service on control):
 
 ```json
@@ -434,6 +440,10 @@ Rejected file opens and resolves use the same frame-family shape with
 - Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 - For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
+- For web-view tools, `pending_tool.args` contains only product fields such as
+  `target_port`, `path`, `title`, `proxied_site_id`, and `disable`; viewer
+  grants, cookies, and daemon stream identifiers are never exposed to the model
+  or clients through pending-tool state
 
 ### 3.3 Agent SSE Stream
 
@@ -632,6 +642,82 @@ Additional routes:
 - non-GET/HEAD methods remain unsupported in Phase 4.2 and return `501 proxy_method_not_implemented`
 - request and response headers are allowlisted; cookies, auth headers, hop-by-hop headers, and non-loopback targets are not forwarded
 
+### 3.8.1 Durable Proxied Sites And Thread Web Views
+
+Product web views are modeled as long-lived Bud-owned `proxied_site` resources,
+not as short-lived thread preview sessions. A thread may attach one current web
+view, and multiple threads can attach to the same proxied site.
+
+Product routes:
+
+- `POST /api/buds/:bud_id/proxied-sites` creates or reuses an owned proxied site
+- `GET /api/buds/:bud_id/proxied-sites` lists owned proxied sites for an owned Bud
+- `GET /api/proxied-sites/:proxied_site_id` reads one owned proxied site
+- `PATCH /api/proxied-sites/:proxied_site_id` updates display name, default path, or enabled state
+- `DELETE /api/proxied-sites/:proxied_site_id` disables one owned proxied site
+- `GET /api/threads/:thread_id/web-view` reads the thread's current attachment
+- `POST /api/threads/:thread_id/web-view/attach` attaches an owned proxied site to the authorized thread
+- `DELETE /api/threads/:thread_id/web-view` detaches without disabling the site
+- `POST /api/proxied-sites/:proxied_site_id/viewer-grants` mints a short-lived one-time bootstrap URL
+
+Create request:
+
+```json
+{
+  "target_host": "localhost",
+  "target_port": 5173,
+  "path": "/",
+  "title": "Vite app",
+  "reuse_existing": true
+}
+```
+
+`target_host` is optional for product proxied sites. When omitted, the service
+defaults to exact `localhost`; callers should preserve an explicit user-provided
+`localhost`, `127.0.0.1`, or `::1` host rather than substituting between them.
+
+Proxied site response:
+
+```json
+{
+  "proxied_site_id": "site_01H...",
+  "bud_id": "b_01H...",
+  "display_name": "Vite app",
+  "slug": "vite-app-abc123",
+  "endpoint_host": "vite-app-abc123.bud.show",
+  "view_url": "https://vite-app-abc123.bud.show/",
+  "target_host": "localhost",
+  "target_port": 5173,
+  "path": "/",
+  "access_policy": "private_owner",
+  "enabled": true,
+  "state": "ready",
+  "expires_at": "2026-07-26T12:00:00.000Z",
+  "transport": { "available": true },
+  "created_at": "2026-04-27T12:00:00.000Z",
+  "updated_at": "2026-04-27T12:00:00.000Z"
+}
+```
+
+Private endpoint-host gateway:
+
+- configured wildcard hosts such as `*.bud.show` route to the service gateway
+- local development can use `*.proxy.localhost`
+- `/__bud/bootstrap?grant=<token>&to=<path>` consumes a one-time grant, sets a
+  host-only viewer cookie, and redirects to the requested path on the endpoint
+  host
+- viewer cookies use a 7-day max age and a roughly 1-day refresh/update window
+  when backed by a still-valid Better Auth session
+- gateway traffic resolves endpoint host to `proxied_site`, validates
+  enabled/expiry state, validates the endpoint-host viewer cookie, checks
+  transport readiness, and only then opens daemon `proxy_open`
+- first-pass gateway traffic supports `GET` and `HEAD`; request bodies,
+  mutation methods, local app cookies, redirects, and WebSocket/HMR upgrades are
+  follow-up phases
+- product routes and thread attachments use authenticated `bud.dev` browser
+  auth; iframe/subresource access uses the endpoint-host viewer cookie because
+  arbitrary bearer headers are not available for normal browser navigation
+
 ### 3.9 File Sessions
 
 Phase 4.4 adds browser-facing file sessions and daemon-backed `HEAD`, full read, and single-range read support.
@@ -805,7 +891,8 @@ Dev-only token bypass example:
     "proxy": {
       "localhost_http": true,
       "methods": ["GET", "HEAD"],
-      "target_hosts": ["127.0.0.1"]
+      "default_target_host": "localhost",
+      "target_hosts": ["localhost", "127.0.0.1", "::1"]
     },
     "files": {
       "workspace_read": true,
@@ -850,7 +937,8 @@ Reconnect example:
     "proxy": {
       "localhost_http": true,
       "methods": ["GET", "HEAD"],
-      "target_hosts": ["127.0.0.1"]
+      "default_target_host": "localhost",
+      "target_hosts": ["localhost", "127.0.0.1", "::1"]
     },
     "files": {
       "workspace_read": true,
@@ -1194,9 +1282,15 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
   - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
+  - For web-view tools, `args` contains product fields only; examples include
+    `target_host`, `target_port`, `path`, `title`, `proxied_site_id`, and
+    `disable`. When `web_view.open` omits `target_host`, the service defaults
+    the proxied site to `localhost`.
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
   - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
+  - web-view tool results include a `web_view` payload with owned proxied-site
+    and thread-attachment state instead of terminal `output`/`readiness`
 - `agent.message`
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
@@ -1354,9 +1448,13 @@ Service: otherwise emit agent.resync_required
 - gRPC data streams must be subordinate to an authenticated gRPC control session and must be rejected if `bud_id` or `device_session_id` does not match the active control tracker
 - browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
 - browser proxy-session reads, revokes, and edge attaches must authorize `proxy_session.created_by_user_id` before checking or opening daemon streams
+- browser proxied-site reads/mutations must authorize `proxied_site.created_by_user_id`; thread web-view attachment must authorize the thread first, derive the Bud from that thread, and then verify the proxied site belongs to the same owner and Bud
+- proxy-domain gateway requests must validate the endpoint-host viewer cookie
+  before opening daemon operation/stream rows; `bud.dev` cookies, auth headers,
+  and Bud credentials must not be forwarded to local apps
 - browser file-session reads, revokes, and edge attaches must authorize `file_session.created_by_user_id` before checking or opening daemon streams
 - thread file-viewer opens must authorize the owning thread before creating `file_session` rows, derive the Bud from that thread, and stamp `file_session.created_by_user_id` with the acting viewer
-- localhost proxy sessions must deny non-`127.0.0.1` targets at the service boundary; the daemon re-checks local policy before any local HTTP side effect
+- localhost proxy sessions must deny non-loopback targets at the service boundary; product proxied sites allow only `127.0.0.1`, `::1`, or exact `localhost`, and the daemon re-checks local policy plus `localhost` loopback resolution before any local HTTP side effect
 - localhost proxy streams require an authenticated data-plane carrier with `localhost_http_proxy` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, range content-identity, and during-read identity policy before sending bytes
@@ -1381,6 +1479,9 @@ Service: otherwise emit agent.resync_required
   - thread-scoped terminal protocol is the active execution surface
   - opt-in `BudData.Attach` carries daemon terminal output over HTTP/2 data when configured
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
+  - Durable owner-private proxied sites and thread web-view attachments now use
+    endpoint-host gateway routing plus cookie-backed private viewer bootstrap
+    for Web and mobile clients
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
@@ -1390,4 +1491,7 @@ Service: otherwise emit agent.resync_required
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
   - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument
   - human terminal interrupt is thread-scoped at `POST /api/threads/:thread_id/terminal/interrupt` and sends `key:"ctrl+c"` through `terminal_send` while rejecting older pending waits as `interrupted`
+  - model-facing `web_view_open`, `web_view_close`, and `web_view_list` tools
+    let the agent attach/detach/list product web views without raw proxy-session
+    authority
   - legacy standalone run transport and browser `/api/runs/*` streaming are removed from the supported protocol

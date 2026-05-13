@@ -27,9 +27,10 @@ import {
 import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner } from "./model-runner.js";
-import { buildToolExecutionTiming } from "./contracts.js";
+import { buildToolExecutionTiming, isTerminalToolDirective } from "./contracts.js";
 import { TerminalToolExecutor } from "./terminal-tool-executor.js";
 import { AgentTranscriptWriter } from "./transcript-writer.js";
+import { WebViewToolExecutor } from "./web-view-tool-executor.js";
 
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
@@ -40,6 +41,7 @@ export class AgentService {
   private readonly conversationLoader = new AgentConversationLoader();
   private readonly modelRunner: AgentModelRunner;
   private readonly toolExecutor: TerminalToolExecutor;
+  private readonly webViewToolExecutor: WebViewToolExecutor;
   private readonly transcriptWriter: AgentTranscriptWriter;
   private readonly cancellations = new AgentCancellationRegistry();
 
@@ -64,6 +66,7 @@ export class AgentService {
       openaiDebugEnabled,
       async (threadId) => this.getOrCreateSession(threadId),
     );
+    this.webViewToolExecutor = new WebViewToolExecutor(logger, debugEnabled);
     this.transcriptWriter = new AgentTranscriptWriter(runtime);
   }
 
@@ -264,11 +267,18 @@ export class AgentService {
               callId: toolCall.callId,
             });
 
-            const pathContextBefore = await this.getPathContextForSession(sessionId);
-            const execution = await this.toolExecutor.execute(threadId, toolCall);
+            const terminalTool = isTerminalToolDirective(toolCall);
+            const pathContextBefore = terminalTool
+              ? await this.getPathContextForSession(sessionId)
+              : null;
+            const execution = terminalTool
+              ? await this.toolExecutor.execute(threadId, toolCall)
+              : await this.webViewToolExecutor.execute(threadId, toolCall, ownerUserId);
             const finishedAt = new Date();
             const timing = buildToolExecutionTiming(startedAt, finishedAt);
-            const pathContextAfter = await this.getPathContextForSession(sessionId);
+            const pathContextAfter = terminalTool
+              ? await this.getPathContextForSession(sessionId)
+              : null;
             const { payload, message } = await this.transcriptWriter.recordToolResult({
               threadId,
               turnId,
@@ -293,7 +303,7 @@ export class AgentService {
               ownerUserId,
             });
 
-            if (toolCall.tool !== "terminal.observe" && this.contextSyncService) {
+            if (terminalTool && toolCall.tool !== "terminal.observe" && this.contextSyncService) {
               await this.contextSyncService.refreshSnapshot(sessionId);
             }
 

@@ -79,4 +79,19 @@ test("effective tool args expose default terminal wait modes", () => {
       wait_for: "settled",
     },
   );
+  assert.deepEqual(
+    buildEffectiveToolArgs({
+      type: "tool_call",
+      tool: "web_view.open",
+      targetHost: "localhost",
+      targetPort: 5173,
+      path: "/",
+      callId: "call-web-view-open",
+    }),
+    {
+      target_host: "localhost",
+      target_port: 5173,
+      path: "/",
+    },
+  );
 });

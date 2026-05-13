@@ -8,7 +8,7 @@ import {
   buildEffectiveToolArgs,
   buildToolArgs,
   type AgentToolCallDirective,
-  type ExecutedTerminalTool,
+  type ExecutedAgentTool,
   type ToolExecutionTiming,
   serializeToolExecutionTiming,
 } from "./contracts.js";
@@ -92,7 +92,7 @@ export class AgentTranscriptWriter {
   async recordToolResult(args: {
     threadId: string;
     turnId: string;
-    execution: ExecutedTerminalTool;
+    execution: ExecutedAgentTool;
     clientId: string;
     timing: ToolExecutionTiming;
     modelSelection: AgentMessageModelSelection;
@@ -155,12 +155,8 @@ export class AgentTranscriptWriter {
         message_id: serializedMessage.message_id,
         name: execution.directive.tool,
         summary: execution.summary,
-        output: execution.result.output,
-        output_bytes: execution.result.outputBytes,
-        readiness: execution.result.readiness,
-        truncated: execution.result.truncated,
+        ...serializeRuntimeToolResultFields(execution),
         output_truncation_reason: execution.outputTruncationReason,
-        omitted_lines: execution.result.omittedLines,
         ...serializedTiming,
         message: serializedMessage,
       },
@@ -392,6 +388,22 @@ export class AgentTranscriptWriter {
       created_at: message.createdAt.toISOString(),
     };
   }
+}
+
+function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<string, unknown> {
+  if (execution.result.kind === "web_view") {
+    return {
+      web_view: execution.result,
+    };
+  }
+
+  return {
+    output: execution.result.output,
+    output_bytes: execution.result.outputBytes,
+    readiness: execution.result.readiness,
+    truncated: execution.result.truncated,
+    omitted_lines: execution.result.omittedLines,
+  };
 }
 
 function serializeModelSelectionMetadata(

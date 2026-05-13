@@ -30,13 +30,28 @@ active.
   methods, header policy, local-app cookies, redirects, response streaming, and
   daemon proxy protocol extensions.
 - `phase-5-websocket-hmr.md`: Browser WebSocket upgrades, daemon local
-  WebSocket bridging, Vite HMR acceptance target, limits, and shutdown behavior.
+  WebSocket bridging, Vite HMR acceptance target, limits, and shutdown behavior
+  overview.
+- `phase-5-prep-observability-and-hardening.md`: Observability, reset
+  diagnostics, auth-before-daemon-work tests, and explicit unsupported-HMR
+  capability surfacing before adding WebSocket support.
+- `phase-5a-protocol-and-daemon-websocket-bridge.md`: Bud-service WebSocket
+  proxy protocol, daemon local loopback WebSocket adapter, and daemon/service
+  echo validation.
+- `phase-5b-gateway-upgrade-and-browser-bridge.md`: Proxy endpoint-host
+  WebSocket upgrade authorization, browser-to-daemon bridging, limits, and
+  lifecycle cleanup.
+- `phase-5c-vite-hmr-validation-and-product-hardening.md`: Vite HMR
+  validation, product capability states, and deployment hardening.
 - `phase-6-agent-tools-and-generated-ui.md`: Product-level `web_view` tools,
   assistant prompting, message/web-view integration, and future generated UI
   affordances.
 - `phase-7-sharing-gateway-extraction-and-transport.md`: Deferred expansion for
   password/public sharing, friendly slug overrides, gateway extraction,
-  horizontal scaling, QUIC/HTTP/3, and local HTTPS.
+  horizontal scaling, and QUIC/HTTP/3.
+- `phase-8-local-https-dev.md`: Optional mkcert+Caddy local HTTPS parity
+  profile for embedded proxy-cookie testing, local host routing, env examples,
+  and README/getting-started updates.
 - `progress-checklist.md`: Phase-by-phase completion tracker.
 - `validation-checklist.md`: Security, protocol, browser, mobile, daemon, and
   production validation checklist.

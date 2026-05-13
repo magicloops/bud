@@ -4,7 +4,7 @@ HTTP API route handlers using Fastify.
 
 ## Purpose
 
-Defines REST API endpoints for managing buds, threads, messages, terminal sessions, the authenticated current-user surface, browser-mediated Bud device claims, and Phase 4 proxy/file sessions. All routes are prefixed with `/api/`.
+Defines REST API endpoints for managing buds, threads, messages, terminal sessions, the authenticated current-user surface, browser-mediated Bud device claims, Phase 4 proxy/file sessions, and product web-proxy sites. Most product routes are prefixed with `/api/`; the web-proxy gateway also registers the configured wildcard proxy-domain host route.
 
 All browser-facing Bud/thread/message/terminal routes now require an authenticated viewer and resolve resources through ownership checks. Cross-user resource access returns `404`, while `401` is reserved for missing browser auth.
 
@@ -158,6 +158,7 @@ Ownership-focused thread submodules:
 - `agent.tool_call` now includes service-side `started_at`
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
 - `agent.tool_result` now also exposes `started_at`, `finished_at`, and `duration_ms`
+- web-view tool results expose a `web_view` result payload instead of terminal `output` / `readiness` fields
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
 - those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
 - embedded canonical tool rows now expose the same timing fields under `message.metadata`, while tool `message.content` remains the replay payload without timing-only fields
@@ -272,6 +273,7 @@ Before creating user message, validates the selected LLM model/reasoning pair an
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
 - terminal interrupt is authorized at the same thread boundary as terminal input/stream/history and returns `404 no_terminal_session` when no active owned session exists
 - thread file-open is authorized at the same thread boundary, derives the Bud from the owned thread, creates `file_session.created_by_user_id` for the acting viewer, daemon-preflights absolute POSIX paths before DB session creation, and returns `404 thread_not_found` for signed-in non-owners
+- thread web-view attachment is authorized at the same thread boundary, derives the Bud from the owned thread, and only attaches owned `proxied_site` rows for that Bud
 - thread SSE routes send an initial heartbeat frame on empty-buffer/live-only attaches so the HTTP response stays in SSE mode even before the first real event arrives
 - `POST /api/threads` now returns `{ thread_id }`
 - `POST /api/threads/:thread_id/messages` now accepts optional `client_id`
@@ -390,6 +392,39 @@ Phase 4.2 localhost proxy session and edge routes.
 ### `proxy.test.ts`
 
 Route-registration and route-auth coverage for the Phase 4.2 proxy session and edge route family, including unauthenticated `401`, signed-in non-owner `404`, and owned session serialization.
+
+### `proxied-sites.ts`
+
+Durable product web-proxy routes and private endpoint-host gateway.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/buds/:budId/proxied-sites` | Create or reuse a long-lived owned proxied site for a Bud loopback target |
+| `GET` | `/api/buds/:budId/proxied-sites` | List owned proxied sites for an owned Bud |
+| `GET` | `/api/proxied-sites/:proxiedSiteId` | Read one owned proxied site |
+| `PATCH` | `/api/proxied-sites/:proxiedSiteId` | Rename, update default path, enable, or disable one owned proxied site |
+| `DELETE` | `/api/proxied-sites/:proxiedSiteId` | Disable one owned proxied site |
+| `GET` | `/api/threads/:threadId/web-view` | Read the current owned thread web-view attachment |
+| `POST` | `/api/threads/:threadId/web-view/attach` | Attach an owned proxied site to the authorized thread |
+| `DELETE` | `/api/threads/:threadId/web-view` | Detach the current thread web view without disabling the site |
+| `POST` | `/api/proxied-sites/:proxiedSiteId/viewer-grants` | Mint a short-lived one-time bootstrap URL for the owner |
+| `GET/HEAD` | `/*` on configured proxy endpoint hosts | Bootstrap private viewer cookies and proxy authorized `GET`/`HEAD` traffic through daemon `proxy_open` |
+
+**Security Notes**:
+- product routes call `requireViewer(...)`
+- Bud-scoped routes resolve ownership through `getAuthorizedBud(...)`
+- thread attachment derives Bud identity from `requireAuthorizedThreadAccess(...)`
+- signed-in non-owners receive `404`
+- proxy-domain gateway traffic resolves endpoint host to `proxied_site`, validates enabled/expiry state, validates the endpoint-host viewer cookie, and only then allocates daemon operation/stream rows
+- viewer grants are one-time and short-lived; viewer sessions use a host-only `HttpOnly` cookie with a 7-day max age and roughly 1-day Better Auth refresh check
+- local targets are limited to `127.0.0.1`, `::1`, or exact `localhost`; daemon revalidates localhost resolution before connecting
+- first-pass gateway supports `GET` and `HEAD`; request bodies, local app cookies, and WebSocket/HMR upgrades remain follow-up phases
+
+### `proxied-sites.test.ts`
+
+Route-registration and route-auth coverage for the durable product web-proxy routes, including unauthenticated `401`, signed-in non-owner `404`, owned site serialization, and gateway route registration.
 
 ### `files.ts`
 

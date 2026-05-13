@@ -10,11 +10,14 @@ This folder owns the daemon's local adapter for service-requested localhost prox
 
 ### `mod.rs`
 
-Phase 4.2 localhost proxy implementation.
+Phase 4.2 localhost proxy implementation, now also used by the durable
+product web-proxy gateway.
 
 - accepts `proxy_open` frames from the app dispatcher
 - only permits `stream_type = "localhost_http_proxy"`
-- only permits `target_host = "127.0.0.1"`
+- only permits loopback target hosts: `127.0.0.1`, `::1`, or exact `localhost`
+- revalidates `localhost` DNS resolution before opening the local request and
+  rejects any non-loopback address
 - only permits `GET` and `HEAD`
 - uses a reqwest client configured by `app.rs` with redirects disabled
 - forwards a small allowlist of request headers
@@ -30,6 +33,7 @@ Phase 4.2 localhost proxy implementation.
 - [../protocol.rs](../protocol.rs) - `ProxyOpenFrame`, `StreamCreditFrame`, and `StreamResetFrame` definitions
 - [../../src.spec.md](../src.spec.md) - daemon source overview
 - [../../../plan/network-upgrade/phase-4-localhost-proxy-and-file-reads.md](../../../plan/network-upgrade/phase-4-localhost-proxy-and-file-reads.md) - Phase 4 sequencing
+- [../../../plan/web-proxy/implementation-spec.md](../../../plan/web-proxy/implementation-spec.md) - durable proxied-site product plan built on this local adapter
 
 ## TODOs / Technical Debt
 

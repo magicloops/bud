@@ -1268,7 +1268,8 @@ impl BudApp {
             "proxy": {
                 "localhost_http": stream_frames_supported,
                 "methods": ["GET", "HEAD"],
-                "target_hosts": ["127.0.0.1"]
+                "default_target_host": "localhost",
+                "target_hosts": ["localhost", "127.0.0.1", "::1"]
             },
             "files": {
                 "workspace_read": stream_frames_supported,
