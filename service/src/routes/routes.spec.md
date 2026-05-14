@@ -435,7 +435,7 @@ Durable product web-proxy routes and private endpoint-host gateway.
 
 ### `proxied-sites.test.ts`
 
-Route-registration and route-auth coverage for the durable product web-proxy routes, including unauthenticated `401`, signed-in non-owner `404`, owned site serialization, gateway route registration, unauthenticated/invalid-cookie WebSocket upgrade rejection before daemon allocation, and disabled/expired WebSocket upgrade rejection.
+Route-registration and route-auth coverage for the durable product web-proxy routes, including unauthenticated `401`, signed-in non-owner `404`, owned site serialization, gateway route registration, unauthenticated/invalid-cookie WebSocket upgrade rejection before daemon allocation, disabled/expired WebSocket upgrade rejection, authorized endpoint-host WebSocket open dispatch, and per-site/per-Bud WebSocket limit enforcement.
 
 ### `files.ts`
 

@@ -120,7 +120,7 @@ and response `Set-Cookie` filtering/caps.
 
 ### `proxy-ws-runtime.test.ts`
 
-Focused unit coverage for proxied WebSocket text/binary forwarding, daemon open/close dispatch, oversized browser-frame rejection, and active-session cleanup helpers used by disabled/expired sites.
+Focused unit coverage for proxied WebSocket text/binary forwarding, daemon open/close dispatch, oversized browser-frame rejection, and active-session cleanup helpers used by disabled/expired sites and Bud-level transport loss.
 
 ## Dependencies
 

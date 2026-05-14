@@ -112,14 +112,31 @@ streaming-upload upgrade.
   frames on the WebSocket carrier.
 - [ ] Add daemon/local WebSocket echo tests for text, binary, close, and error behavior.
 - [ ] Add browser-to-local echo tests for authorized endpoint-host upgrades.
+- [x] Add gateway dispatch regression for authorized endpoint-host WebSocket upgrades.
 - [x] Add auth-before-daemon-work tests for unauthenticated and invalid-cookie upgrades.
 - [x] Add disabled/expired site WebSocket rejection and active-socket cleanup tests.
+- [x] Add runtime-level Bud transport-loss active WebSocket cleanup test.
 - [ ] Add daemon-disconnect active WebSocket cleanup test.
-- [ ] Add per-site and per-Bud WebSocket limit tests.
+- [x] Add per-site and per-Bud WebSocket limit tests.
 - [x] Add product-visible Bud offline, disabled/expired, and WebSocket unsupported/error states.
 - [x] Add agent/tool messaging for static HTTP vs full WebSocket/HMR support.
 - [x] Add repeatable Vite HMR smoke runbook.
-- [ ] Update touched service/web/agent specs.
+- [x] Update touched service specs.
+
+## Phase 5e: High-Risk Release Regressions
+
+- [ ] Add gateway auth/security tests for grants, viewer cookies, host
+  matching, disabled/expired sites, and auth-before-daemon-work behavior.
+- [ ] Add daemon/local WebSocket echo integration tests for text, binary,
+  close, and error behavior.
+- [ ] Add browser-to-local authorized endpoint-host WebSocket echo tests.
+- [ ] Add daemon-disconnect cleanup regressions for active HTTP and WebSocket
+  proxy work.
+- [ ] Add reset/log hygiene assertions for canonical error context without
+  grants, cookies, bodies, or WebSocket payloads.
+- [ ] Add stable idle Vite HMR reset-storm validation.
+- [ ] Add local and production WebSocket upgrade deployment checklist.
+- [ ] Update touched service/daemon/protocol specs.
 
 ## Phase 6: Agent Tools And Generated UI
 

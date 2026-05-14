@@ -6,7 +6,9 @@ import { PROTO_VERSION, config } from "../config.js";
 import {
   ProxyWebSocketRuntimeSession,
   clearProxyWebSocketRuntimeSessionsForTests,
+  closeProxyWebSocketRuntimeSessionsForBud,
   closeProxyWebSocketRuntimeSessionsForSite,
+  countActiveProxyWebSocketRuntimeSessionsForBud,
   countActiveProxyWebSocketRuntimeSessionsForSite,
   handleProxyWebSocketClose,
   handleProxyWebSocketOpenResult,
@@ -196,12 +198,43 @@ test("proxy WebSocket runtime can close all active sessions for a disabled site"
   assert.equal(countActiveProxyWebSocketRuntimeSessionsForSite("site-other"), 1);
 });
 
-function createRuntimeForSite(wsSessionId: string, proxiedSiteId: string) {
+test("proxy WebSocket runtime can close all active sessions for a disconnected Bud", (t) => {
+  t.after(() => {
+    clearProxyWebSocketRuntimeSessionsForTests();
+  });
+  clearProxyWebSocketRuntimeSessionsForTests();
+
+  const first = createRuntimeForSite("st_bud_disconnect_1", "site-a", "bud-disconnect");
+  const second = createRuntimeForSite("st_bud_disconnect_2", "site-b", "bud-disconnect");
+  const other = createRuntimeForSite("st_bud_disconnect_other", "site-c", "bud-other");
+  registerProxyWebSocketRuntimeSession(first.runtime);
+  registerProxyWebSocketRuntimeSession(second.runtime);
+  registerProxyWebSocketRuntimeSession(other.runtime);
+
+  const closed = closeProxyWebSocketRuntimeSessionsForBud("bud-disconnect", {
+    reason: "transport_lost",
+    closeCode: 1011,
+    error: {
+      code: "DATA_PLANE_STREAM_CLOSED",
+      message: "Bud disconnected before proxied WebSocket completed",
+      retryable: true,
+    },
+  });
+
+  assert.equal(closed, 2);
+  assert.equal(first.browser.closed[0]?.code, 1011);
+  assert.equal(second.browser.closed[0]?.code, 1011);
+  assert.equal(other.browser.closed.length, 0);
+  assert.equal(countActiveProxyWebSocketRuntimeSessionsForBud("bud-disconnect"), 0);
+  assert.equal(countActiveProxyWebSocketRuntimeSessionsForBud("bud-other"), 1);
+});
+
+function createRuntimeForSite(wsSessionId: string, proxiedSiteId: string, budId = "bud-1") {
   const browser = createBrowserSocket();
   const runtime = new ProxyWebSocketRuntimeSession(
     wsSessionId,
     `op_${wsSessionId}`,
-    "bud-1",
+    budId,
     proxiedSiteId,
     browser as never,
     () => true,

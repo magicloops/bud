@@ -77,15 +77,18 @@
 ## WebSocket And HMR
 
 - [x] Unauthorized upgrade does not allocate daemon state.
+- [x] Authorized endpoint-host upgrade dispatches daemon WebSocket open after
+  viewer-cookie auth.
 - [ ] Authorized WebSocket connects to local echo server.
 - [x] Text frames round-trip through the service runtime.
 - [x] Binary frames round-trip through the service runtime.
 - [x] Close code/reason propagate through the service runtime.
 - [x] Active sockets close on site disable.
 - [x] Active sockets close on site expiry.
+- [x] Active sockets close through Bud-level runtime cleanup helper.
 - [ ] Active sockets close on daemon disconnect.
-- [ ] Per-site connection limit is enforced.
-- [ ] Per-Bud connection limit is enforced.
+- [x] Per-site connection limit is enforced.
+- [x] Per-Bud connection limit is enforced.
 - [x] Vite HMR connects through endpoint host.
 - [x] Vite component edit updates without manual reload.
 - [ ] Stable idle Vite HMR does not produce a request/reset storm.

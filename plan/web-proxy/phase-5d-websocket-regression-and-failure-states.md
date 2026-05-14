@@ -149,8 +149,15 @@ Repeat before release:
   session cleanup.
 - Added gateway route coverage proving missing/invalid viewer cookies and
   disabled/expired sites reject WebSocket upgrades before opening daemon work.
+- Added gateway route coverage proving an authorized endpoint-host WebSocket
+  upgrade dispatches `proxy_ws_open` only after viewer-cookie auth, preserves
+  request path/query, and sanitizes requested subprotocols.
+- Added gateway route coverage for per-site and per-Bud WebSocket connection
+  limits, including rejection before daemon operation allocation.
 - Added service cleanup hooks so disabling a durable proxied site closes active
   WebSocket sessions, and open WebSocket sessions schedule site-expiry closure.
+- Added runtime-level coverage for closing all active WebSocket sessions for a
+  Bud when the selected carrier is lost.
 - Added separate `websocket_transport` readiness to proxied-site API/tool
   payloads and web-view UI state, with pane banners for Bud offline,
   disabled/expired sites, and WebSocket/HMR unavailable states.
@@ -161,7 +168,6 @@ Remaining hardening after this pass:
 
 - Daemon/local echo integration tests.
 - Browser-to-local authorized gateway echo tests.
-- Daemon-disconnect cleanup regression test.
-- Per-site/per-Bud WebSocket limit tests.
+- End-to-end daemon-disconnect cleanup regression test.
 - Product telemetry for local WebSocket connect failures and connection-limit
   closes inside already-loaded proxied apps.

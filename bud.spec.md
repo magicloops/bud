@@ -518,6 +518,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md](./reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md) | Reference handoff for the iOS team summarizing the confirmed March 22, 2026 SSE streaming findings, what they rule out, and the remaining raw-byte/parser-focused hypotheses for `/api/threads/:thread_id/agent/stream` |
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md) | Current backend handoff for the shipped agent-stream contract, covering `/agent/state`, opaque resume cursors, bounded catch-up, explicit `agent.resync_required`, and the `client_id`-first mobile reconciliation model |
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md) | Current fixtures for the shipped agent-stream contract, covering passive open, active-turn bootstrap, bounded cursor resume, explicit resync, idle-to-active cursor races, and `client_id`-first identity projection |
+| [TEMP_BACKEND_AGENT_STREAM_RESPONSE.md](./TEMP_BACKEND_AGENT_STREAM_RESPONSE.md) | Temporary backend response to the mobile agent-stream reconnect contract questions, clarifying successful attach lifetime, resume miss behavior, cursor preference, and proposed stream lifecycle logging |
 | [reference/IOS_LLM_MODELS_HANDOFF.md](./reference/IOS_LLM_MODELS_HANDOFF.md) | iOS handoff for the catalog-backed `/api/models` contract, model-specific reasoning controls, and message-send model selection semantics |
 | [reference/IOS_FILE_VIEWER_HANDOFF.md](./reference/IOS_FILE_VIEWER_HANDOFF.md) | iOS handoff for the user-initiated file viewer contract, covering thread-scoped open, file edge reads, relative path parsing, terminal-cwd-first resolution, UI states, and deferred viewer expansions |
 | [IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md](./IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md) | Focused follow-up handoff for iOS covering the completed `client_id` rollout, the final Stage B/staging status, and the rule that mobile should key optimistic, runtime, stream, and canonical rows directly by `client_id` from the first stream event |
@@ -726,4 +727,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-12*
+*Last updated: 2026-05-14*

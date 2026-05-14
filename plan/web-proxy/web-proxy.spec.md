@@ -53,6 +53,10 @@ active.
   regression coverage, lifecycle cleanup, manual HMR smoke runbook, and
   product-visible proxy/WebSocket failure states after the core Vite path has
   been validated.
+- `phase-5e-high-risk-release-regressions.md`: Consolidated release-blocking
+  regression pass for gateway auth/security, daemon and browser WebSocket echo
+  integration, daemon-disconnect cleanup, reset diagnostics, and WebSocket
+  upgrade deployment assumptions.
 - `phase-6-agent-tools-and-generated-ui.md`: Product-level `web_view` tools,
   assistant prompting, message/web-view integration, and future generated UI
   affordances.
