@@ -13,6 +13,12 @@ import { handleFileOpenResult as handleFileOpenRuntimeResult } from "../files/fi
 import { handleFileResolveResult as handleFileResolveRuntimeResult } from "../files/file-resolve.js";
 import { decodeBudFrame, encodeBudFrame, UnsupportedBudEnvelopePayloadError } from "../proto/wire.js";
 import { handleProxyOpenResult as handleProxyOpenRuntimeResult } from "../proxy/proxy-runtime.js";
+import {
+  handleProxyWebSocketClose as handleProxyWebSocketRuntimeClose,
+  handleProxyWebSocketError as handleProxyWebSocketRuntimeError,
+  handleProxyWebSocketMessage as handleProxyWebSocketRuntimeMessage,
+  handleProxyWebSocketOpenResult as handleProxyWebSocketRuntimeOpenResult,
+} from "../proxy/proxy-ws-runtime.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
 import type {
@@ -207,6 +213,18 @@ export class BudConnection {
         break;
       case "proxy_open_result":
         await this.handleProxyOpenResult(parsed);
+        break;
+      case "proxy_ws_open_result":
+        await this.handleProxyWebSocketOpenResult(parsed);
+        break;
+      case "proxy_ws_message":
+        await this.handleProxyWebSocketMessage(parsed);
+        break;
+      case "proxy_ws_close":
+        await this.handleProxyWebSocketClose(parsed);
+        break;
+      case "proxy_ws_error":
+        await this.handleProxyWebSocketError(parsed);
         break;
       case "file_open_result":
         await this.handleFileOpenResult(parsed);
@@ -633,12 +651,12 @@ export class BudConnection {
       );
       return;
     }
-    await this.noteDataPlaneActivity(dataTracker);
     await handleRuntimeDataPlaneStreamFrame(dataTracker, raw, {
       logger: this.server.log,
       daemonStateStore: this.daemonStateStore,
       component: "ws_gateway",
     });
+    await this.noteDataPlaneActivity(dataTracker);
   }
 
   private async handleProxyOpenResult(raw: unknown): Promise<void> {
@@ -657,6 +675,73 @@ export class BudConnection {
         component: "ws_gateway",
       },
       "Handled proxy_open_result frame",
+    );
+  }
+
+  private async handleProxyWebSocketOpenResult(raw: unknown): Promise<void> {
+    const frame = handleProxyWebSocketRuntimeOpenResult(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid proxy_ws_open_result frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        wsSessionId: frame.ws_session_id,
+        operationId: frame.operation_id ?? null,
+        accepted: frame.accepted,
+        selectedProtocol: frame.selected_protocol ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled proxy_ws_open_result frame",
+    );
+  }
+
+  private async handleProxyWebSocketMessage(raw: unknown): Promise<void> {
+    const frame = handleProxyWebSocketRuntimeMessage(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid proxy_ws_message frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        wsSessionId: frame.ws_session_id,
+        messageType: frame.message_type,
+        component: "ws_gateway",
+      },
+      "Handled proxy_ws_message frame",
+    );
+  }
+
+  private async handleProxyWebSocketClose(raw: unknown): Promise<void> {
+    const frame = handleProxyWebSocketRuntimeClose(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid proxy_ws_close frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        wsSessionId: frame.ws_session_id,
+        closeCode: frame.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled proxy_ws_close frame",
+    );
+  }
+
+  private async handleProxyWebSocketError(raw: unknown): Promise<void> {
+    const frame = handleProxyWebSocketRuntimeError(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid proxy_ws_error frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        wsSessionId: frame.ws_session_id,
+        errorCode: frame.error.code,
+        component: "ws_gateway",
+      },
+      "Handled proxy_ws_error frame",
     );
   }
 
@@ -1127,6 +1212,9 @@ function streamFamiliesForHello(hello: HelloFrame): Set<string> {
   }
   if (isRecord(hello.capabilities.proxy) && hello.capabilities.proxy.localhost_http === true) {
     families.add("localhost_http_proxy");
+  }
+  if (isRecord(hello.capabilities.proxy) && hello.capabilities.proxy.localhost_websocket === true) {
+    families.add("localhost_websocket_proxy");
   }
   return families;
 }

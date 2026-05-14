@@ -15,7 +15,7 @@ Defines the Phase 0 envelope constants and TypeScript types:
 - `BUD_ENVELOPE_VERSION`
 - `TrafficClass`
 - `TransportKind`
-- `StreamType`
+- `StreamType` values including `localhost_websocket_proxy`
 - `BudError`
 - `BudEnvelope`
 - small runtime guards for traffic classes, transport kinds, and envelope-shaped values
@@ -38,7 +38,7 @@ Exports:
 - `encodeLegacyJsonFrame(...)`
 - `decodeLegacyJsonFrame(...)`
 
-The shared schema is [../../../proto/bud/v1/bud.proto](../../../proto/bud/v1/bud.proto). It defines the Phase 2 `BudControl.Connect` bidirectional gRPC stream plus the transport-independent `BudEnvelope`. Active WebSocket terminal/control frame types dispatch through typed oneof payload fields such as `terminal_ensure`, `terminal_output`, `terminal_send_result`, `terminal_observe_result`, `reconnect_report`, and `reconciliation_decision`, and those payloads now encode direct protobuf fields instead of whole-frame `frame_json`. Terminal result payloads carry optional `host_cwd` fields for service-side cwd caching. Core data-plane lifecycle payloads (`data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, `stream_close`) also use direct protobuf fields on the WebSocket BudEnvelope carrier. Unknown top-level payload oneof fields in the reserved payload range throw `UnsupportedBudEnvelopePayloadError`, allowing the WebSocket gateway to send a typed `UNSUPPORTED_PAYLOAD` error. Proxy/file open and file resolve payloads plus the grpc-js adapter still dispatch through typed payload tags with transitional `frame_json` until generated bindings replace the compatibility bridge. `LegacyJsonPayload` remains decode-compatible and can still be forced in conformance tests, but it is not part of active WebSocket daemon sessions.
+The shared schema is [../../../proto/bud/v1/bud.proto](../../../proto/bud/v1/bud.proto). It defines the Phase 2 `BudControl.Connect` bidirectional gRPC stream plus the transport-independent `BudEnvelope`. Active WebSocket terminal/control frame types dispatch through typed oneof payload fields such as `terminal_ensure`, `terminal_output`, `terminal_send_result`, `terminal_observe_result`, `reconnect_report`, and `reconciliation_decision`, and those payloads now encode direct protobuf fields instead of whole-frame `frame_json`. Terminal result payloads carry optional `host_cwd` fields for service-side cwd caching. Core data-plane lifecycle payloads (`data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, `stream_close`) also use direct protobuf fields on the WebSocket BudEnvelope carrier. Unknown top-level payload oneof fields in the reserved payload range throw `UnsupportedBudEnvelopePayloadError`, allowing the WebSocket gateway to send a typed `UNSUPPORTED_PAYLOAD` error. Proxy/file open, file resolve, and Phase 5 `proxy_ws_*` payloads plus the grpc-js adapter still dispatch through typed payload tags with transitional `frame_json` until generated bindings replace the compatibility bridge. `LegacyJsonPayload` remains decode-compatible and can still be forced in conformance tests, but it is not part of active WebSocket daemon sessions.
 
 ### `wire.test.ts`
 

@@ -5,7 +5,9 @@ import {
   Monitor,
   Play,
   RefreshCw,
+  ShieldAlert,
   Unplug,
+  WifiOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ApiProxiedSite, ApiProxyTransport } from '@/lib/api-types'
@@ -25,6 +27,7 @@ type WebViewPaneProps = {
   sites: ApiProxiedSite[]
   status: WebViewStatus
   transport: ApiProxyTransport | null
+  websocketTransport: ApiProxyTransport | null
 }
 
 const loadingStatuses = new Set<WebViewStatus>(['loading', 'creating', 'attaching', 'granting'])
@@ -42,6 +45,7 @@ export function WebViewPane({
   sites,
   status,
   transport,
+  websocketTransport,
 }: WebViewPaneProps) {
   const [targetHost, setTargetHost] = useState<WebViewOpenInput['targetHost']>('localhost')
   const [targetPort, setTargetPort] = useState('5173')
@@ -52,6 +56,14 @@ export function WebViewPane({
   const isLoading = loadingStatuses.has(status)
   const displayError = localError ?? errorMessage
   const transportAvailable = transport?.available ?? activeSite?.transport?.available ?? true
+  const activeWebSocketTransport = activeSite?.websocket_transport ?? websocketTransport
+  const websocketUnavailable =
+    Boolean(activeSite) &&
+    transportAvailable &&
+    activeWebSocketTransport !== null &&
+    activeWebSocketTransport.available === false
+  const activeSiteUnavailable = activeSite?.state === 'disabled' || activeSite?.state === 'expired'
+  const iframeUrl = !activeSiteUnavailable && transportAvailable ? iframeSrc : null
   const activeTitle = activeSite
     ? `${activeSite.display_name} · ${activeSite.target_host}:${activeSite.target_port}${activePath}`
     : 'Web view'
@@ -211,6 +223,27 @@ export function WebViewPane({
         </div>
       )}
 
+      {activeSiteUnavailable && (
+        <WebViewStatusBanner
+          tone="error"
+          message={activeSite.state === 'expired' ? 'This proxied site has expired' : 'This proxied site is disabled'}
+        />
+      )}
+
+      {!transportAvailable && (
+        <WebViewStatusBanner
+          tone="error"
+          message={proxyTransportMessage(transport ?? activeSite?.transport ?? null, 'http')}
+        />
+      )}
+
+      {websocketUnavailable && (
+        <WebViewStatusBanner
+          tone="warning"
+          message={proxyTransportMessage(activeWebSocketTransport, 'websocket')}
+        />
+      )}
+
       <div className="relative min-h-0 flex-1 bg-white">
         {activeSite && (
           <div className="pointer-events-none absolute right-3 top-3 z-10">
@@ -227,17 +260,29 @@ export function WebViewPane({
             </Button>
           </div>
         )}
-        {iframeSrc ? (
+        {iframeUrl ? (
           <iframe
-            key={iframeSrc}
+            key={iframeUrl}
             title={activeSite?.display_name ?? 'Bud web view'}
-            src={iframeSrc}
+            src={iframeUrl}
             className="h-full w-full border-0 bg-white"
             referrerPolicy="no-referrer"
             sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
           />
         ) : (
-          <WebViewStateMessage status={status} transportAvailable={transportAvailable} />
+          <WebViewStateMessage
+            message={
+              activeSiteUnavailable
+                ? activeSite?.state === 'expired'
+                  ? 'This proxied site has expired'
+                  : 'This proxied site is disabled'
+                : !transportAvailable
+                  ? proxyTransportMessage(transport ?? activeSite?.transport ?? null, 'http')
+                  : null
+            }
+            status={status}
+            transportAvailable={transportAvailable}
+          />
         )}
       </div>
     </div>
@@ -245,13 +290,18 @@ export function WebViewPane({
 }
 
 function WebViewStateMessage({
+  message,
   status,
   transportAvailable,
 }: {
+  message: string | null
   status: WebViewStatus
   transportAvailable: boolean
 }) {
   const copy = (() => {
+    if (message) {
+      return message
+    }
     if (!transportAvailable) {
       return 'Bud proxy transport unavailable'
     }
@@ -286,5 +336,61 @@ function WebViewStateMessage({
         <p className="font-mono text-sm font-semibold">{copy}</p>
       </div>
     </div>
+  )
+}
+
+function WebViewStatusBanner({
+  message,
+  tone,
+}: {
+  message: string
+  tone: 'warning' | 'error'
+}) {
+  return (
+    <div
+      className={cn(
+        'flex shrink-0 items-center gap-2 border-b-2 border-black px-3 py-2 font-mono text-xs',
+        tone === 'error'
+          ? 'bg-destructive/10 text-destructive'
+          : 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-100',
+      )}
+    >
+      {tone === 'error' ? <WifiOff className="h-3.5 w-3.5 shrink-0" /> : <ShieldAlert className="h-3.5 w-3.5 shrink-0" />}
+      <span className="min-w-0">{message}</span>
+    </div>
+  )
+}
+
+function proxyTransportMessage(
+  transport: ApiProxyTransport | null,
+  kind: 'http' | 'websocket',
+): string {
+  if (!transport) {
+    return kind === 'websocket'
+      ? 'WebSocket/HMR status is unavailable'
+      : 'Bud proxy transport status is unavailable'
+  }
+  if (transport.available) {
+    return kind === 'websocket'
+      ? 'WebSocket/HMR is available'
+      : 'Bud proxy transport is available'
+  }
+  if (transport.code === 'DATA_PLANE_UNAVAILABLE') {
+    return kind === 'websocket'
+      ? 'Bud is offline, so WebSocket/HMR is unavailable'
+      : 'Bud is offline, so this proxied site cannot be reached'
+  }
+  if (transport.code === 'STREAM_FAMILY_UNSUPPORTED') {
+    return kind === 'websocket'
+      ? 'Static HTTP preview is available, but this Bud does not support WebSocket/HMR proxying'
+      : 'This Bud does not support web proxying'
+  }
+  if (transport.code === 'TRANSPORT_DEGRADED') {
+    return transport.message ?? 'Bud proxy transport is degraded'
+  }
+  return transport.message ?? (
+    kind === 'websocket'
+      ? 'WebSocket/HMR is unavailable'
+      : 'Bud proxy transport is unavailable'
   )
 }

@@ -11,20 +11,26 @@ import {
   type DataPlaneSessionTracker,
 } from "../transport/data-plane-router.js";
 
-test("proxy target validation only permits explicit loopback host", () => {
+test("proxy target validation permits loopback hosts", () => {
   assert.equal(normalizeProxyTargetHost("127.0.0.1"), "127.0.0.1");
-  assert.throws(
-    () => normalizeProxyTargetHost("localhost"),
-    /Only http:\/\/127\.0\.0\.1:<port> proxy targets are allowed/,
-  );
+  assert.equal(normalizeProxyTargetHost("localhost"), "localhost");
+  assert.equal(normalizeProxyTargetHost("::1"), "::1");
   assert.throws(
     () => normalizeProxyTargetHost("10.0.0.1"),
-    /Only http:\/\/127\.0\.0\.1:<port> proxy targets are allowed/,
+    /Only localhost loopback proxy targets are allowed/,
   );
 });
 
 test("proxy method validation normalizes safe method sets", () => {
-  assert.deepEqual(normalizeProxyAllowedMethods(), ["GET", "HEAD"]);
+  assert.deepEqual(normalizeProxyAllowedMethods(), [
+    "GET",
+    "HEAD",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+  ]);
   assert.deepEqual(normalizeProxyAllowedMethods(["get"]), ["GET", "HEAD"]);
   assert.deepEqual(normalizeProxyAllowedMethods(["post", "POST", "options"]), ["POST", "OPTIONS"]);
   assert.throws(() => normalizeProxyAllowedMethods(["connect"]), /Proxy method connect is not allowed/);

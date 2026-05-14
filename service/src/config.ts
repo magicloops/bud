@@ -210,6 +210,38 @@ export const config = {
     process.env.PROXY_SESSION_MAX_RESPONSE_BYTES,
     16 * 1024 * 1024,
   ),
+  proxySessionMaxRequestBodyBytes: toPositiveInteger(
+    process.env.PROXY_SESSION_MAX_REQUEST_BODY_BYTES,
+    10 * 1024 * 1024,
+  ),
+  proxyLocalAppCookieMaxCount: toPositiveInteger(
+    process.env.PROXY_LOCAL_APP_COOKIE_MAX_COUNT,
+    50,
+  ),
+  proxyLocalAppCookieMaxBytes: toPositiveInteger(
+    process.env.PROXY_LOCAL_APP_COOKIE_MAX_BYTES,
+    16 * 1024,
+  ),
+  proxyWebSocketMaxMessageBytes: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_MAX_MESSAGE_BYTES,
+    1024 * 1024,
+  ),
+  proxyWebSocketOpenTimeoutMs: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_OPEN_TIMEOUT_MS,
+    10_000,
+  ),
+  proxyWebSocketIdleTimeoutMs: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_IDLE_TIMEOUT_MS,
+    10 * 60_000,
+  ),
+  proxyWebSocketMaxConnectionsPerSite: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_MAX_CONNECTIONS_PER_SITE,
+    16,
+  ),
+  proxyWebSocketMaxConnectionsPerBud: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_MAX_CONNECTIONS_PER_BUD,
+    64,
+  ),
   proxyGatewayEnabled: process.env.PROXY_GATEWAY_ENABLED === undefined
     ? true
     : toBool(process.env.PROXY_GATEWAY_ENABLED),

@@ -104,6 +104,7 @@ export type WebViewCallResult = {
   proxiedSites?: Record<string, unknown>[];
   webView?: Record<string, unknown> | null;
   transport?: Record<string, unknown> | null;
+  websocketTransport?: Record<string, unknown> | null;
   disabled?: boolean;
   detached?: boolean;
   error?: string;

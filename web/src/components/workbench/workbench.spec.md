@@ -184,6 +184,9 @@ Presentation component for the thread Web view right-pane mode.
 - includes compact reload, detach, and standalone-open icon controls plus a
   visible in-pane "Open in new tab" action for validating the top-level
   bootstrap path when embedded local HTTP cookies are blocked
+- shows product-visible banners for disabled/expired sites, Bud offline or
+  unavailable HTTP proxy transport, and WebSocket/HMR unsupported/degraded
+  transport while still allowing static HTTP previews when available
 - stays presentation-only: proxied-site creation, thread attachment,
   viewer-grant minting, and iframe URL refresh live in
   `web/src/features/threads/use-web-view.ts`

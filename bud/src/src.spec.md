@@ -44,12 +44,15 @@ Top-level daemon orchestrator.
 - live reconnect report emission after handshake using the local journal
 - heartbeat scheduling
 - routing inbound server frames to the run or terminal subsystems
-- routing Phase 4.2 `proxy_open` requests to the localhost proxy adapter
+- routing Phase 4 `proxy_open` requests and same-stream request body data to
+  the localhost proxy adapter
+- routing Phase 5 `proxy_ws_open` / `proxy_ws_message` / `proxy_ws_close` / `proxy_ws_error` requests to the localhost WebSocket proxy adapter
 - routing Phase 4.4 `file_open` requests to the workspace file adapter
 - routing Phase 7 `file_resolve` requests to the workspace file adapter for metadata-only absolute POSIX preflight
 - skips the fresh tmux pane cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
-- routing WebSocket-received `stream_credit`, `stream_reset`, and `stream_close` frames to the file/proxy managers
-- capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames; proxy target-host capabilities advertise exact `localhost`, `127.0.0.1`, and `::1` with `localhost` as the default target host
+- routing WebSocket-received `stream_data`, `stream_credit`, `stream_reset`,
+  and `stream_close` frames to the file/proxy managers where supported
+- capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames; WebSocket-mode daemons additionally advertise `proxy.localhost_websocket`; proxy target-host capabilities advertise exact `localhost`, `127.0.0.1`, and `::1` with `localhost` as the default target host
 
 **Key types**:
 
@@ -66,6 +69,11 @@ Bud <-> service frame definitions and protocol validation.
 - `TerminalSendFrame` now treats `key` as the canonical single-gesture non-text input field while still deserializing the old plural `keys` alias for rollout compatibility
 - `FileOpenFrame` accepts an optional `resolution_hint` so service-created file sessions can prefer message-time cwd without a click-time tmux query
 - `FileResolveFrame` carries metadata-only absolute POSIX file preflight requests before service-side file-session creation
+- `ProxyWebSocketOpenFrame`, `ProxyWebSocketMessageFrame`, `ProxyWebSocketCloseFrame`, and `ProxyWebSocketErrorFrame` carry the Phase 5 message-oriented WebSocket proxy contract
+- `ProxyOpenFrame` carries optional `request_body_bytes` for bounded
+  service-to-daemon HTTP proxy uploads
+- HTTP proxy open results may include out-of-band `set_cookies` arrays emitted
+  by the local target and filtered by the service before browser delivery
 - keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
 - exposes `validate_inbound_envelope_proto(...)` so the app layer rejects mismatched inbound protocol versions before dispatch
 
@@ -76,6 +84,7 @@ Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 - encodes active terminal/control frame bodies under typed protobuf oneof payload tags with direct protobuf fields
 - carries optional `host_cwd` fields on typed `terminal_send_result` and `terminal_observe_result` payloads
 - encodes core stream lifecycle frames under typed payload tags with direct protobuf fields so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
+- maps Phase 5 `proxy_ws_*` frame types to typed protobuf payload tags with transitional `frame_json`
 - keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and pre-cutover fixture coverage
 - decodes protobuf envelopes back to JSON text before handing off to existing frame handlers
 - shares conformance fixture coverage with the service through `proto/fixtures/legacy-terminal-ensure.json`
@@ -100,20 +109,28 @@ tonic/prost adapter for the Phase 3 daemon data client.
 - converts outbound JSON frames into generated `BudEnvelope` messages with `transport_kind = H2_DATA`
 - currently supports the terminal-output data stream while control, heartbeat, terminal requests, and request-scoped terminal results stay on the control stream
 - negotiates `localhost_http_proxy` and `file_read` alongside `terminal_output` when data is configured
-- rejects unsupported inbound generic `stream_data` frames with typed `stream_reset`
-- routes generic `stream_credit` and `stream_reset` frames into the localhost proxy and file managers
+- routes generic `stream_data`, `stream_credit`, and `stream_reset` frames into
+  the localhost proxy and file managers where supported, rejecting unsupported
+  stream families with typed `stream_reset`
 
 ### `proxy/` → [proxy/proxy.spec.md](./proxy/proxy.spec.md)
 
-Daemon-side Phase 4.2 localhost HTTP proxy adapter.
+Daemon-side localhost HTTP and WebSocket proxy adapter.
 
 - validates `proxy_open` requests against local loopback/method policy
 - performs no-redirect `http://<loopback-host>:<port>` requests for
   `127.0.0.1`, `::1`, or exact `localhost`
+- assembles bounded request bodies from same-stream `stream_data` before
+  opening local mutation requests
 - revalidates `localhost` resolution as loopback before opening a local request
 - returns `proxy_open_result` accept/reject metadata on control
+- returns local target `Set-Cookie` values as `proxy_open_result.set_cookies`
+  for service-side endpoint-host filtering
 - streams response bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
+- dials local `ws://` loopback targets for `proxy_ws_open`
+- bridges WebSocket text/binary messages with `proxy_ws_message`
+- propagates WebSocket close/error state with `proxy_ws_close` and `proxy_ws_error`
 
 ### `files/` → [files/files.spec.md](./files/files.spec.md)
 

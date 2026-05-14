@@ -196,6 +196,10 @@ export type ApiProxiedSite = {
   disabled_at: string | null
   last_accessed_at: string | null
   transport?: ApiProxyTransport | null
+  websocket_transport?: ApiProxyTransport | null
+  capabilities?: {
+    websocket?: boolean
+  } | null
   created_at: string
   updated_at: string
 }
@@ -203,6 +207,7 @@ export type ApiProxiedSite = {
 export type ApiProxiedSiteListResponse = {
   proxied_sites: ApiProxiedSite[]
   transport: ApiProxyTransport
+  websocket_transport?: ApiProxyTransport | null
 }
 
 export type ApiThreadWebView = {

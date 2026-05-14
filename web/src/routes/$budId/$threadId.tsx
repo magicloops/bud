@@ -498,6 +498,7 @@ function ThreadView() {
                 sites={webView.sites}
                 status={webView.status}
                 transport={webView.transport}
+                websocketTransport={webView.websocketTransport}
               />
             )}
             showDisconnectOverlay={showDisconnectOverlay}

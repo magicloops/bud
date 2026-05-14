@@ -13,8 +13,16 @@ import {
   registerDataPlaneRuntimeStream,
   sendDataPlaneControlFrame,
   sendDataPlaneFrame,
+  sendDataPlaneStreamData,
+  type DataPlaneSessionTracker,
 } from "../transport/data-plane-router.js";
-import { LOCALHOST_PROXY_STREAM_TYPE, type ProxySessionRow, type ProxyTransportStatus } from "./proxy-session.js";
+import {
+  LOCALHOST_PROXY_STREAM_TYPE,
+  PROXY_ALLOWED_METHODS,
+  methodAllowedForProxySession,
+  type ProxySessionRow,
+  type ProxyTransportStatus,
+} from "./proxy-session.js";
 import type { ProxiedSiteRow } from "./proxied-site.js";
 import {
   ProxyRuntimeStream,
@@ -28,6 +36,7 @@ const PROXY_OPEN_TIMEOUT_MS = 15_000;
 const REQUEST_HEADER_ALLOWLIST = new Set([
   "accept",
   "accept-language",
+  "content-type",
   "if-modified-since",
   "if-none-match",
   "range",
@@ -72,7 +81,7 @@ export async function openProxiedSiteEdgeStream(args: {
       activeStreamId: args.site.activeStreamId,
       targetHost: args.site.targetHost,
       targetPort: args.site.targetPort,
-      allowedMethods: ["GET", "HEAD"],
+      allowedMethods: [...PROXY_ALLOWED_METHODS],
       state: "ready",
       displayMetadata: args.site.displayMetadata,
       auditCorrelationId: args.site.auditCorrelationId,
@@ -103,13 +112,25 @@ async function openLocalhostProxyEdgeStream(args: {
   targetPath?: string;
 }): Promise<FastifyReply> {
   const method = args.request.method.toUpperCase();
-  if (method !== "GET" && method !== "HEAD") {
-    return args.reply.status(501).send({
-      error: "proxy_method_not_implemented",
-      message: "Phase 4.2 supports GET and HEAD proxy requests only",
-      phase: "4.2",
+  if (!methodAllowedForProxySession(args.session, method)) {
+    return args.reply.status(405).send({
+      error: "proxy_method_not_allowed",
+      message: `Proxy method ${method} is not allowed for this session`,
+      allowed_methods: args.session.allowedMethods,
     });
   }
+  const requestBodyResult = buildProxyRequestBody(args.request, method);
+  if (!requestBodyResult.ok) {
+    return args.reply.status(requestBodyResult.statusCode).send(requestBodyResult.payload);
+  }
+  const requestBody = requestBodyResult.body;
+  const requestHeadersResult = buildProxyRequestHeaders(args.request.headers, {
+    allowLocalAppCookies: Boolean(args.proxiedSite),
+  });
+  if (!requestHeadersResult.ok) {
+    return args.reply.status(requestHeadersResult.statusCode).send(requestHeadersResult.payload);
+  }
+  const requestHeaders = requestHeadersResult.headers;
 
   const dataTracker = getActiveDataPlaneSessionForBud({
     budId: args.session.budId,
@@ -234,6 +255,8 @@ async function openLocalhostProxyEdgeStream(args: {
       initial_credit_bytes: dataTracker.initialCreditBytes,
       max_in_flight_bytes: dataTracker.maxInFlightBytes,
       max_response_bytes: config.proxySessionMaxResponseBytes,
+      request_body_bytes: requestBody.byteLength,
+      max_request_body_bytes: config.proxySessionMaxRequestBodyBytes,
     },
   });
 
@@ -406,6 +429,7 @@ async function openLocalhostProxyEdgeStream(args: {
     streamId,
     streamType: LOCALHOST_PROXY_STREAM_TYPE,
     initialReceiveCreditBytes: dataTracker.initialCreditBytes,
+    initialSendCreditBytes: requestBody.byteLength,
     onData: async (chunk) => {
       refreshIdleTimer();
       try {
@@ -533,7 +557,8 @@ async function openLocalhostProxyEdgeStream(args: {
       target_port: args.session.targetPort,
       method,
       path: targetPath,
-      headers: sanitizeRequestHeaders(args.request.headers),
+      headers: requestHeaders,
+      request_body_bytes: requestBody.byteLength,
       initial_credit_bytes: dataTracker.initialCreditBytes,
       max_chunk_bytes: dataTracker.maxChunkBytes,
     });
@@ -583,6 +608,44 @@ async function openLocalhostProxyEdgeStream(args: {
       error: "DATA_PLANE_UNAVAILABLE",
       message: error.message,
     });
+  }
+  if (requestBody.byteLength > 0) {
+    try {
+      await sendBufferedProxyRequestBody({
+        dataTracker,
+        streamId,
+        body: requestBody,
+      });
+    } catch (err) {
+      cleanup();
+      const error = {
+        code: "PROXY_REQUEST_BODY_SEND_FAILED",
+        message: err instanceof Error ? err.message : "failed to send proxy request body",
+        retryable: true,
+      };
+      await resetRemote("local_error", error);
+      await daemonStateStore
+        .transitionStream({
+          streamId,
+          from: ["opening", "open", "half_closed_local", "half_closed_remote"],
+          to: "reset",
+          resetReason: "local_error",
+          error,
+        })
+        .catch(() => null);
+      await daemonStateStore
+        .transitionOperation({
+          operationId,
+          from: ["offered", "accepted", "running"],
+          to: "failed",
+          error,
+        })
+        .catch(() => null);
+      return args.reply.status(424).send({
+        error: "proxy_request_body_send_failed",
+        message: error.message,
+      });
+    }
   }
 
   let openResult: ProxyOpenResultFrame;
@@ -746,6 +809,12 @@ async function openLocalhostProxyEdgeStream(args: {
   for (const [header, value] of Object.entries(sanitizeResponseHeaders(openResult.headers))) {
     args.reply.header(header, value);
   }
+  appendSetCookieHeaders(
+    args.reply,
+    filterProxyResponseSetCookies(openResult.set_cookies, {
+      allowLocalAppCookies: Boolean(args.proxiedSite),
+    }),
+  );
   args.reply.status(statusCode);
 
   if (method === "HEAD" || statusCode === 204 || statusCode === 304) {
@@ -758,6 +827,116 @@ async function openLocalhostProxyEdgeStream(args: {
     responseCompleted = true;
   });
   return args.reply.send(runtime.body);
+}
+
+export function buildProxyRequestBody(
+  request: Pick<FastifyRequest, "body" | "headers">,
+  method: string,
+):
+  | { ok: true; body: Buffer }
+  | {
+      ok: false;
+      statusCode: number;
+      payload: { error: string; message: string; max_request_body_bytes?: number };
+    } {
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod === "GET" || normalizedMethod === "HEAD") {
+    return { ok: true, body: Buffer.alloc(0) };
+  }
+
+  const contentLength = parseContentLength(request.headers["content-length"]);
+  if (contentLength !== null && contentLength > config.proxySessionMaxRequestBodyBytes) {
+    return {
+      ok: false,
+      statusCode: 413,
+      payload: {
+        error: "proxy_request_body_too_large",
+        message: "Proxy request body exceeds the configured size limit",
+        max_request_body_bytes: config.proxySessionMaxRequestBodyBytes,
+      },
+    };
+  }
+
+  const body = serializeProxyRequestBody(request.body, request.headers["content-type"]);
+  if (body.byteLength > config.proxySessionMaxRequestBodyBytes) {
+    return {
+      ok: false,
+      statusCode: 413,
+      payload: {
+        error: "proxy_request_body_too_large",
+        message: "Proxy request body exceeds the configured size limit",
+        max_request_body_bytes: config.proxySessionMaxRequestBodyBytes,
+      },
+    };
+  }
+  if (contentLength !== null && contentLength > 0 && body.byteLength === 0) {
+    return {
+      ok: false,
+      statusCode: 400,
+      payload: {
+        error: "proxy_request_body_unavailable",
+        message: "Proxy request body could not be read by the gateway",
+      },
+    };
+  }
+
+  return { ok: true, body };
+}
+
+async function sendBufferedProxyRequestBody(args: {
+  dataTracker: DataPlaneSessionTracker;
+  streamId: string;
+  body: Buffer;
+}): Promise<void> {
+  for (let offset = 0; offset < args.body.byteLength; offset += args.dataTracker.maxChunkBytes) {
+    const end = Math.min(offset + args.dataTracker.maxChunkBytes, args.body.byteLength);
+    await sendDataPlaneStreamData(args.dataTracker, {
+      streamId: args.streamId,
+      data: args.body.subarray(offset, end),
+      endStream: end >= args.body.byteLength,
+      maxChunkBytes: args.dataTracker.maxChunkBytes,
+    });
+  }
+}
+
+function parseContentLength(value: string | string[] | undefined): number | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) {
+    return null;
+  }
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function serializeProxyRequestBody(
+  body: unknown,
+  contentTypeHeader: string | string[] | undefined,
+): Buffer {
+  if (body === undefined || body === null) {
+    return Buffer.alloc(0);
+  }
+  if (Buffer.isBuffer(body)) {
+    return body;
+  }
+  if (body instanceof Uint8Array) {
+    return Buffer.from(body);
+  }
+  if (typeof body === "string") {
+    return Buffer.from(body, "utf-8");
+  }
+  if (body instanceof URLSearchParams) {
+    return Buffer.from(body.toString(), "utf-8");
+  }
+  const contentType = Array.isArray(contentTypeHeader)
+    ? contentTypeHeader.join(",").toLowerCase()
+    : contentTypeHeader?.toLowerCase() ?? "";
+  if (typeof body === "object" && (contentType.includes("json") || contentType.length === 0)) {
+    return Buffer.from(JSON.stringify(body), "utf-8");
+  }
+  return Buffer.from(String(body), "utf-8");
 }
 
 function proxyTargetPath(rawUrl: string, proxySessionId: string): string {
@@ -773,7 +952,16 @@ function proxiedSiteTargetPath(rawUrl: string): string {
   return `${url.pathname || "/"}${url.search}`;
 }
 
-function sanitizeRequestHeaders(headers: IncomingHttpHeaders): Record<string, string> {
+export function buildProxyRequestHeaders(
+  headers: IncomingHttpHeaders,
+  options: { allowLocalAppCookies?: boolean } = {},
+):
+  | { ok: true; headers: Record<string, string> }
+  | {
+      ok: false;
+      statusCode: number;
+      payload: { error: string; message: string; max_cookie_count?: number; max_cookie_bytes?: number };
+    } {
   const sanitized: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
     const lowerKey = key.toLowerCase();
@@ -785,7 +973,27 @@ function sanitizeRequestHeaders(headers: IncomingHttpHeaders): Record<string, st
       sanitized[lowerKey] = normalized;
     }
   }
-  return sanitized;
+  if (!options.allowLocalAppCookies) {
+    return { ok: true, headers: sanitized };
+  }
+
+  const cookieResult = filterProxyRequestCookieHeader(headers.cookie);
+  if (!cookieResult.ok) {
+    return {
+      ok: false,
+      statusCode: 431,
+      payload: {
+        error: cookieResult.error,
+        message: cookieResult.message,
+        max_cookie_count: config.proxyLocalAppCookieMaxCount,
+        max_cookie_bytes: config.proxyLocalAppCookieMaxBytes,
+      },
+    };
+  }
+  if (cookieResult.cookieHeader) {
+    sanitized.cookie = cookieResult.cookieHeader;
+  }
+  return { ok: true, headers: sanitized };
 }
 
 function sanitizeResponseHeaders(headers: Record<string, string>): Record<string, string> {
@@ -797,6 +1005,160 @@ function sanitizeResponseHeaders(headers: Record<string, string>): Record<string
     }
   }
   return sanitized;
+}
+
+export function filterProxyResponseSetCookies(
+  setCookies: readonly string[] | undefined,
+  options: { allowLocalAppCookies?: boolean } = {},
+): string[] {
+  if (!options.allowLocalAppCookies) {
+    return [];
+  }
+  const filtered: string[] = [];
+  let totalBytes = 0;
+  for (const raw of setCookies ?? []) {
+    const sanitized = sanitizeSetCookieHeader(raw);
+    if (!sanitized) {
+      continue;
+    }
+    const nextTotalBytes = totalBytes + Buffer.byteLength(sanitized, "utf-8");
+    if (
+      filtered.length >= config.proxyLocalAppCookieMaxCount ||
+      nextTotalBytes > config.proxyLocalAppCookieMaxBytes
+    ) {
+      continue;
+    }
+    filtered.push(sanitized);
+    totalBytes = nextTotalBytes;
+  }
+  return filtered;
+}
+
+function filterProxyRequestCookieHeader(
+  value: string | string[] | undefined,
+):
+  | { ok: true; cookieHeader?: string }
+  | { ok: false; error: string; message: string } {
+  const cookieHeader = Array.isArray(value) ? value.join("; ") : value;
+  if (!cookieHeader) {
+    return { ok: true };
+  }
+  if (containsHeaderControlChars(cookieHeader)) {
+    return {
+      ok: false,
+      error: "proxy_cookie_header_invalid",
+      message: "Proxy request cookie header contains invalid control characters",
+    };
+  }
+
+  const pairs: string[] = [];
+  for (const rawPair of cookieHeader.split(";")) {
+    const pair = rawPair.trim();
+    if (!pair) {
+      continue;
+    }
+    const equalsIndex = pair.indexOf("=");
+    const name = (equalsIndex >= 0 ? pair.slice(0, equalsIndex) : pair).trim();
+    const rawValue = equalsIndex >= 0 ? pair.slice(equalsIndex + 1).trim() : "";
+    if (!name || !isSafeCookieName(name) || isReservedProxyCookieName(name)) {
+      continue;
+    }
+    pairs.push(`${name}=${rawValue}`);
+  }
+
+  if (pairs.length > config.proxyLocalAppCookieMaxCount) {
+    return {
+      ok: false,
+      error: "proxy_cookie_count_exceeded",
+      message: "Proxy request cookie count exceeds the configured limit",
+    };
+  }
+
+  const filtered = pairs.join("; ");
+  if (Buffer.byteLength(filtered, "utf-8") > config.proxyLocalAppCookieMaxBytes) {
+    return {
+      ok: false,
+      error: "proxy_cookie_header_too_large",
+      message: "Proxy request cookie header exceeds the configured size limit",
+    };
+  }
+
+  return filtered ? { ok: true, cookieHeader: filtered } : { ok: true };
+}
+
+function sanitizeSetCookieHeader(raw: string): string | null {
+  const value = raw.trim();
+  if (!value || containsHeaderControlChars(value)) {
+    return null;
+  }
+  const [rawPair, ...rawAttributes] = value.split(";");
+  const equalsIndex = rawPair.indexOf("=");
+  if (equalsIndex <= 0) {
+    return null;
+  }
+  const name = rawPair.slice(0, equalsIndex).trim();
+  const cookieValue = rawPair.slice(equalsIndex + 1).trim();
+  if (!isSafeCookieName(name) || isReservedProxyCookieName(name)) {
+    return null;
+  }
+
+  const attributes: string[] = [];
+  for (const rawAttribute of rawAttributes) {
+    const attribute = rawAttribute.trim();
+    if (!attribute || containsHeaderControlChars(attribute)) {
+      continue;
+    }
+    const attributeName = attribute.split("=", 1)[0]?.trim().toLowerCase();
+    if (attributeName === "domain") {
+      continue;
+    }
+    attributes.push(attribute);
+  }
+
+  return [`${name}=${cookieValue}`, ...attributes].join("; ");
+}
+
+function appendSetCookieHeaders(reply: FastifyReply, cookies: string[]): void {
+  if (cookies.length === 0) {
+    return;
+  }
+  const existing = reply.getHeader("Set-Cookie");
+  const merged = [
+    ...normalizeSetCookieHeaderValue(existing),
+    ...cookies,
+  ];
+  reply.header("Set-Cookie", merged);
+}
+
+function normalizeSetCookieHeaderValue(value: number | string | string[] | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.map(String);
+  }
+  return [String(value)];
+}
+
+function isReservedProxyCookieName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    lower === config.proxyViewerCookieName.toLowerCase() ||
+    lower === "bud_proxy_viewer" ||
+    lower === "__host-bud_proxy_viewer" ||
+    lower === "__secure-bud_proxy_viewer" ||
+    lower.startsWith("bud_proxy_") ||
+    lower.startsWith("__host-bud_proxy_") ||
+    lower.startsWith("__secure-bud_proxy_")
+  );
+}
+
+function isSafeCookieName(name: string): boolean {
+  return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name);
+}
+
+function containsHeaderControlChars(value: string): boolean {
+  return /[\r\n\0]/.test(value);
 }
 
 function statusForProxyOpenError(error: ProxyOpenError | undefined): number {

@@ -94,12 +94,17 @@ Thread-scoped proxied web-view state and hosted-auth bootstrap flow.
 - mint one-time viewer grants for iframe and standalone viewing
 - refresh iframe bootstrap URLs without exposing grants/cookies to agent tools
   or transcript rows
+- track the Bud's HTTP proxy transport separately from WebSocket/HMR transport
+  so the pane can explain static-preview vs HMR availability
 - keep parent error callbacks behind a ref so the mount-time
   `proxied-sites`/`web-view` fetch effect is keyed to Bud/thread identity, not
   parent render identity
 - open a standalone top-level window with a fresh grant so third-party cookie
   restrictions have a product fallback
 - expose compact status/error state for `WebViewPane`
+- expose top-level WebSocket transport readiness alongside the active site so
+  product failure states can distinguish Bud offline, unsupported HMR, and
+  degraded transport
 
 **Exports**:
 - `useWebView(...)`

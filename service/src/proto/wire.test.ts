@@ -365,6 +365,49 @@ test("encodes file resolve result frames as typed protobuf payloads", () => {
   assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
 });
 
+test("encodes proxy WebSocket frames as typed protobuf payloads", () => {
+  const frames = [
+    {
+      frame: {
+        proto: "0.1",
+        type: "proxy_ws_open",
+        id: "msg_proxy_ws_open",
+        ts: 1777132800000,
+        ext: {},
+        operation_id: "op_test",
+        ws_session_id: "st_ws_test",
+        proxied_site_id: "site_test",
+        stream_type: "localhost_websocket_proxy",
+        target_host: "localhost",
+        target_port: 5173,
+        path: "/@vite/client",
+        protocols: [],
+        max_message_bytes: 1048576,
+      },
+      payloadCase: "proxy_ws_open",
+    },
+    {
+      frame: {
+        proto: "0.1",
+        type: "proxy_ws_message",
+        id: "msg_proxy_ws_message",
+        ts: 1777132800000,
+        ext: {},
+        ws_session_id: "st_ws_test",
+        message_type: "text",
+        data: "hello",
+      },
+      payloadCase: "proxy_ws_message",
+    },
+  ];
+
+  for (const { frame, payloadCase } of frames) {
+    const bytes = encodeLegacyJsonFrame(frame, { transportKind: "websocket" });
+    assert.equal(decodeBudEnvelopePayloadCase(bytes), payloadCase);
+    assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+  }
+});
+
 test("tolerates unknown protobuf fields", () => {
   const bytes = Buffer.concat([
     Buffer.from(fixture.binary_base64, "base64"),

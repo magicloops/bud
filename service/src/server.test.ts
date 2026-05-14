@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { config } from "./config.js";
-import { buildServer } from "./server.js";
+
+process.env.GRPC_CONTROL_PORT = "0";
+
+const { config } = await import("./config.js");
+const { buildServer } = await import("./server.js");
 
 test("trusted-origin preflight advertises the full browser API method set", async (t) => {
   const server = await buildServer();

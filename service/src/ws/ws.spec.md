@@ -36,6 +36,8 @@ Owns:
 - terminal frame parsing and routing
 - WebSocket data-plane carrier registration when `bud_envelope.stream_frames` is advertised
 - generic stream lifecycle dispatch into `transport/data-plane-router.ts`
+- dispatch of generic stream lifecycle frames before throttled activity heartbeat writes, preserving inbound frame order for the shared data-plane runtime
+- daemon `proxy_ws_*` frame dispatch into the proxied WebSocket runtime
 - active-session tracker registration and timeout scheduling
 - Bud offline transition side effects
 
@@ -99,7 +101,7 @@ Browser/Client                 Service                      Bud Daemon
 - daemons must advertise `capabilities.bud_envelope = { version: 1, websocket_binary: true }`
 - after capability negotiation, the service and daemon exchange protobuf `BudEnvelope` binary frames; JSON text/binary compatibility frames are rejected
 - active terminal/control frame types dispatch through typed payload oneof fields with direct protobuf fields rather than whole-frame `frame_json`
-- capable daemons can additionally advertise `bud_envelope.stream_frames`; the same authenticated socket is then registered as a control+data data-plane carrier for `file_read` and `localhost_http_proxy`
+- capable daemons can additionally advertise `bud_envelope.stream_frames`; the same authenticated socket is then registered as a control+data data-plane carrier for `file_read`, `localhost_http_proxy`, and `localhost_websocket_proxy` when the corresponding daemon capabilities are present
 - `LegacyJsonPayload` remains decode-compatible for older binary fixtures and conformance testing, but not active daemon sessions
 
 **Connection States**:
@@ -147,7 +149,7 @@ Direct regression coverage for the extracted Bud connection runtime.
 - hello frames without binary-envelope capability fail before auth/registration
 - negotiated binary-envelope sessions reject legacy JSON text frames
 - unknown protobuf payload fields fail with a typed `UNSUPPORTED_PAYLOAD` error frame
-- WebSocket `stream_data` frames dispatch through the shared data-plane runtime
+- WebSocket `stream_data` frames dispatch through the shared data-plane runtime, and back-to-back data/close frames are not reordered by activity heartbeat writes
 
 **Exported Functions**:
 
@@ -220,6 +222,7 @@ The gateway also rejects `hello` frames that do not advertise `bud_envelope.vers
 | `reconnect_report` | `DaemonStateStore.reconcileReconnectReport()` then `reconciliation_decision` reply |
 | `stream_data` / `stream_credit` / `stream_reset` / `stream_close` | shared data-plane runtime dispatch |
 | `proxy_open_result` | proxy runtime open-result delivery |
+| `proxy_ws_open_result` / `proxy_ws_message` / `proxy_ws_close` / `proxy_ws_error` | proxied WebSocket runtime delivery |
 | `file_open_result` | file runtime open-result delivery |
 | `file_resolve_result` | metadata-only file resolve delivery for absolute POSIX open preflight |
 
@@ -242,6 +245,7 @@ Bud's `hello` frame includes capabilities:
   };
   proxy?: {
     localhost_http?: true;
+    localhost_websocket?: true;
     methods?: string[];
     default_target_host?: "localhost";
     target_hosts?: string[];
@@ -250,7 +254,7 @@ Bud's `hello` frame includes capabilities:
 }
 ```
 
-The gateway still tolerates deprecated tmux-shaped hello fields from older daemons during rollout, but it now strips those compatibility fields before persisting `bud.capabilities`. Only `proxy.localhost_http` is used for stream-family negotiation today; proxy method/host/default metadata is retained as advertised capability context for product surfaces.
+The gateway still tolerates deprecated tmux-shaped hello fields from older daemons during rollout, but it now strips those compatibility fields before persisting `bud.capabilities`. `proxy.localhost_http` and `proxy.localhost_websocket` drive proxy stream-family negotiation; proxy method/host/default metadata is retained as advertised capability context for product surfaces.
 
 ## Configuration Used
 

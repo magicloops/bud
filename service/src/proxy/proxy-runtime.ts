@@ -18,6 +18,7 @@ const ProxyOpenResultSchema = EnvelopeSchema.extend({
   accepted: z.boolean(),
   status_code: z.number().int().min(100).max(599).optional(),
   headers: z.record(z.string()).optional().default({}),
+  set_cookies: z.array(z.string()).optional().default([]),
   error: ProxyOpenErrorSchema.optional(),
 });
 

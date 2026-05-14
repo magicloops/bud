@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../auth/auth.js";
+import { config } from "../config.js";
 import { db } from "../db/client.js";
+import { DaemonStateStore } from "../runtime/daemon-state.js";
 import { registerProxiedSiteRoutes } from "./proxied-sites.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
+type WebSocketRouteHandler = (socket: TestWebSocket, request: Record<string, unknown>) => Promise<void> | void;
 type RegisteredRoute = {
   method: string | string[];
   path: string;
+  wsHandler?: WebSocketRouteHandler;
 };
 
 class TestReply {
@@ -68,14 +72,32 @@ function createServer(): FastifyInstance & {
     post: addRoute("POST"),
     patch: addRoute("PATCH"),
     delete: addRoute("DELETE"),
-    route(options: { method: string | string[]; url: string; handler: RouteHandler }) {
-      routes.push({ method: options.method, path: options.url });
+    route(options: { method: string | string[]; url: string; handler: RouteHandler; wsHandler?: unknown }) {
+      routes.push({
+        method: options.method,
+        path: options.url,
+        wsHandler: typeof options.wsHandler === "function"
+          ? options.wsHandler as WebSocketRouteHandler
+          : undefined,
+      });
       handlers.set(
         `${Array.isArray(options.method) ? options.method.join("|") : options.method} ${options.url}`,
         options.handler,
       );
     },
   } as unknown as FastifyInstance & { routes: RegisteredRoute[]; handlers: Map<string, RouteHandler> };
+}
+
+class TestWebSocket {
+  readonly OPEN = 1;
+  readonly CONNECTING = 0;
+  readyState = this.OPEN;
+  closed: Array<{ code: number; reason: string }> = [];
+
+  close(code: number, reason: string) {
+    this.closed.push({ code, reason });
+    this.readyState = 3;
+  }
 }
 
 async function invokeRoute(
@@ -144,15 +166,25 @@ test("proxied site routes register product and gateway contracts", async () => {
     [
       "DELETE /api/proxied-sites/:proxiedSiteId",
       "DELETE /api/threads/:threadId/web-view",
+      "GET /*",
       "GET /api/buds/:budId/proxied-sites",
       "GET /api/proxied-sites/:proxiedSiteId",
       "GET /api/threads/:threadId/web-view",
-      "GET|HEAD /*",
+      "HEAD /*",
       "PATCH /api/proxied-sites/:proxiedSiteId",
       "POST /api/buds/:budId/proxied-sites",
       "POST /api/proxied-sites/:proxiedSiteId/viewer-grants",
       "POST /api/threads/:threadId/web-view/attach",
+      "POST|PUT|PATCH|DELETE|OPTIONS /*",
     ].sort(),
+  );
+  assert.equal(
+    typeof server.routes.find((route) => route.method === "GET" && route.path === "/*")?.wsHandler,
+    "function",
+  );
+  assert.equal(
+    server.routes.find((route) => route.method === "HEAD" && route.path === "/*")?.wsHandler,
+    undefined,
   );
 });
 
@@ -193,7 +225,6 @@ test("proxied site routes return 404 for signed-in non-owner sites", async (t) =
       };
     },
   }) as never);
-
   const server = createServer();
   await registerProxiedSiteRoutes(server);
 
@@ -230,7 +261,6 @@ test("proxied site routes serialize owned sites through owner-filtered lookup", 
       };
     },
   }) as never);
-
   const server = createServer();
   await registerProxiedSiteRoutes(server);
 
@@ -241,4 +271,139 @@ test("proxied site routes serialize owned sites through owner-filtered lookup", 
   assert.equal(response.statusCode, 200);
   assert.equal((response.payload as { proxied_site_id: string }).proxied_site_id, "site_test");
   assert.equal((response.payload as { endpoint_host: string }).endpoint_host, "vite-app-a8f2.proxy.localhost");
+});
+
+test("proxied site WebSocket gateway rejects missing viewer cookie before daemon allocation", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  let selectCalls = 0;
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            limit() {
+              selectCalls += 1;
+              return Promise.resolve(selectCalls === 1 ? [PROXIED_SITE_ROW] : []);
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+  let operationCreated = false;
+  mock.method(DaemonStateStore.prototype, "createOperation", async () => {
+    operationCreated = true;
+    throw new Error("unexpected daemon allocation");
+  });
+
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+  const wsHandler = server.routes.find((route) => route.method === "GET" && route.path === "/*")?.wsHandler;
+  assert.ok(wsHandler);
+
+  const socket = new TestWebSocket();
+  await wsHandler(socket, {
+    headers: { host: PROXIED_SITE_ROW.endpointHost },
+    url: "/@vite/client",
+  });
+
+  assert.deepEqual(socket.closed, [{ code: 1008, reason: "proxy viewer unauthorized" }]);
+  assert.equal(selectCalls, 1);
+  assert.equal(operationCreated, false);
+});
+
+test("proxied site WebSocket gateway rejects invalid viewer cookie before daemon allocation", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  let selectCalls = 0;
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            limit() {
+              selectCalls += 1;
+              return Promise.resolve(selectCalls === 1 ? [PROXIED_SITE_ROW] : []);
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+  let operationCreated = false;
+  mock.method(DaemonStateStore.prototype, "createOperation", async () => {
+    operationCreated = true;
+    throw new Error("unexpected daemon allocation");
+  });
+
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+  const wsHandler = server.routes.find((route) => route.method === "GET" && route.path === "/*")?.wsHandler;
+  assert.ok(wsHandler);
+
+  const socket = new TestWebSocket();
+  await wsHandler(socket, {
+    headers: {
+      host: PROXIED_SITE_ROW.endpointHost,
+      cookie: `${config.proxyViewerCookieName}=invalid`,
+    },
+    url: "/@vite/client",
+  });
+
+  assert.deepEqual(socket.closed, [{ code: 1008, reason: "proxy viewer unauthorized" }]);
+  assert.equal(selectCalls, 2);
+  assert.equal(operationCreated, false);
+});
+
+test("proxied site WebSocket gateway rejects disabled and expired sites before viewer auth", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  const sites = [
+    { ...PROXIED_SITE_ROW, enabled: false, disabledAt: new Date(), disableReason: "user_requested" },
+    { ...PROXIED_SITE_ROW, expiresAt: new Date(Date.now() - 60_000) },
+  ];
+  let selectCalls = 0;
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            limit() {
+              return Promise.resolve([sites[selectCalls++]]);
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+  let operationCreated = false;
+  mock.method(DaemonStateStore.prototype, "createOperation", async () => {
+    operationCreated = true;
+    throw new Error("unexpected daemon allocation");
+  });
+
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+  const wsHandler = server.routes.find((route) => route.method === "GET" && route.path === "/*")?.wsHandler;
+  assert.ok(wsHandler);
+
+  const disabledSocket = new TestWebSocket();
+  await wsHandler(disabledSocket, {
+    headers: { host: PROXIED_SITE_ROW.endpointHost },
+    url: "/@vite/client",
+  });
+  assert.deepEqual(disabledSocket.closed, [{ code: 1008, reason: "proxied site disabled" }]);
+
+  const expiredSocket = new TestWebSocket();
+  await wsHandler(expiredSocket, {
+    headers: { host: PROXIED_SITE_ROW.endpointHost },
+    url: "/@vite/client",
+  });
+  assert.deepEqual(expiredSocket.closed, [{ code: 1008, reason: "proxied site expired" }]);
+  assert.equal(selectCalls, 2);
+  assert.equal(operationCreated, false);
 });

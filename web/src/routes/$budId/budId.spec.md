@@ -164,6 +164,8 @@ loader: async ({ params }) => {
      through the hosted bootstrap URL
    - Standalone open uses a fresh grant and top-level navigation as the
      fallback for browsers that block embedded cookie access
+   - Passes HTTP and WebSocket/HMR transport readiness through to the Web view
+     pane so proxied-site failure states are visible in the right pane
    - Agent `web_view.*` tool-result rows switch the right pane to Web view and
      refresh proxied-site/thread attachment state
 

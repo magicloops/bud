@@ -60,6 +60,11 @@ message BudEnvelope {
     FileOpenResult file_open_result = 179;
     FileResolve file_resolve = 180;
     FileResolveResult file_resolve_result = 181;
+    ProxyWebSocketOpen proxy_ws_open = 182;
+    ProxyWebSocketOpenResult proxy_ws_open_result = 183;
+    ProxyWebSocketMessage proxy_ws_message = 184;
+    ProxyWebSocketClose proxy_ws_close = 185;
+    ProxyWebSocketError proxy_ws_error = 186;
   }
 }
 
@@ -85,6 +90,7 @@ enum StreamType {
   STREAM_TYPE_TERMINAL_INTERACTIVE = 1;
   STREAM_TYPE_LOCALHOST_HTTP_PROXY = 2;
   STREAM_TYPE_FILE_READ = 3;
+  STREAM_TYPE_LOCALHOST_WEBSOCKET_PROXY = 4;
 }
 
 enum OperationState {
@@ -399,6 +405,26 @@ message ProxyOpenResult {
   uint32 status_code = 4;
   map<string, string> headers = 5;
   BudError error = 6;
+  bytes frame_json = 99;
+}
+
+message ProxyWebSocketOpen {
+  bytes frame_json = 99;
+}
+
+message ProxyWebSocketOpenResult {
+  bytes frame_json = 99;
+}
+
+message ProxyWebSocketMessage {
+  bytes frame_json = 99;
+}
+
+message ProxyWebSocketClose {
+  bytes frame_json = 99;
+}
+
+message ProxyWebSocketError {
   bytes frame_json = 99;
 }
 

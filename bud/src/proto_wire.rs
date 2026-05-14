@@ -1810,6 +1810,7 @@ fn stream_type_proto(value: &str) -> u64 {
         "terminal_interactive" => 1,
         "localhost_http_proxy" => 2,
         "file_read" => 3,
+        "localhost_websocket_proxy" => 4,
         _ => 0,
     }
 }
@@ -1818,6 +1819,7 @@ fn stream_type_json(value: u64) -> &'static str {
     match value {
         2 => "localhost_http_proxy",
         3 => "file_read",
+        4 => "localhost_websocket_proxy",
         _ => "terminal_interactive",
     }
 }
@@ -1910,6 +1912,11 @@ fn payload_field_for_frame_type(frame_type: &str) -> Option<u32> {
         "file_open_result" => 179,
         "file_resolve" => 180,
         "file_resolve_result" => 181,
+        "proxy_ws_open" => 182,
+        "proxy_ws_open_result" => 183,
+        "proxy_ws_message" => 184,
+        "proxy_ws_close" => 185,
+        "proxy_ws_error" => 186,
         _ => return None,
     })
 }
@@ -1948,6 +1955,11 @@ fn frame_type_for_payload_field(field_number: u32) -> Option<&'static str> {
         179 => "file_open_result",
         180 => "file_resolve",
         181 => "file_resolve_result",
+        182 => "proxy_ws_open",
+        183 => "proxy_ws_open_result",
+        184 => "proxy_ws_message",
+        185 => "proxy_ws_close",
+        186 => "proxy_ws_error",
         _ => return None,
     })
 }

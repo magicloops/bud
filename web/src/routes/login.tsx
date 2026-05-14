@@ -58,7 +58,7 @@ function LoginView() {
   return (
     <AuthPageShell
       badge={isClaimRedirect ? 'Claim Login' : 'Bud Login'}
-      title={isClaimRedirect ? 'Sign in to approve this Bud device' : 'Sign in to your Bud workspace'}
+      title={isClaimRedirect ? 'Sign in to approve this Bud device' : 'Sign in to Bud'}
       description={
         isClaimRedirect
           ? 'Use GitHub or Google to continue. After sign-in, Bud will return you to the pending device claim automatically.'

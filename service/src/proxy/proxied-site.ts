@@ -16,9 +16,11 @@ import {
 import type { Viewer } from "../auth/session.js";
 import {
   resolveProxyTransportStatus,
+  resolveWebSocketProxyTransportStatus,
   serializeProxyTransportStatus,
   type ProxyTransportStatus,
 } from "./proxy-session.js";
+import { closeProxyWebSocketRuntimeSessionsForSite } from "./proxy-ws-runtime.js";
 
 export const PROXIED_SITE_PRIVATE_OWNER = "private_owner";
 export const PROXIED_SITE_TARGET_HOSTS = ["127.0.0.1", "::1", "localhost"] as const;
@@ -351,6 +353,10 @@ export async function updateAuthorizedProxiedSite(args: {
     )
     .returning();
 
+  if (args.body.enabled === false) {
+    closeDisabledSiteWebSockets(args.proxiedSiteId);
+  }
+
   return row ?? existing;
 }
 
@@ -364,6 +370,7 @@ export async function disableAuthorizedProxiedSite(args: {
     return null;
   }
   if (!existing.enabled) {
+    closeDisabledSiteWebSockets(args.proxiedSiteId);
     return existing;
   }
 
@@ -398,7 +405,21 @@ export async function disableAuthorizedProxiedSite(args: {
     },
   });
 
+  closeDisabledSiteWebSockets(args.proxiedSiteId);
+
   return row ?? existing;
+}
+
+function closeDisabledSiteWebSockets(proxiedSiteId: string): number {
+  return closeProxyWebSocketRuntimeSessionsForSite(proxiedSiteId, {
+    reason: "site_disabled",
+    closeCode: 1008,
+    error: {
+      code: "PROXIED_SITE_DISABLED",
+      message: "proxied site was disabled",
+      retryable: false,
+    },
+  });
 }
 
 export async function attachThreadWebView(args: {
@@ -505,7 +526,10 @@ export function proxiedSiteViewUrl(site: ProxiedSiteRow, path = site.defaultPath
 export function serializeProxiedSite(
   site: ProxiedSiteRow,
   transportStatus?: ProxyTransportStatus,
+  websocketTransportStatus?: ProxyTransportStatus,
 ): Record<string, unknown> {
+  const resolvedWebSocketTransportStatus =
+    websocketTransportStatus ?? (transportStatus ? resolveWebSocketProxyTransportStatus(site.budId) : null);
   return {
     proxied_site_id: site.proxiedSiteId,
     bud_id: site.budId,
@@ -523,6 +547,12 @@ export function serializeProxiedSite(
     disabled_at: site.disabledAt?.toISOString() ?? null,
     last_accessed_at: site.lastAccessedAt?.toISOString() ?? null,
     transport: transportStatus ? serializeProxyTransportStatus(transportStatus) : null,
+    websocket_transport: resolvedWebSocketTransportStatus
+      ? serializeProxyTransportStatus(resolvedWebSocketTransportStatus)
+      : null,
+    capabilities: {
+      websocket: resolvedWebSocketTransportStatus?.available === true,
+    },
     created_at: site.createdAt.toISOString(),
     updated_at: site.updatedAt.toISOString(),
   };

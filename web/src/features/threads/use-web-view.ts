@@ -54,6 +54,7 @@ export function useWebView({
 }: UseWebViewArgs) {
   const [sites, setSites] = useState<ApiProxiedSite[]>([])
   const [transport, setTransport] = useState<ApiProxyTransport | null>(null)
+  const [websocketTransport, setWebsocketTransport] = useState<ApiProxyTransport | null>(null)
   const [activeWebView, setActiveWebView] = useState<ApiThreadWebView | null>(null)
   const [iframeSrc, setIframeSrc] = useState<string | null>(null)
   const [standaloneUrl, setStandaloneUrl] = useState<string | null>(null)
@@ -114,6 +115,7 @@ export function useWebView({
       sequenceRef.current += 1
       setSites([])
       setTransport(null)
+      setWebsocketTransport(null)
       setActiveWebView(null)
       setIframeSrc(null)
       setStandaloneUrl(null)
@@ -149,6 +151,7 @@ export function useWebView({
 
       setSites(siteList.proxied_sites)
       setTransport(siteList.transport)
+      setWebsocketTransport(siteList.websocket_transport ?? null)
       setActiveWebView(threadWebView.web_view)
 
       if (!threadWebView.web_view) {
@@ -358,6 +361,7 @@ export function useWebView({
     setIframeSrc(null)
     setStandaloneUrl(null)
     setGrantExpiresAt(null)
+    setWebsocketTransport(null)
     setStatus('idle')
     setErrorMessage(null)
   }, [shouldAbortForUnauthorized, threadId])
@@ -379,6 +383,7 @@ export function useWebView({
     standaloneUrl,
     status,
     transport,
+    websocketTransport,
   }), [
     activePath,
     activeSite,
@@ -396,6 +401,7 @@ export function useWebView({
     standaloneUrl,
     status,
     transport,
+    websocketTransport,
   ])
 }
 

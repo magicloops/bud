@@ -371,21 +371,25 @@ Phase 4.2 localhost proxy session and edge routes.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/buds/:budId/proxy-sessions` | Create a short-lived owned proxy session for `http://127.0.0.1:<port>` |
+| `POST` | `/api/buds/:budId/proxy-sessions` | Create a short-lived owned proxy session for a loopback `localhost`, `127.0.0.1`, or `::1` target |
 | `GET` | `/api/buds/:budId/proxy-sessions` | List owned proxy sessions for an owned Bud |
 | `GET` | `/api/proxy-sessions/:proxySessionId` | Read one owned proxy session |
 | `DELETE` | `/api/proxy-sessions/:proxySessionId` | Revoke one owned proxy session |
-| `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:proxySessionId/*` | Authorize the owned proxy session; stream `GET`/`HEAD` through the daemon over the selected WebSocket/HTTP2 data-plane carrier; fail closed for unsupported methods, missing transport, or service limits |
+| `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:proxySessionId/*` | Authorize the owned proxy session; proxy allowed HTTP methods and bounded request bodies through the daemon over the selected WebSocket/HTTP2 data-plane carrier; fail closed for unsupported methods, missing transport, or service limits |
 
 **Security Notes**:
 - all routes call `requireViewer(...)`
 - Bud-scoped create/list routes resolve ownership through `getAuthorizedBud(...)`
 - optional `thread_id` on create must belong to the same viewer and Bud
 - session reads/revokes filter by `proxy_session.created_by_user_id` in SQL
-- proxy targets are limited to explicit `127.0.0.1` plus an explicit port
+- proxy targets are limited to loopback `localhost`, `127.0.0.1`, or `::1`
+  plus an explicit port; omitted `target_host` defaults to `localhost`
 - proxy sessions report degraded state when no active carrier has `localhost_http_proxy` support; the edge returns `424` instead of opening daemon work
 - proxy transport payloads include selected-carrier health and skipped candidate reasons so operators can diagnose WebSocket/H2/QUIC fallback without route-specific branches
-- the edge route supports `GET` and `HEAD` in Phase 4.2; other allowed methods still return `501 proxy_method_not_implemented`
+- the edge route supports `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`,
+  and `OPTIONS`; request bodies are buffered under
+  `PROXY_SESSION_MAX_REQUEST_BODY_BYTES` and forwarded as same-stream data
+  frames before daemon accept/reject
 - each proxied request creates durable `bud_operation` / `bud_stream` rows before sending daemon `proxy_open`
 - proxied requests enforce owner checks before stream registration plus per-Bud concurrency, max response bytes, chunk/credit, idle, and TTL limits
 
@@ -410,7 +414,8 @@ Durable product web-proxy routes and private endpoint-host gateway.
 | `POST` | `/api/threads/:threadId/web-view/attach` | Attach an owned proxied site to the authorized thread |
 | `DELETE` | `/api/threads/:threadId/web-view` | Detach the current thread web view without disabling the site |
 | `POST` | `/api/proxied-sites/:proxiedSiteId/viewer-grants` | Mint a short-lived one-time bootstrap URL for the owner |
-| `GET/HEAD` | `/*` on configured proxy endpoint hosts | Bootstrap private viewer cookies and proxy authorized `GET`/`HEAD` traffic through daemon `proxy_open` |
+| `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/*` on configured proxy endpoint hosts | Bootstrap private viewer cookies and proxy authorized HTTP traffic through daemon `proxy_open` |
+| `GET WebSocket upgrade` | `/*` on configured proxy endpoint hosts | Authorize the endpoint-host viewer cookie and bridge browser WebSocket traffic through daemon `proxy_ws_*` frames |
 
 **Security Notes**:
 - product routes call `requireViewer(...)`
@@ -420,11 +425,17 @@ Durable product web-proxy routes and private endpoint-host gateway.
 - proxy-domain gateway traffic resolves endpoint host to `proxied_site`, validates enabled/expiry state, validates the endpoint-host viewer cookie, and only then allocates daemon operation/stream rows
 - viewer grants are one-time and short-lived; viewer sessions use a host-only `HttpOnly` cookie with a 7-day max age and roughly 1-day Better Auth refresh check
 - local targets are limited to `127.0.0.1`, `::1`, or exact `localhost`; daemon revalidates localhost resolution before connecting
-- first-pass gateway supports `GET` and `HEAD`; request bodies, local app cookies, and WebSocket/HMR upgrades remain follow-up phases
+- HTTP gateway supports common mutation methods plus bounded request bodies,
+  forwards endpoint-host local-app cookies after stripping proxy viewer and
+  reserved Bud proxy cookies, and filters local-app `Set-Cookie` values before
+  browser emission; redirect rewriting remains follow-up work
+- WebSocket upgrades require the same endpoint-host viewer cookie before daemon work allocation and use the `localhost_websocket_proxy` carrier family for HMR/app-level sockets
+- proxied-site API responses include separate HTTP proxy `transport` and WebSocket/HMR `websocket_transport` readiness so clients can distinguish static preview from full dev-server fidelity
+- disabling a proxied site closes active proxied WebSocket runtime sessions in addition to blocking future HTTP and WebSocket gateway requests
 
 ### `proxied-sites.test.ts`
 
-Route-registration and route-auth coverage for the durable product web-proxy routes, including unauthenticated `401`, signed-in non-owner `404`, owned site serialization, and gateway route registration.
+Route-registration and route-auth coverage for the durable product web-proxy routes, including unauthenticated `401`, signed-in non-owner `404`, owned site serialization, gateway route registration, unauthenticated/invalid-cookie WebSocket upgrade rejection before daemon allocation, and disabled/expired WebSocket upgrade rejection.
 
 ### `files.ts`
 

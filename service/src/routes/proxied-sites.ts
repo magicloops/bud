@@ -1,9 +1,15 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import WebSocket from "ws";
 import { z } from "zod";
 import { config } from "../config.js";
 import { getAuthorizedBud, requireViewer } from "../auth/session.js";
-import { resolveProxyTransportStatus, serializeProxyTransportStatus } from "../proxy/proxy-session.js";
+import {
+  resolveProxyTransportStatus,
+  resolveWebSocketProxyTransportStatus,
+  serializeProxyTransportStatus,
+} from "../proxy/proxy-session.js";
 import { openProxiedSiteEdgeStream } from "../proxy/proxy-edge.js";
+import { openProxiedSiteWebSocketEdge } from "../proxy/proxy-ws-edge.js";
 import {
   AttachThreadWebViewBodySchema,
   CreateProxiedSiteBodySchema,
@@ -72,9 +78,10 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
         budId: params.budId,
         body: bodyResult.data,
       });
+      const websocketTransportStatus = resolveWebSocketProxyTransportStatus(result.site.budId);
       return reply
         .status(result.reused ? 200 : 201)
-        .send(serializeProxiedSite(result.site, result.transportStatus));
+        .send(serializeProxiedSite(result.site, result.transportStatus, websocketTransportStatus));
     } catch (err) {
       if (err instanceof ProxiedSiteValidationError) {
         return reply.status(400).send({ error: err.code, message: err.message });
@@ -95,14 +102,16 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
     }
 
     const transportStatus = resolveProxyTransportStatus(params.budId);
+    const websocketTransportStatus = resolveWebSocketProxyTransportStatus(params.budId);
     const sites = await listAuthorizedProxiedSitesForBud({
       viewer,
       budId: params.budId,
     });
 
     return {
-      proxied_sites: sites.map((site) => serializeProxiedSite(site, transportStatus)),
+      proxied_sites: sites.map((site) => serializeProxiedSite(site, transportStatus, websocketTransportStatus)),
       transport: serializeProxyTransportStatus(transportStatus),
+      websocket_transport: serializeProxyTransportStatus(websocketTransportStatus),
     };
   });
 
@@ -118,7 +127,9 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
       return reply.status(404).send({ error: "proxied_site_not_found" });
     }
 
-    return serializeProxiedSite(site, resolveProxyTransportStatus(site.budId));
+    const transportStatus = resolveProxyTransportStatus(site.budId);
+    const websocketTransportStatus = resolveWebSocketProxyTransportStatus(site.budId);
+    return serializeProxiedSite(site, transportStatus, websocketTransportStatus);
   });
 
   server.patch("/api/proxied-sites/:proxiedSiteId", async (request, reply) => {
@@ -142,7 +153,9 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
       if (!site) {
         return reply.status(404).send({ error: "proxied_site_not_found" });
       }
-      return serializeProxiedSite(site, resolveProxyTransportStatus(site.budId));
+      const transportStatus = resolveProxyTransportStatus(site.budId);
+      const websocketTransportStatus = resolveWebSocketProxyTransportStatus(site.budId);
+      return serializeProxiedSite(site, transportStatus, websocketTransportStatus);
     } catch (err) {
       if (err instanceof ProxiedSiteValidationError) {
         return reply.status(400).send({ error: err.code, message: err.message });
@@ -166,7 +179,9 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
       return reply.status(404).send({ error: "proxied_site_not_found" });
     }
 
-    return serializeProxiedSite(site, resolveProxyTransportStatus(site.budId));
+    const transportStatus = resolveProxyTransportStatus(site.budId);
+    const websocketTransportStatus = resolveWebSocketProxyTransportStatus(site.budId);
+    return serializeProxiedSite(site, transportStatus, websocketTransportStatus);
   });
 
   server.post("/api/threads/:threadId/web-view/attach", async (request, reply) => {
@@ -237,6 +252,7 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
     }
 
     const transportStatus = resolveProxyTransportStatus(webView.site.budId);
+    const websocketTransportStatus = resolveWebSocketProxyTransportStatus(webView.site.budId);
     return {
       web_view: {
         thread_id: webView.attachment.threadId,
@@ -245,7 +261,7 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
         selected_path: webView.attachment.selectedPath,
         created_at: webView.attachment.createdAt.toISOString(),
         updated_at: webView.attachment.updatedAt.toISOString(),
-        proxied_site: serializeProxiedSite(webView.site, transportStatus),
+        proxied_site: serializeProxiedSite(webView.site, transportStatus, websocketTransportStatus),
       },
     };
   });
@@ -287,43 +303,65 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
   });
 
   server.route({
-    method: ["GET", "HEAD"],
+    method: "GET",
     url: "/*",
     async handler(request, reply) {
-      if (!config.proxyGatewayEnabled || !isProxyGatewayHost(request.headers.host)) {
-        return reply.status(404).send(request.method === "HEAD" ? undefined : { error: "not_found" });
-      }
-
-      const endpointHost = normalizeHostHeader(request.headers.host);
-      if (!endpointHost) {
-        return reply
-          .status(404)
-          .send(request.method === "HEAD" ? undefined : { error: "proxy_host_not_found" });
-      }
-
-      const url = new URL(request.url, `http://${endpointHost}`);
-      if (request.method === "HEAD" && url.pathname === "/__bud/bootstrap") {
-        return reply.status(405).send();
-      }
-      if (url.pathname === "/__bud/bootstrap") {
-        const queryResult = BootstrapQuerySchema.safeParse(request.query ?? {});
-        if (!queryResult.success) {
-          return reply.status(400).send({ error: "invalid_viewer_grant" });
-        }
-        const consumed = await consumeViewerGrant({
-          endpointHost,
-          grantToken: queryResult.data.grant,
-        });
-        if (!consumed.ok) {
-          return reply.status(401).send({ error: consumed.code });
-        }
-        reply.header("Set-Cookie", buildViewerCookie(consumed.sessionToken));
-        return reply.redirect(proxiedSiteViewUrl(consumed.site, consumed.redirectPath));
-      }
-
-      return handleProxiedSiteGatewayRequest({ endpointHost, request, reply });
+      return handleProxyGatewayHttpRoute(request, reply);
+    },
+    async wsHandler(socket: WebSocket, request: FastifyRequest) {
+      await handleProxiedSiteGatewayWebSocketRequest({ socket, request });
     },
   });
+
+  server.route({
+    method: "HEAD",
+    url: "/*",
+    async handler(request, reply) {
+      return handleProxyGatewayHttpRoute(request, reply);
+    },
+  });
+  server.route({
+    method: ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    url: "/*",
+    async handler(request, reply) {
+      return handleProxyGatewayHttpRoute(request, reply);
+    },
+  });
+}
+
+async function handleProxyGatewayHttpRoute(request: FastifyRequest, reply: FastifyReply) {
+  if (!config.proxyGatewayEnabled || !isProxyGatewayHost(request.headers.host)) {
+    return reply.status(404).send(request.method === "HEAD" ? undefined : { error: "not_found" });
+  }
+
+  const endpointHost = normalizeHostHeader(request.headers.host);
+  if (!endpointHost) {
+    return reply
+      .status(404)
+      .send(request.method === "HEAD" ? undefined : { error: "proxy_host_not_found" });
+  }
+
+  const url = new URL(request.url, `http://${endpointHost}`);
+  if (request.method === "HEAD" && url.pathname === "/__bud/bootstrap") {
+    return reply.status(405).send();
+  }
+  if (url.pathname === "/__bud/bootstrap") {
+    const queryResult = BootstrapQuerySchema.safeParse(request.query ?? {});
+    if (!queryResult.success) {
+      return reply.status(400).send({ error: "invalid_viewer_grant" });
+    }
+    const consumed = await consumeViewerGrant({
+      endpointHost,
+      grantToken: queryResult.data.grant,
+    });
+    if (!consumed.ok) {
+      return reply.status(401).send({ error: consumed.code });
+    }
+    reply.header("Set-Cookie", buildViewerCookie(consumed.sessionToken));
+    return reply.redirect(proxiedSiteViewUrl(consumed.site, consumed.redirectPath));
+  }
+
+  return handleProxiedSiteGatewayRequest({ endpointHost, request, reply });
 }
 
 async function handleProxiedSiteGatewayRequest(args: {
@@ -372,4 +410,67 @@ async function handleProxiedSiteGatewayRequest(args: {
     request: args.request,
     reply: args.reply,
   });
+}
+
+async function handleProxiedSiteGatewayWebSocketRequest(args: {
+  endpointHost?: string;
+  request: FastifyRequest;
+  socket: WebSocket;
+}) {
+  if (!config.proxyGatewayEnabled || !isProxyGatewayHost(args.request.headers.host)) {
+    closeSocket(args.socket, 1008, "proxy host not found");
+    return;
+  }
+
+  const endpointHost = args.endpointHost ?? normalizeHostHeader(args.request.headers.host);
+  if (!endpointHost) {
+    closeSocket(args.socket, 1008, "proxy host not found");
+    return;
+  }
+
+  const url = new URL(args.request.url, `http://${endpointHost}`);
+  if (url.pathname === "/__bud/bootstrap") {
+    closeSocket(args.socket, 1008, "bootstrap is not a WebSocket endpoint");
+    return;
+  }
+
+  const site = await getProxiedSiteByEndpointHost(endpointHost);
+  if (!site) {
+    closeSocket(args.socket, 1008, "proxied site not found");
+    return;
+  }
+  const state = effectiveProxiedSiteState(site);
+  if (state !== "ready" || !isProxiedSiteOpenable(site)) {
+    closeSocket(args.socket, 1008, state === "expired" ? "proxied site expired" : "proxied site disabled");
+    return;
+  }
+
+  const viewerSession = await resolveViewerSession({
+    site,
+    sessionToken: readCookie(args.request.headers.cookie, config.proxyViewerCookieName),
+  });
+  if (!viewerSession) {
+    closeSocket(args.socket, 1008, "proxy viewer unauthorized");
+    return;
+  }
+
+  const transportStatus = resolveWebSocketProxyTransportStatus(site.budId);
+  if (!transportStatus.available) {
+    closeSocket(args.socket, 1013, transportStatus.code ?? "proxy WebSocket unavailable");
+    return;
+  }
+
+  await openProxiedSiteWebSocketEdge({
+    viewer: viewerSession.viewer,
+    site,
+    transportStatus,
+    request: args.request,
+    socket: args.socket,
+  });
+}
+
+function closeSocket(socket: WebSocket, code: number, reason: string): void {
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+    socket.close(code, reason.slice(0, 120));
+  }
 }

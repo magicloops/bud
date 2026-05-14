@@ -29,6 +29,12 @@ active.
 - `phase-4-http-fidelity-request-bodies-and-cookies.md`: Request-body support,
   methods, header policy, local-app cookies, redirects, response streaming, and
   daemon proxy protocol extensions.
+- `phase-4a-http-methods-bodies-and-cancellation.md`: Implemented Phase 4
+  subset for expanded HTTP methods, bounded request bodies over same-stream
+  data frames, and browser-disconnect cancellation.
+- `phase-4b-local-app-cookies.md`: Implemented Phase 4 cookie subset for
+  endpoint-host local-app request cookies, out-of-band daemon `set_cookies`,
+  service-side `Set-Cookie` filtering, and reserved gateway cookie protection.
 - `phase-5-websocket-hmr.md`: Browser WebSocket upgrades, daemon local
   WebSocket bridging, Vite HMR acceptance target, limits, and shutdown behavior
   overview.
@@ -42,7 +48,11 @@ active.
   WebSocket upgrade authorization, browser-to-daemon bridging, limits, and
   lifecycle cleanup.
 - `phase-5c-vite-hmr-validation-and-product-hardening.md`: Vite HMR
-  validation, product capability states, and deployment hardening.
+  validation and WebSocket upgrade deployment checks.
+- `phase-5d-websocket-regression-and-failure-states.md`: WebSocket echo
+  regression coverage, lifecycle cleanup, manual HMR smoke runbook, and
+  product-visible proxy/WebSocket failure states after the core Vite path has
+  been validated.
 - `phase-6-agent-tools-and-generated-ui.md`: Product-level `web_view` tools,
   assistant prompting, message/web-view integration, and future generated UI
   affordances.
@@ -102,7 +112,7 @@ active.
   confirmation step before creation.
 - Whether the first production rollout needs a configurable per-user or
   per-Bud port allowlist beyond daemon-side loopback validation.
-- Whether the first full-fidelity HMR acceptance target is limited to Vite or
-  includes a Next.js app as part of the same phase.
+- Whether Next.js HMR should become a follow-up validation target after Vite,
+  or remain outside the first WebSocket/HMR productization pass.
 - Whether generated UI observation becomes a separate `web_view.observe` tool
   or remains out of scope until a later browser-automation capability exists.

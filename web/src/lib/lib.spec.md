@@ -80,7 +80,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiDeviceAuthFlow` / `ApiDeviceAuthApproval` | Device-claim browser contracts |
 | `ApiFileSession` / `ApiOpenThreadFileResponse` | File-viewer session and thread-open response contracts |
 | `ApiProxyTransport` | Browser-visible proxy data-plane availability and health summary |
-| `ApiProxiedSite` / `ApiProxiedSiteListResponse` | Durable Bud-owned proxied-site contracts |
+| `ApiProxiedSite` / `ApiProxiedSiteListResponse` | Durable Bud-owned proxied-site contracts, including separate HTTP proxy and WebSocket/HMR transport readiness |
 | `ApiThreadWebView` / `ApiThreadWebViewResponse` | Current thread web-view attachment contract |
 | `ApiViewerGrantResponse` | One-time hosted-auth bootstrap URL for private proxied sites |
 

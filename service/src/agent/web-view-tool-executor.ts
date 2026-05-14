@@ -21,6 +21,7 @@ import {
 } from "../proxy/proxied-site.js";
 import {
   resolveProxyTransportStatus,
+  resolveWebSocketProxyTransportStatus,
   serializeProxyTransportStatus,
 } from "../proxy/proxy-session.js";
 import {
@@ -164,8 +165,16 @@ export class WebViewToolExecutor {
       );
     }
 
-    const serializedSite = serializeProxiedSite(result.site, result.transportStatus);
-    const summary = `${result.reused ? "Reused" : "Opened"} web view for ${result.site.targetHost}:${result.site.targetPort}${path}`;
+    const websocketTransportStatus = resolveWebSocketProxyTransportStatus(result.site.budId);
+    const serializedSite = serializeProxiedSite(result.site, result.transportStatus, websocketTransportStatus);
+    const summary = summarizeOpenWebView({
+      reused: result.reused,
+      targetHost: result.site.targetHost,
+      targetPort: result.site.targetPort,
+      path,
+      httpTransport: serializeProxyTransportStatus(result.transportStatus),
+      websocketTransport: serializeProxyTransportStatus(websocketTransportStatus),
+    });
     this.debug(summary, {
       threadId: args.thread.threadId,
       proxiedSiteId: result.site.proxiedSiteId,
@@ -181,6 +190,7 @@ export class WebViewToolExecutor {
         proxiedSite: serializedSite,
         webView: serializeThreadWebView(attachment, result.site),
         transport: serializeProxyTransportStatus(result.transportStatus),
+        websocketTransport: serializeProxyTransportStatus(websocketTransportStatus),
       },
       summary,
     );
@@ -218,13 +228,17 @@ export class WebViewToolExecutor {
       targetProxiedSiteId ? await getAuthorizedProxiedSite(args.viewer, targetProxiedSiteId) : null
     );
     const transportStatus = site ? resolveProxyTransportStatus(site.budId) : null;
+    const websocketTransportStatus = site ? resolveWebSocketProxyTransportStatus(site.budId) : null;
     const result: WebViewCallResult = {
       kind: "web_view",
       action: "close",
       detached,
       disabled: Boolean(disabledSite),
-      proxiedSite: site && transportStatus ? serializeProxiedSite(site, transportStatus) : null,
+      proxiedSite: site && transportStatus
+        ? serializeProxiedSite(site, transportStatus, websocketTransportStatus ?? undefined)
+        : null,
       transport: transportStatus ? serializeProxyTransportStatus(transportStatus) : null,
+      websocketTransport: websocketTransportStatus ? serializeProxyTransportStatus(websocketTransportStatus) : null,
       ...(!targetProxiedSiteId
         ? { error: "web_view_not_attached" }
         : !site
@@ -245,6 +259,7 @@ export class WebViewToolExecutor {
     viewer: Viewer;
   }): Promise<ExecutedWebViewTool> {
     const transportStatus = resolveProxyTransportStatus(args.thread.budId);
+    const websocketTransportStatus = resolveWebSocketProxyTransportStatus(args.thread.budId);
     const sites = await listAuthorizedProxiedSitesForBud({
       viewer: args.viewer,
       budId: args.thread.budId,
@@ -260,11 +275,16 @@ export class WebViewToolExecutor {
       {
         kind: "web_view",
         action: "list",
-        proxiedSites: sites.map((site) => serializeProxiedSite(site, transportStatus)),
+        proxiedSites: sites.map((site) => serializeProxiedSite(site, transportStatus, websocketTransportStatus)),
         webView: current ? serializeThreadWebView(current.attachment, current.site) : null,
         transport: serializeProxyTransportStatus(transportStatus),
+        websocketTransport: serializeProxyTransportStatus(websocketTransportStatus),
       },
-      `Listed ${sites.length} web view${sites.length === 1 ? "" : "s"}`,
+      summarizeListedWebViews({
+        count: sites.length,
+        httpTransport: serializeProxyTransportStatus(transportStatus),
+        websocketTransport: serializeProxyTransportStatus(websocketTransportStatus),
+      }),
     );
   }
 
@@ -291,6 +311,10 @@ export class WebViewToolExecutor {
         proxied_sites: result.proxiedSites,
         web_view: result.webView,
         transport: result.transport,
+        websocket_transport: result.websocketTransport,
+        capabilities: {
+          websocket: result.websocketTransport?.available === true,
+        },
         detached: result.detached,
         disabled: result.disabled,
         error: result.error,
@@ -304,6 +328,51 @@ export class WebViewToolExecutor {
     }
     this.logger.info({ ...meta, component: "agent_web_view" }, message);
   }
+}
+
+function summarizeOpenWebView(args: {
+  reused: boolean;
+  targetHost: string;
+  targetPort: number;
+  path: string;
+  httpTransport: Record<string, unknown>;
+  websocketTransport: Record<string, unknown>;
+}): string {
+  const prefix = `${args.reused ? "Reused" : "Opened"} web view for ${args.targetHost}:${args.targetPort}${args.path}`;
+  const httpAvailable = args.httpTransport.available === true;
+  const websocketAvailable = args.websocketTransport.available === true;
+  if (!httpAvailable) {
+    return `${prefix}; HTTP proxy transport is unavailable: ${transportStatusText(args.httpTransport)}`;
+  }
+  if (!websocketAvailable) {
+    return `${prefix}; static HTTP preview is available, but WebSocket/HMR is unavailable: ${transportStatusText(args.websocketTransport)}`;
+  }
+  return `${prefix}; static HTTP and WebSocket/HMR are available`;
+}
+
+function summarizeListedWebViews(args: {
+  count: number;
+  httpTransport: Record<string, unknown>;
+  websocketTransport: Record<string, unknown>;
+}): string {
+  const prefix = `Listed ${args.count} web view${args.count === 1 ? "" : "s"}`;
+  if (args.httpTransport.available !== true) {
+    return `${prefix}; HTTP proxy transport is unavailable: ${transportStatusText(args.httpTransport)}`;
+  }
+  if (args.websocketTransport.available !== true) {
+    return `${prefix}; WebSocket/HMR is unavailable: ${transportStatusText(args.websocketTransport)}`;
+  }
+  return `${prefix}; static HTTP and WebSocket/HMR are available`;
+}
+
+function transportStatusText(transport: Record<string, unknown>): string {
+  const message = typeof transport.message === "string" && transport.message.trim()
+    ? transport.message
+    : null;
+  const code = typeof transport.code === "string" && transport.code.trim()
+    ? transport.code
+    : null;
+  return message ?? code ?? "unknown transport status";
 }
 
 function actionForDirective(directive: WebViewToolCallDirective): WebViewCallResult["action"] {

@@ -22,10 +22,10 @@ import {
 } from "../transport/data-plane-router.js";
 
 export const LOCALHOST_PROXY_STREAM_TYPE = "localhost_http_proxy";
+export const LOCALHOST_WEBSOCKET_PROXY_STREAM_TYPE = "localhost_websocket_proxy";
 export const DEFAULT_PROXY_SESSION_TTL_SECONDS = 15 * 60;
 export const MIN_PROXY_SESSION_TTL_SECONDS = 60;
 export const MAX_PROXY_SESSION_TTL_SECONDS = 60 * 60;
-export const DEFAULT_PROXY_ALLOWED_METHODS = ["GET", "HEAD"] as const;
 export const PROXY_ALLOWED_METHODS = [
   "GET",
   "HEAD",
@@ -35,11 +35,12 @@ export const PROXY_ALLOWED_METHODS = [
   "DELETE",
   "OPTIONS",
 ] as const;
+export const DEFAULT_PROXY_ALLOWED_METHODS = PROXY_ALLOWED_METHODS;
 
 const proxyMethodSet = new Set<string>(PROXY_ALLOWED_METHODS);
 
 export const CreateProxySessionBodySchema = z.object({
-  target_host: z.string().optional().default("127.0.0.1"),
+  target_host: z.string().optional().default("localhost"),
   target_port: z.number().int().min(1).max(65535),
   allowed_methods: z.array(z.string()).optional(),
   ttl_seconds: z
@@ -90,11 +91,11 @@ export class ProxySessionValidationError extends Error {
 }
 
 export function normalizeProxyTargetHost(host: string): string {
-  const normalized = host.trim();
-  if (normalized !== "127.0.0.1") {
+  const normalized = host.trim().toLowerCase();
+  if (!["127.0.0.1", "::1", "localhost"].includes(normalized)) {
     throw new ProxySessionValidationError(
       "unsupported_proxy_target",
-      "Only http://127.0.0.1:<port> proxy targets are allowed",
+      "Only localhost loopback proxy targets are allowed",
     );
   }
   return normalized;
@@ -133,6 +134,21 @@ export function resolveProxyTransportStatus(budId: string): ProxyTransportStatus
     streamType: LOCALHOST_PROXY_STREAM_TYPE,
   });
 
+  return proxyTransportStatusFromCarrier(carrier);
+}
+
+export function resolveWebSocketProxyTransportStatus(budId: string): ProxyTransportStatus {
+  const carrier = selectDataPlaneCarrier({
+    budId,
+    streamType: LOCALHOST_WEBSOCKET_PROXY_STREAM_TYPE,
+  });
+
+  return proxyTransportStatusFromCarrier(carrier);
+}
+
+function proxyTransportStatusFromCarrier(
+  carrier: ReturnType<typeof selectDataPlaneCarrier>,
+): ProxyTransportStatus {
   if (carrier.available) {
     return {
       available: true,

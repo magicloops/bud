@@ -27,6 +27,7 @@ const SERVICE_VERSION = "0.0.1";
 const CORS_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
 const DEFAULT_CORS_HEADERS = "Authorization, Content-Type, Last-Event-ID";
 const SHUTDOWN_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+const WEBSOCKET_SUBPROTOCOL_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean {
   const origin = request.headers.origin;
@@ -48,8 +49,34 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean
   return true;
 }
 
+function isProxyGatewayHostForHandshake(host: string | undefined): boolean {
+  const normalized = host?.trim().toLowerCase().split(":")[0];
+  return Boolean(
+    config.proxyGatewayEnabled &&
+    normalized &&
+    normalized.endsWith(`.${config.proxyBaseDomain}`),
+  );
+}
+
+function selectProxyWebSocketSubprotocol(
+  protocols: Set<string>,
+  request: { headers?: { host?: string } },
+): string | false {
+  if (!isProxyGatewayHostForHandshake(request.headers?.host)) {
+    return protocols.values().next().value ?? false;
+  }
+  for (const protocol of protocols) {
+    const value = protocol.trim();
+    if (value.length > 0 && value.length <= 128 && WEBSOCKET_SUBPROTOCOL_TOKEN.test(value)) {
+      return value;
+    }
+  }
+  return false;
+}
+
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
+    bodyLimit: config.proxySessionMaxRequestBodyBytes,
     logger: {
       level: config.logLevel,
       transport:
@@ -73,6 +100,9 @@ export async function buildServer(): Promise<FastifyInstance> {
       done(null, body);
     },
   );
+  server.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {
+    done(null, body);
+  });
 
   server.addHook("onRequest", async (request, reply) => {
     const origin = request.headers.origin;
@@ -132,6 +162,7 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   await server.register(websocketPlugin, {
     options: {
+      handleProtocols: selectProxyWebSocketSubprotocol,
       perMessageDeflate: {
         threshold: 1024,
         serverNoContextTakeover: true,

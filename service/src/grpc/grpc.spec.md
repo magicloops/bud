@@ -56,7 +56,7 @@ Focused unit coverage for data-attach parsing, generic stream-data parsing, acti
 
 Adapter between proto-loader message objects and the service's existing JSON-shaped frame handlers.
 
-- encodes outbound daemon frames as typed `BudEnvelope` oneof payloads carrying transitional `frame_json`
+- encodes outbound daemon frames as typed `BudEnvelope` oneof payloads carrying transitional `frame_json`, including Phase 5 `proxy_ws_*` payload tags
 - decodes inbound `LegacyJsonPayload` or typed `frame_json` payloads back to `Record<string, unknown>`
 - stamps gRPC transport metadata as `TRANSPORT_KIND_H2_GRPC` or `TRANSPORT_KIND_H2_DATA`
 - remains the bounded gRPC proto-loader compatibility bridge while WebSocket binary frames move active terminal/control and core stream lifecycle payloads to direct protobuf fields; file resolve frames are mapped through typed payload tags with transitional `frame_json`

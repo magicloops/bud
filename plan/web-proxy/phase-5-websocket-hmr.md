@@ -33,7 +33,8 @@ Splitting Phase 5 lets us:
 | [Phase 5 Prep](./phase-5-prep-observability-and-hardening.md) | Current HTTP proxy reset/auth behavior is diagnosable and unsupported HMR is explicit. | Reset error codes are visible; gateway auth tests cover no-stream-before-auth. |
 | [Phase 5a](./phase-5a-protocol-and-daemon-websocket-bridge.md) | Service and daemon have a WebSocket proxy protocol and daemon local loopback WS adapter. | Local daemon WS echo bridge can be driven without browser gateway upgrade. |
 | [Phase 5b](./phase-5b-gateway-upgrade-and-browser-bridge.md) | Proxy endpoint hosts accept authorized browser upgrades and bridge frames to daemon WS sessions. | Browser-to-local echo server works for text, binary, and close semantics. |
-| [Phase 5c](./phase-5c-vite-hmr-validation-and-product-hardening.md) | Vite HMR works and product/deployment behavior is hardened. | Vite component edit updates without manual reload through the proxied endpoint. |
+| [Phase 5c](./phase-5c-vite-hmr-validation-and-product-hardening.md) | Vite HMR is validated through the proxy endpoint host. | Vite component edit updates without manual reload through the proxied endpoint. |
+| [Phase 5d](./phase-5d-websocket-regression-and-failure-states.md) | WebSocket/HMR behavior is covered by regression tests and useful product failure states. | Echo tests cover text/binary/close/disconnect; web/agent surfaces avoid generic loading errors. |
 
 ## Recommended Sequence
 
@@ -81,6 +82,17 @@ family should include:
 - No guarantee that every framework-specific HMR mode works in this phase.
 - No QUIC/HTTP/3 dependency.
 
+## Current Validation Status
+
+As of May 13, 2026, the Vite acceptance path has been manually validated:
+
+- the proxied Vite dev server loads through the endpoint host
+- the HMR WebSocket connects through the proxy
+- editing a source file updates the page live without manual reload
+
+The remaining Phase 5 work is now regression coverage, lifecycle cleanup, and
+product-visible failure states rather than basic HMR feasibility.
+
 ## Acceptance Criteria
 
 Phase 5 is complete when:
@@ -91,5 +103,7 @@ Phase 5 is complete when:
 - Active sockets close promptly on site disable, expiry, browser close, or
   daemon disconnect.
 - Per-site and per-Bud WebSocket limits are enforced.
+- Web and agent surfaces show specific proxy/WebSocket failure states instead
+  of generic loading or generic JSON errors.
 - Protocol docs describe WebSocket proxy frames and lifecycle.
 - Progress and validation checklists are updated.

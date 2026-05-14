@@ -313,6 +313,74 @@ test("handleDataPlaneStreamFrame dispatches stream data through runtime callback
   );
 });
 
+test("handleDataPlaneStreamFrame serializes frames for the same stream", async () => {
+  const sentFrames: Record<string, unknown>[] = [];
+  const closes: unknown[] = [];
+  const tracker = makeTracker({}, sentFrames);
+  let releaseData!: () => void;
+  let dataStarted!: () => void;
+  const dataStartedPromise = new Promise<void>((resolve) => {
+    dataStarted = resolve;
+  });
+  const dataCanFinish = new Promise<void>((resolve) => {
+    releaseData = resolve;
+  });
+
+  registerDataPlaneRuntimeStream(tracker, {
+    streamId: "st_ordered",
+    streamType: "localhost_http_proxy",
+    initialReceiveCreditBytes: 16,
+    async onData() {
+      dataStarted();
+      await dataCanFinish;
+    },
+    onClose(frame) {
+      closes.push(frame);
+    },
+  });
+
+  const dataPromise = handleDataPlaneStreamFrame(
+    tracker,
+    {
+      proto: "0.1",
+      type: "stream_data",
+      id: "msg_stream_data",
+      ts: 1777132800000,
+      ext: {},
+      stream_id: "st_ordered",
+      stream_type: "localhost_http_proxy",
+      offset: 0,
+      data: Buffer.from("hello").toString("base64"),
+      end_stream: false,
+    },
+    { logger: makeLogger() as never },
+  );
+  await dataStartedPromise;
+
+  const closePromise = handleDataPlaneStreamFrame(
+    tracker,
+    {
+      proto: "0.1",
+      type: "stream_close",
+      id: "msg_stream_close",
+      ts: 1777132800001,
+      ext: {},
+      stream_id: "st_ordered",
+      final_offset: 5,
+    },
+    { logger: makeLogger() as never },
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closes.length, 0);
+
+  releaseData();
+  await Promise.all([dataPromise, closePromise]);
+
+  assert.equal(closes.length, 1);
+  assert.deepEqual(sentFrames.map((frame) => frame.type), ["stream_credit"]);
+});
+
 test("data-plane stream capacity counts active streams per Bud and stream family", (t) => {
   t.after(() => dataPlaneSessions.clear());
   dataPlaneSessions.clear();

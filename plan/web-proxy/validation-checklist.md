@@ -9,8 +9,8 @@
 - [ ] Thread attach derives Bud from authorized thread.
 - [ ] Thread cannot attach another user's proxied site.
 - [ ] Gateway resolves endpoint host to site before auth.
-- [ ] Gateway validates viewer cookie before daemon stream allocation.
-- [ ] Disabled and expired sites reject API attach and gateway traffic.
+- [x] Gateway validates viewer cookie before daemon stream allocation.
+- [x] Disabled and expired sites reject API attach and gateway traffic.
 
 ## Target Safety
 
@@ -37,8 +37,8 @@
 - [ ] Viewer cookie is `Secure` in production.
 - [ ] Viewer cookie supports iframe access in Chrome where possible.
 - [ ] Iframe fallback to top-level opening works when cookie access is blocked.
-- [ ] Local app cannot overwrite reserved gateway cookie names.
-- [ ] `bud.dev` cookies are never forwarded upstream.
+- [x] Local app cannot overwrite reserved gateway cookie names.
+- [x] `bud.dev` cookies are never forwarded upstream.
 
 ## Diagnostics And Capability Surfacing
 
@@ -46,14 +46,19 @@
   Bud id, transport kind, and request path.
 - [ ] Daemon reset logs include inbound error code and stream id.
 - [ ] Proxy logs omit grants, cookies, request bodies, and response bodies.
-- [ ] API/tool/UI state can report WebSocket/HMR unsupported before Phase 5
-  runtime support lands.
-- [ ] Gateway auth failures, disabled sites, and expired sites are rejected before
+- [x] API/tool/UI state can report WebSocket/HMR unsupported or unavailable.
+- [ ] API/tool/UI state can report local WebSocket connect failure.
+- [ ] API/tool/UI state can report WebSocket connection limit failures.
+- [ ] API/tool/UI state can report transport loss after a proxied site is open.
+- [x] Gateway auth failures, disabled sites, and expired sites are rejected before
   daemon stream allocation.
 
 ## HTTP Proxy Fidelity
 
 - [ ] Root HTML loads.
+- [x] Small first-load HTTP responses do not reset with
+  `FINAL_OFFSET_MISMATCH` when `stream_data` and `stream_close` arrive
+  back-to-back.
 - [ ] Root-absolute assets load, for example `/src/main.tsx`.
 - [ ] Query strings are preserved.
 - [ ] `GET` works.
@@ -65,24 +70,25 @@
 - [ ] `PUT`, `PATCH`, `DELETE`, and `OPTIONS` work.
 - [ ] `CONNECT` and `TRACE` are rejected.
 - [ ] Browser disconnect cancels daemon/local request.
-- [ ] Local app endpoint-host cookies round-trip.
+- [x] Local app endpoint-host cookies round-trip.
 - [ ] Redirects from local target URLs rewrite to endpoint host.
 - [ ] Hop-by-hop headers are stripped.
 
 ## WebSocket And HMR
 
-- [ ] Unauthorized upgrade does not allocate daemon state.
+- [x] Unauthorized upgrade does not allocate daemon state.
 - [ ] Authorized WebSocket connects to local echo server.
-- [ ] Text frames round-trip.
-- [ ] Binary frames round-trip.
-- [ ] Close code/reason propagate where supported.
-- [ ] Active sockets close on site disable.
-- [ ] Active sockets close on site expiry.
+- [x] Text frames round-trip through the service runtime.
+- [x] Binary frames round-trip through the service runtime.
+- [x] Close code/reason propagate through the service runtime.
+- [x] Active sockets close on site disable.
+- [x] Active sockets close on site expiry.
 - [ ] Active sockets close on daemon disconnect.
 - [ ] Per-site connection limit is enforced.
 - [ ] Per-Bud connection limit is enforced.
-- [ ] Vite HMR connects through endpoint host.
-- [ ] Vite component edit updates without manual reload.
+- [x] Vite HMR connects through endpoint host.
+- [x] Vite component edit updates without manual reload.
+- [ ] Stable idle Vite HMR does not produce a request/reset storm.
 
 ## Web Client
 
@@ -96,6 +102,10 @@
 - [ ] Site picker updates from SSE.
 - [ ] Active pane updates when site is disabled/expired/offline.
 - [ ] Auth-blocked iframe shows standalone fallback.
+- [x] Web view shows specific Bud offline state.
+- [x] Web view shows specific WebSocket unsupported/unavailable state.
+- [ ] Web view shows specific local connect failure state.
+- [ ] Web view shows specific connection limit exceeded state.
 
 ## iOS Client
 

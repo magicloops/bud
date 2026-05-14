@@ -69,7 +69,7 @@ The codebase now has a Phase 0 transport boundary for the daemon-network upgrade
 - service and daemon both encode/decode `BudEnvelope v1` binary frames for WebSocket-capable peers; active daemon sessions must advertise `bud_envelope.websocket_binary`
 - WebSocket-capable peers map active terminal/control and core data-plane lifecycle payloads to typed protobuf fields instead of wrapping the whole JSON frame in `frame_json`; intentionally dynamic nested documents such as capabilities, terminal deltas, readiness, and reconnect details remain explicit JSON/bytes subfields
 - service and daemon both use `BudEnvelope v1` on the gRPC control stream, with typed oneof payloads carrying transitional `frame_json`
-- WebSocket-capable peers dispatch generic stream/proxy/file foundation frames through typed protobuf oneof payload tags; `data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` use direct protobuf fields, while proxy/file open payloads remain on the bounded `frame_json` bridge
+- WebSocket-capable peers dispatch generic stream/proxy/file foundation frames through typed protobuf oneof payload tags; `data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` use direct protobuf fields, while proxy/file open and WebSocket proxy payloads remain on the bounded `frame_json` bridge
 - `LegacyJsonPayload` remains decode-compatible for older binary fixtures and conformance tests, but it is not part of the active WebSocket daemon path
 - terminal output emitted by the daemon is chunked to the documented 16 KiB maximum
 
@@ -110,6 +110,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - terminal requests, heartbeat, reconnect reconciliation, terminal status/readiness, and terminal send/observe results remain on control
 - if the daemon data channel is unavailable or full, daemon terminal output falls back to the gRPC control stream rather than being dropped
 - Phase 4.2 localhost proxy streams negotiate `localhost_http_proxy`; proxy bytes use the selected data-plane carrier, which is WebSocket by default and `h2_data` when explicitly selected/configured
+- Phase 5 localhost WebSocket proxy sessions negotiate `localhost_websocket_proxy`; WebSocket control/message/close frames use a dedicated message-oriented proxy frame family over the authenticated binary WebSocket carrier
 - Phase 4.4 file streams negotiate `file_read`; file bytes use the selected data-plane carrier, which is WebSocket by default and `h2_data` when explicitly selected/configured
 
 ### 3.1 Bud ⇄ Service WebSocket
@@ -118,7 +119,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Encoding: protobuf `BudEnvelope` binary frames; daemon sessions require `bud_envelope.websocket_binary`
 - Active terminal/control binary payloads use typed protobuf fields under their oneof payload tags, not whole-frame `frame_json`
 - Core data-plane lifecycle binary payloads (`data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, `stream_close`) also use typed protobuf fields under their oneof payload tags
-- Peers that also advertise `bud_envelope.stream_frames` can use the same authenticated WebSocket as a control+data carrier for `stream_data`, `stream_credit`, `stream_reset`, `stream_close`, `proxy_open_result`, and `file_open_result`
+- Peers that also advertise `bud_envelope.stream_frames` can use the same authenticated WebSocket as a control+data carrier for `stream_data`, `stream_credit`, `stream_reset`, `stream_close`, `proxy_open_result`, `proxy_ws_*`, and `file_open_result`
 - Bud should send `heartbeat` every 30 seconds
 - Service marks a Bud offline after `offlineGraceSec` with no accepted heartbeat
 - Bud output chunks should stay at or below 16 KiB
@@ -147,6 +148,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Current control fallback: if the daemon-side bounded data queue is closed or full, `terminal_output` is sent on `BudControl.Connect`
 - Generic stream frames: `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` are data-plane frames for proxy/file stream work and use the selected carrier; the baseline selected carrier is the authenticated binary WebSocket
 - Localhost proxy open frames: `proxy_open` and `proxy_open_result` move over the selected carrier's control side; bytes for accepted streams move over that carrier's data side
+- Localhost WebSocket proxy frames: `proxy_ws_open`, `proxy_ws_open_result`, `proxy_ws_message`, `proxy_ws_close`, and `proxy_ws_error` preserve WebSocket message boundaries over the selected WebSocket-capable carrier
 - File open frames: `file_open` and `file_open_result` move over the selected carrier's control side; bytes for accepted read/range streams move over that carrier's data side
 - Stream credits: Phase 4.0 tracks per-stream receive/send offsets and credit windows for generic streams; accepted bytes consume credit and credit is re-granted only after the receiver has consumed the bytes
 - Chunk limit default: 16 KiB decoded generic stream chunks, configurable with `DATA_PLANE_MAX_CHUNK_BYTES`; gRPC terminal-output chunks keep the legacy `GRPC_DATA_MAX_CHUNK_BYTES` setting
@@ -165,7 +167,7 @@ Initial attach frame:
   "ts": 1731,
   "bud_id": "b_01H...",
   "device_session_id": "s_01H...",
-  "streams": ["terminal_output", "localhost_http_proxy", "file_read"],
+  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read"],
   "max_chunk_bytes": 16384,
   "ext": {}
 }
@@ -182,7 +184,7 @@ Successful attach reply:
   "bud_id": "b_01H...",
   "device_session_id": "s_01H...",
   "transport_session_id": "ts_01H...",
-  "streams": ["terminal_output", "localhost_http_proxy", "file_read"],
+  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read"],
   "max_chunk_bytes": 16384,
   "initial_credit_bytes": 1048576,
   "ext": {}
@@ -271,8 +273,11 @@ Localhost proxy open request (Service → Bud on control):
   "method": "GET",
   "path": "/index.html?dev=1",
   "headers": {
-    "accept": "text/html"
+    "accept": "text/html",
+    "cookie": "app_session=abc",
+    "content-type": "application/json"
   },
+  "request_body_bytes": 27,
   "initial_credit_bytes": 1048576,
   "max_chunk_bytes": 16384,
   "ext": {}
@@ -283,7 +288,17 @@ Localhost proxy open request (Service → Bud on control):
 `localhost`. Durable product web views reuse this same daemon frame family; in
 that path `proxy_session_id` may carry the durable `proxied_site_id` for
 wire-compatibility while the service owns browser auth, endpoint-host routing,
-and product lifecycle state.
+and product lifecycle state. When `request_body_bytes` is greater than zero,
+the service sends exactly that many upload bytes on the same `stream_id` as
+generic `stream_data` frames before waiting for `proxy_open_result`; the daemon
+assembles the bounded body before opening the local loopback request. Response
+bytes continue to flow from daemon to service as `stream_data` frames, with
+`stream_reset` canceling either direction.
+The service includes a filtered `cookie` header only for durable endpoint-host
+proxied-site requests; raw `/api/proxy/:proxy_session_id/*` sessions omit
+cookies because they live on the Bud app/API origin. Proxy viewer cookies,
+Bud app cookies, auth headers, and reserved Bud proxy cookie names are never
+forwarded to the daemon or local target.
 
 Localhost proxy open result (Bud → Service on control):
 
@@ -300,11 +315,121 @@ Localhost proxy open result (Bud → Service on control):
   "headers": {
     "content-type": "text/html"
   },
+  "set_cookies": [
+    "app_session=abc; Path=/; HttpOnly; SameSite=Lax"
+  ],
   "ext": {}
 }
 ```
 
 Rejected proxy opens use the same frame with `accepted: false` and a typed `error` object.
+Accepted opens may include `set_cookies` as a separate array because
+`Set-Cookie` is multi-valued and must not be comma-joined in the ordinary
+response header map. The service filters these values before browser emission:
+`Domain` is stripped so local-app cookies remain endpoint-host scoped, reserved
+Bud proxy cookie names/prefixes are rejected, newline-containing values are
+rejected, and configured count/byte caps are applied.
+
+Localhost WebSocket proxy open request (Service → Bud on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "proxy_ws_open",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "ws_session_id": "st_01H...",
+  "proxied_site_id": "site_01H...",
+  "stream_type": "localhost_websocket_proxy",
+  "target_host": "localhost",
+  "target_port": 5173,
+  "path": "/@vite/client",
+  "protocols": [],
+  "max_message_bytes": 1048576,
+  "ext": {}
+}
+```
+
+Bud validates `target_host` using the same loopback-only policy as HTTP proxy
+opens and connects only to `ws://` local targets in this phase. `path` includes
+the browser path and query. Safe `protocols` values are forwarded to the local
+target as `Sec-WebSocket-Protocol`; Bud credentials, proxy viewer cookies, and
+browser auth headers are not forwarded to the local WebSocket target.
+
+Localhost WebSocket proxy open result (Bud → Service on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "proxy_ws_open_result",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "op_01H...",
+  "ws_session_id": "st_01H...",
+  "accepted": true,
+  "selected_protocol": null,
+  "ext": {}
+}
+```
+
+Rejected WebSocket opens use `accepted: false` plus a typed `error` object.
+After an accepted open, both peers exchange message-framed payloads:
+
+```json
+{
+  "proto": "0.1",
+  "type": "proxy_ws_message",
+  "id": "01...",
+  "ts": 1731,
+  "ws_session_id": "st_01H...",
+  "message_type": "text",
+  "data": "{\"type\":\"connected\"}",
+  "ext": {}
+}
+```
+
+For `message_type: "binary"`, `data` is base64. For `message_type: "text"`,
+`data` is the UTF-8 text payload. Message senders must enforce the negotiated
+`max_message_bytes` ceiling before forwarding.
+
+Close and terminal error frames:
+
+```json
+{
+  "proto": "0.1",
+  "type": "proxy_ws_close",
+  "id": "01...",
+  "ts": 1731,
+  "ws_session_id": "st_01H...",
+  "code": 1000,
+  "reason": "normal close",
+  "ext": {}
+}
+```
+
+```json
+{
+  "proto": "0.1",
+  "type": "proxy_ws_error",
+  "id": "01...",
+  "ts": 1731,
+  "ws_session_id": "st_01H...",
+  "error": {
+    "code": "LOCAL_CONNECT_FAILED",
+    "message": "local WebSocket connect failed",
+    "retryable": true
+  },
+  "ext": {}
+}
+```
+
+The service allocates durable operation/stream rows only after endpoint-host
+auth succeeds, enforces per-site/per-Bud WebSocket connection limits, and closes
+active browser sockets when the selected daemon carrier disconnects. On proxy
+endpoint-host browser handshakes, the service may select the first safe
+browser-requested subprotocol before the daemon local open completes; full
+browser/local selected-subprotocol parity is a later hardening item.
 
 File resolve request (Service → Bud on control):
 
@@ -554,6 +679,8 @@ APNs registration rules:
 ### 3.8 Localhost Proxy Sessions
 
 Phase 4.2 adds the browser-facing proxy session contract and a minimal daemon-backed GET/HEAD streaming path.
+Phase 4a expands that path to common mutation methods plus bounded request
+bodies and browser-disconnect cancellation.
 
 Create session:
 
@@ -561,16 +688,16 @@ Create session:
 - Authenticated viewer required
 - `bud_id` must belong to the viewer
 - optional `thread_id` must belong to the same viewer and Bud
-- target is restricted to explicit `http://127.0.0.1:<port>`
+- target is restricted to loopback hosts: `localhost`, `127.0.0.1`, or `::1`
 - if no active data-plane carrier has negotiated `localhost_http_proxy`, the session records degraded state and proxy edge requests fail closed with `424`
 
 Request body:
 
 ```json
 {
-  "target_host": "127.0.0.1",
+  "target_host": "localhost",
   "target_port": 5173,
-  "allowed_methods": ["GET", "HEAD"],
+  "allowed_methods": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   "ttl_seconds": 900,
   "thread_id": "uuid optional",
   "display_metadata": {}
@@ -591,7 +718,7 @@ Response:
     "port": 5173,
     "url": "http://127.0.0.1:5173"
   },
-  "allowed_methods": ["GET", "HEAD"],
+  "allowed_methods": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   "state": "ready",
   "proxy_url": "https://service.example/api/proxy/ps_01H.../",
   "expires_at": "2026-04-27T12:00:00.000Z",
@@ -638,9 +765,11 @@ Additional routes:
 - `GET /api/buds/:bud_id/proxy-sessions` lists owned proxy sessions for an owned Bud
 - `GET /api/proxy-sessions/:proxy_session_id` reads one owned session
 - `DELETE /api/proxy-sessions/:proxy_session_id` revokes one owned session
-- `/api/proxy/:proxy_session_id/*` authorizes the viewer/session, enforces method/expiry/revocation/transport readiness, and streams `GET`/`HEAD` through daemon `proxy_open` plus the selected data-plane carrier
-- non-GET/HEAD methods remain unsupported in Phase 4.2 and return `501 proxy_method_not_implemented`
-- request and response headers are allowlisted; cookies, auth headers, hop-by-hop headers, and non-loopback targets are not forwarded
+- `/api/proxy/:proxy_session_id/*` authorizes the viewer/session, enforces method/expiry/revocation/transport readiness, and streams through daemon `proxy_open` plus the selected data-plane carrier
+- allowed methods are `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, and `OPTIONS`; `CONNECT`, `TRACE`, and unknown methods remain unsupported
+- request bodies are buffered at the service under `PROXY_SESSION_MAX_REQUEST_BODY_BYTES`, forwarded as same-stream `stream_data`, and rejected with `413` when too large
+- browser disconnects send `stream_reset` so daemon local work can stop instead of continuing in the background
+- request and response headers are allowlisted; raw `/api/proxy` sessions do not forward cookies, auth headers, hop-by-hop headers, or non-loopback targets
 
 ### 3.8.1 Durable Proxied Sites And Thread Web Views
 
@@ -711,9 +840,14 @@ Private endpoint-host gateway:
 - gateway traffic resolves endpoint host to `proxied_site`, validates
   enabled/expiry state, validates the endpoint-host viewer cookie, checks
   transport readiness, and only then opens daemon `proxy_open`
-- first-pass gateway traffic supports `GET` and `HEAD`; request bodies,
-  mutation methods, local app cookies, redirects, and WebSocket/HMR upgrades are
-  follow-up phases
+- HTTP gateway traffic supports `GET`, `HEAD`, `POST`, `PUT`, `PATCH`,
+  `DELETE`, and `OPTIONS`; bounded request bodies are forwarded to the daemon,
+  endpoint-host local-app cookies are filtered and forwarded, local-app
+  `Set-Cookie` headers are filtered before browser emission, and redirect
+  rewriting remains a follow-up phase
+- WebSocket gateway upgrades are owner-private and require the same endpoint-host
+  viewer cookie before daemon work allocation; accepted upgrades bridge
+  browser text/binary messages to daemon `proxy_ws_*` frames
 - product routes and thread attachments use authenticated `bud.dev` browser
   auth; iframe/subresource access uses the endpoint-host viewer cookie because
   arbitrary bearer headers are not available for normal browser navigation
@@ -890,7 +1024,8 @@ Dev-only token bypass example:
     },
     "proxy": {
       "localhost_http": true,
-      "methods": ["GET", "HEAD"],
+      "localhost_websocket": true,
+      "methods": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       "default_target_host": "localhost",
       "target_hosts": ["localhost", "127.0.0.1", "::1"]
     },
@@ -936,7 +1071,8 @@ Reconnect example:
     },
     "proxy": {
       "localhost_http": true,
-      "methods": ["GET", "HEAD"],
+      "localhost_websocket": true,
+      "methods": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       "default_target_host": "localhost",
       "target_hosts": ["localhost", "127.0.0.1", "::1"]
     },
@@ -1452,10 +1588,15 @@ Service: otherwise emit agent.resync_required
 - proxy-domain gateway requests must validate the endpoint-host viewer cookie
   before opening daemon operation/stream rows; `bud.dev` cookies, auth headers,
   and Bud credentials must not be forwarded to local apps
+- endpoint-host local-app cookies may be forwarded only after stripping proxy
+  viewer and reserved Bud proxy cookie names; local-app `Set-Cookie` values
+  must be host-only on the endpoint host and cannot overwrite reserved gateway
+  auth cookie names
 - browser file-session reads, revokes, and edge attaches must authorize `file_session.created_by_user_id` before checking or opening daemon streams
 - thread file-viewer opens must authorize the owning thread before creating `file_session` rows, derive the Bud from that thread, and stamp `file_session.created_by_user_id` with the acting viewer
 - localhost proxy sessions must deny non-loopback targets at the service boundary; product proxied sites allow only `127.0.0.1`, `::1`, or exact `localhost`, and the daemon re-checks local policy plus `localhost` loopback resolution before any local HTTP side effect
 - localhost proxy streams require an authenticated data-plane carrier with `localhost_http_proxy` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
+- localhost WebSocket proxy sessions require an authenticated WebSocket-capable carrier with `localhost_websocket_proxy` negotiated. Endpoint-host viewer auth, site state, and connection limits are enforced before daemon WebSocket open allocation.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, range content-identity, and during-read identity policy before sending bytes
 - future QUIC data sessions must attach with a short-lived token bound to the active authenticated Bud, device session, control transport session, allowed endpoint candidates, and allowed stream families; token issuance/attach is not part of the active WebSocket/HTTP2 protocol yet
@@ -1479,9 +1620,19 @@ Service: otherwise emit agent.resync_required
   - thread-scoped terminal protocol is the active execution surface
   - opt-in `BudData.Attach` carries daemon terminal output over HTTP/2 data when configured
   - Phase 4.2 localhost proxy sessions stream GET/HEAD responses through daemon `proxy_open` plus data-only generic stream frames
+  - Phase 4a expands localhost HTTP proxying to common mutation methods,
+    bounded request bodies over same-stream `stream_data`, loopback
+    `localhost` defaults, and browser-disconnect cancellation
+  - Phase 4b adds endpoint-host local-app cookie forwarding for durable
+    proxied sites plus `proxy_open_result.set_cookies` filtering so app cookies
+    remain host-only and cannot overwrite reserved proxy viewer cookies
   - Durable owner-private proxied sites and thread web-view attachments now use
     endpoint-host gateway routing plus cookie-backed private viewer bootstrap
     for Web and mobile clients
+  - Phase 5 WebSocket proxying adds the `localhost_websocket_proxy` carrier
+    family plus `proxy_ws_open`, `proxy_ws_open_result`, `proxy_ws_message`,
+    `proxy_ws_close`, and `proxy_ws_error` frames for Vite/HMR-style local-dev
+    WebSocket traffic
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract

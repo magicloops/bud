@@ -53,6 +53,7 @@ Direct tests for shared contract helpers.
 - compatibility-only `shell_ready` remains accepted below the model-facing schema
 - legacy `screen_stable` payloads normalize to canonical `settled`
 - web-view tool args do not gain terminal `wait_for` defaults
+- web-view tool results include HTTP proxy transport plus separate WebSocket proxy capability/transport metadata when available
 
 ### `conversation-loader.ts`
 
@@ -197,6 +198,8 @@ startUserMessage()
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
 - `web_view.open`, `web_view.close`, and `web_view.list` are product-level tools backed by owner-scoped proxied-site helpers; they do not expose viewer grants, cookies, or daemon stream ids to the model.
 - `web_view.open` keeps `target_host` optional for simple port-only requests, but the model-facing schema and prompt define the omitted-host default as `localhost` and instruct the model to preserve explicit user-provided `localhost`, `127.0.0.1`, or `::1` hosts exactly.
+- web-view tool payloads now include `websocket_transport` and `capabilities.websocket` so the model/client can distinguish static HTTP preview support from full WebSocket/HMR support.
+- web-view tool summaries now explicitly call out whether static HTTP preview is available separately from WebSocket/HMR support, including offline/unsupported transport messages when either carrier family is unavailable.
 - the main `AgentService` file now delegates conversation loading, model invocation, terminal tool execution, and transcript persistence/runtime emission to dedicated modules instead of bundling those concerns inline
 
 ### `web-view-tool-executor.ts`
@@ -209,6 +212,8 @@ Product web-view tool execution ownership extracted from `AgentService`.
 - create/reuse owner-private `proxied_site` rows and attach them through `thread_web_view`
 - detach thread web views by default and only disable proxied sites when explicitly requested
 - shape tool summaries and persisted payloads without exposing viewer grants, cookies, or daemon stream ids
+- include separate WebSocket proxy transport/capability metadata in tool payloads
+- phrase `web_view.open` and `web_view.list` summaries as static HTTP vs WebSocket/HMR availability rather than treating all proxied sites as equivalent
 
 ### `terminal-send-outcome.ts`
 

@@ -22,6 +22,10 @@
   - Follow up with a separate design/implementation pass if product needs authoritative non-tool timing, for example by timestamping assistant draft events or introducing an explicit turn-summary contract, rather than overloading the new tool-timing fields.
 - **Web refactor test hardening**
   - Add the deeper automated browser/runtime coverage outlined in [design/web-refactor-test-hardening.md](./design/web-refactor-test-hardening.md), with priority on transcript hook behavior, agent stream reconnect/resync, terminal reconnect/recovery, and a small route-composition smoke layer.
+- **Web proxy follow-on hardening**
+  - Finish the remaining proxy hardening outlined in [design/web-proxy-follow-on-hardening.md](./design/web-proxy-follow-on-hardening.md).
+  - Prioritize daemon/local WebSocket echo tests, authorized browser-to-local gateway echo tests, daemon-disconnect cleanup coverage, per-site/per-Bud limit tests, and product-visible diagnostics for local connect failures, auth-blocked embeds, connection limits, open timeouts, and transport loss.
+  - Keep request bodies, local app cookies, public/password sharing, and local HTTPS in their separate planned phases.
 - **Streaming JSON renderer replacement**
   - Replace the current web JSON inspection/viewer path with a streaming JSON library so large tool payloads can render incrementally instead of relying on the current heavyweight viewer.
   - Treat this as the point where web code-block rendering/highlighting gets revisited as well, since the renderer boundary will likely change and we still want broad language support up front rather than prematurely narrowing the syntax-highlighter footprint.

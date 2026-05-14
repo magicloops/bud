@@ -45,20 +45,21 @@
 
 ## Phase 4: HTTP Fidelity, Request Bodies, And Cookies
 
-Current recommendation: pause the broader Phase 4 work until Phase 5
-Prep-5c lands, because Vite dev/HMR is blocked on WebSocket support rather than
-HTTP request-body or local-cookie fidelity.
+Phase 4a covers the mutation-method/request-body/cancellation subset. Phase 4b
+covers endpoint-host local-app cookie round-tripping and reserved cookie
+protection. The remaining Phase 4 work is redirects and any future
+streaming-upload upgrade.
 
-- [ ] Expand allowed methods.
-- [ ] Add 10 MB buffered request body support.
-- [ ] Add daemon request body frames.
-- [ ] Add cancellation on browser disconnect.
-- [ ] Add local app cookie forwarding.
-- [ ] Add `Set-Cookie` filtering and reserved-name protection.
+- [x] Expand allowed methods.
+- [x] Add 10 MB buffered request body support.
+- [x] Add daemon request body frames.
+- [x] Add cancellation on browser disconnect.
+- [x] Add local app cookie forwarding.
+- [x] Add `Set-Cookie` filtering and reserved-name protection.
 - [ ] Add redirect rewriting for local target URLs.
 - [ ] Add header stripping and forwarding tests.
-- [ ] Update `docs/proto.md`.
-- [ ] Update touched service/daemon specs.
+- [x] Update `docs/proto.md`.
+- [x] Update touched service/daemon specs.
 
 ## Phase 5 Prep: Observability And Proxy Hardening
 
@@ -67,40 +68,58 @@ HTTP request-body or local-cookie fidelity.
 - [ ] Add gateway auth/security tests for grant, cookie, disabled/expired, and auth-before-daemon-work behavior.
 - [ ] Surface current WebSocket/HMR unsupported capability in API/tool/UI state.
 - [ ] Add reset-storm validation runbook.
+- [x] Fix and regress per-stream data-plane ordering for back-to-back
+  `stream_data` / `stream_close` frames.
 - [ ] Update touched specs.
 
 ## Phase 5a: Protocol And Daemon WebSocket Bridge
 
-- [ ] Define WebSocket proxy frame family.
-- [ ] Update `docs/proto.md` and protobuf envelope mappings.
-- [ ] Add daemon WebSocket proxy capability advertisement.
-- [ ] Add daemon local loopback WebSocket client.
-- [ ] Add service daemon-facing WebSocket proxy runtime.
-- [ ] Preserve text/binary messages and close semantics.
-- [ ] Add frame-size, idle, and open-timeout limits.
-- [ ] Add daemon/service echo tests.
-- [ ] Update touched service/daemon specs.
+- [x] Define WebSocket proxy frame family.
+- [x] Update `docs/proto.md` and protobuf envelope mappings.
+- [x] Add daemon WebSocket proxy capability advertisement.
+- [x] Add daemon local loopback WebSocket client.
+- [x] Add service daemon-facing WebSocket proxy runtime.
+- [x] Preserve text/binary messages and close semantics.
+- [x] Add frame-size, idle, and open-timeout limits.
+- [x] Add service WebSocket runtime text/binary/close/error tests.
+- [ ] Add daemon/local WebSocket echo integration tests.
+- [x] Update touched service/daemon specs.
 
 ## Phase 5b: Gateway Upgrade And Browser Bridge
 
-- [ ] Add proxy endpoint-host WebSocket upgrade authorization.
-- [ ] Bridge browser WebSockets to daemon WebSocket proxy sessions.
-- [ ] Enforce per-site and per-Bud connection limits.
-- [ ] Close sockets on browser close, site disable/expiry, and daemon disconnect.
-- [ ] Strip Bud credentials and proxy viewer cookies before local target.
+- [x] Add proxy endpoint-host WebSocket upgrade authorization.
+- [x] Bridge browser WebSockets to daemon WebSocket proxy sessions.
+- [x] Enforce per-site and per-Bud connection limits.
+- [x] Close active sockets on site disable and site expiry.
+- [ ] Add daemon-disconnect active WebSocket cleanup regression test.
+- [x] Strip Bud credentials and proxy viewer cookies before local target.
 - [ ] Add browser-to-local echo tests for text, binary, and close behavior.
-- [ ] Update touched service route/proxy/transport specs.
+- [x] Update touched service route/proxy/transport specs.
 
-## Phase 5c: Vite HMR Validation And Product Hardening
+## Phase 5c: Vite HMR Validation
 
-- [ ] Validate Vite HMR socket connects through endpoint host.
-- [ ] Validate Vite component edits update without manual reload.
-- [ ] Tune Host/Origin/subprotocol behavior for Vite.
-- [ ] Add product-visible WebSocket unsupported/error states.
+- [x] Validate Vite HMR socket connects through endpoint host.
+- [x] Validate Vite component edits update without manual reload.
+- [x] Tune Host/Origin/subprotocol behavior for Vite.
 - [ ] Add production/local WebSocket upgrade deployment checks.
-- [ ] Add Vite HMR regression smoke coverage.
-- [ ] Update `docs/proto.md`.
-- [ ] Update touched web/agent/service specs.
+- [x] Update `docs/proto.md`.
+- [x] Update touched web/agent/service specs.
+
+## Phase 5d: WebSocket Regression And Failure States
+
+- [x] Add service WebSocket runtime tests for text, binary, close, and error behavior.
+- [x] Add data-plane ordering regression coverage for back-to-back data/close
+  frames on the WebSocket carrier.
+- [ ] Add daemon/local WebSocket echo tests for text, binary, close, and error behavior.
+- [ ] Add browser-to-local echo tests for authorized endpoint-host upgrades.
+- [x] Add auth-before-daemon-work tests for unauthenticated and invalid-cookie upgrades.
+- [x] Add disabled/expired site WebSocket rejection and active-socket cleanup tests.
+- [ ] Add daemon-disconnect active WebSocket cleanup test.
+- [ ] Add per-site and per-Bud WebSocket limit tests.
+- [x] Add product-visible Bud offline, disabled/expired, and WebSocket unsupported/error states.
+- [x] Add agent/tool messaging for static HTTP vs full WebSocket/HMR support.
+- [x] Add repeatable Vite HMR smoke runbook.
+- [ ] Update touched service/web/agent specs.
 
 ## Phase 6: Agent Tools And Generated UI
 
@@ -143,6 +162,7 @@ HTTP request-body or local-cookie fidelity.
 - [x] Unauthenticated access returns `401` or product-safe private access page.
 - [x] Bud credentials are never forwarded to local apps.
 - [x] Target host policy is enforced by service and daemon.
-- [ ] Disabled/expired/offline states are visible in web and mobile clients.
+- [x] Disabled/expired/offline states are visible in the web client.
+- [ ] Disabled/expired/offline states are visible in the mobile client.
 - [x] Local development setup is documented and simple.
 - [ ] Production wildcard DNS/TLS configuration is documented before rollout.
