@@ -131,6 +131,9 @@ Daemon-side localhost HTTP and WebSocket proxy adapter.
 - dials local `ws://` loopback targets for `proxy_ws_open`
 - bridges WebSocket text/binary messages with `proxy_ws_message`
 - propagates WebSocket close/error state with `proxy_ws_close` and `proxy_ws_error`
+- has focused local WebSocket echo coverage for `127.0.0.1`, text/binary
+  forwarding, local close propagation, unsafe target rejection, `localhost`
+  loopback resolution validation, and typed local connect failure reporting
 
 ### `files/` → [files/files.spec.md](./files/files.spec.md)
 

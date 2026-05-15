@@ -26,7 +26,7 @@
 - [x] Add authorized `GET`/`HEAD` proxy path.
 - [x] Add daemon loopback validation for web proxy requests.
 - [x] Add local `proxy.localhost` development route.
-- [ ] Add gateway auth/security tests.
+- [x] Add gateway auth/security tests.
 - [x] Update touched specs and protocol docs.
 
 ## Phase 3: Web And Mobile Client Surfaces
@@ -65,7 +65,7 @@ streaming-upload upgrade.
 
 - [ ] Add service-side reset error-code/details logging.
 - [ ] Add daemon-side inbound reset error-code/details logging.
-- [ ] Add gateway auth/security tests for grant, cookie, disabled/expired, and auth-before-daemon-work behavior.
+- [x] Add gateway auth/security tests for grant, cookie, disabled/expired, and auth-before-daemon-work behavior.
 - [ ] Surface current WebSocket/HMR unsupported capability in API/tool/UI state.
 - [ ] Add reset-storm validation runbook.
 - [x] Fix and regress per-stream data-plane ordering for back-to-back
@@ -82,7 +82,7 @@ streaming-upload upgrade.
 - [x] Preserve text/binary messages and close semantics.
 - [x] Add frame-size, idle, and open-timeout limits.
 - [x] Add service WebSocket runtime text/binary/close/error tests.
-- [ ] Add daemon/local WebSocket echo integration tests.
+- [x] Add daemon/local WebSocket echo integration tests.
 - [x] Update touched service/daemon specs.
 
 ## Phase 5b: Gateway Upgrade And Browser Bridge
@@ -91,9 +91,9 @@ streaming-upload upgrade.
 - [x] Bridge browser WebSockets to daemon WebSocket proxy sessions.
 - [x] Enforce per-site and per-Bud connection limits.
 - [x] Close active sockets on site disable and site expiry.
-- [ ] Add daemon-disconnect active WebSocket cleanup regression test.
+- [x] Add daemon-disconnect active WebSocket cleanup regression test.
 - [x] Strip Bud credentials and proxy viewer cookies before local target.
-- [ ] Add browser-to-local echo tests for text, binary, and close behavior.
+- [x] Add browser-to-local echo tests for text, binary, and close behavior.
 - [x] Update touched service route/proxy/transport specs.
 
 ## Phase 5c: Vite HMR Validation
@@ -110,13 +110,13 @@ streaming-upload upgrade.
 - [x] Add service WebSocket runtime tests for text, binary, close, and error behavior.
 - [x] Add data-plane ordering regression coverage for back-to-back data/close
   frames on the WebSocket carrier.
-- [ ] Add daemon/local WebSocket echo tests for text, binary, close, and error behavior.
-- [ ] Add browser-to-local echo tests for authorized endpoint-host upgrades.
+- [x] Add daemon/local WebSocket echo tests for text, binary, close, and error behavior.
+- [x] Add browser-to-local echo tests for authorized endpoint-host upgrades.
 - [x] Add gateway dispatch regression for authorized endpoint-host WebSocket upgrades.
 - [x] Add auth-before-daemon-work tests for unauthenticated and invalid-cookie upgrades.
 - [x] Add disabled/expired site WebSocket rejection and active-socket cleanup tests.
 - [x] Add runtime-level Bud transport-loss active WebSocket cleanup test.
-- [ ] Add daemon-disconnect active WebSocket cleanup test.
+- [x] Add daemon-disconnect active WebSocket cleanup test.
 - [x] Add per-site and per-Bud WebSocket limit tests.
 - [x] Add product-visible Bud offline, disabled/expired, and WebSocket unsupported/error states.
 - [x] Add agent/tool messaging for static HTTP vs full WebSocket/HMR support.
@@ -125,18 +125,8 @@ streaming-upload upgrade.
 
 ## Phase 5e: High-Risk Release Regressions
 
-- [ ] Add gateway auth/security tests for grants, viewer cookies, host
-  matching, disabled/expired sites, and auth-before-daemon-work behavior.
-- [ ] Add daemon/local WebSocket echo integration tests for text, binary,
-  close, and error behavior.
-- [ ] Add browser-to-local authorized endpoint-host WebSocket echo tests.
-- [ ] Add daemon-disconnect cleanup regressions for active HTTP and WebSocket
-  proxy work.
-- [ ] Add reset/log hygiene assertions for canonical error context without
-  grants, cookies, bodies, or WebSocket payloads.
-- [ ] Add stable idle Vite HMR reset-storm validation.
-- [ ] Add local and production WebSocket upgrade deployment checklist.
-- [ ] Update touched service/daemon/protocol specs.
+- [x] Split high-risk release-regression scope into Phase 9 subdocs.
+- [ ] Complete remaining Phase 9 release-readiness workstreams before production rollout.
 
 ## Phase 6: Agent Tools And Generated UI
 
@@ -171,6 +161,70 @@ streaming-upload upgrade.
 - [ ] Validate embedded Web view bootstrap with `SameSite=None; Secure`.
 - [ ] Update root README/getting-started docs.
 - [ ] Update package README docs for service, web, and daemon.
+
+## Phase 9a: Gateway Auth And Security Regressions
+
+- [x] Add owner-only viewer grant tests.
+- [x] Add grant expiry and one-time consumption tests.
+- [x] Add bootstrap endpoint-host mismatch rejection tests.
+- [x] Add viewer cookie attribute tests for HTTP local and HTTPS configured mode.
+- [x] Add viewer-session refresh, revoked-session, and expired-session tests.
+- [ ] Add thread attach/list/read ownership boundary tests where missing.
+- [x] Add reserved-cookie and Bud credential forwarding tests where missing.
+- [x] Update touched service specs and validation checklist.
+
+## Phase 9b: Daemon Local WebSocket Echo
+
+- [ ] Add local echo server daemon tests for `localhost`.
+- [x] Add local echo server daemon tests for `127.0.0.1`.
+- [ ] Add conditional local echo server daemon tests for `::1`.
+- [x] Add text and binary frame echo tests.
+- [x] Add local close and browser/service close propagation tests.
+- [x] Add unsupported target and non-loopback resolved-address rejection tests.
+- [x] Add typed local-connect failure tests.
+- [x] Update touched daemon/protocol specs.
+
+## Phase 9c: Browser-To-Local Gateway Echo
+
+- [x] Add authorized endpoint-host browser upgrade test through gateway.
+- [x] Add browser-to-local text round-trip test.
+- [x] Add browser-to-local binary round-trip test.
+- [x] Add browser close propagation test.
+- [x] Add local close propagation test.
+- [x] Add oversized message and open-timeout gateway behavior tests.
+- [ ] Add combined manual or automated smoke that exercises service and daemon
+  together.
+- [x] Update touched service/daemon specs.
+
+## Phase 9d: Daemon Disconnect Cleanup
+
+- [x] Add active WebSocket cleanup on daemon disconnect regression.
+- [x] Add active HTTP proxy cleanup on daemon disconnect regression.
+- [x] Add runtime map cleanup assertions.
+- [x] Add `proxied_site.active_stream_id` cleanup assertions where applicable.
+- [ ] Add reconnect/reload stale stream-id regression.
+- [ ] Add stable idle Vite HMR reset-storm validation run.
+- [x] Update touched service specs and validation checklist.
+
+## Phase 9e: Diagnostics And Log Hygiene
+
+- [ ] Add service reset/open-failure structured context.
+- [ ] Add daemon inbound reset/error structured context.
+- [ ] Add log hygiene assertions or review notes for grants, cookies, bodies,
+  and WebSocket payloads.
+- [ ] Add product-visible states for local connect failure, connection limit,
+  open timeout, and transport loss where observable.
+- [ ] Update touched service/daemon/web specs.
+
+## Phase 9f: WebSocket Upgrade Deployment Checks
+
+- [ ] Document wildcard DNS requirements for `*.bud.show`.
+- [ ] Document wildcard TLS automation requirements.
+- [ ] Document load balancer/reverse proxy WebSocket upgrade requirements.
+- [ ] Validate endpoint-host preservation into Fastify.
+- [ ] Validate proxy-domain auth through the deployed edge path.
+- [ ] Add local HTTP-only and optional HTTPS WebSocket upgrade smoke notes.
+- [ ] Update README/getting-started or deployment docs.
 
 ## Cross-Phase Release Readiness
 

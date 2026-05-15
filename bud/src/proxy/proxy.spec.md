@@ -36,6 +36,9 @@ product web-proxy gateway.
 - preserves WebSocket text/binary message boundaries through `proxy_ws_message`
 - propagates close/error state through `proxy_ws_close` and `proxy_ws_error`
 - stops active WebSocket sessions when service sends `proxy_ws_close` or `proxy_ws_error`
+- includes daemon unit coverage for a local `127.0.0.1` WebSocket echo server,
+  text/binary frame echoing, local close propagation, unsafe target rejection,
+  `localhost` loopback resolution validation, and typed local connect failures
 
 ## Dependencies
 

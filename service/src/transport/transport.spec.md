@@ -87,7 +87,10 @@ Carrier-neutral data-plane registry and runtime stream dispatcher.
 
 ### `data-plane-router.test.ts`
 
-Focused unit coverage for data-plane selection, explicit carrier policy ordering, QUIC/H2/WebSocket health fallback, generic stream dispatch, per-stream ordering, credit capping, and final-offset mismatch resets.
+Focused unit coverage for data-plane selection, explicit carrier policy
+ordering, QUIC/H2/WebSocket health fallback, generic stream dispatch,
+per-stream ordering, credit capping, final-offset mismatch resets, and runtime
+stream reset cleanup used when a carrier disconnects beneath active proxy work.
 
 ### `composite-daemon-router.test.ts`
 

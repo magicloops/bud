@@ -8,7 +8,7 @@
 - [x] Unauthenticated API caller gets `401`.
 - [ ] Thread attach derives Bud from authorized thread.
 - [ ] Thread cannot attach another user's proxied site.
-- [ ] Gateway resolves endpoint host to site before auth.
+- [x] Gateway resolves endpoint host to site before auth.
 - [x] Gateway validates viewer cookie before daemon stream allocation.
 - [x] Disabled and expired sites reject API attach and gateway traffic.
 
@@ -17,24 +17,24 @@
 - [x] `127.0.0.1` target is accepted.
 - [x] `::1` target is accepted.
 - [x] Exact `localhost` target is accepted.
-- [ ] `localhost` resolves only to loopback addresses on daemon.
+- [x] `localhost` resolves only to loopback addresses on daemon.
 - [x] LAN addresses are rejected.
 - [ ] Metadata service addresses are rejected.
-- [ ] Arbitrary hostnames are rejected.
+- [x] Arbitrary hostnames are rejected.
 - [ ] Unix sockets and file paths are rejected.
 - [ ] Redirects cannot expand local target access beyond policy.
 
 ## Gateway Auth And Cookies
 
-- [ ] Viewer grant can be minted only by owner.
-- [ ] Viewer grant expires quickly.
-- [ ] Viewer grant is one-time use.
-- [ ] Bootstrap host must match endpoint host.
+- [x] Viewer grant can be minted only by owner.
+- [x] Viewer grant expires quickly.
+- [x] Viewer grant is one-time use.
+- [x] Bootstrap host must match endpoint host.
 - [x] Viewer cookie max age is 7 days.
-- [ ] Viewer cookie refresh/update window is roughly 1 day.
-- [ ] Viewer cookie is host-only for the endpoint host.
-- [ ] Viewer cookie is `HttpOnly`.
-- [ ] Viewer cookie is `Secure` in production.
+- [x] Viewer cookie refresh/update window is roughly 1 day.
+- [x] Viewer cookie is host-only for the endpoint host.
+- [x] Viewer cookie is `HttpOnly`.
+- [x] Viewer cookie is `Secure` in production.
 - [ ] Viewer cookie supports iframe access in Chrome where possible.
 - [ ] Iframe fallback to top-level opening works when cookie access is blocked.
 - [x] Local app cannot overwrite reserved gateway cookie names.
@@ -70,6 +70,7 @@
 - [ ] `PUT`, `PATCH`, `DELETE`, and `OPTIONS` work.
 - [ ] `CONNECT` and `TRACE` are rejected.
 - [ ] Browser disconnect cancels daemon/local request.
+- [x] Active HTTP proxy streams clean up on daemon disconnect.
 - [x] Local app endpoint-host cookies round-trip.
 - [ ] Redirects from local target URLs rewrite to endpoint host.
 - [ ] Hop-by-hop headers are stripped.
@@ -83,10 +84,12 @@
 - [x] Text frames round-trip through the service runtime.
 - [x] Binary frames round-trip through the service runtime.
 - [x] Close code/reason propagate through the service runtime.
+- [x] Gateway oversized-message failure closes with typed service behavior.
+- [x] Gateway open-timeout failure closes with typed service behavior.
 - [x] Active sockets close on site disable.
 - [x] Active sockets close on site expiry.
 - [x] Active sockets close through Bud-level runtime cleanup helper.
-- [ ] Active sockets close on daemon disconnect.
+- [x] Active sockets close on daemon disconnect.
 - [x] Per-site connection limit is enforced.
 - [x] Per-Bud connection limit is enforced.
 - [x] Vite HMR connects through endpoint host.

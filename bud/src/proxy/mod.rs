@@ -1111,7 +1111,12 @@ fn error_value(code: &str, message: &str, retryable: bool) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::protocol::Envelope;
+    use tokio::net::TcpListener;
+    use tokio::sync::mpsc as tokio_mpsc;
+    use tokio_tungstenite::accept_async;
 
     use super::*;
 
@@ -1259,5 +1264,226 @@ mod tests {
         assert_eq!(as_strings.get("accept"), Some(&"text/html".to_string()));
         assert!(!as_strings.contains_key("authorization"));
         assert!(!as_strings.contains_key("connection"));
+    }
+
+    #[tokio::test]
+    async fn websocket_proxy_echoes_text_binary_and_local_close() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local echo server");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept websocket");
+            let ws_stream = accept_async(stream).await.expect("websocket handshake");
+            let (mut write, mut read) = ws_stream.split();
+            while let Some(message) = read.next().await {
+                match message.expect("local websocket message") {
+                    Message::Text(text) if text == "please-close" => {
+                        write.send(Message::Close(None)).await.expect("send close");
+                        break;
+                    }
+                    Message::Text(text) => {
+                        write
+                            .send(Message::Text(format!("echo:{text}")))
+                            .await
+                            .expect("send text echo");
+                    }
+                    Message::Binary(bytes) => {
+                        write
+                            .send(Message::Binary(bytes))
+                            .await
+                            .expect("send binary echo");
+                    }
+                    Message::Ping(payload) => {
+                        write.send(Message::Pong(payload)).await.expect("send pong");
+                    }
+                    Message::Close(_) => break,
+                    Message::Pong(_) | Message::Frame(_) => {}
+                }
+            }
+        });
+
+        let manager = ProxyManager::default();
+        let (outbound_tx, mut outbound_rx) = tokio_mpsc::unbounded_channel::<Message>();
+        let sender = TransportSender::websocket(outbound_tx, false);
+        let mut frame = ws_frame();
+        frame.target_host = "127.0.0.1".into();
+        frame.target_port = port;
+        frame.path = "/hmr?token=test".into();
+        frame.max_message_bytes = Some(1024);
+        let ws_session_id = frame.ws_session_id.clone();
+
+        let proxy_manager = manager.clone();
+        let proxy = tokio::spawn(async move { proxy_manager.run_ws_proxy(frame, sender).await });
+
+        let opened = recv_transport_json(&mut outbound_rx).await;
+        assert_eq!(
+            opened.get("type").and_then(Value::as_str),
+            Some("proxy_ws_open_result")
+        );
+        assert_eq!(opened.get("accepted").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            opened.get("ws_session_id").and_then(Value::as_str),
+            Some(ws_session_id.as_str())
+        );
+
+        manager
+            .apply_ws_message(ws_message_frame(&ws_session_id, "text", "hello"))
+            .await;
+        let text_echo = recv_transport_json(&mut outbound_rx).await;
+        assert_eq!(
+            text_echo.get("type").and_then(Value::as_str),
+            Some("proxy_ws_message")
+        );
+        assert_eq!(
+            text_echo.get("message_type").and_then(Value::as_str),
+            Some("text")
+        );
+        assert_eq!(
+            text_echo.get("data").and_then(Value::as_str),
+            Some("echo:hello")
+        );
+
+        let binary_payload = BASE64_STANDARD.encode([1_u8, 2, 3, 4]);
+        manager
+            .apply_ws_message(ws_message_frame(&ws_session_id, "binary", &binary_payload))
+            .await;
+        let binary_echo = recv_transport_json(&mut outbound_rx).await;
+        assert_eq!(
+            binary_echo.get("type").and_then(Value::as_str),
+            Some("proxy_ws_message")
+        );
+        assert_eq!(
+            binary_echo.get("message_type").and_then(Value::as_str),
+            Some("binary")
+        );
+        assert_eq!(
+            binary_echo.get("data").and_then(Value::as_str),
+            Some(binary_payload.as_str())
+        );
+
+        manager
+            .apply_ws_message(ws_message_frame(&ws_session_id, "text", "please-close"))
+            .await;
+        let closed = recv_transport_json(&mut outbound_rx).await;
+        assert_eq!(
+            closed.get("type").and_then(Value::as_str),
+            Some("proxy_ws_close")
+        );
+        assert_eq!(
+            closed.get("ws_session_id").and_then(Value::as_str),
+            Some(ws_session_id.as_str())
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), proxy)
+            .await
+            .expect("proxy completed")
+            .expect("proxy task")
+            .expect("proxy result");
+        tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .expect("server completed")
+            .expect("server task");
+    }
+
+    #[tokio::test]
+    async fn websocket_proxy_rejects_unsafe_targets_and_reports_local_connect_failure() {
+        assert!(validate_loopback_resolution("localhost", 0).await.is_ok());
+
+        let manager = ProxyManager::default();
+        let (unsafe_tx, mut unsafe_rx) = tokio_mpsc::unbounded_channel::<Message>();
+        let mut unsafe_frame = ws_frame();
+        unsafe_frame.target_host = "example.com".into();
+        unsafe_frame.ws_session_id = "st_ws_unsafe".into();
+        manager
+            .run_ws_proxy(unsafe_frame, TransportSender::websocket(unsafe_tx, false))
+            .await
+            .expect("unsafe target rejection");
+        let unsafe_rejection = recv_transport_json(&mut unsafe_rx).await;
+        assert_eq!(
+            unsafe_rejection.get("type").and_then(Value::as_str),
+            Some("proxy_ws_open_result")
+        );
+        assert_eq!(
+            unsafe_rejection.get("accepted").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            unsafe_rejection
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_str),
+            Some("POLICY_DENIED")
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind unused port probe");
+        let closed_port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+
+        let (connect_tx, mut connect_rx) = tokio_mpsc::unbounded_channel::<Message>();
+        let mut connect_frame = ws_frame();
+        connect_frame.target_host = "127.0.0.1".into();
+        connect_frame.target_port = closed_port;
+        connect_frame.ws_session_id = "st_ws_connect_failure".into();
+        manager
+            .run_ws_proxy(connect_frame, TransportSender::websocket(connect_tx, false))
+            .await
+            .expect("local connect failure");
+        let connect_rejection = recv_transport_json(&mut connect_rx).await;
+        assert_eq!(
+            connect_rejection.get("type").and_then(Value::as_str),
+            Some("proxy_ws_open_result")
+        );
+        assert_eq!(
+            connect_rejection.get("accepted").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            connect_rejection
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_str),
+            Some("LOCAL_CONNECT_FAILED")
+        );
+        assert_eq!(
+            connect_rejection
+                .get("error")
+                .and_then(|error| error.get("retryable"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    fn ws_message_frame(
+        ws_session_id: &str,
+        message_type: &str,
+        data: &str,
+    ) -> ProxyWebSocketMessageFrame {
+        ProxyWebSocketMessageFrame {
+            envelope: Envelope {
+                kind: "proxy_ws_message".into(),
+                proto: PROTO_VERSION.into(),
+                id: format!("msg_{message_type}"),
+                ts: 0,
+                ext: Value::Null,
+            },
+            ws_session_id: ws_session_id.into(),
+            message_type: message_type.into(),
+            data: data.into(),
+        }
+    }
+
+    async fn recv_transport_json(rx: &mut tokio_mpsc::UnboundedReceiver<Message>) -> Value {
+        match tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("transport frame")
+            .expect("transport sender open")
+        {
+            Message::Text(text) => serde_json::from_str(&text).expect("json text frame"),
+            Message::Binary(bytes) => serde_json::from_slice(&bytes).expect("json binary frame"),
+            other => panic!("unexpected transport message: {other:?}"),
+        }
     }
 }

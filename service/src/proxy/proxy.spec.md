@@ -106,7 +106,9 @@ Focused unit coverage for target validation, method normalization, carrier-neutr
 
 ### `proxied-site.test.ts`
 
-Focused unit coverage for product target/path validation, endpoint host generation, and viewer cookie parsing.
+Focused unit coverage for product target/path validation, endpoint host
+generation, viewer cookie parsing, and local HTTP versus hosted HTTPS viewer
+cookie attributes.
 
 ### `proxy-runtime.test.ts`
 
@@ -116,11 +118,14 @@ Focused unit coverage for open-result delivery and response-body chunk handling.
 
 Focused unit coverage for proxy request body extraction, request-body error
 handling before daemon work allocation, endpoint-host request-cookie filtering,
-and response `Set-Cookie` filtering/caps.
+response `Set-Cookie` filtering/caps, and durable HTTP proxied-site stream
+cleanup when the selected data-plane carrier resets after open.
 
 ### `proxy-ws-runtime.test.ts`
 
-Focused unit coverage for proxied WebSocket text/binary forwarding, daemon open/close dispatch, oversized browser-frame rejection, and active-session cleanup helpers used by disabled/expired sites and Bud-level transport loss.
+Focused unit coverage for proxied WebSocket text/binary forwarding, daemon
+open/close dispatch, oversized browser-frame rejection, and active-session
+cleanup helpers used by disabled/expired sites and Bud-level transport loss.
 
 ## Dependencies
 

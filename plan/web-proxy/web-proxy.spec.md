@@ -54,9 +54,8 @@ active.
   product-visible proxy/WebSocket failure states after the core Vite path has
   been validated.
 - `phase-5e-high-risk-release-regressions.md`: Consolidated release-blocking
-  regression pass for gateway auth/security, daemon and browser WebSocket echo
-  integration, daemon-disconnect cleanup, reset diagnostics, and WebSocket
-  upgrade deployment assumptions.
+  regression pass from the Phase 5 WebSocket work, now retained as a pointer
+  to the split Phase 9 release-readiness subdocs.
 - `phase-6-agent-tools-and-generated-ui.md`: Product-level `web_view` tools,
   assistant prompting, message/web-view integration, and future generated UI
   affordances.
@@ -66,6 +65,24 @@ active.
 - `phase-8-local-https-dev.md`: Optional mkcert+Caddy local HTTPS parity
   profile for embedded proxy-cookie testing, local host routing, env examples,
   and README/getting-started updates.
+- `phase-9a-gateway-auth-security-regressions.md`: Owner-only gateway auth,
+  viewer grants, endpoint-host cookies, host matching, disabled/expired
+  rejection, and reserved-cookie regression coverage.
+- `phase-9b-daemon-local-websocket-echo.md`: Daemon local WebSocket echo tests
+  for loopback target policy, text/binary frames, close propagation, and local
+  connect failures.
+- `phase-9c-browser-to-local-gateway-echo.md`: Authorized endpoint-host
+  browser-to-local WebSocket echo coverage across the service gateway and
+  daemon bridge.
+- `phase-9d-daemon-disconnect-cleanup.md`: Active HTTP/WebSocket proxy cleanup
+  on daemon disconnect, stale runtime state prevention, reconnect recovery,
+  and idle HMR reset-storm validation.
+- `phase-9e-diagnostics-and-log-hygiene.md`: Structured proxy failure
+  diagnostics plus log hygiene for grants, cookies, bodies, and WebSocket
+  payloads.
+- `phase-9f-websocket-upgrade-deployment-checks.md`: Local and production
+  WebSocket upgrade runbooks covering wildcard DNS/TLS, load balancer upgrade
+  handling, host preservation, and proxy-domain auth.
 - `progress-checklist.md`: Phase-by-phase completion tracker.
 - `validation-checklist.md`: Security, protocol, browser, mobile, daemon, and
   production validation checklist.

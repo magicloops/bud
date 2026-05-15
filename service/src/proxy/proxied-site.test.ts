@@ -42,3 +42,29 @@ test("proxied site viewer cookies are parseable by reserved name", () => {
   assert.equal(readCookie(cookie, config.proxyViewerCookieName), "token-value");
   assert.equal(readCookie(`${cookie}; other=value`, "other"), "value");
 });
+
+test("proxied site viewer cookies use local HTTP and hosted HTTPS browser attributes", (t) => {
+  const originalScheme = config.proxyPublicScheme;
+  const originalCookieName = config.proxyViewerCookieName;
+  t.after(() => {
+    config.proxyPublicScheme = originalScheme;
+    config.proxyViewerCookieName = originalCookieName;
+  });
+
+  config.proxyPublicScheme = "http";
+  config.proxyViewerCookieName = "bud_proxy_viewer";
+  const localCookie = buildViewerCookie("local-token");
+  assert.match(localCookie, /^bud_proxy_viewer=local-token/);
+  assert.match(localCookie, /HttpOnly/);
+  assert.match(localCookie, /SameSite=Lax/);
+  assert.doesNotMatch(localCookie, /Secure/);
+
+  config.proxyPublicScheme = "https";
+  config.proxyViewerCookieName = "__Host-bud_proxy_viewer";
+  const hostedCookie = buildViewerCookie("hosted-token");
+  assert.match(hostedCookie, /^__Host-bud_proxy_viewer=hosted-token/);
+  assert.match(hostedCookie, /HttpOnly/);
+  assert.match(hostedCookie, /SameSite=None/);
+  assert.match(hostedCookie, /Secure/);
+  assert.doesNotMatch(hostedCookie, /Domain=/i);
+});
