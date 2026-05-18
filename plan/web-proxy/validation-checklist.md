@@ -35,7 +35,7 @@
 - [x] Viewer cookie is host-only for the endpoint host.
 - [x] Viewer cookie is `HttpOnly`.
 - [x] Viewer cookie is `Secure` in production.
-- [ ] Viewer cookie supports iframe access in Chrome where possible.
+- [x] Viewer cookie supports iframe access in Chrome where possible.
 - [ ] Iframe fallback to top-level opening works when cookie access is blocked.
 - [x] Local app cannot overwrite reserved gateway cookie names.
 - [x] `bud.dev` cookies are never forwarded upstream.
@@ -55,13 +55,13 @@
 
 ## HTTP Proxy Fidelity
 
-- [ ] Root HTML loads.
+- [x] Root HTML loads.
 - [x] Small first-load HTTP responses do not reset with
   `FINAL_OFFSET_MISMATCH` when `stream_data` and `stream_close` arrive
   back-to-back.
-- [ ] Root-absolute assets load, for example `/src/main.tsx`.
+- [x] Root-absolute assets load, for example `/src/main.tsx`.
 - [ ] Query strings are preserved.
-- [ ] `GET` works.
+- [x] `GET` works.
 - [ ] `HEAD` works.
 - [ ] `POST` JSON works.
 - [ ] Form submissions work.
@@ -115,9 +115,9 @@
 
 ## iOS Client
 
-- [ ] iOS can request a viewer grant through authenticated API.
-- [ ] iOS can open bootstrap URL in hosted web view.
-- [ ] iOS does not need custom subresource auth headers.
+- [x] iOS can request a viewer grant through authenticated API.
+- [x] iOS can open bootstrap URL in hosted web view.
+- [x] iOS does not need custom subresource auth headers.
 - [ ] iOS handles offline/disabled/expired product pages.
 - [ ] iOS can open the same proxied site across app launches while cookie is
   valid.
@@ -136,20 +136,31 @@
 
 ## Local Development
 
-- [ ] New developer can run web, service, and daemon locally without a separate
+- [x] New developer can run web, service, and daemon locally without a separate
   tunnel dependency.
+- [x] New developer can run the default local stack without installing Caddy or
+  mkcert.
 - [ ] `proxy.localhost` route works where supported.
 - [ ] `nip.io` fallback route works where supported.
-- [ ] HTTP-only local development path is documented.
-- [ ] Optional mkcert+Caddy HTTPS recipe is documented.
-- [ ] HTTPS local app route works at `https://app.bud.localhost`.
-- [ ] HTTPS local API/SSE route works at `https://api.bud.localhost`.
-- [ ] HTTPS local Bud WebSocket route works at `wss://api.bud.localhost/ws`.
-- [ ] HTTPS local proxy endpoint hosts work at
-  `https://<slug>.proxy.bud.localhost`.
-- [ ] HTTPS local iframe bootstrap sends a `SameSite=None; Secure` viewer
+- [x] HTTP-only local development path is documented.
+- [x] Optional mkcert+Caddy HTTPS recipe is documented.
+- [x] Docs explain how to upgrade from HTTP local dev to HTTPS parity mode and
+  how to switch back.
+- [x] HTTPS local app route works at `https://localhost:3443`.
+- [x] HTTPS local API/SSE route works at `https://localhost:3443`.
+- [x] HTTPS local Bud WebSocket route works at `wss://localhost:3443/ws`.
+- [x] HTTPS local proxy endpoint hosts work at
+  `https://<slug>.bud-proxy.localhost:3443`.
+- [x] HTTPS local proxy endpoint hosts work at
+  `https://<slug>.bud-show.test:3443`.
+- [x] Local DNS resolves `smoke.bud-show.test` to `127.0.0.1`.
+- [x] Setup/check commands validate local `.test` DNS before treating the
+  HTTPS profile as ready.
+- [ ] iOS Simulator Safari resolves and loads the `.test` proxy endpoint host.
+- [x] Bud iOS WKWebView resolves and loads the `.test` proxy endpoint host.
+- [x] HTTPS local iframe bootstrap sends a `SameSite=None; Secure` viewer
   cookie on the redirected clean request.
-- [ ] Root README/getting-started docs explain when to use HTTP vs HTTPS local
+- [x] Root README/getting-started docs explain when to use HTTP vs HTTPS local
   development.
 
 ## Production Deployment

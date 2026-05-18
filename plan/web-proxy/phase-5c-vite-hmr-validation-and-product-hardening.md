@@ -59,7 +59,9 @@ Local HTTP:
 
 Local HTTPS Phase 8 profile:
 
-- `wss://<slug>.proxy.bud.localhost` upgrades through Caddy.
+- `wss://<slug>.bud-show.test:3443` upgrades through Caddy.
+- The earlier `*.bud-proxy.localhost` profile can remain as a desktop
+  compatibility alias, but mobile validation should use `.test`.
 - `Host` is preserved to Fastify for proxy endpoint hosts.
 - app/API/SSE/Bud daemon WebSocket still work through Caddy.
 

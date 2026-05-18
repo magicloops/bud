@@ -13,7 +13,7 @@ import { Pool } from "pg";
 export const AUTH_BASE_PATH = config.betterAuthBasePath;
 export const OAUTH_PROVIDER_SCOPES = ["openid", "profile", "email", "offline_access", "api"] as const;
 export const MOBILE_API_SCOPE = "api";
-const AUTH_ISSUER = new URL(AUTH_BASE_PATH, `${config.betterAuthUrl}/`).toString();
+export const AUTH_ISSUER = new URL(AUTH_BASE_PATH, `${config.betterAuthUrl}/`).toString();
 
 export const authHandlerPoolOptions = {
   connectionString: config.databaseUrl,
@@ -133,6 +133,16 @@ export async function verifyOAuthAccessToken(
     },
     scopes: [MOBILE_API_SCOPE],
   });
+}
+
+export function buildProtectedResourceMetadataOverrides(): {
+  resource: string;
+  authorization_servers: string[];
+} {
+  return {
+    resource: config.apiAudience,
+    authorization_servers: [AUTH_ISSUER],
+  };
 }
 
 function buildAuthUrl(request: FastifyRequest): URL {
@@ -327,9 +337,9 @@ export async function registerAuthRoutes(server: FastifyInstance): Promise<void>
   });
 
   server.get(getProtectedResourceMetadataPath(config.apiAudience), async (_request, reply) => {
-    const metadata = await oauthResourceActions.getProtectedResourceMetadata({
-      resource: config.apiAudience,
-    });
+    const metadata = await oauthResourceActions.getProtectedResourceMetadata(
+      buildProtectedResourceMetadataOverrides(),
+    );
 
     reply
       .header("Cache-Control", "public, max-age=15, stale-while-revalidate=15, stale-if-error=86400")

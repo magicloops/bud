@@ -12,9 +12,9 @@ export type IosOAuthProvisionConfig = {
   clientRowId: string;
   clientName: string;
   redirectUri: string;
-  expectedAppOrigin: string;
-  expectedIssuer: string;
-  expectedAudience: string;
+  expectedAppOrigin: string | string[];
+  expectedIssuer: string | string[];
+  expectedAudience: string | string[];
 };
 
 type IosAuthBundle = {
@@ -110,6 +110,14 @@ function buildIosAuthBundle(provisionConfig: IosOAuthProvisionConfig): IosAuthBu
   };
 }
 
+function includesExpectedValue(expected: string | string[], actual: string): boolean {
+  return Array.isArray(expected) ? expected.includes(actual) : expected === actual;
+}
+
+function formatExpectedValue(expected: string | string[]): string {
+  return Array.isArray(expected) ? expected.join(" or ") : expected;
+}
+
 async function upsertIosClient(provisionConfig: IosOAuthProvisionConfig): Promise<"created" | "updated"> {
   const existing = await db.query.authOAuthClientTable.findFirst({
     where: eq(authOAuthClientTable.clientId, provisionConfig.clientId),
@@ -171,21 +179,21 @@ function printWarnings(bundle: IosAuthBundle, provisionConfig: IosOAuthProvision
     );
   }
 
-  if (bundle.app_origin !== provisionConfig.expectedAppOrigin) {
+  if (!includesExpectedValue(provisionConfig.expectedAppOrigin, bundle.app_origin)) {
     warnings.push(
-      `APP_BASE_URL is ${bundle.app_origin}. The ${provisionConfig.environment} iOS handoff expects ${provisionConfig.expectedAppOrigin} as the public app origin.`,
+      `APP_BASE_URL is ${bundle.app_origin}. The ${provisionConfig.environment} iOS handoff expects ${formatExpectedValue(provisionConfig.expectedAppOrigin)} as the public app origin.`,
     );
   }
 
-  if (bundle.issuer !== provisionConfig.expectedIssuer) {
+  if (!includesExpectedValue(provisionConfig.expectedIssuer, bundle.issuer)) {
     warnings.push(
-      `Issuer is ${bundle.issuer}. The ${provisionConfig.environment} iOS handoff expects ${provisionConfig.expectedIssuer}.`,
+      `Issuer is ${bundle.issuer}. The ${provisionConfig.environment} iOS handoff expects ${formatExpectedValue(provisionConfig.expectedIssuer)}.`,
     );
   }
 
-  if (bundle.audience !== provisionConfig.expectedAudience) {
+  if (!includesExpectedValue(provisionConfig.expectedAudience, bundle.audience)) {
     warnings.push(
-      `API audience is ${bundle.audience}. The ${provisionConfig.environment} iOS handoff expects ${provisionConfig.expectedAudience}.`,
+      `API audience is ${bundle.audience}. The ${provisionConfig.environment} iOS handoff expects ${formatExpectedValue(provisionConfig.expectedAudience)}.`,
     );
   }
 

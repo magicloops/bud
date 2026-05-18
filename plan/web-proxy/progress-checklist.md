@@ -151,16 +151,32 @@ streaming-upload upgrade.
 
 ## Phase 8: Local HTTPS Dev With mkcert And Caddy
 
-- [ ] Add checked-in local HTTPS Caddyfile/template.
-- [ ] Add mkcert setup helper or documented command sequence.
-- [ ] Add `.certs/` gitignore coverage for local certificates.
-- [ ] Add HTTPS env examples for service, web, and daemon.
-- [ ] Validate Better Auth callbacks through `https://app.bud.localhost`.
-- [ ] Validate API, SSE, and Bud WebSocket traffic through Caddy.
-- [ ] Validate `*.proxy.bud.localhost` host preservation into Fastify.
-- [ ] Validate embedded Web view bootstrap with `SameSite=None; Secure`.
-- [ ] Update root README/getting-started docs.
-- [ ] Update package README docs for service, web, and daemon.
+- [x] Add checked-in local HTTPS Caddyfile/template.
+- [x] Add mkcert setup helper or documented command sequence.
+- [x] Add `.certs/` gitignore coverage for local certificates.
+- [x] Add HTTPS env examples for service, web, and daemon.
+- [x] Keep default local development documented as HTTP without Caddy/mkcert.
+- [x] Document HTTPS as an additive opt-in upgrade path.
+- [x] Validate Better Auth callbacks through `https://localhost:3443`.
+- [x] Validate API, SSE, and Bud WebSocket traffic through Caddy.
+- [x] Validate `*.bud-proxy.localhost:3443` host preservation into Fastify.
+- [x] Validate embedded Web view bootstrap with `SameSite=None; Secure`.
+- [x] Update root README/getting-started docs.
+- [x] Update package README docs for service, web, and daemon.
+
+## Phase 8a: iOS-Safe Local Proxy DNS With `.test`
+
+- [x] Switch local HTTPS proxy endpoint base domain to `bud-show.test`.
+- [x] Add dnsmasq setup/runbook docs for `*.bud-show.test -> 127.0.0.1`.
+- [x] Add DNS preflight checks for `smoke.bud-show.test`.
+- [x] Regenerate local mkcert profile with `bud-show.test` and
+  `*.bud-show.test`.
+- [x] Update Caddy local HTTPS wildcard host routing for `.test`.
+- [x] Update HTTPS env examples and docs to use
+  `PROXY_BASE_DOMAIN=bud-show.test`.
+- [ ] Validate desktop Safari and iOS Simulator Safari resolution.
+- [ ] Validate Bud iOS WKWebView loading through the `.test` proxy endpoint.
+- [x] Keep app/API/auth on `https://localhost:3443`.
 
 ## Phase 9a: Gateway Auth And Security Regressions
 

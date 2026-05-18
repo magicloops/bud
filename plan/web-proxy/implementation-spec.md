@@ -31,6 +31,7 @@ Related plan docs:
 - `plan/web-proxy/phase-6-agent-tools-and-generated-ui.md`
 - `plan/web-proxy/phase-7-sharing-gateway-extraction-and-transport.md`
 - `plan/web-proxy/phase-8-local-https-dev.md`
+- `plan/web-proxy/phase-8a-ios-safari-test-domain-dns.md`
 
 ## Objective
 
@@ -307,6 +308,8 @@ the update window has elapsed.
 | 5d | WebSocket regression and failure states | Echo/lifecycle regressions are covered and web/agent surfaces show useful failure states. |
 | 6 | Agent tools and generated UI | The assistant can open/reuse/detach web views as a product-level capability. |
 | 7 | Expansion path | Sharing, friendly slugs, gateway extraction, HTTP/3, and local HTTPS have a concrete path. |
+| 8 | Local HTTPS dev | mkcert+Caddy parity profile validates secure cookies, app/API routing, and proxy endpoint hosts locally. |
+| 8a | iOS-safe local proxy DNS | Local HTTPS proxy endpoint hosts move from wildcard `.localhost` to dnsmasq-backed `.test` for Safari/WKWebView compatibility. |
 
 Current execution note: Vite HMR is now validated through the Phase 5
 WebSocket path, so Phase 4a is the next HTTP-fidelity slice: mutation methods,

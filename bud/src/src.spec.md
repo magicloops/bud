@@ -400,7 +400,7 @@ External crates (from `Cargo.toml`):
 | Crate | Purpose |
 |-------|---------|
 | `tokio` | Async runtime with process, fs, sync features |
-| `tokio-tungstenite` | WebSocket client |
+| `tokio-tungstenite` | WebSocket client, configured with native Rustls roots so local mkcert CAs trusted by the OS work for HTTPS parity dev |
 | `tonic` / `tonic-prost` / `prost` | gRPC control/data clients and generated protobuf message support |
 | `tokio-stream` | Adapts control/data stream outbound channels for tonic |
 | `clap` | CLI argument parsing |
@@ -409,7 +409,7 @@ External crates (from `Cargo.toml`):
 | `anyhow` | Error handling |
 | `base64` | Data encoding for frames |
 | `hmac` / `sha2` | Authentication |
-| `reqwest` | Device-auth bootstrap HTTP client and no-redirect localhost proxy requests |
+| `reqwest` | Device-auth bootstrap HTTP client and no-redirect localhost proxy requests, configured with native Rustls roots so local mkcert CAs trusted by the OS work for HTTPS parity dev |
 | `qrcodegen` | Terminal QR rendering |
 | `tracing` / `tracing-subscriber` | Logging |
 | `ulid` | Message ID generation |

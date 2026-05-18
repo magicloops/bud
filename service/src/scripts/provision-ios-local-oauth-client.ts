@@ -8,9 +8,18 @@ async function main() {
     clientRowId: "oauth_client_bud_ios_dev_local",
     clientName: "Bud iOS (dev)",
     redirectUri: getIosOAuthRedirectUri("local"),
-    expectedAppOrigin: "http://localhost:5173",
-    expectedIssuer: "http://localhost:5173/api/auth",
-    expectedAudience: "http://localhost:5173/api",
+    expectedAppOrigin: [
+      "http://localhost:5173",
+      "https://localhost:3443",
+    ],
+    expectedIssuer: [
+      "http://localhost:5173/api/auth",
+      "https://localhost:3443/api/auth",
+    ],
+    expectedAudience: [
+      "http://localhost:5173/api",
+      "https://localhost:3443/api",
+    ],
   });
 }
 

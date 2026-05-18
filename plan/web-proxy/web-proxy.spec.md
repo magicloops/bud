@@ -63,8 +63,13 @@ active.
   password/public sharing, friendly slug overrides, gateway extraction,
   horizontal scaling, and QUIC/HTTP/3.
 - `phase-8-local-https-dev.md`: Optional mkcert+Caddy local HTTPS parity
-  profile for embedded proxy-cookie testing, local host routing, env examples,
-  and README/getting-started updates.
+  profile using split app/proxy localhost sites for embedded proxy-cookie
+  testing, local host routing, env examples, and README/getting-started
+  updates while preserving HTTP as the default local development path.
+- `phase-8a-ios-safari-test-domain-dns.md`: Follow-up local HTTPS phase for
+  replacing wildcard `.localhost` proxy endpoint hosts with a reserved
+  `.test` domain backed by dnsmasq so iOS Simulator Safari and WKWebView can
+  resolve generated proxy hosts.
 - `phase-9a-gateway-auth-security-regressions.md`: Owner-only gateway auth,
   viewer grants, endpoint-host cookies, host matching, disabled/expired
   rejection, and reserved-cookie regression coverage.
@@ -83,6 +88,9 @@ active.
 - `phase-9f-websocket-upgrade-deployment-checks.md`: Local and production
   WebSocket upgrade runbooks covering wildcard DNS/TLS, load balancer upgrade
   handling, host preservation, and proxy-domain auth.
+- `mobile-handoff.md`: Mobile-team hand-off for the web proxy feature,
+  private-owner bootstrap/API flow, native web-view expectations, and the
+  optional local HTTPS Caddy profile used by this branch.
 - `progress-checklist.md`: Phase-by-phase completion tracker.
 - `validation-checklist.md`: Security, protocol, browser, mobile, daemon, and
   production validation checklist.
@@ -118,6 +126,9 @@ active.
 
 - Use `bud.dev` for the app/API/auth origin and `bud.show` for proxied
   endpoint hosts.
+- For local HTTPS mobile validation, keep app/API/auth on literal `localhost`
+  and use `.test` DNS for generated proxy endpoint hosts rather than wildcard
+  `.localhost`.
 - Default to generated-friendly endpoint hosts with random suffixes, while
   leaving room for owner-selected friendly slugs later.
 - Keep private owner-only access as the first access policy.

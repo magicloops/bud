@@ -71,6 +71,20 @@ Recommended local development:
 - local iOS auth still treats `http://localhost:5173` as the public auth origin; use the proxy path only when you explicitly need browser/mobile-visible `5173` routing parity for auth and discovery flows
 - the prototype deployment recommendation is to keep `VITE_API_BASE_URL` unset there as well and rely on one public origin that routes `/api/*`, `/.well-known/*`, and `/ws` to the service
 
+### `.env.https.example`
+
+Optional local HTTPS parity template for the mkcert+Caddy profile. It keeps
+Vite on its normal `http://localhost:5173` dev server, exposes the browser app
+through `https://localhost:3443`, and leaves `VITE_API_BASE_URL` unset so
+browser API/SSE calls stay same-origin through Caddy. Generated HTTPS proxy
+endpoint hosts use `https://<slug>.bud-show.test:3443`, which requires local
+wildcard DNS outside the web package.
+
+The repo-root `pnpm dev:https` launcher owns the web dev server, service dev
+server, and Caddy for this profile. It starts Vite with `VITE_API_BASE_URL`
+forced to an empty value so a developer's normal direct-service HTTP setting
+does not leak into HTTPS parity testing.
+
 ### `vite.config.ts`
 
 Vite build configuration with:

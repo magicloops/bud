@@ -97,6 +97,7 @@ pending → creating → ready ↔ active → idle → closed
 
 ```
 bud/
+├── package.json            # Repo-root developer script shim, including local HTTPS bootstrap commands
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
 ├── git_loc_breakdown.py    # Repo-wide LOC analyzer that buckets code, config, markdown, and other tracked text while honoring Git ignore rules
 ├── test_git_loc_breakdown.py # Regression tests for the LOC analyzer's category and summary accounting
@@ -153,6 +154,7 @@ bud/
 ├── docs/                   # Documentation
 ├── plan/                   # Planning documents
 ├── spikes/                 # Isolated validation spikes for transport/tooling decisions
+├── dev/                    # Optional local developer tooling, including Caddy HTTPS parity config
 ├── review/                 # Review and audit notes
 ├── debug/                  # Debug logs and notes
 └── research/               # Current-state research notes before plan/design promotion
@@ -442,6 +444,7 @@ Detailed specifications for each subproject:
 | `/service` | [service/service.spec.md](./service/service.spec.md) | Node.js backend | ✅ Complete |
 | `/web` | [web/web.spec.md](./web/web.spec.md) | React frontend | ✅ Complete |
 | `/spikes` | [spikes/spikes.spec.md](./spikes/spikes.spec.md) | Isolated validation harnesses | ✅ Active |
+| `/dev` | [dev/dev.spec.md](./dev/dev.spec.md) | Optional local developer tooling | ✅ Active |
 | `/research` | [research/research.spec.md](./research/research.spec.md) | Current-state research notes | ✅ Active |
 
 ---
@@ -515,6 +518,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 |----------|---------|
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
 | [reference/IOS_LOCAL_AUTH_HANDOFF.md](./reference/IOS_LOCAL_AUTH_HANDOFF.md) | Reference handoff for the iOS team with the concrete local OAuth client, `5173`-based auth bundle, required revoke contract, and current validation status |
+| [reference/IOS_LOCAL_HTTPS_ROUTES_HANDOFF.md](./reference/IOS_LOCAL_HTTPS_ROUTES_HANDOFF.md) | iOS handoff for the updated local HTTPS route values, covering `https://localhost:3443` for app/API/auth/WSS and `https://<slug>.bud-show.test:3443` for proxied web-view content |
 | [reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md](./reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md) | Reference handoff for the iOS team summarizing the confirmed March 22, 2026 SSE streaming findings, what they rule out, and the remaining raw-byte/parser-focused hypotheses for `/api/threads/:thread_id/agent/stream` |
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_HANDOFF.md) | Current backend handoff for the shipped agent-stream contract, covering `/agent/state`, opaque resume cursors, bounded catch-up, explicit `agent.resync_required`, and the `client_id`-first mobile reconciliation model |
 | [reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md](./reference/IOS_AGENT_STREAM_STATE_AND_RESUME_FIXTURES.md) | Current fixtures for the shipped agent-stream contract, covering passive open, active-turn bootstrap, bounded cursor resume, explicit resync, idle-to-active cursor races, and `client_id`-first identity projection |
@@ -546,6 +550,10 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/thread-title-generation/implementation-spec.md](./plan/thread-title-generation/implementation-spec.md) | Phased implementation plan for generating short thread titles from first user messages, persisting `thread.title`, streaming `thread.title` updates, and adopting the contract in the reference web client |
 | [plan/mobile-agent-stream-attach-semantics/validation-checklist.md](./plan/mobile-agent-stream-attach-semantics/validation-checklist.md) | Validation checklist for the agent-stream attach-semantics work, covering runtime-state route behavior, completed-thread reopen, active-turn open, reconnect replay, and docs/spec alignment |
 | [plan/ios-local-auth/implementation-spec.md](./plan/ios-local-auth/implementation-spec.md) | Focused implementation plan for the local iOS auth handoff, covering public-origin alignment, deterministic client provisioning, revoke cleanup, and bundle publication |
+| [plan/dev-https-setup-script/dev-https-setup-script.spec.md](./plan/dev-https-setup-script/dev-https-setup-script.spec.md) | Folder spec for the local HTTPS setup-script rollout, covering repo-root Caddy + mkcert process ownership, cert generation, OAuth/JWKS preflights, and iOS provisioning wrapper docs |
+| [plan/dev-https-setup-script/implementation-spec.md](./plan/dev-https-setup-script/implementation-spec.md) | Phased implementation plan for adding `pnpm dev:https`, setup-generated mkcert certs, simple public-origin preflights, and HTTPS-profile iOS OAuth provisioning |
+| [plan/dev-https-setup-script/progress-checklist.md](./plan/dev-https-setup-script/progress-checklist.md) | Running implementation checklist for the local HTTPS setup-script rollout |
+| [plan/dev-https-setup-script/validation-checklist.md](./plan/dev-https-setup-script/validation-checklist.md) | Validation checklist for local HTTPS setup, launcher process ownership, OAuth/JWKS preflights, iOS provisioning, and unchanged package-local HTTP workflows |
 | [plan/deploy/implementation-spec.md](./plan/deploy/implementation-spec.md) | Phased implementation plan for the prototype Render staging deployment, covering the single-origin contract, service readiness, checked-in Render config, deployed mobile-testing validation, and the post-validation production-provider decision |
 | [plan/api-snake-case-normalization.md](./plan/api-snake-case-normalization.md) | Focused implementation plan for normalizing Bud-owned wire contracts to snake_case across the in-use service, web, stream, and any small daemon-facing payload leaks found during implementation |
 | [plan/improve-observe/improve-observe.spec.md](./plan/improve-observe/improve-observe.spec.md) | Folder spec for the phased improve-observe plan, covering one-hour settled waits, post-dispatch send quiescence timing, evidence-based readiness, and interruptible long pending tools |
@@ -666,6 +674,10 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/ios-local-oauth-client-provisioning-id-null.md](./debug/ios-local-oauth-client-provisioning-id-null.md) | Debug note documenting why the first run of `pnpm oauth:provision:ios-local` fails on a fresh database: the provisioning script omits the required `auth.oauthClient.id` primary key on insert |
 | [debug/api-me-opaque-access-token.md](./debug/api-me-opaque-access-token.md) | Debug note documenting why `GET /api/me` returned `401 no token payload`: the token endpoint was allowed to mint opaque access tokens while Bud's bearer bootstrap path only accepted JWT API tokens |
 | [debug/api-me-issuer-mismatch.md](./debug/api-me-issuer-mismatch.md) | Debug note documenting why `GET /api/me` can still fail after JWT token minting succeeds: the bearer verifier defaulted to the bare Better Auth origin instead of the mounted `/api/auth` issuer |
+| [debug/local-https-oauth-jwks-verification.md](./debug/local-https-oauth-jwks-verification.md) | Debug note validating the local HTTPS `/api/me` 401 hypothesis: Node cannot fetch Caddy's mkcert JWKS URL without `NODE_EXTRA_CA_CERTS`, while the same JWKS path succeeds with the mkcert root or direct service HTTP |
+| [debug/local-https-web-readiness-host-mismatch.md](./debug/local-https-web-readiness-host-mismatch.md) | Debug note documenting why `pnpm dev:https` could shut down a working HTTPS profile: the launcher probed Vite on `127.0.0.1:5173` while Caddy and the working browser path used `localhost:5173` |
+| [debug/local-https-protected-resource-issuer-mismatch.md](./debug/local-https-protected-resource-issuer-mismatch.md) | Debug note documenting the local HTTPS semantic probe failure where protected-resource metadata advertised Better Auth's bare base URL instead of Bud's mounted OAuth issuer at `/api/auth` |
+| [debug/ios-safari-localhost-wildcard-dns.md](./debug/ios-safari-localhost-wildcard-dns.md) | Debug note documenting why wildcard `.localhost` proxy endpoint hosts can fail before Caddy/TLS in iOS Simulator Safari and WKWebView, and why local HTTPS proxy hosts moved to dnsmasq-backed `*.bud-show.test` |
 | [debug/ios-chat-agent-stream-no-frames.md](./debug/ios-chat-agent-stream-no-frames.md) | Debug note documenting the current hypotheses for the iOS chat streaming gap, including the real agent-SSE replay semantics, why restart-after-send is not obviously wrong, and the verification plan for `5173` proxy flushing vs per-connection delivery |
 | [debug/auth-token-resource-body-cast-build-failure.md](./debug/auth-token-resource-body-cast-build-failure.md) | Debug note documenting why `pnpm --dir service build` currently fails in the Better Auth bridge: `injectDefaultTokenResource(...)` tries to treat broad `BodyInit` variants as plain objects even though `toWebRequest(...)` already normalizes form bodies before that helper runs |
 | [debug/oauth-token-form-urlencoded-415.md](./debug/oauth-token-form-urlencoded-415.md) | Debug note documenting why local OAuth token exchange returned `415 Unsupported Media Type`: Fastify had no parser for `application/x-www-form-urlencoded` before the `/api/auth/*` bridge |
@@ -704,6 +716,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/mobile-thread-title-stream-handoff.md](./design/mobile-thread-title-stream-handoff.md) | Mobile handoff for the new streamed thread-title update contract, covering the `thread.title` event, client reducer expectations, and recovery rules |
 | [design/thread-message-timeline-ux-refresh.md](./design/thread-message-timeline-ux-refresh.md) | Draft design for the next-pass thread message UX work across web and iOS, covering latest-window pagination, bottom-follow scroll behavior, compact tool activity, and the backend changes required for true assistant text streaming |
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
+| [design/local-https-dev-bootstrap.md](./design/local-https-dev-bootstrap.md) | Proposal for reducing Caddy + mkcert local HTTPS configuration fatigue with an opt-in bootstrap that derives the mkcert root, injects `NODE_EXTRA_CA_CERTS` before Node starts, and preflights the public OAuth/JWKS origin |
 | [design/render-deployment-review-and-topology-options.md](./design/render-deployment-review-and-topology-options.md) | Deployment review of the current web/service/Bud topology for a first production-like Render rollout, including current codebase gaps, Render-specific constraints, and cloud-agnostic infrastructure options |
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
 | [design/web-serving-preview-domain-architecture.md](./design/web-serving-preview-domain-architecture.md) | Architecture options and recommendation for production-grade localhost web serving through durable Bud-scoped proxied sites on a dedicated domain such as `bud.show`, including private owner auth, future sharing modes, local dev setup, wildcard host routing, WebSocket/HMR support, gateway extraction, and transport choices |
