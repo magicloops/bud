@@ -88,6 +88,10 @@ active.
 - `phase-9f-websocket-upgrade-deployment-checks.md`: Local and production
   WebSocket upgrade runbooks covering wildcard DNS/TLS, load balancer upgrade
   handling, host preservation, and proxy-domain auth.
+- `phase-10-cloudflare-wildcard-edge-routing.md`: Staging/production-like
+  Cloudflare `*.bud.show` Worker routing to Render, trusted forwarded-host
+  gateway resolution, edge-secret guarding, and wildcard deployment smoke
+  validation.
 - `mobile-handoff.md`: Mobile-team hand-off for the web proxy feature,
   private-owner bootstrap/API flow, native web-view expectations, and the
   optional local HTTPS Caddy profile used by this branch.

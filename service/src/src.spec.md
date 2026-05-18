@@ -22,7 +22,7 @@ Application entry point and thin Fastify composition root.
 - Initialize Fastify with WebSocket and SSE plugins
 - Configure Fastify's body limit from `PROXY_SESSION_MAX_REQUEST_BODY_BYTES`
   so proxy mutation requests can be buffered before daemon forwarding
-- Configure the WebSocket plugin to select a safe browser-requested subprotocol for proxy endpoint hosts, enabling Vite-style `Sec-WebSocket-Protocol` handshakes without changing the daemon `/ws` route
+- Configure the WebSocket plugin to select a safe browser-requested subprotocol for proxy endpoint hosts, including trusted Cloudflare-forwarded `*.bud.show` hosts, enabling Vite-style `Sec-WebSocket-Protocol` handshakes without changing the daemon `/ws` route
 - Register the raw form-urlencoded parser needed for OAuth token/revoke requests before auth routes mount
 - Register a fallback buffer parser for otherwise-unknown content types so
   proxied binary/form/multipart request bodies can reach the proxy edge
@@ -123,6 +123,7 @@ Environment-based configuration with defaults.
 | `proxyPublicScheme` | `PROXY_PUBLIC_SCHEME` | `http` locally, `https` in production | Public scheme used when building proxied-site URLs and cookies |
 | `proxyPublicPort` | `PROXY_PUBLIC_PORT` | service port for local HTTP proxy.localhost | Optional public port appended to generated proxied-site URLs |
 | `proxyViewerCookieName` | `PROXY_VIEWER_COOKIE_NAME` | scheme-aware reserved cookie name | Host-only private-owner viewer cookie name |
+| `proxyEdgeSecret` | `PROXY_EDGE_SECRET` | - | Shared secret required before trusting edge-forwarded proxy gateway hosts such as Cloudflare Worker `x-forwarded-host` |
 | `proxyViewerCookieMaxAgeSeconds` | `PROXY_VIEWER_COOKIE_MAX_AGE_SECONDS` | 7 days | Viewer cookie/session lifetime aligned with Better Auth defaults |
 | `proxyViewerCookieRefreshSeconds` | `PROXY_VIEWER_COOKIE_REFRESH_SECONDS` | 1 day | Minimum interval before refreshing viewer sessions against Better Auth |
 | `proxyBootstrapGrantTtlSeconds` | `PROXY_BOOTSTRAP_GRANT_TTL_SECONDS` | 5 minutes | One-time proxy-domain bootstrap grant lifetime |

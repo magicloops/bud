@@ -59,6 +59,9 @@ Checked-in template for local service setup. Includes:
 - the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
 - the local browser-workbench recommendation that the web app sets `VITE_API_BASE_URL=http://localhost:3000` so API/SSE traffic bypasses the Vite-origin proxy path during multi-tab terminal work
 - the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin, `API_AUDIENCE` points at that origin's `/api` path, and `OAUTH_TRUSTED_CLIENT_IDS` includes the published first-party mobile client ids for that environment
+- hosted web-view proxy hints for `PROXY_PUBLIC_SCHEME`, `PROXY_BASE_DOMAIN`,
+  `PROXY_GATEWAY_ENABLED`, `PROXY_VIEWER_COOKIE_NAME`, and
+  `PROXY_EDGE_SECRET` when Cloudflare forwards `*.bud.show` to the service
 - optional APNs push-notification settings (`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_FILE`, `APNS_PRIVATE_KEY`, `APNS_DEFAULT_TOPIC`, `APNS_ALLOWED_TOPICS`)
 - optional LLM provider settings
 

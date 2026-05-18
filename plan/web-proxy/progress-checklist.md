@@ -242,6 +242,22 @@ streaming-upload upgrade.
 - [ ] Add local HTTP-only and optional HTTPS WebSocket upgrade smoke notes.
 - [ ] Update README/getting-started or deployment docs.
 
+## Phase 10: Cloudflare Wildcard Edge Routing
+
+- [x] Add trusted forwarded-host resolution for HTTP proxy gateway routes.
+- [x] Add trusted forwarded-host resolution for WebSocket proxy gateway
+  handshakes and route authorization.
+- [x] Add edge-secret configuration so direct Render-origin requests cannot
+  spoof `*.bud.show` with forwarded headers.
+- [x] Add tests for direct host, trusted forwarded host, untrusted forwarded
+  host, and out-of-domain forwarded host behavior.
+- [x] Update Cloudflare Worker routing so `*.bud.show/*` forwards all paths to
+  `bud-service`.
+- [ ] Configure matching `PROXY_EDGE_SECRET` values in Render and Cloudflare.
+- [ ] Validate `https://<slug>.bud.show` bootstrap, HTTP assets, and
+  `wss://<slug>.bud.show` upgrades through Cloudflare.
+- [x] Update deployment runbook with the final wildcard edge contract.
+
 ## Cross-Phase Release Readiness
 
 - [x] Private owner-only access is enforced before daemon streams open.

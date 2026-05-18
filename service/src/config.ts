@@ -101,6 +101,7 @@ const proxyPublicPort = toOptionalNumber(
 const proxyViewerCookieName =
   process.env.PROXY_VIEWER_COOKIE_NAME ??
   (proxyPublicScheme === "https" ? "__Host-bud_proxy_viewer" : "bud_proxy_viewer");
+const proxyEdgeSecret = toNullable(process.env.PROXY_EDGE_SECRET);
 
 const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortSetting): ReasoningEffortSetting => {
   if (!value) {
@@ -249,6 +250,7 @@ export const config = {
   proxyPublicScheme,
   proxyPublicPort,
   proxyViewerCookieName,
+  proxyEdgeSecret,
   proxyViewerCookieMaxAgeSeconds: toPositiveInteger(
     process.env.PROXY_VIEWER_COOKIE_MAX_AGE_SECONDS,
     7 * 24 * 60 * 60,

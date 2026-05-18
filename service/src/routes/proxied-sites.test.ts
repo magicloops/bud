@@ -195,7 +195,7 @@ const PROXIED_SITE_ROW = {
   activeStreamId: null,
   displayName: "Vite app",
   slug: "vite-app-a8f2",
-  endpointHost: "vite-app-a8f2.proxy.localhost",
+  endpointHost: `vite-app-a8f2.${config.proxyBaseDomain}`,
   targetScheme: "http",
   targetHost: "127.0.0.1",
   targetPort: 5173,
@@ -214,6 +214,12 @@ const PROXIED_SITE_ROW = {
   createdByUserId: "user-1",
   createdAt: new Date("2026-04-21T20:00:00.000Z"),
   updatedAt: new Date("2026-04-21T20:00:00.000Z"),
+};
+
+const EDGE_SECRET = "test-edge-secret";
+const EDGE_PROXIED_SITE_ROW = {
+  ...PROXIED_SITE_ROW,
+  endpointHost: "vite-app-a8f2.bud.show",
 };
 
 const VIEWER_SESSION_ROW = {
@@ -365,7 +371,7 @@ test("proxied site routes serialize owned sites through owner-filtered lookup", 
 
   assert.equal(response.statusCode, 200);
   assert.equal((response.payload as { proxied_site_id: string }).proxied_site_id, "site_test");
-  assert.equal((response.payload as { endpoint_host: string }).endpoint_host, "vite-app-a8f2.proxy.localhost");
+  assert.equal((response.payload as { endpoint_host: string }).endpoint_host, PROXIED_SITE_ROW.endpointHost);
 });
 
 test("proxied site viewer grant route requires an owned site before minting grants", async (t) => {
@@ -418,10 +424,14 @@ test("proxied site viewer grant route mints owner-only bootstrap URLs", async (t
   assert.equal((inserted[0] as { proxiedSiteId: string }).proxiedSiteId, PROXIED_SITE_ROW.proxiedSiteId);
   assert.equal((inserted[0] as { userId: string }).userId, PROXIED_SITE_ROW.createdByUserId);
   assert.equal((inserted[0] as { authSessionId: string }).authSessionId, SESSION.session.id);
-  assert.match((response.payload as { bootstrap_url: string }).bootstrap_url, /^http:\/\/vite-app-a8f2\.proxy\.localhost:3000\/__bud\/bootstrap\?grant=/);
+  const bootstrapUrl = new URL((response.payload as { bootstrap_url: string }).bootstrap_url);
+  assert.equal(bootstrapUrl.origin, expectedProxyOrigin(PROXIED_SITE_ROW));
+  assert.equal(bootstrapUrl.pathname, "/__bud/bootstrap");
+  assert.equal(bootstrapUrl.searchParams.get("to"), "/dashboard?tab=logs");
+  assert.ok(bootstrapUrl.searchParams.get("grant"));
   assert.equal(
     (response.payload as { view_url: string }).view_url,
-    "http://vite-app-a8f2.proxy.localhost:3000/dashboard?tab=logs",
+    expectedProxyUrl(PROXIED_SITE_ROW, "/dashboard?tab=logs"),
   );
 });
 
@@ -461,7 +471,7 @@ test("proxied site gateway bootstrap rejects grants for a different endpoint hos
 
   assert.deepEqual(
     await invokeRoute(handler, {
-      headers: { host: "other-site.proxy.localhost" },
+      headers: { host: `other-site.${config.proxyBaseDomain}` },
       query: { grant: "grant-for-vite-app" },
       url: "/__bud/bootstrap?grant=grant-for-vite-app",
     }),
@@ -492,16 +502,83 @@ test("proxied site gateway bootstrap consumes grants and sets endpoint-host view
 
   assert.equal(response.statusCode, 302);
   assert.equal(response.payload, "");
-  assert.equal(response.headers.Location, "http://vite-app-a8f2.proxy.localhost:3000/");
-  assert.match(response.headers["Set-Cookie"], /^bud_proxy_viewer=/);
+  assert.equal(response.headers.Location, expectedProxyUrl(PROXIED_SITE_ROW));
+  assert.match(response.headers["Set-Cookie"], new RegExp(`^${escapeRegex(config.proxyViewerCookieName)}=`));
   assert.match(response.headers["Set-Cookie"], /Path=\//);
   assert.match(response.headers["Set-Cookie"], /HttpOnly/);
   assert.match(response.headers["Set-Cookie"], /Max-Age=604800/);
-  assert.match(response.headers["Set-Cookie"], /SameSite=Lax/);
-  assert.doesNotMatch(response.headers["Set-Cookie"], /Secure/);
+  if (config.proxyPublicScheme === "https") {
+    assert.match(response.headers["Set-Cookie"], /SameSite=None/);
+    assert.match(response.headers["Set-Cookie"], /Secure/);
+  } else {
+    assert.match(response.headers["Set-Cookie"], /SameSite=Lax/);
+    assert.doesNotMatch(response.headers["Set-Cookie"], /Secure/);
+  }
   assert.equal(updates.length, 1);
   assert.equal(inserts.length, 1);
   assert.equal((inserts[0] as { proxiedSiteId: string }).proxiedSiteId, PROXIED_SITE_ROW.proxiedSiteId);
+});
+
+test("proxied site gateway bootstrap accepts trusted Cloudflare forwarded hosts", async (t) => {
+  useHostedProxyEdgeConfig(t);
+  t.after(() => {
+    mock.restoreAll();
+  });
+  mockGatewayLookups([[VIEWER_GRANT_ROW], [EDGE_PROXIED_SITE_ROW]]);
+  const inserts: unknown[] = [];
+  const updates: unknown[] = [];
+  mockDbTransaction({ inserts, updates });
+
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+
+  const handler = server.handlers.get("GET /*");
+  assert.ok(handler);
+
+  const response = await invokeRouteWithReply(handler, {
+    headers: {
+      host: "bud-service.onrender.com",
+      "x-forwarded-host": EDGE_PROXIED_SITE_ROW.endpointHost,
+      "x-bud-edge-secret": EDGE_SECRET,
+    },
+    query: { grant: "grant-token" },
+    url: "/__bud/bootstrap?grant=grant-token&to=%2F",
+  });
+
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.Location, "https://vite-app-a8f2.bud.show/");
+  assert.equal(updates.length, 1);
+  assert.equal(inserts.length, 1);
+});
+
+test("proxied site gateway rejects untrusted forwarded hosts before DB work", async (t) => {
+  useHostedProxyEdgeConfig(t);
+  t.after(() => {
+    mock.restoreAll();
+  });
+  let selectCalled = false;
+  mock.method(db, "select", () => {
+    selectCalled = true;
+    throw new Error("unexpected forwarded-host DB lookup");
+  });
+
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+
+  const handler = server.handlers.get("GET /*");
+  assert.ok(handler);
+
+  assert.deepEqual(
+    await invokeRoute(handler, {
+      headers: {
+        host: "bud-service.onrender.com",
+        "x-forwarded-host": EDGE_PROXIED_SITE_ROW.endpointHost,
+      },
+      url: "/",
+    }),
+    { statusCode: 404, payload: { error: "not_found" } },
+  );
+  assert.equal(selectCalled, false);
 });
 
 test("proxied site gateway refreshes stale authenticated viewer sessions before proxy transport lookup", async (t) => {
@@ -534,7 +611,7 @@ test("proxied site gateway refreshes stale authenticated viewer sessions before 
 
   assert.equal(response.statusCode, 424);
   assert.equal((response.payload as { error: string }).error, "DATA_PLANE_UNAVAILABLE");
-  assert.match(response.headers["Set-Cookie"], /^bud_proxy_viewer=/);
+  assert.match(response.headers["Set-Cookie"], new RegExp(`^${escapeRegex(config.proxyViewerCookieName)}=`));
   assert.equal(updates.length, 1);
 });
 
@@ -601,6 +678,52 @@ test("proxied site WebSocket gateway rejects missing viewer cookie before daemon
   const socket = new TestWebSocket();
   await wsHandler(socket, {
     headers: { host: PROXIED_SITE_ROW.endpointHost },
+    url: "/@vite/client",
+  });
+
+  assert.deepEqual(socket.closed, [{ code: 1008, reason: "proxy viewer unauthorized" }]);
+  assert.equal(selectCalls, 1);
+  assert.equal(operationCreated, false);
+});
+
+test("proxied site WebSocket gateway accepts trusted Cloudflare forwarded hosts", async (t) => {
+  useHostedProxyEdgeConfig(t);
+  t.after(() => {
+    mock.restoreAll();
+  });
+  let selectCalls = 0;
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            limit() {
+              selectCalls += 1;
+              return Promise.resolve(selectCalls === 1 ? [EDGE_PROXIED_SITE_ROW] : []);
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+  let operationCreated = false;
+  mock.method(DaemonStateStore.prototype, "createOperation", async () => {
+    operationCreated = true;
+    throw new Error("unexpected daemon allocation");
+  });
+
+  const server = createServer();
+  await registerProxiedSiteRoutes(server);
+  const wsHandler = server.routes.find((route) => route.method === "GET" && route.path === "/*")?.wsHandler;
+  assert.ok(wsHandler);
+
+  const socket = new TestWebSocket();
+  await wsHandler(socket, {
+    headers: {
+      host: "bud-service.onrender.com",
+      "x-forwarded-host": EDGE_PROXIED_SITE_ROW.endpointHost,
+      "x-bud-edge-secret": EDGE_SECRET,
+    },
     url: "/@vite/client",
   });
 
@@ -1183,6 +1306,37 @@ test("proxied site WebSocket gateway enforces per-Bud connection limits before d
 
   assert.deepEqual(socket.closed, [{ code: 1013, reason: "Bud WebSocket proxy limit exceeded" }]);
 });
+
+function useHostedProxyEdgeConfig(t: { after(fn: () => void): void }): void {
+  const originalBaseDomain = config.proxyBaseDomain;
+  const originalEdgeSecret = config.proxyEdgeSecret;
+  const originalPublicScheme = config.proxyPublicScheme;
+  const originalPublicPort = config.proxyPublicPort;
+  t.after(() => {
+    config.proxyBaseDomain = originalBaseDomain;
+    config.proxyEdgeSecret = originalEdgeSecret;
+    config.proxyPublicScheme = originalPublicScheme;
+    config.proxyPublicPort = originalPublicPort;
+  });
+
+  config.proxyBaseDomain = "bud.show";
+  config.proxyEdgeSecret = EDGE_SECRET;
+  config.proxyPublicScheme = "https";
+  config.proxyPublicPort = null;
+}
+
+function expectedProxyOrigin(site: { endpointHost: string }): string {
+  const port = config.proxyPublicPort ? `:${config.proxyPublicPort}` : "";
+  return `${config.proxyPublicScheme}://${site.endpointHost}${port}`;
+}
+
+function expectedProxyUrl(site: { endpointHost: string }, path = "/"): string {
+  return new URL(path, expectedProxyOrigin(site)).toString();
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function mockGatewayLookups(rows: unknown[][]): void {
   let selectCalls = 0;

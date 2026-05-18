@@ -115,6 +115,7 @@ Routing contract for the public origin:
 Checked-in deployment artifacts for this prototype shape:
 
 - [render.yaml](./render.yaml): Render Blueprint for `web`, `service`, and PostgreSQL
+- [deploy/cloudflare/bud-front-door-worker.js](./deploy/cloudflare/bud-front-door-worker.js): Cloudflare Worker source for app/API path routing and `*.bud.show` web-view proxy routing
 - [plan/deploy/cloudflare-front-door-runbook.md](./plan/deploy/cloudflare-front-door-runbook.md): Cloudflare path-routing and deploy-order runbook for the single public origin
 
 Database note:

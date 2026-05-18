@@ -207,7 +207,10 @@ When creating a new non-local environment, make sure all of these are true toget
 2. `DATABASE_URL` includes the provider's required SSL settings when using a hosted Postgres service.
 3. `OAUTH_TRUSTED_CLIENT_IDS` includes the first-party mobile client ids published for that environment.
 4. Provider callback URLs point at `https://<public-origin>/api/auth/callback/{provider}`.
-5. The matching iOS provisioning script has been run against that environment's database before sharing the auth bundle.
+5. If hosted web views are enabled through Cloudflare, `PROXY_PUBLIC_SCHEME`,
+   `PROXY_BASE_DOMAIN`, `PROXY_GATEWAY_ENABLED`, `PROXY_VIEWER_COOKIE_NAME`,
+   and `PROXY_EDGE_SECRET` match the Worker route for `*.bud.show`.
+6. The matching iOS provisioning script has been run against that environment's database before sharing the auth bundle.
 
 ## Notes
 

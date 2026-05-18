@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
@@ -57,6 +57,11 @@ export const CreateViewerGrantBodySchema = z.object({
 export type CreateProxiedSiteBody = z.infer<typeof CreateProxiedSiteBodySchema>;
 export type ProxiedSiteRow = typeof proxiedSiteTable.$inferSelect;
 export type ThreadWebViewRow = typeof threadWebViewTable.$inferSelect;
+export type ProxyGatewayRequestHeaders = {
+  host?: string | string[];
+  "x-forwarded-host"?: string | string[];
+  "x-bud-edge-secret"?: string | string[];
+};
 
 export class ProxiedSiteValidationError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -135,8 +140,7 @@ export function endpointHostForSlug(slug: string): string {
 }
 
 export function isProxyGatewayHost(host: string | undefined): boolean {
-  const normalized = normalizeHostHeader(host);
-  return Boolean(normalized && normalized.endsWith(`.${config.proxyBaseDomain}`));
+  return isProxyGatewayNormalizedHost(normalizeHostHeader(host));
 }
 
 export function normalizeHostHeader(host: string | undefined): string | null {
@@ -151,6 +155,50 @@ export function normalizeHostHeader(host: string | undefined): string | null {
     return trimmed.slice(1, trimmed.indexOf("]"));
   }
   return trimmed.split(":")[0] ?? null;
+}
+
+export function resolveProxyGatewayHost(headers: ProxyGatewayRequestHeaders): string | null {
+  const directHost = normalizeHostHeader(firstHeaderValue(headers.host));
+  if (isProxyGatewayNormalizedHost(directHost)) {
+    return directHost;
+  }
+
+  const forwardedHost = normalizeHostHeader(firstHeaderValue(headers["x-forwarded-host"]));
+  if (!isProxyGatewayNormalizedHost(forwardedHost)) {
+    return null;
+  }
+  if (!hasTrustedProxyEdgeSecret(headers)) {
+    return null;
+  }
+  return forwardedHost;
+}
+
+export function isProxyGatewayRequest(headers: ProxyGatewayRequestHeaders): boolean {
+  return config.proxyGatewayEnabled && resolveProxyGatewayHost(headers) !== null;
+}
+
+function isProxyGatewayNormalizedHost(host: string | null): host is string {
+  const baseDomain = config.proxyBaseDomain.trim().toLowerCase();
+  return Boolean(baseDomain && host && host.endsWith(`.${baseDomain}`));
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const first = raw?.split(",")[0]?.trim();
+  return first || undefined;
+}
+
+function hasTrustedProxyEdgeSecret(headers: ProxyGatewayRequestHeaders): boolean {
+  if (!config.proxyEdgeSecret) {
+    return false;
+  }
+  const actual = firstHeaderValue(headers["x-bud-edge-secret"]);
+  if (!actual) {
+    return false;
+  }
+  const expectedBytes = Buffer.from(config.proxyEdgeSecret);
+  const actualBytes = Buffer.from(actual);
+  return expectedBytes.length === actualBytes.length && timingSafeEqual(expectedBytes, actualBytes);
 }
 
 async function allocateEndpointHost(title: string): Promise<{ slug: string; endpointHost: string }> {

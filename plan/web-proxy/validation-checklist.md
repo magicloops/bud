@@ -167,8 +167,18 @@
 
 - [ ] Wildcard DNS exists for `*.bud.show`.
 - [ ] Wildcard TLS certificate automation exists.
+- [ ] Cloudflare Worker route `*.bud.show/*` forwards all paths to
+  `bud-service`.
+- [ ] Cloudflare Worker preserves incoming host in `x-forwarded-host` and sets
+  `x-forwarded-proto=https`, `x-forwarded-port=443`, and the configured edge
+  secret header.
+- [x] Service honors forwarded proxy gateway hosts only from the trusted edge
+  path.
+- [x] Direct Render-origin requests cannot spoof `*.bud.show` routing with
+  arbitrary forwarded headers.
 - [ ] Load balancer routes `*.bud.show` to gateway handler.
 - [ ] WebSocket upgrades are allowed through production edge.
+- [ ] CDN caching and HTML/JS transformations are bypassed for `*.bud.show/*`.
 - [ ] Gateway logs omit cookies, grants, request bodies, and WS payloads.
 - [ ] Metrics track requests, bytes, latency, auth failures, daemon disconnects,
   and active WebSockets.

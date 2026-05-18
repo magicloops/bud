@@ -33,6 +33,9 @@ Product web-proxy resource helpers and route-facing contracts.
 - reads, lists, updates, disables, attaches, and detaches proxied sites with SQL owner filters
 - creates short-lived one-time viewer grants and hashed endpoint-host viewer sessions
 - builds host-only `HttpOnly` viewer cookies with 7-day max age and roughly 1-day Better Auth refresh checks
+- resolves proxy gateway endpoint hosts from direct `Host` headers or trusted
+  edge-forwarded `x-forwarded-host`, requiring `PROXY_EDGE_SECRET` before
+  trusting the forwarded path
 - serializes the stable product response shape consumed by the web view tab and agent web-view tools, including separate HTTP proxy and WebSocket/HMR transport readiness
 - closes active proxied WebSocket runtime sessions when a durable proxied site is disabled
 
@@ -107,8 +110,8 @@ Focused unit coverage for target validation, method normalization, carrier-neutr
 ### `proxied-site.test.ts`
 
 Focused unit coverage for product target/path validation, endpoint host
-generation, viewer cookie parsing, and local HTTP versus hosted HTTPS viewer
-cookie attributes.
+generation, trusted forwarded-host gateway resolution, viewer cookie parsing,
+and local HTTP versus hosted HTTPS viewer cookie attributes.
 
 ### `proxy-runtime.test.ts`
 

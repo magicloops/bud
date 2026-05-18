@@ -27,11 +27,10 @@ import {
   getProxiedSiteByEndpointHost,
   getThreadWebViewForThread,
   isProxiedSiteOpenable,
-  isProxyGatewayHost,
   listAuthorizedProxiedSitesForBud,
-  normalizeHostHeader,
   proxiedSiteViewUrl,
   readCookie,
+  resolveProxyGatewayHost,
   resolveViewerSession,
   serializeProxiedSite,
   updateAuthorizedProxiedSite,
@@ -330,15 +329,9 @@ export async function registerProxiedSiteRoutes(server: FastifyInstance): Promis
 }
 
 async function handleProxyGatewayHttpRoute(request: FastifyRequest, reply: FastifyReply) {
-  if (!config.proxyGatewayEnabled || !isProxyGatewayHost(request.headers.host)) {
+  const endpointHost = resolveProxyGatewayHost(request.headers);
+  if (!config.proxyGatewayEnabled || !endpointHost) {
     return reply.status(404).send(request.method === "HEAD" ? undefined : { error: "not_found" });
-  }
-
-  const endpointHost = normalizeHostHeader(request.headers.host);
-  if (!endpointHost) {
-    return reply
-      .status(404)
-      .send(request.method === "HEAD" ? undefined : { error: "proxy_host_not_found" });
   }
 
   const url = new URL(request.url, `http://${endpointHost}`);
@@ -417,13 +410,8 @@ async function handleProxiedSiteGatewayWebSocketRequest(args: {
   request: FastifyRequest;
   socket: WebSocket;
 }) {
-  if (!config.proxyGatewayEnabled || !isProxyGatewayHost(args.request.headers.host)) {
-    closeSocket(args.socket, 1008, "proxy host not found");
-    return;
-  }
-
-  const endpointHost = args.endpointHost ?? normalizeHostHeader(args.request.headers.host);
-  if (!endpointHost) {
+  const endpointHost = args.endpointHost ?? resolveProxyGatewayHost(args.request.headers);
+  if (!config.proxyGatewayEnabled || !endpointHost) {
     closeSocket(args.socket, 1008, "proxy host not found");
     return;
   }

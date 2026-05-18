@@ -18,6 +18,7 @@ import { registerMeRoutes } from "./routes/me.js";
 import { registerProxyRoutes } from "./routes/proxy.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerProxiedSiteRoutes } from "./routes/proxied-sites.js";
+import { isProxyGatewayRequest, type ProxyGatewayRequestHeaders } from "./proxy/proxied-site.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 import { PushNotificationWorker } from "./notifications/index.js";
 import { startGrpcControlGateway } from "./grpc/control-gateway.js";
@@ -49,20 +50,11 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean
   return true;
 }
 
-function isProxyGatewayHostForHandshake(host: string | undefined): boolean {
-  const normalized = host?.trim().toLowerCase().split(":")[0];
-  return Boolean(
-    config.proxyGatewayEnabled &&
-    normalized &&
-    normalized.endsWith(`.${config.proxyBaseDomain}`),
-  );
-}
-
 function selectProxyWebSocketSubprotocol(
   protocols: Set<string>,
-  request: { headers?: { host?: string } },
+  request: { headers?: ProxyGatewayRequestHeaders },
 ): string | false {
-  if (!isProxyGatewayHostForHandshake(request.headers?.host)) {
+  if (!request.headers || !isProxyGatewayRequest(request.headers)) {
     return protocols.values().next().value ?? false;
   }
   for (const protocol of protocols) {

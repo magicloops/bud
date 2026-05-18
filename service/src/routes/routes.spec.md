@@ -422,7 +422,8 @@ Durable product web-proxy routes and private endpoint-host gateway.
 - Bud-scoped routes resolve ownership through `getAuthorizedBud(...)`
 - thread attachment derives Bud identity from `requireAuthorizedThreadAccess(...)`
 - signed-in non-owners receive `404`
-- proxy-domain gateway traffic resolves endpoint host to `proxied_site`, validates enabled/expiry state, validates the endpoint-host viewer cookie, and only then allocates daemon operation/stream rows
+- proxy-domain gateway traffic resolves endpoint host to `proxied_site` from direct `Host` headers or trusted Cloudflare-forwarded `x-forwarded-host`, validates enabled/expiry state, validates the endpoint-host viewer cookie, and only then allocates daemon operation/stream rows
+- forwarded proxy gateway hosts are trusted only when the request carries the configured `PROXY_EDGE_SECRET`; direct Render-origin spoof attempts remain unrouted before database or daemon work
 - viewer grants are one-time and short-lived; viewer sessions use a host-only `HttpOnly` cookie with a 7-day max age and roughly 1-day Better Auth refresh check
 - local targets are limited to `127.0.0.1`, `::1`, or exact `localhost`; daemon revalidates localhost resolution before connecting
 - HTTP gateway supports common mutation methods plus bounded request bodies,
@@ -438,7 +439,8 @@ Durable product web-proxy routes and private endpoint-host gateway.
 Route-registration and route-auth coverage for the durable product web-proxy
 routes, including unauthenticated `401`, signed-in non-owner `404`, owned site
 serialization, owner-only viewer grant minting, bootstrap grant rejection and
-cookie setting, viewer-session refresh, gateway route registration,
+cookie setting, viewer-session refresh, gateway route registration, trusted
+forwarded-host routing and spoof rejection,
 unauthenticated/invalid-cookie WebSocket upgrade rejection before daemon
 allocation, disabled/expired WebSocket upgrade rejection, authorized
 endpoint-host WebSocket open dispatch, browser/daemon text and binary

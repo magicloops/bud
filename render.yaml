@@ -75,6 +75,18 @@ services:
         sync: false
       - key: BETTER_AUTH_TRUSTED_ORIGINS
         sync: false
+      - key: PROXY_PUBLIC_SCHEME
+        sync: false
+      - key: PROXY_BASE_DOMAIN
+        sync: false
+      - key: PROXY_PUBLIC_PORT
+        sync: false
+      - key: PROXY_GATEWAY_ENABLED
+        sync: false
+      - key: PROXY_VIEWER_COOKIE_NAME
+        sync: false
+      - key: PROXY_EDGE_SECRET
+        sync: false
       - key: GITHUB_CLIENT_ID
         sync: false
       - key: GITHUB_CLIENT_SECRET

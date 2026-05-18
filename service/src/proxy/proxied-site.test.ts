@@ -4,9 +4,11 @@ import {
   CreateProxiedSiteBodySchema,
   buildViewerCookie,
   endpointHostForSlug,
+  isProxyGatewayRequest,
   normalizeProxiedSitePath,
   normalizeProxiedSiteTargetHost,
   readCookie,
+  resolveProxyGatewayHost,
 } from "./proxied-site.js";
 import { config } from "../config.js";
 
@@ -35,6 +37,66 @@ test("proxied site path validation requires absolute paths", () => {
 
 test("proxied site endpoint hosts use configured proxy base domain", () => {
   assert.equal(endpointHostForSlug("vite-dev-a8f2"), `vite-dev-a8f2.${config.proxyBaseDomain}`);
+});
+
+test("proxy gateway host resolution preserves direct hosts and requires edge trust for forwarded hosts", (t) => {
+  const originalBaseDomain = config.proxyBaseDomain;
+  const originalEdgeSecret = config.proxyEdgeSecret;
+  t.after(() => {
+    config.proxyBaseDomain = originalBaseDomain;
+    config.proxyEdgeSecret = originalEdgeSecret;
+  });
+
+  config.proxyBaseDomain = "bud.show";
+  config.proxyEdgeSecret = "edge-secret";
+
+  assert.equal(
+    resolveProxyGatewayHost({ host: "vite-dev-a8f2.bud.show" }),
+    "vite-dev-a8f2.bud.show",
+  );
+  assert.equal(
+    resolveProxyGatewayHost({
+      host: "bud-service.onrender.com",
+      "x-forwarded-host": "VITE-DEV-A8F2.BUD.SHOW",
+      "x-bud-edge-secret": "edge-secret",
+    }),
+    "vite-dev-a8f2.bud.show",
+  );
+  assert.equal(
+    resolveProxyGatewayHost({
+      host: "bud-service.onrender.com",
+      "x-forwarded-host": "vite-dev-a8f2.bud.show",
+    }),
+    null,
+  );
+  assert.equal(
+    resolveProxyGatewayHost({
+      host: "bud-service.onrender.com",
+      "x-forwarded-host": "vite-dev-a8f2.example.com",
+      "x-bud-edge-secret": "edge-secret",
+    }),
+    null,
+  );
+});
+
+test("proxy gateway request detection respects the gateway enable switch", (t) => {
+  const originalBaseDomain = config.proxyBaseDomain;
+  const originalEdgeSecret = config.proxyEdgeSecret;
+  const originalGatewayEnabled = config.proxyGatewayEnabled;
+  t.after(() => {
+    config.proxyBaseDomain = originalBaseDomain;
+    config.proxyEdgeSecret = originalEdgeSecret;
+    config.proxyGatewayEnabled = originalGatewayEnabled;
+  });
+
+  config.proxyBaseDomain = "bud.show";
+  config.proxyEdgeSecret = "edge-secret";
+  config.proxyGatewayEnabled = true;
+
+  assert.equal(isProxyGatewayRequest({ host: "vite-dev-a8f2.bud.show" }), true);
+
+  config.proxyGatewayEnabled = false;
+  assert.equal(isProxyGatewayRequest({ host: "vite-dev-a8f2.bud.show" }), false);
 });
 
 test("proxied site viewer cookies are parseable by reserved name", () => {
