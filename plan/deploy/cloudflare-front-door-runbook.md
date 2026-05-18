@@ -50,6 +50,13 @@ The public hostname must route:
 - `/healthz` -> `bud-service`
 - everything else -> `bud-web`
 
+The hosted web-view proxy domain must route:
+
+- `*.bud.show/*` -> `bud-service`
+
+Unlike the app/API hostname, every path on `*.bud.show` belongs to the service
+proxy gateway.
+
 ## Recommended Cloudflare Shape
 
 Use Cloudflare proxied DNS plus one small Worker attached only to Bud's service-owned paths.
@@ -84,6 +91,13 @@ Before wiring Cloudflare, collect:
   - `BETTER_AUTH_URL`
   - `API_AUDIENCE`
   - `BETTER_AUTH_TRUSTED_ORIGINS`
+- proxy gateway env values:
+  - `PROXY_PUBLIC_SCHEME`
+  - `PROXY_BASE_DOMAIN`
+  - `PROXY_PUBLIC_PORT`
+  - `PROXY_GATEWAY_ENABLED`
+  - `PROXY_VIEWER_COOKIE_NAME`
+  - `PROXY_EDGE_SECRET`
 
 ## Cloudflare Setup
 
@@ -123,68 +137,21 @@ This makes the static app the default destination for unmatched paths.
 
 If Cloudflare already has an `AAAA` record for the same hostname, remove it. Render's custom-domain guidance assumes IPv4-only origin routing.
 
-### 3. Create the service-path Worker
+### 3. Create the front-door Worker
 
-Create a Worker whose only job is to forward Bud's service-owned paths to the Render service origin without buffering or rewriting the response body.
+Create a Worker from [../../deploy/cloudflare/bud-front-door-worker.js](../../deploy/cloudflare/bud-front-door-worker.js). Its job is to forward Bud's service-owned paths and `*.bud.show` traffic to the Render service origin without buffering or rewriting the response body.
 
 Worker environment:
 
 - `SERVICE_ORIGIN=https://<bud-service>.onrender.com`
-
-Recommended Worker code:
-
-```js
-const SERVICE_PREFIXES = ['/api/', '/.well-known/']
-const SERVICE_EXACT_PATHS = new Set(['/ws', '/readyz', '/healthz'])
-
-function isServicePath(pathname) {
-  return SERVICE_PREFIXES.some((prefix) => pathname.startsWith(prefix)) || SERVICE_EXACT_PATHS.has(pathname)
-}
-
-function forwardedPort(url) {
-  if (url.port) {
-    return url.port
-  }
-  return url.protocol === 'https:' ? '443' : '80'
-}
-
-export default {
-  async fetch(request, env) {
-    const incomingUrl = new URL(request.url)
-
-    if (!isServicePath(incomingUrl.pathname)) {
-      return fetch(request)
-    }
-
-    const serviceOrigin = new URL(env.SERVICE_ORIGIN)
-    const upstreamUrl = new URL(request.url)
-    upstreamUrl.protocol = serviceOrigin.protocol
-    upstreamUrl.hostname = serviceOrigin.hostname
-    upstreamUrl.port = serviceOrigin.port
-
-    const headers = new Headers(request.headers)
-    headers.delete('host')
-    headers.set('x-forwarded-host', incomingUrl.host)
-    headers.set('x-forwarded-proto', incomingUrl.protocol.replace(':', ''))
-    headers.set('x-forwarded-port', forwardedPort(incomingUrl))
-    headers.set('x-bud-edge-router', 'cloudflare-worker')
-
-    const upstreamRequest = new Request(upstreamUrl.toString(), {
-      method: request.method,
-      headers,
-      body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
-      redirect: 'manual',
-    })
-
-    return fetch(upstreamRequest, { cache: 'no-store' })
-  },
-}
-```
+- `PROXY_BASE_DOMAIN=bud.show`
+- `PROXY_EDGE_SECRET=<same value as Render bud-service PROXY_EDGE_SECRET>`
 
 Notes:
 
 - `cache: 'no-store'` keeps service subrequests off Cloudflare cache.
 - The Worker preserves `x-forwarded-host` and `x-forwarded-proto` so Bud's auth layer can keep advertising `https://staging.bud.dev` even though the upstream request is sent to `bud-service.onrender.com`.
+- For `*.bud.show`, the service proxy gateway trusts `x-forwarded-host` only when the Worker also sends the shared `x-bud-edge-secret`.
 - The Worker returns the upstream response directly, which is the desired behavior for SSE.
 - For `/ws`, the Worker should not inspect frames or terminate the WebSocket. It should only proxy the successful upgrade response from Render.
 
@@ -206,15 +173,38 @@ Notes:
 - Do not attach the Worker to `staging.bud.dev/*` unless you intentionally want all app traffic to pay the Worker hop.
 - With the route-scoped approach, ordinary page loads and static assets continue to go directly from Cloudflare to `bud-web`.
 
-### 5. Keep WebSockets enabled
+### 5. Add the web-view wildcard route
+
+Create a proxied wildcard DNS record for the proxy domain:
+
+- `*.bud.show` -> any proxied origin record suitable for Worker routing
+
+Attach the same Worker to:
+
+- `*.bud.show/*`
+
+Notes:
+
+- The route must cover all paths, not just `/api`, `/.well-known`, or `/ws`.
+- The Worker should forward `*.bud.show` to `bud-service.onrender.com`, not
+  `bud-web`.
+- Do not add `bud.show` to `BETTER_AUTH_TRUSTED_ORIGINS`; Bud app auth remains
+  on `staging.bud.dev`.
+- Do not use Cloudflare caching, HTML rewriting, or JS transformations on
+  `*.bud.show/*`.
+
+### 6. Keep WebSockets enabled
 
 Ensure Cloudflare WebSockets support stays enabled for the zone.
 
 Bud daemon traffic on `wss://bud.example.com/ws` depends on this.
+Hosted web-view HMR and app WebSocket traffic on `wss://<slug>.bud.show/...`
+also depend on this.
 
-### 6. Avoid extra edge features on service paths
+### 7. Avoid extra edge features on service paths
 
-Do not add edge behaviors on the service-matched paths that could alter or buffer responses, including:
+Do not add edge behaviors on the service-matched paths or `*.bud.show/*` that
+could alter or buffer responses, including:
 
 - cache rules that override the Worker's `no-store` service fetches
 - HTML rewrites
@@ -234,6 +224,15 @@ If the public hostname is `https://bud.example.com`, set:
 - `API_AUDIENCE=https://bud.example.com/api`
 - `BETTER_AUTH_TRUSTED_ORIGINS=https://bud.example.com`
 
+For hosted web-view proxy routing through Cloudflare, also set:
+
+- `PROXY_PUBLIC_SCHEME=https`
+- `PROXY_BASE_DOMAIN=bud.show`
+- `PROXY_PUBLIC_PORT=` (blank)
+- `PROXY_GATEWAY_ENABLED=true`
+- `PROXY_VIEWER_COOKIE_NAME=__Host-bud_proxy_viewer`
+- `PROXY_EDGE_SECRET=<same value as the Cloudflare Worker secret>`
+
 Provider callbacks should also move to the public origin:
 
 - `https://bud.example.com/api/auth/callback/github`
@@ -252,10 +251,11 @@ Bud daemons should use:
 5. Add the public hostname to `bud-web` in Render.
 6. Ensure `bud.dev` is active on Cloudflare and existing DNS records are recreated there if nameservers are changing.
 7. Create the Cloudflare proxied DNS record pointing the public hostname at `bud-web`.
-8. Deploy the Cloudflare Worker with `SERVICE_ORIGIN=https://<bud-service>.onrender.com`.
+8. Deploy the Cloudflare Worker with `SERVICE_ORIGIN=https://<bud-service>.onrender.com`, `PROXY_BASE_DOMAIN=bud.show`, and the `PROXY_EDGE_SECRET` secret.
 9. Attach the Worker to the service-path route patterns.
-10. Update OAuth provider callback URLs to the public hostname.
-11. Validate the public hostname against [validation-checklist.md](./validation-checklist.md).
+10. Add proxied wildcard DNS and the Worker route for `*.bud.show/*`.
+11. Update OAuth provider callback URLs to the public hostname.
+12. Validate the public hostname and wildcard web-view proxy path against [validation-checklist.md](./validation-checklist.md).
 
 ## Agent Provider Note
 
@@ -284,6 +284,8 @@ If the team later needs direct psql or admin-tool access from outside Render, wi
 
 - If the backend deploy is unhealthy, roll back `bud-service` in Render first. The public Cloudflare DNS + Worker entrypoint can stay in place.
 - If path routing is wrong, disable the Worker routes or redeploy a no-op Worker without redeploying either Render service.
+- If `*.bud.show` routing is wrong, disable only the `*.bud.show/*` Worker
+  route first; `staging.bud.dev` app/API routing is independent.
 - If the public origin is broken and rapid diagnosis matters more than cleanliness, temporarily test against the direct `bud-web.onrender.com` and `bud-service.onrender.com` origins to isolate whether the failure is in Render or the edge layer.
 
 ## Exit Condition
@@ -291,9 +293,13 @@ If the team later needs direct psql or admin-tool access from outside Render, wi
 This runbook is complete when:
 
 - the public hostname routes app and service traffic exactly as listed above
+- `*.bud.show/*` routes to the service proxy gateway through Cloudflare without
+  requiring Render to terminate the wildcard domain
 - provider callbacks and Bud daemon traffic use that same hostname
 - Phase 4 validation confirms `/api/*`, `/.well-known/*`, SSE, and `/ws` all behave correctly through the Cloudflare Worker path
+- Phase 10 validation confirms web-view bootstrap, HTTP assets, and WebSocket
+  upgrades work through `https://<slug>.bud.show`
 
 ---
 
-*Last Updated: 2026-03-24*
+*Last Updated: 2026-05-17*

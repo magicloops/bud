@@ -4,7 +4,9 @@ Thread-scoped browser runtime modules.
 
 ## Purpose
 
-Owns thread-scoped browser runtime behavior that was previously embedded directly inside `web/src/routes/$budId/$threadId.tsx`.
+Owns thread-scoped browser runtime behavior that was previously embedded
+directly inside `web/src/routes/$budId/$threadId.tsx`, including transcript,
+agent stream, terminal, file-viewer, and web-view state.
 
 ## Files
 
@@ -80,6 +82,34 @@ Thread-scoped file viewer state and fetch flow for user-clicked transcript paths
 - `FileViewerKind`
 - `FileViewerStatus`
 
+### `use-web-view.ts`
+
+Thread-scoped proxied web-view state and hosted-auth bootstrap flow.
+
+**Responsibilities**:
+- load owned Bud proxied sites and the current thread's web-view attachment
+- create or reuse an owned proxied site by loopback host/port/path
+- attach an existing owned site to the current thread and detach without
+  disabling the durable site
+- mint one-time viewer grants for iframe and standalone viewing
+- refresh iframe bootstrap URLs without exposing grants/cookies to agent tools
+  or transcript rows
+- track the Bud's HTTP proxy transport separately from WebSocket/HMR transport
+  so the pane can explain static-preview vs HMR availability
+- keep parent error callbacks behind a ref so the mount-time
+  `proxied-sites`/`web-view` fetch effect is keyed to Bud/thread identity, not
+  parent render identity
+- open a standalone top-level window with a fresh grant so third-party cookie
+  restrictions have a product fallback
+- expose compact status/error state for `WebViewPane`
+- expose top-level WebSocket transport readiness alongside the active site so
+  product failure states can distinguish Bud offline, unsupported HMR, and
+  degraded transport
+
+**Exports**:
+- `useWebView(...)`
+- `WebViewStatus`
+
 ### `file-viewer-state.ts`
 
 Pure file-viewer state helpers shared by the hook and tests.
@@ -125,7 +155,7 @@ Node-runner coverage for the file-viewer open/fetch flow.
 | `react` | Hook state, refs, memoization |
 | `@/lib/transport` | Paginated message fetch |
 | `@/lib/messages` | Optimistic `client_id` generation |
-| `@/lib/api-types` | Thread message, agent-state, and file-viewer contracts |
+| `@/lib/api-types` | Thread message, agent-state, file-viewer, and proxied web-view contracts |
 | `@/lib/file-paths` | File-open candidate payload types |
 
 ### `use-agent-stream.ts`
@@ -143,6 +173,8 @@ Agent SSE ownership for the existing-thread route.
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
 - pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly
+- keep latest event handlers in refs so the EventSource lifecycle depends on
+  `threadId` rather than callback identity churn from the composing route
 
 **Exports**:
 - `useAgentStream(...)`

@@ -123,6 +123,47 @@ export function useAgentStream({
   const lastEventTimeRef = useRef<number>(Date.now())
   const cursorRef = useRef<string | null>(initialStreamCursor)
   const threadIdRef = useRef<string | null>(null)
+  const callbacksRef = useRef({
+    onStatusChange,
+    onError,
+    onToolCall,
+    onToolResultMessage,
+    onAssistantMessageStart,
+    onAssistantMessageDelta,
+    onAssistantMessageDone,
+    onAssistantMessageEvent,
+    onThreadTitle,
+    onFinalizeTurn,
+    refreshBootstrap,
+  })
+
+  useEffect(() => {
+    callbacksRef.current = {
+      onStatusChange,
+      onError,
+      onToolCall,
+      onToolResultMessage,
+      onAssistantMessageStart,
+      onAssistantMessageDelta,
+      onAssistantMessageDone,
+      onAssistantMessageEvent,
+      onThreadTitle,
+      onFinalizeTurn,
+      refreshBootstrap,
+    }
+  }, [
+    onAssistantMessageDelta,
+    onAssistantMessageDone,
+    onAssistantMessageEvent,
+    onAssistantMessageStart,
+    onError,
+    onFinalizeTurn,
+    onStatusChange,
+    onThreadTitle,
+    onToolCall,
+    onToolResultMessage,
+    refreshBootstrap,
+  ])
 
   useEffect(() => {
     cursorRef.current = initialStreamCursor
@@ -209,11 +250,11 @@ export function useAgentStream({
     source.addEventListener('agent.tool_call', (evt) => {
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
-      onStatusChange('streaming')
+      callbacksRef.current.onStatusChange('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentToolCallEvent
         console.log('[agent-sse] tool_call', data.name, data.args)
-        onToolCall({
+        callbacksRef.current.onToolCall({
           turnId: data.turn_id,
           clientId: data.client_id,
           callId: data.call_id,
@@ -231,7 +272,7 @@ export function useAgentStream({
       try {
         const data = JSON.parse(evt.data) as AgentToolResultEvent
         if (data.message) {
-          onToolResultMessage(data.message)
+          callbacksRef.current.onToolResultMessage(data.message)
         }
       } catch (error) {
         console.warn('[agent-sse] failed to parse agent.tool_result', error)
@@ -241,10 +282,10 @@ export function useAgentStream({
     source.addEventListener('agent.message_start', (evt) => {
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
-      onStatusChange('streaming')
+      callbacksRef.current.onStatusChange('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentMessageStartEvent
-        onAssistantMessageStart({ turnId: data.turn_id, clientId: data.client_id })
+        callbacksRef.current.onAssistantMessageStart({ turnId: data.turn_id, clientId: data.client_id })
       } catch (error) {
         console.warn('[agent-sse] failed to parse agent.message_start', error)
       }
@@ -253,10 +294,10 @@ export function useAgentStream({
     source.addEventListener('agent.message_delta', (evt) => {
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
-      onStatusChange('streaming')
+      callbacksRef.current.onStatusChange('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentMessageDeltaEvent
-        onAssistantMessageDelta({
+        callbacksRef.current.onAssistantMessageDelta({
           turnId: data.turn_id,
           clientId: data.client_id,
           delta: data.delta,
@@ -271,7 +312,7 @@ export function useAgentStream({
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
         const data = JSON.parse(evt.data) as AgentMessageDoneEvent
-        onAssistantMessageDone({
+        callbacksRef.current.onAssistantMessageDone({
           turnId: data.turn_id,
           clientId: data.client_id,
           text: data.text,
@@ -286,7 +327,7 @@ export function useAgentStream({
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
         const data = JSON.parse(evt.data) as AgentMessageEvent
-        onAssistantMessageEvent({
+        callbacksRef.current.onAssistantMessageEvent({
           turnId: data.turn_id,
           clientId: data.client_id,
           messageId: data.message_id,
@@ -303,7 +344,7 @@ export function useAgentStream({
       cursorRef.current = evt.lastEventId || cursorRef.current
       try {
         const data = JSON.parse(evt.data) as ThreadTitleEvent
-        onThreadTitle(data.title)
+        callbacksRef.current.onThreadTitle(data.title)
       } catch (error) {
         console.warn('[agent-sse] failed to parse thread.title', error)
       }
@@ -326,7 +367,7 @@ export function useAgentStream({
       })
 
       cleanupAgent()
-      void refreshBootstrap(agentThreadId)
+      void callbacksRef.current.refreshBootstrap(agentThreadId)
         .then((nextAgentState) => {
           cursorRef.current = nextAgentState.stream_cursor
           if (threadIdRef.current === agentThreadId && !isAuthRedirectPending()) {
@@ -338,7 +379,7 @@ export function useAgentStream({
             return
           }
           console.error('[agent-sse] failed to refresh bootstrap after resync', error)
-          onError(error instanceof Error ? error.message : 'Failed to resync thread')
+          callbacksRef.current.onError(error instanceof Error ? error.message : 'Failed to resync thread')
           scheduleReconnect('resync_refresh_failed')
         })
     })
@@ -357,14 +398,14 @@ export function useAgentStream({
         clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
       }
-      onStatusChange('idle')
+      callbacksRef.current.onStatusChange('idle')
       if (finalEvent?.turn_id) {
-        onFinalizeTurn(finalEvent.turn_id, finalEvent.status)
+        callbacksRef.current.onFinalizeTurn(finalEvent.turn_id, finalEvent.status)
       }
       if (finalEvent?.status === 'failed') {
-        onError(finalEvent.error ?? 'Agent turn failed')
+        callbacksRef.current.onError(finalEvent.error ?? 'Agent turn failed')
       } else {
-        onError(null)
+        callbacksRef.current.onError(null)
       }
     })
 
@@ -385,19 +426,7 @@ export function useAgentStream({
     })
 
     return cleanupAgent
-  }, [
-    onAssistantMessageDelta,
-    onAssistantMessageDone,
-    onAssistantMessageEvent,
-    onAssistantMessageStart,
-    onError,
-    onFinalizeTurn,
-    onStatusChange,
-    onThreadTitle,
-    onToolCall,
-    onToolResultMessage,
-    refreshBootstrap,
-  ])
+  }, [])
 
   useEffect(() => {
     if (!threadId) {

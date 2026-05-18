@@ -112,6 +112,8 @@ loader: async ({ params }) => {
 3. **Agent Stream**
    - Runtime bootstrap from `/api/threads/:id/agent/state`
    - Delegates SSE attach/resume/reconnect/resync ownership to `useAgentStream(...)` in `web/src/features/threads/`
+   - Keeps feature hook error callbacks stable so route rerenders do not
+     retrigger web-view fetches or agent stream reconnects
    - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, and `final`
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
@@ -140,7 +142,7 @@ loader: async ({ params }) => {
    - Reuses `useAvailableModels()` so model fetching/default selection and per-model reasoning normalization match the new-thread flow
    - Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
    - Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
-   - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, `useFileViewer(...)`, `ThreadTerminalPane`, and `FileViewerPane`
+   - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, `useFileViewer(...)`, `useWebView(...)`, `ThreadTerminalPane`, `FileViewerPane`, and `WebViewPane`
 
 8. **File Viewer**
    - Assistant message file actions call `useFileViewer(...)` only after a user click
@@ -151,6 +153,21 @@ loader: async ({ params }) => {
    - Absolute POSIX candidates are supported by the web open flow and normalize to the backend-returned workspace-relative session path
    - Markdown previews can open absolute POSIX links with `source.kind = "markdown_preview"` while unsupported local/relative preview links stay inert
    - The first pass supports Markdown, source/code, and unknown UTF-8 text; binary/image/PDF preview and line scrolling remain follow-ups
+
+9. **Web View**
+   - Delegates proxied-site and thread web-view state to `useWebView(...)`
+   - The Web view tab can create or reuse an owned loopback proxied site for
+     the current Bud
+   - Existing owned sites can be attached to the thread so multiple threads can
+     point at the same local app
+   - The pane mints one-time viewer grants and loads the endpoint-host iframe
+     through the hosted bootstrap URL
+   - Standalone open uses a fresh grant and top-level navigation as the
+     fallback for browsers that block embedded cookie access
+   - Passes HTTP and WebSocket/HMR transport readiness through to the Web view
+     pane so proxied-site failure states are visible in the right pane
+   - Agent `web_view.*` tool-result rows switch the right pane to Web view and
+     refresh proxied-site/thread attachment state
 
 **State**:
 ```typescript
@@ -168,6 +185,8 @@ terminalReadiness: { ready, confidence, trigger, hints }
 terminalHasOutput: boolean
 terminalOutputTruncated: boolean
 activeFileEntry: FileViewerEntry | null
+activeWebView: ApiThreadWebView | null
+webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
 ```
 
 **Terminal Event Handling**:
@@ -205,7 +224,7 @@ From `@/lib/api-types` / `@/lib/terminal-data`:
 | `@/components/debug-panel` | Dev-only debug info |
 | `@/contexts/layout-context` | Thread panel toggle |
 | `@/contexts/bud-status-context` | Bud online status |
-| `@/features/threads/*` | Extracted transcript, agent-stream, and terminal session hooks |
+| `@/features/threads/*` | Extracted transcript, agent-stream, terminal session, file-viewer, and web-view hooks |
 | `@/lib/file-paths` | File-open candidate payload type |
 | `@/lib/transport`, `@/lib/api-types`, `@/lib/messages`, `@/lib/models`, `@/lib/auth-redirect` | Split API/runtime helpers |
 | `lucide-react` | Icons |

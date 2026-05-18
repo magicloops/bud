@@ -34,10 +34,11 @@ use crate::journal::{load_journal, DaemonJournal};
 use crate::proto_wire::{decode_bud_frame, encode_bud_frame};
 use crate::protocol::{
     validate_inbound_envelope_proto, Envelope, ErrorFrame, FileOpenFrame, FileResolveFrame,
-    HelloAckFrame, HelloChallengeFrame, ProxyOpenFrame, RunFrame, StreamCloseFrame,
-    StreamCreditFrame, StreamDataFrame, StreamResetFrame, TerminalCloseFrame, TerminalEnsureFrame,
-    TerminalInputFrame, TerminalObserveFrame, TerminalResizeFrame, TerminalSendFrame,
-    DEFAULT_HEARTBEAT_SEC, PROTO_VERSION, TERMINAL_PROTO_VERSION,
+    HelloAckFrame, HelloChallengeFrame, ProxyOpenFrame, ProxyWebSocketCloseFrame,
+    ProxyWebSocketErrorFrame, ProxyWebSocketMessageFrame, ProxyWebSocketOpenFrame, RunFrame,
+    StreamCloseFrame, StreamCreditFrame, StreamDataFrame, StreamResetFrame, TerminalCloseFrame,
+    TerminalEnsureFrame, TerminalInputFrame, TerminalObserveFrame, TerminalResizeFrame,
+    TerminalSendFrame, DEFAULT_HEARTBEAT_SEC, PROTO_VERSION, TERMINAL_PROTO_VERSION,
 };
 use crate::proxy::ProxyManager;
 use crate::run::RunExecutor;
@@ -498,27 +499,29 @@ impl BudApp {
                                 Ok(envelope) if envelope.kind == "stream_data" => {
                                     match serde_json::from_str::<StreamDataFrame>(&text) {
                                         Ok(frame) => {
-                                            warn!(
-                                                stream_id = %frame.stream_id,
-                                                stream_type = %frame.stream_type,
-                                                "Rejecting unsupported inbound gRPC data stream"
-                                            );
-                                            let reset = json!({
-                                                "proto": PROTO_VERSION,
-                                                "type": "stream_reset",
-                                                "id": new_message_id(),
-                                                "ts": now_millis(),
-                                                "ext": {},
-                                                "stream_id": frame.stream_id,
-                                                "reason": "protocol_error",
-                                                "error": {
-                                                    "code": "UNSUPPORTED_STREAM",
-                                                    "message": "daemon has no adapter for this stream type",
-                                                    "retryable": false
+                                            if !proxy_manager.apply_data(frame.clone()).await {
+                                                warn!(
+                                                    stream_id = %frame.stream_id,
+                                                    stream_type = %frame.stream_type,
+                                                    "Rejecting unsupported inbound gRPC data stream"
+                                                );
+                                                let reset = json!({
+                                                    "proto": PROTO_VERSION,
+                                                    "type": "stream_reset",
+                                                    "id": new_message_id(),
+                                                    "ts": now_millis(),
+                                                    "ext": {},
+                                                    "stream_id": frame.stream_id,
+                                                    "reason": "protocol_error",
+                                                    "error": {
+                                                        "code": "UNSUPPORTED_STREAM",
+                                                        "message": "daemon has no adapter for this stream type",
+                                                        "retryable": false
+                                                    }
+                                                });
+                                                if reader_frame_tx.send(reset).await.is_err() {
+                                                    break;
                                                 }
-                                            });
-                                            if reader_frame_tx.send(reset).await.is_err() {
-                                                break;
                                             }
                                         }
                                         Err(err) => warn!(
@@ -934,11 +937,25 @@ impl BudApp {
             }
             "proxy_open" => {
                 let frame: ProxyOpenFrame = serde_json::from_str(text)?;
-                self.proxy_manager.handle_open(
-                    frame,
-                    sender.clone(),
-                    self.proxy_http_client.clone(),
-                );
+                self.proxy_manager
+                    .handle_open(frame, sender.clone(), self.proxy_http_client.clone())
+                    .await;
+            }
+            "proxy_ws_open" => {
+                let frame: ProxyWebSocketOpenFrame = serde_json::from_str(text)?;
+                self.proxy_manager.handle_ws_open(frame, sender.clone());
+            }
+            "proxy_ws_message" => {
+                let frame: ProxyWebSocketMessageFrame = serde_json::from_str(text)?;
+                self.proxy_manager.apply_ws_message(frame).await;
+            }
+            "proxy_ws_close" => {
+                let frame: ProxyWebSocketCloseFrame = serde_json::from_str(text)?;
+                self.proxy_manager.apply_ws_close(frame).await;
+            }
+            "proxy_ws_error" => {
+                let frame: ProxyWebSocketErrorFrame = serde_json::from_str(text)?;
+                self.proxy_manager.apply_ws_error(frame).await;
             }
             "file_open" => {
                 let frame: FileOpenFrame = serde_json::from_str(text)?;
@@ -976,26 +993,28 @@ impl BudApp {
             }
             "stream_data" => {
                 let frame: StreamDataFrame = serde_json::from_str(text)?;
-                warn!(
-                    stream_id = %frame.stream_id,
-                    stream_type = %frame.stream_type,
-                    "Rejecting unsupported inbound WebSocket data stream"
-                );
-                let reset = json!({
-                    "proto": PROTO_VERSION,
-                    "type": "stream_reset",
-                    "id": new_message_id(),
-                    "ts": now_millis(),
-                    "ext": {},
-                    "stream_id": frame.stream_id,
-                    "reason": "protocol_error",
-                    "error": {
-                        "code": "UNSUPPORTED_STREAM",
-                        "message": "daemon has no adapter for this stream type",
-                        "retryable": false
-                    }
-                });
-                send_transport_frame(sender, reset)?;
+                if !self.proxy_manager.apply_data(frame.clone()).await {
+                    warn!(
+                        stream_id = %frame.stream_id,
+                        stream_type = %frame.stream_type,
+                        "Rejecting unsupported inbound WebSocket data stream"
+                    );
+                    let reset = json!({
+                        "proto": PROTO_VERSION,
+                        "type": "stream_reset",
+                        "id": new_message_id(),
+                        "ts": now_millis(),
+                        "ext": {},
+                        "stream_id": frame.stream_id,
+                        "reason": "protocol_error",
+                        "error": {
+                            "code": "UNSUPPORTED_STREAM",
+                            "message": "daemon has no adapter for this stream type",
+                            "retryable": false
+                        }
+                    });
+                    send_transport_frame(sender, reset)?;
+                }
             }
             "stream_reset" => {
                 let frame: StreamResetFrame = serde_json::from_str(text)?;
@@ -1267,8 +1286,10 @@ impl BudApp {
             },
             "proxy": {
                 "localhost_http": stream_frames_supported,
-                "methods": ["GET", "HEAD"],
-                "target_hosts": ["127.0.0.1"]
+                "localhost_websocket": websocket_mode,
+                "methods": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                "default_target_host": "localhost",
+                "target_hosts": ["localhost", "127.0.0.1", "::1"]
             },
             "files": {
                 "workspace_read": stream_frames_supported,

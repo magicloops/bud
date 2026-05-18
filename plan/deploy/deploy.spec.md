@@ -92,6 +92,7 @@ Documents:
 
 - the recommended route-scoped Cloudflare Worker shape
 - service-path route patterns, forwarded-header preservation, and no-store proxy behavior for service-owned paths
+- the `*.bud.show` all-path Worker route, shared `PROXY_EDGE_SECRET`, and trusted forwarded-host contract for Render-backed web views
 - deploy order from raw Render origins to the public hostname
 - rollback entry points if the edge layer misroutes traffic
 - the fact that this runbook is the staging default, not a final production commitment

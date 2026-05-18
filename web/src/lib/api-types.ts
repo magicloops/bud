@@ -166,6 +166,70 @@ export type ApiOpenThreadFileResponse = {
   }
 }
 
+export type ApiProxyTransport = {
+  available: boolean
+  code?: string | null
+  message?: string | null
+  device_session_id?: string | null
+  control_transport_session_id?: string | null
+  data_transport_session_id?: string | null
+  transport_kind?: string | null
+  health?: Record<string, unknown> | null
+  selection_reason?: string | null
+  candidate_transports?: Array<Record<string, unknown>>
+}
+
+export type ApiProxiedSite = {
+  proxied_site_id: string
+  bud_id: string
+  display_name: string
+  slug: string
+  endpoint_host: string
+  view_url: string
+  target_host: '127.0.0.1' | 'localhost' | '::1' | string
+  target_port: number
+  path: string
+  access_policy: 'private_owner' | string
+  enabled: boolean
+  state: 'ready' | 'disabled' | 'expired' | string
+  expires_at: string
+  disabled_at: string | null
+  last_accessed_at: string | null
+  transport?: ApiProxyTransport | null
+  websocket_transport?: ApiProxyTransport | null
+  capabilities?: {
+    websocket?: boolean
+  } | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiProxiedSiteListResponse = {
+  proxied_sites: ApiProxiedSite[]
+  transport: ApiProxyTransport
+  websocket_transport?: ApiProxyTransport | null
+}
+
+export type ApiThreadWebView = {
+  thread_id: string
+  bud_id: string
+  proxied_site_id: string
+  selected_path: string | null
+  created_at: string
+  updated_at: string
+  proxied_site: ApiProxiedSite
+}
+
+export type ApiThreadWebViewResponse = {
+  web_view: ApiThreadWebView | null
+}
+
+export type ApiViewerGrantResponse = {
+  bootstrap_url: string
+  view_url: string
+  expires_at: string
+}
+
 export function normalizeCapabilities(caps: unknown): {
   sessions: boolean
   terminal: boolean

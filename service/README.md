@@ -67,6 +67,47 @@ If you are testing from another machine or phone, replace `localhost` with your 
 - the Bud daemon `BUD_SERVER_URL`
 - the web app `VITE_API_PROXY_TARGET` or `VITE_API_BASE_URL`
 
+## Optional Local HTTPS
+
+Local HTTPS is not required for day-to-day service development. Use
+[service/.env.https.example](./.env.https.example) only when validating the
+web-proxy or mobile OAuth parity path through Caddy and mkcert.
+
+In the HTTPS profile:
+
+- Fastify still listens on `http://127.0.0.1:3000`.
+- Caddy exposes app/auth/API/SSE/Bud WebSocket traffic at
+  `https://localhost:3443`.
+- Caddy exposes proxy endpoint hosts at
+  `https://<slug>.bud-show.test:3443`.
+- The proxy endpoint base domain requires local wildcard DNS:
+  `*.bud-show.test -> 127.0.0.1`.
+- `PROXY_PUBLIC_SCHEME=https` and `PROXY_PUBLIC_PORT=3443` make generated
+  proxied-site URLs and viewer cookies match the Caddy front door.
+- `PROXY_VIEWER_COOKIE_NAME=__Host-bud_proxy_viewer` keeps private viewer
+  cookies host-only for each endpoint host.
+
+OAuth callback URLs for local HTTPS:
+
+- GitHub: `https://localhost:3443/api/auth/callback/github`
+- Google: `https://localhost:3443/api/auth/callback/google`
+
+The package-local `pnpm dev` command is unchanged for normal HTTP service work.
+For the HTTPS profile, prefer the repo-root launcher:
+
+```bash
+pnpm dev:https:setup
+pnpm dev:https
+```
+
+`pnpm dev:https:setup` also checks that `smoke.bud-show.test` resolves to
+`127.0.0.1` and prints the dnsmasq runbook if local DNS is missing. `pnpm
+dev:https` owns the service dev server, the web dev server, and Caddy. It also
+injects `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"` before starting
+Node so service-side OAuth/JWKS verification trusts the local mkcert CA. Do
+not rely on adding `NODE_EXTRA_CA_CERTS` only to `service/.env`; Node reads
+that variable during process startup, before application dotenv loading.
+
 ## Prototype Deployment Contract
 
 For the current prototype deployment, keep browser and hosted auth traffic on one public origin even though `web` and `service` deploy separately.
@@ -131,6 +172,21 @@ Auth and Bud claim testing do not require an LLM provider key, and the service n
 
 Local development for this repo uses `db:push`. Staging uses `db:migrate` against the checked-in migration chain.
 
+`pnpm oauth:provision:ios-local` prints the bundle from the active
+`service/.env`. For the optional mkcert+Caddy HTTPS profile, prefer the
+repo-root wrapper so mkcert trust and public-origin values are applied before
+Node starts:
+
+```bash
+pnpm dev:https:provision-ios
+```
+
+Confirm the printed bundle uses:
+
+- `app_origin: https://localhost:3443`
+- `issuer: https://localhost:3443/api/auth`
+- `audience: https://localhost:3443/api`
+
 ## Local Test Flow
 
 1. Start the service with `pnpm dev`.
@@ -151,7 +207,10 @@ When creating a new non-local environment, make sure all of these are true toget
 2. `DATABASE_URL` includes the provider's required SSL settings when using a hosted Postgres service.
 3. `OAUTH_TRUSTED_CLIENT_IDS` includes the first-party mobile client ids published for that environment.
 4. Provider callback URLs point at `https://<public-origin>/api/auth/callback/{provider}`.
-5. The matching iOS provisioning script has been run against that environment's database before sharing the auth bundle.
+5. If hosted web views are enabled through Cloudflare, `PROXY_PUBLIC_SCHEME`,
+   `PROXY_BASE_DOMAIN`, `PROXY_GATEWAY_ENABLED`, `PROXY_VIEWER_COOKIE_NAME`,
+   and `PROXY_EDGE_SECRET` match the Worker route for `*.bud.show`.
+6. The matching iOS provisioning script has been run against that environment's database before sharing the auth bundle.
 
 ## Notes
 

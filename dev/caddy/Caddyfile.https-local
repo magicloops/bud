@@ -1,0 +1,30 @@
+{
+	auto_https off
+}
+
+https://localhost:3443 {
+	tls .certs/bud-local.pem .certs/bud-local-key.pem
+
+	reverse_proxy /api/* 127.0.0.1:3000
+	reverse_proxy /.well-known/* 127.0.0.1:3000
+	reverse_proxy /ws 127.0.0.1:3000
+	reverse_proxy localhost:5173
+}
+
+https://*.bud-show.test:3443 {
+	tls .certs/bud-local.pem .certs/bud-local-key.pem
+	reverse_proxy 127.0.0.1:3000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+	}
+}
+
+# Desktop compatibility alias. Generated HTTPS proxy URLs use bud-show.test;
+# mobile Safari/WKWebView validation should use the .test host above.
+https://*.bud-proxy.localhost:3443 {
+	tls .certs/bud-local.pem .certs/bud-local-key.pem
+	reverse_proxy 127.0.0.1:3000 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+	}
+}

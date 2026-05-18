@@ -20,14 +20,19 @@ Application entry point and thin Fastify composition root.
 
 **Key Responsibilities**:
 - Initialize Fastify with WebSocket and SSE plugins
+- Configure Fastify's body limit from `PROXY_SESSION_MAX_REQUEST_BODY_BYTES`
+  so proxy mutation requests can be buffered before daemon forwarding
+- Configure the WebSocket plugin to select a safe browser-requested subprotocol for proxy endpoint hosts, including trusted Cloudflare-forwarded `*.bud.show` hosts, enabling Vite-style `Sec-WebSocket-Protocol` handshakes without changing the daemon `/ws` route
 - Register the raw form-urlencoded parser needed for OAuth token/revoke requests before auth routes mount
+- Register a fallback buffer parser for otherwise-unknown content types so
+  proxied binary/form/multipart request bodies can reach the proxy edge
 - Apply service-level CORS for direct browser-to-service local development, using the trusted-origin allowlist from `config.betterAuthTrustedOrigins`
 - Advertise the current direct-browser method set (`GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`) during trusted-origin preflight handling so local web workbench and mobile registration calls can use profile updates, push-endpoint upserts, thread deletion, and session closure against `http://localhost:3000`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
 - Start the push-notification outbox worker when APNs credentials are configured
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
-- Register the proxy and file session route families used by Phase 4 daemon-network features
+- Register the proxy, product proxied-site, and file session route families used by Phase 4 daemon-network and web-view features
 - Compose the current thread-scoped streaming/runtime surface without the removed standalone run manager
 - Optionally start the grpc-js daemon control gateway when `GRPC_CONTROL_ENABLED=true`
 - Optionally start the grpc-js daemon data gateway when `GRPC_DATA_ENABLED=true`
@@ -60,6 +65,8 @@ Focused regression coverage for service composition behavior that is easiest to 
 
 **Current Coverage**:
 - trusted-origin `OPTIONS` preflight responses include the full direct-browser API method set needed by the current web app and push-registration clients, including `PUT`, `PATCH`, and `DELETE`
+- the service composition test binds any enabled gRPC control gateway on an
+  ephemeral port so it does not collide with a running local dev server
 - gRPC control shutdown finalization is covered in [grpc/control-gateway.test.ts](./grpc/control-gateway.test.ts)
 
 ### `config.ts`
@@ -103,6 +110,24 @@ Environment-based configuration with defaults.
 | `dataPlaneStreamTtlMs` | `DATA_PLANE_STREAM_TTL_MS` | 5m | Absolute service TTL for one file/proxy runtime stream |
 | `fileSessionDefaultMaxBytes` | `FILE_SESSION_DEFAULT_MAX_BYTES` | 64MB | Default file-session byte ceiling when the browser omits `max_bytes` |
 | `proxySessionMaxResponseBytes` | `PROXY_SESSION_MAX_RESPONSE_BYTES` | 16MB | Service-side max proxied response bytes per proxy request |
+| `proxySessionMaxRequestBodyBytes` | `PROXY_SESSION_MAX_REQUEST_BODY_BYTES` | 10MB | Service-side max buffered request body bytes per proxy request |
+| `proxyLocalAppCookieMaxCount` | `PROXY_LOCAL_APP_COOKIE_MAX_COUNT` | 50 | Max endpoint-host local-app cookies forwarded or emitted per proxied-site request |
+| `proxyLocalAppCookieMaxBytes` | `PROXY_LOCAL_APP_COOKIE_MAX_BYTES` | 16KB | Max total endpoint-host local-app cookie bytes forwarded or emitted per proxied-site request |
+| `proxyWebSocketMaxMessageBytes` | `PROXY_WEBSOCKET_MAX_MESSAGE_BYTES` | 1MB | Service-side max text/binary message size for proxied WebSocket sessions |
+| `proxyWebSocketOpenTimeoutMs` | `PROXY_WEBSOCKET_OPEN_TIMEOUT_MS` | 10s | Time to wait for Bud to accept a local WebSocket proxy open |
+| `proxyWebSocketIdleTimeoutMs` | `PROXY_WEBSOCKET_IDLE_TIMEOUT_MS` | 10m | Idle timeout for active proxied WebSocket sessions |
+| `proxyWebSocketMaxConnectionsPerSite` | `PROXY_WEBSOCKET_MAX_CONNECTIONS_PER_SITE` | 16 | Max active WebSocket sessions per proxied site |
+| `proxyWebSocketMaxConnectionsPerBud` | `PROXY_WEBSOCKET_MAX_CONNECTIONS_PER_BUD` | 64 | Max active proxied WebSocket sessions per Bud |
+| `proxyGatewayEnabled` | `PROXY_GATEWAY_ENABLED` | true | Enable the host-routed product web-proxy gateway |
+| `proxyBaseDomain` | `PROXY_BASE_DOMAIN` | `proxy.localhost` locally, `bud.show` in production | Base domain for generated proxied-site endpoint hosts |
+| `proxyPublicScheme` | `PROXY_PUBLIC_SCHEME` | `http` locally, `https` in production | Public scheme used when building proxied-site URLs and cookies |
+| `proxyPublicPort` | `PROXY_PUBLIC_PORT` | service port for local HTTP proxy.localhost | Optional public port appended to generated proxied-site URLs |
+| `proxyViewerCookieName` | `PROXY_VIEWER_COOKIE_NAME` | scheme-aware reserved cookie name | Host-only private-owner viewer cookie name |
+| `proxyEdgeSecret` | `PROXY_EDGE_SECRET` | - | Shared secret required before trusting edge-forwarded proxy gateway hosts such as Cloudflare Worker `x-forwarded-host` |
+| `proxyViewerCookieMaxAgeSeconds` | `PROXY_VIEWER_COOKIE_MAX_AGE_SECONDS` | 7 days | Viewer cookie/session lifetime aligned with Better Auth defaults |
+| `proxyViewerCookieRefreshSeconds` | `PROXY_VIEWER_COOKIE_REFRESH_SECONDS` | 1 day | Minimum interval before refreshing viewer sessions against Better Auth |
+| `proxyBootstrapGrantTtlSeconds` | `PROXY_BOOTSTRAP_GRANT_TTL_SECONDS` | 5 minutes | One-time proxy-domain bootstrap grant lifetime |
+| `proxiedSiteTtlSeconds` | `PROXIED_SITE_TTL_SECONDS` | 90 days | Long soft TTL renewed while a Bud/proxied site remains active |
 | `betterAuthUrl` | `BETTER_AUTH_URL` | http://localhost:3000 | Public auth base URL |
 | `appBaseUrl` | `APP_BASE_URL` | `BETTER_AUTH_URL` or http://localhost:3000 | Browser origin used when generating Bud claim URLs |
 | `betterAuthBasePath` | fixed | `/api/auth` | Better Auth mount path and OAuth issuer path |
@@ -146,7 +171,7 @@ Better Auth runtime integration plus session/profile/ownership helpers used by a
 
 ### `agent/` → [agent.spec.md](./agent/agent.spec.md)
 
-Agent orchestration for tool-calling loops using the LLM provider abstraction, now split into conversation-loading, model-running, terminal-tool execution, transcript-writing, cached cwd path-context stamping, and cancellation ownership units.
+Agent orchestration for tool-calling loops using the LLM provider abstraction, now split into conversation-loading, model-running, terminal-tool execution, product web-view tool execution, transcript-writing, cached cwd path-context stamping, and cancellation ownership units.
 
 ### `llm/` → [llm.spec.md](./llm/llm.spec.md)
 
@@ -162,7 +187,7 @@ Push notification helpers covering unread attention math, APNs delivery, and out
 
 ### `routes/` → [routes.spec.md](./routes/routes.spec.md)
 
-REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, and split thread/message/agent/terminal/file-viewer modules, all enforcing per-user ownership across browser-facing resources.
+REST API route handlers for buds, current-user auth surfaces, device claims, proxy/file sessions, product proxied sites, and split thread/message/agent/terminal/file-viewer modules, all enforcing per-user ownership across browser-facing resources.
 
 ### `runtime/` → [runtime.spec.md](./runtime/runtime.spec.md)
 
@@ -178,7 +203,7 @@ Phase 0 daemon-network upgrade helpers and compatibility protobuf wire codec for
 
 ### `proxy/` → [proxy/proxy.spec.md](./proxy/proxy.spec.md)
 
-Phase 4.2 localhost proxy helpers for strict target/method validation, carrier-neutral data-plane readiness checks, owned `proxy_session` persistence, daemon `proxy_open` dispatch, and bounded GET/HEAD response streaming over the selected WebSocket/HTTP2 carrier.
+Phase 4 localhost proxy helpers plus product proxied-site helpers for strict target/method validation, carrier-neutral data-plane readiness checks, owned `proxy_session` / durable `proxied_site` persistence, private viewer grants/cookies, endpoint-host local-app cookie filtering, daemon `proxy_open` dispatch, bounded request-body forwarding plus response streaming over the selected WebSocket/HTTP2 carrier, and Phase 5 endpoint-host WebSocket upgrades over the `proxy_ws_*` daemon frame family.
 
 ### `files/` → [files/files.spec.md](./files/files.spec.md)
 
@@ -257,7 +282,7 @@ POST /api/threads/:id/messages
                   │
                   ├─► Extract tool_call or final
                   │
-                  ├─► terminal-tool-executor.ts
+                  ├─► terminal-tool-executor.ts / web-view-tool-executor.ts
                   │
                   └─► transcript-writer.ts / agent runtime / notifications outbox
 ```

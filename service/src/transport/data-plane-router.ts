@@ -173,6 +173,13 @@ export type StreamResetFrame = z.infer<typeof StreamResetSchema>;
 export type StreamCloseFrame = z.infer<typeof StreamCloseSchema>;
 
 export const dataPlaneSessions = new Map<string, DataPlaneSessionTracker>();
+const dataPlaneStreamFrameQueues = new WeakMap<DataPlaneSessionTracker, Map<string, Promise<void>>>();
+
+type DataPlaneStreamFrameHandlerArgs = {
+  logger: FastifyBaseLogger;
+  daemonStateStore?: DaemonStateStore;
+  component?: string;
+};
 
 export function dataPlaneSessionKey(
   budId: string,
@@ -548,11 +555,22 @@ export function parseStreamDataFrame(raw: unknown): StreamDataFrame | null {
 export async function handleDataPlaneStreamFrame(
   tracker: DataPlaneSessionTracker,
   raw: unknown,
-  args: {
-    logger: FastifyBaseLogger;
-    daemonStateStore?: DaemonStateStore;
-    component?: string;
-  },
+  args: DataPlaneStreamFrameHandlerArgs,
+): Promise<void> {
+  const frameType = isRecord(raw) && typeof raw.type === "string" ? raw.type : undefined;
+  const streamId = isRecord(raw) && typeof raw.stream_id === "string" ? raw.stream_id : null;
+  if (isOrderedDataPlaneStreamFrameType(frameType) && streamId) {
+    await enqueueDataPlaneStreamFrame(tracker, streamId, () => dispatchDataPlaneStreamFrame(tracker, raw, args));
+    return;
+  }
+
+  await dispatchDataPlaneStreamFrame(tracker, raw, args);
+}
+
+async function dispatchDataPlaneStreamFrame(
+  tracker: DataPlaneSessionTracker,
+  raw: unknown,
+  args: DataPlaneStreamFrameHandlerArgs,
 ): Promise<void> {
   const frameType = isRecord(raw) && typeof raw.type === "string" ? raw.type : undefined;
   switch (frameType) {
@@ -575,6 +593,38 @@ export async function handleDataPlaneStreamFrame(
       );
       break;
   }
+}
+
+async function enqueueDataPlaneStreamFrame(
+  tracker: DataPlaneSessionTracker,
+  streamId: string,
+  handler: () => Promise<void>,
+): Promise<void> {
+  let queues = dataPlaneStreamFrameQueues.get(tracker);
+  if (!queues) {
+    queues = new Map();
+    dataPlaneStreamFrameQueues.set(tracker, queues);
+  }
+
+  const previous = queues.get(streamId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(handler);
+  queues.set(streamId, current);
+  try {
+    await current;
+  } finally {
+    if (queues.get(streamId) === current) {
+      queues.delete(streamId);
+    }
+  }
+}
+
+function isOrderedDataPlaneStreamFrameType(frameType: string | undefined): boolean {
+  return (
+    frameType === "stream_data" ||
+    frameType === "stream_credit" ||
+    frameType === "stream_reset" ||
+    frameType === "stream_close"
+  );
 }
 
 export async function finalizeDataPlaneSessionTracker(args: {

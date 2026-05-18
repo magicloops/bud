@@ -23,6 +23,12 @@ Contributor-facing usage guide for the daemon.
 
 Shell-export template for local daemon development.
 
+### `.env.https.example`
+
+Optional shell-export template for routing the daemon through the local
+mkcert+Caddy HTTPS parity profile at
+`wss://localhost:3443/ws`.
+
 ### `Cargo.toml`
 
 Rust package manifest for the daemon crate and its runtime dependencies.
@@ -164,6 +170,10 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 | `--terminal-rows` | `BUD_TERMINAL_ROWS` | `50` | Terminal height |
 | `--debug` | `BUD_DEBUG` | `false` | Debug logging |
 
+The default local env template targets `ws://localhost:3000/ws`. The optional
+HTTPS parity template targets `wss://localhost:3443/ws` through the repo-root
+Caddy profile.
+
 ## Dependencies
 
 ### Runtime requirements
@@ -176,6 +186,10 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 - Rust stable toolchain
 - system trust store support for TLS
 - `protoc` available on `PATH` for tonic/prost code generation
+
+The daemon's Rustls-backed HTTP and WebSocket clients use native OS root
+certificates, so the optional local HTTPS profile trusts mkcert certificates
+after `mkcert -install`.
 
 ## Known Issues
 

@@ -3,7 +3,12 @@
 .env
 .env.*
 !service/.env.example
+!service/.env.https.example
 !web/.env.example
+!web/.env.https.example
+!bud/.env.example
+!bud/.env.https.example
+.certs/
 .idea/
 .vscode/
 

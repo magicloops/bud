@@ -199,8 +199,54 @@ pub struct ProxyOpenFrame {
     pub method: String,
     pub path: String,
     pub headers: Option<HashMap<String, String>>,
+    pub request_body_bytes: Option<u64>,
     pub initial_credit_bytes: Option<u64>,
     pub max_chunk_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProxyWebSocketOpenFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub operation_id: String,
+    pub ws_session_id: String,
+    pub proxied_site_id: Option<String>,
+    pub stream_type: String,
+    pub target_host: String,
+    pub target_port: u16,
+    pub path: String,
+    pub protocols: Option<Vec<String>>,
+    pub max_message_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProxyWebSocketMessageFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub ws_session_id: String,
+    pub message_type: String,
+    pub data: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProxyWebSocketCloseFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub ws_session_id: String,
+    pub code: Option<u16>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct ProxyWebSocketErrorFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub ws_session_id: String,
+    pub error: Value,
 }
 
 #[derive(Debug, Deserialize, Clone)]

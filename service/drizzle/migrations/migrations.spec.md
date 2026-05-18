@@ -144,6 +144,15 @@ Placeholder to ensure the directory exists in git.
 - Adds foreign keys to `thread`, `message`, and `llm_call`
 - Adds provider diagnostics, call-sequence, thread-created, tool-call, and message-link indexes
 
+### `0018_luxuriant_bloodstorm.sql`
+
+**Durable product web proxy**:
+- Creates `proxied_site` for long-lived owner-private web proxy endpoints with generated slugs, endpoint hosts, loopback target host/port/path, enabled/expiry/renewal state, audit correlation, and owner stamps
+- Creates `thread_web_view` for the current thread-to-proxied-site attachment
+- Creates `proxied_site_viewer_grant` for short-lived one-time bootstrap tokens
+- Creates `proxied_site_viewer_session` for hashed endpoint-host viewer cookies with Better Auth session refresh binding
+- Adds owner, endpoint-host, attachment, grant, and viewer-session indexes plus foreign keys to `bud`, `thread`, `bud_operation`, `bud_stream`, and `auth.user`
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -154,7 +163,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0017` currently)
+- Snapshot files for each migration (`0000` through `0018` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -223,6 +232,9 @@ v16: thread model-preference persistence
  │
  ▼
 v17: LLM provider-call and ordered-item ledger
+ │
+ ▼
+v18: durable proxied-site, thread web-view attachment, viewer-grant, and viewer-session schema
 ```
 
 ---

@@ -1,0 +1,14 @@
+{
+  "name": "bud",
+  "private": true,
+  "description": "Bud repo-level developer scripts.",
+  "scripts": {
+    "dev:https": "node dev/local-https.mjs start",
+    "dev:https:setup": "node dev/local-https.mjs setup",
+    "dev:https:check": "node dev/local-https.mjs check",
+    "dev:https:provision-ios": "node dev/local-https.mjs provision-ios"
+  },
+  "engines": {
+    "node": ">=20.19.0 || >=22.12.0"
+  }
+}

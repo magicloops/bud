@@ -9,9 +9,9 @@ import {
   DEFAULT_READINESS_HINTS,
   buildEffectiveToolArgs,
   serializeTerminalDelta,
-  type AgentToolCallDirective,
   type ExecutedTerminalTool,
   type TerminalCallResult,
+  type TerminalToolCallDirective,
 } from "./contracts.js";
 
 type SessionResolver = (threadId: string) => Promise<TerminalSession>;
@@ -39,7 +39,7 @@ export class TerminalToolExecutor {
 
   async execute(
     threadId: string,
-    directive: AgentToolCallDirective,
+    directive: TerminalToolCallDirective,
   ): Promise<ExecutedTerminalTool> {
     const result = await this.executeDirective(threadId, directive);
     const args = buildEffectiveToolArgs(directive);
@@ -75,7 +75,7 @@ export class TerminalToolExecutor {
 
   private async executeDirective(
     threadId: string,
-    directive: AgentToolCallDirective,
+    directive: TerminalToolCallDirective,
   ): Promise<TerminalCallResult> {
     const session = await this.resolveSession(threadId);
     const sessionId = session.sessionId;
@@ -268,7 +268,7 @@ export class TerminalToolExecutor {
   }
 
   private buildToolSummary(
-    directive: AgentToolCallDirective,
+    directive: TerminalToolCallDirective,
     result: TerminalCallResult,
   ): string {
     switch (directive.tool) {
@@ -310,7 +310,7 @@ export class TerminalToolExecutor {
   }
 
   private getToolOutputTruncationReason(
-    directive: AgentToolCallDirective,
+    directive: TerminalToolCallDirective,
     result: TerminalCallResult,
   ): "bud_runtime_limit" | "service_backfill_limit" | null {
     if (!result.truncated) {
@@ -326,7 +326,7 @@ export class TerminalToolExecutor {
   }
 
   private validateTerminalSendDirective(
-    directive: Extract<AgentToolCallDirective, { tool: "terminal.send" }>,
+    directive: Extract<TerminalToolCallDirective, { tool: "terminal.send" }>,
     state: {
       hasTextField: boolean;
       hasText: boolean;

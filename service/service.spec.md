@@ -59,8 +59,23 @@ Checked-in template for local service setup. Includes:
 - the local iOS-auth recommendation that `BETTER_AUTH_URL` and `APP_BASE_URL` both point at `http://localhost:5173` while the Fastify process still listens on `http://localhost:3000`
 - the local browser-workbench recommendation that the web app sets `VITE_API_BASE_URL=http://localhost:3000` so API/SSE traffic bypasses the Vite-origin proxy path during multi-tab terminal work
 - the prototype-deployment recommendation that `APP_BASE_URL` and `BETTER_AUTH_URL` collapse to one public origin, `API_AUDIENCE` points at that origin's `/api` path, and `OAUTH_TRUSTED_CLIENT_IDS` includes the published first-party mobile client ids for that environment
+- hosted web-view proxy hints for `PROXY_PUBLIC_SCHEME`, `PROXY_BASE_DOMAIN`,
+  `PROXY_GATEWAY_ENABLED`, `PROXY_VIEWER_COOKIE_NAME`, and
+  `PROXY_EDGE_SECRET` when Cloudflare forwards `*.bud.show` to the service
 - optional APNs push-notification settings (`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_FILE`, `APNS_PRIVATE_KEY`, `APNS_DEFAULT_TOPIC`, `APNS_ALLOWED_TOPICS`)
 - optional LLM provider settings
+
+### `.env.https.example`
+
+Optional local HTTPS parity template for the mkcert+Caddy profile. It keeps the
+Fastify service on `http://127.0.0.1:3000`, exposes app/auth/API/SSE/Bud
+WebSocket traffic through `https://localhost:3443`, and configures durable
+proxied-site endpoint hosts as `https://<slug>.bud-show.test:3443` with
+`SameSite=None; Secure` viewer-cookie behavior. The `.test` proxy base domain
+requires explicit local wildcard DNS such as dnsmasq. The repo-root
+`pnpm dev:https` launcher should be used for this profile because it injects
+`NODE_EXTRA_CA_CERTS=<mkcert CAROOT>/rootCA.pem` before the service Node
+process starts, which lets bearer verification fetch the public HTTPS JWKS URL.
 
 ### `.env` (not committed)
 
@@ -74,7 +89,7 @@ Main source code:
 - `server.ts` - Entry point
 - `config.ts` - Environment configuration
 - `auth/` - Better Auth integration and session helpers
-- `agent/` - LLM integration with extracted conversation/model/tool/transcript ownership seams
+- `agent/` - LLM integration with extracted conversation/model/terminal-tool/web-view-tool/transcript ownership seams
 - `db/` - Database layer
 - `notifications/` - Push notification helpers, APNs provider, and async outbox worker
 - `routes/` - HTTP endpoints, with split thread submodules under `routes/threads/`
@@ -82,7 +97,7 @@ Main source code:
 - `terminal/` - Terminal types
 - `grpc/` - Opt-in grpc-js daemon control gateway and envelope adapter
 - `proto/` - Network-upgrade envelope helpers and typed protobuf WebSocket carrier codec
-- `proxy/` - Phase 4.2 localhost proxy session validation, persistence helpers, transport readiness checks, daemon open dispatch, and GET/HEAD streaming bridge
+- `proxy/` - Phase 4.2 localhost proxy session validation plus product proxied-site resources, viewer grants/cookies, transport readiness checks, daemon open dispatch, and GET/HEAD streaming bridge
 - `files/` - Phase 4.4 file session validation, persistence helpers, transport readiness checks, daemon open dispatch, and stat/read/range streaming bridge
 - `transport/` - Daemon transport router interface, explicit carrier policy, composite gRPC/WebSocket adapters, gateway drain helper, optional-carrier health metadata, and selected/skipped carrier observability for file/proxy data-plane work
 - `ws/` - WebSocket gateway shell plus extracted Bud connection/tracker/protocol helpers
@@ -121,6 +136,11 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
 | `oauth:provision:ios-staging` | `node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using the checked-in staging env file |
 
+For the local mkcert+Caddy HTTPS profile, prefer the repo-root
+`pnpm dev:https:provision-ios` wrapper. It runs `oauth:provision:ios-local`
+with HTTPS public-origin values and `NODE_EXTRA_CA_CERTS` set before Node
+startup.
+
 ## API Overview
 
 ### REST Endpoints
@@ -144,6 +164,16 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `GET` | `/api/proxy-sessions/:id` | Read one owned proxy session |
 | `DELETE` | `/api/proxy-sessions/:id` | Revoke one owned proxy session |
 | `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS` | `/api/proxy/:id/*` | Authorize a proxy edge request; stream GET/HEAD through the daemon over the selected data-plane carrier; fail closed for unsupported methods or missing transport |
+| `POST` | `/api/buds/:id/proxied-sites` | Create or reuse an owned durable proxied site for a Bud loopback web server |
+| `GET` | `/api/buds/:id/proxied-sites` | List owned proxied sites for a Bud |
+| `GET` | `/api/proxied-sites/:id` | Read one owned proxied site |
+| `PATCH` | `/api/proxied-sites/:id` | Rename, update path, enable, or disable one owned proxied site |
+| `DELETE` | `/api/proxied-sites/:id` | Disable one owned proxied site |
+| `GET` | `/api/threads/:id/web-view` | Read the current owned thread web-view attachment |
+| `POST` | `/api/threads/:id/web-view/attach` | Attach an owned proxied site to a thread |
+| `DELETE` | `/api/threads/:id/web-view` | Detach the current thread web view |
+| `POST` | `/api/proxied-sites/:id/viewer-grants` | Mint a one-time private proxy-domain viewer bootstrap URL |
+| `GET/HEAD` | `/*` on configured proxy endpoint hosts | Bootstrap viewer cookies and stream authorized proxied-site traffic through the daemon |
 | `POST` | `/api/buds/:id/file-sessions` | Create a short-lived owned file session for a workspace-relative path |
 | `GET` | `/api/buds/:id/file-sessions` | List owned file sessions for a Bud |
 | `GET` | `/api/file-sessions/:id` | Read one owned file session |

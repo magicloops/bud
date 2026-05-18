@@ -29,6 +29,42 @@ Optional:
 - `VITE_ROUTER_DEVTOOLS=true`
 - `VITE_SHOW_SYSTEM_MESSAGES=false`
 
+## Optional Local HTTPS
+
+Local HTTPS is not required for normal web development. Use
+[web/.env.https.example](./.env.https.example) only when validating browser
+behavior through the mkcert+Caddy parity profile.
+
+In the HTTPS profile:
+
+- Vite still runs with `pnpm dev` on `http://localhost:5173`.
+- Caddy exposes the app at `https://localhost:3443`.
+- Caddy exposes generated proxy endpoint hosts at
+  `https://<slug>.bud-show.test:3443`.
+- Browser API and SSE calls stay same-origin through Caddy because
+  `VITE_API_BASE_URL` is left unset.
+- Caddy routes `/api/*`, `/.well-known/*`, and `/ws` directly to the service.
+
+The proxy endpoint domain requires local wildcard DNS:
+`*.bud-show.test -> 127.0.0.1`. The repo-root setup/check commands validate
+that DNS before treating the HTTPS profile as ready.
+
+The package-local `pnpm dev` command is unchanged for normal HTTP web work. For
+the HTTPS profile, prefer the repo-root launcher:
+
+```bash
+pnpm dev:https:setup
+pnpm dev:https
+```
+
+`pnpm dev:https` owns Vite, the service dev server, and Caddy. It forces
+`VITE_API_BASE_URL` to an empty value for the Vite child process so browser API
+and SSE calls stay same-origin through Caddy.
+
+Open `https://localhost:3443` after the launcher reports ready. If Caddy
+returns a 502 for `/`, confirm Vite is still running at
+`http://localhost:5173`.
+
 ## Prototype Deployment Contract
 
 For the current prototype deployment, the browser should still see one public origin even though `web` and `service` deploy as separate workloads behind it.
@@ -45,6 +81,9 @@ Cross-origin browser API mode is intentionally not the default deployment path f
 ## Local Run
 
 Open the app at `http://localhost:5173` after starting the service from [service/](../service).
+
+When using the optional HTTPS profile, open
+`https://localhost:3443` instead.
 
 The important routes for auth testing are:
 

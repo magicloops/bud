@@ -17,6 +17,8 @@ import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
 import { registerMeRoutes } from "./routes/me.js";
 import { registerProxyRoutes } from "./routes/proxy.js";
 import { registerFileRoutes } from "./routes/files.js";
+import { registerProxiedSiteRoutes } from "./routes/proxied-sites.js";
+import { isProxyGatewayRequest, type ProxyGatewayRequestHeaders } from "./proxy/proxied-site.js";
 import { AgentRuntimeStateManager } from "./runtime/agent-runtime-state.js";
 import { PushNotificationWorker } from "./notifications/index.js";
 import { startGrpcControlGateway } from "./grpc/control-gateway.js";
@@ -26,6 +28,7 @@ const SERVICE_VERSION = "0.0.1";
 const CORS_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
 const DEFAULT_CORS_HEADERS = "Authorization, Content-Type, Last-Event-ID";
 const SHUTDOWN_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+const WEBSOCKET_SUBPROTOCOL_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean {
   const origin = request.headers.origin;
@@ -47,8 +50,25 @@ function applyCorsHeaders(request: FastifyRequest, reply: FastifyReply): boolean
   return true;
 }
 
+function selectProxyWebSocketSubprotocol(
+  protocols: Set<string>,
+  request: { headers?: ProxyGatewayRequestHeaders },
+): string | false {
+  if (!request.headers || !isProxyGatewayRequest(request.headers)) {
+    return protocols.values().next().value ?? false;
+  }
+  for (const protocol of protocols) {
+    const value = protocol.trim();
+    if (value.length > 0 && value.length <= 128 && WEBSOCKET_SUBPROTOCOL_TOKEN.test(value)) {
+      return value;
+    }
+  }
+  return false;
+}
+
 export async function buildServer(): Promise<FastifyInstance> {
   const server = Fastify({
+    bodyLimit: config.proxySessionMaxRequestBodyBytes,
     logger: {
       level: config.logLevel,
       transport:
@@ -72,6 +92,9 @@ export async function buildServer(): Promise<FastifyInstance> {
       done(null, body);
     },
   );
+  server.addContentTypeParser("*", { parseAs: "buffer" }, (_request, body, done) => {
+    done(null, body);
+  });
 
   server.addHook("onRequest", async (request, reply) => {
     const origin = request.headers.origin;
@@ -131,6 +154,7 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   await server.register(websocketPlugin, {
     options: {
+      handleProtocols: selectProxyWebSocketSubprotocol,
       perMessageDeflate: {
         threshold: 1024,
         serverNoContextTakeover: true,
@@ -145,6 +169,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerBudRoutes(server, terminalSessionManager);
   await registerProxyRoutes(server);
   await registerFileRoutes(server);
+  await registerProxiedSiteRoutes(server);
   await registerThreadRoutes(
     server,
     agentService,

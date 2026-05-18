@@ -28,10 +28,13 @@ test("proxy runtime resolves open results and streams data to the response body"
     accepted: true,
     status_code: 200,
     headers: { "content-type": "text/plain" },
+    set_cookies: ["app_session=abc; Path=/"],
   });
 
   assert.equal(parsed?.accepted, true);
-  assert.equal((await wait).status_code, 200);
+  const openResult = await wait;
+  assert.equal(openResult.status_code, 200);
+  assert.deepEqual(openResult.set_cookies, ["app_session=abc; Path=/"]);
 
   await runtime.handleData(Buffer.from("hello"));
   runtime.handleClose();

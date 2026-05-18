@@ -22,6 +22,7 @@ export type TransportKind = (typeof TRANSPORT_KINDS)[number];
 export const STREAM_TYPES = [
   "terminal_interactive",
   "localhost_http_proxy",
+  "localhost_websocket_proxy",
   "file_read",
 ] as const;
 

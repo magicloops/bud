@@ -16,9 +16,11 @@ import { ChatTimeline } from '@/components/workbench/chat-timeline'
 import { ThinkingIndicator } from '@/components/workbench/thinking-indicator'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
+import { WebViewPane } from '@/components/workbench/web-view-pane'
 import { DebugPanel } from '@/components/debug-panel'
 import { useAgentStream } from '@/features/threads/use-agent-stream'
 import { useFileViewer } from '@/features/threads/use-file-viewer'
+import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
 import {
@@ -96,6 +98,9 @@ function ThreadView() {
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
     return isAuthRedirectPending() || response?.status === 401
   }, [])
+  const handleFeatureError = useCallback((message: string) => {
+    setError(message)
+  }, [])
   const {
     messages,
     messagePage,
@@ -118,7 +123,7 @@ function ThreadView() {
     initialMessagePage,
     initialAgentState,
     threadId,
-    onError: (message) => setError(message),
+    onError: handleFeatureError,
     shouldAbortForUnauthorized,
   })
   const agentStreamCursorSetterRef = useRef<(cursor: string | null) => void>(() => {})
@@ -129,9 +134,16 @@ function ThreadView() {
     closeFileViewer,
   } = useFileViewer({
     threadId,
-    onError: (message) => setError(message),
+    onError: handleFeatureError,
     shouldAbortForUnauthorized,
   })
+  const webView = useWebView({
+    budId,
+    threadId,
+    onError: handleFeatureError,
+    shouldAbortForUnauthorized,
+  })
+  const refreshThreadWebView = webView.refreshWebViews
 
   // Update messages when loader data changes
   useEffect(() => {
@@ -291,6 +303,15 @@ function ThreadView() {
     setViewMode('terminal')
   }, [closeFileViewer])
 
+  const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
+    applyToolResultMessage(message)
+    const tool = typeof message.metadata?.tool === 'string' ? message.metadata.tool : null
+    if (tool?.startsWith('web_view.')) {
+      setViewMode('web')
+      void refreshThreadWebView()
+    }
+  }, [applyToolResultMessage, refreshThreadWebView])
+
   const {
     ensureConnected: ensureAgentStreamConnected,
     setStreamCursor: setAgentStreamCursor,
@@ -300,7 +321,7 @@ function ThreadView() {
     onStatusChange: setStatus,
     onError: setError,
     onToolCall: applyToolCall,
-    onToolResultMessage: applyToolResultMessage,
+    onToolResultMessage: handleToolResultMessage,
     onAssistantMessageStart: applyAssistantMessageStart,
     onAssistantMessageDelta: applyAssistantMessageDelta,
     onAssistantMessageDone: applyAssistantMessageDone,
@@ -327,7 +348,7 @@ function ThreadView() {
     threadId,
     viewMode,
     threadPanelOpen,
-    onError: (message) => setError(message),
+    onError: handleFeatureError,
     shouldAbortForUnauthorized,
     updateBudStatus,
   })
@@ -463,6 +484,23 @@ function ThreadView() {
             terminalScrolledToTop={terminalScrolledToTop}
             terminalState={terminalState}
             viewMode={viewMode === 'web' ? 'web' : 'terminal'}
+            webViewPane={(
+              <WebViewPane
+                activePath={webView.activePath}
+                activeSite={webView.activeSite}
+                errorMessage={webView.errorMessage}
+                iframeSrc={webView.iframeSrc}
+                onDetach={webView.detachWebView}
+                onOpenLocalApp={webView.openLocalApp}
+                onOpenStandalone={webView.openStandaloneWebView}
+                onReload={webView.reloadWebView}
+                onSelectSite={webView.selectSite}
+                sites={webView.sites}
+                status={webView.status}
+                transport={webView.transport}
+                websocketTransport={webView.websocketTransport}
+              />
+            )}
             showDisconnectOverlay={showDisconnectOverlay}
             onCancelAgentTurn={cancelAgentTurn}
             onFocusTerminal={focusTerminal}

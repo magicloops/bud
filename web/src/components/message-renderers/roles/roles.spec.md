@@ -41,6 +41,8 @@ Shared markdown renderer using `react-markdown` with:
 - When `fileActions` are supplied, local Markdown links and inline-code path candidates render explicit file-open controls; external links and low-confidence inline code remain inert/normal
 - The renderer can restrict allowed file path kinds and render unsupported local links inert, which lets Markdown file previews open absolute POSIX links without letting relative preview links navigate to same-origin 404s
 - Long local file paths and link labels wrap inside the message bubble so the file-open control remains visible instead of forcing horizontal scroll
+- Local file-link actions render a plain-text label inside the link action so
+  inline-code path affordances cannot produce nested `<button>` markup
 
 **Code Block Handling**:
 - Fenced code blocks (````lang`) use `CodeBlock` component with syntax highlighting and copy button on hover

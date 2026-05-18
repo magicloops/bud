@@ -33,6 +33,12 @@ Bud does not auto-load `.env` itself; you need to export the variables in your s
 | `BUD_DEBUG` | `--debug` | Extra Bud logging |
 | `BUD_ENROLLMENT_TOKEN` | `--token` | Legacy/manual enrollment fallback |
 
+For the optional local HTTPS profile, copy
+[bud/.env.https.example](./.env.https.example) to `.env` or set
+`BUD_SERVER_URL=wss://localhost:3443/ws`. The daemon run command is
+unchanged; Caddy forwards that WSS connection to the same service `/ws`
+endpoint.
+
 Bud also persists a stable non-secret installation identity beside the configured identity file. With the default settings that path is `~/.bud/installation-id`.
 
 Bud does not use the current shell directory as a state root. Running the binary from a different directory only changes isolation if your launcher also points `BUD_IDENTITY_FILE` and `BUD_TERMINAL_BASE_DIR` at that directory.
@@ -43,6 +49,15 @@ Start the service and web app first, then:
 
 ```bash
 cd bud
+set -a; source .env; set +a
+cargo run -- --terminal-enabled
+```
+
+With the optional HTTPS profile, start Caddy from the repo root first and use
+the HTTPS env example before running the same command:
+
+```bash
+cp .env.https.example .env
 set -a; source .env; set +a
 cargo run -- --terminal-enabled
 ```

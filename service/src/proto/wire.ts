@@ -54,6 +54,11 @@ const TYPED_PAYLOAD_FIELD_BY_FRAME_TYPE: Record<string, number> = {
   file_open_result: 179,
   file_resolve: 180,
   file_resolve_result: 181,
+  proxy_ws_open: 182,
+  proxy_ws_open_result: 183,
+  proxy_ws_message: 184,
+  proxy_ws_close: 185,
+  proxy_ws_error: 186,
 };
 
 const FRAME_TYPE_BY_TYPED_PAYLOAD_FIELD = new Map(
@@ -103,12 +108,14 @@ const STREAM_TYPE_PROTO_VALUES: Record<string, number> = {
   terminal_interactive: 1,
   localhost_http_proxy: 2,
   file_read: 3,
+  localhost_websocket_proxy: 4,
 };
 
 const STREAM_TYPE_JSON_VALUES: Record<number, string> = {
   1: "terminal_interactive",
   2: "localhost_http_proxy",
   3: "file_read",
+  4: "localhost_websocket_proxy",
 };
 
 const OPERATION_STATE_PROTO_VALUES: Record<string, number> = {

@@ -9,6 +9,9 @@ test("system prompt documents only public wait_for modes", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"settled"/);
   assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"changed"/);
   assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"none"/);
+  assert.match(AGENT_SYSTEM_PROMPT, /target_host:"localhost"/);
+  assert.match(AGENT_SYSTEM_PROMPT, /Do not substitute 127\.0\.0\.1 for localhost/);
+  assert.match(AGENT_SYSTEM_PROMPT, /the service defaults to localhost/);
 });
 
 test("load normalizes persisted tool rows and preserves preferred cwd context", async (t) => {

@@ -54,6 +54,10 @@ Drizzle schema definitions. Defines all tables:
 | `budOperationTable` | Durable daemon-directed operation lifecycle | `operationId`, `budId`, `threadId`, `terminalSessionId`, `operationType`, `trafficClass`, `state`, `idempotencyKey`, typed error columns |
 | `budStreamTable` | Durable daemon stream lifecycle and checkpoints | `streamId`, `operationId`, `budId`, `streamType`, `state`, `sendOffset`, `receiveOffset`, `creditWindowBytes`, `resetReason` |
 | `proxySessionTable` | Phase 4 localhost proxy session contract | `proxySessionId`, `budId`, optional `threadId`, optional `operationId` / `activeStreamId`, target host/port, allowed methods, state, expiry, revocation, audit correlation |
+| `proxiedSiteTable` | Durable product web-proxy resource | `proxiedSiteId`, `budId`, `displayName`, `slug`, `endpointHost`, loopback target host/port/path, access policy, enabled/expiry/renewal fields, audit correlation |
+| `threadWebViewTable` | Current thread attachment to a durable proxied site | `threadId`, `budId`, `proxiedSiteId`, optional `selectedPath`, owner stamps |
+| `proxiedSiteViewerGrantTable` | Short-lived one-time viewer bootstrap grants for proxy-domain auth | `viewerGrantId`, `proxiedSiteId`, `grantHash`, `redirectPath`, `expiresAt`, `consumedAt`, `authSessionId` |
+| `proxiedSiteViewerSessionTable` | Cookie-backed private-owner viewer sessions on proxy endpoint hosts | `viewerSessionId`, `proxiedSiteId`, `tokenHash`, `expiresAt`, `lastSeenAt`, `lastRefreshedAt`, `revokedAt`, `authSessionId` |
 | `fileSessionTable` | Phase 4 file session contract | `fileSessionId`, `budId`, optional `threadId`, optional `operationId` / `activeStreamId`, root key, relative path, permissions, max bytes, state, content identity, expiry, revocation, audit correlation |
 | `auditEventTable` | Append-only audit foundation for daemon/network events | `auditEventId`, `budId`, `userId`, `operationId`, `streamId`, `eventType`, `eventData` |
 
@@ -218,6 +222,10 @@ budTable
     ├── 1:N ──► deviceSessionTable ──► transportSessionTable
     ├── 1:N ──► budOperationTable ──► budStreamTable
     ├── 1:N ──► proxySessionTable
+    ├── 1:N ──► proxiedSiteTable ──► threadWebViewTable
+    │             │
+    │             ├── 1:N ──► proxiedSiteViewerGrantTable
+    │             └── 1:N ──► proxiedSiteViewerSessionTable
     ├── 1:N ──► fileSessionTable
     ├── 1:N ──► auditEventTable
     ├── enrollmentTokenTable (no FK)
@@ -230,7 +238,7 @@ budTable
 
 `drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0017`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, and add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes.
+Checked-in migrations now run cleanly through `0018`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes, and add durable web-proxy `proxied_site`, thread attachment, viewer grant, and viewer session tables.
 
 ## Ownership And Multi-Tenancy Support
 
@@ -255,6 +263,9 @@ Network-upgrade durable rows follow the same ownership direction:
 - daemon-originated reconciliation rows may temporarily have no user stamp until tied back to an owning thread, proxy session, or file session
 - `proxy_session.created_by_user_id` scopes browser-visible proxy session reads, lists, revokes, and edge attaches
 - `file_session.created_by_user_id` scopes browser-visible file session reads, lists, revokes, and edge attaches
+- `proxied_site.created_by_user_id` scopes browser-visible product web-proxy inventory, lifecycle mutations, viewer-grant creation, and gateway host resolution before daemon streams open
+- `thread_web_view.created_by_user_id` scopes thread web-view attachment reads/detaches and points at an owned `proxied_site`
+- `proxied_site_viewer_grant` and `proxied_site_viewer_session` are stamped with the owner user and only bootstrap private-owner access for the matching endpoint host
 
 `tenantId` columns remain nullable and unused in this tranche.
 

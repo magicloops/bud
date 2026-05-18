@@ -13,7 +13,7 @@ libc = "0.2"
 nix = { version = "0.28", default-features = false, features = ["fs", "signal", "term"] }
 prost = "0.14"
 qrcodegen = "1.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "stream"] }
 rustls = "0.23"
 rustls-native-certs = "0.7"
 serde = { version = "1.0", features = ["derive"] }
@@ -23,7 +23,7 @@ sha2 = "0.10"
 tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "signal", "fs", "time", "process", "sync"] }
 tokio-rustls = "0.25"
 tokio-stream = "0.1"
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 tonic = "0.14"
 tonic-prost = "0.14"
 tracing = "0.1"

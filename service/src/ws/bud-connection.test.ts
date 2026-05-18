@@ -325,6 +325,146 @@ test("WebSocket stream frames dispatch into the shared data-plane runtime", asyn
   assert.deepEqual(sentFrames.map((frame) => frame.type), ["stream_credit"]);
 });
 
+test("WebSocket stream frame dispatch is not blocked by activity heartbeat writes", async (t) => {
+  t.after(() => {
+    sessions.clear();
+    dataPlaneSessions.clear();
+  });
+  sessions.clear();
+  dataPlaneSessions.clear();
+
+  const socket = createSocket();
+  const connection = new BudConnection(createServer() as never, socket as never, {
+    async rejectPendingRequestsForBud() {
+      // noop
+    },
+  } as never);
+  let releaseHeartbeat!: () => void;
+  const heartbeatCanFinish = new Promise<void>((resolve) => {
+    releaseHeartbeat = resolve;
+  });
+  Reflect.set(connection, "daemonStateStore", {
+    async recordHeartbeat() {
+      await heartbeatCanFinish;
+    },
+    async transitionStream() {
+      // noop
+    },
+    async appendAuditEvent() {
+      // noop
+    },
+  });
+
+  const sessionTracker: SessionTracker = {
+    budId: "b_test",
+    sessionId: "s_test",
+    deviceSessionId: "ds_test",
+    transportSessionId: "ts_ws",
+    drainState: "active",
+    lastHeartbeat: Date.now(),
+    socket: socket as never,
+    supportsEnvelopeBinary: true,
+    supportsStreamFrames: true,
+    streamFamilies: new Set(["localhost_http_proxy"]),
+  };
+  sessions.set("b_test", sessionTracker);
+  Reflect.set(connection, "tracker", sessionTracker);
+  Reflect.set(connection, "state", {
+    kind: "connected",
+    budId: "b_test",
+    sessionId: "s_test",
+    hello: {
+      capabilities: {
+        max_concurrency: 1,
+        sessions: true,
+        terminal: true,
+        bud_envelope: {
+          version: 1,
+          websocket_binary: true,
+          stream_frames: true,
+        },
+      },
+    },
+  });
+
+  const resetFrames: unknown[] = [];
+  const closeFrames: unknown[] = [];
+  const sentFrames: Record<string, unknown>[] = [];
+  const dataTracker: DataPlaneSessionTracker = {
+    budId: "b_test",
+    deviceSessionId: "ds_test",
+    controlTransportSessionId: "ts_ws",
+    transportSessionId: "ts_ws",
+    transportKind: "websocket",
+    role: "control_data",
+    drainState: "active",
+    lastSeenAt: Date.now(),
+    streams: new Set(["localhost_http_proxy"]),
+    framesReceived: 0,
+    bytesReceived: 0,
+    runtimeStreams: new Map(),
+    maxChunkBytes: 16 * 1024,
+    initialCreditBytes: 1024 * 1024,
+    maxInFlightBytes: 1024 * 1024,
+    sendFrame(frame) {
+      sentFrames.push(frame);
+    },
+    isActive() {
+      return true;
+    },
+  };
+  registerActiveDataPlaneSessionTracker(dataTracker);
+  registerDataPlaneRuntimeStream(dataTracker, {
+    streamId: "st_test",
+    streamType: "localhost_http_proxy",
+    initialReceiveCreditBytes: 16,
+    onReset(frame) {
+      resetFrames.push(frame);
+    },
+    onClose(frame) {
+      closeFrames.push(frame);
+    },
+  });
+
+  const handleRaw = Reflect.get(connection, "handleRaw") as (raw: string) => Promise<void>;
+  const dataPromise = handleRaw.call(
+    connection,
+    JSON.stringify({
+      proto: "0.1",
+      type: "stream_data",
+      id: "msg_stream_data",
+      ts: 1777132800000,
+      ext: {},
+      stream_id: "st_test",
+      stream_type: "localhost_http_proxy",
+      offset: 0,
+      data: Buffer.from("hello").toString("base64"),
+      end_stream: false,
+    }),
+  );
+  const closePromise = handleRaw.call(
+    connection,
+    JSON.stringify({
+      proto: "0.1",
+      type: "stream_close",
+      id: "msg_stream_close",
+      ts: 1777132800001,
+      ext: {},
+      stream_id: "st_test",
+      final_offset: 5,
+    }),
+  );
+
+  await closePromise;
+
+  assert.deepEqual(resetFrames, []);
+  assert.equal(closeFrames.length, 1);
+  assert.deepEqual(sentFrames.map((frame) => frame.type), ["stream_credit"]);
+
+  releaseHeartbeat();
+  await dataPromise;
+});
+
 function binaryEnvelopeHello() {
   return {
     proto: "0.1",

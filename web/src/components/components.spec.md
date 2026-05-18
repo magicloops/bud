@@ -90,7 +90,8 @@ Base UI primitives (Button) using shadcn/ui patterns.
 
 ### `workbench/` → [workbench/workbench.spec.md](./workbench/workbench.spec.md)
 
-Main application components: bud rail, thread panel, chat timeline, command composer, terminal views, and the file viewer pane.
+Main application components: bud rail, thread panel, chat timeline, command
+composer, terminal views, file viewer pane, and proxied web-view pane.
 
 ### `message-renderers/` → [message-renderers/message-renderers.spec.md](./message-renderers/message-renderers.spec.md)
 

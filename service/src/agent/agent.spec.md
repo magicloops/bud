@@ -7,7 +7,7 @@ Agent orchestration layer for AI-assisted terminal interactions using the LLM pr
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
 1. Builds conversation context from thread history (canonical format)
 2. Calls the LLM provider (OpenAI, Anthropic) via `providerRegistry`
-3. Executes tool calls on the connected bud daemon
+3. Executes terminal tool calls on the connected bud daemon and product web-view tool calls through service-side proxied-site routes/helpers
 4. Loops until a final response or max steps reached
 
 ## Files
@@ -38,10 +38,11 @@ Direct tests for cancel-vs-clear behavior in the extracted cancellation registry
 Shared agent-facing tool/result contracts.
 
 **Responsibilities**:
-- define the normalized `terminal.send` / `terminal.observe` directive unions used across the split agent seams
+- define the normalized `terminal.send`, `terminal.observe`, and `web_view.*` directive unions used across the split agent seams
 - centralize readiness defaults plus tool-argument serialization
 - expose effective client-facing wait modes for terminal tools (`terminal.send` defaults to `wait_for: "settled"`, `terminal.observe` defaults to `wait_for: "none"`)
 - normalize legacy wait/key inputs reused during transcript replay and model-tool parsing
+- keep web-view tool args/result payloads separate from terminal wait/readiness defaults
 
 ### `contracts.test.ts`
 
@@ -51,6 +52,8 @@ Direct tests for shared contract helpers.
 - public wait modes parse as themselves
 - compatibility-only `shell_ready` remains accepted below the model-facing schema
 - legacy `screen_stable` payloads normalize to canonical `settled`
+- web-view tool args do not gain terminal `wait_for` defaults
+- web-view tool results include HTTP proxy transport plus separate WebSocket proxy capability/transport metadata when available
 
 ### `conversation-loader.ts`
 
@@ -64,7 +67,7 @@ Conversation-building ownership extracted from `AgentService`.
 - return reconstruction diagnostics that distinguish provider-native replay, canonical fallback, mixed degraded replay, omitted provider-only items, and provider switches
 - return same-provider incompatibility diagnostics when Anthropic thinking/redacted-thinking blocks are omitted for canonical fallback
 - skip duplicate product assistant rows whose `metadata.llm_call_id` is already represented by provider-ledger output
-- normalize historical tool rows, including legacy `terminal.interrupt` replay and `screen_stable` wait values
+- normalize historical tool rows, including legacy `terminal.interrupt` replay, web-view tool rows, and `screen_stable` wait values
 - preserve user preferred-cwd hints during replay
 
 ### `conversation-loader.test.ts`
@@ -85,10 +88,11 @@ Thin agent orchestrator over the extracted conversation/model/tool/transcript ow
 
 The prompt/tool-definition ownership now lives in the extracted modules:
 - `conversation-loader.ts` owns the canonical Bud Agent system prompt used for every turn
-- `model-runner.ts` owns the canonical `terminal_send` / `terminal_observe` JSON Schema definitions passed to providers
+- `model-runner.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, and `web_view_list` JSON Schema definitions passed to providers
 
 **System Prompt Highlights**:
 - tool-calling guidance for `terminal.send` and `terminal.observe`
+- product web-view guidance for opening, listing, and closing thread web views
 - readiness confidence interpretation (`>= 0.8` ready, `0.5-0.8` probably ready, `< 0.5` still processing)
 - hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (Python/Node/Claude Code vs shell)
@@ -101,6 +105,9 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 |------|------------|-------------|
 | `terminal_send` | `text?`, `submit?`, `key?`, `observe_after_ms?`, `wait_for?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a settled-by-default synchronous result |
 | `terminal_observe` | `lines?`, `wait_for?`, `view?` | Observe terminal deltas by default, with explicit full-screen/history modes |
+| `web_view_open` | `target_port`, `target_host?`, `path?`, `title?` | Create/reuse a Bud-scoped proxied site and attach it to the current thread; omitted `target_host` defaults to `localhost`, and explicit loopback hosts must be preserved exactly |
+| `web_view_close` | `proxied_site_id?`, `disable?` | Detach the current thread web view and optionally disable the proxied site |
+| `web_view_list` | none | List owned proxied sites for the current Bud and current thread attachment |
 
 Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. The lower service/daemon parsers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where needed for replay and older clients.
 
@@ -116,6 +123,7 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 - `AgentConversationLoader`
 - `AgentModelRunner`
 - `TerminalToolExecutor`
+- `WebViewToolExecutor`
 - `AgentTranscriptWriter`
 - `AgentCancellationRegistry`
 
@@ -149,7 +157,7 @@ startUserMessage()
                   │      │
                   │      ├─► tool calls found → for each provider-ordered call:
                   │      │                  └─► transcriptWriter.emitToolCall()
-                  │      │                  └─► toolExecutor.execute()
+                  │      │                  └─► terminalToolExecutor.execute() or webViewToolExecutor.execute()
                   │      │                  └─► transcriptWriter.recordToolResult()
                   │      │                  └─► persist provider tool-result item
                   │      │
@@ -171,7 +179,7 @@ startUserMessage()
 - Assistant rows are stamped with cached terminal cwd `path_context` when available; terminal tool rows are stamped with `path_context_before` and `path_context_after`.
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
 - Anthropic thinking and redacted-thinking blocks are replayed provider-natively only when the next Anthropic model/reasoning request is compatible; incompatible same-provider ranges fall back to canonical visible transcript rows with explicit degradation metadata.
-- Multiple provider tool calls are parsed and executed serially in provider output order for the current terminal-tool-only agent.
+- Multiple provider tool calls are parsed and executed serially in provider output order across terminal and web-view tools.
 - Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
@@ -188,7 +196,24 @@ startUserMessage()
 - human terminal interrupts reject the currently pending terminal wait as `interrupted`; `TerminalToolExecutor` turns that into a conservative tool result with `readiness.trigger: "error"` so the model regains control without treating the original command as completed.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
+- `web_view.open`, `web_view.close`, and `web_view.list` are product-level tools backed by owner-scoped proxied-site helpers; they do not expose viewer grants, cookies, or daemon stream ids to the model.
+- `web_view.open` keeps `target_host` optional for simple port-only requests, but the model-facing schema and prompt define the omitted-host default as `localhost` and instruct the model to preserve explicit user-provided `localhost`, `127.0.0.1`, or `::1` hosts exactly.
+- web-view tool payloads now include `websocket_transport` and `capabilities.websocket` so the model/client can distinguish static HTTP preview support from full WebSocket/HMR support.
+- web-view tool summaries now explicitly call out whether static HTTP preview is available separately from WebSocket/HMR support, including offline/unsupported transport messages when either carrier family is unavailable.
 - the main `AgentService` file now delegates conversation loading, model invocation, terminal tool execution, and transcript persistence/runtime emission to dedicated modules instead of bundling those concerns inline
+
+### `web-view-tool-executor.ts`
+
+Product web-view tool execution ownership extracted from `AgentService`.
+
+**Responsibilities**:
+- resolve the owning thread/Bud/user before any web-view mutation
+- run `web_view.open`, `web_view.close`, and `web_view.list`
+- create/reuse owner-private `proxied_site` rows and attach them through `thread_web_view`
+- detach thread web views by default and only disable proxied sites when explicitly requested
+- shape tool summaries and persisted payloads without exposing viewer grants, cookies, or daemon stream ids
+- include separate WebSocket proxy transport/capability metadata in tool payloads
+- phrase `web_view.open` and `web_view.list` summaries as static HTTP vs WebSocket/HMR availability rather than treating all proxied sites as equivalent
 
 ### `terminal-send-outcome.ts`
 
@@ -240,8 +265,10 @@ Direct tests for the extracted model runner.
 **Current Coverage**:
 - reasoning-effort normalization follows selected model policy, including Claude 4.6/4.7 and GPT-5.4 differences
 - terminal tool schemas advertise only public `wait_for` modes and omit `timeout_ms`
+- web-view tool schemas advertise product-level `web_view_open`, `web_view_close`, and `web_view_list`
 - streamed text blocks around multiple tool calls are retained in provider order
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
+- web-view tool calls parse into product `web_view.*` directives
 - empty final responses include bounded canonical/provider response diagnostics on the thrown error
 
 ### `terminal-tool-executor.ts`
@@ -277,6 +304,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
 - add the resolved `model`, `reasoning_effort`, and `model_selection_source` to assistant/tool `message.metadata`
 - add cached cwd path context to assistant rows and before/after path context to terminal tool rows
+- emit web-view tool results with a `web_view` runtime payload instead of terminal `output` / `readiness` fields
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
 - advance runtime cursors only after the durable transcript boundary is visible
 
@@ -302,6 +330,7 @@ Human terminal interrupt is intentionally separate from agent cancel: the termin
 - `startUserMessage(..., { ownerUserId })` threads the resolved thread owner through the agent loop
 - assistant final messages and tool-result messages are written with `message.created_by_user_id`
 - lazily created terminal sessions inherit the same owner via `ensureSessionRecordForThread(..., ownerUserId)`
+- web-view tools use the owning thread user to create/list/attach/detach `proxied_site` and `thread_web_view` rows
 
 ### `transcript-writer.test.ts`
 
@@ -370,9 +399,12 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `client_id` on `agent.tool_call` / `agent.tool_result` matches `/agent/state.pending_tool.client_id` and the later persisted tool row
 - `/agent/state.pending_tool.started_at` matches `agent.tool_call.started_at`, so reconnecting clients can show elapsed time for long pending waits
 - `/agent/state.pending_tool.args.wait_for` and `agent.tool_call.args.wait_for` expose the effective terminal wait mode, including implicit `terminal.send` settled waits and implicit `terminal.observe` non-waits
+- web-view pending/tool-call args expose only product fields such as `target_port`, `path`, `proxied_site_id`, and `disable`
+- omitted `web_view.open.target_host` means `localhost`; when present, `target_host` is the exact loopback host the model requested
 - `started_at` on `agent.tool_call` is the service-side tool-start timestamp captured immediately before execution begins
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
 - tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop
+- web-view tool-result payloads include `web_view` data instead of terminal readiness/output fields
 - canonical persisted tool rows expose the same timing fields under `message.metadata`, while `message.content` remains the replay payload and intentionally does not gain timing-only fields
 - canonical persisted terminal tool rows may expose `path_context_before` / `path_context_after` under `message.metadata`; assistant rows may expose `path_context`
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
@@ -401,6 +433,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `./conversation-loader.js` | Canonical transcript/context assembly |
 | `./model-runner.js` | Provider invocation + draft assistant streaming |
 | `./terminal-tool-executor.js` | Terminal tool orchestration |
+| `./web-view-tool-executor.js` | Product web-view tool orchestration |
 | `./transcript-writer.js` | Durable assistant/tool persistence + runtime emission |
 | `./terminal-send-outcome.js` | Send-result delta interpretation for conservative summaries |
 | `../db/thread-metadata.js` | Thread activity tracking |

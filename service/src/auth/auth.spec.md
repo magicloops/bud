@@ -30,6 +30,7 @@ Initializes the Better Auth runtime.
 - Normalizes forwarded JSON and form bodies before dispatching to Better Auth, so downstream token-resource injection only reparses already-normalized form payloads
 - Defaults `/oauth2/token` `resource` to Bud's API audience for trusted first-party clients when they omit it, so mobile bearer access tokens are minted as JWTs usable against `/api/me`
 - Verifies mobile bearer JWTs against the mounted OAuth issuer (`BETTER_AUTH_URL + /api/auth`) instead of the bare Better Auth origin, so `/api/me` accepts locally minted tokens with `iss=http://localhost:5173/api/auth`
+- Overrides protected-resource metadata `authorization_servers` to the same mounted OAuth issuer, so OAuth discovery does not advertise the bare Better Auth origin
 - Exposes a shared helper for dispatching internal Better Auth subrequests from Bud-owned routes
 - Exposes a shared helper for forwarding Better Auth headers/cookies back through Fastify replies
 - Registers `GET`/`POST /api/auth/*`
@@ -44,6 +45,7 @@ Initializes the Better Auth runtime.
 - `MOBILE_API_SCOPE` - Coarse API scope (`api`)
 - `createAuthOptions(database)` - Shared Better Auth config for runtime and local schema bootstrap
 - `verifyOAuthAccessToken(token)` - JWT verification helper using the OAuth Provider resource client
+- `buildProtectedResourceMetadataOverrides()` - Protected-resource metadata overrides for Bud's API audience and mounted OAuth issuer
 - `dispatchAuthSubrequest(request, options)` - Run an internal Better Auth request against the mounted auth handler
 - `applyAuthResponseHeaders(response, reply)` - Forward Better Auth headers/cookies without forcing the original response body
 - `registerAuthRoutes(server)` - Mount Better Auth routes on Fastify
@@ -81,6 +83,14 @@ Session lookup and profile bootstrap helpers layered on top of Better Auth.
 - `normalizeEditableUsername(input)`
 - `updateUserProfileUsername(user, input)`
 - `getNormalizedCurrentUser(request)`
+
+### `auth.test.ts`
+
+Focused regression coverage for auth metadata behavior.
+
+**Current Coverage**:
+- protected-resource metadata overrides advertise Bud's mounted OAuth issuer in
+  `authorization_servers`
 
 ### `enrollment-token.ts`
 

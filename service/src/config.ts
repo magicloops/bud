@@ -86,6 +86,22 @@ export type ReasoningEffortSetting = ReasoningLevel;
 
 const DAEMON_TRANSPORT_POLICIES = ["websocket_baseline", "h2_preferred", "quic_preferred"] as const;
 export type DaemonTransportPolicy = (typeof DAEMON_TRANSPORT_POLICIES)[number];
+const defaultProxyBaseDomain =
+  process.env.NODE_ENV === "production" ? "bud.show" : "proxy.localhost";
+const defaultProxyPublicScheme =
+  process.env.NODE_ENV === "production" ? "https" : "http";
+const proxyPublicScheme = process.env.PROXY_PUBLIC_SCHEME ?? defaultProxyPublicScheme;
+const proxyBaseDomain = process.env.PROXY_BASE_DOMAIN ?? defaultProxyBaseDomain;
+const proxyPublicPort = toOptionalNumber(
+  process.env.PROXY_PUBLIC_PORT ??
+    (proxyPublicScheme === "http" && proxyBaseDomain.includes("localhost")
+      ? String(defaultPort)
+      : undefined),
+);
+const proxyViewerCookieName =
+  process.env.PROXY_VIEWER_COOKIE_NAME ??
+  (proxyPublicScheme === "https" ? "__Host-bud_proxy_viewer" : "bud_proxy_viewer");
+const proxyEdgeSecret = toNullable(process.env.PROXY_EDGE_SECRET);
 
 const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortSetting): ReasoningEffortSetting => {
   if (!value) {
@@ -194,6 +210,62 @@ export const config = {
   proxySessionMaxResponseBytes: toPositiveInteger(
     process.env.PROXY_SESSION_MAX_RESPONSE_BYTES,
     16 * 1024 * 1024,
+  ),
+  proxySessionMaxRequestBodyBytes: toPositiveInteger(
+    process.env.PROXY_SESSION_MAX_REQUEST_BODY_BYTES,
+    10 * 1024 * 1024,
+  ),
+  proxyLocalAppCookieMaxCount: toPositiveInteger(
+    process.env.PROXY_LOCAL_APP_COOKIE_MAX_COUNT,
+    50,
+  ),
+  proxyLocalAppCookieMaxBytes: toPositiveInteger(
+    process.env.PROXY_LOCAL_APP_COOKIE_MAX_BYTES,
+    16 * 1024,
+  ),
+  proxyWebSocketMaxMessageBytes: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_MAX_MESSAGE_BYTES,
+    1024 * 1024,
+  ),
+  proxyWebSocketOpenTimeoutMs: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_OPEN_TIMEOUT_MS,
+    10_000,
+  ),
+  proxyWebSocketIdleTimeoutMs: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_IDLE_TIMEOUT_MS,
+    10 * 60_000,
+  ),
+  proxyWebSocketMaxConnectionsPerSite: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_MAX_CONNECTIONS_PER_SITE,
+    16,
+  ),
+  proxyWebSocketMaxConnectionsPerBud: toPositiveInteger(
+    process.env.PROXY_WEBSOCKET_MAX_CONNECTIONS_PER_BUD,
+    64,
+  ),
+  proxyGatewayEnabled: process.env.PROXY_GATEWAY_ENABLED === undefined
+    ? true
+    : toBool(process.env.PROXY_GATEWAY_ENABLED),
+  proxyBaseDomain,
+  proxyPublicScheme,
+  proxyPublicPort,
+  proxyViewerCookieName,
+  proxyEdgeSecret,
+  proxyViewerCookieMaxAgeSeconds: toPositiveInteger(
+    process.env.PROXY_VIEWER_COOKIE_MAX_AGE_SECONDS,
+    7 * 24 * 60 * 60,
+  ),
+  proxyViewerCookieRefreshSeconds: toPositiveInteger(
+    process.env.PROXY_VIEWER_COOKIE_REFRESH_SECONDS,
+    24 * 60 * 60,
+  ),
+  proxyBootstrapGrantTtlSeconds: toPositiveInteger(
+    process.env.PROXY_BOOTSTRAP_GRANT_TTL_SECONDS,
+    5 * 60,
+  ),
+  proxiedSiteTtlSeconds: toPositiveInteger(
+    process.env.PROXIED_SITE_TTL_SECONDS,
+    90 * 24 * 60 * 60,
   ),
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",

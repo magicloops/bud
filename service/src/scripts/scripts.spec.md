@@ -89,7 +89,7 @@ Shared helper for first-party iOS OAuth-client provisioning scripts.
 **Responsibilities**:
 - Upsert deterministic first-party iOS client rows in `auth.oauthClient`
 - Build the published auth bundle from the current `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
-- Print environment-specific warnings when the running config does not match the expected public origin
+- Print environment-specific warnings when the running config does not match the expected public origin; local provisioning accepts both the HTTP quickstart origin and the HTTPS mkcert+Caddy origin
 - Share one bundle/output shape across local and staging provisioning entrypoints
 
 ### `ios-oauth-contract.ts`
@@ -121,12 +121,24 @@ Creates or updates the fixed first-party local iOS OAuth client and prints the e
 - Enforce the expected local redirect URI (`chat.bud.app.staging://oauth/callback`)
 - Mark the client as a public native PKCE client with refresh-token support
 - Print the current local auth bundle derived from `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
-- Warn when the local env is not aligned with the expected public `http://localhost:5173` topology
+- Warn when the local env is not aligned with either supported local public topology:
+  `http://localhost:5173` for the HTTP quickstart or `https://localhost:3443`
+  for the mkcert+Caddy HTTPS profile
 
 **Usage**:
 ```bash
 pnpm oauth:provision:ios-local
 ```
+
+For the mkcert+Caddy HTTPS profile, prefer the repo-root wrapper:
+
+```bash
+pnpm dev:https:provision-ios
+```
+
+That wrapper runs this package script with `APP_BASE_URL`,
+`BETTER_AUTH_URL`, and `API_AUDIENCE` set to `https://localhost:3443` and
+with `NODE_EXTRA_CA_CERTS` pointing at the mkcert root before Node starts.
 
 ### `provision-ios-staging-oauth-client.ts`
 
