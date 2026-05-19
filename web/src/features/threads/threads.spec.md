@@ -94,6 +94,11 @@ Thread-scoped proxied web-view state and hosted-auth bootstrap flow.
 - mint one-time viewer grants for iframe and standalone viewing
 - refresh iframe bootstrap URLs without exposing grants/cookies to agent tools
   or transcript rows
+- leave tab-visibility lifecycle to the workbench presentation layer; normal
+  Terminal/Web tab switches do not mint viewer grants
+- treat explicit Web view reload as an authoritative site/thread attachment and
+  proxy-transport refresh before applying a new iframe grant, so stale offline
+  transport snapshots can recover after Bud reconnect
 - track the Bud's HTTP proxy transport separately from WebSocket/HMR transport
   so the pane can explain static-preview vs HMR availability
 - keep parent error callbacks behind a ref so the mount-time

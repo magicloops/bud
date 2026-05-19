@@ -12,6 +12,7 @@ The Bud daemon:
 4. manages thread-scoped interactive terminal sessions
 5. reports local journal state after reconnect so the service can reconcile operation/stream outcomes
 6. detects readiness and screen stability so the service can drive terminal interactions safely
+7. tears down transport-bound proxy/file work on disconnect so stale stream tasks cannot block reconnect
 
 ## Files
 
@@ -78,6 +79,7 @@ Cargo build artifacts. Not tracked in version control.
 Key boundary decisions:
 
 - `app.rs` owns connection lifecycle and frame dispatch for both WebSocket and opt-in gRPC control.
+- `app.rs` owns transport shutdown cleanup, including aborting the WebSocket writer task and canceling proxy/file stream work before reconnect.
 - `proto_wire.rs` owns the compatibility envelope carrier codec used by both WebSocket binary frames and the tonic gRPC adapter.
 - `grpc_control.rs` owns generated tonic/prost bindings and converts generated `BudEnvelope` messages to/from JSON-frame text for the existing handlers.
 - `transport.rs` owns the transport-neutral sender seam; it carries JSON payloads directly for legacy peers, wraps them in typed-payload protobuf `BudEnvelope` binary frames after WebSocket capability negotiation, or forwards JSON payloads to the gRPC control writer.

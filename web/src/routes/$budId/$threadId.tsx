@@ -144,6 +144,9 @@ function ThreadView() {
     shouldAbortForUnauthorized,
   })
   const refreshThreadWebView = webView.refreshWebViews
+  const webViewActiveSite = webView.activeSite
+  const webViewHttpTransportUnavailable =
+    webView.transport?.available === false || webViewActiveSite?.transport?.available === false
 
   // Update messages when loader data changes
   useEffect(() => {
@@ -352,6 +355,42 @@ function ThreadView() {
     shouldAbortForUnauthorized,
     updateBudStatus,
   })
+  const previousTerminalConnectionRef = useRef(terminalConnection)
+  const terminalConnectedRecoveryEpochRef = useRef(terminalConnection === 'connected' ? 1 : 0)
+  const lastWebViewReconnectRefreshEpochRef = useRef(0)
+
+  useEffect(() => {
+    const previousTerminalConnection = previousTerminalConnectionRef.current
+    previousTerminalConnectionRef.current = terminalConnection
+
+    if (terminalConnection === 'connected' && previousTerminalConnection !== 'connected') {
+      terminalConnectedRecoveryEpochRef.current += 1
+    }
+
+    if (
+      terminalConnection !== 'connected' ||
+      !webViewActiveSite ||
+      !webViewHttpTransportUnavailable
+    ) {
+      return
+    }
+
+    const currentRecoveryEpoch = terminalConnectedRecoveryEpochRef.current
+    if (
+      currentRecoveryEpoch === 0 ||
+      lastWebViewReconnectRefreshEpochRef.current === currentRecoveryEpoch
+    ) {
+      return
+    }
+
+    lastWebViewReconnectRefreshEpochRef.current = currentRecoveryEpoch
+    void refreshThreadWebView()
+  }, [
+    refreshThreadWebView,
+    terminalConnection,
+    webViewActiveSite,
+    webViewHttpTransportUnavailable,
+  ])
 
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return

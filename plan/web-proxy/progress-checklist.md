@@ -39,7 +39,7 @@
 - [x] Add standalone fallback flow.
 - [ ] Add reload/detach/disable/open/copy controls.
 - [ ] Add SSE state handling.
-- [ ] Define and validate iOS client flow.
+- [x] Define and validate iOS client flow.
 - [ ] Add UI tests.
 - [x] Update touched web/client specs.
 
@@ -234,13 +234,13 @@ streaming-upload upgrade.
 
 ## Phase 9f: WebSocket Upgrade Deployment Checks
 
-- [ ] Document wildcard DNS requirements for `*.bud.show`.
-- [ ] Document wildcard TLS automation requirements.
-- [ ] Document load balancer/reverse proxy WebSocket upgrade requirements.
-- [ ] Validate endpoint-host preservation into Fastify.
-- [ ] Validate proxy-domain auth through the deployed edge path.
+- [x] Document wildcard DNS requirements for `*.bud.show`.
+- [x] Document wildcard TLS automation requirements.
+- [x] Document load balancer/reverse proxy WebSocket upgrade requirements.
+- [x] Validate endpoint-host preservation into Fastify.
+- [x] Validate proxy-domain auth through the deployed edge path.
 - [ ] Add local HTTP-only and optional HTTPS WebSocket upgrade smoke notes.
-- [ ] Update README/getting-started or deployment docs.
+- [x] Update README/getting-started or deployment docs.
 
 ## Phase 10: Cloudflare Wildcard Edge Routing
 
@@ -253,8 +253,8 @@ streaming-upload upgrade.
   host, and out-of-domain forwarded host behavior.
 - [x] Update Cloudflare Worker routing so `*.bud.show/*` forwards all paths to
   `bud-service`.
-- [ ] Configure matching `PROXY_EDGE_SECRET` values in Render and Cloudflare.
-- [ ] Validate `https://<slug>.bud.show` bootstrap, HTTP assets, and
+- [x] Configure matching `PROXY_EDGE_SECRET` values in Render and Cloudflare.
+- [x] Validate `https://<slug>.bud.show` bootstrap, HTTP assets, and
   `wss://<slug>.bud.show` upgrades through Cloudflare.
 - [x] Update deployment runbook with the final wildcard edge contract.
 
@@ -268,4 +268,4 @@ streaming-upload upgrade.
 - [x] Disabled/expired/offline states are visible in the web client.
 - [ ] Disabled/expired/offline states are visible in the mobile client.
 - [x] Local development setup is documented and simple.
-- [ ] Production wildcard DNS/TLS configuration is documented before rollout.
+- [x] Production wildcard DNS/TLS configuration is documented before rollout.

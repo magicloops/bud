@@ -607,7 +607,11 @@ impl BudApp {
         if self.terminal_manager.config.enabled && !self.terminal_manager.config.tmux_available {
             info!("terminal enabled but tmux unavailable; terminal sessions will fail");
         }
-        self.send_reconnect_report(&sender, &meta).await?;
+        if let Err(err) = self.send_reconnect_report(&sender, &meta).await {
+            self.shutdown_grpc_session(sender, writer_handle, data_attachment)
+                .await;
+            return Err(err);
+        }
 
         loop {
             tokio::select! {
@@ -628,8 +632,17 @@ impl BudApp {
                 message = stream.message() => {
                     match message {
                         Ok(Some(envelope)) => {
-                            let text = envelope_to_json_text(&envelope)?;
-                            self.handle_server_frame(&text, &sender).await?;
+                            let text = match envelope_to_json_text(&envelope) {
+                                Ok(text) => text,
+                                Err(err) => {
+                                    self.shutdown_grpc_session(sender, writer_handle, data_attachment).await;
+                                    return Err(err);
+                                }
+                            };
+                            if let Err(err) = self.handle_server_frame(&text, &sender).await {
+                                self.shutdown_grpc_session(sender, writer_handle, data_attachment).await;
+                                return Err(err);
+                            }
                         }
                         Ok(None) => {
                             if self.debug_enabled {
@@ -657,6 +670,8 @@ impl BudApp {
         writer_handle: task::JoinHandle<()>,
         data_attachment: Option<GrpcDataAttachment>,
     ) {
+        self.cleanup_transport_bound_tasks("grpc_session_shutdown")
+            .await;
         self.run_executor.clear_sender().await;
         self.terminal_manager.clear_sender().await;
         drop(sender);
@@ -665,6 +680,45 @@ impl BudApp {
         }
         writer_handle.abort();
         let _ = writer_handle.await;
+    }
+
+    async fn cleanup_transport_bound_tasks(&self, reason: &str) {
+        let proxy_summary = self
+            .proxy_manager
+            .abort_all_for_transport_disconnect(reason)
+            .await;
+        let file_summary = self
+            .file_manager
+            .abort_all_for_transport_disconnect(reason)
+            .await;
+        if proxy_summary.streams > 0
+            || proxy_summary.websocket_sessions > 0
+            || file_summary.streams > 0
+        {
+            info!(
+                reason = %reason,
+                proxy_streams = proxy_summary.streams,
+                proxy_websocket_sessions = proxy_summary.websocket_sessions,
+                file_streams = file_summary.streams,
+                "canceled transport-bound daemon tasks"
+            );
+        }
+    }
+
+    async fn shutdown_websocket_session(
+        &self,
+        sender: TransportSender,
+        writer_handle: task::JoinHandle<()>,
+        reason: &str,
+    ) {
+        info!(reason = %reason, "shutting down WebSocket session transport");
+        self.cleanup_transport_bound_tasks(reason).await;
+        self.run_executor.clear_sender().await;
+        self.terminal_manager.clear_sender().await;
+        drop(sender);
+        writer_handle.abort();
+        let _ = writer_handle.await;
+        info!(reason = %reason, "WebSocket session transport cleanup complete");
     }
 
     async fn perform_handshake(
@@ -824,7 +878,11 @@ impl BudApp {
         if self.terminal_manager.config.enabled && !self.terminal_manager.config.tmux_available {
             info!("terminal enabled but tmux unavailable; terminal sessions will fail");
         }
-        self.send_reconnect_report(&sender, &meta).await?;
+        if let Err(err) = self.send_reconnect_report(&sender, &meta).await {
+            self.shutdown_websocket_session(sender, writer_handle, "reconnect_report_send_failed")
+                .await;
+            return Err(err);
+        }
 
         loop {
             tokio::select! {
@@ -838,37 +896,70 @@ impl BudApp {
                         "session_id": meta.session_id
                     });
                     if let Err(err) = send_transport_frame(&sender, heartbeat) {
-                        self.run_executor.clear_sender().await;
-                        self.terminal_manager.clear_sender().await;
-                        drop(sender);
-                        let _ = writer_handle.await;
+                        self.shutdown_websocket_session(
+                            sender,
+                            writer_handle,
+                            "heartbeat_send_failed",
+                        )
+                        .await;
                         return Err(err);
                     }
                 }
                 msg = read.next() => {
                     match msg {
                         Some(Ok(Message::Text(text))) => {
-                            self.handle_server_frame(&text, &sender).await?;
+                            if let Err(err) = self.handle_server_frame(&text, &sender).await {
+                                self.shutdown_websocket_session(
+                                    sender,
+                                    writer_handle,
+                                    "server_frame_error",
+                                )
+                                .await;
+                                return Err(err);
+                            }
                         }
                         Some(Ok(Message::Binary(bytes))) => {
-                            let text = decode_bud_frame(&bytes)?;
-                            self.handle_server_frame(&text, &sender).await?;
+                            let text = match decode_bud_frame(&bytes) {
+                                Ok(text) => text,
+                                Err(err) => {
+                                    self.shutdown_websocket_session(
+                                        sender,
+                                        writer_handle,
+                                        "server_frame_decode_failed",
+                                    )
+                                    .await;
+                                    return Err(err);
+                                }
+                            };
+                            if let Err(err) = self.handle_server_frame(&text, &sender).await {
+                                self.shutdown_websocket_session(
+                                    sender,
+                                    writer_handle,
+                                    "server_frame_error",
+                                )
+                                .await;
+                                return Err(err);
+                            }
                         }
                         Some(Ok(Message::Ping(payload))) => {
                             if let Err(err) = send_transport_message(&sender, Message::Pong(payload)) {
-                                self.run_executor.clear_sender().await;
-                                self.terminal_manager.clear_sender().await;
-                                drop(sender);
-                                let _ = writer_handle.await;
+                                self.shutdown_websocket_session(
+                                    sender,
+                                    writer_handle,
+                                    "pong_send_failed",
+                                )
+                                .await;
                                 return Err(err);
                             }
                         }
                         Some(Ok(Message::Close(frame))) => {
                             info!(?frame, "Server closed connection");
-                            self.run_executor.clear_sender().await;
-                            self.terminal_manager.clear_sender().await;
-                            drop(sender);
-                            let _ = writer_handle.await;
+                            self.shutdown_websocket_session(
+                                sender,
+                                writer_handle,
+                                "server_close",
+                            )
+                            .await;
                             return Ok(());
                         }
                         Some(Ok(_)) => {}
@@ -876,20 +967,24 @@ impl BudApp {
                             if self.debug_enabled {
                                 info!(error = %err, "WS read error; reconnecting soon");
                             }
-                            self.run_executor.clear_sender().await;
-                            self.terminal_manager.clear_sender().await;
-                            drop(sender);
-                            let _ = writer_handle.await;
+                            self.shutdown_websocket_session(
+                                sender,
+                                writer_handle,
+                                "websocket_read_error",
+                            )
+                            .await;
                             return Err(err.into());
                         }
                         None => {
                             if self.debug_enabled {
                                 info!("WS stream ended; reconnecting");
                             }
-                            self.run_executor.clear_sender().await;
-                            self.terminal_manager.clear_sender().await;
-                            drop(sender);
-                            let _ = writer_handle.await;
+                            self.shutdown_websocket_session(
+                                sender,
+                                writer_handle,
+                                "websocket_stream_ended",
+                            )
+                            .await;
                             return Ok(());
                         }
                     }
@@ -1309,4 +1404,57 @@ fn grpc_error_allows_websocket_fallback(err: &anyhow::Error) -> bool {
             .to_string()
             .contains("gRPC handshake (code=AUTH_FAILED)")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    fn test_args(workspace: &std::path::Path) -> BudArgs {
+        BudArgs {
+            server: "ws://127.0.0.1:3000/ws".into(),
+            grpc_control_url: None,
+            grpc_data_url: None,
+            token: None,
+            name: "bud-test".into(),
+            cwd: workspace.to_string_lossy().into_owned(),
+            identity_file: workspace
+                .join("identity.json")
+                .to_string_lossy()
+                .into_owned(),
+            reconnect_base_sec: 1,
+            terminal_enabled: false,
+            terminal_base_dir: workspace.join("terminal").to_string_lossy().into_owned(),
+            terminal_cols: 80,
+            terminal_rows: 24,
+            debug: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_shutdown_does_not_wait_for_live_sender_clone() {
+        let workspace = std::env::temp_dir().join(format!(
+            "bud-websocket-shutdown-{}-{}",
+            std::process::id(),
+            now_millis()
+        ));
+        fs::create_dir_all(&workspace).expect("create test workspace");
+        let app = BudApp::new(test_args(&workspace)).await;
+        let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+        let sender = TransportSender::websocket(tx, false);
+        let extra_sender = sender.clone();
+        let writer_handle = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+        time::timeout(
+            Duration::from_secs(1),
+            app.shutdown_websocket_session(sender, writer_handle, "test_server_close"),
+        )
+        .await
+        .expect("shutdown completed without waiting for sender clone");
+
+        assert!(send_transport_message(&extra_sender, Message::Close(None)).is_err());
+        let _ = fs::remove_dir_all(workspace);
+    }
 }

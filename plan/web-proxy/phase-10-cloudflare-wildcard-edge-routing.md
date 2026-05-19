@@ -178,6 +178,22 @@ Deployment smoke:
 6. If validation fails, remove or disable the `*.bud.show/*` Worker route; the
    existing `staging.bud.dev` app/API path remains independent.
 
+## Staging Validation Result
+
+Validated on 2026-05-18 after merging the branch with `main` and deploying to
+staging:
+
+- Render `bud-service` and the Cloudflare Worker had matching
+  `PROXY_EDGE_SECRET` values.
+- Cloudflare `bud.show` had proxied wildcard DNS, the `*.bud.show/*` Worker
+  route, cache bypass, transform bypass, WebSockets enabled, and URL
+  normalization disabled.
+- `dig` and `curl` confirmed `*.bud.show` resolves and reaches Cloudflare.
+- Generated `https://<slug>.bud.show` web-view URLs loaded correctly through
+  the staging web client.
+- Generated `https://<slug>.bud.show` web-view URLs loaded correctly through
+  the staging mobile client.
+
 ## Acceptance Criteria
 
 - `*.bud.show` routes through Cloudflare Worker to Render `bud-service`.

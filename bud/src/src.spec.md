@@ -44,6 +44,8 @@ Top-level daemon orchestrator.
 - live reconnect report emission after handshake using the local journal
 - heartbeat scheduling
 - routing inbound server frames to the run or terminal subsystems
+- transport shutdown cleanup that clears run/terminal senders, aborts stale
+  WebSocket writer tasks, and cancels proxy/file stream work before reconnect
 - routing Phase 4 `proxy_open` requests and same-stream request body data to
   the localhost proxy adapter
 - routing Phase 5 `proxy_ws_open` / `proxy_ws_message` / `proxy_ws_close` / `proxy_ws_error` requests to the localhost WebSocket proxy adapter
@@ -128,6 +130,8 @@ Daemon-side localhost HTTP and WebSocket proxy adapter.
   for service-side endpoint-host filtering
 - streams response bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
+- cancels active HTTP and WebSocket proxy work when the active daemon transport
+  disconnects
 - dials local `ws://` loopback targets for `proxy_ws_open`
 - bridges WebSocket text/binary messages with `proxy_ws_message`
 - propagates WebSocket close/error state with `proxy_ws_close` and `proxy_ws_error`
@@ -148,6 +152,7 @@ Daemon-side Phase 4.4 workspace file adapter.
 - returns `file_open_result` and `file_resolve_result` accept/reject metadata on control, including accepted-open/resolve resolution metadata
 - streams file bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
+- cancels active file streams when the active daemon transport disconnects
 
 ### `transport.rs`
 
@@ -358,14 +363,18 @@ app.rs::BudApp
 
 High-value local tests now live next to the extracted abstractions:
 
+- `app.rs`
+  - WebSocket session shutdown does not wait for stale cloned transport senders
 - `protocol.rs`
   - inbound protocol validation
 - `proto_wire.rs`
   - protobuf compatibility envelope fixture encode/decode
 - `proxy/mod.rs`
   - localhost proxy-open policy validation
+  - transport-disconnect cleanup resets waiting HTTP proxy streams and closes active WebSocket proxy sessions
 - `files/mod.rs`
   - workspace file-open policy and range selection
+  - transport-disconnect cleanup resets waiting file streams
 - `transport.rs`
   - gRPC data-channel terminal-output routing and control fallback
 - `journal.rs`

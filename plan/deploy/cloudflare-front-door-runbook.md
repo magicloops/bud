@@ -82,6 +82,7 @@ It should not be a browser/API domain split.
 Before wiring Cloudflare, collect:
 
 - confirmation that `bud.dev` is active on Cloudflare
+- confirmation that `bud.show` is active on Cloudflare
 - public hostname, for example `bud.example.com`
 - `bud-web` Render hostname
 - `bud-service` Render hostname
@@ -101,16 +102,21 @@ Before wiring Cloudflare, collect:
 
 ## Cloudflare Setup
 
-### 0. Ensure the zone is actually on Cloudflare
+### 0. Ensure the zones are actually on Cloudflare
 
-If `bud.dev` is not already active on Cloudflare, add the zone to Cloudflare first and update the domain's nameservers in Squarespace before doing any hostname-level routing work.
+If `bud.dev` or `bud.show` is not already active on Cloudflare, add the zone to
+Cloudflare first and update the domain's nameservers in Squarespace before
+doing any hostname-level routing work.
 
 Before changing nameservers:
 
 - recreate any existing `A`, `CNAME`, `MX`, `TXT`, DKIM, SPF, or verification records in Cloudflare
-- confirm the existing `bud.dev` DNS footprint so staging cutover does not break mail or unrelated subdomains
+- confirm the existing `bud.dev` and `bud.show` DNS footprint so staging
+  cutover does not break mail or unrelated subdomains
 
 Cloudflare cannot apply Worker routes or proxied DNS behavior to `staging.bud.dev` until the parent zone is actually active there.
+Cloudflare also cannot serve the wildcard web-view proxy until `bud.show` has a
+proxied wildcard DNS record and active wildcard edge certificate coverage.
 
 ### 1. Attach the public hostname to `bud-web` in Render
 
@@ -177,7 +183,7 @@ Notes:
 
 Create a proxied wildcard DNS record for the proxy domain:
 
-- `*.bud.show` -> any proxied origin record suitable for Worker routing
+- `*.bud.show` -> proxied placeholder `A` record such as `192.0.2.0`
 
 Attach the same Worker to:
 
@@ -190,8 +196,22 @@ Notes:
   `bud-web`.
 - Do not add `bud.show` to `BETTER_AUTH_TRUSTED_ORIGINS`; Bud app auth remains
   on `staging.bud.dev`.
-- Do not use Cloudflare caching, HTML rewriting, or JS transformations on
-  `*.bud.show/*`.
+- If the Cloudflare dashboard rejects the wildcard route with `Route pattern
+  must include zone name`, add the route directly to the Worker configuration
+  or API. The route is valid when attached to the `bud.show` zone.
+- Do not use Cloudflare caching, HTML rewriting, URL normalization, or JS
+  transformations on `*.bud.show/*`.
+
+Use these Cloudflare rule settings for the `bud.show` zone:
+
+- DNS: `A`, name `*`, value `192.0.2.0`, proxied.
+- Cache Rules: bypass cache when `http.host wildcard "*.bud.show"`.
+- Transform, Redirect, and Configuration Rules: exclude
+  `http.host wildcard "*.bud.show"` from rules that modify paths, headers,
+  bodies, redirects, or scripts.
+- URL Normalization: select `RFC-3986`, disable incoming URL normalization, and
+  disable normalization to origin.
+- Network: keep WebSockets enabled.
 
 ### 6. Keep WebSockets enabled
 
@@ -257,6 +277,19 @@ Bud daemons should use:
 11. Update OAuth provider callback URLs to the public hostname.
 12. Validate the public hostname and wildcard web-view proxy path against [validation-checklist.md](./validation-checklist.md).
 
+## Staging Validation Result
+
+Validated on 2026-05-18 after the branch was merged with `main` and deployed to
+staging:
+
+- Render and Cloudflare had matching `PROXY_EDGE_SECRET` values.
+- Cloudflare `bud.show` had proxied wildcard DNS, the all-path Worker route,
+  cache bypass, transform bypass, WebSockets enabled, and URL normalization
+  disabled.
+- `dig` and `curl` checks reached `*.bud.show` through Cloudflare.
+- Generated `https://<slug>.bud.show` web-view URLs worked in both the staging
+  web client and mobile client.
+
 ## Agent Provider Note
 
 `render.yaml` intentionally does not hardcode a model selection because the current codebase defaults to `claude-opus-4-5`.
@@ -302,4 +335,4 @@ This runbook is complete when:
 
 ---
 
-*Last Updated: 2026-05-17*
+*Last Updated: 2026-05-18*

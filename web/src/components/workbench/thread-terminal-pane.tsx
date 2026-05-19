@@ -75,8 +75,15 @@ export function ThreadTerminalPane({
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-black">
-      {viewMode === 'web' && (
-        <div className="absolute inset-0 z-10 flex flex-col bg-background">
+      {webViewPane && (
+        <div
+          aria-hidden={viewMode !== 'web'}
+          className={`absolute inset-0 flex flex-col bg-background transition-opacity duration-150 ${
+            viewMode === 'web'
+              ? 'visible z-10 opacity-100'
+              : 'pointer-events-none invisible z-0 opacity-0'
+          }`}
+        >
           {webViewPane}
         </div>
       )}

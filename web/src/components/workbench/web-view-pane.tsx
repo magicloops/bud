@@ -1,10 +1,11 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   ExternalLink,
   Loader2,
   Monitor,
   Play,
   RefreshCw,
+  Settings2,
   ShieldAlert,
   Unplug,
   WifiOff,
@@ -52,6 +53,8 @@ export function WebViewPane({
   const [targetPath, setTargetPath] = useState('/')
   const [title, setTitle] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
+  const [controlsOpen, setControlsOpen] = useState(false)
+  const syncedSiteSignatureRef = useRef<string | null>(null)
 
   const isLoading = loadingStatuses.has(status)
   const displayError = localError ?? errorMessage
@@ -73,6 +76,37 @@ export function WebViewPane({
     () => sites.filter((site) => site.enabled && site.state === 'ready'),
     [sites],
   )
+
+  useEffect(() => {
+    const activeSiteSignature = activeSite
+      ? [
+          activeSite.proxied_site_id,
+          activeSite.target_host,
+          activeSite.target_port,
+          activePath || activeSite.path,
+        ].join('|')
+      : null
+
+    if (syncedSiteSignatureRef.current === activeSiteSignature) {
+      return
+    }
+
+    syncedSiteSignatureRef.current = activeSiteSignature
+    setLocalError(null)
+
+    if (!activeSite) {
+      setTargetHost('localhost')
+      setTargetPort('5173')
+      setTargetPath('/')
+      setTitle('')
+      return
+    }
+
+    setTargetHost(toWebViewTargetHost(activeSite.target_host))
+    setTargetPort(String(activeSite.target_port))
+    setTargetPath(normalizeFormPath(activePath || activeSite.path))
+    setTitle('')
+  }, [activePath, activeSite])
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -100,6 +134,22 @@ export function WebViewPane({
           {isLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setControlsOpen((open) => !open)}
+            title="Web view settings"
+            aria-label="Web view settings"
+            aria-expanded={controlsOpen}
+            aria-controls="web-view-controls"
+            className={cn(
+              'h-8 w-8 cursor-pointer rounded-md bg-transparent text-foreground hover:bg-black/10 dark:hover:bg-white/10',
+              controlsOpen && 'bg-black/10 dark:bg-white/10',
+            )}
+          >
+            <Settings2 className="h-4 w-4" />
+          </Button>
           <Button
             type="button"
             size="icon-sm"
@@ -136,86 +186,91 @@ export function WebViewPane({
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-wrap items-end gap-2 border-b-2 border-black bg-muted/20 p-3">
-        {visibleSites.length > 0 && (
-          <label className="flex min-w-[180px] flex-1 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
-            Site
-            <select
-              value={selectedSiteId}
-              onChange={(event) => onSelectSite(event.target.value)}
-              disabled={isLoading}
-              className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="" disabled>
-                Select
-              </option>
-              {visibleSites.map((site) => (
-                <option key={site.proxied_site_id} value={site.proxied_site_id}>
-                  {site.display_name} ({site.target_port})
+      {controlsOpen && (
+        <div
+          id="web-view-controls"
+          className="flex shrink-0 flex-wrap items-end gap-2 border-b-2 border-black bg-muted/20 p-3"
+        >
+          {visibleSites.length > 0 && (
+            <label className="flex min-w-[180px] flex-1 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
+              Site
+              <select
+                value={selectedSiteId}
+                onChange={(event) => onSelectSite(event.target.value)}
+                disabled={isLoading}
+                className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="" disabled>
+                  Select
                 </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <form onSubmit={handleSubmit} className="flex flex-1 flex-wrap items-end gap-2">
-          <label className="flex w-28 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
-            Host
-            <select
-              value={targetHost}
-              onChange={(event) => setTargetHost(event.target.value as WebViewOpenInput['targetHost'])}
-              disabled={isLoading}
-              className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
+                {visibleSites.map((site) => (
+                  <option key={site.proxied_site_id} value={site.proxied_site_id}>
+                    {site.display_name} ({site.target_port})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <form onSubmit={handleSubmit} className="flex flex-1 flex-wrap items-end gap-2">
+            <label className="flex w-28 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
+              Host
+              <select
+                value={targetHost}
+                onChange={(event) => setTargetHost(event.target.value as WebViewOpenInput['targetHost'])}
+                disabled={isLoading}
+                className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="localhost">localhost</option>
+                <option value="127.0.0.1">127.0.0.1</option>
+                <option value="::1">::1</option>
+              </select>
+            </label>
+            <label className="flex w-24 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
+              Port
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={65535}
+                value={targetPort}
+                onChange={(event) => setTargetPort(event.target.value)}
+                disabled={isLoading}
+                className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            <label className="flex min-w-[110px] flex-1 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
+              Path
+              <input
+                type="text"
+                value={targetPath}
+                onChange={(event) => setTargetPath(event.target.value)}
+                disabled={isLoading}
+                className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+            <label className="flex min-w-[120px] flex-1 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
+              Name
+              <input
+                type="text"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                disabled={isLoading}
+                className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
+                placeholder={`Local app ${targetPort || ''}`.trim()}
+              />
+            </label>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={isLoading || !transportAvailable}
+              className="h-9 rounded-md border-2 border-black font-mono"
             >
-              <option value="localhost">localhost</option>
-              <option value="127.0.0.1">127.0.0.1</option>
-              <option value="::1">::1</option>
-            </select>
-          </label>
-          <label className="flex w-24 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
-            Port
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={65535}
-              value={targetPort}
-              onChange={(event) => setTargetPort(event.target.value)}
-              disabled={isLoading}
-              className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
-          <label className="flex min-w-[110px] flex-1 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
-            Path
-            <input
-              type="text"
-              value={targetPath}
-              onChange={(event) => setTargetPath(event.target.value)}
-              disabled={isLoading}
-              className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
-          <label className="flex min-w-[120px] flex-1 flex-col gap-1 font-mono text-xs font-semibold uppercase text-muted-foreground">
-            Name
-            <input
-              type="text"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              disabled={isLoading}
-              className="h-9 rounded-md border-2 border-black bg-background px-2 text-sm normal-case text-foreground outline-none focus:ring-2 focus:ring-ring"
-              placeholder={`Local app ${targetPort || ''}`.trim()}
-            />
-          </label>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={isLoading || !transportAvailable}
-            className="h-9 rounded-md border-2 border-black font-mono"
-          >
-            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            Open
-          </Button>
-        </form>
-      </div>
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              Open
+            </Button>
+          </form>
+        </div>
+      )}
 
       {displayError && (
         <div className="shrink-0 border-b-2 border-black bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
@@ -393,4 +448,16 @@ function proxyTransportMessage(
       ? 'WebSocket/HMR is unavailable'
       : 'Bud proxy transport is unavailable'
   )
+}
+
+function toWebViewTargetHost(value: ApiProxiedSite['target_host']): WebViewOpenInput['targetHost'] {
+  if (value === '127.0.0.1' || value === 'localhost' || value === '::1') {
+    return value
+  }
+  return 'localhost'
+}
+
+function normalizeFormPath(value: string | null | undefined): string {
+  const trimmed = value?.trim() || '/'
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
 }

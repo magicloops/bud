@@ -162,10 +162,15 @@ loader: async ({ params }) => {
      point at the same local app
    - The pane mints one-time viewer grants and loads the endpoint-host iframe
      through the hosted bootstrap URL
+   - Terminal/Web tab switches preserve the mounted Web view pane so the iframe
+     is not recreated with a consumed bootstrap URL
    - Standalone open uses a fresh grant and top-level navigation as the
      fallback for browsers that block embedded cookie access
    - Passes HTTP and WebSocket/HMR transport readiness through to the Web view
      pane so proxied-site failure states are visible in the right pane
+   - When terminal recovery transitions back to connected, the route triggers a
+     guarded Web view refresh only if an active Web view has an unavailable HTTP
+     transport snapshot
    - Agent `web_view.*` tool-result rows switch the right pane to Web view and
      refresh proxied-site/thread attachment state
 
@@ -207,6 +212,9 @@ webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
 - Exponential backoff: 1s, 2s, 4s, ... up to 30s
 - On reconnect: rerun `terminal/ensure`, fetch authoritative session state, backfill history, and only then return to `connected`
 - If the SSE stream remains open but the Bud is offline, the terminal hook keeps polling `terminal/ensure`; if the stream itself closes, reconnect attempts are driven only by the backoff timer
+- Web view recovery watches the terminal connection transition to `connected`
+  and only refreshes the Web view REST snapshot when the current active Web view
+  was gated by unavailable HTTP proxy transport
 
 ## Types
 
