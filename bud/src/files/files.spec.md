@@ -33,10 +33,12 @@ Phase 4.4 file implementation.
 - sends read/range body chunks as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` before sending more response bytes
 - stops active streams when service sends `stream_reset`
+- exposes transport-disconnect cleanup that resets active file streams, clears
+  the manager map, and returns canceled counts for app-level logging
 
 ## Dependencies
 
-- [../app.rs](../app.rs) - dispatches `file_open`, owns the workspace root, and routes WebSocket/HTTP2 data-stream credit/reset frames into the manager
+- [../app.rs](../app.rs) - dispatches `file_open`, owns the workspace root, routes WebSocket/HTTP2 data-stream credit/reset frames into the manager, and cancels file tasks on daemon transport shutdown
 - [../transport.rs](../transport.rs) - routes generic stream frames over WebSocket or attached gRPC data according to the active transport
 - [../protocol.rs](../protocol.rs) - `FileOpenFrame`, `FileResolveFrame`, `StreamCreditFrame`, and `StreamResetFrame` definitions
 - [../../src.spec.md](../src.spec.md) - daemon source overview

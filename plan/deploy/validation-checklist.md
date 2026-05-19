@@ -79,7 +79,23 @@ Use this checklist as the release gate for the prototype mobile-testing environm
 - [ ] the team knows whether schema rollback is supported or whether rollback is forward-fix only.
 - [ ] the team knows how to disable or pause mobile use of the environment if validation fails after rollout.
 
-## 9. Platform Decision
+## 9. Hosted Web-View Proxy Contract
+
+- [x] Render `bud-service` and the Cloudflare Worker have matching
+  `PROXY_EDGE_SECRET` values.
+- [x] `*.bud.show` has proxied wildcard DNS in Cloudflare.
+- [x] Cloudflare edge TLS covers generated `*.bud.show` web-view hosts.
+- [x] the Cloudflare Worker route `*.bud.show/*` forwards all paths to
+  `bud-service`.
+- [x] Cloudflare cache, transform, rewrite, and URL normalization behavior is
+  bypassed or disabled for `*.bud.show`.
+- [x] Cloudflare WebSockets are enabled for the `bud.show` zone.
+- [x] generated `https://<slug>.bud.show` web-view URLs work in the staging web
+  client.
+- [x] generated `https://<slug>.bud.show` web-view URLs work in the staging
+  mobile client.
+
+## 10. Platform Decision
 
 - [ ] the team has written down whether Render remains staging-only or continues toward production use.
 - [ ] if Render remains staging-only, the intended production successor is named explicitly.
@@ -94,9 +110,10 @@ Use this checklist as the release gate for the prototype mobile-testing environm
 - [ ] Public-origin auth contract accepted
 - [ ] Bud claim/bootstrap accepted
 - [ ] SSE and `/ws` behavior accepted
+- [x] Hosted web-view proxy accepted
 - [ ] Mobile environment bundle published
 - [ ] Platform decision recorded
 
 ---
 
-*Last Updated: 2026-03-23*
+*Last Updated: 2026-05-18*

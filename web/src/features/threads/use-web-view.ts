@@ -287,17 +287,9 @@ export function useWebView({
     if (!activeSite) {
       return
     }
-    const sequence = sequenceRef.current + 1
-    sequenceRef.current = sequence
-    try {
-      await requestViewerGrant(activeSite, activePath, sequence)
-    } catch (error) {
-      if (isApiError(error, 401)) {
-        return
-      }
-      applyError(error, 'Failed to reload web view')
-    }
-  }, [activePath, activeSite, applyError, requestViewerGrant])
+
+    await refreshWebViews()
+  }, [activeSite, refreshWebViews])
 
   const openStandaloneWebView = useCallback(async () => {
     if (!activeSite) {

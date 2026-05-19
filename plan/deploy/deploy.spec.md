@@ -80,6 +80,7 @@ Covers:
 - Bud daemon behavior
 - SSE and WebSocket behavior
 - DB/migration posture
+- hosted `*.bud.show` web-view proxy routing through Cloudflare
 - mobile bundle publication
 - rollback readiness
 - the post-validation platform decision

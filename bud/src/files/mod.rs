@@ -35,6 +35,11 @@ pub struct FileManager {
     streams: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<FileStreamEvent>>>>,
 }
 
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+pub struct FileDisconnectSummary {
+    pub streams: usize,
+}
+
 enum FileStreamEvent {
     Credit { credit_bytes: u64 },
     Reset { reason: String },
@@ -127,6 +132,26 @@ impl FileManager {
             let _ = sender.send(FileStreamEvent::Reset {
                 reason: frame.reason,
             });
+        }
+    }
+
+    pub async fn abort_all_for_transport_disconnect(&self, reason: &str) -> FileDisconnectSummary {
+        let stream_senders = {
+            let mut streams = self.streams.lock().await;
+            streams
+                .drain()
+                .map(|(_, sender)| sender)
+                .collect::<Vec<_>>()
+        };
+
+        for sender in &stream_senders {
+            let _ = sender.send(FileStreamEvent::Reset {
+                reason: reason.to_string(),
+            });
+        }
+
+        FileDisconnectSummary {
+            streams: stream_senders.len(),
         }
     }
 
@@ -1350,5 +1375,34 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         fs::canonicalize(path).unwrap()
+    }
+
+    #[tokio::test]
+    async fn abort_transport_disconnect_resets_waiting_file_streams() {
+        let workspace = temp_workspace("abort-file-stream");
+        let manager = FileManager::new(workspace.clone());
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        manager
+            .register_stream("st_abort_file".into(), event_tx)
+            .await;
+
+        let waiter = tokio::spawn(async move {
+            let mut available_credit = 0;
+            wait_for_credit(&mut available_credit, 1, &mut event_rx).await
+        });
+
+        let summary = manager
+            .abort_all_for_transport_disconnect("transport disconnected")
+            .await;
+        assert_eq!(summary, FileDisconnectSummary { streams: 1 });
+
+        let err = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter completed")
+            .expect("waiter joined")
+            .expect_err("waiter should receive reset");
+        assert!(err.to_string().contains("transport disconnected"));
+
+        let _ = fs::remove_dir_all(workspace);
     }
 }

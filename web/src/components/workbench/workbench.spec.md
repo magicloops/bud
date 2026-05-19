@@ -177,6 +177,11 @@ Presentation component for the thread Web view right-pane mode.
 - renders create/load/ready/error states from `useWebView(...)`
 - lets users enter a loopback port, optional host/path, and display title for
   an owned proxied site, defaulting the manual host picker to `localhost`
+- syncs host/port/path controls from the active proxied site when the active
+  site changes, while keeping the Name field as an optional override for the
+  next Open action
+- keeps the Site/Host/Port/Path/Name/Open controls collapsed by default behind
+  a top-header settings icon, preserving the iframe and form state when toggled
 - exposes an existing-site picker for the current Bud so multiple threads can
   attach to the same durable proxied site
 - renders the private `bud.show`/`proxy.localhost` iframe bootstrap flow and
@@ -184,6 +189,9 @@ Presentation component for the thread Web view right-pane mode.
 - includes compact reload, detach, and standalone-open icon controls plus a
   visible in-pane "Open in new tab" action for validating the top-level
   bootstrap path when embedded local HTTP cookies are blocked
+- uses the hook-owned reload action as an authoritative Web view/site/transport
+  refresh, not just a viewer-grant remint, so stale unavailable proxy transport
+  can recover after Bud reconnect
 - shows product-visible banners for disabled/expired sites, Bud offline or
   unavailable HTTP proxy transport, and WebSocket/HMR unsupported/degraded
   transport while still allowing static HTTP previews when available
@@ -208,6 +216,8 @@ Terminal presentation component for the existing-thread workspace.
 - bottom-anchors the injected xterm element inside its measured host so whole-row fit remainder pixels collect above the terminal screen instead of below it
 - remains mounted underneath file-viewer and web-view overlays in the
   existing-thread route so the xterm host DOM is not removed during previews
+- keeps the injected web-view pane mounted while hidden on the Terminal tab so
+  the iframe is not recreated with a consumed one-time bootstrap grant
 - keeps terminal menu/open state and terminal-specific JSX out of `/$budId/$threadId`
 - stays presentation-only: terminal reconnect policy, xterm lifecycle, and transport remain in `web/src/features/threads/use-terminal-session.ts`
 

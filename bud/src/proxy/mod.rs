@@ -60,6 +60,12 @@ pub struct ProxyManager {
     ws_sessions: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<ProxyWebSocketEvent>>>>,
 }
 
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+pub struct ProxyDisconnectSummary {
+    pub streams: usize,
+    pub websocket_sessions: usize,
+}
+
 enum ProxyStreamEvent {
     Credit {
         credit_bytes: u64,
@@ -188,6 +194,39 @@ impl ProxyManager {
                 .unwrap_or("proxied WebSocket reset")
                 .to_string();
             let _ = sender.send(ProxyWebSocketEvent::Error { message });
+        }
+    }
+
+    pub async fn abort_all_for_transport_disconnect(&self, reason: &str) -> ProxyDisconnectSummary {
+        let stream_senders = {
+            let mut streams = self.streams.lock().await;
+            streams
+                .drain()
+                .map(|(_, sender)| sender)
+                .collect::<Vec<_>>()
+        };
+        let websocket_senders = {
+            let mut sessions = self.ws_sessions.lock().await;
+            sessions
+                .drain()
+                .map(|(_, sender)| sender)
+                .collect::<Vec<_>>()
+        };
+
+        for sender in &stream_senders {
+            let _ = sender.send(ProxyStreamEvent::Reset {
+                reason: reason.to_string(),
+            });
+        }
+        for sender in &websocket_senders {
+            let _ = sender.send(ProxyWebSocketEvent::Error {
+                message: reason.to_string(),
+            });
+        }
+
+        ProxyDisconnectSummary {
+            streams: stream_senders.len(),
+            websocket_sessions: websocket_senders.len(),
         }
     }
 
@@ -461,24 +500,28 @@ impl ProxyManager {
 
         loop {
             tokio::select! {
-                Some(event) = event_rx.recv() => {
+                event = event_rx.recv() => {
                     match event {
-                        ProxyWebSocketEvent::Message { message_type, data } => {
+                        Some(ProxyWebSocketEvent::Message { message_type, data }) => {
                             let message = proxy_ws_event_message(&message_type, &data, max_message_bytes)?;
                             ws_write.send(message).await?;
                         }
-                        ProxyWebSocketEvent::Close { reason } => {
+                        Some(ProxyWebSocketEvent::Close { reason }) => {
                             let _ = reason;
                             ws_write.send(Message::Close(None)).await?;
                             return Ok(());
                         }
-                        ProxyWebSocketEvent::Error { message } => {
+                        Some(ProxyWebSocketEvent::Error { message }) => {
                             warn!(
                                 ws_session_id = %frame.ws_session_id,
                                 message = %message,
                                 "service reset proxied WebSocket"
                             );
                             ws_write.send(Message::Close(None)).await?;
+                            return Ok(());
+                        }
+                        None => {
+                            let _ = ws_write.send(Message::Close(None)).await;
                             return Ok(());
                         }
                     }
@@ -1485,5 +1528,90 @@ mod tests {
             Message::Binary(bytes) => serde_json::from_slice(&bytes).expect("json binary frame"),
             other => panic!("unexpected transport message: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn abort_transport_disconnect_resets_waiting_http_proxy_streams() {
+        let manager = ProxyManager::default();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        manager.register_stream("st_abort".into(), event_tx).await;
+
+        let waiter = tokio::spawn(async move {
+            let mut available_credit = 0;
+            wait_for_credit(&mut available_credit, 1, &mut event_rx).await
+        });
+
+        let summary = manager
+            .abort_all_for_transport_disconnect("transport disconnected")
+            .await;
+        assert_eq!(
+            summary,
+            ProxyDisconnectSummary {
+                streams: 1,
+                websocket_sessions: 0
+            }
+        );
+
+        let err = tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter completed")
+            .expect("waiter joined")
+            .expect_err("waiter should receive reset");
+        assert!(err.to_string().contains("transport disconnected"));
+    }
+
+    #[tokio::test]
+    async fn abort_transport_disconnect_closes_active_websocket_proxy_session() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local websocket server");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept websocket");
+            let ws_stream = accept_async(stream).await.expect("websocket handshake");
+            let (_write, mut read) = ws_stream.split();
+            while let Some(message) = read.next().await {
+                if matches!(message.expect("local websocket message"), Message::Close(_)) {
+                    break;
+                }
+            }
+        });
+
+        let manager = ProxyManager::default();
+        let (outbound_tx, mut outbound_rx) = tokio_mpsc::unbounded_channel::<Message>();
+        let sender = TransportSender::websocket(outbound_tx, false);
+        let mut frame = ws_frame();
+        frame.target_host = "127.0.0.1".into();
+        frame.target_port = port;
+        frame.path = "/hmr".into();
+
+        let proxy_manager = manager.clone();
+        let proxy = tokio::spawn(async move { proxy_manager.run_ws_proxy(frame, sender).await });
+        let opened = recv_transport_json(&mut outbound_rx).await;
+        assert_eq!(
+            opened.get("type").and_then(Value::as_str),
+            Some("proxy_ws_open_result")
+        );
+
+        let summary = manager
+            .abort_all_for_transport_disconnect("transport disconnected")
+            .await;
+        assert_eq!(
+            summary,
+            ProxyDisconnectSummary {
+                streams: 0,
+                websocket_sessions: 1
+            }
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), proxy)
+            .await
+            .expect("proxy completed")
+            .expect("proxy task")
+            .expect("proxy result");
+        tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .expect("server completed")
+            .expect("server task");
     }
 }

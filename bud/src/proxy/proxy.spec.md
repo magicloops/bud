@@ -31,18 +31,23 @@ product web-proxy gateway.
 - waits for service `stream_credit` before sending more response bytes
 - stops active streams when service sends `stream_reset`, including browser
   disconnect cancellation before or during the local request
+- exposes transport-disconnect cleanup that resets active HTTP proxy streams,
+  closes active local WebSocket proxy sessions, clears manager maps, and returns
+  canceled counts for app-level logging
 - dials first-pass local `ws://<loopback-host>:<port><path>` targets for WebSocket proxy sessions
 - forwards a bounded, validated list of requested WebSocket subprotocols to the local target
 - preserves WebSocket text/binary message boundaries through `proxy_ws_message`
 - propagates close/error state through `proxy_ws_close` and `proxy_ws_error`
 - stops active WebSocket sessions when service sends `proxy_ws_close` or `proxy_ws_error`
+- exits local WebSocket proxy tasks if their service-event channel closes
 - includes daemon unit coverage for a local `127.0.0.1` WebSocket echo server,
   text/binary frame echoing, local close propagation, unsafe target rejection,
-  `localhost` loopback resolution validation, and typed local connect failures
+  `localhost` loopback resolution validation, typed local connect failures, and
+  transport-disconnect cleanup
 
 ## Dependencies
 
-- [../app.rs](../app.rs) - dispatches `proxy_open` / `proxy_ws_open`, owns the no-redirect HTTP client, and routes WebSocket/HTTP2 data-stream credit/reset plus WebSocket proxy frames into the manager
+- [../app.rs](../app.rs) - dispatches `proxy_open` / `proxy_ws_open`, owns the no-redirect HTTP client, routes WebSocket/HTTP2 data-stream credit/reset plus WebSocket proxy frames into the manager, and cancels proxy tasks on daemon transport shutdown
 - [../transport.rs](../transport.rs) - routes generic stream frames over WebSocket or attached gRPC data according to the active transport
 - [../protocol.rs](../protocol.rs) - `ProxyOpenFrame`, `ProxyWebSocket*Frame`, `StreamDataFrame`, `StreamCreditFrame`, and `StreamResetFrame` definitions
 - [../../src.spec.md](../src.spec.md) - daemon source overview

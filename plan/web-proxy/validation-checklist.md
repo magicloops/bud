@@ -165,21 +165,35 @@
 
 ## Production Deployment
 
-- [ ] Wildcard DNS exists for `*.bud.show`.
-- [ ] Wildcard TLS certificate automation exists.
-- [ ] Cloudflare Worker route `*.bud.show/*` forwards all paths to
+- [x] Wildcard DNS exists for `*.bud.show`.
+- [x] Wildcard TLS certificate automation exists.
+- [x] Cloudflare Worker route `*.bud.show/*` forwards all paths to
   `bud-service`.
-- [ ] Cloudflare Worker preserves incoming host in `x-forwarded-host` and sets
+- [x] Cloudflare Worker preserves incoming host in `x-forwarded-host` and sets
   `x-forwarded-proto=https`, `x-forwarded-port=443`, and the configured edge
   secret header.
 - [x] Service honors forwarded proxy gateway hosts only from the trusted edge
   path.
 - [x] Direct Render-origin requests cannot spoof `*.bud.show` routing with
   arbitrary forwarded headers.
-- [ ] Load balancer routes `*.bud.show` to gateway handler.
-- [ ] WebSocket upgrades are allowed through production edge.
-- [ ] CDN caching and HTML/JS transformations are bypassed for `*.bud.show/*`.
+- [x] Cloudflare edge routes `*.bud.show` to the gateway handler.
+- [x] WebSocket upgrades are allowed through production edge.
+- [x] CDN caching and HTML/JS transformations are bypassed for `*.bud.show/*`.
 - [ ] Gateway logs omit cookies, grants, request bodies, and WS payloads.
 - [ ] Metrics track requests, bytes, latency, auth failures, daemon disconnects,
   and active WebSockets.
 - [ ] Rate limits and quotas are configured before broad rollout.
+
+## Staging Edge Validation
+
+- [x] Render and Cloudflare both have the matching `PROXY_EDGE_SECRET`.
+- [x] Cloudflare wildcard DNS, Worker route, cache bypass, transform bypass,
+  WebSockets, and URL normalization settings were configured for `bud.show`.
+- [x] `dig` and `curl` checks resolve and reach `*.bud.show` through
+  Cloudflare.
+- [x] Generated `https://<slug>.bud.show` web-view URLs work in the staging web
+  client.
+- [x] Generated `https://<slug>.bud.show` web-view URLs work in the staging
+  mobile client.
+- [x] Staging validation completed after the branch was merged with `main` and
+  deployed on 2026-05-18.
