@@ -208,6 +208,54 @@ test("runtime snapshots expose pending tool metadata and draft assistant client 
   assert.equal(draftSnapshot.draft_assistant?.text, "Hello");
 });
 
+test("runtime snapshots expose waiting_for_user for pending question prompts", () => {
+  const runtime = new AgentRuntimeStateManager();
+  runtime.startTurn("thread-1", "turn-1");
+
+  const toolCursor = runtime.emit("thread-1", {
+    event: "agent.tool_call",
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-1",
+      call_id: "call-question",
+      name: "ask_user_questions",
+      args: {
+        schema: "ask_user_questions_request_v1",
+        request_id: "qr_test",
+        questions: [
+          {
+            question_id: "env",
+            kind: "single_choice",
+            label: "Environment?",
+            skippable: true,
+            choices: [{ choice_id: "staging", label: "Staging" }],
+          },
+        ],
+      },
+    },
+  });
+  runtime.setPendingUserQuestions(
+    "thread-1",
+    {
+      client_id: "tool-client-1",
+      call_id: "call-question",
+      name: "ask_user_questions",
+      args: {
+        schema: "ask_user_questions_request_v1",
+        request_id: "qr_test",
+        questions: [],
+      },
+      started_at: "2026-05-19T12:00:00.000Z",
+    },
+    toolCursor,
+  );
+
+  const snapshot = runtime.getSnapshot("thread-1");
+  assert.equal(snapshot.phase, "waiting_for_user");
+  assert.equal(snapshot.pending_tool?.name, "ask_user_questions");
+  assert.equal(snapshot.pending_tool?.args.request_id, "qr_test");
+});
+
 test("advanceCursor preserves runtime state while acknowledging external events", () => {
   const runtime = new AgentRuntimeStateManager();
   runtime.startTurn("thread-1", "turn-1");

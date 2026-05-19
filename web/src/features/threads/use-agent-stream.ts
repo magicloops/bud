@@ -85,6 +85,7 @@ type UseAgentStreamArgs = {
     callId: string
     name: string
     args?: Record<string, unknown>
+    startedAt?: string
   }) => void
   onToolResultMessage: (message: ApiMessage) => void
   onAssistantMessageStart: (event: { turnId: string; clientId: string }) => void
@@ -260,6 +261,7 @@ export function useAgentStream({
           callId: data.call_id,
           name: data.name,
           args: data.args,
+          startedAt: data.started_at,
         })
       } catch (error) {
         console.warn('[agent-sse] failed to parse tool_call', error)

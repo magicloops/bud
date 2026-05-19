@@ -80,7 +80,7 @@ Responsibilities:
 - FCM provider support is not implemented yet even though the route and schema shapes are designed to support it later.
 
 <!-- SPEC:TODO -->
-- `human_input_requested` is supported by the schema, unread math, and delivery preferences, but the service does not enqueue that kind yet because the human-input tool flow is still pending.
+- `human_input_requested` is supported by the schema, unread math, and delivery preferences, but the service does not enqueue that kind yet. The `ask_user_questions` tool flow now exists; attention stamping and push enqueue are deferred until the prompt visibility/read-watermark boundary is finalized.
 
 ---
 

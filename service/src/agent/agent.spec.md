@@ -7,7 +7,7 @@ Agent orchestration layer for AI-assisted terminal interactions using the LLM pr
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
 1. Builds conversation context from thread history (canonical format)
 2. Calls the LLM provider (OpenAI, Anthropic) via `providerRegistry`
-3. Executes terminal tool calls on the connected bud daemon and product web-view tool calls through service-side proxied-site routes/helpers
+3. Executes terminal tool calls on the connected bud daemon, product web-view tool calls through service-side proxied-site routes/helpers, and structured `ask_user_questions` pauses through the thread response route
 4. Loops until a final response or max steps reached
 
 ## Files
@@ -38,11 +38,12 @@ Direct tests for cancel-vs-clear behavior in the extracted cancellation registry
 Shared agent-facing tool/result contracts.
 
 **Responsibilities**:
-- define the normalized `terminal.send`, `terminal.observe`, and `web_view.*` directive unions used across the split agent seams
+- define the normalized `terminal.send`, `terminal.observe`, `web_view.*`, and `ask_user_questions` directive unions used across the split agent seams
 - centralize readiness defaults plus tool-argument serialization
 - expose effective client-facing wait modes for terminal tools (`terminal.send` defaults to `wait_for: "settled"`, `terminal.observe` defaults to `wait_for: "none"`)
 - normalize legacy wait/key inputs reused during transcript replay and model-tool parsing
 - keep web-view tool args/result payloads separate from terminal wait/readiness defaults
+- keep user-question request/result payloads separate from terminal and web-view result contracts
 
 ### `contracts.test.ts`
 
@@ -82,17 +83,57 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - stored `screen_stable` waits replay as canonical `settled`
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
 
+### `user-question-contracts.ts`
+
+Shared validation and normalization for the `ask_user_questions` tool.
+
+**Responsibilities**:
+- define v1 request, response, and tool-result schema constants
+- normalize model-supplied question requests into a bounded, client-renderable form
+- tolerate OpenAI strict-mode `null` values for optional request fields by treating them as omitted
+- force every v1 question to be skippable
+- validate client responses against the stored request, not client-supplied labels
+- build the single structured tool result that repeats each question before each answer
+- build a markdown Q/A summary used by restart fallback user messages
+
+### `user-question-contracts.test.ts`
+
+Standalone tests for mixed request normalization, duplicate-id rejection, invalid answer rejection, skipped answers, and self-contained tool-result summaries.
+
+### `user-question-registry.ts`
+
+In-memory waiter registry for live `ask_user_questions` continuations.
+
+**Responsibilities**:
+- register one pending response promise per durable question request id
+- resolve a live waiter when the authorized response route accepts an answer
+- reject waiting prompts on agent cancel or terminal/service failure cleanup
+- let the response route distinguish live continuation from restart fallback
+
+### `user-question-repository.ts`
+
+Persistence and route/service helpers for `agent_question_request`.
+
+**Responsibilities**:
+- create durable pending question request rows before exposing prompts to clients
+- load owned request rows for a thread/question id pair
+- validate and atomically accept client responses with `client_response_id` idempotency
+- persist generated response and tool-result payloads on the request row
+- mark pending rows canceled during turn cancellation
+- shape completed user-question tool results for transcript persistence
+
 ### `agent-service.ts`
 
 Thin agent orchestrator over the extracted conversation/model/tool/transcript ownership units.
 
 The prompt/tool-definition ownership now lives in the extracted modules:
 - `conversation-loader.ts` owns the canonical Bud Agent system prompt used for every turn
-- `model-runner.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, and `web_view_list` JSON Schema definitions passed to providers
+- `model-runner.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, `web_view_list`, and `ask_user_questions` JSON Schema definitions passed to providers
 
 **System Prompt Highlights**:
 - tool-calling guidance for `terminal.send` and `terminal.observe`
 - product web-view guidance for opening, listing, and closing thread web views
+- structured human-question guidance for asking bounded, skippable questions only when a normal answer or assumption would be risky
 - readiness confidence interpretation (`>= 0.8` ready, `0.5-0.8` probably ready, `< 0.5` still processing)
 - hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (Python/Node/Claude Code vs shell)
@@ -108,6 +149,7 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 | `web_view_open` | `target_port`, `target_host?`, `path?`, `title?` | Create/reuse a Bud-scoped proxied site and attach it to the current thread; omitted `target_host` defaults to `localhost`, and explicit loopback hosts must be preserved exactly |
 | `web_view_close` | `proxied_site_id?`, `disable?` | Detach the current thread web view and optionally disable the proxied site |
 | `web_view_list` | none | List owned proxied sites for the current Bud and current thread attachment |
+| `ask_user_questions` | `title?`, `body?`, `submit_label?`, `skip_all_label?`, `questions[]` | Pause the current turn and ask the owning user up to five skippable structured questions; v1 supports boolean, single-choice, multi-choice, text, and number questions |
 
 Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. The lower service/daemon parsers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where needed for replay and older clients.
 
@@ -133,6 +175,7 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 |--------|---------|
 | `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, then spawns async agent flow while carrying thread-owner stamping plus the resolved model-selection source |
 | `runAgentFlow(...)` | Main loop - delegate conversation/model/tool/transcript work across the extracted ownership seams |
+| `submitQuestionResponse(...)` | Validate an owned question response, resolve a live waiter, or persist a fallback user message and start a follow-up turn |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 | `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
 
@@ -157,7 +200,7 @@ startUserMessage()
                   │      │
                   │      ├─► tool calls found → for each provider-ordered call:
                   │      │                  └─► transcriptWriter.emitToolCall()
-                  │      │                  └─► terminalToolExecutor.execute() or webViewToolExecutor.execute()
+                  │      │                  └─► terminalToolExecutor.execute(), webViewToolExecutor.execute(), or durable ask-user response wait
                   │      │                  └─► transcriptWriter.recordToolResult()
                   │      │                  └─► persist provider tool-result item
                   │      │
@@ -180,6 +223,8 @@ startUserMessage()
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
 - Anthropic thinking and redacted-thinking blocks are replayed provider-natively only when the next Anthropic model/reasoning request is compatible; incompatible same-provider ranges fall back to canonical visible transcript rows with explicit degradation metadata.
 - Multiple provider tool calls are parsed and executed serially in provider output order across terminal and web-view tools.
+- `ask_user_questions` tool calls are normalized and persisted before `agent.tool_call` is emitted; live answers resolve the waiter and continue the same provider tool-call loop, while answers submitted after a service restart become a self-contained follow-up user message that starts a normal new turn.
+- While waiting on `ask_user_questions`, `/agent/state.phase` is `waiting_for_user` and `/agent/state.pending_tool` exposes the normalized request with `request_id`.
 - Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
@@ -266,9 +311,12 @@ Direct tests for the extracted model runner.
 - reasoning-effort normalization follows selected model policy, including Claude 4.6/4.7 and GPT-5.4 differences
 - terminal tool schemas advertise only public `wait_for` modes and omit `timeout_ms`
 - web-view tool schemas advertise product-level `web_view_open`, `web_view_close`, and `web_view_list`
+- user-question tool schema advertises `ask_user_questions` with bounded skippable question kinds
+- user-question request normalization treats strict-mode `null` optionals as omitted
 - streamed text blocks around multiple tool calls are retained in provider order
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
 - web-view tool calls parse into product `web_view.*` directives
+- user-question tool calls parse into normalized `ask_user_questions` directives
 - empty final responses include bounded canonical/provider response diagnostics on the thrown error
 
 ### `terminal-tool-executor.ts`
@@ -297,6 +345,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 
 **Responsibilities**:
 - emit `agent.tool_call` and synchronize `/agent/state.pending_tool`, including the tool `started_at` timestamp and effective client-facing terminal `wait_for` args
+- set `/agent/state.phase` to `waiting_for_user` for pending `ask_user_questions` tool calls
 - persist assistant/tool transcript rows with stable `client_id`
 - persist intermediate assistant text segments that precede or appear between tool calls
 - stamp thread attention metadata for final attention-worthy assistant output
@@ -305,6 +354,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - add the resolved `model`, `reasoning_effort`, and `model_selection_source` to assistant/tool `message.metadata`
 - add cached cwd path context to assistant rows and before/after path context to terminal tool rows
 - emit web-view tool results with a `web_view` runtime payload instead of terminal `output` / `readiness` fields
+- emit user-question tool results with a `user_questions` runtime payload instead of terminal `output` / `readiness` fields
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
 - advance runtime cursors only after the durable transcript boundary is visible
 
@@ -322,7 +372,7 @@ Thread/message routes now resolve the effective thread selection before starting
 
 **Cancellation**:
 
-`AgentService` now delegates per-thread `AbortController` ownership to `AgentCancellationRegistry`, and explicit cancel also rejects any pending terminal wait through `TerminalSessionManager.rejectPendingRequestsForThread(...)`.
+`AgentService` now delegates per-thread `AbortController` ownership to `AgentCancellationRegistry`, and explicit cancel also rejects any pending terminal wait through `TerminalSessionManager.rejectPendingRequestsForThread(...)`, rejects pending `ask_user_questions` waiters, and marks durable pending question requests canceled.
 
 Human terminal interrupt is intentionally separate from agent cancel: the terminal route sends `ctrl+c` and rejects the current terminal wait as `interrupted`, allowing the active agent turn to record a tool result and continue.
 
@@ -331,6 +381,7 @@ Human terminal interrupt is intentionally separate from agent cancel: the termin
 - assistant final messages and tool-result messages are written with `message.created_by_user_id`
 - lazily created terminal sessions inherit the same owner via `ensureSessionRecordForThread(..., ownerUserId)`
 - web-view tools use the owning thread user to create/list/attach/detach `proxied_site` and `thread_web_view` rows
+- question request rows inherit the owning thread user in `agent_question_request.created_by_user_id`; response submissions authorize the thread before reading or accepting the request
 
 ### `transcript-writer.test.ts`
 
@@ -400,11 +451,13 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `/agent/state.pending_tool.started_at` matches `agent.tool_call.started_at`, so reconnecting clients can show elapsed time for long pending waits
 - `/agent/state.pending_tool.args.wait_for` and `agent.tool_call.args.wait_for` expose the effective terminal wait mode, including implicit `terminal.send` settled waits and implicit `terminal.observe` non-waits
 - web-view pending/tool-call args expose only product fields such as `target_port`, `path`, `proxied_site_id`, and `disable`
+- user-question pending/tool-call args expose the normalized `ask_user_questions_request_v1` payload, including `request_id`, labels, and skippable question definitions
 - omitted `web_view.open.target_host` means `localhost`; when present, `target_host` is the exact loopback host the model requested
 - `started_at` on `agent.tool_call` is the service-side tool-start timestamp captured immediately before execution begins
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
 - tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop
 - web-view tool-result payloads include `web_view` data instead of terminal readiness/output fields
+- user-question tool-result payloads include `user_questions` data with the structured `ask_user_questions_tool_result_v1` result and Q/A summary
 - canonical persisted tool rows expose the same timing fields under `message.metadata`, while `message.content` remains the replay payload and intentionally does not gain timing-only fields
 - canonical persisted terminal tool rows may expose `path_context_before` / `path_context_after` under `message.metadata`; assistant rows may expose `path_context`
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
@@ -436,6 +489,9 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `./web-view-tool-executor.js` | Product web-view tool orchestration |
 | `./transcript-writer.js` | Durable assistant/tool persistence + runtime emission |
 | `./terminal-send-outcome.js` | Send-result delta interpretation for conservative summaries |
+| `./user-question-contracts.js` | `ask_user_questions` request/response/result validation and summary building |
+| `./user-question-registry.js` | Live `ask_user_questions` waiter resolution |
+| `./user-question-repository.js` | Durable `agent_question_request` persistence and response acceptance |
 | `../db/thread-metadata.js` | Thread activity tracking |
 
 ## Configuration Used
@@ -454,7 +510,7 @@ From `../config.js`:
 - Consider: Move tool definitions to a shared location if multiple agents need them
 
 <!-- SPEC:TODO -->
-- `human_input_requested` attention is designed into the notification schema/routes but is not emitted yet because the corresponding tool-driven prompt flow has not been implemented.
+- `human_input_requested` attention is designed into the notification schema/routes, but attention stamping/push enqueue for `ask_user_questions` prompts is deferred until the prompt visibility/read-watermark boundary is finalized.
 
 ---
 

@@ -51,6 +51,12 @@ export const fileSessionStateValues = [
   "revoked",
   "expired",
 ] as const;
+export const agentQuestionRequestStatusValues = [
+  "pending",
+  "answered",
+  "expired",
+  "canceled",
+] as const;
 
 const byteaColumn = customType<{ data: Buffer }>({
   dataType() {
@@ -516,6 +522,57 @@ export const llmCallItemTable = pgTable(
     ),
     toolCallIdx: index("llm_call_item_tool_call_idx").on(table.toolCallId),
     messageIdx: index("llm_call_item_message_idx").on(table.messageId),
+  }),
+);
+
+export const agentQuestionRequestTable = pgTable(
+  "agent_question_request",
+  {
+    questionRequestId: text("question_request_id").primaryKey(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => threadTable.threadId, { onDelete: "cascade" }),
+    turnId: text("turn_id").notNull(),
+    callId: text("call_id").notNull(),
+    clientId: uuid("client_id").notNull(),
+    status: text("status", { enum: agentQuestionRequestStatusValues })
+      .notNull()
+      .default("pending"),
+    request: jsonb("request")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    clientResponse: jsonb("client_response").$type<Record<string, unknown>>(),
+    toolResult: jsonb("tool_result").$type<Record<string, unknown>>(),
+    clientResponseId: uuid("client_response_id"),
+    answeredByUserId: text("answered_by_user_id").references(() => authUserTable.id, {
+      onDelete: "set null",
+    }),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    threadCallIdx: uniqueIndex("agent_question_request_thread_call_idx").on(
+      table.threadId,
+      table.callId,
+    ),
+    clientResponseIdx: uniqueIndex("agent_question_request_client_response_idx").on(
+      table.clientResponseId,
+    ),
+    threadStatusIdx: index("agent_question_request_thread_status_idx").on(
+      table.threadId,
+      table.status,
+      table.createdAt,
+    ),
+    ownerStatusIdx: index("agent_question_request_owner_status_idx").on(
+      table.createdByUserId,
+      table.status,
+      table.createdAt,
+    ),
   }),
 );
 

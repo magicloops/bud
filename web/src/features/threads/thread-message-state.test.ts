@@ -100,6 +100,41 @@ test('applyAgentStateOverlay replaces stale synthetic rows with the current pend
   assert.equal(nextMessages[2]?.content, 'working...')
 })
 
+test('applyAgentStateOverlay builds pending ask_user_questions rows from agent state', () => {
+  const nextState = buildAgentState({
+    active: true,
+    turn_id: 'turn-question',
+    phase: 'waiting_for_user',
+    pending_tool: {
+      client_id: 'question-client',
+      call_id: 'call-question',
+      name: 'ask_user_questions',
+      started_at: '2026-05-19T12:00:00.000Z',
+      args: {
+        schema: 'ask_user_questions_request_v1',
+        request_id: 'qr_test',
+        title: 'Deploy',
+        questions: [
+          {
+            question_id: 'env',
+            kind: 'single_choice',
+            label: 'Environment?',
+            skippable: true,
+            choices: [{ choice_id: 'staging', label: 'Staging' }],
+          },
+        ],
+      },
+    },
+  })
+
+  const [message] = applyAgentStateOverlay([], nextState)
+
+  assert.equal(message?.client_id, 'question-client')
+  assert.equal(message?.created_at, '2026-05-19T12:00:00.000Z')
+  assert.equal(message?.metadata?.tool, 'ask_user_questions')
+  assert.equal(message?.metadata?.request_id, 'qr_test')
+})
+
 test('mergeLatestBootstrapState preserves older canonical history and earlier pagination cursors', () => {
   const olderLoaded = buildMessage({
     client_id: 'older-1',

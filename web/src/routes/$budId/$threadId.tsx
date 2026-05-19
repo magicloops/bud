@@ -37,7 +37,13 @@ import {
   useAvailableModels,
   type ReasoningLevel,
 } from '@/lib/models'
-import type { ApiAgentState, ApiMessagePage, ApiThread } from '@/lib/api-types'
+import type {
+  ApiAgentState,
+  ApiAskUserQuestionsRequest,
+  ApiAskUserQuestionsResponseInput,
+  ApiMessagePage,
+  ApiThread,
+} from '@/lib/api-types'
 import type { OpenFileCandidate } from '@/lib/file-paths'
 import type { ViewMode } from '@/components/workbench/workspace-top-bar'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
@@ -90,6 +96,7 @@ function ThreadView() {
     initialAgentState.active ? 'streaming' : 'idle',
   )
   const [error, setError] = useState<string | null>(null)
+  const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
@@ -308,6 +315,9 @@ function ThreadView() {
 
   const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
     applyToolResultMessage(message)
+    if (message.metadata?.tool === 'ask_user_questions') {
+      setQuestionSubmitError(null)
+    }
     const tool = typeof message.metadata?.tool === 'string' ? message.metadata.tool : null
     if (tool?.startsWith('web_view.')) {
       setViewMode('web')
@@ -334,6 +344,49 @@ function ThreadView() {
     refreshBootstrap: refreshAgentBootstrap,
   })
   agentStreamCursorSetterRef.current = setAgentStreamCursor
+
+  const handleSubmitQuestionResponse = useCallback(async (
+    request: ApiAskUserQuestionsRequest,
+    response: ApiAskUserQuestionsResponseInput,
+  ) => {
+    if (!threadId) {
+      setQuestionSubmitError('No thread selected')
+      return
+    }
+
+    setQuestionSubmitError(null)
+    try {
+      const resp = await apiFetch(
+        `/api/threads/${threadId}/agent/question-requests/${encodeURIComponent(request.request_id)}/responses`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(response),
+        },
+      )
+      if (shouldAbortForUnauthorized(resp)) {
+        return
+      }
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}))
+        throw new Error(body.message ?? body.error ?? `HTTP ${resp.status}`)
+      }
+
+      const result = await resp.json() as {
+        continuation: 'live_tool_result' | 'fallback_user_message' | 'already_answered'
+      }
+      if (result.continuation === 'fallback_user_message' || result.continuation === 'already_answered') {
+        await refreshAgentBootstrap(threadId)
+      } else {
+        ensureAgentStreamConnected()
+      }
+    } catch (err) {
+      if (isAuthRedirectPending()) {
+        return
+      }
+      setQuestionSubmitError(err instanceof Error ? err.message : 'Failed to submit answers')
+    }
+  }, [ensureAgentStreamConnected, refreshAgentBootstrap, shouldAbortForUnauthorized, threadId])
   const {
     currentSessionId,
     focusTerminal,
@@ -355,6 +408,16 @@ function ThreadView() {
     shouldAbortForUnauthorized,
     updateBudStatus,
   })
+  const isWaitingForQuestion = useMemo(
+    () =>
+      messages.some(
+        (message) =>
+          message.role === 'tool' &&
+          message.metadata?.pending === true &&
+          message.metadata?.tool === 'ask_user_questions',
+      ),
+    [messages],
+  )
   const previousTerminalConnectionRef = useRef(terminalConnection)
   const terminalConnectedRecoveryEpochRef = useRef(terminalConnection === 'connected' ? 1 : 0)
   const lastWebViewReconnectRefreshEpochRef = useRef(0)
@@ -506,6 +569,8 @@ function ThreadView() {
             onLoadOlderMessages={loadOlderMessages}
             scrollContainerRef={chatScrollRef}
             onOpenFile={handleOpenFile}
+            onSubmitQuestionResponse={handleSubmitQuestionResponse}
+            questionSubmitError={questionSubmitError}
           />
           <ThinkingIndicator isVisible={status !== 'idle'} />
         </div>
@@ -569,6 +634,7 @@ function ThreadView() {
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
+          disabledReason={isWaitingForQuestion ? 'Answer or skip the pending questions to continue.' : null}
         />
       )}
       debugPanel={(

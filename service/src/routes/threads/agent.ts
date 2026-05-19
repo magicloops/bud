@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { AgentService } from "../../agent/index.js";
+import { AgentQuestionRequestError } from "../../agent/user-question-repository.js";
+import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
 import type { AgentRuntimeStateManager } from "../../runtime/agent-runtime-state.js";
 import {
   StreamResumeQuerySchema,
@@ -7,6 +9,11 @@ import {
   readLastEventId,
   requireAuthorizedThreadAccess,
 } from "./shared.js";
+import { z } from "zod";
+
+const QuestionRequestParamsSchema = ThreadParamsSchema.extend({
+  requestId: z.string().min(1).max(128),
+});
 
 export async function registerThreadAgentRoutes(
   server: FastifyInstance,
@@ -77,5 +84,42 @@ export async function registerThreadAgentRoutes(
     await agentService.cancelThread(thread.threadId);
     reply.send({ ok: true });
   });
-}
 
+  server.post(
+    "/api/threads/:threadId/agent/question-requests/:requestId/responses",
+    async (request, reply) => {
+      const params = QuestionRequestParamsSchema.parse(request.params);
+      const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+      if (!access) {
+        return;
+      }
+
+      try {
+        const result = await agentService.submitQuestionResponse({
+          threadId: access.thread.threadId,
+          questionRequestId: params.requestId,
+          response: request.body ?? {},
+          answeredByUserId: access.viewer.userId,
+        });
+        reply.send({
+          ok: true,
+          question_request_id: result.questionRequestId,
+          status: result.status,
+          continuation: result.continuation,
+          ...(result.messageId ? { message_id: result.messageId } : {}),
+          ...(result.clientId ? { client_id: result.clientId } : {}),
+        });
+      } catch (err) {
+        if (err instanceof AgentQuestionRequestError) {
+          reply.code(err.statusCode).send({ error: err.code });
+          return;
+        }
+        if (err instanceof AskUserQuestionsContractError) {
+          reply.code(400).send({ error: err.code, message: err.message });
+          return;
+        }
+        throw err;
+      }
+    },
+  );
+}

@@ -20,6 +20,7 @@ Message/transcript ownership for the existing-thread route.
 - fetch older transcript pages through `before=<cursor>`
 - create and reconcile optimistic user messages
 - apply runtime pending-tool and draft-assistant overlays
+- preserve pending `ask_user_questions` overlays from `/agent/state` so a refresh can recover the form while the service is waiting on the user
 - reconcile canonical assistant/tool messages from the agent stream
 - keep visible assistant draft text in the timeline when a tool call arrives, so text streamed before or between tool calls is not removed while waiting for the persisted assistant row
 - clear per-turn synthetic rows when a turn finishes or fails
@@ -40,6 +41,7 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 - stable `client_id` identity comparison and chronological sorting
 - optimistic user-message reconciliation into canonical persisted ids
 - pending-tool / draft-assistant synthetic-row detection and cleanup
+- pending `ask_user_questions` synthetic rows carry the server `started_at` timestamp when available so refresh and live stream rows sort consistently
 - `/agent/state` overlay application
 - latest-bootstrap merges that preserve older already-loaded transcript history
 - per-turn finalization cleanup rules
@@ -174,9 +176,11 @@ Agent SSE ownership for the existing-thread route.
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
+- pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering
 - accept `agent.message` for both intermediate assistant text segments and final assistant rows
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
 - pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
+- pass through `ask_user_questions` request args unchanged so the timeline can render the pending form and submit through the thread route
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly
 - keep latest event handlers in refs so the EventSource lifecycle depends on
   `threadId` rather than callback identity churn from the composing route

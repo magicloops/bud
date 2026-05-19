@@ -117,12 +117,13 @@ export const buildPendingToolMessageFromState = (agentState: ApiAgentState): Api
       call_id: pendingTool.call_id,
       ...(pendingTool.args ?? {}),
     }),
-    created_at: agentState.updated_at,
+    created_at: pendingTool.started_at ?? agentState.updated_at,
     metadata: {
       tool: pendingTool.name,
       call_id: pendingTool.call_id,
       turn_id: agentState.turn_id,
       pending: true,
+      ...(pendingTool.started_at ? { started_at: pendingTool.started_at } : {}),
       ...(pendingTool.args ?? {}),
     },
   }

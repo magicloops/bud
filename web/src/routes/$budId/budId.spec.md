@@ -115,6 +115,7 @@ loader: async ({ params }) => {
    - Keeps feature hook error callbacks stable so route rerenders do not
      retrigger web-view fetches or agent stream reconnects
    - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, and `final`
+   - Renders pending `ask_user_questions` prompts in the timeline and submits responses to the thread-scoped question-response route
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
@@ -174,6 +175,12 @@ loader: async ({ params }) => {
    - Agent `web_view.*` tool-result rows switch the right pane to Web view and
      refresh proxied-site/thread attachment state
 
+10. **Ask User Questions**
+   - Pending `ask_user_questions` rows render the `QuestionRequestCard` inside the timeline
+   - Submission posts `ask_user_questions_response_v1` payloads to `/api/threads/:threadId/agent/question-requests/:requestId/responses`
+   - Live continuations keep the stream connected while fallback/idempotent responses refresh the transcript/runtime bootstrap
+   - Normal composer input is disabled with an explicit reason while a pending structured prompt is visible
+
 **State**:
 ```typescript
 // UI state
@@ -192,6 +199,7 @@ terminalOutputTruncated: boolean
 activeFileEntry: FileViewerEntry | null
 activeWebView: ApiThreadWebView | null
 webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
+questionSubmitError: string | null
 ```
 
 **Terminal Event Handling**:

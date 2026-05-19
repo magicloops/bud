@@ -7,6 +7,7 @@ export type AgentRuntimePhase =
   | "starting"
   | "thinking"
   | "tool_running"
+  | "waiting_for_user"
   | "streaming_message";
 
 export type AgentPendingTool = {
@@ -133,6 +134,22 @@ export class AgentRuntimeStateManager {
       threadId,
       (snapshot) => {
         snapshot.phase = "tool_running";
+        snapshot.pendingTool = pendingTool;
+        snapshot.draftAssistant = null;
+      },
+      cursor,
+    );
+  }
+
+  setPendingUserQuestions(
+    threadId: string,
+    pendingTool: AgentPendingTool,
+    cursor: string,
+  ): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.phase = "waiting_for_user";
         snapshot.pendingTool = pendingTool;
         snapshot.draftAssistant = null;
       },

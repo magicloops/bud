@@ -86,6 +86,7 @@ Message list with auto-scroll and collapsible messages.
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
+- Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
 - The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
 - Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render
 
@@ -125,6 +126,7 @@ Message input form with options.
 - `onSubmit` - Form submission handler
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
+- optional `disabledReason` - Human-readable reason to disable normal message composition while a structured prompt is pending
 
 **Features**:
 - Multi-line textarea
@@ -134,7 +136,24 @@ Message input form with options.
 - Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh` and `max`
 - Hides the reasoning selector when a model only exposes `none`
 - Submit button with loading state
+- Disables text entry, model/reasoning controls, and submit while `disabledReason` is present, such as during `waiting_for_user`
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
+
+### `question-request-card.tsx`
+
+Inline structured prompt form for pending `ask_user_questions` tool calls.
+
+**Props**:
+- `request` - normalized `ApiAskUserQuestionsRequest`
+- `onSubmit` - callback receiving the request plus an `ask_user_questions_response_v1` payload
+- optional `disabled` / `error`
+
+**Features**:
+- renders boolean, single-choice, multi-choice, text, and number question kinds
+- supports per-question skip plus skip-all
+- generates a browser UUIDv7 `client_response_id`
+- submits only normalized answer payloads; labels remain display-only
+- keeps unsupported question kinds non-crashing by allowing the user to skip them
 
 ### `workspace-shell.tsx`
 

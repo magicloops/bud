@@ -24,6 +24,11 @@ import {
   toolNameForConversation,
   type AgentToolCallDirective,
 } from "./contracts.js";
+import {
+  ASK_USER_QUESTIONS_TOOL,
+  normalizeAskUserQuestionsRequest,
+  parseStoredAskUserQuestionsRequest,
+} from "./user-question-contracts.js";
 
 type StoredMessageRow = {
   messageId: string;
@@ -57,6 +62,7 @@ Tools:
 - {"type":"tool_call","tool":"web_view.open","target_host":"localhost","target_port":5173,"path":"/"}
 - {"type":"tool_call","tool":"web_view.close"}
 - {"type":"tool_call","tool":"web_view.list"}
+- {"type":"tool_call","tool":"ask_user_questions","title":"Deployment details","questions":[{"question_id":"target","kind":"single_choice","label":"Which environment should I deploy to?","choices":[{"choice_id":"staging","label":"Staging"},{"choice_id":"production","label":"Production"}]}]}
 
 Tool Responses:
 All terminal tools return a JSON result containing:
@@ -68,6 +74,7 @@ All terminal tools return a JSON result containing:
 - terminal.observe defaults to view:"delta" and returns delta in output; use view:"screen" or view:"history" for broader context
 - The service owns terminal wait timeout policy. Choose wait_for behavior, not timeout_ms values.
 Web view tools return JSON with kind:"web_view", the proxied site metadata, current thread attachment, and proxy transport status.
+ask_user_questions returns JSON with kind:"user_questions", the original questions, and a response for each question. Each response repeats the question before the answer. Users may skip any question.
 
 Guidelines:
 - terminal.send is the primary terminal input tool for both shell commands and interactive programs.
@@ -98,6 +105,7 @@ Guidelines:
 - If the user gives only a port for web_view.open, omit target_host; the service defaults to localhost.
 - Use web_view.list before opening a duplicate if you are unsure whether the current Bud already has a matching web view.
 - Use web_view.close to detach the current thread web view. Only set disable:true when the user explicitly wants the proxied site stopped.
+- Use ask_user_questions when you cannot proceed safely without one or more user decisions. Keep prompts short, ask at most five questions, use structured choices when possible, and continue from skipped answers when a reasonable fallback exists.
 - Use the hints object to understand terminal state:
   - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
   - looks_like_confirmation: Waiting for y/n or yes/no response
@@ -353,6 +361,9 @@ export class AgentConversationLoader {
         title?: string;
         proxied_site_id?: string;
         disable?: boolean;
+        schema?: string;
+        request_id?: string;
+        questions?: unknown;
       };
 
       const callId =
@@ -417,6 +428,16 @@ export class AgentConversationLoader {
           return {
             type: "tool_call",
             tool: "web_view.list",
+            callId,
+          };
+        case ASK_USER_QUESTIONS_TOOL:
+          return {
+            type: "tool_call",
+            tool: ASK_USER_QUESTIONS_TOOL,
+            request:
+              payload.schema === "ask_user_questions_request_v1"
+                ? parseStoredAskUserQuestionsRequest(payload)
+                : normalizeAskUserQuestionsRequest(payload),
             callId,
           };
         default:

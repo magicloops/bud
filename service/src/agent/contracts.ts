@@ -5,6 +5,11 @@ import type {
   TerminalWaitFor,
 } from "../terminal/types.js";
 import { normalizeTerminalSendKeyName } from "../terminal/types.js";
+import {
+  ASK_USER_QUESTIONS_TOOL,
+  type AskUserQuestionsRequest,
+  type AskUserQuestionsToolResult,
+} from "./user-question-contracts.js";
 
 export type AgentToolCallDirective =
   | {
@@ -47,6 +52,12 @@ export type AgentToolCallDirective =
       type: "tool_call";
       tool: "web_view.list";
       callId: string;
+    }
+  | {
+      type: "tool_call";
+      tool: typeof ASK_USER_QUESTIONS_TOOL;
+      request: AskUserQuestionsRequest;
+      callId: string;
     };
 
 export type TerminalToolCallDirective = Extract<
@@ -57,6 +68,11 @@ export type TerminalToolCallDirective = Extract<
 export type WebViewToolCallDirective = Extract<
   AgentToolCallDirective,
   { tool: "web_view.open" | "web_view.close" | "web_view.list" }
+>;
+
+export type UserQuestionToolCallDirective = Extract<
+  AgentToolCallDirective,
+  { tool: typeof ASK_USER_QUESTIONS_TOOL }
 >;
 
 export type AgentFinalDirective = {
@@ -119,7 +135,22 @@ export type ExecutedWebViewTool = {
   payload: Record<string, unknown>;
 };
 
-export type ExecutedAgentTool = ExecutedTerminalTool | ExecutedWebViewTool;
+export type UserQuestionCallResult = {
+  kind: "user_questions";
+  requestId: string;
+  responses: AskUserQuestionsToolResult["responses"];
+};
+
+export type ExecutedUserQuestionTool = {
+  directive: UserQuestionToolCallDirective;
+  args: Record<string, unknown>;
+  summary: string;
+  outputTruncationReason: null;
+  result: UserQuestionCallResult;
+  payload: Record<string, unknown>;
+};
+
+export type ExecutedAgentTool = ExecutedTerminalTool | ExecutedWebViewTool | ExecutedUserQuestionTool;
 
 export type ToolExecutionTiming = {
   startedAt: Date;
@@ -138,7 +169,13 @@ export const DEFAULT_READINESS_HINTS: ReadinessHints = {
 
 export function toolNameForConversation(
   tool: AgentToolCallDirective["tool"],
-): "terminal_send" | "terminal_observe" | "web_view_open" | "web_view_close" | "web_view_list" {
+):
+  | "terminal_send"
+  | "terminal_observe"
+  | "web_view_open"
+  | "web_view_close"
+  | "web_view_list"
+  | typeof ASK_USER_QUESTIONS_TOOL {
   switch (tool) {
     case "terminal.send":
       return "terminal_send";
@@ -150,6 +187,8 @@ export function toolNameForConversation(
       return "web_view_close";
     case "web_view.list":
       return "web_view_list";
+    case ASK_USER_QUESTIONS_TOOL:
+      return ASK_USER_QUESTIONS_TOOL;
   }
 }
 
@@ -157,6 +196,12 @@ export function isTerminalToolDirective(
   directive: AgentToolCallDirective,
 ): directive is TerminalToolCallDirective {
   return directive.tool === "terminal.send" || directive.tool === "terminal.observe";
+}
+
+export function isUserQuestionToolDirective(
+  directive: AgentToolCallDirective,
+): directive is UserQuestionToolCallDirective {
+  return directive.tool === ASK_USER_QUESTIONS_TOOL;
 }
 
 export function parseWaitForArg(value: unknown): TerminalWaitFor | undefined {
@@ -229,6 +274,8 @@ export function buildToolArgs(
       };
     case "web_view.list":
       return {};
+    case ASK_USER_QUESTIONS_TOOL:
+      return directive.request as unknown as Record<string, unknown>;
   }
 }
 

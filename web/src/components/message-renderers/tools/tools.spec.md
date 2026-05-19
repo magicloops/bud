@@ -16,6 +16,7 @@ Registry mapping tool names to their renderers:
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
+  'ask_user_questions': AskUserQuestionsContent,
 }
 ```
 
@@ -42,6 +43,19 @@ $ ls -la
 Submit: Enter
 Key: ctrl+c
 ```
+
+### `ask-user-questions.tsx`
+
+Renders completed `ask_user_questions_tool_result_v1` payloads.
+
+**Props**:
+- `payload.result` or the payload itself may contain the tool result object
+
+**Rendering**:
+- shows the request title/body when present
+- displays each question label before its answered or skipped response
+- formats boolean, choice, multi-choice, text, and number answers
+- falls back to JSON for malformed or non-v1 payloads
 
 ## Types
 

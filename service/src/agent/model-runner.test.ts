@@ -168,11 +168,13 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   const webViewOpenTool = capturedTools.find((tool) => tool.name === "web_view_open");
   const webViewCloseTool = capturedTools.find((tool) => tool.name === "web_view_close");
   const webViewListTool = capturedTools.find((tool) => tool.name === "web_view_list");
+  const askUserQuestionsTool = capturedTools.find((tool) => tool.name === "ask_user_questions");
   assert.ok(sendTool);
   assert.ok(observeTool);
   assert.ok(webViewOpenTool);
   assert.ok(webViewCloseTool);
   assert.ok(webViewListTool);
+  assert.ok(askUserQuestionsTool);
 
   const sendProperties = sendTool.parameters.properties as Record<string, unknown>;
   const observeProperties = observeTool.parameters.properties as Record<string, unknown>;
@@ -195,6 +197,13 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.match(
     (webViewOpenProperties.target_host as { description?: string }).description ?? "",
     /preserve that exact host/,
+  );
+  const askProperties = askUserQuestionsTool.parameters.properties as Record<string, unknown>;
+  const questionsSchema = askProperties.questions as { maxItems?: number; items?: { properties?: Record<string, unknown> } };
+  assert.equal(questionsSchema.maxItems, 5);
+  assert.deepEqual(
+    (questionsSchema.items?.properties?.kind as { enum?: unknown }).enum,
+    ["boolean", "single_choice", "multi_choice", "text", "number"],
   );
 });
 
@@ -435,6 +444,49 @@ test("extractToolCalls parses web view tool directives", () => {
       callId: "call_web_list",
     },
   ]);
+});
+
+test("extractToolCalls parses ask_user_questions directives", () => {
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const directives = runner.extractToolCalls({
+    id: "resp_question_tools",
+    content: [],
+    stopReason: "tool_use",
+    toolCalls: [
+      {
+        id: "call_questions",
+        name: "ask_user_questions",
+        input: {
+          title: "Deploy",
+          questions: [
+            {
+              question_id: "env",
+              kind: "single_choice",
+              label: "Environment?",
+              choices: [
+                { choice_id: "staging", label: "Staging" },
+                { choice_id: "production", label: "Production" },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  assert.equal(directives.length, 1);
+  assert.equal(directives[0]?.tool, "ask_user_questions");
+  assert.equal(directives[0]?.callId, "call_questions");
+  if (directives[0]?.tool === "ask_user_questions") {
+    assert.equal(directives[0].request.schema, "ask_user_questions_request_v1");
+    assert.equal(directives[0].request.questions[0]?.skippable, true);
+  }
 });
 
 test("parseFinalResponse includes bounded model response diagnostics on empty output", () => {

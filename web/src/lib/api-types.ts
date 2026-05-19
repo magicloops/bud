@@ -102,10 +102,90 @@ export type ApiMessagePage = {
   }
 }
 
+export type ApiAskUserQuestionKind =
+  | 'boolean'
+  | 'single_choice'
+  | 'multi_choice'
+  | 'text'
+  | 'number'
+
+export type ApiAskUserQuestionChoice = {
+  choice_id: string
+  label: string
+  description?: string
+}
+
+export type ApiAskUserQuestionAnswer =
+  | { kind: 'boolean'; value: boolean }
+  | { kind: 'single_choice'; choice_id: string }
+  | { kind: 'multi_choice'; choice_ids: string[] }
+  | { kind: 'text'; value: string }
+  | { kind: 'number'; value: number }
+
+export type ApiAskUserQuestion = {
+  question_id: string
+  kind: ApiAskUserQuestionKind
+  label: string
+  help_text?: string
+  importance?: 'required' | 'important' | 'optional'
+  skippable?: boolean
+  choices?: ApiAskUserQuestionChoice[]
+  default_answer?: ApiAskUserQuestionAnswer
+  multiline?: boolean
+  placeholder?: string
+  min_length?: number
+  max_length?: number
+  min?: number
+  max?: number
+  step?: number
+  unit?: string
+  [key: string]: unknown
+}
+
+export type ApiAskUserQuestionsRequest = {
+  schema: 'ask_user_questions_request_v1'
+  request_id: string
+  title?: string
+  body?: string
+  submit_label?: string
+  skip_all_label?: string
+  questions: ApiAskUserQuestion[]
+  [key: string]: unknown
+}
+
+export type ApiAskUserQuestionResponseAnswer = {
+  question_id: string
+  status: 'answered' | 'skipped'
+  answer?: ApiAskUserQuestionAnswer
+  skip_reason?: 'user_skipped' | 'not_applicable' | 'unknown'
+}
+
+export type ApiAskUserQuestionsResponseInput = {
+  schema: 'ask_user_questions_response_v1'
+  client_response_id: string
+  answers: ApiAskUserQuestionResponseAnswer[]
+}
+
+export type ApiAskUserQuestionsToolResult = {
+  schema: 'ask_user_questions_tool_result_v1'
+  request_id: string
+  title?: string
+  body?: string
+  responses: Array<{
+    question_id: string
+    question: Pick<ApiAskUserQuestion, 'question_id' | 'kind' | 'label' | 'help_text' | 'choices'>
+    status: 'answered' | 'skipped'
+    answer?: ApiAskUserQuestionAnswer
+    display_answer?: string
+    skip_reason?: 'user_skipped' | 'not_applicable' | 'unknown'
+  }>
+  summary_markdown: string
+}
+
 export type ApiAgentState = {
   active: boolean
   turn_id: string | null
-  phase: 'idle' | 'starting' | 'thinking' | 'tool_running' | 'streaming_message'
+  phase: 'idle' | 'starting' | 'thinking' | 'tool_running' | 'waiting_for_user' | 'streaming_message'
   can_cancel: boolean
   stream_cursor: string
   pending_tool: {
@@ -113,6 +193,7 @@ export type ApiAgentState = {
     call_id: string
     name: string
     args: Record<string, unknown>
+    started_at?: string
   } | null
   draft_assistant: {
     client_id: string

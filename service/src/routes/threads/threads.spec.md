@@ -8,7 +8,7 @@ Keeps browser-visible thread ownership checks explicit while splitting the old m
 - core thread CRUD
 - message history/create flows
 - read-watermark updates for unread-attention state
-- agent state/stream/cancel
+- agent state/stream/cancel and structured question-response submission
 - terminal create/ensure/input/history/stream
 - user-clicked file viewer session creation
 
@@ -46,7 +46,13 @@ Focused route-handler coverage for the thread read-watermark route.
 
 ### `agent.ts`
 
-Agent runtime routes for `/agent/state`, `/agent/stream`, and `/cancel`.
+Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_user_questions` response submission.
+
+**Behavior**:
+- authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
+- accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`
+- validates submitted answers against the persisted question request row
+- returns whether the accepted response continued a live tool call, created a fallback user message, or matched an already-answered idempotent retry
 
 ### `files.ts`
 
@@ -106,6 +112,7 @@ Regression test for the split thread-route registration surface.
 - terminal routes still stamp and enforce the owning human through the terminal runtime
 - file viewer session creation stamps the acting viewer on `file_session.created_by_user_id` and never trusts a client-supplied Bud id
 - thread model-preference updates resolve through the same owned-thread boundary and return `404` for signed-in non-owners
+- question-response submission resolves the thread owner first, loads requests by `(thread_id, question_request_id)`, stamps `answered_by_user_id`, and returns `404` for cross-thread or cross-user request ids
 
 ---
 

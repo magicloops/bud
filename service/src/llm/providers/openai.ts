@@ -336,38 +336,75 @@ export class OpenAIProvider implements LLMProvider {
   ): Record<string, unknown> {
     // Deep clone to avoid mutating original
     const result = JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
+    return this.transformSchemaNodeForStrictMode(result) as Record<string, unknown>;
+  }
 
-    if (result.type !== "object" || !result.properties) {
-      return result;
+  private transformSchemaNodeForStrictMode(schema: unknown): unknown {
+    if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+      return schema;
     }
 
-    const properties = result.properties as Record<string, Record<string, unknown>>;
-    const required = new Set<string>(
-      Array.isArray(result.required) ? result.required as string[] : []
-    );
-    const allPropertyNames = Object.keys(properties);
+    const result = schema as Record<string, unknown>;
 
-    // Transform optional properties to include null type
-    for (const propName of allPropertyNames) {
-      if (!required.has(propName)) {
-        const prop = properties[propName];
-        const currentType = prop.type;
+    if (result.items) {
+      result.items = this.transformSchemaNodeForStrictMode(result.items);
+    }
 
-        // Add null to the type
-        if (typeof currentType === "string") {
-          prop.type = [currentType, "null"];
-        } else if (Array.isArray(currentType) && !currentType.includes("null")) {
-          prop.type = [...currentType, "null"];
-        }
-        // If already includes null or is complex, leave as-is
+    for (const key of ["anyOf", "oneOf", "allOf"] as const) {
+      if (Array.isArray(result[key])) {
+        result[key] = result[key].map((entry) => this.transformSchemaNodeForStrictMode(entry));
       }
     }
 
-    // All properties must be in required for strict mode
-    result.required = allPropertyNames;
-    result.additionalProperties = false;
+    if (this.isObjectSchema(result)) {
+      const properties = isRecord(result.properties)
+        ? result.properties as Record<string, Record<string, unknown>>
+        : {};
+      const required = new Set<string>(
+        Array.isArray(result.required) ? result.required as string[] : []
+      );
+      const allPropertyNames = Object.keys(properties);
+
+      for (const propName of allPropertyNames) {
+        const transformed = this.transformSchemaNodeForStrictMode(properties[propName]);
+        const prop = isRecord(transformed) ? transformed : properties[propName];
+        if (!required.has(propName)) {
+          this.addNullToOptionalSchema(prop);
+        }
+        properties[propName] = prop;
+      }
+
+      result.properties = properties;
+      result.required = allPropertyNames;
+      result.additionalProperties = false;
+    }
 
     return result;
+  }
+
+  private isObjectSchema(schema: Record<string, unknown>): boolean {
+    return schema.type === "object" ||
+      (Array.isArray(schema.type) && schema.type.includes("object")) ||
+      isRecord(schema.properties);
+  }
+
+  private addNullToOptionalSchema(schema: Record<string, unknown>): void {
+    const currentType = schema.type;
+    if (typeof currentType === "string") {
+      schema.type = currentType === "null" ? currentType : [currentType, "null"];
+      return;
+    }
+    if (Array.isArray(currentType)) {
+      if (!currentType.includes("null")) {
+        schema.type = [...currentType, "null"];
+      }
+      return;
+    }
+    if (Array.isArray(schema.anyOf)) {
+      if (!schema.anyOf.some((entry) => isRecord(entry) && entry.type === "null")) {
+        schema.anyOf = [...schema.anyOf, { type: "null" }];
+      }
+    }
   }
 
   private transformToolChoice(
@@ -780,4 +817,8 @@ export class OpenAIProvider implements LLMProvider {
     const textBlock = content.find(c => c.type === "text");
     return textBlock && "text" in textBlock ? textBlock.text : "";
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

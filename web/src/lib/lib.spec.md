@@ -74,7 +74,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiThread` | Thread response (id, title, session info, stored/effective model selection) |
 | `ApiMessage` | Message response (`message_id`, `client_id`, role, content) |
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
-| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, `pending_tool.args.wait_for`, and `draft_assistant.client_id` |
+| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, and `draft_assistant.client_id` |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 | `ApiDeviceAuthFlow` / `ApiDeviceAuthApproval` | Device-claim browser contracts |
@@ -83,6 +83,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiProxiedSite` / `ApiProxiedSiteListResponse` | Durable Bud-owned proxied-site contracts, including separate HTTP proxy and WebSocket/HMR transport readiness |
 | `ApiThreadWebView` / `ApiThreadWebViewResponse` | Current thread web-view attachment contract |
 | `ApiViewerGrantResponse` | One-time hosted-auth bootstrap URL for private proxied sites |
+| `ApiAskUserQuestionsRequest` / `ApiAskUserQuestionsResponseInput` / `ApiAskUserQuestionsToolResult` | `ask_user_questions` prompt, response, and completed tool-result contracts |
 
 **Capability Normalization**:
 ```typescript
@@ -99,6 +100,7 @@ Tool transcript note:
 - terminal tool rows and live pending-tool snapshots expose the effective `wait_for` value so clients can detect settled waits without elapsed-time heuristics
 - web-view tool rows may expose a `web_view` runtime payload instead of
   terminal `output`/`readiness` fields
+- user-question pending tool rows expose normalized `ask_user_questions_request_v1` payloads, and completed rows may expose `ask_user_questions_tool_result_v1` Q/A summaries
 
 ### `route-auth.ts`
 

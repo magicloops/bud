@@ -289,6 +289,7 @@ Each provider transforms canonical schemas to their specific requirements:
 - Transforms optional fields to `type: ["type", "null"]`
 - Adds ALL properties to `required` array
 - Sets `additionalProperties: false`
+- Applies those transformations recursively to nested object and array-item schemas
 
 **Anthropic** (standard JSON Schema):
 - Uses canonical schema directly with minimal transformation

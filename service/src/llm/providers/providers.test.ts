@@ -69,6 +69,82 @@ test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async
   assert.equal("reasoning" in capturedParams[1], false);
 });
 
+test("OpenAI provider recursively transforms nested tool schemas for strict mode", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const capturedParams: Record<string, unknown>[] = [];
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(params: Record<string, unknown>): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async (params) => {
+    capturedParams.push(params);
+    return emptyStream();
+  };
+
+  await drain(provider.invoke(messages, [
+    {
+      name: "ask_user_questions",
+      description: "Ask structured questions",
+      parameters: {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                label: { type: "string" },
+                choices: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      choice_id: { type: "string" },
+                      label: { type: "string" },
+                      description: { type: "string" },
+                    },
+                    required: ["choice_id", "label"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["label"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["questions"],
+        additionalProperties: false,
+      },
+    },
+  ], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: { enabled: false },
+  }));
+
+  const tools = capturedParams[0].tools as Array<Record<string, unknown>>;
+  const tool = tools[0];
+  const parameters = tool.parameters as Record<string, unknown>;
+  const questions = (parameters.properties as Record<string, unknown>).questions as Record<string, unknown>;
+  const questionItem = questions.items as Record<string, unknown>;
+  const questionProperties = questionItem.properties as Record<string, unknown>;
+  const choices = questionProperties.choices as Record<string, unknown>;
+  const choiceItem = choices.items as Record<string, unknown>;
+  const choiceProperties = choiceItem.properties as Record<string, Record<string, unknown>>;
+
+  assert.deepEqual(parameters.required, ["questions"]);
+  assert.deepEqual(questionItem.required, ["label", "choices"]);
+  assert.deepEqual(choices.type, ["array", "null"]);
+  assert.deepEqual(choiceItem.required, ["choice_id", "label", "description"]);
+  assert.deepEqual(choiceProperties.description.type, ["string", "null"]);
+  assert.equal(choiceItem.additionalProperties, false);
+});
+
 test("OpenAI provider preserves completed response payload for diagnostics", async () => {
   const provider = new OpenAIProvider("test-key");
   const providerWithClient = provider as unknown as {
