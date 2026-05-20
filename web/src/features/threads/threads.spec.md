@@ -42,6 +42,7 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 - optimistic user-message reconciliation into canonical persisted ids
 - pending-tool / draft-assistant synthetic-row detection and cleanup
 - pending `ask_user_questions` synthetic rows carry the server `started_at` timestamp when available so refresh and live stream rows sort consistently
+- live tool-call events and `/agent/state` snapshots share the same pending-tool row builder
 - `/agent/state` overlay application
 - latest-bootstrap merges that preserve older already-loaded transcript history
 - per-turn finalization cleanup rules
@@ -60,8 +61,32 @@ Node-runner coverage for transcript reconciliation rules.
 **Coverage**:
 - optimistic → canonical id reconciliation
 - stale synthetic overlay replacement
+- live `agent.tool_call` events build pending `ask_user_questions` prompt rows
+- `/agent/state` bootstrap preserves pending `ask_user_questions` prompt rows
+- latest-bootstrap refreshes do not duplicate pending `ask_user_questions` prompt rows
 - latest-bootstrap preservation of older history/cursors
 - turn finalization cleanup semantics
+
+### `question-response-submit.ts`
+
+Pure async submit/reconciliation helper for pending `ask_user_questions` responses.
+
+**Responsibilities**:
+- submit `ask_user_questions_response_v1` payloads to the thread-scoped response route
+- stop early with an auth-abort result when the transport reports an auth redirect
+- keep live continuations on the existing agent stream path
+- refresh latest transcript/runtime bootstrap for fallback and idempotent/already-answered responses
+- centralize user-facing error message selection for failed submissions
+
+### `question-response-submit.test.ts`
+
+Node-runner coverage for structured question-response submission flow.
+
+**Coverage**:
+- live continuation submissions keep the stream connected
+- fallback and already-answered submissions refresh latest bootstrap state
+- auth-aborted and failed submissions report stable outcomes
+- missing selected thread state fails locally without making a request
 
 ### `use-file-viewer.ts`
 

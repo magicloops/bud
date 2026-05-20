@@ -71,6 +71,31 @@ Finalization phase covering:
 - migration docs
 - manual validation and mobile handoff notes
 
+### `phase-5-integration-tests.md`
+
+Follow-on integration test hardening phase covering:
+
+- service route/repository integration test scope
+- agent continuation integration test scope
+- web prompt integration test scope
+- local end-to-end smoke and regression matrix
+
+### `phase-5a-service-route-and-repository-integration-tests.md`
+
+Subphase 5a covering owner-scoped response route, repository, validation, idempotency, and auth/ownership integration tests.
+
+### `phase-5b-agent-continuation-integration-tests.md`
+
+Subphase 5b covering live continuation, fallback continuation, cancel cleanup, runtime events, transcript rows, and provider ledger integration tests.
+
+### `phase-5c-web-prompt-integration-tests.md`
+
+Subphase 5c covering web pending prompt rendering, response payload construction, submit behavior, and transcript reconciliation tests.
+
+### `phase-5d-e2e-smoke-and-regression-matrix.md`
+
+Subphase 5d covering local end-to-end smoke scenarios and regression evidence to record after schema push.
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.

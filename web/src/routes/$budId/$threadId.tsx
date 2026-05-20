@@ -23,6 +23,7 @@ import { useFileViewer } from '@/features/threads/use-file-viewer'
 import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
+import { submitQuestionResponseFlow } from '@/features/threads/question-response-submit'
 import {
   apiFetch,
   apiFetchJson,
@@ -349,42 +350,41 @@ function ThreadView() {
     request: ApiAskUserQuestionsRequest,
     response: ApiAskUserQuestionsResponseInput,
   ) => {
-    if (!threadId) {
-      setQuestionSubmitError('No thread selected')
-      return
-    }
-
     setQuestionSubmitError(null)
-    try {
-      const resp = await apiFetch(
-        `/api/threads/${threadId}/agent/question-requests/${encodeURIComponent(request.request_id)}/responses`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(response),
-        },
-      )
-      if (shouldAbortForUnauthorized(resp)) {
-        return
-      }
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({}))
-        throw new Error(body.message ?? body.error ?? `HTTP ${resp.status}`)
-      }
+    const result = await submitQuestionResponseFlow({
+      threadId,
+      request,
+      response,
+      transport: {
+        async submitResponse(targetThreadId, requestId, payload) {
+          const resp = await apiFetch(
+            `/api/threads/${targetThreadId}/agent/question-requests/${encodeURIComponent(requestId)}/responses`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            },
+          )
+          if (shouldAbortForUnauthorized(resp)) {
+            return null
+          }
+          if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}))
+            throw new Error(body.message ?? body.error ?? `HTTP ${resp.status}`)
+          }
 
-      const result = await resp.json() as {
-        continuation: 'live_tool_result' | 'fallback_user_message' | 'already_answered'
-      }
-      if (result.continuation === 'fallback_user_message' || result.continuation === 'already_answered') {
-        await refreshAgentBootstrap(threadId)
-      } else {
-        ensureAgentStreamConnected()
-      }
-    } catch (err) {
-      if (isAuthRedirectPending()) {
-        return
-      }
-      setQuestionSubmitError(err instanceof Error ? err.message : 'Failed to submit answers')
+          return await resp.json() as {
+            continuation: 'live_tool_result' | 'fallback_user_message' | 'already_answered'
+          }
+        },
+        refreshBootstrap: refreshAgentBootstrap,
+        ensureAgentStreamConnected,
+        isAuthRedirectPending,
+      },
+    })
+
+    if (result.status === 'error') {
+      setQuestionSubmitError(result.message)
     }
   }, [ensureAgentStreamConnected, refreshAgentBootstrap, shouldAbortForUnauthorized, threadId])
   const {

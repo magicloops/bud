@@ -5,6 +5,7 @@ import {
   canonicalBlockFromLedgerItem,
   loadProviderLedgerThreadDiagnostics,
   recordLlmCall,
+  recordLlmToolResultItem,
 } from "./provider-ledger.js";
 
 test("recordLlmCall persists all provider output items and cache metadata", async (t) => {
@@ -157,6 +158,63 @@ test("recordLlmCall rolls back call row when output item insertion fails", async
   );
 
   assert.deepEqual(committedValues, []);
+});
+
+test("recordLlmToolResultItem persists ask_user_questions tool-result payloads for provider replay", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  let insertedValue: Record<string, unknown> | null = null;
+  mock.method(db, "insert", () => ({
+    values(values: Record<string, unknown>) {
+      insertedValue = values;
+      return {};
+    },
+  }) as never);
+
+  const payload = {
+    tool: "ask_user_questions",
+    call_id: "call-question",
+    schema: "ask_user_questions_request_v1",
+    request_id: "qr_test",
+    kind: "user_questions",
+    result: {
+      schema: "ask_user_questions_tool_result_v1",
+      request_id: "qr_test",
+      responses: [],
+      summary_markdown: "Question response",
+    },
+  };
+
+  await recordLlmToolResultItem({
+    llmCallId: "llm-call-1",
+    threadId: "thread-1",
+    sequence: 3,
+    toolCallId: "call-question",
+    content: JSON.stringify(payload),
+    payload,
+    messageId: "message-question-1",
+    ownerUserId: "user-1",
+  });
+
+  const captured = insertedValue as Record<string, unknown> | null;
+  assert.ok(captured);
+  assert.equal(captured.llmCallId, "llm-call-1");
+  assert.equal(captured.threadId, "thread-1");
+  assert.equal(captured.direction, "input");
+  assert.equal(captured.role, "user");
+  assert.equal(captured.kind, "tool_result");
+  assert.equal(captured.sequence, 3);
+  assert.equal(captured.toolCallId, "call-question");
+  assert.equal(captured.messageId, "message-question-1");
+  assert.equal(captured.createdByUserId, "user-1");
+  assert.deepEqual(captured.providerPayload, payload);
+  assert.deepEqual(captured.canonicalPayload, {
+    type: "tool_result",
+    tool_use_id: "call-question",
+    content: JSON.stringify(payload),
+  });
 });
 
 test("loadProviderLedgerThreadDiagnostics summarizes provider-native and omitted provider-only items", async (t) => {

@@ -56,6 +56,25 @@ Renders completed `ask_user_questions_tool_result_v1` payloads.
 - displays each question label before its answered or skipped response
 - formats boolean, choice, multi-choice, text, and number answers
 - falls back to JSON for malformed or non-v1 payloads
+- delegates payload parsing and display formatting to `ask-user-questions-format.ts`
+
+### `ask-user-questions-format.ts`
+
+Pure parser/formatter helpers for completed `ask_user_questions` tool rows.
+
+**Responsibilities**:
+- accept direct or nested `{ result }` `ask_user_questions_tool_result_v1` payloads
+- format answered and skipped rows for every v1 answer kind
+- return `null` for malformed or non-v1 payloads so the renderer can fall back to JSON
+
+### `ask-user-questions-format.test.ts`
+
+Node-runner coverage for completed question-result formatting.
+
+**Coverage**:
+- direct and nested result payload parsing
+- answered and skipped row formatting
+- malformed payload fallback behavior
 
 ## Types
 

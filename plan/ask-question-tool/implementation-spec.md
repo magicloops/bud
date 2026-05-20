@@ -8,6 +8,7 @@
 **Phase 2**: [phase-2-agent-runtime-tool-flow.md](./phase-2-agent-runtime-tool-flow.md)
 **Phase 3**: [phase-3-reference-web-client.md](./phase-3-reference-web-client.md)
 **Phase 4**: [phase-4-notifications-docs-and-validation.md](./phase-4-notifications-docs-and-validation.md)
+**Phase 5**: [phase-5-integration-tests.md](./phase-5-integration-tests.md)
 **Related Docs**:
 - [../../design/ask-user-questions-tool-contract.md](../../design/ask-user-questions-tool-contract.md)
 - [../../docs/proto.md](../../docs/proto.md)
@@ -98,6 +99,7 @@ Implement the `ask_user_questions` tool for the service and reference web client
 | 2 | [phase-2-agent-runtime-tool-flow.md](./phase-2-agent-runtime-tool-flow.md) | Urgent | Agent can call `ask_user_questions`, enter `waiting_for_user`, and continue from live or fallback responses |
 | 3 | [phase-3-reference-web-client.md](./phase-3-reference-web-client.md) | Urgent | Reference web renders and submits question forms from `/agent/state` / SSE |
 | 4 | [phase-4-notifications-docs-and-validation.md](./phase-4-notifications-docs-and-validation.md) | High | Notifications, docs, specs, migration docs, and manual validation align with the shipped contract |
+| 5 | [phase-5-integration-tests.md](./phase-5-integration-tests.md) | High | Integration tests and local smoke coverage harden route, runtime, web, and end-to-end behavior |
 
 ## Current Code Map
 
@@ -288,4 +290,5 @@ Response:
 - [ ] schema change has local `db:push` coverage and checked-in Drizzle migration
 - [ ] service tests cover contract validation, ownership, live continuation, and restart fallback
 - [ ] web tests cover pending prompt overlay and response payload construction
+- [ ] integration-test follow-on coverage is implemented or explicitly tracked through Phase 5
 - [ ] docs/specs describe the shipped route, stream state, and transcript behavior

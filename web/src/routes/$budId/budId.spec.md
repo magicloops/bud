@@ -178,6 +178,7 @@ loader: async ({ params }) => {
 10. **Ask User Questions**
    - Pending `ask_user_questions` rows render the `QuestionRequestCard` inside the timeline
    - Submission posts `ask_user_questions_response_v1` payloads to `/api/threads/:threadId/agent/question-requests/:requestId/responses`
+   - Submission reconciliation delegates to `submitQuestionResponseFlow(...)` in `web/src/features/threads/question-response-submit.ts`
    - Live continuations keep the stream connected while fallback/idempotent responses refresh the transcript/runtime bootstrap
    - Normal composer input is disabled with an explicit reason while a pending structured prompt is visible
 

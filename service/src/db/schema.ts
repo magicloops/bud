@@ -11,6 +11,7 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  foreignKey,
   customType
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -670,9 +671,7 @@ export const terminalSessionTable = pgTable(
 export const terminalSessionOutputTable = pgTable(
   "terminal_session_output",
   {
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => terminalSessionTable.sessionId, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
     byteOffset: bigint("byte_offset", { mode: "number" }).notNull(),
     seq: bigint("seq", { mode: "number" }).notNull(),
     data: byteaColumn("data").notNull(),
@@ -680,7 +679,12 @@ export const terminalSessionOutputTable = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.sessionId, table.byteOffset], name: "terminal_session_output_pkey" }),
-    seqIdx: index("terminal_session_output_seq_idx").on(table.sessionId, table.seq)
+    seqIdx: index("terminal_session_output_seq_idx").on(table.sessionId, table.seq),
+    sessionFk: foreignKey({
+      columns: [table.sessionId],
+      foreignColumns: [terminalSessionTable.sessionId],
+      name: "terminal_session_output_session_fk",
+    }).onDelete("cascade"),
   })
 );
 
@@ -688,9 +692,7 @@ export const terminalSessionInputLogTable = pgTable(
   "terminal_session_input_log",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => terminalSessionTable.sessionId, { onDelete: "cascade" }),
+    sessionId: text("session_id").notNull(),
     data: byteaColumn("data").notNull(),
     source: text("source").notNull(),
     userId: text("user_id"),
@@ -698,7 +700,12 @@ export const terminalSessionInputLogTable = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
   },
   (table) => ({
-    sessionIdx: index("terminal_session_input_log_idx").on(table.sessionId, table.createdAt)
+    sessionIdx: index("terminal_session_input_log_idx").on(table.sessionId, table.createdAt),
+    sessionFk: foreignKey({
+      columns: [table.sessionId],
+      foreignColumns: [terminalSessionTable.sessionId],
+      name: "terminal_session_input_log_session_fk",
+    }).onDelete("cascade"),
   })
 );
 
@@ -739,9 +746,7 @@ export const transportSessionTable = pgTable(
   "transport_session",
   {
     transportSessionId: text("transport_session_id").primaryKey(),
-    deviceSessionId: text("device_session_id").references(() => deviceSessionTable.deviceSessionId, {
-      onDelete: "set null",
-    }),
+    deviceSessionId: text("device_session_id"),
     budId: text("bud_id")
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
@@ -766,6 +771,11 @@ export const transportSessionTable = pgTable(
       table.transportKind,
       table.status,
     ),
+    deviceSessionFk: foreignKey({
+      columns: [table.deviceSessionId],
+      foreignColumns: [deviceSessionTable.deviceSessionId],
+      name: "transport_session_device_session_fk",
+    }).onDelete("set null"),
   }),
 );
 
@@ -777,15 +787,9 @@ export const budOperationTable = pgTable(
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
     threadId: uuid("thread_id").references(() => threadTable.threadId, { onDelete: "set null" }),
-    terminalSessionId: text("terminal_session_id").references(() => terminalSessionTable.sessionId, {
-      onDelete: "set null",
-    }),
-    deviceSessionId: text("device_session_id").references(() => deviceSessionTable.deviceSessionId, {
-      onDelete: "set null",
-    }),
-    transportSessionId: text("transport_session_id").references(() => transportSessionTable.transportSessionId, {
-      onDelete: "set null",
-    }),
+    terminalSessionId: text("terminal_session_id"),
+    deviceSessionId: text("device_session_id"),
+    transportSessionId: text("transport_session_id"),
     idempotencyKey: text("idempotency_key"),
     operationType: text("operation_type").notNull(),
     trafficClass: text("traffic_class").notNull().default("control"),
@@ -813,6 +817,21 @@ export const budOperationTable = pgTable(
     budStateIdx: index("bud_operation_bud_state_idx").on(table.budId, table.state),
     threadIdx: index("bud_operation_thread_idx").on(table.threadId, table.createdAt),
     idempotencyIdx: uniqueIndex("bud_operation_idempotency_idx").on(table.budId, table.idempotencyKey),
+    terminalSessionFk: foreignKey({
+      columns: [table.terminalSessionId],
+      foreignColumns: [terminalSessionTable.sessionId],
+      name: "bud_operation_terminal_session_fk",
+    }).onDelete("set null"),
+    deviceSessionFk: foreignKey({
+      columns: [table.deviceSessionId],
+      foreignColumns: [deviceSessionTable.deviceSessionId],
+      name: "bud_operation_device_session_fk",
+    }).onDelete("set null"),
+    transportSessionFk: foreignKey({
+      columns: [table.transportSessionId],
+      foreignColumns: [transportSessionTable.transportSessionId],
+      name: "bud_operation_transport_session_fk",
+    }).onDelete("set null"),
   }),
 );
 
@@ -826,12 +845,8 @@ export const budStreamTable = pgTable(
     budId: text("bud_id")
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
-    deviceSessionId: text("device_session_id").references(() => deviceSessionTable.deviceSessionId, {
-      onDelete: "set null",
-    }),
-    transportSessionId: text("transport_session_id").references(() => transportSessionTable.transportSessionId, {
-      onDelete: "set null",
-    }),
+    deviceSessionId: text("device_session_id"),
+    transportSessionId: text("transport_session_id"),
     streamType: text("stream_type").notNull(),
     trafficClass: text("traffic_class").notNull().default("interactive"),
     state: text("state", { enum: streamStateValues }).notNull().default("opening"),
@@ -855,6 +870,16 @@ export const budStreamTable = pgTable(
     operationIdx: index("bud_stream_operation_idx").on(table.operationId),
     budStateIdx: index("bud_stream_bud_state_idx").on(table.budId, table.state),
     transportIdx: index("bud_stream_transport_idx").on(table.transportSessionId, table.state),
+    deviceSessionFk: foreignKey({
+      columns: [table.deviceSessionId],
+      foreignColumns: [deviceSessionTable.deviceSessionId],
+      name: "bud_stream_device_session_fk",
+    }).onDelete("set null"),
+    transportSessionFk: foreignKey({
+      columns: [table.transportSessionId],
+      foreignColumns: [transportSessionTable.transportSessionId],
+      name: "bud_stream_transport_session_fk",
+    }).onDelete("set null"),
   }),
 );
 
@@ -970,7 +995,7 @@ export const threadWebViewTable = pgTable(
   "thread_web_view",
   {
     threadId: uuid("thread_id")
-      .notNull()
+      .primaryKey()
       .references(() => threadTable.threadId, { onDelete: "cascade" }),
     budId: text("bud_id")
       .notNull()
@@ -988,7 +1013,6 @@ export const threadWebViewTable = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
   },
   (table) => ({
-    pk: primaryKey({ columns: [table.threadId], name: "thread_web_view_pkey" }),
     siteIdx: index("thread_web_view_site_idx").on(table.proxiedSiteId, table.updatedAt),
     ownerIdx: index("thread_web_view_owner_idx").on(table.createdByUserId, table.updatedAt),
   }),
@@ -998,9 +1022,7 @@ export const proxiedSiteViewerGrantTable = pgTable(
   "proxied_site_viewer_grant",
   {
     viewerGrantId: text("viewer_grant_id").primaryKey(),
-    proxiedSiteId: text("proxied_site_id")
-      .notNull()
-      .references(() => proxiedSiteTable.proxiedSiteId, { onDelete: "cascade" }),
+    proxiedSiteId: text("proxied_site_id").notNull(),
     budId: text("bud_id")
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
@@ -1025,6 +1047,11 @@ export const proxiedSiteViewerGrantTable = pgTable(
       table.expiresAt,
     ),
     userIdx: index("proxied_site_viewer_grant_user_idx").on(table.userId, table.createdAt),
+    proxiedSiteFk: foreignKey({
+      columns: [table.proxiedSiteId],
+      foreignColumns: [proxiedSiteTable.proxiedSiteId],
+      name: "proxied_site_viewer_grant_site_fk",
+    }).onDelete("cascade"),
   }),
 );
 
@@ -1032,9 +1059,7 @@ export const proxiedSiteViewerSessionTable = pgTable(
   "proxied_site_viewer_session",
   {
     viewerSessionId: text("viewer_session_id").primaryKey(),
-    proxiedSiteId: text("proxied_site_id")
-      .notNull()
-      .references(() => proxiedSiteTable.proxiedSiteId, { onDelete: "cascade" }),
+    proxiedSiteId: text("proxied_site_id").notNull(),
     budId: text("bud_id")
       .notNull()
       .references(() => budTable.budId, { onDelete: "cascade" }),
@@ -1064,6 +1089,11 @@ export const proxiedSiteViewerSessionTable = pgTable(
     authSessionIdx: index("proxied_site_viewer_session_auth_session_idx").on(
       table.authSessionId,
     ),
+    proxiedSiteFk: foreignKey({
+      columns: [table.proxiedSiteId],
+      foreignColumns: [proxiedSiteTable.proxiedSiteId],
+      name: "proxied_site_viewer_session_site_fk",
+    }).onDelete("cascade"),
   }),
 );
 

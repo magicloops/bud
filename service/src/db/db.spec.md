@@ -244,7 +244,7 @@ budTable
 
 `drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0019`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes, add durable web-proxy `proxied_site`, thread attachment, viewer grant, and viewer session tables, and add `agent_question_request` for durable `ask_user_questions` prompts.
+Checked-in migrations now run cleanly through `0020`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes, add durable web-proxy `proxied_site`, thread attachment, viewer grant, and viewer session tables, add `agent_question_request` for durable `ask_user_questions` prompts, and normalize Drizzle/PostgreSQL constraint metadata so repeated local `db:push` runs converge.
 
 ## Ownership And Multi-Tenancy Support
 
@@ -283,6 +283,25 @@ Network-upgrade durable rows follow the same ownership direction:
 
 <!-- SPEC:TODO -->
 Tenant-level isolation is not implemented yet even though the schema remains prepared for it.
+
+### `schema-metadata.test.ts`
+
+Drizzle metadata guardrail test. Reads the latest checked-in snapshot from `service/drizzle/migrations/meta/_journal.json` and verifies:
+
+- PostgreSQL-facing table, column, index, FK, unique, check, and primary-key names do not exceed the 63-byte identifier limit
+- one-column primary keys are represented as column-level `.primaryKey()` metadata, not one-column `compositePrimaryKeys`
+
+This prevents `drizzle-kit push` from reintroducing non-converging live diffs caused by PostgreSQL identifier truncation or one-column table-level primary-key metadata.
+
+## Drizzle Push Convergence Notes
+
+Drizzle schema declarations should avoid PostgreSQL live-introspection shapes that cannot round-trip cleanly:
+
+- Use explicit `foreignKey({ name: "..." })` declarations for FKs whose auto-generated names would exceed PostgreSQL's 63-byte identifier limit.
+- Use column-level `.primaryKey()` for single-column primary keys.
+- Use table-level `primaryKey({ columns: [...] })` only for real multi-column primary keys.
+
+Migration `0020` normalizes the known affected FK names and keeps `thread_web_view.thread_id` as a physical `PRIMARY KEY(thread_id)` while aligning Drizzle metadata with PostgreSQL introspection.
 
 ## Dependencies
 

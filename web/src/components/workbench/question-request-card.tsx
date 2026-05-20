@@ -3,12 +3,16 @@ import { Check, CircleSlash, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type {
   ApiAskUserQuestion,
-  ApiAskUserQuestionAnswer,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
 } from '@/lib/api-types'
-import { generateMessageClientId } from '@/lib/messages'
 import { cn } from '@/lib/utils'
+import {
+  buildAskUserQuestionsResponseInput,
+  buildInitialQuestionAnswers,
+  buildSkippedQuestionAnswers,
+  type QuestionRequestAnswerState,
+} from './question-request-response.ts'
 
 type QuestionRequestCardProps = {
   request: ApiAskUserQuestionsRequest
@@ -17,23 +21,14 @@ type QuestionRequestCardProps = {
   onSubmit: (response: ApiAskUserQuestionsResponseInput) => Promise<void> | void
 }
 
-type LocalAnswerState =
-  | { status: 'skipped'; answer?: undefined }
-  | { status: 'answered'; answer: ApiAskUserQuestionAnswer }
-
 export function QuestionRequestCard({
   request,
   disabled = false,
   submitError = null,
   onSubmit,
 }: QuestionRequestCardProps) {
-  const [answers, setAnswers] = useState<Record<string, LocalAnswerState>>(() =>
-    Object.fromEntries(
-      request.questions.map((question) => [
-        question.question_id,
-        initialAnswerForQuestion(question),
-      ]),
-    ),
+  const [answers, setAnswers] = useState<Record<string, QuestionRequestAnswerState>>(() =>
+    buildInitialQuestionAnswers(request),
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -42,19 +37,12 @@ export function QuestionRequestCard({
     [answers],
   )
 
-  const updateAnswer = (questionId: string, answer: LocalAnswerState) => {
+  const updateAnswer = (questionId: string, answer: QuestionRequestAnswerState) => {
     setAnswers((prev) => ({ ...prev, [questionId]: answer }))
   }
 
   const skipAll = () => {
-    setAnswers(
-      Object.fromEntries(
-        request.questions.map((question) => [
-          question.question_id,
-          { status: 'skipped' as const },
-        ]),
-      ),
-    )
+    setAnswers(buildSkippedQuestionAnswers(request))
   }
 
   const handleSubmit = async (event: FormEvent) => {
@@ -64,25 +52,7 @@ export function QuestionRequestCard({
     }
     setIsSubmitting(true)
     try {
-      await onSubmit({
-        schema: 'ask_user_questions_response_v1',
-        client_response_id: generateMessageClientId(),
-        answers: request.questions.map((question) => {
-          const local = answers[question.question_id] ?? { status: 'skipped' as const }
-          if (local.status === 'answered') {
-            return {
-              question_id: question.question_id,
-              status: 'answered',
-              answer: local.answer,
-            }
-          }
-          return {
-            question_id: question.question_id,
-            status: 'skipped',
-            skip_reason: 'user_skipped',
-          }
-        }),
-      })
+      await onSubmit(buildAskUserQuestionsResponseInput(request, answers))
     } finally {
       setIsSubmitting(false)
     }
@@ -150,9 +120,9 @@ function QuestionInput({
   onChange,
 }: {
   question: ApiAskUserQuestion
-  value: LocalAnswerState
+  value: QuestionRequestAnswerState
   disabled: boolean
-  onChange: (value: LocalAnswerState) => void
+  onChange: (value: QuestionRequestAnswerState) => void
 }) {
   const skipped = value.status === 'skipped'
 
@@ -183,8 +153,8 @@ function QuestionInput({
 
 function renderQuestionControl(
   question: ApiAskUserQuestion,
-  value: LocalAnswerState,
-  onChange: (value: LocalAnswerState) => void,
+  value: QuestionRequestAnswerState,
+  onChange: (value: QuestionRequestAnswerState) => void,
 ) {
   switch (question.kind) {
     case 'boolean':
@@ -310,13 +280,6 @@ function renderQuestionControl(
         </div>
       )
   }
-}
-
-function initialAnswerForQuestion(question: ApiAskUserQuestion): LocalAnswerState {
-  if (question.default_answer && question.default_answer.kind === question.kind) {
-    return { status: 'answered', answer: question.default_answer }
-  }
-  return { status: 'skipped' }
 }
 
 function choiceButtonClass(active: boolean) {

@@ -104,6 +104,56 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] service build/lint run if implementation touches build-sensitive code
 - [ ] web build/lint run if implementation touches UI code
 
+## Phase 5: Integration Test Hardening
+
+### Service Route And Repository
+
+- [ ] owner response integration test passes
+- [ ] unauthenticated response integration test passes
+- [ ] signed-in non-owner response integration test passes
+- [ ] request/thread mismatch integration test passes
+- [ ] idempotent retry integration test passes
+- [ ] answered/canceled conflict integration tests pass
+- [ ] invalid response payload integration tests pass
+- [ ] persisted row assertions pass for status, response, tool result, idempotency key, and acting user stamps
+
+### Agent Continuation
+
+- [ ] live continuation integration test passes
+- [ ] runtime event/state assertions pass for `waiting_for_user`
+- [ ] transcript completed-tool-row assertions pass
+- [ ] provider ledger tool-result assertions pass
+- [ ] fallback continuation integration test passes
+- [ ] cancel while waiting integration test passes
+- [ ] malformed model ask payload fail-closed test passes
+
+### Web Prompt Integration
+
+- [ ] pending prompt from live stream test passes
+- [ ] pending prompt from `/agent/state` bootstrap test passes
+- [ ] response payload tests pass for all v1 question kinds
+- [ ] per-question skip and skip-all tests pass
+- [ ] submit reconciliation tests pass for live, fallback, already-answered, and error responses
+- [ ] completed renderer tests pass for answered, skipped, and malformed payloads
+
+### End-To-End Smoke
+
+- [ ] real-provider ask/answer/continue smoke passes or is explicitly deferred
+- [ ] refresh while waiting smoke passes
+- [ ] duplicate submit smoke passes
+- [ ] cancel while waiting smoke passes
+- [ ] fallback continuation smoke passes
+- [ ] ownership regression smoke passes
+- [ ] terminal-tool regression smoke passes
+
+### Phase 5 Commands
+
+- [ ] service route/repository integration command run
+- [ ] service agent continuation integration command run
+- [ ] web prompt integration command run
+- [ ] service build run after integration test changes
+- [ ] web build run after web test changes
+
 ## Notes
 
 - This checklist validates v1 only. Secret input, file answers, date/time controls, branching prompts, and durable provider-native suspended-turn replay are out of scope.

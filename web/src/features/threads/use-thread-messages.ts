@@ -4,6 +4,7 @@ import { generateMessageClientId } from '@/lib/messages'
 import type { ApiAgentState, ApiMessage, ApiMessagePage } from '@/lib/api-types'
 import {
   applyAgentStateOverlay,
+  buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
   mergeLatestBootstrapState,
   mergeOlderMessages,
@@ -203,25 +204,12 @@ export function useThreadMessages({
   )
 
   const applyToolCall = useCallback(({ turnId, clientId, callId, name, args, startedAt }: ApplyToolCallArgs) => {
-    const argsObj = typeof args === 'object' && args !== null ? args : {}
-    const pendingMessage: ApiMessage = {
-      message_id: clientId,
-      client_id: clientId,
-      role: 'tool',
-      display_role: name,
-      content: JSON.stringify({ tool: name, call_id: callId, ...argsObj }),
-      created_at: startedAt ?? new Date().toISOString(),
-      metadata: {
-        tool: name,
-        call_id: callId,
-        turn_id: turnId,
-        pending: true,
-        ...(startedAt ? { started_at: startedAt } : {}),
-        ...argsObj,
-      },
-    }
-
-    setMessages((prev) => upsertMessage(prev, pendingMessage))
+    setMessages((prev) =>
+      upsertMessage(
+        prev,
+        buildPendingToolMessageFromToolCall({ turnId, clientId, callId, name, args, startedAt }),
+      ),
+    )
   }, [])
 
   const applyToolResultMessage = useCallback((message: ApiMessage) => {

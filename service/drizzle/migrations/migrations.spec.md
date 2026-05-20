@@ -161,6 +161,14 @@ Placeholder to ensure the directory exists in git.
 - Adds unique `(thread_id, call_id)` and nullable `client_response_id` idempotency indexes
 - Adds thread/status and owner/status indexes plus foreign keys to `thread` and `auth.user`
 
+### `0020_aromatic_zemo.sql`
+
+**Drizzle push convergence cleanup**:
+- Renames overlong FK constraints that PostgreSQL had truncated at the 63-byte identifier limit to stable explicit names
+- Aligns `thread_web_view.thread_id` Drizzle metadata with PostgreSQL one-column primary-key introspection
+- Preserves the physical `thread_web_view_pkey` definition as `PRIMARY KEY(thread_id)`
+- Avoids data-changing table rewrites; local validation confirmed an immediate second `pnpm db:push` reports no changes
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -171,8 +179,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0018` currently)
-- Snapshot files for each migration (`0000` through `0019` currently)
+- Snapshot files for each migration (`0000` through `0020` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -247,6 +254,9 @@ v18: durable proxied-site, thread web-view attachment, viewer-grant, and viewer-
  │
  ▼
 v19: agent question request persistence for ask_user_questions
+ │
+ ▼
+v20: Drizzle/PostgreSQL constraint metadata convergence cleanup
 ```
 
 ---

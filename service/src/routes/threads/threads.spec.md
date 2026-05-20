@@ -54,6 +54,17 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 - validates submitted answers against the persisted question request row
 - returns whether the accepted response continued a live tool call, created a fallback user message, or matched an already-answered idempotent retry
 
+### `agent-question-response.test.ts`
+
+Focused route-level integration coverage for structured question-response submission.
+
+**Current Coverage**:
+- owned submissions call `AgentService.submitQuestionResponse(...)` and serialize accepted continuation status
+- unauthenticated callers receive `401`
+- signed-in non-owner and cross-thread/missing request submissions receive `404`
+- repository/request validation failures map to stable route errors
+- malformed stored question requests fail closed with a service-side contract error
+
 ### `files.ts`
 
 Thread-scoped file viewer route for `POST /api/threads/:threadId/files/open`.

@@ -101,32 +101,59 @@ export const removeDraftAssistantMessageForTurn = (existing: ApiMessage[], turnI
     return metadata.turn_id !== turnId
   })
 
+export type PendingToolCallMessageInput = {
+  turnId: string
+  clientId: string
+  callId: string
+  name: string
+  args?: Record<string, unknown> | null
+  startedAt?: string | null
+  createdAt?: string
+}
+
+export const buildPendingToolMessageFromToolCall = ({
+  turnId,
+  clientId,
+  callId,
+  name,
+  args,
+  startedAt,
+  createdAt,
+}: PendingToolCallMessageInput): ApiMessage => {
+  const argsObj = typeof args === 'object' && args !== null ? args : {}
+  return {
+    message_id: clientId,
+    client_id: clientId,
+    role: 'tool',
+    display_role: name,
+    content: JSON.stringify({ tool: name, call_id: callId, ...argsObj }),
+    created_at: startedAt ?? createdAt ?? new Date().toISOString(),
+    metadata: {
+      tool: name,
+      call_id: callId,
+      turn_id: turnId,
+      pending: true,
+      ...(startedAt ? { started_at: startedAt } : {}),
+      ...argsObj,
+    },
+  }
+}
+
 export const buildPendingToolMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {
   if (!agentState.active || !agentState.turn_id || !agentState.pending_tool) {
     return null
   }
 
   const { pending_tool: pendingTool } = agentState
-  return {
-    message_id: pendingTool.client_id,
-    client_id: pendingTool.client_id,
-    role: 'tool',
-    display_role: pendingTool.name,
-    content: JSON.stringify({
-      tool: pendingTool.name,
-      call_id: pendingTool.call_id,
-      ...(pendingTool.args ?? {}),
-    }),
-    created_at: pendingTool.started_at ?? agentState.updated_at,
-    metadata: {
-      tool: pendingTool.name,
-      call_id: pendingTool.call_id,
-      turn_id: agentState.turn_id,
-      pending: true,
-      ...(pendingTool.started_at ? { started_at: pendingTool.started_at } : {}),
-      ...(pendingTool.args ?? {}),
-    },
-  }
+  return buildPendingToolMessageFromToolCall({
+    turnId: agentState.turn_id,
+    clientId: pendingTool.client_id,
+    callId: pendingTool.call_id,
+    name: pendingTool.name,
+    args: pendingTool.args,
+    startedAt: pendingTool.started_at,
+    createdAt: agentState.updated_at,
+  })
 }
 
 export const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): ApiMessage | null => {

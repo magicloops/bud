@@ -1,6 +1,6 @@
 # Implementation Spec: Fix Drizzle Push Mismatch
 
-**Status**: Draft
+**Status**: Implemented
 **Created**: 2026-05-19
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -109,12 +109,12 @@ Generate the next Drizzle migration after updating `schema.ts`, then review it c
 
 ## Definition Of Done
 
-- [ ] `schema.ts` uses column-level `.primaryKey()` for `thread_web_view.thread_id`
-- [ ] affected FKs have explicit stable names shorter than 63 bytes
-- [ ] checked-in migration updates FK names without data loss
-- [ ] latest Drizzle snapshot has no affected FK names over 63 bytes
-- [ ] latest Drizzle snapshot has no one-column `compositePrimaryKeys`
-- [ ] `pnpm --dir /Users/adam/bud/service db:push` applies the cleanup locally
-- [ ] rerunning `pnpm --dir /Users/adam/bud/service db:push` reports no repeated FK/PK rewrite warning
-- [ ] service DB and migration specs are updated
-- [ ] debug note is updated with the implemented resolution
+- [x] `schema.ts` uses column-level `.primaryKey()` for `thread_web_view.thread_id`
+- [x] affected FKs have explicit stable names shorter than 63 bytes
+- [x] checked-in migration updates FK names without data loss
+- [x] latest Drizzle snapshot has no affected FK names over 63 bytes
+- [x] latest Drizzle snapshot has no one-column `compositePrimaryKeys`
+- [x] `pnpm --dir /Users/adam/bud/service db:push` applies the cleanup locally
+- [x] rerunning `pnpm --dir /Users/adam/bud/service db:push` reports no repeated FK/PK rewrite warning
+- [x] service DB and migration specs are updated
+- [x] debug note is updated with the implemented resolution

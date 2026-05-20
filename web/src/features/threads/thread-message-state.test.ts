@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { ApiAgentState, ApiMessage, ApiMessagePage } from '../../lib/api-types.ts'
 import {
   applyAgentStateOverlay,
+  buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
   mergeLatestBootstrapState,
   reconcileMessagePersistence,
@@ -133,6 +134,104 @@ test('applyAgentStateOverlay builds pending ask_user_questions rows from agent s
   assert.equal(message?.created_at, '2026-05-19T12:00:00.000Z')
   assert.equal(message?.metadata?.tool, 'ask_user_questions')
   assert.equal(message?.metadata?.request_id, 'qr_test')
+})
+
+test('buildPendingToolMessageFromToolCall builds pending ask_user_questions rows from live stream events', () => {
+  const message = buildPendingToolMessageFromToolCall({
+    turnId: 'turn-live-question',
+    clientId: 'question-client-live',
+    callId: 'call-live-question',
+    name: 'ask_user_questions',
+    startedAt: '2026-05-19T12:01:00.000Z',
+    args: {
+      schema: 'ask_user_questions_request_v1',
+      request_id: 'qr_live',
+      title: 'Release',
+      questions: [
+        {
+          question_id: 'ship',
+          kind: 'boolean',
+          label: 'Ship it?',
+          skippable: true,
+        },
+      ],
+    },
+  })
+
+  assert.equal(message.client_id, 'question-client-live')
+  assert.equal(message.created_at, '2026-05-19T12:01:00.000Z')
+  assert.equal(message.metadata?.tool, 'ask_user_questions')
+  assert.equal(message.metadata?.request_id, 'qr_live')
+  assert.equal(JSON.parse(message.content).request_id, 'qr_live')
+})
+
+test('mergeLatestBootstrapState preserves one pending ask_user_questions row after refresh', () => {
+  const existingQuestion = buildMessage({
+    client_id: 'question-client',
+    message_id: 'question-client',
+    role: 'tool',
+    display_role: 'ask_user_questions',
+    content: '{}',
+    created_at: '2026-05-19T12:00:00.000Z',
+    metadata: {
+      pending: true,
+      turn_id: 'turn-question',
+      tool: 'ask_user_questions',
+      request_id: 'qr_test',
+    },
+  })
+  const canonicalUser = buildMessage({
+    client_id: 'user-1',
+    message_id: 'user-1',
+    content: 'deploy',
+    created_at: '2026-05-19T11:59:00.000Z',
+  })
+  const nextPage: ApiMessagePage = {
+    messages: [canonicalUser],
+    page: {
+      limit: 100,
+      returned: 1,
+      has_more_before: false,
+      has_more_after: false,
+      before_cursor: null,
+      after_cursor: null,
+    },
+  }
+
+  const merged = mergeLatestBootstrapState(
+    [canonicalUser, existingQuestion],
+    {
+      limit: 100,
+      returned: 2,
+      has_more_before: false,
+      has_more_after: false,
+      before_cursor: null,
+      after_cursor: null,
+    },
+    nextPage,
+    buildAgentState({
+      active: true,
+      turn_id: 'turn-question',
+      phase: 'waiting_for_user',
+      pending_tool: {
+        client_id: 'question-client',
+        call_id: 'call-question',
+        name: 'ask_user_questions',
+        started_at: '2026-05-19T12:00:00.000Z',
+        args: {
+          schema: 'ask_user_questions_request_v1',
+          request_id: 'qr_test',
+          questions: [],
+        },
+      },
+    }),
+  )
+
+  assert.deepEqual(
+    merged.messages.map((message) => message.client_id),
+    ['user-1', 'question-client'],
+  )
+  assert.equal(merged.messages.filter((message) => message.metadata?.request_id === 'qr_test').length, 1)
 })
 
 test('mergeLatestBootstrapState preserves older canonical history and earlier pagination cursors', () => {

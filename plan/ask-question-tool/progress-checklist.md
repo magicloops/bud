@@ -122,6 +122,49 @@ Use this as the running status board while the service and web implementation la
 - [ ] `web/src/routes/$budId/budId.spec.md` updated
 - [ ] `bud.spec.md` updated
 
+## Phase 5: Integration Test Hardening
+
+### Phase 5a: Service Route And Repository
+
+- [ ] owner response route integration test added
+- [ ] unauthenticated and non-owner response tests added
+- [ ] request/thread mismatch and unknown request tests added
+- [ ] idempotent retry and answered-conflict tests added
+- [ ] canceled/expired request rejection tests added where applicable
+- [ ] stored-request validation tests added for wrong kind, unknown question, and unknown choice
+- [ ] persisted row assertions cover response, tool result, idempotency key, and acting user stamps
+
+### Phase 5b: Agent Continuation
+
+- [ ] live continuation integration test added
+- [ ] runtime `waiting_for_user` event/state assertions added
+- [ ] transcript completed-tool-row assertions added
+- [ ] provider ledger tool-result assertions added
+- [ ] fallback continuation integration test added
+- [ ] cancel while waiting integration test added
+- [ ] malformed model ask payload fail-closed integration test added
+
+### Phase 5c: Web Prompt Integration
+
+- [ ] pending prompt from live `agent.tool_call` test added
+- [ ] pending prompt from `/agent/state` bootstrap test added
+- [ ] response payload tests cover boolean, single-choice, multi-choice, text, and number questions
+- [ ] per-question skip and skip-all tests added
+- [ ] submit reconciliation tests cover live, fallback, already-answered, and failed submit
+- [ ] completed Q/A renderer tests cover answered, skipped, and malformed payloads
+- [ ] any new web DOM/component test harness is documented
+
+### Phase 5d: End-To-End Smoke
+
+- [ ] real-provider ask/answer/continue smoke run or explicitly deferred
+- [ ] refresh while waiting smoke run
+- [ ] duplicate submit smoke run
+- [ ] cancel while waiting smoke run
+- [ ] fallback continuation smoke run
+- [ ] ownership regression smoke run
+- [ ] terminal-tool regression smoke run
+- [ ] smoke evidence recorded in [validation-checklist.md](./validation-checklist.md)
+
 ### Overall Progress
 
 | Phase | Status | Notes |
@@ -130,6 +173,7 @@ Use this as the running status board while the service and web implementation la
 | 2 | Not Started | Agent does not expose or execute `ask_user_questions` |
 | 3 | Not Started | Web does not render or submit question prompts |
 | 4 | Not Started | Notification/docs/validation updates not complete |
+| 5 | Not Started | Integration test hardening scoped but not implemented |
 
 ## Notes
 

@@ -153,7 +153,27 @@ Inline structured prompt form for pending `ask_user_questions` tool calls.
 - supports per-question skip plus skip-all
 - generates a browser UUIDv7 `client_response_id`
 - submits only normalized answer payloads; labels remain display-only
+- delegates default answer state, skip behavior, and response-payload construction to `question-request-response.ts`
 - keeps unsupported question kinds non-crashing by allowing the user to skip them
+
+### `question-request-response.ts`
+
+Pure response-state and payload helpers for the structured prompt form.
+
+**Responsibilities**:
+- build initial per-question answer state for boolean, single-choice, multi-choice, text, and number questions
+- build skip-all and per-question skipped answer payloads
+- convert local form state into the `ask_user_questions_response_v1` route payload with a browser `client_response_id`
+- keep labels display-only by submitting ids and normalized answer values
+
+### `question-request-response.test.ts`
+
+Node-runner coverage for structured prompt response helpers.
+
+**Coverage**:
+- initial answer state for every v1 question kind
+- answer payload construction for boolean, single-choice, multi-choice, text, and number questions
+- per-question skip and skip-all payload construction
 
 ### `workspace-shell.tsx`
 

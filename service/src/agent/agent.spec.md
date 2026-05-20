@@ -82,6 +82,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`
 - stored `screen_stable` waits replay as canonical `settled`
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
+- the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions and excludes one-off freeform text prompts plus secrets
 
 ### `user-question-contracts.ts`
 
@@ -122,6 +123,16 @@ Persistence and route/service helpers for `agent_question_request`.
 - mark pending rows canceled during turn cancellation
 - shape completed user-question tool results for transcript persistence
 
+### `user-question-repository.integration.test.ts`
+
+Integration-style repository tests for durable `agent_question_request` acceptance and validation.
+
+**Current Coverage**:
+- accepted responses persist status, response payload, generated tool result, idempotency key, and acting user stamp
+- duplicate `client_response_id` submissions return idempotent success
+- already-answered, canceled, and missing request rows reject with stable request errors
+- stored-request validation rejects unknown questions, wrong answer kinds, and unknown choice ids
+
 ### `agent-service.ts`
 
 Thin agent orchestrator over the extracted conversation/model/tool/transcript ownership units.
@@ -134,6 +145,7 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 - tool-calling guidance for `terminal.send` and `terminal.observe`
 - product web-view guidance for opening, listing, and closing thread web views
 - structured human-question guidance for asking bounded, skippable questions only when a normal answer or assumption would be risky
+- ask-user policy that batches currently blocking decisions, avoids secret collection, treats skipped answers as conservative-assumption opportunities, and prefers a normal markdown response for a single freeform text question
 - readiness confidence interpretation (`>= 0.8` ready, `0.5-0.8` probably ready, `< 0.5` still processing)
 - hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (Python/Node/Claude Code vs shell)
@@ -290,6 +302,16 @@ Standalone Node tests for `AgentService` orchestration behavior.
 - `cancelThread()` aborts the active turn and rejects any pending terminal waits for that thread
 - final no-tool responses record exactly one provider-ledger `llm_call` row before final assistant persistence
 
+### `ask-user-questions-continuation.integration.test.ts`
+
+Integration-style tests for `AgentService.submitQuestionResponse(...)` and the live/fallback continuation boundary.
+
+**Current Coverage**:
+- accepted live responses resolve the in-memory question waiter
+- fallback responses after a missing live waiter persist a self-contained user message and start a follow-up agent turn
+- scoped fake OpenAI provider registration covers the default `gpt-5.5` model path in continuation tests
+- cancel while waiting rejects pending question waiters and marks durable pending question rows canceled
+
 ### `model-runner.ts`
 
 Model invocation ownership extracted from `AgentService`.
@@ -317,6 +339,7 @@ Direct tests for the extracted model runner.
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
 - web-view tool calls parse into product `web_view.*` directives
 - user-question tool calls parse into normalized `ask_user_questions` directives
+- malformed user-question tool payloads fail closed before client-visible prompts are emitted
 - empty final responses include bounded canonical/provider response diagnostics on the thrown error
 
 ### `terminal-tool-executor.ts`
@@ -392,6 +415,8 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 - intermediate assistant text segments persist with `segment_kind` / `llm_call_id` metadata and emit `agent.message` without finalizing the turn
 - canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
 - canonical assistant/tool rows receive cached cwd path context metadata when available
+- pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`
+- completed `ask_user_questions` results persist Q/A payload rows and emit `user_questions` runtime data
 
 ### `thread-title-service.ts`
 

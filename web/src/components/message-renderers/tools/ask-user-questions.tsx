@@ -1,8 +1,11 @@
 import type { ToolContentRendererProps } from '../types'
-import type { ApiAskUserQuestionsToolResult } from '@/lib/api-types'
+import {
+  displayAskUserQuestionsResponse,
+  parseAskUserQuestionsToolResultPayload,
+} from './ask-user-questions-format'
 
 export function AskUserQuestionsContent({ payload }: ToolContentRendererProps) {
-  const result = parseResult(payload)
+  const result = parseAskUserQuestionsToolResultPayload(payload)
   if (!result) {
     return (
       <pre className="overflow-x-auto rounded-md bg-background/80 p-2 text-[11px] text-muted-foreground">
@@ -23,54 +26,12 @@ export function AskUserQuestionsContent({ payload }: ToolContentRendererProps) {
         {result.responses.map((response) => (
           <div key={response.question_id} className="rounded-md bg-background/70 px-2 py-1.5">
             <div className="font-medium text-foreground">{response.question.label}</div>
-            {response.status === 'answered' ? (
-              <div className="mt-0.5 text-muted-foreground">
-                {response.display_answer ?? formatAnswer(response.answer)}
-              </div>
-            ) : (
-              <div className="mt-0.5 text-muted-foreground">
-                Skipped{response.skip_reason ? ` (${response.skip_reason})` : ''}
-              </div>
-            )}
+            <div className="mt-0.5 text-muted-foreground">
+              {displayAskUserQuestionsResponse(response)}
+            </div>
           </div>
         ))}
       </div>
     </div>
   )
-}
-
-function parseResult(payload: Record<string, unknown>): ApiAskUserQuestionsToolResult | null {
-  const candidate = isRecord(payload.result) ? payload.result : payload
-  if (
-    candidate.schema !== 'ask_user_questions_tool_result_v1' ||
-    typeof candidate.request_id !== 'string' ||
-    !Array.isArray(candidate.responses)
-  ) {
-    return null
-  }
-  return candidate as ApiAskUserQuestionsToolResult
-}
-
-function formatAnswer(answer: unknown): string {
-  if (!isRecord(answer) || typeof answer.kind !== 'string') {
-    return '(answered)'
-  }
-  switch (answer.kind) {
-    case 'boolean':
-      return answer.value === true ? 'Yes' : answer.value === false ? 'No' : '(answered)'
-    case 'single_choice':
-      return typeof answer.choice_id === 'string' ? answer.choice_id : '(answered)'
-    case 'multi_choice':
-      return Array.isArray(answer.choice_ids) ? answer.choice_ids.join(', ') : '(answered)'
-    case 'text':
-      return typeof answer.value === 'string' ? answer.value : '(answered)'
-    case 'number':
-      return typeof answer.value === 'number' ? String(answer.value) : '(answered)'
-    default:
-      return '(answered)'
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }

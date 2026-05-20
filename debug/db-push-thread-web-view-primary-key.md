@@ -231,19 +231,51 @@ The repeated prompt is caused by schema constructs that Drizzle Kit 0.31.6 canno
 
 The live database is not missing the primary key. The warning repeats because Drizzle's source snapshot and live-introspection snapshot encode the same physical PK differently.
 
-## Proposed Fix / Next Steps
+## Implemented Fix
 
-Recommended fix:
+Implemented in `plan/fix-drizzle-push-mismatch/` phases:
 
-- Change `threadWebViewTable.threadId` to use column-level `.primaryKey()` and remove the table-level `pk: primaryKey({ columns: [table.threadId], name: "thread_web_view_pkey" })`.
-- Replace the affected inline `.references(...)` definitions with explicit `foreignKey({ name: "..." })` builders using stable names shorter than 63 bytes.
-- Generate and review a checked-in migration for the FK renames. The primary-key representation change should be validated carefully because it is intended to align Drizzle metadata with the existing live PK, not change the physical constraint.
-- Re-run `pnpm --dir /Users/adam/bud/service db:push` after the schema cleanup. The prompt should stop showing these FK and PK rewrites.
+- `threadWebViewTable.threadId` now uses column-level `.primaryKey()`.
+- The table-level one-column `primaryKey({ columns: [table.threadId], name: "thread_web_view_pkey" })` declaration was removed.
+- The affected overlong inline `.references(...)` declarations were replaced with explicit `foreignKey({ name: "..." })` declarations using names shorter than PostgreSQL's 63-byte identifier limit.
+- The generated `0020` migration snapshot records the normalized metadata.
+- The generated SQL migration was reviewed and changed from drop/add FK churn plus a physical `thread_web_view_pkey` rewrite into guarded data-preserving FK constraint renames.
+- `service/src/db/schema-metadata.test.ts` now scans the latest Drizzle snapshot and fails on identifier names longer than 63 bytes or one-column `compositePrimaryKeys`.
 
-Operational guardrail:
+Stable FK names introduced:
 
-- Consider making `service/src/scripts/db-push.ts` fail closed or print a clearer handoff when Drizzle proposes destructive statements. The current interactive text suggests truncating a table even when the underlying issue is a non-converging metadata diff.
+- `terminal_session_input_log_session_fk`
+- `terminal_session_output_session_fk`
+- `bud_operation_terminal_session_fk`
+- `bud_operation_device_session_fk`
+- `bud_operation_transport_session_fk`
+- `bud_stream_device_session_fk`
+- `bud_stream_transport_session_fk`
+- `transport_session_device_session_fk`
+- `proxied_site_viewer_grant_site_fk`
+- `proxied_site_viewer_session_site_fk`
+
+## Validation
+
+Commands run:
+
+```bash
+pnpm --dir /Users/adam/bud/service db:generate
+pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/db/schema-metadata.test.ts
+pnpm --dir /Users/adam/bud/service build
+pnpm --dir /Users/adam/bud/service db:push
+pnpm --dir /Users/adam/bud/service db:push
+```
+
+Results:
+
+- `db:generate` produced `0020_aromatic_zemo.sql` and `meta/0020_snapshot.json`.
+- The metadata guardrail test passed.
+- The service build passed.
+- The first `db:push` proposed only the expected FK cleanup and no `thread_web_view_pkey` rewrite or data-loss warning; it was applied locally.
+- The immediate second `db:push` returned `[i] No changes detected`.
+- A read-only catalog check confirmed the new stable FK names and `thread_web_view_pkey` remains `PRIMARY KEY (thread_id)`.
 
 ## Status
 
-Root cause identified. No repository schema cleanup has been applied yet.
+Resolved locally. The checked-in migration and snapshot now represent the cleanup for staging/deployed environments, and repeated local `db:push` converges.

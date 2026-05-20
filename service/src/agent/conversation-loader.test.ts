@@ -14,6 +14,14 @@ test("system prompt documents only public wait_for modes", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /the service defaults to localhost/);
 });
 
+test("system prompt scopes ask_user_questions usage policy", () => {
+  assert.match(AGENT_SYSTEM_PROMPT, /Ask all currently blocking user questions in one ask_user_questions call/);
+  assert.match(AGENT_SYSTEM_PROMPT, /One-question prompts are fine for binary, choice, or constrained numeric decisions/);
+  assert.match(AGENT_SYSTEM_PROMPT, /Do not use ask_user_questions when the only needed input is one freeform text answer/);
+  assert.match(AGENT_SYSTEM_PROMPT, /Never request passwords, API keys, tokens, private keys, or other secrets through ask_user_questions/);
+  assert.match(AGENT_SYSTEM_PROMPT, /Every question is skippable, even when importance is "required"/);
+});
+
 test("load normalizes persisted tool rows and preserves preferred cwd context", async (t) => {
   t.after(() => {
     mock.restoreAll();

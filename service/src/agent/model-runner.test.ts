@@ -489,6 +489,40 @@ test("extractToolCalls parses ask_user_questions directives", () => {
   }
 });
 
+test("extractToolCalls rejects malformed ask_user_questions directives before client exposure", () => {
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  assert.throws(
+    () =>
+      runner.extractToolCalls({
+        id: "resp_question_tools_invalid",
+        content: [],
+        stopReason: "tool_use",
+        toolCalls: [
+          {
+            id: "call_questions",
+            name: "ask_user_questions",
+            input: {
+              questions: [
+                {
+                  question_id: "env",
+                  kind: "single_choice",
+                  label: "Environment?",
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    /single_choice questions require at least one choice/,
+  );
+});
+
 test("parseFinalResponse includes bounded model response diagnostics on empty output", () => {
   const runner = new AgentModelRunner(
     createRuntime() as never,
