@@ -1505,9 +1505,12 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
   - web-view tool results include a `web_view` payload with owned proxied-site
     and thread-attachment state instead of terminal `output`/`readiness`
-  - `ask_user_questions` tool results include a `user_questions` payload with
-    `schema: "ask_user_questions_tool_result_v1"`, the original `request_id`,
-    per-question answered/skipped responses, and `summary_markdown`
+  - `ask_user_questions` tool results include a compact live `user_questions`
+    payload with `kind: "user_questions"`, `requestId`, and per-question
+    answered/skipped responses. The persisted canonical tool row is still
+    carried in `message`; historical clients should parse `message.content` as
+    JSON and read `result.schema: "ask_user_questions_tool_result_v1"` for the
+    full Q/A result and `summary_markdown`.
 - `agent.message`
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
@@ -1659,7 +1662,7 @@ Service: otherwise emit agent.resync_required
 ```text
 Agent model → Service: ask_user_questions{questions[]}
 Service: normalize and persist agent_question_request
-Service → Browser SSE: agent.tool_call{name:"ask_user_questions", args:{request_id,...}}
+Service → Browser SSE: agent.tool_call{client_id:"uuidv7", name:"ask_user_questions", args:{request_id,...}}
 Browser → Service: POST /api/threads/:thread_id/agent/question-requests/:request_id/responses
 Service: validate answers against stored request
 Service → Agent model: one ask_user_questions_tool_result_v1 payload

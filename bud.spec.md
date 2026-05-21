@@ -367,7 +367,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 | `ANTHROPIC_API_KEY` | - | Anthropic API key |
 | `DEFAULT_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
 | `AGENT_REASONING_EFFORT` | low | Compatibility fallback reasoning effort for non-catalog model overrides |
-| `AGENT_MAX_STEPS` | 30 | Max tool calls per request |
+| `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
 | `AGENT_DEBUG` | false | Enable agent debug logging |
 | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle after |
 | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions after (`0` disables destructive cleanup) |
@@ -701,6 +701,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/agent-stream-state-and-resume-implementation.md](./debug/agent-stream-state-and-resume-implementation.md) | Debug note documenting the stale attach replay problem, the split between durable transcript vs in-flight runtime state, and the implemented `/agent/state` plus bounded-resume fix direction |
 | [debug/llm-output-text-and-reasoning-gaps.md](./debug/llm-output-text-and-reasoning-gaps.md) | Debug note reviewing OpenAI/Anthropic stream handling gaps, including live-only assistant text before tool calls, hidden reasoning output, provider ordering/multi-tool issues, and proposed transcript-contract fixes |
 | [debug/agent-sse-stale-tab-reconnect-loop.md](./debug/agent-sse-stale-tab-reconnect-loop.md) | Debug note documenting the validated April 21, 2026 agent-SSE reconnect-loop diagnosis and fix: a single live hook instance could still flap noisily when Bud's manual stale-heartbeat reconnect logic overlapped with the browser's native `EventSource` reconnect behavior, and the resolution was to dedupe manual reconnect scheduling and gate stale-heartbeat escalation to truly open streams |
+| [debug/serverresponse-maxlisteners-warning.md](./debug/serverresponse-maxlisteners-warning.md) | Debug note reviewing the service `ServerResponse` `MaxListenersExceededWarning`, narrowing the likely cause to repeated stream piping into one response, reproducing the `fastify-sse-v2` async-iterable warning shape, and outlining trace-first remediation |
 | [debug/browser-terminal-input-leak.md](./debug/browser-terminal-input-leak.md) | Debug note documenting why raw xterm `onData` submission lets emulator-generated protocol bytes leak into the shared tmux session, and why the phase-1 fix belongs at the browser boundary |
 | [debug/terminal-interrupt-correctness.md](./debug/terminal-interrupt-correctness.md) | Debug note documenting the current `terminal.interrupt` correctness gaps around premature REPL-context clearing, false-success dispatch reporting, and stale-history interrupt output reconstruction |
 | [debug/remove-terminal-interrupt-cutover.md](./debug/remove-terminal-interrupt-cutover.md) | Debug note capturing the cutover rationale for removing the agent-facing `terminal.interrupt` tool, keeping browser Ctrl+C as an escape hatch, and collapsing onto the general `terminal.send` path |
@@ -718,6 +719,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/mobile-claim-redirect-handoff.md](./design/mobile-claim-redirect-handoff.md) | Design for returning hosted Bud claims back into the iOS app, covering login-resume parameter preservation, callback validation, and recommended post-claim thread ownership |
 | [design/mobile-agent-stream-attach-semantics.md](./design/mobile-agent-stream-attach-semantics.md) | Design for separating passive thread-open semantics from reconnect replay, adding an explicit current-turn runtime bootstrap surface with opaque resume cursors, making cursorless agent-stream attach live-only, and constraining replay to bounded catch-up with explicit resync |
 | [design/mobile-tool-call-timing-and-compaction.md](./design/mobile-tool-call-timing-and-compaction.md) | Design for keeping grouped mobile tool-summary rows client-side while adding authoritative tool timing to canonical message metadata and optional server-clock timestamps to live tool SSE events |
+| [design/streaming-tool-call-assembly.md](./design/streaming-tool-call-assembly.md) | Draft design for streaming non-authoritative tool-call previews from `AgentModelRunner` to clients while preserving `agent.tool_call` as the final executable tool boundary |
 | [design/mobile-chat-thread-first-backend-contract.md](./design/mobile-chat-thread-first-backend-contract.md) | Design for the first-pass mobile chat backend contract, keeping the existing Bud/thread/message route family while adopting a thread-first mobile list and documenting the required payload/stream cleanup |
 | [design/ask-user-questions-tool-contract.md](./design/ask-user-questions-tool-contract.md) | Draft design for a model-facing `ask_user_questions` tool, including skippable form question types, client response payloads, structured tool-result replay, ownership rules, and human-input notification hooks |
 | [design/llm-model-catalog-and-reasoning-controls.md](./design/llm-model-catalog-and-reasoning-controls.md) | Design sketch for centralizing Bud's LLM model catalog, making reasoning controls provider/model-specific, and planning the Opus 4.6/4.7 plus GPT-5.4/GPT-5.5 rollout |
@@ -752,4 +754,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-19*
+*Last updated: 2026-05-21*

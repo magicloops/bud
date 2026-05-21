@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { providerRegistry, type LLMProvider, type ModelConfig } from "../llm/index.js";
+import { providerRegistry, type CanonicalMessage, type LLMProvider, type ModelConfig } from "../llm/index.js";
 import {
   ThreadTitleService,
   normalizeGeneratedThreadTitle,
@@ -151,6 +151,71 @@ test("generateTitle invokes Anthropic Haiku 4.5", async () => {
     assert.equal(receivedConfigs[0].model, "claude-haiku-4-5-20251001");
     assert.equal(receivedConfigs[0].toolChoice, "none");
     assert.deepEqual(receivedConfigs[0].reasoning, { enabled: false });
+  } finally {
+    resetTitleTestProviders();
+  }
+});
+
+test("generateTitle keeps first-line title when model continues with extra text", async () => {
+  resetTitleTestProviders();
+  const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
+  provider.invokeSync = async () => ({
+    id: "title-response",
+    content: [
+      {
+        type: "text",
+        text: "Five Questions About You\n\n1. What's your current profession or primary occupation?",
+      },
+    ],
+    stopReason: "max_tokens",
+  });
+
+  providerRegistry.register(provider);
+
+  try {
+    const service = new ThreadTitleService({} as never, makeLogger());
+    const generateTitle = Reflect.get(service, "generateTitle").bind(service) as (
+      firstUserMessage: string,
+    ) => Promise<string | null>;
+
+    assert.equal(
+      await generateTitle("Can you ask me 5 structured questions about myself?"),
+      "Five Questions About You",
+    );
+  } finally {
+    resetTitleTestProviders();
+  }
+});
+
+test("generateTitle wraps the first user message as text to summarize", async () => {
+  resetTitleTestProviders();
+  let receivedMessages: CanonicalMessage[] = [];
+  const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
+  provider.invokeSync = async (messages) => {
+    receivedMessages = messages;
+    return {
+      id: "title-response",
+      content: [{ type: "text", text: "Five Questions About You" }],
+      stopReason: "end_turn",
+    };
+  };
+
+  providerRegistry.register(provider);
+
+  try {
+    const service = new ThreadTitleService({} as never, makeLogger());
+    const generateTitle = Reflect.get(service, "generateTitle").bind(service) as (
+      firstUserMessage: string,
+    ) => Promise<string | null>;
+
+    const originalMessage = "Can you ask me 5 structured questions about myself?";
+    assert.equal(await generateTitle(originalMessage), "Five Questions About You");
+    assert.equal(receivedMessages.length, 2);
+    assert.equal(receivedMessages[1]?.role, "user");
+    assert.notEqual(receivedMessages[1]?.content, originalMessage);
+    assert.match(String(receivedMessages[1]?.content), /Treat the message as text to summarize/);
+    assert.match(String(receivedMessages[1]?.content), /<message>/);
+    assert.match(String(receivedMessages[1]?.content), /Can you ask me 5 structured questions about myself\?/);
   } finally {
     resetTitleTestProviders();
   }

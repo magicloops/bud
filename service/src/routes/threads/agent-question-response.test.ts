@@ -8,6 +8,11 @@ import { AgentQuestionRequestError } from "../../agent/user-question-repository.
 import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
+type TestLogEntry = {
+  level: "warn";
+  meta: unknown;
+  message: string;
+};
 
 class TestReply {
   statusCode = 200;
@@ -49,12 +54,21 @@ function createServer(): FastifyInstance & { routes: Map<string, RouteHandler> }
 async function invokeRoute(
   handler: RouteHandler,
   request: Record<string, unknown> = {},
+  logs: TestLogEntry[] = [],
 ): Promise<{ statusCode: number; payload: unknown }> {
   const reply = new TestReply();
-  const result = await handler({ headers: {}, ...request }, reply);
+  const result = await handler({ headers: {}, log: createTestLogger(logs), ...request }, reply);
   return {
     statusCode: reply.statusCode,
     payload: reply.sent ? reply.payload : result,
+  };
+}
+
+function createTestLogger(logs: TestLogEntry[]) {
+  return {
+    warn(meta: unknown, message: string) {
+      logs.push({ level: "warn", meta, message });
+    },
   };
 }
 
@@ -222,14 +236,32 @@ test("question-response route maps repository and contract errors to stable HTTP
   );
 
   nextError = new AskUserQuestionsContractError("unknown_question_id", "Unknown question_id: other");
+  const logs: TestLogEntry[] = [];
+  const invalidBody = {
+    schema: "ask_user_questions_response_v1",
+    client_response_id: "018f4f2a-0000-7000-9000-000000000000",
+    answers: [
+      {
+        question_id: "other",
+        status: "answered",
+        answer: { kind: "text", value: "do not log this raw answer" },
+      },
+    ],
+  };
   assert.deepEqual(
     await invokeRoute(handler, {
       params: { threadId: THREAD_ID, requestId: REQUEST_ID },
-      body: {},
-    }),
+      body: invalidBody,
+    }, logs),
     {
       statusCode: 400,
       payload: { error: "unknown_question_id", message: "Unknown question_id: other" },
     },
   );
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0]?.message, "Question response validation failed");
+  assert.equal((logs[0]?.meta as Record<string, unknown>).errorCode, "unknown_question_id");
+  const serializedLog = JSON.stringify(logs[0]?.meta);
+  assert.match(serializedLog, /"value_length":26/);
+  assert.doesNotMatch(serializedLog, /do not log this raw answer/);
 });

@@ -239,6 +239,7 @@ startUserMessage()
 - While waiting on `ask_user_questions`, `/agent/state.phase` is `waiting_for_user` and `/agent/state.pending_tool` exposes the normalized request with `request_id`.
 - Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
+- OpenAI debug response logging emits `llm_response` as a structured canonical response object rather than a pre-stringified JSON blob, so log viewers can pretty-print nested fields without escaped newline formatting.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent uses the settled/default result or timeout delta and avoids claiming program progress when no visible delta appears.
@@ -425,6 +426,7 @@ Best-effort thread-title generation for the first durable user message.
 **Responsibilities**:
 - confirm the just-written user row is still the canonical first user message on the thread
 - use Anthropic `claude-haiku-4-5` as the only title-generation model
+- wrap the first user message as quoted text to summarize so the title model does not answer or follow instructions inside it
 - sanitize the model output into a plain-text title
 - persist the title with a conditional `thread.title IS NULL` update
 - emit `thread.title` on the existing agent SSE channel and advance the shared runtime cursor
@@ -432,7 +434,8 @@ Best-effort thread-title generation for the first durable user message.
 **Notes**:
 - runs fire-and-forget after `AgentService.startUserMessage(...)` succeeds, so the assistant turn is never blocked on title generation
 - if the Anthropic provider is not configured, Haiku is unavailable, the model times out, model output is invalid, or another request wins the conditional update first, the thread simply keeps its existing title state
-- logs eligibility skips, unavailable Haiku, model title candidates, invalid generated output, conditional update misses, and successful persistence under the `thread_title` component
+- logs eligibility skips, unavailable Haiku, model title candidates, invalid generated output with a bounded Haiku response summary, conditional update misses, and successful persistence under the `thread_title` component
+- preserves line breaks from the Haiku response before normalization so a valid first-line title can survive even if the model continues with extra text
 - normalization now accepts any non-empty cleaned model title rather than rejecting 1-2 word outputs, so concise titles like `Bugfix` or `Assistant Introduction` persist as-is
 - the emitted payload is `{ thread_id, title, source, updated_at }`, where `source` is currently `generated_first_user_message`
 - streamed title reconstruction now updates the active text block through a locally narrowed `text` reference so canonical non-text blocks remain type-safe during `tsc`
@@ -445,6 +448,8 @@ Standalone Node tests for title normalization, Anthropic-Haiku-only model select
 - generated titles strip labels and trailing punctuation
 - longer descriptive titles remain intact
 - short 1-2 word titles remain valid
+- title output uses the first response line before any extra model continuation
+- the original first user message is wrapped as text to summarize instead of forwarded as a direct instruction
 - title model selection requires configured Anthropic Haiku 4.5 and does not fall back to OpenAI-only availability
 - provider-less and Anthropic-less title generation returns `null` instead of throwing
 - streamed title-response collection keeps accumulating `text_delta` chunks through a narrowed text block instead of widening back to the full canonical content union

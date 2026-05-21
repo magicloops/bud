@@ -651,8 +651,7 @@ export class AgentModelRunner {
       return;
     }
     try {
-      const serialized = JSON.stringify(response, null, 2);
-      this.logger.info({ component: "agent", llm_response: serialized }, "LLM response payload");
+      this.logger.info({ component: "agent", llm_response: response }, "LLM response payload");
     } catch (err) {
       this.logger.warn(
         { err, component: "agent" },

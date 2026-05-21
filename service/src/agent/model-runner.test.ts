@@ -262,6 +262,47 @@ test("invokeModel carries provider diagnostics from message_done", async (t) => 
   });
 });
 
+test("OpenAI debug logging emits structured LLM response payload", () => {
+  const logs: Array<{ meta: Record<string, unknown>; message: string }> = [];
+  const logger = {
+    info(meta: Record<string, unknown>, message: string) {
+      logs.push({ meta, message });
+    },
+    warn() {
+      // noop
+    },
+    error() {
+      // noop
+    },
+  };
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    logger as never,
+    false,
+    true,
+  );
+  const response = {
+    id: "resp_debug",
+    content: [{ type: "text" as const, text: "hello\nworld" }],
+    stopReason: "end_turn" as const,
+    usage: {
+      input_tokens: 1,
+      output_tokens: 2,
+    },
+  };
+
+  const debugCanonicalResponse = Reflect.get(runner, "debugCanonicalResponse").bind(runner) as (
+    response: typeof response,
+  ) => void;
+  debugCanonicalResponse(response);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0]?.message, "LLM response payload");
+  assert.equal(logs[0]?.meta.component, "agent");
+  assert.equal(typeof logs[0]?.meta.llm_response, "object");
+  assert.deepEqual(logs[0]?.meta.llm_response, response);
+});
+
 test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
   const previousOpenAI = providerRegistry.getProvider("openai");
   const previousAnthropic = providerRegistry.getProvider("anthropic");

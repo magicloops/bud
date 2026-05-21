@@ -121,6 +121,7 @@ Use this as the running status board while the service and web implementation la
 - [ ] `web/src/components/message-renderers/tools/tools.spec.md` updated
 - [ ] `web/src/routes/$budId/budId.spec.md` updated
 - [ ] `bud.spec.md` updated
+- [x] mobile client handoff doc created
 
 ## Phase 5: Integration Test Hardening
 

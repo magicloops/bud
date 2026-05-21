@@ -87,7 +87,7 @@ Update:
 
 ### 6. Mobile Handoff
 
-If mobile is expected to consume the contract soon, create or update a reference handoff under `reference/` describing:
+If mobile is expected to consume the contract soon, create or update [mobile-client-handoff.md](./mobile-client-handoff.md) describing:
 
 - `agent.tool_call` pending prompt payload
 - `/agent/state` recovery behavior

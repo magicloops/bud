@@ -95,7 +95,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] web specs describe prompt rendering and submission behavior
 - [ ] migration spec lists the generated migration
 - [ ] design doc is still accurate or has a supersession note
-- [ ] mobile handoff exists if native adoption is expected
+- [x] mobile handoff exists if native adoption is expected
 
 ### Commands
 

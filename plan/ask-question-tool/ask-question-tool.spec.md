@@ -96,6 +96,18 @@ Subphase 5c covering web pending prompt rendering, response payload construction
 
 Subphase 5d covering local end-to-end smoke scenarios and regression evidence to record after schema push.
 
+### `mobile-client-handoff.md`
+
+Mobile/native implementation handoff for consuming `ask_user_questions` prompts.
+
+**Covers**:
+- live `agent.tool_call` and `/agent/state` prompt detection
+- exact `ask_user_questions_request_v1` and `ask_user_questions_response_v1` shapes
+- per-kind rendering and response serialization rules
+- thread-scoped submit route, continuation handling, and error handling
+- completed `ask_user_questions_tool_result_v1` rendering
+- mobile-focused test checklist and v1 out-of-scope items
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
