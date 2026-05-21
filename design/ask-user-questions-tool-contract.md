@@ -55,7 +55,7 @@ Bad uses:
 - Asking for secrets that should not be exposed to the model.
 - Replacing normal conversational follow-up when a plain assistant message is enough.
 
-Agent prompt guidance should bias toward a small number of high-signal questions. A practical v1 limit is five questions per tool call unless a user explicitly asks for a questionnaire-style interaction.
+Agent prompt guidance should bias toward high-signal questions and steer multiple needed questions into `ask_user_questions` instead of markdown lists. The service does not impose a hard v1 question-count cap; it still validates each question and leaves presentation choices to first-party clients.
 
 ---
 
@@ -82,7 +82,7 @@ Possible later types:
 
 ## Skippability
 
-Every question is skippable. The agent may mark a question as `importance: "blocking"` to explain that a skipped answer may prevent progress, but the client must still offer a skip path.
+Every question is skippable. The agent may mark a question as `importance: "required"` to explain that a skipped answer may prevent progress, but the client must still offer a skip path.
 
 Recommended states:
 
@@ -116,7 +116,7 @@ The model asks questions through `ask_user_questions`. The service validates and
       "kind": "single_choice",
       "label": "Which environment should I target?",
       "help_text": "Staging is safer if you are unsure.",
-      "importance": "blocking",
+      "importance": "required",
       "skippable": true,
       "choices": [
         {
@@ -141,7 +141,7 @@ The model asks questions through `ask_user_questions`. The service validates and
       "label": "Should I run database migrations if they are needed?",
       "true_label": "Yes",
       "false_label": "No",
-      "importance": "blocking",
+      "importance": "required",
       "skippable": true,
       "default_answer": {
         "kind": "boolean",
@@ -168,7 +168,7 @@ Field notes:
 - `question_id` is the stable key used in responses. It should be unique within the request.
 - `label` is the question text. It is required because the service-generated result will repeat it.
 - `help_text` is optional explanatory text.
-- `importance` is one of `blocking`, `useful`, or `optional`. It is advisory only.
+- `importance` is one of `required`, `important`, or `optional`. It is advisory only.
 - `skippable` should always normalize to `true` in v1.
 - `choices` is required for choice questions. Choice ids and labels should be unique within a question.
 - `default_answer` is optional and must match the question kind.

@@ -96,6 +96,10 @@ Subphase 5c covering web pending prompt rendering, response payload construction
 
 Subphase 5d covering local end-to-end smoke scenarios and regression evidence to record after schema push.
 
+### `phase-6-prompt-guidance-and-question-count.md`
+
+Follow-on phase covering prompt-language changes that steer multiple needed questions into `ask_user_questions` instead of markdown lists, plus removal of the hard five-question cap from the model-facing schema and service request normalization.
+
 ### `mobile-client-handoff.md`
 
 Mobile/native implementation handoff for consuming `ask_user_questions` prompts.

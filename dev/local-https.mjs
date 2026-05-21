@@ -38,6 +38,8 @@ const CERT_FILE = resolve(CERT_DIR, "bud-local.pem");
 const KEY_FILE = resolve(CERT_DIR, "bud-local-key.pem");
 const CADDYFILE = resolve(rootDir, "dev/caddy/Caddyfile.https-local");
 const SHUTDOWN_TIMEOUT_MS = 5_000;
+const TRACE_SERVICE_WARNINGS_FLAG = "--trace-service-warnings";
+const TRACE_WARNINGS_NODE_OPTION = "--trace-warnings";
 
 class UserError extends Error {
   constructor(message) {
@@ -60,6 +62,9 @@ Commands:
   provision-ios  Run local iOS OAuth provisioning with HTTPS profile env
   print-env      Print the derived HTTPS profile environment
 
+Options:
+  --trace-service-warnings  Add NODE_OPTIONS=--trace-warnings to the service process
+
 Repo scripts:
   pnpm dev:https:setup
   pnpm dev:https
@@ -73,6 +78,12 @@ function sleep(ms) {
 
 function formatCommand(command, args = []) {
   return [command, ...args].join(" ");
+}
+
+function cliOptions() {
+  return {
+    traceServiceWarnings: process.argv.includes(TRACE_SERVICE_WARNINGS_FLAG),
+  };
 }
 
 function runCapture(command, args, options = {}) {
@@ -257,8 +268,21 @@ function missingCertificateDnsNames() {
   return REQUIRED_CERT_DNS_NAMES.filter((name) => !subjectAltName.includes(`DNS:${name}`));
 }
 
-function buildServiceEnv(rootCaPath) {
+function withNodeOption(env, option) {
+  const existing = env.NODE_OPTIONS?.trim() ?? "";
+  const options = existing.length > 0 ? existing.split(/\s+/) : [];
+  if (options.includes(option)) {
+    return env;
+  }
+
   return {
+    ...env,
+    NODE_OPTIONS: [...options, option].join(" "),
+  };
+}
+
+function buildServiceEnv(rootCaPath, options = {}) {
+  const env = {
     ...process.env,
     HOST: SERVICE_HOST,
     PORT: String(SERVICE_PORT),
@@ -273,6 +297,10 @@ function buildServiceEnv(rootCaPath) {
     PROXY_VIEWER_COOKIE_NAME: "__Host-bud_proxy_viewer",
     NODE_EXTRA_CA_CERTS: rootCaPath,
   };
+
+  return options.traceServiceWarnings
+    ? withNodeOption(env, TRACE_WARNINGS_NODE_OPTION)
+    : env;
 }
 
 function buildWebEnv(rootCaPath) {
@@ -290,8 +318,12 @@ function buildCaddyEnv() {
   };
 }
 
-function printDerivedEnv(rootCaPath) {
+function printDerivedEnv(rootCaPath, options = {}) {
   console.log(`NODE_EXTRA_CA_CERTS=${rootCaPath}`);
+  if (options.traceServiceWarnings) {
+    const serviceEnv = buildServiceEnv(rootCaPath, options);
+    console.log(`NODE_OPTIONS=${serviceEnv.NODE_OPTIONS}`);
+  }
   console.log(`APP_BASE_URL=${HTTPS_ORIGIN}`);
   console.log(`BETTER_AUTH_URL=${HTTPS_ORIGIN}`);
   console.log(`API_AUDIENCE=${API_AUDIENCE}`);
@@ -510,6 +542,7 @@ async function start() {
   await commandMustExist("pnpm", ["--version"], "Install pnpm before running repo scripts.");
   await commandMustExist("caddy", ["version"], "Install it with: brew install caddy");
   const rootCaPath = await resolveRootCaPath();
+  const options = cliOptions();
   ensureCertFiles();
   await assertLocalHttpsDnsConfigured();
 
@@ -536,7 +569,7 @@ async function start() {
 
     spawnManagedChild(children, "service", "pnpm", ["dev"], {
       cwd: serviceDir,
-      env: buildServiceEnv(rootCaPath),
+      env: buildServiceEnv(rootCaPath, options),
     }).child.once("exit", (code, signal) => onExit("service", code, signal));
 
     spawnManagedChild(children, "web", "pnpm", ["dev"], {
@@ -621,7 +654,7 @@ async function main() {
   }
   if (command === "print-env") {
     const rootCaPath = await resolveRootCaPath();
-    printDerivedEnv(rootCaPath);
+    printDerivedEnv(rootCaPath, cliOptions());
     return;
   }
 

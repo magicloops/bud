@@ -200,7 +200,7 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   );
   const askProperties = askUserQuestionsTool.parameters.properties as Record<string, unknown>;
   const questionsSchema = askProperties.questions as { maxItems?: number; items?: { properties?: Record<string, unknown> } };
-  assert.equal(questionsSchema.maxItems, 5);
+  assert.equal(questionsSchema.maxItems, undefined);
   assert.deepEqual(
     (questionsSchema.items?.properties?.kind as { enum?: unknown }).enum,
     ["boolean", "single_choice", "multi_choice", "text", "number"],

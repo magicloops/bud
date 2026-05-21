@@ -123,6 +123,12 @@ The agent and terminal routes clear heartbeat intervals on `reply.raw.close`. If
 1. Reproduce once with stack traces:
 
    ```bash
+   pnpm dev:https -- --trace-service-warnings
+   ```
+
+   Or, when running the service directly:
+
+   ```bash
    NODE_OPTIONS=--trace-warnings pnpm --dir /Users/adam/bud/service dev
    ```
 

@@ -154,6 +154,19 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] service build run after integration test changes
 - [ ] web build run after web test changes
 
+## Phase 6: Prompt Guidance And Question Count
+
+- [x] system prompt avoids multiple-question markdown-list guidance
+- [x] system prompt tells the model to convert long question checklists into `ask_user_questions`
+- [x] system prompt keeps normal markdown questions scoped to exactly one simple freeform answer
+- [x] model-facing `ask_user_questions.questions` schema omits `maxItems`
+- [x] service request normalization accepts more than five questions
+- [x] focused service tests pass
+
+### Phase 6 Commands
+
+- [x] `pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/agent/conversation-loader.test.ts src/agent/model-runner.test.ts src/agent/user-question-contracts.test.ts`
+
 ## Notes
 
 - This checklist validates v1 only. Secret input, file answers, date/time controls, branching prompts, and durable provider-native suspended-turn replay are out of scope.

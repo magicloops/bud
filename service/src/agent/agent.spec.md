@@ -82,7 +82,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`
 - stored `screen_stable` waits replay as canonical `settled`
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
-- the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions and excludes one-off freeform text prompts plus secrets
+- the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions, steers multiple needed questions away from markdown lists, and excludes one-off simple freeform text prompts plus secrets
 
 ### `user-question-contracts.ts`
 
@@ -90,7 +90,7 @@ Shared validation and normalization for the `ask_user_questions` tool.
 
 **Responsibilities**:
 - define v1 request, response, and tool-result schema constants
-- normalize model-supplied question requests into a bounded, client-renderable form
+- normalize model-supplied question requests into a client-renderable form
 - tolerate OpenAI strict-mode `null` values for optional request fields by treating them as omitted
 - force every v1 question to be skippable
 - validate client responses against the stored request, not client-supplied labels
@@ -144,8 +144,8 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 **System Prompt Highlights**:
 - tool-calling guidance for `terminal.send` and `terminal.observe`
 - product web-view guidance for opening, listing, and closing thread web views
-- structured human-question guidance for asking bounded, skippable questions only when a normal answer or assumption would be risky
-- ask-user policy that batches currently blocking decisions, avoids secret collection, treats skipped answers as conservative-assumption opportunities, and prefers a normal markdown response for a single freeform text question
+- structured human-question guidance for asking skippable questions only when a normal answer or assumption would be risky
+- ask-user policy that batches currently needed decisions, converts multiple questions or long question checklists into `ask_user_questions`, avoids secret collection, treats skipped answers as conservative-assumption opportunities, and reserves normal markdown questions for exactly one simple freeform answer
 - readiness confidence interpretation (`>= 0.8` ready, `0.5-0.8` probably ready, `< 0.5` still processing)
 - hint interpretation (`looks_like_prompt`, `looks_like_confirmation`, etc.)
 - REPL context awareness (Python/Node/Claude Code vs shell)
@@ -161,7 +161,7 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 | `web_view_open` | `target_port`, `target_host?`, `path?`, `title?` | Create/reuse a Bud-scoped proxied site and attach it to the current thread; omitted `target_host` defaults to `localhost`, and explicit loopback hosts must be preserved exactly |
 | `web_view_close` | `proxied_site_id?`, `disable?` | Detach the current thread web view and optionally disable the proxied site |
 | `web_view_list` | none | List owned proxied sites for the current Bud and current thread attachment |
-| `ask_user_questions` | `title?`, `body?`, `submit_label?`, `skip_all_label?`, `questions[]` | Pause the current turn and ask the owning user up to five skippable structured questions; v1 supports boolean, single-choice, multi-choice, text, and number questions |
+| `ask_user_questions` | `title?`, `body?`, `submit_label?`, `skip_all_label?`, `questions[]` | Pause the current turn and ask the owning user skippable structured questions; v1 supports boolean, single-choice, multi-choice, text, and number questions |
 
 Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. The lower service/daemon parsers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where needed for replay and older clients.
 
@@ -334,7 +334,7 @@ Direct tests for the extracted model runner.
 - reasoning-effort normalization follows selected model policy, including Claude 4.6/4.7 and GPT-5.4 differences
 - terminal tool schemas advertise only public `wait_for` modes and omit `timeout_ms`
 - web-view tool schemas advertise product-level `web_view_open`, `web_view_close`, and `web_view_list`
-- user-question tool schema advertises `ask_user_questions` with bounded skippable question kinds
+- user-question tool schema advertises `ask_user_questions` with skippable question kinds and no hard question-count cap
 - user-question request normalization treats strict-mode `null` optionals as omitted
 - streamed text blocks around multiple tool calls are retained in provider order
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing

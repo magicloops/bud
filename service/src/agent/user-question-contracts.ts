@@ -5,7 +5,6 @@ export const ASK_USER_QUESTIONS_REQUEST_SCHEMA = "ask_user_questions_request_v1"
 export const ASK_USER_QUESTIONS_RESPONSE_SCHEMA = "ask_user_questions_response_v1" as const;
 export const ASK_USER_QUESTIONS_TOOL_RESULT_SCHEMA = "ask_user_questions_tool_result_v1" as const;
 
-export const ASK_USER_QUESTIONS_MAX_QUESTIONS = 5;
 const DEFAULT_TEXT_MAX_LENGTH = 4_000;
 
 export type AskUserQuestionKind =
@@ -139,7 +138,7 @@ const RawRequestSchema = z.object({
   body: z.string().trim().min(1).optional(),
   submit_label: z.string().trim().min(1).optional(),
   skip_all_label: z.string().trim().min(1).optional(),
-  questions: z.array(RawQuestionSchema).min(1).max(ASK_USER_QUESTIONS_MAX_QUESTIONS),
+  questions: z.array(RawQuestionSchema).min(1),
 });
 
 const ClientAnswerSchema = z.discriminatedUnion("kind", [

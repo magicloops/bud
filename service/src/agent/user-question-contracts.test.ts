@@ -105,6 +105,21 @@ test("normalizes OpenAI strict-mode null optional fields as omitted", () => {
   assert.equal(request.questions[0]?.default_answer, undefined);
 });
 
+test("normalizes more than five questions", () => {
+  const request = normalizeAskUserQuestionsRequest({
+    title: "Setup details",
+    questions: Array.from({ length: 8 }, (_value, index) => ({
+      question_id: `question_${index + 1}`,
+      kind: "boolean",
+      label: `Question ${index + 1}?`,
+    })),
+  });
+
+  assert.equal(request.questions.length, 8);
+  assert.equal(request.questions[7]?.question_id, "question_8");
+  assert.equal(request.questions[7]?.skippable, true);
+});
+
 test("rejects duplicate question ids and wrong answer kinds", () => {
   assert.throws(
     () =>

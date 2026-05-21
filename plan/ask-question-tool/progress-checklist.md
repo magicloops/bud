@@ -166,6 +166,16 @@ Use this as the running status board while the service and web implementation la
 - [ ] terminal-tool regression smoke run
 - [ ] smoke evidence recorded in [validation-checklist.md](./validation-checklist.md)
 
+## Phase 6: Prompt Guidance And Question Count
+
+- [x] system prompt tells the model not to ask multiple questions as a markdown list
+- [x] system prompt tells the model to convert long question checklists into `ask_user_questions`
+- [x] prompt language keeps the single-freeform markdown exception narrow
+- [x] prompt language does not advertise a numeric question limit
+- [x] model-facing `ask_user_questions.questions` schema no longer includes `maxItems`
+- [x] service request normalization accepts more than five questions
+- [x] prompt/schema/normalization tests updated
+
 ### Overall Progress
 
 | Phase | Status | Notes |
@@ -175,6 +185,7 @@ Use this as the running status board while the service and web implementation la
 | 3 | Not Started | Web does not render or submit question prompts |
 | 4 | Not Started | Notification/docs/validation updates not complete |
 | 5 | Not Started | Integration test hardening scoped but not implemented |
+| 6 | Implemented | Prompt guidance and question-count cap removal completed and covered by focused service tests |
 
 ## Notes
 

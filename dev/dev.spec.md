@@ -22,6 +22,8 @@ Responsibilities:
 - check that the local `.test` proxy endpoint DNS name resolves before
   starting or validating the HTTPS profile
 - own the service, web, and Caddy child-process lifecycle for the HTTPS profile
+- optionally add `NODE_OPTIONS=--trace-warnings` to only the service child
+  process via `--trace-service-warnings`
 - check protected-resource metadata, OIDC metadata, and JWKS through
   `https://localhost:3443`
 - run local iOS OAuth provisioning under the same HTTPS profile env

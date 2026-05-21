@@ -1742,7 +1742,7 @@ summary and starts a normal follow-up agent turn.
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits
-  - model-facing `ask_user_questions` lets the agent pause for bounded structured user input; `/agent/state.phase` may be `waiting_for_user`, clients submit `ask_user_questions_response_v1` through the thread-scoped response route, and completed tool rows include a self-contained Q/A result
+  - model-facing `ask_user_questions` lets the agent pause for structured user input; `/agent/state.phase` may be `waiting_for_user`, clients submit `ask_user_questions_response_v1` through the thread-scoped response route, and completed tool rows include a self-contained Q/A result
   - settled `terminal_send` and `terminal_observe(wait_for:"settled")` now use a service-owned one-hour timeout budget, while non-settled waits keep shorter defaults
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
   - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument

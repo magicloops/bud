@@ -39,7 +39,7 @@ It should define:
 
 Normalization rules:
 
-- limit requests to at most five questions unless a server constant is intentionally raised
+- require at least one question; do not impose a hard maximum question count
 - generate missing `question_id` values from ordinal position
 - require unique question ids
 - require non-empty labels

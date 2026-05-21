@@ -220,7 +220,6 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
         questions: {
           type: "array",
           minItems: 1,
-          maxItems: 5,
           items: {
             type: "object",
             properties: {

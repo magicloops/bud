@@ -9,6 +9,7 @@
 **Phase 3**: [phase-3-reference-web-client.md](./phase-3-reference-web-client.md)
 **Phase 4**: [phase-4-notifications-docs-and-validation.md](./phase-4-notifications-docs-and-validation.md)
 **Phase 5**: [phase-5-integration-tests.md](./phase-5-integration-tests.md)
+**Phase 6**: [phase-6-prompt-guidance-and-question-count.md](./phase-6-prompt-guidance-and-question-count.md)
 **Related Docs**:
 - [../../design/ask-user-questions-tool-contract.md](../../design/ask-user-questions-tool-contract.md)
 - [../../docs/proto.md](../../docs/proto.md)
@@ -33,7 +34,7 @@ The design direction is to add one model-facing tool, `ask_user_questions`, that
 
 Implement the `ask_user_questions` tool for the service and reference web client:
 
-- the model can ask a bounded set of structured, skippable questions
+- the model can ask structured, skippable questions
 - the service normalizes and persists the question request
 - `/agent/state` and `agent.tool_call` expose the prompt to clients
 - the web client renders the prompt as a form in the thread timeline
@@ -100,6 +101,7 @@ Implement the `ask_user_questions` tool for the service and reference web client
 | 3 | [phase-3-reference-web-client.md](./phase-3-reference-web-client.md) | Urgent | Reference web renders and submits question forms from `/agent/state` / SSE |
 | 4 | [phase-4-notifications-docs-and-validation.md](./phase-4-notifications-docs-and-validation.md) | High | Notifications, docs, specs, migration docs, and manual validation align with the shipped contract |
 | 5 | [phase-5-integration-tests.md](./phase-5-integration-tests.md) | High | Integration tests and local smoke coverage harden route, runtime, web, and end-to-end behavior |
+| 6 | [phase-6-prompt-guidance-and-question-count.md](./phase-6-prompt-guidance-and-question-count.md) | High | Prompt guidance avoids markdown question blocks and the hard question-count cap is removed |
 
 ## Current Code Map
 
