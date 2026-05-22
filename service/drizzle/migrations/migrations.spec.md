@@ -153,6 +153,22 @@ Placeholder to ensure the directory exists in git.
 - Creates `proxied_site_viewer_session` for hashed endpoint-host viewer cookies with Better Auth session refresh binding
 - Adds owner, endpoint-host, attachment, grant, and viewer-session indexes plus foreign keys to `bud`, `thread`, `bud_operation`, `bud_stream`, and `auth.user`
 
+### `0019_married_pixie.sql`
+
+**Agent question request persistence**:
+- Creates `agent_question_request` for durable `ask_user_questions` request/response state
+- Stores thread/turn/call identity, client-visible tool `client_id`, normalized request JSON, accepted client response JSON, generated tool-result JSON, status, answerer, optional expiry, and owner stamps
+- Adds unique `(thread_id, call_id)` and nullable `client_response_id` idempotency indexes
+- Adds thread/status and owner/status indexes plus foreign keys to `thread` and `auth.user`
+
+### `0020_aromatic_zemo.sql`
+
+**Drizzle push convergence cleanup**:
+- Renames overlong FK constraints that PostgreSQL had truncated at the 63-byte identifier limit to stable explicit names
+- Aligns `thread_web_view.thread_id` Drizzle metadata with PostgreSQL one-column primary-key introspection
+- Preserves the physical `thread_web_view_pkey` definition as `PRIMARY KEY(thread_id)`
+- Avoids data-changing table rewrites; local validation confirmed an immediate second `pnpm db:push` reports no changes
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -163,7 +179,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0018` currently)
+- Snapshot files for each migration (`0000` through `0020` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -235,6 +251,12 @@ v17: LLM provider-call and ordered-item ledger
  │
  ▼
 v18: durable proxied-site, thread web-view attachment, viewer-grant, and viewer-session schema
+ │
+ ▼
+v19: agent question request persistence for ask_user_questions
+ │
+ ▼
+v20: Drizzle/PostgreSQL constraint metadata convergence cleanup
 ```
 
 ---

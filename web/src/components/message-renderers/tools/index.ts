@@ -3,6 +3,7 @@ import {
   TerminalObserveContent,
   TerminalSendContent,
 } from './terminal-run'
+import { AskUserQuestionsContent } from './ask-user-questions'
 
 /**
  * Registry mapping tool names to their content renderers.
@@ -14,4 +15,5 @@ import {
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
+  ask_user_questions: AskUserQuestionsContent,
 }

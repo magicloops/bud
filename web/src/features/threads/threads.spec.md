@@ -20,6 +20,7 @@ Message/transcript ownership for the existing-thread route.
 - fetch older transcript pages through `before=<cursor>`
 - create and reconcile optimistic user messages
 - apply runtime pending-tool and draft-assistant overlays
+- preserve pending `ask_user_questions` overlays from `/agent/state` so a refresh can recover the form while the service is waiting on the user
 - reconcile canonical assistant/tool messages from the agent stream
 - keep visible assistant draft text in the timeline when a tool call arrives, so text streamed before or between tool calls is not removed while waiting for the persisted assistant row
 - clear per-turn synthetic rows when a turn finishes or fails
@@ -38,8 +39,10 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 
 **Responsibilities**:
 - stable `client_id` identity comparison and chronological sorting
-- optimistic user-message reconciliation into canonical persisted ids
+- optimistic user-message reconciliation into canonical persisted rows, including server timestamps and metadata
 - pending-tool / draft-assistant synthetic-row detection and cleanup
+- pending `ask_user_questions` synthetic rows carry the server `started_at` timestamp when available so refresh and live stream rows sort consistently
+- live tool-call events and `/agent/state` snapshots share the same pending-tool row builder
 - `/agent/state` overlay application
 - latest-bootstrap merges that preserve older already-loaded transcript history
 - per-turn finalization cleanup rules
@@ -56,10 +59,34 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 Node-runner coverage for transcript reconciliation rules.
 
 **Coverage**:
-- optimistic → canonical id reconciliation
+- optimistic → canonical row reconciliation, including live ordering when a superseded tool result is inserted before a follow-up user message
 - stale synthetic overlay replacement
+- live `agent.tool_call` events build pending `ask_user_questions` prompt rows
+- `/agent/state` bootstrap preserves pending `ask_user_questions` prompt rows
+- latest-bootstrap refreshes do not duplicate pending `ask_user_questions` prompt rows
 - latest-bootstrap preservation of older history/cursors
 - turn finalization cleanup semantics
+
+### `question-response-submit.ts`
+
+Pure async submit/reconciliation helper for pending `ask_user_questions` responses.
+
+**Responsibilities**:
+- submit `ask_user_questions_response_v1` payloads to the thread-scoped response route
+- stop early with an auth-abort result when the transport reports an auth redirect
+- keep live continuations on the existing agent stream path
+- refresh latest transcript/runtime bootstrap for fallback and idempotent/already-answered responses
+- centralize user-facing error message selection for failed submissions
+
+### `question-response-submit.test.ts`
+
+Node-runner coverage for structured question-response submission flow.
+
+**Coverage**:
+- live continuation submissions keep the stream connected
+- fallback and already-answered submissions refresh latest bootstrap state
+- auth-aborted and failed submissions report stable outcomes
+- missing selected thread state fails locally without making a request
 
 ### `use-file-viewer.ts`
 
@@ -174,9 +201,12 @@ Agent SSE ownership for the existing-thread route.
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
+- map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
+- pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering
 - accept `agent.message` for both intermediate assistant text segments and final assistant rows
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
 - pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
+- pass through `ask_user_questions` request args unchanged so the timeline can render the pending form and submit through the thread route
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly
 - keep latest event handlers in refs so the EventSource lifecycle depends on
   `threadId` rather than callback identity churn from the composing route
@@ -186,6 +216,7 @@ Agent SSE ownership for the existing-thread route.
 
 **Route contract**:
 - the route still owns the initial loader fetches plus the top-level `status`/`error` state
+- the route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to `waiting_for_user`, keeping global loading indicators separate from paused human input
 - the hook owns EventSource lifecycle, cursor tracking, reconnect behavior, and event parsing
 
 ### `thread-stream-timing.ts`

@@ -60,7 +60,7 @@ Role-based renderers (user, assistant). Uses markdown rendering with syntax high
 
 ### `tools/` → [tools/tools.spec.md](./tools/tools.spec.md)
 
-Tool-specific renderers for the revised terminal contract. Shows send/observe calls with concise summaries, and now surfaces evidence-based `terminal.send` state so developers can distinguish ambiguous sends from settled interactive waits.
+Tool-specific renderers for the revised terminal contract and structured agent prompts. Shows send/observe calls with concise summaries, surfaces evidence-based `terminal.send` state, and renders completed `ask_user_questions` Q/A summaries.
 
 ## Extension Pattern
 

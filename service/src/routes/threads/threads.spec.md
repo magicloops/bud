@@ -8,7 +8,7 @@ Keeps browser-visible thread ownership checks explicit while splitting the old m
 - core thread CRUD
 - message history/create flows
 - read-watermark updates for unread-attention state
-- agent state/stream/cancel
+- agent state/stream/cancel and structured question-response submission
 - terminal create/ensure/input/history/stream
 - user-clicked file viewer session creation
 
@@ -33,7 +33,7 @@ Focused route-handler coverage for thread-list serialization.
 
 ### `messages.ts`
 
-Thread message history, read-watermark, and create/send routes, including pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available.
+Thread message history, read-watermark, and create/send routes, including follow-up supersession of pending `ask_user_questions` prompts, pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available. Create-message responses include the full serialized user message so clients can replace optimistic rows with canonical timestamps and metadata.
 
 ### `messages.test.ts`
 
@@ -46,7 +46,26 @@ Focused route-handler coverage for the thread read-watermark route.
 
 ### `agent.ts`
 
-Agent runtime routes for `/agent/state`, `/agent/stream`, and `/cancel`.
+Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_user_questions` response submission.
+
+**Behavior**:
+- authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
+- accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`
+- validates submitted answers against the persisted question request row
+- returns whether the accepted response continued a live tool call, created a fallback user message, or matched an already-answered idempotent retry
+- logs known question-response failures with thread/request/viewer ids plus a redacted response-body summary that omits raw freeform answer values
+
+### `agent-question-response.test.ts`
+
+Focused route-level integration coverage for structured question-response submission.
+
+**Current Coverage**:
+- owned submissions call `AgentService.submitQuestionResponse(...)` and serialize accepted continuation status
+- unauthenticated callers receive `401`
+- signed-in non-owner and cross-thread/missing request submissions receive `404`
+- repository/request validation failures map to stable route errors
+- malformed stored question requests fail closed with a service-side contract error
+- validation-failure logs include safe diagnostic shape without raw text answer values
 
 ### `files.ts`
 
@@ -106,6 +125,8 @@ Regression test for the split thread-route registration surface.
 - terminal routes still stamp and enforce the owning human through the terminal runtime
 - file viewer session creation stamps the acting viewer on `file_session.created_by_user_id` and never trusts a client-supplied Bud id
 - thread model-preference updates resolve through the same owned-thread boundary and return `404` for signed-in non-owners
+- question-response submission resolves the thread owner first, loads requests by `(thread_id, question_request_id)`, stamps `answered_by_user_id`, and returns `404` for cross-thread or cross-user request ids
+- normal message creation resolves ownership first, returns duplicate `client_id` retries with the serialized existing message before side effects, then asks `AgentService` to close pending question requests as skipped before persisting and returning the new serialized user message
 
 ---
 

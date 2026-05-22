@@ -24,6 +24,10 @@ import {
   type AgentFinalDirective,
   type AgentToolCallDirective,
 } from "./contracts.js";
+import {
+  ASK_USER_QUESTIONS_TOOL,
+  normalizeAskUserQuestionsRequest,
+} from "./user-question-contracts.js";
 
 type StreamedModelResponse = {
   response: CanonicalResponse;
@@ -187,6 +191,91 @@ const CANONICAL_TOOLS: CanonicalTool[] = [
       type: "object",
       properties: {},
       required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: ASK_USER_QUESTIONS_TOOL,
+    description:
+      "Ask the user one or more structured, skippable questions before continuing the current task. Use only when the answer is needed to proceed.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Short title for the question prompt.",
+        },
+        body: {
+          type: "string",
+          description: "Optional context explaining why this input is needed.",
+        },
+        submit_label: {
+          type: "string",
+          description: "Optional label for the form submit action.",
+        },
+        skip_all_label: {
+          type: "string",
+          description: "Optional label for skipping every question.",
+        },
+        questions: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              question_id: {
+                type: "string",
+                description: "Stable snake_case or kebab-case id for the question.",
+              },
+              kind: {
+                type: "string",
+                enum: ["boolean", "single_choice", "multi_choice", "text", "number"],
+              },
+              label: {
+                type: "string",
+                description: "User-visible question text.",
+              },
+              help_text: {
+                type: "string",
+                description: "Optional helper text for the question.",
+              },
+              importance: {
+                type: "string",
+                enum: ["required", "important", "optional"],
+                description: "Advisory importance only; users may still skip.",
+              },
+              choices: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    choice_id: { type: "string" },
+                    label: { type: "string" },
+                    description: { type: "string" },
+                  },
+                  required: ["choice_id", "label"],
+                  additionalProperties: false,
+                },
+              },
+              default_answer: {
+                type: "object",
+                description: "Optional typed default answer matching the question kind.",
+              },
+              multiline: { type: "boolean" },
+              placeholder: { type: "string" },
+              min_length: { type: "integer", minimum: 0 },
+              max_length: { type: "integer", minimum: 1 },
+              min: { type: "number" },
+              max: { type: "number" },
+              step: { type: "number", minimum: 0 },
+              unit: { type: "string" },
+            },
+            required: ["kind", "label"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["questions"],
       additionalProperties: false,
     },
   },
@@ -537,6 +626,13 @@ export class AgentModelRunner {
           tool: "web_view.list",
           callId: toolCall.id,
         };
+      case ASK_USER_QUESTIONS_TOOL:
+        return {
+          type: "tool_call",
+          tool: ASK_USER_QUESTIONS_TOOL,
+          request: normalizeAskUserQuestionsRequest(args),
+          callId: toolCall.id,
+        };
       default:
         return null;
     }
@@ -554,8 +650,7 @@ export class AgentModelRunner {
       return;
     }
     try {
-      const serialized = JSON.stringify(response, null, 2);
-      this.logger.info({ component: "agent", llm_response: serialized }, "LLM response payload");
+      this.logger.info({ component: "agent", llm_response: response }, "LLM response payload");
     } catch (err) {
       this.logger.warn(
         { err, component: "agent" },

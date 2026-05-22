@@ -23,6 +23,7 @@ import { useFileViewer } from '@/features/threads/use-file-viewer'
 import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
+import { submitQuestionResponseFlow } from '@/features/threads/question-response-submit'
 import {
   apiFetch,
   apiFetchJson,
@@ -37,9 +38,16 @@ import {
   useAvailableModels,
   type ReasoningLevel,
 } from '@/lib/models'
-import type { ApiAgentState, ApiMessagePage, ApiThread } from '@/lib/api-types'
+import type {
+  ApiAgentState,
+  ApiAskUserQuestionsRequest,
+  ApiAskUserQuestionsResponseInput,
+  ApiCreateMessageResponse,
+  ApiMessagePage,
+  ApiThread,
+} from '@/lib/api-types'
 import type { OpenFileCandidate } from '@/lib/file-paths'
-import type { ViewMode } from '@/components/workbench/workspace-top-bar'
+import type { ViewMode, WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
 import { useBudStatus } from '@/contexts/bud-status-context'
@@ -86,10 +94,9 @@ function ThreadView() {
   const { updateStatus: updateBudStatus } = useBudStatus()
 
   const [messageText, setMessageText] = useState('')
-  const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>(
-    initialAgentState.active ? 'streaming' : 'idle',
-  )
+  const [status, setStatus] = useState<WorkbenchStatus>(getStatusFromAgentState(initialAgentState))
   const [error, setError] = useState<string | null>(null)
+  const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
@@ -150,7 +157,7 @@ function ThreadView() {
 
   // Update messages when loader data changes
   useEffect(() => {
-    setStatus(initialAgentState.active ? 'streaming' : 'idle')
+    setStatus(getStatusFromAgentState(initialAgentState))
   }, [initialAgentState, initialMessagePage])
 
   useEffect(() => {
@@ -218,7 +225,7 @@ function ThreadView() {
 
     applyAgentState(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
-    setStatus(nextAgentState.active ? 'streaming' : 'idle')
+    setStatus(getStatusFromAgentState(nextAgentState))
     return nextAgentState
   }, [applyAgentState])
 
@@ -232,7 +239,7 @@ function ThreadView() {
 
     mergeLatestBootstrap(nextPage, nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
-    setStatus(nextAgentState.active ? 'streaming' : 'idle')
+    setStatus(getStatusFromAgentState(nextAgentState))
     return nextAgentState
   }, [mergeLatestBootstrap])
 
@@ -308,6 +315,10 @@ function ThreadView() {
 
   const handleToolResultMessage = useCallback((message: Parameters<typeof applyToolResultMessage>[0]) => {
     applyToolResultMessage(message)
+    if (message.metadata?.tool === 'ask_user_questions') {
+      setQuestionSubmitError(null)
+      setStatus((current) => (current === 'dispatching' ? current : 'streaming'))
+    }
     const tool = typeof message.metadata?.tool === 'string' ? message.metadata.tool : null
     if (tool?.startsWith('web_view.')) {
       setViewMode('web')
@@ -334,6 +345,48 @@ function ThreadView() {
     refreshBootstrap: refreshAgentBootstrap,
   })
   agentStreamCursorSetterRef.current = setAgentStreamCursor
+
+  const handleSubmitQuestionResponse = useCallback(async (
+    request: ApiAskUserQuestionsRequest,
+    response: ApiAskUserQuestionsResponseInput,
+  ) => {
+    setQuestionSubmitError(null)
+    const result = await submitQuestionResponseFlow({
+      threadId,
+      request,
+      response,
+      transport: {
+        async submitResponse(targetThreadId, requestId, payload) {
+          const resp = await apiFetch(
+            `/api/threads/${targetThreadId}/agent/question-requests/${encodeURIComponent(requestId)}/responses`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            },
+          )
+          if (shouldAbortForUnauthorized(resp)) {
+            return null
+          }
+          if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}))
+            throw new Error(body.message ?? body.error ?? `HTTP ${resp.status}`)
+          }
+
+          return await resp.json() as {
+            continuation: 'live_tool_result' | 'fallback_user_message' | 'already_answered'
+          }
+        },
+        refreshBootstrap: refreshAgentBootstrap,
+        ensureAgentStreamConnected,
+        isAuthRedirectPending,
+      },
+    })
+
+    if (result.status === 'error') {
+      setQuestionSubmitError(result.message)
+    }
+  }, [ensureAgentStreamConnected, refreshAgentBootstrap, shouldAbortForUnauthorized, threadId])
   const {
     currentSessionId,
     focusTerminal,
@@ -454,11 +507,17 @@ function ThreadView() {
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
 
-      const { message_id: persistedMessageId, client_id: persistedClientId } = await messageResp.json() as {
-        message_id: string
-        client_id: string
-      }
-      reconcilePersistedUserMessage(optimisticId, persistedMessageId, persistedClientId)
+      const {
+        message_id: persistedMessageId,
+        client_id: persistedClientId,
+        message: persistedMessage,
+      } = await messageResp.json() as ApiCreateMessageResponse
+      reconcilePersistedUserMessage(
+        optimisticId,
+        persistedMessageId,
+        persistedClientId,
+        persistedMessage,
+      )
 
       try {
         await refreshAgentState(threadId)
@@ -506,8 +565,10 @@ function ThreadView() {
             onLoadOlderMessages={loadOlderMessages}
             scrollContainerRef={chatScrollRef}
             onOpenFile={handleOpenFile}
+            onSubmitQuestionResponse={handleSubmitQuestionResponse}
+            questionSubmitError={questionSubmitError}
           />
-          <ThinkingIndicator isVisible={status !== 'idle'} />
+          <ThinkingIndicator isVisible={status === 'streaming'} />
         </div>
       )}
       rightPane={(
@@ -580,4 +641,14 @@ function ThreadView() {
       )}
     />
   )
+}
+
+function getStatusFromAgentState(agentState: ApiAgentState): WorkbenchStatus {
+  if (!agentState.active) {
+    return 'idle'
+  }
+  if (agentState.phase === 'waiting_for_user' || agentState.pending_tool?.name === 'ask_user_questions') {
+    return 'waiting_for_user'
+  }
+  return 'streaming'
 }

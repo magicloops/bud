@@ -24,6 +24,11 @@ import {
   toolNameForConversation,
   type AgentToolCallDirective,
 } from "./contracts.js";
+import {
+  ASK_USER_QUESTIONS_TOOL,
+  normalizeAskUserQuestionsRequest,
+  parseStoredAskUserQuestionsRequest,
+} from "./user-question-contracts.js";
 
 type StoredMessageRow = {
   messageId: string;
@@ -57,6 +62,7 @@ Tools:
 - {"type":"tool_call","tool":"web_view.open","target_host":"localhost","target_port":5173,"path":"/"}
 - {"type":"tool_call","tool":"web_view.close"}
 - {"type":"tool_call","tool":"web_view.list"}
+- {"type":"tool_call","tool":"ask_user_questions","title":"Deployment details","questions":[{"question_id":"target","kind":"single_choice","label":"Which environment should I deploy to?","choices":[{"choice_id":"staging","label":"Staging"},{"choice_id":"production","label":"Production"}]}]}
 
 Tool Responses:
 All terminal tools return a JSON result containing:
@@ -68,6 +74,7 @@ All terminal tools return a JSON result containing:
 - terminal.observe defaults to view:"delta" and returns delta in output; use view:"screen" or view:"history" for broader context
 - The service owns terminal wait timeout policy. Choose wait_for behavior, not timeout_ms values.
 Web view tools return JSON with kind:"web_view", the proxied site metadata, current thread attachment, and proxy transport status.
+ask_user_questions returns JSON with kind:"user_questions", the original questions, and a response for each question. Each response repeats the question before the answer. Users may skip any question.
 
 Guidelines:
 - terminal.send is the primary terminal input tool for both shell commands and interactive programs.
@@ -98,6 +105,17 @@ Guidelines:
 - If the user gives only a port for web_view.open, omit target_host; the service defaults to localhost.
 - Use web_view.list before opening a duplicate if you are unsure whether the current Bud already has a matching web view.
 - Use web_view.close to detach the current thread web view. Only set disable:true when the user explicitly wants the proxied site stopped.
+- Use ask_user_questions when you cannot proceed safely without one or more user decisions. Good triggers include destructive or external side effects, deployment targets, spending/cost choices, credential strategy decisions (not secret values), privacy-sensitive choices, and subjective preferences.
+- Do not use ask_user_questions for repo facts, routine implementation choices, or information you can safely discover.
+- Ask all currently needed user questions in one ask_user_questions call; do not ask serial one-question prompts unless a later answer creates a new needed question.
+- Do not ask multiple questions as a markdown list. If you need the user to answer two or more questions before proceeding, use ask_user_questions unless the questions are only casual discussion.
+- If you think you need many answers, ask the highest-leverage questions now, combine related questions, and defer lower-priority details until the answers reveal they are still needed. Never spill extra questions into markdown.
+- One-question prompts are fine for binary, choice, or constrained numeric decisions. A normal markdown question is only for exactly one simple freeform answer.
+- For multiple questions, mixed question types, choices, approvals, deployment/configuration decisions, or anything needed before tool execution, use ask_user_questions.
+- Never request passwords, API keys, tokens, private keys, or other secrets through ask_user_questions; responses are durable. Ask the user to handle secrets outside this tool until secret input support exists.
+- Every question is skippable, even when importance is "required". If the user skips, continue with a conservative assumption when possible and state that assumption in the final answer. Re-ask only if the task cannot continue without it.
+- Prefer structured choices over freeform text. Use stable question_id and choice_id values, concise labels, and include all required choices for single_choice and multi_choice questions.
+- When you are tempted to write a long markdown checklist of questions, convert it into ask_user_questions: use concise labels, choice/boolean/number questions where possible, and put short shared context in body instead of repeating it in every question.
 - Use the hints object to understand terminal state:
   - looks_like_prompt: A shell/REPL prompt detected (safe to send commands)
   - looks_like_confirmation: Waiting for y/n or yes/no response
@@ -353,6 +371,9 @@ export class AgentConversationLoader {
         title?: string;
         proxied_site_id?: string;
         disable?: boolean;
+        schema?: string;
+        request_id?: string;
+        questions?: unknown;
       };
 
       const callId =
@@ -417,6 +438,16 @@ export class AgentConversationLoader {
           return {
             type: "tool_call",
             tool: "web_view.list",
+            callId,
+          };
+        case ASK_USER_QUESTIONS_TOOL:
+          return {
+            type: "tool_call",
+            tool: ASK_USER_QUESTIONS_TOOL,
+            request:
+              payload.schema === "ask_user_questions_request_v1"
+                ? parseStoredAskUserQuestionsRequest(payload)
+                : normalizeAskUserQuestionsRequest(payload),
             callId,
           };
         default:

@@ -56,6 +56,7 @@ The OpenAI provider transforms canonical JSON Schema to OpenAI strict mode forma
 |-------------------|----------------------|
 | `required: ["input"]` | `required: ["input", "limit"]` (all props) |
 | `type: "integer"` (optional) | `type: ["integer", "null"]` |
+| nested object/array item schemas | recursively strict with all nested properties required |
 | Standard JSON Schema | OpenAI strict mode |
 
 This allows tool definitions to use clean standard JSON Schema while ensuring OpenAI strict mode compliance.
@@ -190,6 +191,7 @@ Direct request-shape tests for provider lowering without live API calls.
 - OpenAI streamed mixed text/tool/text output preserves provider order and cached-token usage
 - OpenAI assistant-history reconstruction keeps reasoning/text/tool/text order when building the next Responses input
 - OpenAI completed stream events preserve provider payload diagnostics
+- OpenAI strict-mode tool transformation recursively rewrites nested object and array-item schemas so nested optional fields become nullable required fields
 - Anthropic Opus 4.7 sends adaptive thinking with omitted display and `output_config.effort`
 - Anthropic Opus 4.6 sends adaptive thinking with summarized display and `output_config.effort`
 - Anthropic Haiku 4.5 uses manual `thinking.budget_tokens`

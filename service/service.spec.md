@@ -290,7 +290,7 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `DEFAULT_MODEL` - Product model used when requests omit `model` (default: `gpt-5.5`)
 - `OPENAI_MODEL` - Legacy fallback model env read before the built-in default
 - `AGENT_REASONING_EFFORT` - Compatibility fallback reasoning effort for non-catalog model overrides (default: `low`)
-- `AGENT_MAX_STEPS` - Max tool calls (default: 30)
+- `AGENT_MAX_STEPS` - Max tool calls (default: 1000)
 - `AGENT_DEBUG` - Enable debug logging
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
 - `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_FILE` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` / `APNS_ALLOWED_TOPICS` - APNs provider credentials, fallback topic, and accepted Bud app topics

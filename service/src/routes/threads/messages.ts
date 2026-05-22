@@ -205,11 +205,27 @@ export async function registerThreadMessageRoutes(
       effectiveClientId,
     );
     if (existingMessage) {
+      const serializedMessage = serializeMessage(existingMessage);
       reply.code(200).send({
-        message_id: existingMessage.messageId,
-        client_id: effectiveClientId,
+        message_id: serializedMessage.message_id,
+        client_id: serializedMessage.client_id,
+        message: serializedMessage,
       });
       return;
+    }
+
+    const supersededQuestionRequests = await agentService.supersedePendingUserQuestionsForFollowUp({
+      threadId: thread.threadId,
+      answeredByUserId: viewer.userId,
+    });
+    if (supersededQuestionRequests.superseded > 0) {
+      server.log.info(
+        {
+          threadId: thread.threadId,
+          superseded: supersededQuestionRequests.superseded,
+        },
+        "Superseded pending question requests before follow-up message",
+      );
     }
 
     if (
@@ -267,6 +283,7 @@ export async function registerThreadMessageRoutes(
       ...toModelSelectionMetadata(selection),
     };
     let messageId: string;
+    let serializedUserMessage: ReturnType<typeof serializeMessage>;
 
     try {
       const [message] = await db
@@ -280,8 +297,12 @@ export async function registerThreadMessageRoutes(
           createdByUserId: viewer.userId,
           metadata
         })
-        .returning({ messageId: messageTable.messageId });
+        .returning();
+      if (!message) {
+        throw new Error("message_insert_failed");
+      }
       messageId = message.messageId;
+      serializedUserMessage = serializeMessage(message);
     } catch (err) {
       if (isUniqueViolation(err)) {
         const duplicateMessage = await findOwnedUserMessageByClientId(
@@ -290,9 +311,11 @@ export async function registerThreadMessageRoutes(
           effectiveClientId,
         );
         if (duplicateMessage) {
+          const serializedMessage = serializeMessage(duplicateMessage);
           reply.code(200).send({
-            message_id: duplicateMessage.messageId,
-            client_id: effectiveClientId,
+            message_id: serializedMessage.message_id,
+            client_id: serializedMessage.client_id,
+            message: serializedMessage,
           });
           return;
         }
@@ -325,7 +348,11 @@ export async function registerThreadMessageRoutes(
         );
       });
 
-      reply.code(201).send({ message_id: messageId, client_id: effectiveClientId });
+      reply.code(201).send({
+        message_id: messageId,
+        client_id: serializedUserMessage.client_id,
+        message: serializedUserMessage,
+      });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");
       reply.code(500).send({ error: (err as Error).message });

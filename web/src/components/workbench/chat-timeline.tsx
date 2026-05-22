@@ -4,8 +4,13 @@ import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
-import type { ApiMessage } from '@/lib/api-types'
+import type {
+  ApiAskUserQuestionsRequest,
+  ApiAskUserQuestionsResponseInput,
+  ApiMessage,
+} from '@/lib/api-types'
 import { toOpenFileCandidate, type FilePathCandidate, type OpenFileCandidate } from '@/lib/file-paths'
+import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 
 const MAX_MESSAGE_HEIGHT = 500
 type JsonViewComponent = typeof import('@microlink/react-json-view').default
@@ -38,6 +43,11 @@ type ChatTimelineProps = {
   onLoadOlderMessages?: (() => void) | null
   scrollContainerRef?: MutableRefObject<HTMLDivElement | null>
   onOpenFile?: (candidate: OpenFileCandidate) => void
+  onSubmitQuestionResponse?: (
+    request: ApiAskUserQuestionsRequest,
+    response: ApiAskUserQuestionsResponseInput,
+  ) => Promise<void> | void
+  questionSubmitError?: string | null
 }
 
 const ChatTimelineComponent = ({
@@ -48,6 +58,8 @@ const ChatTimelineComponent = ({
   onLoadOlderMessages = null,
   scrollContainerRef,
   onOpenFile,
+  onSubmitQuestionResponse,
+  questionSubmitError = null,
 }: ChatTimelineProps) => {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const shouldStickRef = useRef(true)
@@ -147,6 +159,8 @@ const ChatTimelineComponent = ({
           JsonView={JsonView}
           ensureJsonViewLoaded={ensureJsonViewLoaded}
           onOpenFile={onOpenFile}
+          onSubmitQuestionResponse={onSubmitQuestionResponse}
+          questionSubmitError={questionSubmitError}
         />
       ))}
     </div>
@@ -162,6 +176,11 @@ type ChatTimelineMessageProps = {
   JsonView: JsonViewComponent | null
   ensureJsonViewLoaded: () => void
   onOpenFile?: (candidate: OpenFileCandidate) => void
+  onSubmitQuestionResponse?: (
+    request: ApiAskUserQuestionsRequest,
+    response: ApiAskUserQuestionsResponseInput,
+  ) => Promise<void> | void
+  questionSubmitError?: string | null
 }
 
 const ChatTimelineMessage = memo(function ChatTimelineMessage({
@@ -170,6 +189,8 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   JsonView,
   ensureJsonViewLoaded,
   onOpenFile,
+  onSubmitQuestionResponse,
+  questionSubmitError = null,
 }: ChatTimelineMessageProps) {
   const [isPayloadExpanded, setIsPayloadExpanded] = useState(false)
   const [isMessageExpanded, setIsMessageExpanded] = useState(false)
@@ -185,6 +206,8 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const isDraftAssistant = isAssistant && message.metadata?.draft === true
   const payload = isTool ? resolveToolPayload(message) : null
   const toolName = (payload?.tool as string | undefined) ?? (message.display_role || 'Tool')
+  const pendingQuestionRequest =
+    isTool && message.metadata?.pending === true ? resolveQuestionRequest(payload) : null
   const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
   const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
   const fileActions = isAssistant && onOpenFile
@@ -285,7 +308,13 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     )
   }
 
-  const contentNode = isTool ? (
+  const contentNode = pendingQuestionRequest && onSubmitQuestionResponse ? (
+    <QuestionRequestCard
+      request={pendingQuestionRequest}
+      submitError={questionSubmitError}
+      onSubmit={(response) => onSubmitQuestionResponse(pendingQuestionRequest, response)}
+    />
+  ) : isTool ? (
     <div className="space-y-2 text-xs">
       {ToolContentRenderer && payload && <ToolContentRenderer payload={payload} />}
       <button
@@ -417,4 +446,18 @@ function resolveToolPayload(message: ChatMessage): Record<string, unknown> | nul
     // ignore parse failures, fall back to null
   }
   return null
+}
+
+function resolveQuestionRequest(payload: Record<string, unknown> | null): ApiAskUserQuestionsRequest | null {
+  if (
+    !payload ||
+    payload.tool !== 'ask_user_questions' ||
+    payload.schema !== 'ask_user_questions_request_v1' ||
+    typeof payload.request_id !== 'string' ||
+    !Array.isArray(payload.questions)
+  ) {
+    return null
+  }
+
+  return payload as ApiAskUserQuestionsRequest
 }

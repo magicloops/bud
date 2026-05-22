@@ -86,6 +86,7 @@ Message list with auto-scroll and collapsible messages.
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
+- Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
 - The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
 - Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render
 
@@ -106,7 +107,7 @@ Animated "thinking" indicator shown when agent is working.
 - Spinner icon with `animate-spin`
 - Text with `animate-pulse`
 
-**Usage**: Rendered as sibling to ChatTimeline, outside the scroll container, to avoid re-render coupling and scroll interference.
+**Usage**: Rendered as sibling to ChatTimeline, outside the scroll container, to avoid re-render coupling and scroll interference. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
 
 **Message Styling by Role**:
 | Role | Avatar | Background |
@@ -121,10 +122,11 @@ Message input form with options.
 
 **Props**:
 - `messageText` / `onMessageChange` - Controlled input
-- `status` - UI state (idle, dispatching, streaming)
+- `status` - UI state (idle, dispatching, streaming, waiting_for_user)
 - `onSubmit` - Form submission handler
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
+- optional `disabledReason` - Human-readable reason to disable normal message composition while a structured prompt is pending
 
 **Features**:
 - Multi-line textarea
@@ -133,8 +135,45 @@ Message input form with options.
 - Model selector dropdown (grouped by provider)
 - Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh` and `max`
 - Hides the reasoning selector when a model only exposes `none`
-- Submit button with loading state
+- Submit button with loading state only during message dispatch
+- Keeps text entry, model/reasoning controls, and submit available during `waiting_for_user`; `disabledReason` remains available for other caller-owned disable cases
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
+
+### `question-request-card.tsx`
+
+Inline structured prompt form for pending `ask_user_questions` tool calls.
+
+**Props**:
+- `request` - normalized `ApiAskUserQuestionsRequest`
+- `onSubmit` - callback receiving the request plus an `ask_user_questions_response_v1` payload
+- optional `disabled` / `error`
+
+**Features**:
+- renders boolean, single-choice, multi-choice, text, and number question kinds
+- supports per-question skip plus skip-all
+- generates a browser UUIDv7 `client_response_id`
+- submits only normalized answer payloads; labels remain display-only
+- delegates default answer state, skip behavior, and response-payload construction to `question-request-response.ts`
+- keeps unsupported question kinds non-crashing by allowing the user to skip them
+
+### `question-request-response.ts`
+
+Pure response-state and payload helpers for the structured prompt form.
+
+**Responsibilities**:
+- build initial per-question answer state for boolean, single-choice, multi-choice, text, and number questions
+- build skip-all and per-question skipped answer payloads
+- convert local form state into the `ask_user_questions_response_v1` route payload with a browser `client_response_id`
+- keep labels display-only by submitting ids and normalized answer values
+
+### `question-request-response.test.ts`
+
+Node-runner coverage for structured prompt response helpers.
+
+**Coverage**:
+- initial answer state for every v1 question kind
+- answer payload construction for boolean, single-choice, multi-choice, text, and number questions
+- per-question skip and skip-all payload construction
 
 ### `workspace-shell.tsx`
 
@@ -233,9 +272,9 @@ Header bar with workspace title and view toggle.
 **Components**:
 - Thread panel toggle (hamburger menu)
 - Title display (`New Thread` for compose mode, otherwise the current thread title or `Untitled thread`)
-- Status indicator (Idle/Dispatching/Streaming)
+- Status indicator (Idle/Dispatching/Streaming/Waiting)
 - View mode toggle buttons; the file toggle appears only when an active file is available
-- Exports the shared `ViewMode` union used by `workspace-shell.tsx`
+- Exports the shared `ViewMode` and `WorkbenchStatus` unions used by the workbench frame and child controls
 
 ## Dependencies
 

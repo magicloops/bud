@@ -29,6 +29,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `can_cancel`
 - `stream_cursor`
 - `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`; terminal-tool args include the effective `wait_for` mode)
+- `pending_tool` may also contain the normalized `ask_user_questions_request_v1` payload while the agent is waiting for a user response
 - `draft_assistant` (`client_id`, `text`, `updated_at`)
 - `updated_at`
 
@@ -37,6 +38,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `starting`
 - `thinking`
 - `tool_running`
+- `waiting_for_user`
 - `streaming_message`
 
 **Replay / Cursor Notes**:
@@ -86,6 +88,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
 - runtime snapshots expose `started_at` on `pending_tool` so long-running tool waits remain diagnosable after reconnect
 - runtime snapshots expose effective terminal wait modes on `pending_tool.args.wait_for`, including default settled `terminal.send` waits
+- runtime snapshots expose `waiting_for_user` with a pending `ask_user_questions` tool while a turn is paused for a structured response
 - `advanceCursor(...)` preserves in-flight runtime state while acknowledging external thread events already emitted on the shared cursor stream
 
 ### `event-bus.test.ts`

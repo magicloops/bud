@@ -275,7 +275,7 @@ export const config = {
   // Anthropic
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   anthropicTimeout: toNumber(process.env.ANTHROPIC_TIMEOUT_MS, 120000),
-  agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 30),
+  agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 1000),
   agentMaxOutputTokens: toNumber(process.env.AGENT_MAX_OUTPUT_TOKENS, 128000),
   agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "low"),
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),

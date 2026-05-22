@@ -103,6 +103,7 @@ Ownership-focused thread submodules:
 | `POST` | `/api/threads/:thread_id/read` | Advance the viewer's read watermark to a specific owned transcript row |
 | `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
+| `POST` | `/api/threads/:thread_id/agent/question-requests/:request_id/responses` | Submit an owner-scoped response to a pending `ask_user_questions` tool request |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
 
 **Thread File Viewer Endpoint**:
@@ -135,6 +136,7 @@ Ownership-focused thread submodules:
 - `TerminalResizeBodySchema` - Required `cols`, `rows`
 - `TerminalInputBodySchema` - Required `input`
 - `OpenThreadFileBodySchema` - Required file `path`, optional source metadata, optional line/column, and first-pass `viewer_intent: "preview"`; relative paths use message-time cwd hints when available, while absolute POSIX paths are daemon-preflighted before session creation
+- `QuestionRequestParamsSchema` - `thread_id` plus bounded `request_id` for owned `ask_user_questions` response submission
 
 **Message History Contract**:
 - `GET /api/threads/:thread_id/messages` now returns an envelope: `{ messages, page }`
@@ -149,6 +151,7 @@ Ownership-focused thread submodules:
 **Agent Stream Contract**:
 - `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
 - `pending_tool` now carries `client_id` and `started_at` in addition to `call_id`, `name`, and `args`
+- `phase` may be `waiting_for_user`; in that state `pending_tool.name` can be `ask_user_questions` and `pending_tool.args` is the normalized `ask_user_questions_request_v1` payload with `request_id`
 - `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
 - `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
 - agent payloads include a per-turn `turn_id`
@@ -159,6 +162,7 @@ Ownership-focused thread submodules:
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
 - `agent.tool_result` now also exposes `started_at`, `finished_at`, and `duration_ms`
 - web-view tool results expose a `web_view` result payload instead of terminal `output` / `readiness` fields
+- user-question tool results expose a `user_questions` result payload with the completed `ask_user_questions_tool_result_v1` Q/A summary
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
 - those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
 - embedded canonical tool rows now expose the same timing fields under `message.metadata`, while tool `message.content` remains the replay payload without timing-only fields
@@ -273,6 +277,7 @@ Before creating user message, validates the selected LLM model/reasoning pair an
 - SSE routes authorize before attaching listeners, so cross-user clients never attach buffered streams
 - terminal interrupt is authorized at the same thread boundary as terminal input/stream/history and returns `404 no_terminal_session` when no active owned session exists
 - thread file-open is authorized at the same thread boundary, derives the Bud from the owned thread, creates `file_session.created_by_user_id` for the acting viewer, daemon-preflights absolute POSIX paths before DB session creation, and returns `404 thread_not_found` for signed-in non-owners
+- question-response submission is authorized at the same thread boundary, validates request ownership by `(thread_id, question_request_id)`, stamps `answered_by_user_id`, and returns `404` for signed-in non-owners or request ids that belong to another thread
 - thread web-view attachment is authorized at the same thread boundary, derives the Bud from the owned thread, and only attaches owned `proxied_site` rows for that Bud
 - thread SSE routes send an initial heartbeat frame on empty-buffer/live-only attaches so the HTTP response stays in SSE mode even before the first real event arrives
 - `POST /api/threads` now returns `{ thread_id }`

@@ -15,6 +15,7 @@ import {
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
 import type { ModelSelectionSource, ReasoningLevel } from "../llm/index.js";
 import type { TerminalPathContext } from "../runtime/terminal-session-manager.js";
+import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 
 type PersistedAgentMessage = {
   messageId: string;
@@ -74,17 +75,19 @@ export class AgentTranscriptWriter {
       },
     });
 
-    this.runtime.setPendingTool(
-      threadId,
-      {
-        client_id: clientId,
-        call_id: directive.callId,
-        name: directive.tool,
-        args: clientArgs,
-        started_at: startedAt.toISOString(),
-      },
-      cursor,
-    );
+    const pendingTool = {
+      client_id: clientId,
+      call_id: directive.callId,
+      name: directive.tool,
+      args: clientArgs,
+      started_at: startedAt.toISOString(),
+    };
+
+    if (directive.tool === ASK_USER_QUESTIONS_TOOL) {
+      this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
+    } else {
+      this.runtime.setPendingTool(threadId, pendingTool, cursor);
+    }
 
     return { modelArgs, clientArgs, cursor };
   }
@@ -394,6 +397,12 @@ function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<
   if (execution.result.kind === "web_view") {
     return {
       web_view: execution.result,
+    };
+  }
+
+  if (execution.result.kind === "user_questions") {
+    return {
+      user_questions: execution.result,
     };
   }
 

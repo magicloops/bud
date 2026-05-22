@@ -4,6 +4,7 @@ import { generateMessageClientId } from '@/lib/messages'
 import type { ApiAgentState, ApiMessage, ApiMessagePage } from '@/lib/api-types'
 import {
   applyAgentStateOverlay,
+  buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
   mergeLatestBootstrapState,
   mergeOlderMessages,
@@ -29,6 +30,7 @@ type ApplyToolCallArgs = {
   callId: string
   name: string
   args?: Record<string, unknown>
+  startedAt?: string
 }
 
 type ApplyAssistantDraftArgs = {
@@ -193,27 +195,26 @@ export function useThreadMessages({
   }, [])
 
   const reconcilePersistedUserMessage = useCallback(
-    (currentClientId: string, nextMessageId: string, nextClientId: string) => {
+    (
+      currentClientId: string,
+      nextMessageId: string,
+      nextClientId: string,
+      nextMessage?: ApiMessage,
+    ) => {
       setMessages((prev) =>
-        reconcileMessagePersistence(prev, currentClientId, nextMessageId, nextClientId),
+        reconcileMessagePersistence(prev, currentClientId, nextMessageId, nextClientId, nextMessage),
       )
     },
     [],
   )
 
-  const applyToolCall = useCallback(({ turnId, clientId, callId, name, args }: ApplyToolCallArgs) => {
-    const argsObj = typeof args === 'object' && args !== null ? args : {}
-    const pendingMessage: ApiMessage = {
-      message_id: clientId,
-      client_id: clientId,
-      role: 'tool',
-      display_role: name,
-      content: JSON.stringify({ tool: name, call_id: callId, ...argsObj }),
-      created_at: new Date().toISOString(),
-      metadata: { tool: name, call_id: callId, turn_id: turnId, pending: true, ...argsObj },
-    }
-
-    setMessages((prev) => upsertMessage(prev, pendingMessage))
+  const applyToolCall = useCallback(({ turnId, clientId, callId, name, args, startedAt }: ApplyToolCallArgs) => {
+    setMessages((prev) =>
+      upsertMessage(
+        prev,
+        buildPendingToolMessageFromToolCall({ turnId, clientId, callId, name, args, startedAt }),
+      ),
+    )
   }, [])
 
   const applyToolResultMessage = useCallback((message: ApiMessage) => {

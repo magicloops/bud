@@ -169,6 +169,7 @@ Standalone tests for provider-ledger persistence/reconstruction helpers.
 **Current Coverage**:
 - `recordLlmCall()` stores every output block plus cache metadata
 - `recordLlmCall()` stores reconstruction mode, fallback counts, omitted provider-only counts, and source-provider counts in call metadata
+- `recordLlmToolResultItem()` stores `ask_user_questions` tool-result payloads as provider replay input items
 - provider-ledger thread diagnostics count provider-native calls, output items, and provider-only output items by provider
 - redacted Anthropic thinking reconstructs as provider-only canonical reasoning
 
@@ -289,6 +290,7 @@ Each provider transforms canonical schemas to their specific requirements:
 - Transforms optional fields to `type: ["type", "null"]`
 - Adds ALL properties to `required` array
 - Sets `additionalProperties: false`
+- Applies those transformations recursively to nested object and array-item schemas
 
 **Anthropic** (standard JSON Schema):
 - Uses canonical schema directly with minimal transformation

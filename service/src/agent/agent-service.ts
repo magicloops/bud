@@ -4,7 +4,8 @@ import { eq } from "drizzle-orm";
 import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
-import { threadTable } from "../db/schema.js";
+import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
+import { messageTable, threadTable } from "../db/schema.js";
 import type {
   TerminalPathContext,
   TerminalSession,
@@ -23,14 +24,34 @@ import {
   createLlmCallId,
   recordLlmCall,
   recordLlmToolResultItem,
+  resolveEffectiveModelSelection,
 } from "../llm/index.js";
 import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner } from "./model-runner.js";
-import { buildToolExecutionTiming, isTerminalToolDirective } from "./contracts.js";
+import {
+  buildToolExecutionTiming,
+  type ExecutedAgentTool,
+  type UserQuestionToolCallDirective,
+  isTerminalToolDirective,
+  isUserQuestionToolDirective,
+} from "./contracts.js";
 import { TerminalToolExecutor } from "./terminal-tool-executor.js";
 import { AgentTranscriptWriter } from "./transcript-writer.js";
 import { WebViewToolExecutor } from "./web-view-tool-executor.js";
+import {
+  AgentUserQuestionRegistry,
+  type ResolvedUserQuestionResponse,
+} from "./user-question-registry.js";
+import {
+  acceptAgentQuestionResponse,
+  acceptPendingAgentQuestionRequestsAsSkipped,
+  buildExecutedUserQuestionTool,
+  createAgentQuestionRequest,
+  markPendingAgentQuestionRequestsCanceled,
+  type AcceptedQuestionResponse,
+} from "./user-question-repository.js";
+import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
@@ -44,6 +65,8 @@ export class AgentService {
   private readonly webViewToolExecutor: WebViewToolExecutor;
   private readonly transcriptWriter: AgentTranscriptWriter;
   private readonly cancellations = new AgentCancellationRegistry();
+  private readonly userQuestions = new AgentUserQuestionRegistry();
+  private readonly threadTransitions = new Map<string, Promise<void>>();
 
   constructor(
     terminalSessionManager: TerminalSessionManager,
@@ -92,12 +115,15 @@ export class AgentService {
     };
     const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
     const turnId = ulid();
-    this.runtime.startTurn(threadId, turnId);
+    const controller = new AbortController();
+
+    await this.withThreadTransition(threadId, async () => {
+      this.runtime.startTurn(threadId, turnId);
+      this.cancellations.set(threadId, controller);
+    });
 
     try {
       const session = await this.getOrCreateSession(threadId, ownerUserId);
-      const controller = new AbortController();
-      this.cancellations.set(threadId, controller);
 
       void this.runAgentFlow({
         threadId,
@@ -117,14 +143,26 @@ export class AgentService {
 
       return { sessionId: session.sessionId };
     } catch (err) {
-      this.runtime.finishTurn(threadId);
+      await this.withThreadTransition(threadId, async () => {
+        if (this.cancellations.get(threadId) === controller) {
+          this.cancellations.clear(threadId);
+        }
+        const snapshot = this.runtime.getSnapshot(threadId);
+        if (snapshot.turn_id === turnId) {
+          this.runtime.finishTurn(threadId);
+        }
+      });
       throw err;
     }
   }
 
   async cancelThread(threadId: string): Promise<void> {
-    this.cancellations.cancel(threadId);
-    await this.terminalSessionManager.rejectPendingRequestsForThread(threadId, "agent_canceled");
+    await this.withThreadTransition(threadId, async () => {
+      this.cancellations.cancel(threadId);
+      this.userQuestions.rejectThread(threadId, new Error("agent_canceled"));
+      await markPendingAgentQuestionRequestsCanceled({ threadId });
+      await this.terminalSessionManager.rejectPendingRequestsForThread(threadId, "agent_canceled");
+    });
   }
 
   isThreadActive(threadId: string): boolean {
@@ -136,6 +174,141 @@ export class AgentService {
       getPathContextForThread?: (threadId: string) => Promise<TerminalPathContext | null>;
     };
     return manager.getPathContextForThread?.(threadId) ?? null;
+  }
+
+  async submitQuestionResponse(args: {
+    threadId: string;
+    questionRequestId: string;
+    response: unknown;
+    answeredByUserId: string;
+  }): Promise<{
+    questionRequestId: string;
+    status: "answered";
+    continuation: "live_tool_result" | "fallback_user_message" | "already_answered";
+    messageId?: string;
+    clientId?: string;
+  }> {
+    const transition = await this.withThreadTransition(args.threadId, async () => {
+      const accepted = await acceptAgentQuestionResponse({
+        threadId: args.threadId,
+        questionRequestId: args.questionRequestId,
+        response: args.response,
+        answeredByUserId: args.answeredByUserId,
+      });
+
+      if (accepted.alreadyAnswered) {
+        return {
+          kind: "already_answered" as const,
+        };
+      }
+
+      if (
+        this.userQuestions.resolve(args.questionRequestId, {
+          response: accepted.response,
+          toolResult: accepted.toolResult,
+          continuation: "continue",
+        })
+      ) {
+        return {
+          kind: "live_tool_result" as const,
+        };
+      }
+
+      return {
+        kind: "fallback_user_message" as const,
+        accepted,
+      };
+    });
+
+    if (transition.kind === "already_answered") {
+      return {
+        questionRequestId: args.questionRequestId,
+        status: "answered",
+        continuation: "already_answered",
+      };
+    }
+
+    if (transition.kind === "live_tool_result") {
+      return {
+        questionRequestId: args.questionRequestId,
+        status: "answered",
+        continuation: "live_tool_result",
+      };
+    }
+
+    const fallbackMessage = await this.persistQuestionResponseFallbackMessage(
+      transition.accepted,
+      args.answeredByUserId,
+    );
+    return {
+      questionRequestId: args.questionRequestId,
+      status: "answered",
+      continuation: "fallback_user_message",
+      messageId: fallbackMessage.messageId,
+      clientId: fallbackMessage.clientId,
+    };
+  }
+
+  async supersedePendingUserQuestionsForFollowUp(args: {
+    threadId: string;
+    answeredByUserId: string;
+  }): Promise<{ superseded: number }> {
+    return this.withThreadTransition(args.threadId, async () => {
+      const acceptedRows = await acceptPendingAgentQuestionRequestsAsSkipped({
+        threadId: args.threadId,
+        answeredByUserId: args.answeredByUserId,
+      });
+      if (acceptedRows.length === 0) {
+        return { superseded: 0 };
+      }
+
+      const liveFinalizers: Promise<void>[] = [];
+      const staleRows: AcceptedQuestionResponse[] = [];
+      for (const accepted of acceptedRows) {
+        let finalize!: () => void;
+        let fail!: (error: unknown) => void;
+        const finalized = new Promise<void>((resolve, reject) => {
+          finalize = resolve;
+          fail = reject;
+        });
+        const resolvedLiveWaiter = this.userQuestions.resolve(
+          accepted.questionRequest.questionRequestId,
+          {
+            response: accepted.response,
+            toolResult: accepted.toolResult,
+            continuation: "supersede",
+            reason: "superseded_by_user_message",
+            onFinalized: finalize,
+            onFailed: fail,
+          },
+        );
+
+        if (resolvedLiveWaiter) {
+          liveFinalizers.push(finalized);
+        } else {
+          staleRows.push(accepted);
+        }
+      }
+
+      const staleTurns = new Set<string>();
+      for (const accepted of staleRows) {
+        await this.recordStaleSupersededQuestionToolResult(
+          accepted,
+          args.answeredByUserId,
+        );
+        staleTurns.add(accepted.questionRequest.turnId);
+      }
+
+      for (const turnId of staleTurns) {
+        this.emitSupersededFinalIfCurrent(args.threadId, turnId);
+      }
+
+      if (liveFinalizers.length > 0) {
+        await Promise.all(liveFinalizers);
+      }
+
+      return { superseded: acceptedRows.length };
+    });
   }
 
   private async runAgentFlow(args: {
@@ -153,6 +326,7 @@ export class AgentService {
     controller: AbortController;
   }): Promise<void> {
     const { threadId, turnId, sessionId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
+    let supersededQuestionResponse: ResolvedUserQuestionResponse | null = null;
     const providerName = this.modelRunner.resolveProviderName(model);
     const loadedConversation = await this.conversationLoader.loadWithDiagnostics(threadId, {
       provider: providerName,
@@ -251,10 +425,34 @@ export class AgentService {
           for (const toolCall of toolCalls) {
             const toolClientId = generateMessageClientId();
             const startedAt = new Date();
+            let effectiveToolCall = toolCall;
+            let pendingQuestionResponse:
+              | ReturnType<AgentUserQuestionRegistry["register"]>
+              | null = null;
+
+            if (isUserQuestionToolDirective(toolCall)) {
+              const created = await createAgentQuestionRequest({
+                threadId,
+                turnId,
+                callId: toolCall.callId,
+                clientId: toolClientId,
+                request: toolCall.request,
+                ownerUserId,
+              });
+              effectiveToolCall = {
+                ...toolCall,
+                request: created.request,
+              };
+              pendingQuestionResponse = this.userQuestions.register(
+                threadId,
+                created.row.questionRequestId,
+              );
+            }
+
             const { clientArgs } = this.transcriptWriter.emitToolCall(
               threadId,
               turnId,
-              toolCall,
+              effectiveToolCall,
               toolClientId,
               startedAt,
             );
@@ -262,21 +460,40 @@ export class AgentService {
             this.debug("Dispatching tool call", {
               sessionId,
               threadId,
-              tool: toolCall.tool,
+              tool: effectiveToolCall.tool,
               args: clientArgs,
-              callId: toolCall.callId,
+              callId: effectiveToolCall.callId,
             });
 
-            const terminalTool = isTerminalToolDirective(toolCall);
-            const pathContextBefore = terminalTool
+            let execution: ExecutedAgentTool;
+            let shouldRefreshContext = false;
+            const pathContextBefore = isTerminalToolDirective(effectiveToolCall)
               ? await this.getPathContextForSession(sessionId)
               : null;
-            const execution = terminalTool
-              ? await this.toolExecutor.execute(threadId, toolCall)
-              : await this.webViewToolExecutor.execute(threadId, toolCall, ownerUserId);
+
+            if (isTerminalToolDirective(effectiveToolCall)) {
+              execution = await this.toolExecutor.execute(threadId, effectiveToolCall);
+              shouldRefreshContext = effectiveToolCall.tool !== "terminal.observe";
+            } else if (isUserQuestionToolDirective(effectiveToolCall)) {
+              if (!pendingQuestionResponse) {
+                throw new Error("missing_pending_question_response");
+              }
+              const resolvedQuestionResponse = await pendingQuestionResponse;
+              supersededQuestionResponse =
+                resolvedQuestionResponse.continuation === "supersede"
+                  ? resolvedQuestionResponse
+                  : null;
+              execution = buildExecutedUserQuestionTool({
+                directive: effectiveToolCall,
+                toolResult: resolvedQuestionResponse.toolResult,
+              });
+            } else {
+              execution = await this.webViewToolExecutor.execute(threadId, effectiveToolCall, ownerUserId);
+            }
+
             const finishedAt = new Date();
             const timing = buildToolExecutionTiming(startedAt, finishedAt);
-            const pathContextAfter = terminalTool
+            const pathContextAfter = shouldRefreshContext
               ? await this.getPathContextForSession(sessionId)
               : null;
             const { payload, message } = await this.transcriptWriter.recordToolResult({
@@ -296,20 +513,40 @@ export class AgentService {
               llmCallId,
               threadId,
               sequence: response.content.length + toolResultBlocks.length,
-              toolCallId: toolCall.callId,
+              toolCallId: effectiveToolCall.callId,
               content: JSON.stringify(payload),
               payload,
               messageId: message.message_id,
               ownerUserId,
             });
 
-            if (terminalTool && toolCall.tool !== "terminal.observe" && this.contextSyncService) {
+            if (shouldRefreshContext && this.contextSyncService) {
               await this.contextSyncService.refreshSnapshot(sessionId);
+            }
+
+            if (supersededQuestionResponse?.continuation === "supersede") {
+              this.runtime.emit(threadId, {
+                event: "final",
+                data: {
+                  turn_id: turnId,
+                  status: "succeeded",
+                  reason: supersededQuestionResponse.reason ?? "superseded_by_user_message",
+                },
+              });
+              this.runtime.finishTurn(threadId);
+              this.debug("Agent turn superseded by follow-up user message", {
+                threadId,
+                sessionId,
+              });
+              this.cancellations.clear(threadId);
+              supersededQuestionResponse.onFinalized?.();
+              supersededQuestionResponse = null;
+              return;
             }
 
             toolResultBlocks.push({
               type: "tool_result",
-              tool_use_id: toolCall.callId,
+              tool_use_id: effectiveToolCall.callId,
               content: JSON.stringify(payload),
             });
           }
@@ -352,8 +589,13 @@ export class AgentService {
 
       throw new Error("agent reached max steps");
     } catch (err) {
+      supersededQuestionResponse?.onFailed?.(err);
       const canceled = err instanceof Error && err.message === "agent_canceled";
       this.cancellations.clear(threadId);
+      this.userQuestions.rejectThread(threadId, new Error(canceled ? "agent_canceled" : "agent_failed"));
+      if (canceled) {
+        await markPendingAgentQuestionRequestsCanceled({ threadId, turnId });
+      }
       const abortLike =
         canceled ||
         (err instanceof Error &&
@@ -463,6 +705,163 @@ export class AgentService {
       return;
     }
     this.logger.info({ ...meta, component: "agent" }, message);
+  }
+
+  private async persistQuestionResponseFallbackMessage(
+    accepted: AcceptedQuestionResponse,
+    ownerUserId: string,
+  ): Promise<{ messageId: string; clientId: string }> {
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, accepted.questionRequest.threadId),
+    });
+    if (!thread) {
+      throw new Error("thread_not_found");
+    }
+
+    const selection = resolveEffectiveModelSelection({
+      threadModel: thread.modelId,
+      threadReasoning: thread.reasoningEffort,
+      serviceDefaultModel: config.defaultModel,
+    });
+    const clientId = generateMessageClientId();
+    const content = accepted.toolResult.summary_markdown;
+    const [message] = await db
+      .insert(messageTable)
+      .values({
+        clientId,
+        threadId: thread.threadId,
+        role: "user",
+        displayRole: "User",
+        content,
+        createdByUserId: ownerUserId,
+        metadata: {
+          source: "ask_user_questions",
+          question_request_id: accepted.questionRequest.questionRequestId,
+          schema: accepted.toolResult.schema,
+          model: selection.model,
+          reasoning_effort: selection.reasoningEffort,
+          model_selection_source: selection.source,
+        },
+      })
+      .returning({ messageId: messageTable.messageId });
+
+    await recordThreadMessageMetadata(thread.threadId, content);
+    await this.startUserMessage(thread.threadId, {
+      model: selection.model,
+      reasoningEffort: selection.reasoningEffort,
+      modelSelectionSource: selection.source,
+      ownerUserId,
+    });
+
+    return { messageId: message.messageId, clientId };
+  }
+
+  private async withThreadTransition<T>(
+    threadId: string,
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.threadTransitions.get(threadId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const next = previous.catch(() => undefined).then(() => current);
+    this.threadTransitions.set(threadId, next);
+
+    await previous.catch(() => undefined);
+
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.threadTransitions.get(threadId) === next) {
+        this.threadTransitions.delete(threadId);
+      }
+    }
+  }
+
+  private async recordStaleSupersededQuestionToolResult(
+    accepted: AcceptedQuestionResponse,
+    answeredByUserId: string,
+  ): Promise<void> {
+    const alreadyRecorded = await this.hasMessageForClientId(accepted.questionRequest.clientId);
+    if (alreadyRecorded) {
+      return;
+    }
+
+    const thread = await db.query.threadTable.findFirst({
+      where: eq(threadTable.threadId, accepted.questionRequest.threadId),
+      columns: {
+        threadId: true,
+        modelId: true,
+        reasoningEffort: true,
+        createdByUserId: true,
+      },
+    });
+    if (!thread) {
+      throw new Error("thread_not_found");
+    }
+
+    const selection = resolveEffectiveModelSelection({
+      threadModel: thread.modelId,
+      threadReasoning: thread.reasoningEffort,
+      serviceDefaultModel: config.defaultModel,
+      validateAvailability: false,
+    });
+    const directive: UserQuestionToolCallDirective = {
+      type: "tool_call",
+      tool: ASK_USER_QUESTIONS_TOOL,
+      request: accepted.request,
+      callId: accepted.questionRequest.callId,
+    };
+    const execution = buildExecutedUserQuestionTool({
+      directive,
+      toolResult: accepted.toolResult,
+    });
+    const startedAt = accepted.questionRequest.createdAt;
+    const finishedAt = accepted.questionRequest.answeredAt ?? new Date();
+
+    await this.transcriptWriter.recordToolResult({
+      threadId: accepted.questionRequest.threadId,
+      turnId: accepted.questionRequest.turnId,
+      execution,
+      clientId: accepted.questionRequest.clientId,
+      timing: buildToolExecutionTiming(startedAt, finishedAt),
+      modelSelection: {
+        model: selection.model,
+        reasoningEffort: selection.reasoningEffort,
+        source: selection.source,
+      },
+      ownerUserId: thread.createdByUserId ?? answeredByUserId,
+    });
+  }
+
+  private async hasMessageForClientId(clientId: string): Promise<boolean> {
+    const [message] = await db
+      .select({ messageId: messageTable.messageId })
+      .from(messageTable)
+      .where(eq(messageTable.clientId, clientId))
+      .limit(1);
+
+    return Boolean(message);
+  }
+
+  private emitSupersededFinalIfCurrent(threadId: string, turnId: string): void {
+    const snapshot = this.runtime.getSnapshot(threadId);
+    if (snapshot.turn_id !== turnId) {
+      return;
+    }
+
+    this.runtime.emit(threadId, {
+      event: "final",
+      data: {
+        turn_id: turnId,
+        status: "succeeded",
+        reason: "superseded_by_user_message",
+      },
+    });
+    this.runtime.finishTurn(threadId);
+    this.cancellations.clear(threadId);
   }
 }
 

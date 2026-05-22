@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { ApiAgentState, ApiMessage, ApiMessagePage } from '../../lib/api-types.ts'
 import {
   applyAgentStateOverlay,
+  buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
   mergeLatestBootstrapState,
   reconcileMessagePersistence,
@@ -46,6 +47,49 @@ test('reconcileMessagePersistence swaps ids and removes only the optimistic meta
   assert.equal(reconciled.message_id, 'msg-1')
   assert.equal(reconciled.client_id, 'client-1')
   assert.deepEqual(reconciled.metadata, { preserved: 'yes' })
+})
+
+test('reconcileMessagePersistence replaces optimistic rows with canonical messages for server ordering', () => {
+  const optimistic = buildMessage({
+    client_id: '11111111-1111-4111-8111-111111111111',
+    message_id: '11111111-1111-4111-8111-111111111111',
+    role: 'user',
+    content: 'follow up',
+    created_at: '2026-05-19T12:00:00.000Z',
+    metadata: { optimistic: true },
+  })
+  const supersededToolResult = buildMessage({
+    client_id: '22222222-2222-4222-8222-222222222222',
+    message_id: '22222222-2222-4222-8222-222222222222',
+    role: 'tool',
+    display_role: 'Tool',
+    content: '{}',
+    created_at: '2026-05-19T12:00:01.000Z',
+    metadata: { tool: 'ask_user_questions', turn_id: 'turn-old' },
+  })
+  const canonicalUser = buildMessage({
+    client_id: '11111111-1111-4111-8111-111111111111',
+    message_id: '33333333-3333-4333-8333-333333333333',
+    role: 'user',
+    content: 'follow up',
+    created_at: '2026-05-19T12:00:02.000Z',
+    metadata: {},
+  })
+
+  const nextMessages = reconcileMessagePersistence(
+    [optimistic, supersededToolResult],
+    optimistic.client_id,
+    canonicalUser.message_id,
+    canonicalUser.client_id,
+    canonicalUser,
+  )
+
+  assert.deepEqual(
+    nextMessages.map((message) => message.client_id),
+    [supersededToolResult.client_id, canonicalUser.client_id],
+  )
+  assert.equal(nextMessages[1]?.created_at, canonicalUser.created_at)
+  assert.deepEqual(nextMessages[1]?.metadata, {})
 })
 
 test('applyAgentStateOverlay replaces stale synthetic rows with the current pending tool and draft assistant', () => {
@@ -98,6 +142,139 @@ test('applyAgentStateOverlay replaces stale synthetic rows with the current pend
   )
   assert.equal(nextMessages[1]?.metadata?.turn_id, 'turn-new')
   assert.equal(nextMessages[2]?.content, 'working...')
+})
+
+test('applyAgentStateOverlay builds pending ask_user_questions rows from agent state', () => {
+  const nextState = buildAgentState({
+    active: true,
+    turn_id: 'turn-question',
+    phase: 'waiting_for_user',
+    pending_tool: {
+      client_id: 'question-client',
+      call_id: 'call-question',
+      name: 'ask_user_questions',
+      started_at: '2026-05-19T12:00:00.000Z',
+      args: {
+        schema: 'ask_user_questions_request_v1',
+        request_id: 'qr_test',
+        title: 'Deploy',
+        questions: [
+          {
+            question_id: 'env',
+            kind: 'single_choice',
+            label: 'Environment?',
+            skippable: true,
+            choices: [{ choice_id: 'staging', label: 'Staging' }],
+          },
+        ],
+      },
+    },
+  })
+
+  const [message] = applyAgentStateOverlay([], nextState)
+
+  assert.equal(message?.client_id, 'question-client')
+  assert.equal(message?.created_at, '2026-05-19T12:00:00.000Z')
+  assert.equal(message?.metadata?.tool, 'ask_user_questions')
+  assert.equal(message?.metadata?.request_id, 'qr_test')
+})
+
+test('buildPendingToolMessageFromToolCall builds pending ask_user_questions rows from live stream events', () => {
+  const message = buildPendingToolMessageFromToolCall({
+    turnId: 'turn-live-question',
+    clientId: 'question-client-live',
+    callId: 'call-live-question',
+    name: 'ask_user_questions',
+    startedAt: '2026-05-19T12:01:00.000Z',
+    args: {
+      schema: 'ask_user_questions_request_v1',
+      request_id: 'qr_live',
+      title: 'Release',
+      questions: [
+        {
+          question_id: 'ship',
+          kind: 'boolean',
+          label: 'Ship it?',
+          skippable: true,
+        },
+      ],
+    },
+  })
+
+  assert.equal(message.client_id, 'question-client-live')
+  assert.equal(message.created_at, '2026-05-19T12:01:00.000Z')
+  assert.equal(message.metadata?.tool, 'ask_user_questions')
+  assert.equal(message.metadata?.request_id, 'qr_live')
+  assert.equal(JSON.parse(message.content).request_id, 'qr_live')
+})
+
+test('mergeLatestBootstrapState preserves one pending ask_user_questions row after refresh', () => {
+  const existingQuestion = buildMessage({
+    client_id: 'question-client',
+    message_id: 'question-client',
+    role: 'tool',
+    display_role: 'ask_user_questions',
+    content: '{}',
+    created_at: '2026-05-19T12:00:00.000Z',
+    metadata: {
+      pending: true,
+      turn_id: 'turn-question',
+      tool: 'ask_user_questions',
+      request_id: 'qr_test',
+    },
+  })
+  const canonicalUser = buildMessage({
+    client_id: 'user-1',
+    message_id: 'user-1',
+    content: 'deploy',
+    created_at: '2026-05-19T11:59:00.000Z',
+  })
+  const nextPage: ApiMessagePage = {
+    messages: [canonicalUser],
+    page: {
+      limit: 100,
+      returned: 1,
+      has_more_before: false,
+      has_more_after: false,
+      before_cursor: null,
+      after_cursor: null,
+    },
+  }
+
+  const merged = mergeLatestBootstrapState(
+    [canonicalUser, existingQuestion],
+    {
+      limit: 100,
+      returned: 2,
+      has_more_before: false,
+      has_more_after: false,
+      before_cursor: null,
+      after_cursor: null,
+    },
+    nextPage,
+    buildAgentState({
+      active: true,
+      turn_id: 'turn-question',
+      phase: 'waiting_for_user',
+      pending_tool: {
+        client_id: 'question-client',
+        call_id: 'call-question',
+        name: 'ask_user_questions',
+        started_at: '2026-05-19T12:00:00.000Z',
+        args: {
+          schema: 'ask_user_questions_request_v1',
+          request_id: 'qr_test',
+          questions: [],
+        },
+      },
+    }),
+  )
+
+  assert.deepEqual(
+    merged.messages.map((message) => message.client_id),
+    ['user-1', 'question-client'],
+  )
+  assert.equal(merged.messages.filter((message) => message.metadata?.request_id === 'qr_test').length, 1)
 })
 
 test('mergeLatestBootstrapState preserves older canonical history and earlier pagination cursors', () => {

@@ -564,11 +564,15 @@ Rejected file opens and resolves use the same frame-family shape with
 - Returns the current best-effort in-flight runtime snapshot for the authorized viewer
 - Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
+- `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
 - For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
 - For web-view tools, `pending_tool.args` contains only product fields such as
   `target_port`, `path`, `title`, `proxied_site_id`, and `disable`; viewer
   grants, cookies, and daemon stream identifiers are never exposed to the model
   or clients through pending-tool state
+- For `ask_user_questions`, `pending_tool.args` is the normalized
+  `ask_user_questions_request_v1` payload, including `request_id`, optional
+  title/body labels, and skippable question definitions
 
 ### 3.3 Agent SSE Stream
 
@@ -643,6 +647,54 @@ Successful response:
   "last_seen_message_id": "uuid"
 }
 ```
+
+### 3.6.1 Agent Question Response Write
+
+- URL: `POST /api/threads/:thread_id/agent/question-requests/:request_id/responses`
+- Authorized, thread-scoped response endpoint for pending `ask_user_questions`
+  tool calls
+- The service validates answers against the stored request row, not client-sent
+  labels or question definitions
+- `client_response_id` is an idempotency key for browser retry after a network
+  failure
+
+Request body:
+
+```json
+{
+  "schema": "ask_user_questions_response_v1",
+  "client_response_id": "018f4f2a-0000-7000-9000-000000000000",
+  "answers": [
+    {
+      "question_id": "target_environment",
+      "status": "answered",
+      "answer": { "kind": "single_choice", "choice_id": "staging" }
+    },
+    {
+      "question_id": "rollback_window",
+      "status": "skipped"
+    }
+  ]
+}
+```
+
+Successful response:
+
+```json
+{
+  "ok": true,
+  "question_request_id": "qr_01J...",
+  "status": "answered",
+  "continuation": "live_tool_result",
+  "client_id": "018f4f2a-1111-7000-9000-000000000000"
+}
+```
+
+`continuation` is one of:
+- `live_tool_result`: the original in-process agent tool call resumed
+- `fallback_user_message`: no live waiter existed, so the service persisted a
+  self-contained Q/A user message and started a normal follow-up turn
+- `already_answered`: the same accepted `client_response_id` was retried
 
 ### 3.7 Notification Summary And Push Registration
 
@@ -1422,11 +1474,43 @@ All browser-facing streams must authorize the viewer before attaching listeners 
     `target_host`, `target_port`, `path`, `title`, `proxied_site_id`, and
     `disable`. When `web_view.open` omits `target_host`, the service defaults
     the proxied site to `localhost`.
+  - For `ask_user_questions`, `name` is `"ask_user_questions"` and `args` is a
+    normalized request:
+
+```json
+{
+  "schema": "ask_user_questions_request_v1",
+  "request_id": "qr_01J...",
+  "title": "Deployment details",
+  "body": "A few details are needed before I continue.",
+  "submit_label": "Send answers",
+  "skip_all_label": "Skip all",
+  "questions": [
+    {
+      "id": "target_environment",
+      "kind": "single_choice",
+      "label": "Which environment should I target?",
+      "skippable": true,
+      "choices": [
+        { "id": "staging", "label": "Staging" },
+        { "id": "production", "label": "Production" }
+      ]
+    }
+  ]
+}
+```
+
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
   - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
   - web-view tool results include a `web_view` payload with owned proxied-site
     and thread-attachment state instead of terminal `output`/`readiness`
+  - `ask_user_questions` tool results include a compact live `user_questions`
+    payload with `kind: "user_questions"`, `requestId`, and per-question
+    answered/skipped responses. The persisted canonical tool row is still
+    carried in `message`; historical clients should parse `message.content` as
+    JSON and read `result.schema: "ask_user_questions_tool_result_v1"` for the
+    full Q/A result and `summary_markdown`.
 - `agent.message`
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
@@ -1436,7 +1520,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.resync_required`
   - `{ "error": "resync_required", "provided_cursor": "01CUR..." }`
 - `final`
-  - `{ "turn_id": "01TURN...", "status": "succeeded|failed|canceled", "message_id"?: "uuid", "text"?: "...", "error"?: "..." }`
+  - `{ "turn_id": "01TURN...", "status": "succeeded|failed|canceled", "message_id"?: "uuid", "text"?: "...", "reason"?: "superseded_by_user_message", "error"?: "..." }`
 - `heartbeat`
 
 Resume rules:
@@ -1480,6 +1564,9 @@ Rules:
 - first-party clients should key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`
 - first-party clients must not remove a visible assistant draft just because an `agent.tool_call` arrives; text before or between tool calls is persisted as an assistant `agent.message`
 - first-party clients should use `agent.tool_call.args.wait_for` or `/agent/state.pending_tool.args.wait_for` to detect settled terminal waits instead of inferring long-running terminal progress from elapsed time
+- first-party clients should render `ask_user_questions` prompts from either a live `agent.tool_call` or `/agent/state.pending_tool` after refresh, and submit answers through the thread-scoped response route
+- first-party clients should treat `/agent/state.phase: "waiting_for_user"` as paused human input rather than background loading, and may send normal follow-up messages through `/api/threads/:thread_id/messages`
+- normal follow-up messages while `ask_user_questions` is pending are service-owned supersession: the service stores skipped answers for pending prompts, emits a completed tool row when possible, and may emit successful `final` without `message_id` or `text`
 - completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
 
@@ -1572,6 +1659,38 @@ Service: replay newer buffered events if cursor is known
 Service: otherwise emit agent.resync_required
 ```
 
+### 10.5 Ask User Questions
+
+```text
+Agent model → Service: ask_user_questions{questions[]}
+Service: normalize and persist agent_question_request
+Service → Browser SSE: agent.tool_call{client_id:"uuidv7", name:"ask_user_questions", args:{request_id,...}}
+Browser → Service: POST /api/threads/:thread_id/agent/question-requests/:request_id/responses
+Service: validate answers against stored request
+Service → Agent model: one ask_user_questions_tool_result_v1 payload
+Service → Browser SSE: agent.tool_result with user_questions result
+```
+
+If the service no longer has the live in-memory waiter when the response is
+accepted, it persists a user message containing the same self-contained Q/A
+summary and starts a normal follow-up agent turn.
+
+If the browser sends a normal follow-up message while the thread has pending
+`ask_user_questions` rows, the service closes all pending prompts for that
+thread as skipped before persisting the new user message. The message-create
+response remains `{ "message_id": "uuid", "client_id": "uuidv7" }`. The old
+waiting turn emits a skipped `agent.tool_result` when possible and then:
+
+```json
+{
+  "turn_id": "01TURN...",
+  "status": "succeeded",
+  "reason": "superseded_by_user_message"
+}
+```
+
+No assistant `message_id` or `text` is created for that old turn.
+
 ---
 
 ## 11. Security
@@ -1583,6 +1702,9 @@ Service: otherwise emit agent.resync_required
 - TLS is required for deployed WebSocket traffic
 - gRPC data streams must be subordinate to an authenticated gRPC control session and must be rejected if `bud_id` or `device_session_id` does not match the active control tracker
 - browser SSE/REST reads must authorize ownership before any replay, attach, or data fetch
+- browser `ask_user_questions` response writes must authorize the thread before
+  loading the question request row, and request ids belonging to another thread
+  or owner return `404`
 - browser proxy-session reads, revokes, and edge attaches must authorize `proxy_session.created_by_user_id` before checking or opening daemon streams
 - browser proxied-site reads/mutations must authorize `proxied_site.created_by_user_id`; thread web-view attachment must authorize the thread first, derive the Bud from that thread, and then verify the proxied site belongs to the same owner and Bud
 - proxy-domain gateway requests must validate the endpoint-host viewer cookie
@@ -1638,6 +1760,8 @@ Service: otherwise emit agent.resync_required
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits
+  - model-facing `ask_user_questions` lets the agent pause for structured user input; `/agent/state.phase` may be `waiting_for_user`, clients submit `ask_user_questions_response_v1` through the thread-scoped response route, and completed tool rows include a self-contained Q/A result
+  - normal follow-up messages while `ask_user_questions` is pending now close pending prompts as skipped server-side, finish the old waiting turn with `reason: "superseded_by_user_message"`, and keep the message-create response shape unchanged
   - settled `terminal_send` and `terminal_observe(wait_for:"settled")` now use a service-owned one-hour timeout budget, while non-settled waits keep shorter defaults
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
   - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument

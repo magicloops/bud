@@ -282,9 +282,9 @@ export async function findOwnedUserMessageByClientId(
   threadId: string,
   userId: string,
   clientId: string,
-): Promise<{ messageId: string } | null> {
+): Promise<typeof messageTable.$inferSelect | null> {
   const [message] = await db
-    .select({ messageId: messageTable.messageId })
+    .select()
     .from(messageTable)
     .where(
       and(

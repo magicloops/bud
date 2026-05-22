@@ -77,7 +77,7 @@ type ThreadTitleEvent = {
 type UseAgentStreamArgs = {
   threadId: string | null
   initialStreamCursor: string | null
-  onStatusChange: (status: 'idle' | 'streaming') => void
+  onStatusChange: (status: 'idle' | 'streaming' | 'waiting_for_user') => void
   onError: (message: string | null) => void
   onToolCall: (event: {
     turnId: string
@@ -85,6 +85,7 @@ type UseAgentStreamArgs = {
     callId: string
     name: string
     args?: Record<string, unknown>
+    startedAt?: string
   }) => void
   onToolResultMessage: (message: ApiMessage) => void
   onAssistantMessageStart: (event: { turnId: string; clientId: string }) => void
@@ -250,9 +251,11 @@ export function useAgentStream({
     source.addEventListener('agent.tool_call', (evt) => {
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
-      callbacksRef.current.onStatusChange('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentToolCallEvent
+        callbacksRef.current.onStatusChange(
+          data.name === 'ask_user_questions' ? 'waiting_for_user' : 'streaming',
+        )
         console.log('[agent-sse] tool_call', data.name, data.args)
         callbacksRef.current.onToolCall({
           turnId: data.turn_id,
@@ -260,6 +263,7 @@ export function useAgentStream({
           callId: data.call_id,
           name: data.name,
           args: data.args,
+          startedAt: data.started_at,
         })
       } catch (error) {
         console.warn('[agent-sse] failed to parse tool_call', error)

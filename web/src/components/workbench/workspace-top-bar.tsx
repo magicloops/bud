@@ -4,13 +4,14 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export type ViewMode = 'terminal' | 'web' | 'file'
+export type WorkbenchStatus = 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user'
 
 type WorkspaceTopBarProps = {
   title: string
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
-  status: 'idle' | 'dispatching' | 'streaming'
+  status: WorkbenchStatus
   fileViewLabel?: string | null
 }
 
@@ -41,7 +42,13 @@ export function WorkspaceTopBar({
         </div>
       <div className="flex items-center gap-2">
         <span className="text-xs font-mono uppercase tracking-wide text-muted-foreground">
-          {status === 'dispatching' ? 'Dispatching' : status === 'streaming' ? 'Streaming' : 'Idle'}
+          {status === 'dispatching'
+            ? 'Dispatching'
+            : status === 'streaming'
+              ? 'Streaming'
+              : status === 'waiting_for_user'
+                ? 'Waiting'
+                : 'Idle'}
         </span>
         <ViewToggleButton active={view === 'terminal'} onClick={() => onViewChange('terminal')} icon={<TerminalIcon className="mr-2 h-4 w-4" />}>
           Terminal

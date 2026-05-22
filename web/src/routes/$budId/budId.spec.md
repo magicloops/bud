@@ -55,7 +55,7 @@ New thread creation view - allows users to start a new conversation.
 - Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
   1. POST `/api/threads` with `{ bud_id, model, reasoning_effort }` to create the thread and persist its initial model preference
-  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, model, reasoning_effort }` and read `{ message_id, client_id }`
+  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, model, reasoning_effort }` and read `{ message_id, client_id, message }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
@@ -99,7 +99,7 @@ loader: async ({ params }) => {
    - Passes the hook-owned chronological `ApiMessage[]` directly into `ChatTimeline` instead of creating an extra route-local mapped/sorted copy
    - Updates via SSE agent stream
    - Role-based rendering (user, assistant, tool)
-   - Consumes the paged `{ messages, page }` API contract
+   - Consumes the paged `{ messages, page }` API contract and the create-message `{ message }` payload for canonical optimistic-row replacement
    - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
    - Timeline row UI state (expand/copy/payload/overflow) is now message-local and memoized inside `ChatTimeline`, reducing whole-list churn during streaming and interaction
@@ -115,6 +115,7 @@ loader: async ({ params }) => {
    - Keeps feature hook error callbacks stable so route rerenders do not
      retrigger web-view fetches or agent stream reconnects
    - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, and `final`
+   - Renders pending `ask_user_questions` prompts in the timeline and submits responses to the thread-scoped question-response route
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
@@ -174,10 +175,19 @@ loader: async ({ params }) => {
    - Agent `web_view.*` tool-result rows switch the right pane to Web view and
      refresh proxied-site/thread attachment state
 
+10. **Ask User Questions**
+   - Pending `ask_user_questions` rows render the `QuestionRequestCard` inside the timeline
+   - Submission posts `ask_user_questions_response_v1` payloads to `/api/threads/:threadId/agent/question-requests/:requestId/responses`
+   - Submission reconciliation delegates to `submitQuestionResponseFlow(...)` in `web/src/features/threads/question-response-submit.ts`
+   - Live continuations keep the stream connected while fallback/idempotent responses refresh the transcript/runtime bootstrap
+   - The route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to a paused UI status
+   - The global thinking indicator is hidden while paused for user input
+   - Normal composer input stays enabled while a pending structured prompt is visible; follow-up sends use the normal message route and let the service close the prompt
+
 **State**:
 ```typescript
 // UI state
-status: 'idle' | 'dispatching' | 'streaming'
+status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
 viewMode: 'terminal' | 'web' | 'file'
@@ -192,6 +202,7 @@ terminalOutputTruncated: boolean
 activeFileEntry: FileViewerEntry | null
 activeWebView: ApiThreadWebView | null
 webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
+questionSubmitError: string | null
 ```
 
 **Terminal Event Handling**:
