@@ -13,7 +13,7 @@ import {
   serializeToolExecutionTiming,
 } from "./contracts.js";
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
-import type { ModelSelectionSource, ReasoningLevel } from "../llm/index.js";
+import type { AssistantMessagePhase, ModelSelectionSource, ReasoningLevel } from "../llm/index.js";
 import type { TerminalPathContext } from "../runtime/terminal-session-manager.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 
@@ -210,6 +210,7 @@ export class AgentTranscriptWriter {
             status,
             turn_id: turnId,
             segment_kind: "final",
+            assistant_phase: "final_answer",
             ...(llmCallId ? { llm_call_id: llmCallId } : {}),
             ...(pathContext ? { path_context: pathContext } : {}),
             attention_kind: "assistant_completed",
@@ -346,6 +347,7 @@ export class AgentTranscriptWriter {
           status: "succeeded",
           turn_id: turnId,
           segment_kind: segmentKind,
+          assistant_phase: assistantPhaseForSegment(segmentKind),
           ...(llmCallId ? { llm_call_id: llmCallId } : {}),
           ...(followedByToolCall ? { followed_by_tool_call: true } : {}),
           ...(pathContext ? { path_context: pathContext } : {}),
@@ -423,4 +425,10 @@ function serializeModelSelectionMetadata(
     reasoning_effort: selection.reasoningEffort,
     model_selection_source: selection.source,
   };
+}
+
+function assistantPhaseForSegment(
+  segmentKind: "intermediate" | "final",
+): AssistantMessagePhase {
+  return segmentKind === "intermediate" ? "commentary" : "final_answer";
 }

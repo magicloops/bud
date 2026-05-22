@@ -19,6 +19,7 @@ import type {
   ModelConfig,
   ModelCapabilities,
   CanonicalStopReason,
+  AssistantMessagePhase,
 } from "../types.js";
 
 // OpenAI-specific types
@@ -262,6 +263,7 @@ export class OpenAIProvider implements LLMProvider {
                 type: "message",
                 role: "assistant",
                 content: block.text,
+                ...(block.assistantPhase ? { phase: block.assistantPhase } : {}),
               });
               break;
             case "tool_use":
@@ -437,6 +439,7 @@ export class OpenAIProvider implements LLMProvider {
       name: string;
       args: string;
     }>();
+    const messagePhasesByOutputIndex = new Map<number, AssistantMessagePhase>();
 
     const nextFallbackIndex = () => {
       const index = 1_000_000 + fallbackIndex;
@@ -463,6 +466,13 @@ export class OpenAIProvider implements LLMProvider {
         return outputIndex * 1000 + contentIndexFor(event);
       }
       return nextFallbackIndex();
+    };
+
+    const assistantPhaseFor = (event: unknown): AssistantMessagePhase | undefined => {
+      const outputIndex = outputIndexFor(event);
+      return typeof outputIndex === "number"
+        ? messagePhasesByOutputIndex.get(outputIndex)
+        : undefined;
     };
 
     const toolKeyFor = (event: unknown): string | null => {
@@ -560,6 +570,13 @@ export class OpenAIProvider implements LLMProvider {
               id: toolCall.id,
               name: toolCall.name,
             };
+          } else if ((event.item as unknown as Record<string, unknown>).type === "message") {
+            const phase = parseAssistantMessagePhase(
+              (event.item as unknown as Record<string, unknown>).phase,
+            );
+            if (phase) {
+              messagePhasesByOutputIndex.set(event.output_index, phase);
+            }
           }
           break;
 
@@ -591,11 +608,17 @@ export class OpenAIProvider implements LLMProvider {
               (event.part as unknown as Record<string, unknown>).type === "output_text"
                 ? "text"
                 : "tool_use",
+            assistantPhase: assistantPhaseFor(event),
           };
           break;
 
         case "response.output_text.delta":
-          yield { type: "text_delta", index: orderedIndexFor(event), delta: event.delta };
+          yield {
+            type: "text_delta",
+            index: orderedIndexFor(event),
+            delta: event.delta,
+            assistantPhase: assistantPhaseFor(event),
+          };
           break;
 
         case "response.output_text.done":
@@ -693,12 +716,17 @@ export class OpenAIProvider implements LLMProvider {
             },
           });
         } else if (typedItem.type === "message") {
+          const assistantPhase = parseAssistantMessagePhase(typedItem.phase);
           // Extract text content
           const msgContent = typedItem.content as Array<{ type: string; text: string }> | undefined;
           if (msgContent) {
             for (const block of msgContent) {
               if (block.type === "output_text") {
-                content.push({ type: "text", text: block.text });
+                content.push({
+                  type: "text",
+                  text: block.text,
+                  ...(assistantPhase ? { assistantPhase } : {}),
+                });
               }
             }
           }
@@ -821,4 +849,8 @@ export class OpenAIProvider implements LLMProvider {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseAssistantMessagePhase(value: unknown): AssistantMessagePhase | undefined {
+  return value === "commentary" || value === "final_answer" ? value : undefined;
 }

@@ -14,6 +14,7 @@ import {
   type CanonicalTool,
   type CanonicalToolCall,
   type ModelConfig,
+  type AssistantMessagePhase,
   resolveModelReasoning,
   type ResolvedModelReasoning,
   type TokenUsage,
@@ -349,7 +350,8 @@ export class AgentModelRunner {
       responseFormat: "text",
     };
 
-    const textBlocks = new Map<number, string>();
+    const textBlocks = new Map<number, { text: string; assistantPhase?: AssistantMessagePhase }>();
+    const textPhases = new Map<number, AssistantMessagePhase>();
     const reasoningBlocks = new Map<number, CanonicalReasoningBlock>();
     const toolCallsByIndex = new Map<number, CanonicalToolCall>();
     const pendingTextPrefixes = new Map<number, string>();
@@ -415,6 +417,9 @@ export class AgentModelRunner {
           break;
         case "content_start":
           if (event.content_type === "text") {
+            if (event.assistantPhase) {
+              textPhases.set(event.index, event.assistantPhase);
+            }
             if (!seenTextIndexes.has(event.index)) {
               pendingTextPrefixes.set(event.index, textBlockCount > 0 ? "\n" : "");
               seenTextIndexes.add(event.index);
@@ -433,7 +438,12 @@ export class AgentModelRunner {
             pendingTextPrefixes.delete(event.index);
             emitAssistantDraftDelta(prefix);
           }
-          textBlocks.set(event.index, `${textBlocks.get(event.index) ?? ""}${event.delta}`);
+          const current = textBlocks.get(event.index);
+          const assistantPhase = current?.assistantPhase ?? event.assistantPhase ?? textPhases.get(event.index);
+          textBlocks.set(event.index, {
+            text: `${current?.text ?? ""}${event.delta}`,
+            ...(assistantPhase ? { assistantPhase } : {}),
+          });
           emitAssistantDraftDelta(event.delta);
           break;
         }
@@ -483,7 +493,11 @@ export class AgentModelRunner {
 
       const textBlock = textBlocks.get(index);
       if (textBlock !== undefined) {
-        content.push({ type: "text", text: textBlock });
+        content.push({
+          type: "text",
+          text: textBlock.text,
+          ...(textBlock.assistantPhase ? { assistantPhase: textBlock.assistantPhase } : {}),
+        });
       }
 
       const toolCall = toolCallsByIndex.get(index);
@@ -682,6 +696,7 @@ function diagnosticContentBlock(block: CanonicalContentBlock): unknown {
         type: "text",
         charCount: block.text.length,
         text: truncateText(block.text, MODEL_RESPONSE_TEXT_PREVIEW_CHARS),
+        assistantPhase: block.assistantPhase,
       };
     case "image":
       return {

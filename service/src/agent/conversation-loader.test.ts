@@ -226,7 +226,7 @@ test("load prefers same-provider ledger output over duplicate assistant product 
     {
       role: "assistant",
       content: [
-        { type: "text", text: "I will inspect first." },
+        { type: "text", text: "I will inspect first.", assistantPhase: "commentary" },
         {
           type: "tool_use",
           id: "call-observe-1",
@@ -248,6 +248,53 @@ test("load prefers same-provider ledger output over duplicate assistant product 
           }),
         },
       ],
+    },
+  ]);
+});
+
+test("load derives assistant phase from transcript metadata fallback", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            async orderBy() {
+              return [
+                {
+                  role: "assistant",
+                  content: "I will inspect first.",
+                  metadata: { segment_kind: "intermediate" },
+                },
+                {
+                  role: "assistant",
+                  content: "Done.",
+                  metadata: { assistant_phase: "final_answer", segment_kind: "final" },
+                },
+              ];
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const loader = new AgentConversationLoader();
+  const messages = await loader.load("thread-1");
+
+  assert.deepEqual(messages.slice(1), [
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "I will inspect first.", assistantPhase: "commentary" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Done.", assistantPhase: "final_answer" }],
     },
   ]);
 });

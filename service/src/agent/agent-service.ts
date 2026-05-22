@@ -14,6 +14,7 @@ import type {
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import type {
+  AssistantMessagePhase,
   CanonicalContentBlock,
   ModelSelectionSource,
   ReasoningLevel,
@@ -376,8 +377,17 @@ export class AgentService {
             controller.signal,
           );
         const llmCallId = createLlmCallId();
-        const visibleText = collectVisibleText(response.content);
         const toolCalls = this.modelRunner.extractToolCalls(response);
+        const responseForReplay = response.providerData?.provider === "openai" || providerName === "openai"
+          ? {
+              ...response,
+              content: applyOpenAIAssistantPhaseFallback(
+                response.content,
+                toolCalls.length > 0 ? "commentary" : "final_answer",
+              ),
+            }
+          : response;
+        const visibleText = collectVisibleText(responseForReplay.content);
         let assistantMessageId: string | null = null;
 
         if (toolCalls.length > 0 && visibleText.trim().length > 0) {
@@ -406,9 +416,9 @@ export class AgentService {
           provider: providerName,
           model: modelReasoning.providerModel,
           requestMode: buildRequestMode(providerName),
-          providerResponseId: response.id,
-          output: response.content,
-          usage: response.usage,
+          providerResponseId: responseForReplay.id,
+          output: responseForReplay.content,
+          usage: responseForReplay.usage,
           assistantMessageId,
           ownerUserId,
           reconstruction,
@@ -417,7 +427,7 @@ export class AgentService {
         if (toolCalls.length > 0) {
           conversation.push({
             role: "assistant",
-            content: response.content,
+            content: responseForReplay.content,
           });
 
           const toolResultBlocks: CanonicalContentBlock[] = [];
@@ -512,7 +522,7 @@ export class AgentService {
             await recordLlmToolResultItem({
               llmCallId,
               threadId,
-              sequence: response.content.length + toolResultBlocks.length,
+              sequence: responseForReplay.content.length + toolResultBlocks.length,
               toolCallId: effectiveToolCall.callId,
               content: JSON.stringify(payload),
               payload,
@@ -562,7 +572,7 @@ export class AgentService {
           continue;
         }
 
-        const directive = this.modelRunner.parseFinalResponse(response);
+        const directive = this.modelRunner.parseFinalResponse(responseForReplay);
         const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
         const pathContext = await this.getPathContextForSession(sessionId);
         await this.transcriptWriter.recordFinalAssistant({
@@ -870,4 +880,19 @@ function collectVisibleText(content: CanonicalContentBlock[]): string {
     .filter((block): block is Extract<CanonicalContentBlock, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+}
+
+function applyOpenAIAssistantPhaseFallback(
+  content: CanonicalContentBlock[],
+  fallbackPhase: AssistantMessagePhase,
+): CanonicalContentBlock[] {
+  return content.map((block) => {
+    if (block.type !== "text" || block.assistantPhase) {
+      return block;
+    }
+    return {
+      ...block,
+      assistantPhase: fallbackPhase,
+    };
+  });
 }

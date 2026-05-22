@@ -446,14 +446,14 @@ test("OpenAI provider sends assistant history in canonical block order", async (
             },
           },
         },
-        { type: "text", text: "before" },
+        { type: "text", text: "before", assistantPhase: "commentary" },
         {
           type: "tool_use",
           id: "call_first",
           name: "terminal_observe",
           input: { view: "screen" },
         },
-        { type: "text", text: "between" },
+        { type: "text", text: "between", assistantPhase: "commentary" },
         {
           type: "tool_use",
           id: "call_second",
@@ -474,7 +474,7 @@ test("OpenAI provider sends assistant history in canonical block order", async (
   assert.deepEqual(
     input.map((item) => {
       if (item.type === "message") {
-        return `message:${item.content}`;
+        return `message:${item.content}:${item.phase ?? "none"}`;
       }
       if (item.type === "function_call") {
         return `tool:${item.call_id}`;
@@ -483,12 +483,217 @@ test("OpenAI provider sends assistant history in canonical block order", async (
     }),
     [
       "reasoning:rs_order",
-      "message:before",
+      "message:before:commentary",
       "tool:call_first",
-      "message:between",
+      "message:between:commentary",
       "tool:call_second",
     ],
   );
+});
+
+test("OpenAI provider preserves streamed output message phase on text events", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async () =>
+    (async function* stream() {
+      yield { type: "response.created", response: { id: "resp_phase_stream" } };
+      yield {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: {
+          id: "msg_phase",
+          type: "message",
+          role: "assistant",
+          phase: "commentary",
+        },
+      };
+      yield {
+        type: "response.content_part.added",
+        output_index: 0,
+        content_index: 0,
+        part: { type: "output_text" },
+      };
+      yield {
+        type: "response.output_text.delta",
+        output_index: 0,
+        content_index: 0,
+        delta: "I will inspect first.",
+      };
+      yield {
+        type: "response.output_text.done",
+        output_index: 0,
+        content_index: 0,
+      };
+      yield {
+        type: "response.output_item.added",
+        output_index: 1,
+        item: {
+          id: "msg_final_phase",
+          type: "message",
+          role: "assistant",
+          phase: "final_answer",
+        },
+      };
+      yield {
+        type: "response.content_part.added",
+        output_index: 1,
+        content_index: 0,
+        part: { type: "output_text" },
+      };
+      yield {
+        type: "response.output_text.delta",
+        output_index: 1,
+        content_index: 0,
+        delta: "Done.",
+      };
+      yield {
+        type: "response.output_text.done",
+        output_index: 1,
+        content_index: 0,
+      };
+      yield {
+        type: "response.completed",
+        response: {
+          id: "resp_phase_stream",
+          status: "completed",
+          usage: {
+            input_tokens: 3,
+            output_tokens: 2,
+          },
+        },
+      };
+    })();
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  })) {
+    events.push(event);
+  }
+
+  const contentStarts = events.filter((event) => event.type === "content_start");
+  assert.deepEqual(
+    contentStarts.map((event) => event.assistantPhase),
+    ["commentary", "final_answer"],
+  );
+
+  const textDeltas = events.filter((event) => event.type === "text_delta");
+  assert.deepEqual(
+    textDeltas.map((event) => event.assistantPhase),
+    ["commentary", "final_answer"],
+  );
+});
+
+test("OpenAI provider preserves non-streaming output message phase", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(): Promise<Record<string, unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async () => ({
+    id: "resp_phase_sync",
+    status: "completed",
+    output: [
+      {
+        id: "msg_commentary",
+        type: "message",
+        role: "assistant",
+        phase: "commentary",
+        status: "completed",
+        content: [
+          {
+            type: "output_text",
+            text: "I will inspect first.",
+          },
+        ],
+      },
+      {
+        id: "msg_final",
+        type: "message",
+        role: "assistant",
+        phase: "final_answer",
+        status: "completed",
+        content: [
+          {
+            type: "output_text",
+            text: "Done.",
+          },
+        ],
+      },
+    ],
+    usage: {
+      input_tokens: 3,
+      output_tokens: 2,
+    },
+  });
+
+  const response = await provider.invokeSync(messages, [], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  });
+
+  assert.deepEqual(response.content, [
+    { type: "text", text: "I will inspect first.", assistantPhase: "commentary" },
+    { type: "text", text: "Done.", assistantPhase: "final_answer" },
+  ]);
+});
+
+test("OpenAI provider lowers final_answer assistant phase on replay", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const capturedParams: Record<string, unknown>[] = [];
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(params: Record<string, unknown>): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async (params) => {
+    capturedParams.push(params);
+    return emptyStream();
+  };
+
+  await drain(provider.invoke([
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Done.", assistantPhase: "final_answer" }],
+    },
+  ], [], {
+    model: "gpt-5.4-2026-03-05",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  }));
+
+  const input = capturedParams[0].input as Array<Record<string, unknown>>;
+  assert.deepEqual(input, [
+    {
+      type: "message",
+      role: "assistant",
+      content: "Done.",
+      phase: "final_answer",
+    },
+  ]);
 });
 
 test("Anthropic provider lowers adaptive effort models without manual budgets", async () => {
@@ -541,6 +746,45 @@ test("Anthropic provider lowers adaptive effort models without manual budgets", 
   assert.deepEqual(capturedParams[1].output_config, {
     effort: "max",
   });
+});
+
+test("Anthropic provider ignores OpenAI assistant phase metadata", async () => {
+  const provider = new AnthropicProvider("test-key");
+  let capturedParams: Record<string, unknown> | null = null;
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(params: Record<string, unknown>): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = (params) => {
+    capturedParams = params;
+    return emptyStream();
+  };
+
+  await drain(provider.invoke([
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Prior note", assistantPhase: "commentary" }],
+    },
+  ], [], {
+    model: "claude-sonnet-4-6",
+    maxOutputTokens: 32000,
+  }));
+
+  assert.ok(capturedParams);
+  const replayMessages = (capturedParams as Record<string, unknown>).messages as Array<{
+    role: string;
+    content: Array<Record<string, unknown>>;
+  }>;
+  assert.deepEqual(replayMessages, [
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Prior note" }],
+    },
+  ]);
 });
 
 test("Anthropic provider keeps Haiku 4.5 on manual thinking budgets", async () => {
