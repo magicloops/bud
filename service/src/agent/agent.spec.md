@@ -108,6 +108,7 @@ In-memory waiter registry for live `ask_user_questions` continuations.
 **Responsibilities**:
 - register one pending response promise per durable question request id
 - resolve a live waiter when the authorized response route accepts an answer
+- resolve a live waiter with a superseded outcome when a normal follow-up message closes the prompt instead of continuing the old turn
 - reject waiting prompts on agent cancel or terminal/service failure cleanup
 - let the response route distinguish live continuation from restart fallback
 
@@ -119,6 +120,7 @@ Persistence and route/service helpers for `agent_question_request`.
 - create durable pending question request rows before exposing prompts to clients
 - load owned request rows for a thread/question id pair
 - validate and atomically accept client responses with `client_response_id` idempotency
+- generate all-skipped responses for follow-up supersession of pending prompts
 - persist generated response and tool-result payloads on the request row
 - mark pending rows canceled during turn cancellation
 - shape completed user-question tool results for transcript persistence
@@ -180,6 +182,7 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 - `WebViewToolExecutor`
 - `AgentTranscriptWriter`
 - `AgentCancellationRegistry`
+- `AgentUserQuestionRegistry`
 
 **Key methods**:
 
@@ -188,6 +191,7 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 | `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, then spawns async agent flow while carrying thread-owner stamping plus the resolved model-selection source |
 | `runAgentFlow(...)` | Main loop - delegate conversation/model/tool/transcript work across the extracted ownership seams |
 | `submitQuestionResponse(...)` | Validate an owned question response, resolve a live waiter, or persist a fallback user message and start a follow-up turn |
+| `supersedePendingUserQuestionsForFollowUp(...)` | Close pending question requests as skipped before a normal follow-up message starts a fresh turn |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
 | `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
 
@@ -235,12 +239,13 @@ startUserMessage()
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
 - Anthropic thinking and redacted-thinking blocks are replayed provider-natively only when the next Anthropic model/reasoning request is compatible; incompatible same-provider ranges fall back to canonical visible transcript rows with explicit degradation metadata.
 - Multiple provider tool calls are parsed and executed serially in provider output order across terminal and web-view tools.
-- `ask_user_questions` tool calls are normalized and persisted before `agent.tool_call` is emitted; live answers resolve the waiter and continue the same provider tool-call loop, while answers submitted after a service restart become a self-contained follow-up user message that starts a normal new turn.
+- `ask_user_questions` tool calls are normalized and persisted before `agent.tool_call` is emitted; live answers resolve the waiter and continue the same provider tool-call loop, answers submitted after a service restart become a self-contained follow-up user message, and normal follow-up messages close pending prompts as skipped before starting a fresh turn.
 - While waiting on `ask_user_questions`, `/agent/state.phase` is `waiting_for_user` and `/agent/state.pending_tool` exposes the normalized request with `request_id`.
+- Follow-up supersession records a skipped `ask_user_questions` tool result, emits `final` with `status: "succeeded"` and `reason: "superseded_by_user_message"`, and returns from the old turn without another provider call.
 - Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - OpenAI debug response logging emits `llm_response` as a structured canonical response object rather than a pre-stringified JSON blob, so log viewers can pretty-print nested fields without escaped newline formatting.
-- `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event.
+- `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent uses the settled/default result or timeout delta and avoids claiming program progress when no visible delta appears.
 - `terminal.send` is now modeled as one gesture at a time: `text` with optional `submit`, or one semantic `key` such as `ctrl+c`.
@@ -300,7 +305,7 @@ Standalone Node tests for Phase 6 send-result interpretation.
 Standalone Node tests for `AgentService` orchestration behavior.
 
 **Current Coverage**:
-- `cancelThread()` aborts the active turn and rejects any pending terminal waits for that thread
+- `cancelThread()` aborts the active turn, rejects any pending terminal waits for that thread, and marks pending user-question rows canceled
 - final no-tool responses record exactly one provider-ledger `llm_call` row before final assistant persistence
 
 ### `ask-user-questions-continuation.integration.test.ts`
@@ -309,6 +314,7 @@ Integration-style tests for `AgentService.submitQuestionResponse(...)` and the l
 
 **Current Coverage**:
 - accepted live responses resolve the in-memory question waiter
+- follow-up supersession resolves a live waiter as skipped and waits for the old turn closeout callback
 - fallback responses after a missing live waiter persist a self-contained user message and start a follow-up agent turn
 - scoped fake OpenAI provider registration covers the default `gpt-5.5` model path in continuation tests
 - cancel while waiting rejects pending question waiters and marks durable pending question rows canceled
@@ -400,6 +406,10 @@ Thread/message routes now resolve the effective thread selection before starting
 
 Human terminal interrupt is intentionally separate from agent cancel: the terminal route sends `ctrl+c` and rejects the current terminal wait as `interrupted`, allowing the active agent turn to record a tool result and continue.
 
+**Follow-Up Supersession**:
+
+Normal `POST /api/threads/:threadId/messages` calls ask `AgentService` to close all pending `ask_user_questions` rows for the thread after duplicate `client_id` checks and before the new user row is persisted. The generated response marks every question skipped with `skip_reason: "user_skipped"`. Live waiters finish the old turn with a skipped tool result and a successful `final` event carrying `reason: "superseded_by_user_message"`; stale durable rows are closed and get a canonical tool row when enough metadata is available.
+
 **Ownership Notes**:
 - `startUserMessage(..., { ownerUserId })` threads the resolved thread owner through the agent loop
 - assistant final messages and tool-result messages are written with `message.created_by_user_id`
@@ -468,7 +478,7 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 | `agent.message` | `{ turn_id, client_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
 | `thread.title` | `{ thread_id, title, source, updated_at }` | Best-effort first-message thread title became durable |
 | `agent.resync_required` | `{ error, provided_cursor }` | Resume cursor was too old or unknown; client must refetch `/messages` plus `/agent/state` |
-| `final` | `{ turn_id, status, message_id?, text? }` or `{ turn_id, status, error }` | Flow complete |
+| `final` | `{ turn_id, status, message_id?, text?, reason? }` or `{ turn_id, status, error }` | Flow complete |
 
 Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 
@@ -496,6 +506,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `agent.message` may represent an intermediate visible text segment before later tool calls; successful final turn status still arrives separately as `final`
 - `thread.title` shares the same SSE frame-id cursor space as the agent events, so bounded resume covers title changes without opening a second stream
 - `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
+- superseded question turns may emit successful `final` events with `reason: "superseded_by_user_message"` and no assistant `message_id` or `text`
 - replay resume is keyed off the SSE frame `id:` / runtime cursor rather than the JSON payload
 - no-cursor attaches are live-only; bounded replay only happens when the client resumes from an explicit cursor
 - stale or unknown cursors now surface explicit `agent.resync_required` instead of silent live-only fallback
@@ -520,8 +531,8 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `./transcript-writer.js` | Durable assistant/tool persistence + runtime emission |
 | `./terminal-send-outcome.js` | Send-result delta interpretation for conservative summaries |
 | `./user-question-contracts.js` | `ask_user_questions` request/response/result validation and summary building |
-| `./user-question-registry.js` | Live `ask_user_questions` waiter resolution |
-| `./user-question-repository.js` | Durable `agent_question_request` persistence and response acceptance |
+| `./user-question-registry.js` | Live `ask_user_questions` waiter resolution and supersession callbacks |
+| `./user-question-repository.js` | Durable `agent_question_request` persistence, response acceptance, and generated skipped closeouts |
 | `../db/thread-metadata.js` | Thread activity tracking |
 
 ## Configuration Used

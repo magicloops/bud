@@ -107,7 +107,7 @@ Animated "thinking" indicator shown when agent is working.
 - Spinner icon with `animate-spin`
 - Text with `animate-pulse`
 
-**Usage**: Rendered as sibling to ChatTimeline, outside the scroll container, to avoid re-render coupling and scroll interference.
+**Usage**: Rendered as sibling to ChatTimeline, outside the scroll container, to avoid re-render coupling and scroll interference. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
 
 **Message Styling by Role**:
 | Role | Avatar | Background |
@@ -122,7 +122,7 @@ Message input form with options.
 
 **Props**:
 - `messageText` / `onMessageChange` - Controlled input
-- `status` - UI state (idle, dispatching, streaming)
+- `status` - UI state (idle, dispatching, streaming, waiting_for_user)
 - `onSubmit` - Form submission handler
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
@@ -135,8 +135,8 @@ Message input form with options.
 - Model selector dropdown (grouped by provider)
 - Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh` and `max`
 - Hides the reasoning selector when a model only exposes `none`
-- Submit button with loading state
-- Disables text entry, model/reasoning controls, and submit while `disabledReason` is present, such as during `waiting_for_user`
+- Submit button with loading state only during message dispatch
+- Keeps text entry, model/reasoning controls, and submit available during `waiting_for_user`; `disabledReason` remains available for other caller-owned disable cases
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
 
 ### `question-request-card.tsx`
@@ -272,9 +272,9 @@ Header bar with workspace title and view toggle.
 **Components**:
 - Thread panel toggle (hamburger menu)
 - Title display (`New Thread` for compose mode, otherwise the current thread title or `Untitled thread`)
-- Status indicator (Idle/Dispatching/Streaming)
+- Status indicator (Idle/Dispatching/Streaming/Waiting)
 - View mode toggle buttons; the file toggle appears only when an active file is available
-- Exports the shared `ViewMode` union used by `workspace-shell.tsx`
+- Exports the shared `ViewMode` and `WorkbenchStatus` unions used by the workbench frame and child controls
 
 ## Dependencies
 

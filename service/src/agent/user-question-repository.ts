@@ -1,9 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db } from "../db/client.js";
+import { generateMessageClientId } from "../db/message-client-id.js";
 import { agentQuestionRequestTable } from "../db/schema.js";
 import {
   ASK_USER_QUESTIONS_TOOL,
+  ASK_USER_QUESTIONS_RESPONSE_SCHEMA,
   attachRequestIdToAskUserQuestionsRequest,
   buildAskUserQuestionsToolResult,
   parseStoredAskUserQuestionsRequest,
@@ -169,6 +171,78 @@ export async function acceptAgentQuestionResponse(args: {
       toolResult,
       alreadyAnswered: false,
     };
+  });
+}
+
+export async function acceptPendingAgentQuestionRequestsAsSkipped(args: {
+  threadId: string;
+  answeredByUserId: string;
+}): Promise<AcceptedQuestionResponse[]> {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(agentQuestionRequestTable)
+      .where(
+        and(
+          eq(agentQuestionRequestTable.threadId, args.threadId),
+          eq(agentQuestionRequestTable.status, "pending"),
+        ),
+      );
+
+    const accepted: AcceptedQuestionResponse[] = [];
+    for (const row of rows) {
+      const request = parseStoredAskUserQuestionsRequest(row.request);
+      const response = validateAskUserQuestionsResponse(
+        {
+          schema: ASK_USER_QUESTIONS_RESPONSE_SCHEMA,
+          client_response_id: generateMessageClientId(),
+          answers: request.questions.map((question) => ({
+            question_id: question.question_id,
+            status: "skipped",
+            skip_reason: "user_skipped",
+          })),
+        },
+        request,
+      );
+      const toolResult = buildAskUserQuestionsToolResult(
+        request,
+        response,
+        row.questionRequestId,
+      );
+      const [updated] = await tx
+        .update(agentQuestionRequestTable)
+        .set({
+          status: "answered",
+          clientResponse: response as unknown as Record<string, unknown>,
+          toolResult: toolResult as unknown as Record<string, unknown>,
+          clientResponseId: response.client_response_id,
+          answeredByUserId: args.answeredByUserId,
+          answeredAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(agentQuestionRequestTable.threadId, args.threadId),
+            eq(agentQuestionRequestTable.questionRequestId, row.questionRequestId),
+            eq(agentQuestionRequestTable.status, "pending"),
+          ),
+        )
+        .returning();
+
+      if (!updated) {
+        continue;
+      }
+
+      accepted.push({
+        questionRequest: updated,
+        request,
+        response,
+        toolResult,
+        alreadyAnswered: false,
+      });
+    }
+
+    return accepted;
   });
 }
 

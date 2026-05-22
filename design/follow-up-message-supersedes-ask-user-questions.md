@@ -34,6 +34,15 @@ The recommended direction is to make ordinary message sending resilient:
 
 This keeps web simple and gives mobile the same recovery behavior without requiring it to know the pending request id.
 
+Key decisions from the design review:
+
+- the normal message-create response should not expose a `superseded_question_requests` field
+- follow-up supersession should finish the old waiting turn with `final.status: "succeeded"` plus `reason: "superseded_by_user_message"`
+- the service should close all pending `ask_user_questions` rows for the thread
+- the implementation should use a short-lived per-thread transition lock, not a long-running turn mutex
+- explicit skip-all from the question card continues the original turn; follow-up supersession stops it
+- human-input attention and push behavior should be documented here but implemented in a later notification slice
+
 ---
 
 ## 2. Current Behavior
@@ -107,24 +116,21 @@ POST /api/threads/:thread_id/messages
 
 The client request body does not need to include the question request id. The service already knows which thread is authorized and can resolve current runtime state plus durable pending question rows.
 
-The response can remain compatible with the existing message-create response, with optional additive metadata for clients that want immediate reconciliation:
+The message-create response should stay compatible with the existing route shape:
 
 ```json
 {
-  "message": {},
-  "agent": {},
-  "superseded_question_requests": [
-    {
-      "request_id": "qr_01J...",
-      "turn_id": "01TURN...",
-      "tool_client_id": "019...",
-      "reason": "followup_message"
-    }
-  ]
+  "message_id": "uuid",
+  "client_id": "019..."
 }
 ```
 
-Clients should not need this field for correctness because SSE and `/agent/state` should also converge, but it is useful for immediate local cleanup if the client sends while the stream is disconnected.
+Do not add `superseded_question_requests` to this response. That would expose an implementation detail on the most common write path and would make clients depend on a technical cleanup artifact. The route should instead return only after supersession is durable enough that stream events and `/agent/state` converge:
+
+- live clients receive `agent.tool_result` for the skipped question result
+- live clients receive `final` for the old turn
+- `/agent/state` no longer exposes the stale prompt
+- `/messages` includes the canonical skipped tool-result rows where durable replay needs them
 
 ---
 
@@ -147,17 +153,19 @@ The operation should be owned by the agent service rather than the route module 
 Recommended behavior:
 
 1. Run after the message route has authorized the thread and checked duplicate `client_id` writes.
-2. Acquire a per-thread transition lock so question response submission, follow-up sends, cancellation, and new turns cannot race each other into overlapping runtime state.
+2. Acquire a short-lived per-thread transition lock so question response submission, follow-up sends, cancellation, and new-turn start cannot race each other into overlapping runtime state.
 3. Find the active runtime pending tool if it is `ask_user_questions`.
 4. Also query durable pending question requests for the thread so stale prompts can be closed after service restart.
 5. Generate an `ask_user_questions_response_v1` where every question is `skipped` with `skip_reason: "user_skipped"`.
-6. Mark the request `answered`, set `answered_by_user_id`, and store the generated response plus tool result.
-7. Persist and emit the canonical `ask_user_questions` tool result row using the original tool `client_id`, `turn_id`, and `call_id`.
+6. Mark every pending question request for the thread as `answered`, set `answered_by_user_id`, and store the generated response plus tool result.
+7. Persist and emit the canonical `ask_user_questions` tool result row for the active runtime request using the original tool `client_id`, `turn_id`, and `call_id`.
 8. Finish the old waiting turn without another model call.
 9. Clear runtime pending state and any live waiter.
-10. Return supersession metadata to the message route.
+10. Return an internal closeout outcome to the message route so it can decide whether the follow-up turn can start.
 
 Use the existing skip reason for v1. A new `superseded_by_user_message` answer status or skip reason would create more client contract surface than we need. The reason can live in row metadata, tool-result metadata, and final event metadata.
+
+For stale durable requests with no live waiter, the service should still close every pending row. If there is enough stored metadata to create a canonical skipped tool result, persist one so future transcript replay sees the prompt closed before the follow-up user message. The service should log when more than one pending row exists because the steady-state design expects at most one current human-input prompt per thread.
 
 ### 6.2 Do not continue the old model turn
 
@@ -207,16 +215,18 @@ Recommendation: prefer Option A for live waiters and use a service helper fallba
 
 The old waiting turn should emit a final event so clients clear pending synthetic rows and leave the loading state.
 
-For compatibility, v1 should use:
+V1 should use:
 
 ```json
 {
-  "status": "canceled",
+  "status": "succeeded",
   "reason": "superseded_by_user_message"
 }
 ```
 
-Existing clients already clear pending tools and draft assistant rows for `canceled`. The `reason` field is additive and lets updated clients distinguish user supersession from an explicit cancel button. A future protocol cleanup can add `status: "superseded"` if there is enough value, but v1 should not require every client to learn a new final status before this behavior is safe.
+The turn completed a valid service action: it recorded skipped answers for the tool call and intentionally stopped before another model continuation. That is not the same as an explicit user cancel or provider abort.
+
+`message_id` and `text` should be omitted because no assistant message was created. First-party clients should explicitly tolerate successful finals without assistant text. The current web cleanup path already removes pending tool rows for `succeeded`, which matches the desired behavior.
 
 ### 6.4 Ordering
 
@@ -224,7 +234,7 @@ For a live waiting turn, the observable order should be:
 
 ```text
 agent.tool_result     # ask_user_questions, all answers skipped
-agent.final           # status canceled, reason superseded_by_user_message
+agent.final           # status succeeded, reason superseded_by_user_message
 message created       # follow-up user message is persisted
 new agent turn starts # normal stream events for the follow-up
 ```
@@ -243,7 +253,28 @@ The request-row update should be guarded by `status = "pending"`. If two clients
 - follow-up supersession wins if it updates the row first
 - the loser observes `already_answered` or no pending request and refreshes state
 
-If multiple pending durable requests exist for one thread, the runtime pending request should be closed first. For stale rows with no runtime state, close the oldest pending request first and consider marking additional stale pending requests skipped in the same operation. The implementation should log this case because the steady-state model expects at most one live human-input prompt per thread.
+If multiple pending durable requests exist for one thread, close all of them as skipped in the same operation. The active runtime request should be emitted first so connected clients clear the visible card predictably; stale durable rows can be closed without live SSE if no waiter exists. The implementation should log this case because the steady-state model expects at most one live human-input prompt per thread.
+
+### 6.6 Transition lock scope
+
+The implementation should add a short-lived per-thread transition lock inside `AgentService`.
+
+Use it around state transitions such as:
+
+- accepting an explicit question response
+- closing question requests for follow-up supersession
+- explicit cancel
+- starting a new user-message turn
+
+Do not hold this lock across provider calls, terminal waits, or the human-input wait itself. A long-running turn mutex would make a paused question prompt hold the thread lock for minutes or hours, which is exactly the state where the user needs to send a follow-up message.
+
+The transition lock should protect the handoff:
+
+1. close the old waiting turn
+2. clear runtime and waiter state
+3. start the follow-up turn
+
+That is enough to prevent the current overlapping-turn risk where `startUserMessage(...)` can replace the thread cancellation controller while the old waiting flow is still alive.
 
 ---
 
@@ -286,9 +317,9 @@ When the user sends a follow-up while a question is pending, the web client shou
 
 ### 7.3 Reconcile the pending card
 
-After the normal message POST succeeds, the web client can clear or soften the pending question card if the response includes `superseded_question_requests`.
+After the normal message POST succeeds, the web client should rely on the stream and `/agent/state` refresh to clear the pending question card. The message-create response should not carry a supersession-specific cleanup field.
 
-Even without that field, convergence should come from:
+Convergence should come from:
 
 - `agent.tool_result` replacing the pending synthetic tool row with the completed skipped tool row
 - `agent.final` clearing old pending state
@@ -296,6 +327,11 @@ Even without that field, convergence should come from:
 - `/messages` bootstrap returning the persisted skipped tool result
 
 The existing explicit answer and skip-all buttons should continue to use the question-response route. Their behavior does not need to change except that they should race safely with a follow-up send.
+
+Explicit skip-all and follow-up supersession intentionally diverge:
+
+- explicit skip-all means "answer this prompt with no answers and let the agent continue the original turn"
+- follow-up supersession means "I am moving the conversation forward myself; close the prompt and start from my new message"
 
 ---
 
@@ -314,11 +350,34 @@ This gives mobile a durable escape hatch for stale prompt rows. If a tool call i
 
 ---
 
-## 9. Protocol And Spec Impact During Implementation
+## 9. Attention And Push
+
+The current notification system already has schema, endpoint preferences, unread math, and payload copy for `human_input_requested`, but the service does not yet enqueue that attention kind for `ask_user_questions`.
+
+This feature should not implement human-input push in the first slice. Follow-up supersession should still define the target semantics so the later notification slice has a clear contract:
+
+- a pending `ask_user_questions` prompt may eventually stamp `last_attention_kind = "human_input_requested"` and enqueue a `human_input_requested` outbox row
+- explicit answer, explicit skip-all, follow-up supersession, explicit cancel, and expiry all resolve that human-input attention
+- follow-up supersession should suppress unsent human-input push rows for the superseded request
+- the skipped closeout itself should not create `assistant_completed` attention
+- after explicit answer or explicit skip-all, the original agent turn may continue and later create normal `assistant_completed` attention if it writes a final assistant message
+- after follow-up supersession, the follow-up turn may later create normal `assistant_completed` attention for its own final assistant message
+
+The clean implementation likely needs one of these notification-model improvements:
+
+1. a persisted prompt/message anchor that can act like a message watermark for `human_input_requested`
+2. an attention model that can point directly at `agent_question_request`
+3. a small resolution/suppression helper for pending outbox rows keyed by thread, kind, and request id
+
+Until then, keep this feature focused on closing prompts and avoiding overlapping agent turns.
+
+---
+
+## 10. Protocol And Spec Impact During Implementation
 
 Implementation should update:
 
-- `docs/proto.md` for follow-up-message supersession semantics, optional message response metadata, and `agent.final.reason`
+- `docs/proto.md` for follow-up-message supersession semantics and `agent.final.reason`
 - `service/src/agent/agent.spec.md` for the superseded waiting-turn path
 - `service/src/routes/threads/threads.spec.md` for message-route behavior while pending questions exist
 - `web/src/features/threads/threads.spec.md` for the `waiting_for_user` UI phase and stream reconciliation
@@ -330,28 +389,31 @@ No Bud daemon protocol changes are required.
 
 ---
 
-## 10. Risks
+## 11. Risks
 
 - Overlapping turns are the main correctness risk. The service must serialize the old waiting-turn closeout before starting the follow-up turn.
 - Route-owned transcript writes can drift from `runAgentFlow(...)` transcript behavior. Keep closeout logic in agent-owned helpers where possible.
-- A `canceled` final status with a supersession reason is pragmatic, but clients may need UI language that does not imply the user hit cancel.
+- `succeeded` final events without assistant text are semantically cleaner, but first-party clients must explicitly tolerate them.
 - Durable stale prompt cleanup needs careful replay behavior so future model context sees the skipped tool result before the follow-up user message.
 - Multiple stale pending requests in one thread likely indicate an earlier bug. The first implementation should handle them defensively and log the condition.
+- Holding a lock for an entire agent turn would make human-input waits impossible to supersede. The transition lock must stay scoped to short state changes only.
 
 ---
 
-## 11. Open Questions
+## 12. Resolved Questions
 
-1. Should the message-create response include `superseded_question_requests`, or is stream plus state refresh enough?
-2. Should v1 use `final.status: "canceled"` with `reason: "superseded_by_user_message"`, or should we first update clients to safely handle `succeeded` with no assistant text?
-3. Should the service close all stale pending question requests for a thread, or only the current runtime request plus one durable fallback row?
-4. Do we need a generic per-thread agent-turn mutex before this feature, or can the supersession helper provide enough serialization locally?
-5. Should explicit skip-all from the question card continue the original turn, while follow-up skip-all stops it? The recommendation is yes, because those are different user intents.
-6. Should follow-up supersession resolve thread attention or push-notification state differently from explicit answers?
+| Question | Decision |
+|----------|----------|
+| Should message-create include `superseded_question_requests`? | No. Keep the response shape unchanged and rely on stream/state convergence. |
+| What final status should the old waiting turn emit? | `succeeded` with `reason: "superseded_by_user_message"` and no assistant `message_id`/`text`. |
+| How many stale pending requests should be closed? | Close all pending `ask_user_questions` rows for the thread. |
+| Do we need a generic per-thread mutex? | Use a short-lived transition lock in `AgentService`; do not hold a lock for the full agent turn. |
+| Should explicit skip-all and follow-up supersession behave differently? | Yes. Explicit skip-all continues the original turn; follow-up supersession stops it and starts from the new message. |
+| Should attention/push behavior differ? | Yes, eventually. Follow-up supersession resolves human-input attention and suppresses unsent human-input push, but push/attention implementation should be deferred to a dedicated slice. |
 
 ---
 
-## 12. Acceptance Criteria
+## 13. Acceptance Criteria
 
 - When a pending `ask_user_questions` card is visible, the web composer remains enabled and does not show a loading spinner.
 - Sending a follow-up message through the normal message route skips every pending question server-side.
@@ -360,3 +422,5 @@ No Bud daemon protocol changes are required.
 - A service restart with a durable pending question request still lets the next normal message close the prompt as skipped.
 - Explicit question answers and explicit skip-all continue to work through the existing response route.
 - Web and mobile can recover from stale pending prompts without knowing the request id.
+- The message-create response shape remains unchanged.
+- First-party clients tolerate `final.status: "succeeded"` without assistant text when `reason` is `superseded_by_user_message`.

@@ -176,6 +176,47 @@ Use this as the running status board while the service and web implementation la
 - [x] service request normalization accepts more than five questions
 - [x] prompt/schema/normalization tests updated
 
+## Phase 7: Follow-Up Supersession Service Contract
+
+- [x] normal message route detects pending `ask_user_questions` prompts after duplicate `client_id` checks
+- [x] message-create response shape remains `{ message_id, client_id }`
+- [x] per-thread transition lock added for short service state handoffs
+- [x] explicit question responses, follow-up supersession, cancel, and turn startup share the transition guard
+- [x] generated skip-all response helper exists for stored question requests
+- [x] follow-up supersession closes all pending question rows for the thread as answered/skipped
+- [x] live waiter can resolve with a superseded outcome distinct from explicit answers
+- [x] superseded live turn records a skipped tool result
+- [x] superseded live turn emits `final.status: "succeeded"` with `reason: "superseded_by_user_message"`
+- [x] superseded live turn does not make another model call
+- [x] stale durable pending rows are closed and replay-safe where possible
+- [ ] service tests cover duplicate send, racing explicit answer, all-pending-row cleanup, and old-turn no-continuation
+
+## Phase 8: Waiting-For-User Client UX
+
+- [x] web route status distinguishes `waiting_for_user` from `streaming`
+- [x] bootstrap `/agent/state.phase = "waiting_for_user"` maps to waiting UI state
+- [x] live `agent.tool_call` for `ask_user_questions` maps to waiting UI state
+- [x] non-question tool calls still map to active streaming/loading behavior
+- [x] `ThinkingIndicator` is hidden while only waiting for user input
+- [x] composer stays enabled while pending question cards are visible
+- [x] send button spinner is tied to dispatching, not waiting state
+- [x] follow-up send uses only the normal message route
+- [x] web tolerates `final.status: "succeeded"` without assistant text
+- [x] mobile handoff documents follow-up message recovery
+- [ ] web tests cover waiting UI state, composer behavior, and final reconciliation
+
+## Phase 9: Human-Input Attention Resolution
+
+- [ ] attention anchor decision recorded
+- [ ] prompt creation stamps or enqueues `human_input_requested` attention when implemented
+- [ ] explicit answer resolves human-input attention when implemented
+- [ ] explicit skip-all resolves human-input attention when implemented
+- [ ] follow-up supersession resolves human-input attention when implemented
+- [ ] follow-up supersession suppresses stale human-input push rows when implemented
+- [ ] skipped closeout does not create assistant-completed attention
+- [ ] newer assistant-completed attention is preserved
+- [-] human-input attention/push implementation deferred until the attention anchor is chosen
+
 ### Overall Progress
 
 | Phase | Status | Notes |
@@ -186,6 +227,9 @@ Use this as the running status board while the service and web implementation la
 | 4 | Not Started | Notification/docs/validation updates not complete |
 | 5 | Not Started | Integration test hardening scoped but not implemented |
 | 6 | Implemented | Prompt guidance and question-count cap removal completed and covered by focused service tests |
+| 7 | Implemented | Follow-up message supersession service path landed; broader race/route test coverage remains tracked |
+| 8 | Implemented | Waiting-for-user web UX and mobile handoff landed; broader UI tests remain tracked |
+| 9 | Deferred | Human-input attention/push resolution requires an attention anchor decision |
 
 ## Notes
 

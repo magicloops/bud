@@ -102,6 +102,12 @@ export type ApiMessagePage = {
   }
 }
 
+export type ApiCreateMessageResponse = {
+  message_id: string
+  client_id: string
+  message: ApiMessage
+}
+
 export type ApiAskUserQuestionKind =
   | 'boolean'
   | 'single_choice'

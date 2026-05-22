@@ -1520,7 +1520,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.resync_required`
   - `{ "error": "resync_required", "provided_cursor": "01CUR..." }`
 - `final`
-  - `{ "turn_id": "01TURN...", "status": "succeeded|failed|canceled", "message_id"?: "uuid", "text"?: "...", "error"?: "..." }`
+  - `{ "turn_id": "01TURN...", "status": "succeeded|failed|canceled", "message_id"?: "uuid", "text"?: "...", "reason"?: "superseded_by_user_message", "error"?: "..." }`
 - `heartbeat`
 
 Resume rules:
@@ -1565,6 +1565,8 @@ Rules:
 - first-party clients must not remove a visible assistant draft just because an `agent.tool_call` arrives; text before or between tool calls is persisted as an assistant `agent.message`
 - first-party clients should use `agent.tool_call.args.wait_for` or `/agent/state.pending_tool.args.wait_for` to detect settled terminal waits instead of inferring long-running terminal progress from elapsed time
 - first-party clients should render `ask_user_questions` prompts from either a live `agent.tool_call` or `/agent/state.pending_tool` after refresh, and submit answers through the thread-scoped response route
+- first-party clients should treat `/agent/state.phase: "waiting_for_user"` as paused human input rather than background loading, and may send normal follow-up messages through `/api/threads/:thread_id/messages`
+- normal follow-up messages while `ask_user_questions` is pending are service-owned supersession: the service stores skipped answers for pending prompts, emits a completed tool row when possible, and may emit successful `final` without `message_id` or `text`
 - completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
 
@@ -1673,6 +1675,22 @@ If the service no longer has the live in-memory waiter when the response is
 accepted, it persists a user message containing the same self-contained Q/A
 summary and starts a normal follow-up agent turn.
 
+If the browser sends a normal follow-up message while the thread has pending
+`ask_user_questions` rows, the service closes all pending prompts for that
+thread as skipped before persisting the new user message. The message-create
+response remains `{ "message_id": "uuid", "client_id": "uuidv7" }`. The old
+waiting turn emits a skipped `agent.tool_result` when possible and then:
+
+```json
+{
+  "turn_id": "01TURN...",
+  "status": "succeeded",
+  "reason": "superseded_by_user_message"
+}
+```
+
+No assistant `message_id` or `text` is created for that old turn.
+
 ---
 
 ## 11. Security
@@ -1743,6 +1761,7 @@ summary and starts a normal follow-up agent turn.
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits
   - model-facing `ask_user_questions` lets the agent pause for structured user input; `/agent/state.phase` may be `waiting_for_user`, clients submit `ask_user_questions_response_v1` through the thread-scoped response route, and completed tool rows include a self-contained Q/A result
+  - normal follow-up messages while `ask_user_questions` is pending now close pending prompts as skipped server-side, finish the old waiting turn with `reason: "superseded_by_user_message"`, and keep the message-create response shape unchanged
   - settled `terminal_send` and `terminal_observe(wait_for:"settled")` now use a service-owned one-hour timeout budget, while non-settled waits keep shorter defaults
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
   - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument

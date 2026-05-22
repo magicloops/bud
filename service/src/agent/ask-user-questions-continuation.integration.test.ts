@@ -184,6 +184,44 @@ function installAcceptTransaction(row: AgentQuestionRequestRow = buildRow()) {
   });
 }
 
+function installSkipPendingTransaction(rows: AgentQuestionRequestRow[] = [buildRow()]) {
+  const updatedValues: Record<string, unknown>[] = [];
+  mock.method(db, "transaction", async (callback: (txArg: unknown) => Promise<unknown>) => {
+    const tx = {
+      select() {
+        return {
+          from() {
+            return {
+              where() {
+                return Promise.resolve(rows);
+              },
+            };
+          },
+        };
+      },
+      update() {
+        return {
+          set(values: Record<string, unknown>) {
+            updatedValues.push(values);
+            return {
+              where() {
+                return {
+                  returning() {
+                    const row = rows[updatedValues.length - 1];
+                    return Promise.resolve(row ? [{ ...row, ...values }] : []);
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    return callback(tx);
+  });
+  return updatedValues;
+}
+
 test("submitQuestionResponse resolves a live waiter with one structured tool result", async (t) => {
   t.after(() => mock.restoreAll());
   installAcceptTransaction();
@@ -214,6 +252,45 @@ test("submitQuestionResponse resolves a live waiter with one structured tool res
     (resolved as { toolResult: { responses: Array<{ display_answer?: string }> } }).toolResult.responses[0]?.display_answer,
     "Staging",
   );
+});
+
+test("supersedePendingUserQuestionsForFollowUp resolves a live waiter as skipped and waits for closeout", async (t) => {
+  t.after(() => mock.restoreAll());
+  const updatedValues = installSkipPendingTransaction();
+
+  const { service } = createService();
+  const registry = Reflect.get(service, "userQuestions") as {
+    register(threadId: string, questionRequestId: string): Promise<unknown>;
+  };
+  const waiter = registry.register(THREAD_ID, REQUEST_ID);
+  const superseded = service.supersedePendingUserQuestionsForFollowUp({
+    threadId: THREAD_ID,
+    answeredByUserId: "user-1",
+  });
+
+  const resolved = await waiter as {
+    continuation?: string;
+    reason?: string;
+    toolResult: { responses: Array<{ status: string; skip_reason?: string }> };
+    onFinalized?: () => void;
+  };
+  assert.equal(resolved.continuation, "supersede");
+  assert.equal(resolved.reason, "superseded_by_user_message");
+  assert.equal(resolved.toolResult.responses[0]?.status, "skipped");
+  assert.equal(resolved.toolResult.responses[0]?.skip_reason, "user_skipped");
+  assert.equal(updatedValues[0]?.status, "answered");
+  assert.equal(updatedValues[0]?.answeredByUserId, "user-1");
+
+  let completed = false;
+  const completion = superseded.then((result) => {
+    completed = true;
+    return result;
+  });
+  await Promise.resolve();
+  assert.equal(completed, false);
+
+  resolved.onFinalized?.();
+  assert.deepEqual(await completion, { superseded: 1 });
 });
 
 test("submitQuestionResponse falls back to a self-contained user message without a live waiter", async (t) => {
@@ -303,10 +380,10 @@ test("cancelThread rejects pending question waiters and marks pending rows cance
       (err: unknown) => (err instanceof Error ? err.message : String(err)),
     );
 
-  let updateValues: Record<string, unknown> | null = null;
+  const updateCapture: { values: Record<string, unknown> | null } = { values: null };
   mock.method(db, "update", () => ({
     set(values: Record<string, unknown>) {
-      updateValues = values;
+      updateCapture.values = values;
       return {
         where() {
           return Promise.resolve(undefined);
@@ -318,8 +395,10 @@ test("cancelThread rejects pending question waiters and marks pending rows cance
   await service.cancelThread(THREAD_ID);
 
   assert.equal(await waiter, "agent_canceled");
-  assert.equal(updateValues?.status, "canceled");
-  assert.ok(updateValues?.updatedAt instanceof Date);
+  const capturedUpdate = updateCapture.values;
+  assert.ok(capturedUpdate);
+  assert.equal(capturedUpdate.status, "canceled");
+  assert.ok(capturedUpdate.updatedAt instanceof Date);
   assert.deepEqual(terminal.rejected, [
     {
       threadId: THREAD_ID,

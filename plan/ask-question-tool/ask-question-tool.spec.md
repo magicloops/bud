@@ -4,7 +4,7 @@ Implementation planning documents for the `ask_user_questions` agent tool across
 
 ## Purpose
 
-This folder turns the design in [../../design/ask-user-questions-tool-contract.md](../../design/ask-user-questions-tool-contract.md) into an actionable backend/frontend rollout plan.
+This folder turns the design in [../../design/ask-user-questions-tool-contract.md](../../design/ask-user-questions-tool-contract.md) and the follow-up supersession design in [../../design/follow-up-message-supersedes-ask-user-questions.md](../../design/follow-up-message-supersedes-ask-user-questions.md) into actionable backend/frontend rollout plans.
 
 The plan assumes:
 
@@ -14,6 +14,7 @@ The plan assumes:
 - the accepted response is converted into one self-contained tool result that repeats each question before its answer
 - v1 supports live in-process tool-result continuation
 - restart recovery falls back to a normal follow-up user message containing the same question/answer summary
+- normal follow-up messages can supersede pending prompts by closing questions as skipped and starting a fresh turn
 - the tool belongs to the owning thread and authenticated viewer; there is no daemon protocol change
 
 ## Files
@@ -100,6 +101,18 @@ Subphase 5d covering local end-to-end smoke scenarios and regression evidence to
 
 Follow-on phase covering prompt-language changes that steer multiple needed questions into `ask_user_questions` instead of markdown lists, plus removal of the hard five-question cap from the model-facing schema and service request normalization.
 
+### `phase-7-follow-up-supersession-service.md`
+
+Follow-on service phase covering normal message sends while `ask_user_questions` is pending, server-side skipped-answer closeout, transition locking, stale durable prompt cleanup, final event semantics, and prevention of overlapping turns.
+
+### `phase-8-waiting-for-user-client-ux.md`
+
+Follow-on client phase covering phase-aware web UI state, enabled composer behavior while waiting for user input, spinner cleanup, follow-up send behavior, stream/state reconciliation, and mobile handoff updates.
+
+### `phase-9-human-input-attention-resolution.md`
+
+Deferred follow-on phase covering the eventual `human_input_requested` attention anchor, push enqueue/suppression rules, and resolution semantics for explicit answers, skip-all, follow-up supersession, cancel, and expiry.
+
 ### `mobile-client-handoff.md`
 
 Mobile/native implementation handoff for consuming `ask_user_questions` prompts.
@@ -112,6 +125,17 @@ Mobile/native implementation handoff for consuming `ask_user_questions` prompts.
 - completed `ask_user_questions_tool_result_v1` rendering
 - mobile-focused test checklist and v1 out-of-scope items
 
+### `mobile-follow-up-supersession-handoff.md`
+
+Focused mobile/native handoff for sending normal follow-up messages while an `ask_user_questions` prompt is pending.
+
+**Covers**:
+- keeping the normal composer enabled during `waiting_for_user`
+- using `POST /api/threads/:thread_id/messages` rather than the question-response route
+- replacing optimistic rows with the create-message `message` payload for canonical timestamp ordering
+- handling skipped prompt `agent.tool_result` and `final.reason: "superseded_by_user_message"`
+- race, retry, error-handling, and mobile test checklist guidance
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -123,6 +147,7 @@ Manual verification checklist for the shipped contract.
 ## Dependencies
 
 - [../../design/ask-user-questions-tool-contract.md](../../design/ask-user-questions-tool-contract.md) - source design
+- [../../design/follow-up-message-supersedes-ask-user-questions.md](../../design/follow-up-message-supersedes-ask-user-questions.md) - follow-up message supersession design
 - [../../service/src/agent/agent.spec.md](../../service/src/agent/agent.spec.md) - current model/tool/transcript ownership
 - [../../service/src/routes/routes.spec.md](../../service/src/routes/routes.spec.md) - thread route and ownership contracts
 - [../../service/src/runtime/runtime.spec.md](../../service/src/runtime/runtime.spec.md) - `/agent/state` and stream runtime shape

@@ -39,7 +39,7 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 
 **Responsibilities**:
 - stable `client_id` identity comparison and chronological sorting
-- optimistic user-message reconciliation into canonical persisted ids
+- optimistic user-message reconciliation into canonical persisted rows, including server timestamps and metadata
 - pending-tool / draft-assistant synthetic-row detection and cleanup
 - pending `ask_user_questions` synthetic rows carry the server `started_at` timestamp when available so refresh and live stream rows sort consistently
 - live tool-call events and `/agent/state` snapshots share the same pending-tool row builder
@@ -59,7 +59,7 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 Node-runner coverage for transcript reconciliation rules.
 
 **Coverage**:
-- optimistic → canonical id reconciliation
+- optimistic → canonical row reconciliation, including live ordering when a superseded tool result is inserted before a follow-up user message
 - stale synthetic overlay replacement
 - live `agent.tool_call` events build pending `ask_user_questions` prompt rows
 - `/agent/state` bootstrap preserves pending `ask_user_questions` prompt rows
@@ -201,6 +201,7 @@ Agent SSE ownership for the existing-thread route.
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
+- map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
 - pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering
 - accept `agent.message` for both intermediate assistant text segments and final assistant rows
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
@@ -215,6 +216,7 @@ Agent SSE ownership for the existing-thread route.
 
 **Route contract**:
 - the route still owns the initial loader fetches plus the top-level `status`/`error` state
+- the route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to `waiting_for_user`, keeping global loading indicators separate from paused human input
 - the hook owns EventSource lifecycle, cursor tracking, reconnect behavior, and event parsing
 
 ### `thread-stream-timing.ts`

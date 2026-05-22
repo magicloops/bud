@@ -33,7 +33,7 @@ Focused route-handler coverage for thread-list serialization.
 
 ### `messages.ts`
 
-Thread message history, read-watermark, and create/send routes, including pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available.
+Thread message history, read-watermark, and create/send routes, including follow-up supersession of pending `ask_user_questions` prompts, pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available. Create-message responses include the full serialized user message so clients can replace optimistic rows with canonical timestamps and metadata.
 
 ### `messages.test.ts`
 
@@ -126,6 +126,7 @@ Regression test for the split thread-route registration surface.
 - file viewer session creation stamps the acting viewer on `file_session.created_by_user_id` and never trusts a client-supplied Bud id
 - thread model-preference updates resolve through the same owned-thread boundary and return `404` for signed-in non-owners
 - question-response submission resolves the thread owner first, loads requests by `(thread_id, question_request_id)`, stamps `answered_by_user_id`, and returns `404` for cross-thread or cross-user request ids
+- normal message creation resolves ownership first, returns duplicate `client_id` retries with the serialized existing message before side effects, then asks `AgentService` to close pending question requests as skipped before persisting and returning the new serialized user message
 
 ---
 

@@ -10,8 +10,12 @@
 **Phase 4**: [phase-4-notifications-docs-and-validation.md](./phase-4-notifications-docs-and-validation.md)
 **Phase 5**: [phase-5-integration-tests.md](./phase-5-integration-tests.md)
 **Phase 6**: [phase-6-prompt-guidance-and-question-count.md](./phase-6-prompt-guidance-and-question-count.md)
+**Phase 7**: [phase-7-follow-up-supersession-service.md](./phase-7-follow-up-supersession-service.md)
+**Phase 8**: [phase-8-waiting-for-user-client-ux.md](./phase-8-waiting-for-user-client-ux.md)
+**Phase 9**: [phase-9-human-input-attention-resolution.md](./phase-9-human-input-attention-resolution.md)
 **Related Docs**:
 - [../../design/ask-user-questions-tool-contract.md](../../design/ask-user-questions-tool-contract.md)
+- [../../design/follow-up-message-supersedes-ask-user-questions.md](../../design/follow-up-message-supersedes-ask-user-questions.md)
 - [../../docs/proto.md](../../docs/proto.md)
 - [../../service/src/agent/agent.spec.md](../../service/src/agent/agent.spec.md)
 - [../../web/src/features/threads/threads.spec.md](../../web/src/features/threads/threads.spec.md)
@@ -43,7 +47,9 @@ Implement the `ask_user_questions` tool for the service and reference web client
 - live in-process responses resume the original provider tool-call loop with one structured tool result
 - restart recovery persists the same Q/A summary as a normal follow-up user message and starts a new agent turn
 - completed prompts render as one canonical transcript item
-- human-input attention and optional push notifications work from the same boundary
+- normal follow-up messages can close pending prompts as skipped and start fresh turns
+- clients treat `waiting_for_user` as a paused human-input state rather than active loading
+- human-input attention and optional push notifications work from the same boundary or remain explicitly deferred
 
 ## Fixed Decisions
 
@@ -64,6 +70,12 @@ Implement the `ask_user_questions` tool for the service and reference web client
 - Live in-process response resolves the pending tool promise and continues the current turn.
 - If no pending in-memory waiter exists, response submission persists a user-visible Q/A follow-up message and starts a normal new agent turn.
 - The fallback message uses the same service-generated result payload and repeats each question before its answer.
+- Normal follow-up messages sent through `POST /api/threads/:thread_id/messages` close all pending `ask_user_questions` rows for that thread as skipped before starting the follow-up turn.
+- The message-create response shape remains `{ message_id, client_id }`; it does not expose supersession metadata.
+- Follow-up supersession emits `final.status: "succeeded"` with `reason: "superseded_by_user_message"` and no assistant `message_id` or `text`.
+- Explicit skip-all from the question card continues the original turn; follow-up supersession stops the old waiting turn and starts from the new user message.
+- The service uses a short-lived per-thread transition lock for state handoffs, not a mutex held across provider/tool/human waits.
+- Human-input attention/push resolution for superseded prompts is deferred to a later notification slice unless Phase 9 is explicitly pulled forward.
 
 ## Success Criteria
 
@@ -80,6 +92,10 @@ Implement the `ask_user_questions` tool for the service and reference web client
 - [ ] web renders pending question prompts and completed Q/A summaries
 - [ ] web supports answering and skipping every question kind in v1
 - [ ] human-input attention is stamped and push outbox integration is implemented or explicitly deferred
+- [ ] normal follow-up message sends close pending prompts as skipped server-side
+- [ ] follow-up supersession does not continue the old model turn
+- [ ] web composer remains available while `waiting_for_user`
+- [ ] web does not show loading indicators while only waiting for human input
 - [ ] protocol, service, db, web, and migration specs are updated
 
 ## Non-Goals
@@ -102,6 +118,9 @@ Implement the `ask_user_questions` tool for the service and reference web client
 | 4 | [phase-4-notifications-docs-and-validation.md](./phase-4-notifications-docs-and-validation.md) | High | Notifications, docs, specs, migration docs, and manual validation align with the shipped contract |
 | 5 | [phase-5-integration-tests.md](./phase-5-integration-tests.md) | High | Integration tests and local smoke coverage harden route, runtime, web, and end-to-end behavior |
 | 6 | [phase-6-prompt-guidance-and-question-count.md](./phase-6-prompt-guidance-and-question-count.md) | High | Prompt guidance avoids markdown question blocks and the hard question-count cap is removed |
+| 7 | [phase-7-follow-up-supersession-service.md](./phase-7-follow-up-supersession-service.md) | High | Normal follow-up message sends close pending prompts as skipped, finish the old waiting turn, and start a fresh turn without response-shape churn |
+| 8 | [phase-8-waiting-for-user-client-ux.md](./phase-8-waiting-for-user-client-ux.md) | High | Web and mobile client guidance treat `waiting_for_user` as a paused input state with composer access and stream/state reconciliation |
+| 9 | [phase-9-human-input-attention-resolution.md](./phase-9-human-input-attention-resolution.md) | Deferred | Human-input attention and push semantics are anchored, resolved, and suppressed correctly for answers, skip-all, supersession, cancel, and expiry |
 
 ## Current Code Map
 
@@ -111,8 +130,11 @@ Implement the `ask_user_questions` tool for the service and reference web client
 - `service/src/agent/contracts.ts` owns normalized tool directive/result types and client-facing args.
 - `service/src/agent/agent-service.ts` executes provider-ordered tool calls serially and appends tool results to the provider conversation.
 - `service/src/agent/transcript-writer.ts` emits `agent.tool_call`, stores tool rows, emits `agent.tool_result`, and manages runtime pending-tool state.
+- `service/src/agent/user-question-repository.ts` owns durable question request creation, answer acceptance, skipped-result generation, and status transitions.
+- `service/src/agent/user-question-registry.ts` owns live in-memory question waiters.
 - `service/src/runtime/agent-runtime-state.ts` owns `/agent/state` snapshots and bounded SSE cursor state.
 - `service/src/routes/threads/agent.ts` owns `/agent/state`, `/agent/stream`, and `/cancel`.
+- `service/src/routes/threads/messages.ts` owns normal user-message creation and the follow-up supersession entrypoint for pending question prompts.
 - `service/src/routes/threads/shared.ts` owns thread params and ownership helpers.
 - `service/src/db/schema.ts` is the schema source of truth and must be paired with a checked-in migration.
 
@@ -122,6 +144,8 @@ Implement the `ask_user_questions` tool for the service and reference web client
 - `web/src/features/threads/use-agent-stream.ts` parses agent SSE events.
 - `web/src/features/threads/thread-message-state.ts` builds synthetic pending tool rows from `/agent/state`.
 - `web/src/features/threads/use-thread-messages.ts` owns transcript reconciliation.
+- `web/src/components/workbench/command-composer.tsx` owns composer disabled/loading behavior, including keeping normal sends available during `waiting_for_user`.
+- `web/src/components/workbench/thinking-indicator.tsx` owns the global agent loading indicator.
 - `web/src/components/workbench/chat-timeline.tsx` renders timeline rows.
 - `web/src/components/message-renderers/tools/` renders completed tool payloads.
 - `web/src/routes/$budId/$threadId.tsx` composes thread hooks and passes callbacks to presentation components.
@@ -228,6 +252,33 @@ Response:
 - `fallback_user_message`
 - `already_answered`
 
+Follow-up message route behavior:
+
+```text
+POST /api/threads/:thread_id/messages
+```
+
+If the thread has pending `ask_user_questions` rows, the service closes them as skipped before persisting and starting the follow-up message turn. The response shape remains unchanged:
+
+```json
+{
+  "message_id": "uuid",
+  "client_id": "019..."
+}
+```
+
+The old waiting turn emits:
+
+```json
+{
+  "turn_id": "01TURN...",
+  "status": "succeeded",
+  "reason": "superseded_by_user_message"
+}
+```
+
+with no assistant `message_id` or `text`.
+
 ## Expected Files And Areas
 
 ### Service
@@ -239,9 +290,12 @@ Response:
 - `service/src/agent/agent-service.ts`
 - `service/src/agent/transcript-writer.ts`
 - `service/src/agent/user-question-contracts.ts` or equivalent
+- `service/src/agent/user-question-repository.ts`
+- `service/src/agent/user-question-registry.ts`
 - `service/src/agent/user-question-tool-executor.ts` or equivalent
 - `service/src/runtime/agent-runtime-state.ts`
 - `service/src/routes/threads/agent.ts`
+- `service/src/routes/threads/messages.ts`
 - `service/src/routes/threads/shared.ts`
 - focused tests under `service/src/agent/`, `service/src/runtime/`, and `service/src/routes/threads/`
 
@@ -251,6 +305,8 @@ Response:
 - `web/src/features/threads/use-agent-stream.ts`
 - `web/src/features/threads/thread-message-state.ts`
 - `web/src/features/threads/use-thread-messages.ts`
+- `web/src/components/workbench/command-composer.tsx`
+- `web/src/components/workbench/thinking-indicator.tsx`
 - `web/src/components/workbench/chat-timeline.tsx`
 - `web/src/components/workbench/question-request-card.tsx` or equivalent
 - `web/src/components/message-renderers/tools/ask-user-questions.tsx`
@@ -283,6 +339,9 @@ Response:
 | Duplicate response submit creates multiple continuations | Medium | High | Use `client_response_id` idempotency plus row status compare/update |
 | Cross-user prompt leak | Low | High | Route reads request only after `requireAuthorizedThreadAccess(...)` |
 | Web treats `waiting_for_user` as normal streaming and disables useful input forever | Medium | Medium | Add phase-aware UI and explicit answer/cancel affordances |
+| Follow-up send overlaps the old waiting turn | Medium | High | Add a short-lived per-thread transition lock and finish superseded turns before starting follow-up turns |
+| Follow-up supersession accidentally continues the old provider loop | Medium | High | Distinguish explicit answers from superseded waiter outcomes and return from `runAgentFlow(...)` after recording skipped closeout |
+| Message route response grows implementation-specific cleanup fields | Medium | Medium | Keep response shape unchanged and rely on SSE plus `/agent/state` convergence |
 | Push notifications fire repeatedly for the same unanswered prompt | Medium | Medium | Use outbox dedupe keys scoped to request id |
 
 ## Definition Of Done
@@ -293,4 +352,7 @@ Response:
 - [ ] service tests cover contract validation, ownership, live continuation, and restart fallback
 - [ ] web tests cover pending prompt overlay and response payload construction
 - [ ] integration-test follow-on coverage is implemented or explicitly tracked through Phase 5
+- [ ] follow-up supersession service behavior is implemented or explicitly tracked through Phase 7
+- [ ] `waiting_for_user` client UX cleanup is implemented or explicitly tracked through Phase 8
+- [ ] human-input attention/push resolution is implemented or explicitly deferred through Phase 9
 - [ ] docs/specs describe the shipped route, stream state, and transcript behavior

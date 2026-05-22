@@ -1,9 +1,10 @@
 import { useMemo, useState, type ReactNode, type RefObject } from 'react'
 import { MoreVertical, Square } from 'lucide-react'
+import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 
 type ThreadTerminalPaneProps = {
   error: string | null
-  status: 'idle' | 'dispatching' | 'streaming'
+  status: WorkbenchStatus
   terminalConnection: 'connected' | 'reconnecting' | 'offline' | 'disconnected'
   terminalHasOutput: boolean
   terminalOutputTruncated: boolean

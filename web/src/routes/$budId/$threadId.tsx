@@ -42,11 +42,12 @@ import type {
   ApiAgentState,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
+  ApiCreateMessageResponse,
   ApiMessagePage,
   ApiThread,
 } from '@/lib/api-types'
 import type { OpenFileCandidate } from '@/lib/file-paths'
-import type { ViewMode } from '@/components/workbench/workspace-top-bar'
+import type { ViewMode, WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { useBudRouteContext } from '@/contexts/bud-route-context'
 import { useLayout } from '@/contexts/layout-context'
 import { useBudStatus } from '@/contexts/bud-status-context'
@@ -93,9 +94,7 @@ function ThreadView() {
   const { updateStatus: updateBudStatus } = useBudStatus()
 
   const [messageText, setMessageText] = useState('')
-  const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>(
-    initialAgentState.active ? 'streaming' : 'idle',
-  )
+  const [status, setStatus] = useState<WorkbenchStatus>(getStatusFromAgentState(initialAgentState))
   const [error, setError] = useState<string | null>(null)
   const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
@@ -158,7 +157,7 @@ function ThreadView() {
 
   // Update messages when loader data changes
   useEffect(() => {
-    setStatus(initialAgentState.active ? 'streaming' : 'idle')
+    setStatus(getStatusFromAgentState(initialAgentState))
   }, [initialAgentState, initialMessagePage])
 
   useEffect(() => {
@@ -226,7 +225,7 @@ function ThreadView() {
 
     applyAgentState(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
-    setStatus(nextAgentState.active ? 'streaming' : 'idle')
+    setStatus(getStatusFromAgentState(nextAgentState))
     return nextAgentState
   }, [applyAgentState])
 
@@ -240,7 +239,7 @@ function ThreadView() {
 
     mergeLatestBootstrap(nextPage, nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
-    setStatus(nextAgentState.active ? 'streaming' : 'idle')
+    setStatus(getStatusFromAgentState(nextAgentState))
     return nextAgentState
   }, [mergeLatestBootstrap])
 
@@ -318,6 +317,7 @@ function ThreadView() {
     applyToolResultMessage(message)
     if (message.metadata?.tool === 'ask_user_questions') {
       setQuestionSubmitError(null)
+      setStatus((current) => (current === 'dispatching' ? current : 'streaming'))
     }
     const tool = typeof message.metadata?.tool === 'string' ? message.metadata.tool : null
     if (tool?.startsWith('web_view.')) {
@@ -408,16 +408,6 @@ function ThreadView() {
     shouldAbortForUnauthorized,
     updateBudStatus,
   })
-  const isWaitingForQuestion = useMemo(
-    () =>
-      messages.some(
-        (message) =>
-          message.role === 'tool' &&
-          message.metadata?.pending === true &&
-          message.metadata?.tool === 'ask_user_questions',
-      ),
-    [messages],
-  )
   const previousTerminalConnectionRef = useRef(terminalConnection)
   const terminalConnectedRecoveryEpochRef = useRef(terminalConnection === 'connected' ? 1 : 0)
   const lastWebViewReconnectRefreshEpochRef = useRef(0)
@@ -517,11 +507,17 @@ function ThreadView() {
         throw new Error(body.error ?? `HTTP ${messageResp.status}`)
       }
 
-      const { message_id: persistedMessageId, client_id: persistedClientId } = await messageResp.json() as {
-        message_id: string
-        client_id: string
-      }
-      reconcilePersistedUserMessage(optimisticId, persistedMessageId, persistedClientId)
+      const {
+        message_id: persistedMessageId,
+        client_id: persistedClientId,
+        message: persistedMessage,
+      } = await messageResp.json() as ApiCreateMessageResponse
+      reconcilePersistedUserMessage(
+        optimisticId,
+        persistedMessageId,
+        persistedClientId,
+        persistedMessage,
+      )
 
       try {
         await refreshAgentState(threadId)
@@ -572,7 +568,7 @@ function ThreadView() {
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
           />
-          <ThinkingIndicator isVisible={status !== 'idle'} />
+          <ThinkingIndicator isVisible={status === 'streaming'} />
         </div>
       )}
       rightPane={(
@@ -634,7 +630,6 @@ function ThreadView() {
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
-          disabledReason={isWaitingForQuestion ? 'Answer or skip the pending questions to continue.' : null}
         />
       )}
       debugPanel={(
@@ -646,4 +641,14 @@ function ThreadView() {
       )}
     />
   )
+}
+
+function getStatusFromAgentState(agentState: ApiAgentState): WorkbenchStatus {
+  if (!agentState.active) {
+    return 'idle'
+  }
+  if (agentState.phase === 'waiting_for_user' || agentState.pending_tool?.name === 'ask_user_questions') {
+    return 'waiting_for_user'
+  }
+  return 'streaming'
 }

@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react'
-import { WorkspaceTopBar, type ViewMode } from '@/components/workbench/workspace-top-bar'
+import { WorkspaceTopBar, type ViewMode, type WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 
 type WorkspaceShellProps = {
   title: string
   view: ViewMode
   onViewChange: (view: ViewMode) => void
   onToggleThreads: () => void
-  status: 'idle' | 'dispatching' | 'streaming'
+  status: WorkbenchStatus
   fileViewLabel?: string | null
   leftPane: ReactNode
   rightPane: ReactNode

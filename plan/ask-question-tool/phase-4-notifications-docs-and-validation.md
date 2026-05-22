@@ -9,7 +9,7 @@
 
 Finish the feature as a product contract, not just a working local path:
 
-- integrate `human_input_requested` attention/push behavior
+- document the `human_input_requested` attention/push decision
 - update protocol and spec docs
 - update migration docs
 - create mobile handoff notes if needed
@@ -19,13 +19,15 @@ Finish the feature as a product contract, not just a working local path:
 
 ### 1. Human-Input Attention
 
-When `ask_user_questions` becomes durable:
+The full human-input attention anchor and push implementation is now tracked in [phase-9-human-input-attention-resolution.md](./phase-9-human-input-attention-resolution.md). Phase 4 should only document the current shipped state and keep the notification TODO accurate.
+
+When `ask_user_questions` becomes durable in a future attention slice:
 
 - stamp thread attention metadata with `kind: "human_input_requested"`
 - choose whether to associate attention with a placeholder message id or with the eventual visible tool/user row
 - if no message exists yet, prefer adding a message id only when the prompt becomes visible in transcript; otherwise document request-id-only attention as a follow-up
 
-When the prompt is answered, canceled, or expired:
+When the prompt is answered, skipped, superseded by a follow-up message, canceled, or expired:
 
 - ensure the thread no longer appears as requiring human input once read-state catches up
 - avoid clearing newer assistant-completed attention
@@ -46,7 +48,7 @@ If not enabling push in this pass:
 
 - keep attention metadata working locally
 - leave the notifications spec TODO in place with a narrower note
-- record the explicit deferral in this phase doc/checklist
+- record the explicit deferral in this phase doc/checklist and Phase 9
 
 ### 3. Protocol Docs
 
@@ -110,8 +112,8 @@ Per repo instructions, if a build/run command fails, capture the exact command a
 
 ## Acceptance Criteria
 
-- [ ] human-input attention behavior is implemented or explicitly deferred
-- [ ] push behavior is implemented or explicitly deferred
+- [ ] human-input attention behavior is implemented or explicitly deferred to Phase 9
+- [ ] push behavior is implemented or explicitly deferred to Phase 9
 - [ ] `docs/proto.md` describes the shipped contract
 - [ ] service specs match implementation
 - [ ] web specs match implementation

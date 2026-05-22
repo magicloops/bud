@@ -281,7 +281,7 @@ test("OpenAI debug logging emits structured LLM response payload", () => {
     false,
     true,
   );
-  const response = {
+  const canonicalResponse = {
     id: "resp_debug",
     content: [{ type: "text" as const, text: "hello\nworld" }],
     stopReason: "end_turn" as const,
@@ -292,15 +292,15 @@ test("OpenAI debug logging emits structured LLM response payload", () => {
   };
 
   const debugCanonicalResponse = Reflect.get(runner, "debugCanonicalResponse").bind(runner) as (
-    response: typeof response,
+    response: typeof canonicalResponse,
   ) => void;
-  debugCanonicalResponse(response);
+  debugCanonicalResponse(canonicalResponse);
 
   assert.equal(logs.length, 1);
   assert.equal(logs[0]?.message, "LLM response payload");
   assert.equal(logs[0]?.meta.component, "agent");
   assert.equal(typeof logs[0]?.meta.llm_response, "object");
-  assert.deepEqual(logs[0]?.meta.llm_response, response);
+  assert.deepEqual(logs[0]?.meta.llm_response, canonicalResponse);
 });
 
 test("invokeModel keeps text blocks around multiple tool calls", async (t) => {

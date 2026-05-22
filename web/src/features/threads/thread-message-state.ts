@@ -22,6 +22,10 @@ export const sortMessagesChronologically = (messages: ApiMessage[]) =>
     if (timeDelta !== 0) {
       return timeDelta
     }
+    const messageIdDelta = left.message_id.localeCompare(right.message_id)
+    if (messageIdDelta !== 0) {
+      return messageIdDelta
+    }
     return getMessageIdentity(left).localeCompare(getMessageIdentity(right))
   })
 
@@ -48,7 +52,20 @@ export const reconcileMessagePersistence = (
   currentClientId: string,
   nextMessageId: string,
   nextClientId: string,
+  nextMessage?: ApiMessage,
 ) => {
+  if (nextMessage) {
+    const nextIdentity = getMessageIdentity(nextMessage)
+    return sortMessagesChronologically(
+      existing
+        .filter((message) => {
+          const identity = getMessageIdentity(message)
+          return identity !== currentClientId && identity !== nextIdentity
+        })
+        .concat(nextMessage),
+    )
+  }
+
   const nextMessages = existing.map((message) => {
     if (getMessageIdentity(message) !== currentClientId) {
       return message

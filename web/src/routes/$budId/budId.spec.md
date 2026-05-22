@@ -55,7 +55,7 @@ New thread creation view - allows users to start a new conversation.
 - Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
   1. POST `/api/threads` with `{ bud_id, model, reasoning_effort }` to create the thread and persist its initial model preference
-  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, model, reasoning_effort }` and read `{ message_id, client_id }`
+  2. POST `/api/threads/:id/messages` to send first message with `{ text, client_id, model, reasoning_effort }` and read `{ message_id, client_id, message }`
   3. Navigate to `/$budId/$threadId`
 - Terminal initialization (xterm.js) but no connection
 - View mode toggle (terminal/web)
@@ -99,7 +99,7 @@ loader: async ({ params }) => {
    - Passes the hook-owned chronological `ApiMessage[]` directly into `ChatTimeline` instead of creating an extra route-local mapped/sorted copy
    - Updates via SSE agent stream
    - Role-based rendering (user, assistant, tool)
-   - Consumes the paged `{ messages, page }` API contract
+   - Consumes the paged `{ messages, page }` API contract and the create-message `{ message }` payload for canonical optimistic-row replacement
    - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
    - Timeline row UI state (expand/copy/payload/overflow) is now message-local and memoized inside `ChatTimeline`, reducing whole-list churn during streaming and interaction
@@ -180,12 +180,14 @@ loader: async ({ params }) => {
    - Submission posts `ask_user_questions_response_v1` payloads to `/api/threads/:threadId/agent/question-requests/:requestId/responses`
    - Submission reconciliation delegates to `submitQuestionResponseFlow(...)` in `web/src/features/threads/question-response-submit.ts`
    - Live continuations keep the stream connected while fallback/idempotent responses refresh the transcript/runtime bootstrap
-   - Normal composer input is disabled with an explicit reason while a pending structured prompt is visible
+   - The route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to a paused UI status
+   - The global thinking indicator is hidden while paused for user input
+   - Normal composer input stays enabled while a pending structured prompt is visible; follow-up sends use the normal message route and let the service close the prompt
 
 **State**:
 ```typescript
 // UI state
-status: 'idle' | 'dispatching' | 'streaming'
+status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
 viewMode: 'terminal' | 'web' | 'file'

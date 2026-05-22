@@ -17,7 +17,11 @@ function createLogger() {
   };
 }
 
-test("cancelThread aborts the active turn and rejects pending terminal waits", async () => {
+test("cancelThread aborts the active turn, rejects waits, and cancels pending question rows", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
   const terminalCalls: Array<{ threadId: string; errorMessage: string }> = [];
   const service = new AgentService(
     {
@@ -35,10 +39,26 @@ test("cancelThread aborts the active turn and rejects pending terminal waits", a
   const cancellations = Reflect.get(service, "cancellations") as Map<string, AbortController>;
   cancellations.set("thread-1", controller);
 
+  const updateCapture: { values: Record<string, unknown> | null } = { values: null };
+  mock.method(db, "update", () => ({
+    set(values: Record<string, unknown>) {
+      updateCapture.values = values;
+      return {
+        where() {
+          return Promise.resolve(undefined);
+        },
+      };
+    },
+  }) as never);
+
   await service.cancelThread("thread-1");
 
   assert.equal(controller.signal.aborted, true);
   assert.equal(service.isThreadActive("thread-1"), false);
+  const capturedUpdate = updateCapture.values;
+  assert.ok(capturedUpdate);
+  assert.equal(capturedUpdate.status, "canceled");
+  assert.ok(capturedUpdate.updatedAt instanceof Date);
   assert.deepEqual(terminalCalls, [
     {
       threadId: "thread-1",

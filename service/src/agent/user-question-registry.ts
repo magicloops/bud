@@ -6,6 +6,10 @@ import type {
 export type ResolvedUserQuestionResponse = {
   response: AskUserQuestionsResponse;
   toolResult: AskUserQuestionsToolResult;
+  continuation?: "continue" | "supersede";
+  reason?: "superseded_by_user_message";
+  onFinalized?: () => void;
+  onFailed?: (error: unknown) => void;
 };
 
 type PendingUserQuestion = {

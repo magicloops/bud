@@ -49,6 +49,49 @@ test('reconcileMessagePersistence swaps ids and removes only the optimistic meta
   assert.deepEqual(reconciled.metadata, { preserved: 'yes' })
 })
 
+test('reconcileMessagePersistence replaces optimistic rows with canonical messages for server ordering', () => {
+  const optimistic = buildMessage({
+    client_id: '11111111-1111-4111-8111-111111111111',
+    message_id: '11111111-1111-4111-8111-111111111111',
+    role: 'user',
+    content: 'follow up',
+    created_at: '2026-05-19T12:00:00.000Z',
+    metadata: { optimistic: true },
+  })
+  const supersededToolResult = buildMessage({
+    client_id: '22222222-2222-4222-8222-222222222222',
+    message_id: '22222222-2222-4222-8222-222222222222',
+    role: 'tool',
+    display_role: 'Tool',
+    content: '{}',
+    created_at: '2026-05-19T12:00:01.000Z',
+    metadata: { tool: 'ask_user_questions', turn_id: 'turn-old' },
+  })
+  const canonicalUser = buildMessage({
+    client_id: '11111111-1111-4111-8111-111111111111',
+    message_id: '33333333-3333-4333-8333-333333333333',
+    role: 'user',
+    content: 'follow up',
+    created_at: '2026-05-19T12:00:02.000Z',
+    metadata: {},
+  })
+
+  const nextMessages = reconcileMessagePersistence(
+    [optimistic, supersededToolResult],
+    optimistic.client_id,
+    canonicalUser.message_id,
+    canonicalUser.client_id,
+    canonicalUser,
+  )
+
+  assert.deepEqual(
+    nextMessages.map((message) => message.client_id),
+    [supersededToolResult.client_id, canonicalUser.client_id],
+  )
+  assert.equal(nextMessages[1]?.created_at, canonicalUser.created_at)
+  assert.deepEqual(nextMessages[1]?.metadata, {})
+})
+
 test('applyAgentStateOverlay replaces stale synthetic rows with the current pending tool and draft assistant', () => {
   const canonicalUser = buildMessage({
     client_id: 'user-1',

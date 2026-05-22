@@ -195,9 +195,14 @@ export function useThreadMessages({
   }, [])
 
   const reconcilePersistedUserMessage = useCallback(
-    (currentClientId: string, nextMessageId: string, nextClientId: string) => {
+    (
+      currentClientId: string,
+      nextMessageId: string,
+      nextClientId: string,
+      nextMessage?: ApiMessage,
+    ) => {
       setMessages((prev) =>
-        reconcileMessagePersistence(prev, currentClientId, nextMessageId, nextClientId),
+        reconcileMessagePersistence(prev, currentClientId, nextMessageId, nextClientId, nextMessage),
       )
     },
     [],

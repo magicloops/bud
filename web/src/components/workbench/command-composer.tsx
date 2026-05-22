@@ -2,11 +2,12 @@ import type { FormEvent, KeyboardEvent } from 'react'
 import { LoaderCircle, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
+import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 
 type CommandComposerProps = {
   messageText: string
   onMessageChange: (value: string) => void
-  status: 'idle' | 'dispatching' | 'streaming'
+  status: WorkbenchStatus
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   error: string | null
   models: ModelInfo[]
@@ -37,7 +38,7 @@ export function CommandComposer({
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      if (!status || status === 'idle' || status === 'streaming') {
+      if (!status || status === 'idle' || status === 'streaming' || status === 'waiting_for_user') {
         ; (event.currentTarget.form as HTMLFormElement | null)?.requestSubmit()
       }
     }
@@ -106,7 +107,7 @@ export function CommandComposer({
           className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
           style={{ backgroundColor: 'var(--bud-accent-muted)' }}
         >
-          {status !== 'idle' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {status === 'dispatching' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         </Button>
       </div>
     </form>

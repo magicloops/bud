@@ -167,6 +167,56 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - [x] `pnpm --dir /Users/adam/bud/service exec node --import tsx --test src/agent/conversation-loader.test.ts src/agent/model-runner.test.ts src/agent/user-question-contracts.test.ts`
 
+## Phase 7: Follow-Up Supersession Service Contract
+
+- [ ] normal message send while `waiting_for_user` closes pending request as skipped
+- [ ] message-create response contains only `message_id` and `client_id`
+- [ ] all pending question rows for the thread are closed as answered/skipped
+- [ ] live supersession records a completed skipped tool row
+- [ ] live supersession emits `final.status: "succeeded"` with `reason: "superseded_by_user_message"`
+- [ ] live supersession emits no assistant `message_id` or `text`
+- [ ] old waiting turn does not issue another provider call
+- [ ] follow-up turn starts after old waiting turn is terminal
+- [ ] duplicate message `client_id` retry does not re-run supersession
+- [ ] explicit answer racing with follow-up supersession has one accepted winner
+- [ ] explicit skip-all from the question card continues the original turn
+- [ ] explicit cancel still marks pending requests canceled
+
+### Phase 7 Commands
+
+- [ ] service route/repository tests run after implementation
+- [ ] service agent continuation tests run after implementation
+
+## Phase 8: Waiting-For-User Client UX
+
+- [ ] `/agent/state.phase = "waiting_for_user"` shows pending prompt without global loading spinner
+- [ ] live `agent.tool_call` for `ask_user_questions` shows pending prompt without global loading spinner
+- [ ] composer remains enabled while a prompt is pending
+- [ ] send button spinner appears only during message dispatch
+- [ ] follow-up message send uses `POST /api/threads/:thread_id/messages`
+- [ ] follow-up message send does not call the question-response route
+- [ ] `agent.tool_result` plus `final.status: "succeeded"` clears pending prompt UI
+- [ ] explicit answer and explicit skip-all still submit through the question-response route
+- [ ] mobile handoff describes normal-message recovery from stale prompts
+
+### Phase 8 Commands
+
+- [ ] web thread/message-state tests run after implementation
+- [ ] web build or focused UI tests run after implementation if touched
+
+## Phase 9: Human-Input Attention Resolution
+
+- [ ] attention anchor decision recorded
+- [ ] prompt creation produces human-input attention when implemented
+- [ ] notification summary reflects pending human input when implemented
+- [ ] push outbox row is deduped by question request id when implemented
+- [ ] explicit answer resolves human-input attention when implemented
+- [ ] explicit skip-all resolves human-input attention when implemented
+- [ ] follow-up supersession resolves human-input attention when implemented
+- [ ] follow-up supersession suppresses stale human-input push when implemented
+- [ ] newer assistant-completed attention survives stale prompt resolution
+- [-] Phase 9 validation deferred until attention anchor implementation
+
 ## Notes
 
 - This checklist validates v1 only. Secret input, file answers, date/time controls, branching prompts, and durable provider-native suspended-turn replay are out of scope.
