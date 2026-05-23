@@ -10,6 +10,7 @@ import {
   type CanonicalContentBlock,
   type CanonicalMessage,
   type CanonicalProviderId,
+  type AssistantMessagePhase,
   type LlmCallRequestMode,
   type LlmReconstructionDiagnostics,
   type ProviderLedgerMessage,
@@ -166,10 +167,17 @@ RESPONSE FORMAT:
 export function createCanonicalTextMessage(
   role: "system" | "user" | "assistant",
   text: string,
+  assistantPhase?: AssistantMessagePhase,
 ): CanonicalMessage {
   return {
     role,
-    content: [{ type: "text", text }],
+    content: [
+      {
+        type: "text",
+        text,
+        ...(role === "assistant" && assistantPhase ? { assistantPhase } : {}),
+      },
+    ],
   };
 }
 
@@ -330,7 +338,11 @@ export class AgentConversationLoader {
     }
 
     if (row.role === "assistant") {
-      messages.push(createCanonicalTextMessage("assistant", row.content));
+      messages.push(createCanonicalTextMessage(
+        "assistant",
+        row.content,
+        assistantPhaseFromMetadata(row.metadata),
+      ));
       return;
     }
 
@@ -678,4 +690,26 @@ function isProviderOnlyBlock(block: CanonicalContentBlock): boolean {
     block.type === "reasoning_redacted" ||
     block.type === "image"
   );
+}
+
+function assistantPhaseFromMetadata(metadata: unknown): AssistantMessagePhase | undefined {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const record = metadata as Record<string, unknown>;
+  const explicit = parseAssistantMessagePhase(record.assistant_phase);
+  if (explicit) {
+    return explicit;
+  }
+  if (record.segment_kind === "intermediate") {
+    return "commentary";
+  }
+  if (record.segment_kind === "final") {
+    return "final_answer";
+  }
+  return undefined;
+}
+
+function parseAssistantMessagePhase(value: unknown): AssistantMessagePhase | undefined {
+  return value === "commentary" || value === "final_answer" ? value : undefined;
 }

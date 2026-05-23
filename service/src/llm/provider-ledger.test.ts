@@ -3,6 +3,7 @@ import test, { mock } from "node:test";
 import { db } from "../db/client.js";
 import {
   canonicalBlockFromLedgerItem,
+  loadProviderLedgerMessages,
   loadProviderLedgerThreadDiagnostics,
   recordLlmCall,
   recordLlmToolResultItem,
@@ -35,7 +36,7 @@ test("recordLlmCall persists all provider output items and cache metadata", asyn
     providerResponseId: "resp-1",
     assistantMessageId: "message-1",
     output: [
-      { type: "text", text: "visible text" },
+      { type: "text", text: "visible text", assistantPhase: "commentary" },
       {
         type: "reasoning",
         text: "summary",
@@ -109,6 +110,11 @@ test("recordLlmCall persists all provider output items and cache metadata", asyn
   );
   assert.equal(itemValues[0]?.visibility, "product_text");
   assert.equal(itemValues[0]?.messageId, "message-1");
+  assert.deepEqual(itemValues[0]?.canonicalPayload, {
+    type: "text",
+    text: "visible text",
+    assistantPhase: "commentary",
+  });
   assert.deepEqual(itemValues[1]?.providerPayload, {
     id: "rs-1",
     type: "reasoning",
@@ -364,4 +370,106 @@ test("canonicalBlockFromLedgerItem reconstructs redacted Anthropic thinking", ()
       },
     },
   });
+});
+
+test("canonicalBlockFromLedgerItem reconstructs text assistant phase", () => {
+  const block = canonicalBlockFromLedgerItem({
+    kind: "text",
+    canonicalPayload: {
+      type: "text",
+      text: "Visible text",
+      assistantPhase: "final_answer",
+    },
+    providerPayload: {},
+  } as never);
+
+  assert.deepEqual(block, {
+    type: "text",
+    text: "Visible text",
+    assistantPhase: "final_answer",
+  });
+});
+
+test("loadProviderLedgerMessages derives historical OpenAI assistant phases", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        innerJoin() {
+          return {
+            where() {
+              return {
+                async orderBy() {
+                  return [
+                    {
+                      llmCallId: "llm-call-tool",
+                      createdAt: new Date("2026-05-22T10:00:00.000Z"),
+                      model: "gpt-5.5",
+                      requestMode: "openai_responses",
+                      itemKind: "text",
+                      itemDirection: "output",
+                      itemSequence: 0,
+                      canonicalPayload: {
+                        type: "text",
+                        text: "I will inspect first.",
+                      },
+                      providerPayload: {},
+                    },
+                    {
+                      llmCallId: "llm-call-tool",
+                      createdAt: new Date("2026-05-22T10:00:00.000Z"),
+                      model: "gpt-5.5",
+                      requestMode: "openai_responses",
+                      itemKind: "tool_use",
+                      itemDirection: "output",
+                      itemSequence: 1,
+                      canonicalPayload: {
+                        type: "tool_use",
+                        id: "call-observe",
+                        name: "terminal_observe",
+                        input: { view: "screen" },
+                      },
+                      providerPayload: {},
+                    },
+                    {
+                      llmCallId: "llm-call-final",
+                      createdAt: new Date("2026-05-22T10:00:01.000Z"),
+                      model: "gpt-5.5",
+                      requestMode: "openai_responses",
+                      itemKind: "text",
+                      itemDirection: "output",
+                      itemSequence: 0,
+                      canonicalPayload: {
+                        type: "text",
+                        text: "Done.",
+                      },
+                      providerPayload: {},
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const messages = await loadProviderLedgerMessages("thread-1", "openai");
+
+  assert.deepEqual(messages.map((message) => message.content), [
+    [
+      { type: "text", text: "I will inspect first.", assistantPhase: "commentary" },
+      {
+        type: "tool_use",
+        id: "call-observe",
+        name: "terminal_observe",
+        input: { view: "screen" },
+      },
+    ],
+    [{ type: "text", text: "Done.", assistantPhase: "final_answer" }],
+  ]);
 });

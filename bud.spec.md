@@ -543,6 +543,15 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/mobile-api-simplify/progress-checklist.md](./plan/mobile-api-simplify/progress-checklist.md) | Running checklist for the transcript-history and agent-stream simplification work, tracking paging, stream semantics, reference-web adoption, true assistant streaming, and handoff validation |
 | [plan/mobile-agent-stream-attach-semantics/implementation-spec.md](./plan/mobile-agent-stream-attach-semantics/implementation-spec.md) | Phased implementation plan for separating active-turn bootstrap from agent-stream replay, adding an explicit `/agent/state` runtime snapshot with opaque resume cursors, and keeping agent-stream replay to a bounded catch-up window with explicit resync |
 | [plan/llm-models/implementation-spec.md](./plan/llm-models/implementation-spec.md) | Phased implementation plan for centralizing Bud's model catalog, adding the Opus 4.6/4.7 and GPT-5.4/GPT-5.5 model set, and making reasoning controls provider/model-specific |
+| [plan/openai-phases/openai-phases.spec.md](./plan/openai-phases/openai-phases.spec.md) | Folder spec for preserving OpenAI Responses assistant message `phase` values across Bud's manual replay path while keeping Anthropic behavior unchanged |
+| [plan/openai-phases/implementation-spec.md](./plan/openai-phases/implementation-spec.md) | Parent implementation spec for preserving OpenAI Responses assistant `phase` through canonical types, OpenAI provider round trip, provider-ledger persistence, transcript fallback, and validation |
+| [plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md](./plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md) | SDK and fixture-baseline phase covering the OpenAI SDK `6.39.0` update, Responses `phase` type inspection, and provider fixture shapes |
+| [plan/openai-phases/phase-1-canonical-assistant-phase-contract.md](./plan/openai-phases/phase-1-canonical-assistant-phase-contract.md) | Canonical-contract phase covering optional assistant phase metadata on canonical text blocks without changing providers that do not use it |
+| [plan/openai-phases/phase-2-openai-provider-round-trip.md](./plan/openai-phases/phase-2-openai-provider-round-trip.md) | OpenAI provider phase covering Responses input `phase` lowering plus streaming and non-streaming output phase preservation |
+| [plan/openai-phases/phase-3-persistence-and-replay-fallbacks.md](./plan/openai-phases/phase-3-persistence-and-replay-fallbacks.md) | Durability phase covering provider-ledger phase round trip, transcript metadata fallback, and historical same-turn replay derivation |
+| [plan/openai-phases/phase-4-validation-docs-and-rollout.md](./plan/openai-phases/phase-4-validation-docs-and-rollout.md) | Finalization phase covering focused tests, Anthropic regression checks, service spec updates, and rollout validation |
+| [plan/openai-phases/progress-checklist.md](./plan/openai-phases/progress-checklist.md) | Running implementation checklist for the OpenAI Responses assistant phase preservation rollout |
+| [plan/openai-phases/validation-checklist.md](./plan/openai-phases/validation-checklist.md) | Manual validation checklist for OpenAI phase preservation, durable replay, same-turn tool loops, and Anthropic no-op behavior |
 | [plan/fortify-llm-call-handling/fortify-llm-call-handling.spec.md](./plan/fortify-llm-call-handling/fortify-llm-call-handling.spec.md) | Folder spec for the LLM call-handling fortification plan, separating provider-native reconstruction and cache correctness from product transcript rendering |
 | [plan/fortify-llm-call-handling/implementation-spec.md](./plan/fortify-llm-call-handling/implementation-spec.md) | Phased implementation plan for preserving OpenAI/Anthropic output items, durable reasoning continuity, mixed text/tool transcript persistence, multi-tool handling, provider switching fallback, and cache observability |
 | [plan/fortify-llm-call-handling/progress-checklist.md](./plan/fortify-llm-call-handling/progress-checklist.md) | Running checklist for the LLM call-handling fortification rollout |
@@ -755,4 +764,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-21*
+*Last updated: 2026-05-22*

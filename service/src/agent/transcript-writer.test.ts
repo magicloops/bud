@@ -404,6 +404,7 @@ test("assistant text segments are persisted before tool calls without finalizing
     status: "succeeded",
     turn_id: "turn-1",
     segment_kind: "intermediate",
+    assistant_phase: "commentary",
     llm_call_id: "llm-call-1",
     followed_by_tool_call: true,
     model: "gpt-5.5",
@@ -414,5 +415,114 @@ test("assistant text segments are persisted before tool calls without finalizing
   assert.equal(events[0]?.event, "agent.message");
   assert.equal(events[0]?.data.text, "I will inspect the terminal first.");
   assert.equal((events[0]?.data.message as Record<string, unknown>).message_id, "message-assistant-1");
+  assert.deepEqual((events[0]?.data.message as Record<string, unknown>).metadata, {
+    status: "succeeded",
+    turn_id: "turn-1",
+    segment_kind: "intermediate",
+    assistant_phase: "commentary",
+    llm_call_id: "llm-call-1",
+    followed_by_tool_call: true,
+    model: "gpt-5.5",
+    reasoning_effort: "medium",
+    model_selection_source: "service_default",
+  });
   assert.equal(result.message_id, "message-assistant-1");
+});
+
+test("final assistant messages persist final_answer assistant phase metadata", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const insertedValues: Array<Record<string, unknown>> = [];
+  mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) => {
+    const tx = {
+      insert() {
+        return {
+          values(values: Record<string, unknown>) {
+            insertedValues.push(values);
+            return {
+              returning() {
+                return [
+                  {
+                    messageId: "message-final-1",
+                    clientId: values.clientId,
+                    role: values.role,
+                    displayRole: values.displayRole,
+                    content: values.content,
+                    metadata: values.metadata,
+                    createdAt: new Date("2026-05-22T20:00:05.000Z"),
+                  },
+                ];
+              },
+            };
+          },
+        };
+      },
+      execute() {
+        return Promise.resolve([]);
+      },
+      select() {
+        return {
+          from() {
+            return {
+              innerJoin() {
+                return {
+                  where() {
+                    return {
+                      limit() {
+                        return Promise.resolve([
+                          {
+                            budId: "bud-1",
+                            threadTitle: null,
+                            threadOwnerUserId: null,
+                            budDisplayName: "Bud",
+                            budName: "bud",
+                          },
+                        ]);
+                      },
+                    };
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    return callback(tx as never);
+  });
+
+  const { runtime, events } = createRuntimeRecorder();
+  const writer = new AgentTranscriptWriter(runtime as never);
+
+  const result = await writer.recordFinalAssistant({
+    threadId: "thread-1",
+    turnId: "turn-1",
+    message: "Done.",
+    status: "succeeded",
+    clientId: "assistant-client-1",
+    modelSelection: {
+      model: "gpt-5.5",
+      reasoningEffort: "low",
+      source: "service_default",
+    },
+    llmCallId: "llm-call-1",
+  });
+
+  assert.equal(insertedValues.length, 1);
+  assert.deepEqual(insertedValues[0]?.metadata, {
+    status: "succeeded",
+    turn_id: "turn-1",
+    segment_kind: "final",
+    assistant_phase: "final_answer",
+    llm_call_id: "llm-call-1",
+    attention_kind: "assistant_completed",
+    model: "gpt-5.5",
+    reasoning_effort: "low",
+    model_selection_source: "service_default",
+  });
+  assert.equal(events[0]?.event, "agent.message");
+  assert.equal(events[1]?.event, "final");
+  assert.equal(result.message_id, "message-final-1");
 });

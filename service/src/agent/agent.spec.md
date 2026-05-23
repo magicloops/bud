@@ -64,6 +64,7 @@ Conversation-building ownership extracted from `AgentService`.
 - seed the canonical system prompt
 - load persisted thread messages into canonical provider input order
 - load same-provider provider-ledger assistant output blocks when a target provider is known
+- derive assistant text phase from provider-ledger payloads or product transcript metadata for OpenAI manual replay
 - gate Anthropic reasoning-bearing provider-ledger replay on the current target model and reasoning config
 - return reconstruction diagnostics that distinguish provider-native replay, canonical fallback, mixed degraded replay, omitted provider-only items, and provider switches
 - return same-provider incompatibility diagnostics when Anthropic thinking/redacted-thinking blocks are omitted for canonical fallback
@@ -234,6 +235,8 @@ startUserMessage()
 - Draft assistant text is emitted live over SSE via `agent.message_start`, `agent.message_delta`, and `agent.message_done`.
 - Visible assistant text in a response that also contains tool calls is now persisted as an intermediate assistant transcript row before tool execution and emitted as `agent.message`.
 - Final persisted assistant rows are still emitted as `agent.message` once the turn resolves.
+- OpenAI assistant text is replayed with canonical `assistantPhase`: provider-returned phase wins, pre-tool text falls back to `commentary`, and final no-tool text falls back to `final_answer`.
+- Assistant product rows persist `metadata.assistant_phase` (`commentary` for intermediate segments, `final_answer` for final rows) so canonical fallback can preserve OpenAI replay semantics.
 - Assistant/tool `client_id` values are now allocated before the first live runtime/SSE event that refers to them, and the persisted assistant/tool rows reuse those same values at insert time.
 - Assistant rows are stamped with cached terminal cwd `path_context` when available; terminal tool rows are stamped with `path_context_before` and `path_context_after`.
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
@@ -378,6 +381,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - set `/agent/state.phase` to `waiting_for_user` for pending `ask_user_questions` tool calls
 - persist assistant/tool transcript rows with stable `client_id`
 - persist intermediate assistant text segments that precede or appear between tool calls
+- persist assistant phase metadata for intermediate and final assistant rows so OpenAI replay fallback can recover it
 - stamp thread attention metadata for final attention-worthy assistant output
 - enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
 - add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
@@ -424,6 +428,7 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 **Current Coverage**:
 - tool timing is emitted on `agent.tool_call` / `agent.tool_result`
 - intermediate assistant text segments persist with `segment_kind` / `llm_call_id` metadata and emit `agent.message` without finalizing the turn
+- emitted intermediate assistant `agent.message` payloads include the serialized commentary phase metadata
 - canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
 - canonical assistant/tool rows receive cached cwd path context metadata when available
 - pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`

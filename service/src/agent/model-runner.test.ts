@@ -312,8 +312,8 @@ test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
   providerRegistry.register(
     createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
       { type: "message_start", id: "resp_interleaved" },
-      { type: "content_start", index: 0, content_type: "text" },
-      { type: "text_delta", index: 0, delta: "before tool" },
+      { type: "content_start", index: 0, content_type: "text", assistantPhase: "commentary" },
+      { type: "text_delta", index: 0, delta: "before tool", assistantPhase: "commentary" },
       { type: "content_done", index: 0 },
       {
         type: "tool_use_done",
@@ -322,8 +322,8 @@ test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
         name: "terminal_observe",
         input: { view: "screen" },
       },
-      { type: "content_start", index: 2, content_type: "text" },
-      { type: "text_delta", index: 2, delta: "between tools" },
+      { type: "content_start", index: 2, content_type: "text", assistantPhase: "commentary" },
+      { type: "text_delta", index: 2, delta: "between tools", assistantPhase: "commentary" },
       { type: "content_done", index: 2 },
       {
         type: "tool_use_done",
@@ -366,14 +366,14 @@ test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
   assert.equal(providerModel, "gpt-5.4-2026-03-05");
   assert.ok(assistantClientId);
   assert.deepEqual(response.content, [
-    { type: "text", text: "before tool" },
+    { type: "text", text: "before tool", assistantPhase: "commentary" },
     {
       type: "tool_use",
       id: "call_observe",
       name: "terminal_observe",
       input: { view: "screen" },
     },
-    { type: "text", text: "between tools" },
+    { type: "text", text: "between tools", assistantPhase: "commentary" },
     {
       type: "tool_use",
       id: "call_send",

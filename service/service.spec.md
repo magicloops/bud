@@ -33,7 +33,7 @@ Package manifest:
 | `fastify-sse-v2` | ^2.2.1 | Server-Sent Events |
 | `better-auth` | ^1.5.5 | Browser auth + OAuth |
 | `@better-auth/oauth-provider` | ^1.5.5 | OAuth 2.1 / OIDC provider + protected-resource metadata |
-| `openai` | ^6.8.1 | OpenAI SDK |
+| `openai` | ^6.39.0 | OpenAI SDK |
 | `@anthropic-ai/sdk` | ^0.91.0 | Anthropic SDK |
 | `drizzle-orm` | ^0.44.7 | Database ORM |
 | `pg` | ^8.13.1 | PostgreSQL client |

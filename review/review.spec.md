@@ -18,6 +18,10 @@ Current review folder for the active network-upgrade branch after the branch piv
 
 Current branch review for the LLM call-handling fortification work. Compares the tracked branch against `origin/main`, calls out remaining provider-ledger replay/cache correctness risks, summarizes validation evidence, and notes worktree files that should stay out of the PR unless intentional.
 
+### `openai-response-phase-review.md`
+
+Review of Bud's OpenAI Responses API assistant-message `phase` handling. Concludes that the current manual replay path drops `commentary` / `final_answer` values, recommends adding an optional canonical assistant phase for OpenAI text blocks, and outlines persistence, replay, and test coverage needed without imposing the field on Anthropic.
+
 ### `network-upgrade.md`
 
 Review of the proposed WebSocket-to-HTTP/2-gRPC/QUIC transport upgrade. Compares the reference transport goals against the current daemon, service, web, and DB implementation, then recommends a bounded phased migration through protobuf envelopes, durable operation/stream state, HTTP/2 control/data, proxy/file sessions, optional QUIC, and WebSocket fallback cleanup.

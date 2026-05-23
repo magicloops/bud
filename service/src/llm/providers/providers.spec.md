@@ -38,13 +38,14 @@ Public product IDs and capability limits are owned by `model-catalog.ts`; the pr
 - **Response diagnostics**: Attaches the raw `response.completed` payload to `message_done.providerData` so agent parse failures can log the actual OpenAI result
 - **Terminal serial policy**: Sends `parallel_tool_calls: false` so terminal tool execution stays deterministic
 - **Temperature handling**: Automatically sets `undefined` for reasoning models
+- **Assistant phase preservation**: Preserves OpenAI Responses assistant message `phase` (`commentary` / `final_answer`) on replayed assistant text, streaming output, and non-streaming output
 
 **Message Transformation**:
 | Canonical | OpenAI Responses API |
 |-----------|---------------------|
 | System message | `{ type: "message", role: "system", content: [...] }` |
 | User message | `{ type: "message", role: "user", content: [...] }` |
-| Assistant text | `{ type: "message", role: "assistant", content: "..." }` |
+| Assistant text | `{ type: "message", role: "assistant", content: "...", phase? }` |
 | Tool use | `{ type: "function_call", call_id, name, arguments }` |
 | Tool result | `{ type: "function_call_output", call_id, output }` |
 
@@ -67,6 +68,7 @@ This allows tool definitions to use clean standard JSON Schema while ensuring Op
 | `response.created` | `message_start` |
 | `response.completed` | `message_done` with OpenAI `providerData` |
 | `response.failed` | `error` |
+| `response.output_item.added` with message `phase` | Captured as canonical text `assistantPhase` metadata |
 | `response.output_text.delta` | `text_delta` using provider output/content indexes |
 | `response.function_call_arguments.delta` | `tool_use_delta` |
 | `response.function_call_arguments.done` | `tool_use_done` using the `call_id` and `name` captured from `response.output_item.added` |
@@ -190,6 +192,8 @@ Direct request-shape tests for provider lowering without live API calls.
 - OpenAI streamed function calls preserve `call_id` and tool name from output-item metadata when arguments finish
 - OpenAI streamed mixed text/tool/text output preserves provider order and cached-token usage
 - OpenAI assistant-history reconstruction keeps reasoning/text/tool/text order when building the next Responses input
+- OpenAI assistant-history reconstruction lowers canonical `assistantPhase` to Responses input message `phase`
+- OpenAI streamed and non-streaming output message `phase` values are preserved on canonical text blocks
 - OpenAI completed stream events preserve provider payload diagnostics
 - OpenAI strict-mode tool transformation recursively rewrites nested object and array-item schemas so nested optional fields become nullable required fields
 - Anthropic Opus 4.7 sends adaptive thinking with omitted display and `output_config.effort`
@@ -209,6 +213,7 @@ Direct request-shape tests for provider lowering without live API calls.
 | **Tool call args** | JSON string | Parsed object |
 | **Max tokens** | Optional | **Required** |
 | **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy |
+| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent |
 | **JSON mode** | `text.format.type` | Use structured tool output |
 
 ## Adding a New Provider

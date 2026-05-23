@@ -7,6 +7,7 @@ import type {
   CanonicalMessage,
   CanonicalProviderId,
   CanonicalReasoningBlock,
+  AssistantMessagePhase,
   ReasoningConfig,
   TokenUsage,
 } from "./types.js";
@@ -213,7 +214,9 @@ export async function loadProviderLedgerMessages(
       createdAt: value.createdAt,
       model: value.model,
       requestMode: value.requestMode,
-      content: value.content,
+      content: provider === "openai"
+        ? deriveOpenAIAssistantPhases(value.content)
+        : value.content,
     }));
 }
 
@@ -394,7 +397,12 @@ function blockFromPayload(
   switch (kind) {
     case "text":
       if (typeof canonicalPayload.text === "string") {
-        return { type: "text", text: canonicalPayload.text };
+        const assistantPhase = parseAssistantMessagePhase(canonicalPayload.assistantPhase);
+        return {
+          type: "text",
+          text: canonicalPayload.text,
+          ...(assistantPhase ? { assistantPhase } : {}),
+        };
       }
       return null;
     case "tool_use":
@@ -521,6 +529,28 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseAssistantMessagePhase(value: unknown): AssistantMessagePhase | undefined {
+  return value === "commentary" || value === "final_answer" ? value : undefined;
+}
+
+function deriveOpenAIAssistantPhases(
+  content: CanonicalContentBlock[],
+): CanonicalContentBlock[] {
+  const fallbackPhase: AssistantMessagePhase = content.some((block) => block.type === "tool_use")
+    ? "commentary"
+    : "final_answer";
+
+  return content.map((block) => {
+    if (block.type !== "text" || block.assistantPhase) {
+      return block;
+    }
+    return {
+      ...block,
+      assistantPhase: fallbackPhase,
+    };
+  });
 }
 
 function isCanonicalProviderId(value: string): value is CanonicalProviderId {

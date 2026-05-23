@@ -244,8 +244,243 @@ test("final no-tool response records exactly one LLM call", async (t) => {
       anthropic: 1,
     },
   });
+  const outputItems = insertedValues.find(
+    (value): value is Array<Record<string, unknown>> => Array.isArray(value),
+  );
+  assert.ok(outputItems);
+  assert.deepEqual(outputItems[0]?.canonicalPayload, {
+    type: "text",
+    text: "Done.",
+    assistantPhase: "final_answer",
+  });
   assert.equal(
     loggerEvents.some((event) => event.message === "LLM conversation reconstruction degraded"),
     true,
   );
+});
+
+test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const insertedValues: unknown[] = [];
+  mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) =>
+    callback({ insert: db.insert.bind(db) } as never)
+  );
+  mock.method(db, "insert", () => ({
+    values(values: unknown) {
+      insertedValues.push(values);
+      return {};
+    },
+  }) as never);
+
+  const runtime = {
+    markThinking() {
+      // noop
+    },
+    finishTurn() {
+      // noop
+    },
+    emit() {
+      return "cursor-1";
+    },
+  };
+  const service = new AgentService(
+    {} as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  Reflect.set(service, "conversationLoader", {
+    async loadWithDiagnostics() {
+      return {
+        messages: [{ role: "user", content: "Inspect first" }],
+        reconstruction: {
+          mode: "canonical_only",
+          targetProvider: "openai",
+          degraded: false,
+          degradedReasons: [],
+          sourceProviders: [],
+          providerNativeCallCount: 0,
+          providerNativeOutputItemCount: 0,
+          canonicalFallbackMessageCount: 0,
+          omittedProviderOnlyItemCount: 0,
+          providerCallCounts: {},
+          providerOnlyOutputItemCounts: {},
+        },
+      };
+    },
+  });
+
+  let invokeCount = 0;
+  let secondInvokeMessages: unknown[] | null = null;
+  Reflect.set(service, "modelRunner", {
+    resolveProviderName() {
+      return "openai";
+    },
+    async invokeModel(_threadId: string, _turnId: string, messages: unknown[]) {
+      invokeCount += 1;
+      if (invokeCount === 1) {
+        return {
+          assistantClientId: "assistant-client-1",
+          response: {
+            id: "resp-tool",
+            content: [
+              { type: "text", text: "I will inspect first." },
+              {
+                type: "tool_use",
+                id: "call-observe",
+                name: "terminal_observe",
+                input: { view: "screen" },
+              },
+            ],
+            stopReason: "tool_use",
+            toolCalls: [
+              {
+                id: "call-observe",
+                name: "terminal_observe",
+                input: { view: "screen" },
+              },
+            ],
+          },
+        };
+      }
+      secondInvokeMessages = messages;
+      return {
+        assistantClientId: "assistant-client-2",
+        response: {
+          id: "resp-final",
+          content: [{ type: "text", text: "Done." }],
+          stopReason: "end_turn",
+        },
+      };
+    },
+    extractToolCalls(response: { toolCalls?: unknown[] }) {
+      return response.toolCalls?.length
+        ? [
+            {
+              type: "tool_call",
+              tool: "terminal.observe",
+              callId: "call-observe",
+              view: "screen",
+            },
+          ]
+        : [];
+    },
+    parseFinalResponse() {
+      return {
+        message: "Done.",
+        status: "succeeded",
+      };
+    },
+  });
+  Reflect.set(service, "toolExecutor", {
+    async execute() {
+      return {
+        payload: {
+          tool: "terminal.observe",
+          call_id: "call-observe",
+          kind: "observation",
+          output: "screen",
+        },
+      };
+    },
+  });
+  Reflect.set(service, "transcriptWriter", {
+    async recordAssistantTextSegment() {
+      return { message_id: "message-intermediate-1" };
+    },
+    emitToolCall() {
+      return {
+        modelArgs: { view: "screen" },
+        clientArgs: { view: "screen" },
+        cursor: "cursor-tool-call",
+      };
+    },
+    async recordToolResult() {
+      return {
+        payload: {
+          tool: "terminal.observe",
+          call_id: "call-observe",
+          kind: "observation",
+          output: "screen",
+        },
+        message: { message_id: "message-tool-1" },
+        cursor: "cursor-tool-result",
+      };
+    },
+    async recordFinalAssistant() {
+      return {
+        message_id: "message-final-1",
+        client_id: "assistant-client-2",
+        role: "assistant",
+        display_role: "Bud Agent",
+        content: "Done.",
+        metadata: {},
+        created_at: "2026-05-22T20:00:00.000Z",
+      };
+    },
+  });
+
+  const runAgentFlow = Reflect.get(service, "runAgentFlow") as (args: {
+    threadId: string;
+    turnId: string;
+    sessionId: string;
+    model: string;
+    modelReasoning: {
+      providerModel: string;
+      reasoningLevel: string;
+    };
+    modelSelection: {
+      model: string;
+      reasoningEffort: string;
+      source: string;
+    };
+    ownerUserId?: string | null;
+    controller: AbortController;
+  }) => Promise<void>;
+
+  await runAgentFlow.call(service, {
+    threadId: "017dbb12-3865-44fc-8228-17bc55af2cd5",
+    turnId: "01KQG8FX9YZAR32E4RGWVVA67G",
+    sessionId: "sess_test",
+    model: "gpt-5.5",
+    modelReasoning: {
+      providerModel: "gpt-5.5",
+      reasoningLevel: "low",
+    },
+    modelSelection: {
+      model: "gpt-5.5",
+      reasoningEffort: "low",
+      source: "service_default",
+    },
+    ownerUserId: "user-1",
+    controller: new AbortController(),
+  });
+
+  assert.ok(secondInvokeMessages);
+  assert.deepEqual(secondInvokeMessages[1], {
+    role: "assistant",
+    content: [
+      { type: "text", text: "I will inspect first.", assistantPhase: "commentary" },
+      {
+        type: "tool_use",
+        id: "call-observe",
+        name: "terminal_observe",
+        input: { view: "screen" },
+      },
+    ],
+  });
+
+  const outputItemGroups = insertedValues.filter(
+    (value): value is Array<Record<string, unknown>> => Array.isArray(value),
+  );
+  assert.deepEqual(outputItemGroups[0]?.[0]?.canonicalPayload, {
+    type: "text",
+    text: "I will inspect first.",
+    assistantPhase: "commentary",
+  });
 });

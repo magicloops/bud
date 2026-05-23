@@ -23,12 +23,14 @@ export type CanonicalProviderData<
   payload: unknown;
 };
 
+export type AssistantMessagePhase = "commentary" | "final_answer";
+
 /**
  * Content blocks that can appear in messages.
  */
 export type CanonicalContentBlock =
   // Text content
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; assistantPhase?: AssistantMessagePhase }
 
   // Image content (vision)
   | {
@@ -165,8 +167,13 @@ export type CanonicalStreamEvent =
     }
 
   // Text content
-  | { type: "content_start"; index: number; content_type: ContentType }
-  | { type: "text_delta"; index: number; delta: string }
+  | {
+      type: "content_start";
+      index: number;
+      content_type: ContentType;
+      assistantPhase?: AssistantMessagePhase;
+    }
+  | { type: "text_delta"; index: number; delta: string; assistantPhase?: AssistantMessagePhase }
   | { type: "content_done"; index: number }
 
   // Tool use
