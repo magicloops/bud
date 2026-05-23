@@ -66,6 +66,7 @@ Node-runner coverage for transcript reconciliation rules.
 - latest-bootstrap refreshes do not duplicate pending `ask_user_questions` prompt rows
 - latest-bootstrap preservation of older history/cursors
 - turn finalization cleanup semantics
+- persisted commentary assistant rows survive draft replacement and successful turn finalization
 
 ### `question-response-submit.ts`
 

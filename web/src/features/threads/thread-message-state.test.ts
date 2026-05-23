@@ -6,7 +6,9 @@ import {
   buildPendingToolMessageFromToolCall,
   finalizeTurnMessages,
   mergeLatestBootstrapState,
+  removeDraftAssistantMessageForTurn,
   reconcileMessagePersistence,
+  upsertMessage,
 } from './thread-message-state.ts'
 
 const buildMessage = (overrides: Partial<ApiMessage> & Pick<ApiMessage, 'client_id'>): ApiMessage => ({
@@ -388,4 +390,75 @@ test('finalizeTurnMessages removes pending tool rows and only drops draft assist
     succeededTurnMessages.map((message) => message.client_id),
     ['draft-1', 'assistant-1'],
   )
+})
+
+test('persisted commentary assistant rows survive draft cleanup and turn finalization', () => {
+  const draftAssistant = buildMessage({
+    client_id: 'assistant-commentary-client',
+    message_id: 'assistant-commentary-client',
+    role: 'assistant',
+    display_role: 'Bud Agent',
+    content: 'I will inspect the terminal first.',
+    created_at: '2026-05-22T20:00:01.000Z',
+    metadata: {
+      draft: true,
+      turn_id: 'turn-1',
+    },
+  })
+  const commentaryAssistant = buildMessage({
+    client_id: 'assistant-commentary-client',
+    message_id: 'assistant-commentary-message',
+    role: 'assistant',
+    display_role: 'Bud Agent',
+    content: 'I will inspect the terminal first.',
+    created_at: '2026-05-22T20:00:02.000Z',
+    metadata: {
+      status: 'succeeded',
+      turn_id: 'turn-1',
+      segment_kind: 'intermediate',
+      assistant_phase: 'commentary',
+      followed_by_tool_call: true,
+    },
+  })
+  const pendingTool = buildMessage({
+    client_id: 'tool-1',
+    role: 'tool',
+    display_role: 'terminal.observe',
+    content: '{}',
+    created_at: '2026-05-22T20:00:03.000Z',
+    metadata: { pending: true, turn_id: 'turn-1' },
+  })
+  const finalAssistant = buildMessage({
+    client_id: 'assistant-final-client',
+    message_id: 'assistant-final-message',
+    role: 'assistant',
+    display_role: 'Bud Agent',
+    content: 'Done.',
+    created_at: '2026-05-22T20:00:04.000Z',
+    metadata: {
+      status: 'succeeded',
+      turn_id: 'turn-1',
+      segment_kind: 'final',
+      assistant_phase: 'final_answer',
+    },
+  })
+
+  const withPersistedCommentary = upsertMessage(
+    removeDraftAssistantMessageForTurn([draftAssistant], 'turn-1'),
+    commentaryAssistant,
+  )
+  const finalized = finalizeTurnMessages(
+    [...withPersistedCommentary, pendingTool, finalAssistant],
+    'turn-1',
+    'succeeded',
+  )
+
+  assert.deepEqual(
+    finalized.map((message) => message.client_id),
+    ['assistant-commentary-client', 'assistant-final-client'],
+  )
+  assert.equal(finalized[0]?.content, 'I will inspect the terminal first.')
+  assert.equal(finalized[0]?.metadata?.assistant_phase, 'commentary')
+  assert.equal(finalized[0]?.metadata?.segment_kind, 'intermediate')
+  assert.equal(finalized[1]?.metadata?.assistant_phase, 'final_answer')
 })

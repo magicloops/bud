@@ -415,6 +415,17 @@ test("assistant text segments are persisted before tool calls without finalizing
   assert.equal(events[0]?.event, "agent.message");
   assert.equal(events[0]?.data.text, "I will inspect the terminal first.");
   assert.equal((events[0]?.data.message as Record<string, unknown>).message_id, "message-assistant-1");
+  assert.deepEqual((events[0]?.data.message as Record<string, unknown>).metadata, {
+    status: "succeeded",
+    turn_id: "turn-1",
+    segment_kind: "intermediate",
+    assistant_phase: "commentary",
+    llm_call_id: "llm-call-1",
+    followed_by_tool_call: true,
+    model: "gpt-5.5",
+    reasoning_effort: "medium",
+    model_selection_source: "service_default",
+  });
   assert.equal(result.message_id, "message-assistant-1");
 });
 

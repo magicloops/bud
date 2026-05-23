@@ -42,6 +42,7 @@ Focused route-handler coverage for the thread read-watermark route.
 **Current Coverage**:
 - `POST /api/threads/:threadId/read` upserts the watermark when the seen message is newer
 - stale read-watermark updates return `updated: false` and do not rewrite the row
+- message history serialization preserves intermediate assistant `metadata.assistant_phase: "commentary"`
 - create-message rejects invalid explicit model/reasoning selections before duplicate lookup or persistence
 
 ### `agent.ts`

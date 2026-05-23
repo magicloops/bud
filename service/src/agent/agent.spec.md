@@ -428,6 +428,7 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 **Current Coverage**:
 - tool timing is emitted on `agent.tool_call` / `agent.tool_result`
 - intermediate assistant text segments persist with `segment_kind` / `llm_call_id` metadata and emit `agent.message` without finalizing the turn
+- emitted intermediate assistant `agent.message` payloads include the serialized commentary phase metadata
 - canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
 - canonical assistant/tool rows receive cached cwd path context metadata when available
 - pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`

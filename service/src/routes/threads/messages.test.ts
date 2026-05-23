@@ -260,6 +260,98 @@ test("POST /api/threads/:threadId/read returns updated=false for stale watermark
   assert.equal(insertCalled, false);
 });
 
+test("GET /api/threads/:threadId/messages returns intermediate assistant phase metadata", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const server = createServer();
+  await registerThreadMessageRoutes(
+    server,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+
+  const handler = server.routes.get("GET /api/threads/:threadId/messages");
+  assert.ok(handler, "expected message history route to register");
+
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => ACCESS.thread as never);
+
+  const commentaryMessage = {
+    messageId: "55555555-5555-4555-8555-555555555555",
+    clientId: "66666666-6666-4666-8666-666666666666",
+    threadId: ACCESS.thread.threadId,
+    role: "assistant",
+    displayRole: "Bud Agent",
+    content: "I will inspect the terminal first.",
+    metadata: {
+      status: "succeeded",
+      turn_id: "turn-1",
+      segment_kind: "intermediate",
+      assistant_phase: "commentary",
+      followed_by_tool_call: true,
+    },
+    createdByUserId: SESSION.user.id,
+    createdAt: new Date("2026-05-22T20:00:05.000Z"),
+    updatedAt: new Date("2026-05-22T20:00:05.000Z"),
+  };
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            orderBy() {
+              return {
+                limit() {
+                  return Promise.resolve([commentaryMessage]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: ACCESS.thread.threadId },
+    query: { limit: 100 },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 200);
+  const payload = response.payload as {
+    messages: Array<Record<string, unknown>>;
+    page: Record<string, unknown>;
+  };
+  assert.deepEqual(payload.messages, [
+    {
+      message_id: commentaryMessage.messageId,
+      client_id: commentaryMessage.clientId,
+      role: "assistant",
+      display_role: "Bud Agent",
+      content: "I will inspect the terminal first.",
+      metadata: {
+        status: "succeeded",
+        turn_id: "turn-1",
+        segment_kind: "intermediate",
+        assistant_phase: "commentary",
+        followed_by_tool_call: true,
+      },
+      created_at: commentaryMessage.createdAt,
+    },
+  ]);
+  assert.equal(payload.page.limit, 100);
+  assert.equal(payload.page.returned, 1);
+  assert.equal(payload.page.has_more_before, false);
+  assert.equal(payload.page.has_more_after, false);
+  assert.equal(typeof payload.page.before_cursor, "string");
+  assert.equal(payload.page.before_cursor, payload.page.after_cursor);
+});
+
 test("POST /api/threads/:threadId/messages rejects invalid explicit reasoning before persistence", async (t) => {
   t.after(() => {
     mock.restoreAll();

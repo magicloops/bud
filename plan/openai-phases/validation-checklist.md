@@ -40,6 +40,13 @@ Manual validation pending.
 - [x] Final visible assistant text with no tool call is replayed to OpenAI as `final_answer`
 - [x] Multi-tool turns preserve phase across every follow-up provider request
 
+## Product API / UI Handling
+
+- [x] Intermediate assistant transcript rows are emitted on `agent.message` with serialized `metadata.assistant_phase: "commentary"`
+- [x] `GET /api/threads/:threadId/messages` returns intermediate assistant `metadata.assistant_phase: "commentary"`
+- [x] Web transcript reconciliation keeps persisted commentary assistant rows visible after draft cleanup and successful turn finalization
+- [x] Web rendering intentionally treats commentary rows as normal assistant prose; no top-level REST/SSE phase field or special UI label is added
+
 ## Anthropic Regression
 
 - [x] Anthropic transformed messages do not include phase-like metadata
