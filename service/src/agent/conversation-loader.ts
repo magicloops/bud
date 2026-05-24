@@ -1,5 +1,5 @@
 import { ulid } from "ulid";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, gt, or, type SQL } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messageTable } from "../db/schema.js";
 import {
@@ -30,6 +30,10 @@ import {
   normalizeAskUserQuestionsRequest,
   parseStoredAskUserQuestionsRequest,
 } from "./user-question-contracts.js";
+import {
+  getLatestCompletedContextCheckpoint,
+  type AgentContextCheckpoint,
+} from "./context-checkpoint-repository.js";
 
 type StoredMessageRow = {
   messageId: string;
@@ -43,6 +47,10 @@ type ConversationLoadOptions = {
   provider?: CanonicalProviderId | null;
   targetModel?: string | null;
   targetReasoning?: ReasoningConfig | null;
+};
+
+type ConversationCheckpointRepository = {
+  getLatestCompletedCheckpoint(threadId: string): Promise<AgentContextCheckpoint | null>;
 };
 
 export type LoadedConversation = {
@@ -182,6 +190,12 @@ export function createCanonicalTextMessage(
 }
 
 export class AgentConversationLoader {
+  constructor(
+    private readonly checkpointRepository: ConversationCheckpointRepository = {
+      getLatestCompletedCheckpoint: getLatestCompletedContextCheckpoint,
+    },
+  ) {}
+
   async load(
     threadId: string,
     options?: ConversationLoadOptions,
@@ -205,7 +219,13 @@ export class AgentConversationLoader {
       createCanonicalTextMessage("system", AGENT_SYSTEM_PROMPT),
     ];
 
-    const rows = await this.loadStoredRows(threadId);
+    const checkpoint = await this.checkpointRepository.getLatestCompletedCheckpoint(threadId);
+    const replacementHistory = checkpoint
+      ? checkpoint.replacementHistory.filter((message) => message.role !== "system")
+      : [];
+    messages.push(...replacementHistory);
+
+    const rows = await this.loadStoredRows(threadId, checkpoint);
 
     if (!options?.provider) {
       for (const row of rows) {
@@ -219,14 +239,24 @@ export class AgentConversationLoader {
           ledgerMessages: [],
           ledgerSummary: emptyProviderLedgerThreadDiagnostics(),
           canonicalFallbackMessageCount: countModelTranscriptRows(rows),
+          checkpoint,
+          replacementHistoryMessageCount: replacementHistory.length,
         }),
       };
     }
 
+    const ledgerBoundary = checkpoint
+      ? {
+          createdAt: checkpoint.compactedThroughLlmCallCreatedAt,
+          llmCallId: checkpoint.compactedThroughLlmCallId,
+        }
+      : null;
     const ledgerSummary = includeDiagnostics
-      ? await loadProviderLedgerThreadDiagnostics(threadId)
+      ? await loadProviderLedgerThreadDiagnostics(threadId, { after: ledgerBoundary })
       : emptyProviderLedgerThreadDiagnostics();
-    const loadedLedgerMessages = await loadProviderLedgerMessages(threadId, options.provider);
+    const loadedLedgerMessages = await loadProviderLedgerMessages(threadId, options.provider, {
+      after: ledgerBoundary,
+    });
     const compatibility = splitCompatibleLedgerMessages(loadedLedgerMessages, options);
     const ledgerMessages = compatibility.compatibleMessages;
     const ledgerCallIds = new Set(ledgerMessages.map((message) => message.llmCallId));
@@ -277,11 +307,22 @@ export class AgentConversationLoader {
           compatibility.incompatibleOutputItemCount,
         sameProviderIncompatibleProviderOnlyItemCount:
           compatibility.incompatibleProviderOnlyItemCount,
+        checkpoint,
+        replacementHistoryMessageCount: replacementHistory.length,
       }),
     };
   }
 
-  private async loadStoredRows(threadId: string): Promise<StoredMessageRow[]> {
+  private async loadStoredRows(
+    threadId: string,
+    checkpoint: AgentContextCheckpoint | null,
+  ): Promise<StoredMessageRow[]> {
+    const conditions: SQL<unknown>[] = [eq(messageTable.threadId, threadId)];
+    const afterBoundary = messageAfterCheckpointBoundary(checkpoint);
+    if (afterBoundary) {
+      conditions.push(afterBoundary);
+    }
+
     return db
       .select({
         messageId: messageTable.messageId,
@@ -291,8 +332,8 @@ export class AgentConversationLoader {
         createdAt: messageTable.createdAt,
       })
       .from(messageTable)
-      .where(eq(messageTable.threadId, threadId))
-      .orderBy(asc(messageTable.createdAt));
+      .where(and(...conditions))
+      .orderBy(asc(messageTable.createdAt), asc(messageTable.messageId));
   }
 
   private appendStoredMessage(
@@ -494,6 +535,8 @@ function buildReconstructionDiagnostics(args: {
   sameProviderIncompatibleCallCount?: number;
   sameProviderIncompatibleOutputItemCount?: number;
   sameProviderIncompatibleProviderOnlyItemCount?: number;
+  checkpoint?: AgentContextCheckpoint | null;
+  replacementHistoryMessageCount?: number;
 }): LlmReconstructionDiagnostics {
   const sourceProviders = sortedProviders(args.ledgerSummary.providerCallCounts);
   const providerNativeCallCount = args.ledgerMessages.length;
@@ -546,6 +589,17 @@ function buildReconstructionDiagnostics(args: {
     ...(args.targetReasoning !== undefined
       ? { targetReasoning: args.targetReasoning }
       : {}),
+    ...(args.checkpoint
+      ? {
+          checkpointApplied: true,
+          checkpointId: args.checkpoint.checkpointId,
+          checkpointCreatedAt: args.checkpoint.createdAt.toISOString(),
+          checkpointReplacementHistoryMessageCount:
+            args.replacementHistoryMessageCount ?? 0,
+          compactedThroughMessageId: args.checkpoint.compactedThroughMessageId,
+          compactedThroughLlmCallId: args.checkpoint.compactedThroughLlmCallId,
+        }
+      : {}),
     degraded: degradedReasons.length > 0,
     degradedReasons,
     sourceProviders,
@@ -569,6 +623,25 @@ function buildReconstructionDiagnostics(args: {
       ? { outputlessCompletedCallCounts: args.ledgerSummary.outputlessCompletedCallCounts }
       : {}),
   };
+}
+
+function messageAfterCheckpointBoundary(
+  checkpoint: AgentContextCheckpoint | null,
+): SQL<unknown> | undefined {
+  if (
+    !checkpoint?.compactedThroughMessageCreatedAt ||
+    !checkpoint.compactedThroughMessageId
+  ) {
+    return undefined;
+  }
+
+  return or(
+    gt(messageTable.createdAt, checkpoint.compactedThroughMessageCreatedAt),
+    and(
+      eq(messageTable.createdAt, checkpoint.compactedThroughMessageCreatedAt),
+      gt(messageTable.messageId, checkpoint.compactedThroughMessageId),
+    ),
+  );
 }
 
 function reconstructionMode(args: {

@@ -79,7 +79,7 @@ Canonical type definitions for the abstraction layer (~265 lines).
 
 ### `provider.ts`
 
-`LLMProvider` interface that all providers implement (~77 lines).
+`LLMProvider` interface and provider-level shared errors (~100 lines).
 
 ```typescript
 interface LLMProvider {
@@ -92,6 +92,8 @@ interface LLMProvider {
   getModelCapabilities(model: string): ModelCapabilities;
 }
 ```
+
+Also exports `ProviderContextWindowError` and `isProviderContextWindowError()`, the normalized provider error shape used by the agent to trigger a one-shot automatic context compaction retry when a model rejects an oversized request.
 
 ### `model-catalog.ts`
 
@@ -159,6 +161,7 @@ Durable provider-call ledger helpers for same-provider reconstruction and cache 
 - mark provider-only reasoning payloads separately from browser-visible product text
 - preserve explicit OpenAI assistant text `assistantPhase` in canonical payloads and derive best-effort historical OpenAI phase during same-provider replay
 - record cache telemetry derived from provider usage blocks plus reconstruction-mode diagnostics
+- filter replay and diagnostics after a context-checkpoint boundary when automatic compaction has replaced older transcript spans with a summary
 - summarize provider-ledger coverage for a thread so provider switches, same-provider replay incompatibilities, itemless completed calls, and canonical fallback ranges are explicit
 - reconstruct canonical assistant messages from same-provider ledger items before falling back to product transcript rows
 
@@ -263,9 +266,11 @@ for await (const event of provider.invoke(messages, tools, {
 - The agent reconstructs a `CanonicalResponse` from streamed text/tool/reasoning events after also forwarding assistant draft text to browser clients over SSE.
 - Every provider invocation is recorded in the provider ledger before tool execution or final success emission, including provider output items, reasoning payloads, usage, and cache counters.
 - Same-provider conversation loading uses durable ledger items for assistant output blocks so reasoning, redacted reasoning, and tool calls survive service restarts. Provider switches use the existing canonical product transcript projection.
+- Automatic context compaction supplies provider-ledger and transcript boundaries so older spans are represented by persisted checkpoint replacement history instead of replayed verbatim.
 - OpenAI same-provider loading preserves or derives assistant text `assistantPhase` so manually replayed Responses assistant messages can include `phase`.
 - Anthropic same-provider loading now checks the current target model and reasoning config before replaying signed `thinking` or `redacted_thinking` provider blocks; incompatible ranges use canonical fallback and persist `same_provider_incompatible_reasoning` diagnostics in call metadata.
 - Providers may attach raw completion payloads as `providerData`; the agent uses those only for diagnostics when a response cannot be parsed into text or a tool call.
+- Providers normalize context-window failures into `ProviderContextWindowError`; the agent uses that signal to compact and retry the request once with a fresh conversation load.
 - `invokeSync()` remains an optional adapter capability, but it is no longer the main chat-agent path in this repo.
 
 ## Canonical Tool Schema

@@ -23,6 +23,13 @@ const toOptionalNumber = (value: string | undefined) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
+const toClampedRatio = (value: string | undefined, fallback: number, max: number) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.min(parsed, max);
+};
 const toNullable = (value: string | undefined) => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -278,6 +285,14 @@ export const config = {
   agentMaxSteps: toNumber(process.env.AGENT_MAX_STEPS, 1000),
   agentMaxOutputTokens: toNumber(process.env.AGENT_MAX_OUTPUT_TOKENS, 128000),
   agentReasoningEffortDefault: toReasoningEffort(process.env.AGENT_REASONING_EFFORT, "low"),
+  agentAutoCompactionEnabled: process.env.AGENT_AUTO_COMPACTION_ENABLED === undefined
+    ? true
+    : toBool(process.env.AGENT_AUTO_COMPACTION_ENABLED),
+  agentAutoCompactionRatio: toClampedRatio(
+    process.env.AGENT_AUTO_COMPACTION_RATIO,
+    0.9,
+    0.9,
+  ),
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
   agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI),

@@ -6,7 +6,7 @@
  */
 
 import OpenAI from "openai";
-import type { LLMProvider } from "../provider.js";
+import { ProviderContextWindowError, type LLMProvider } from "../provider.js";
 import { getCatalogEntry } from "../model-catalog.js";
 import type {
   CanonicalMessage,
@@ -154,12 +154,21 @@ export class OpenAIProvider implements LLMProvider {
       params.text = { format: { type: "json_object" } };
     }
 
-    const stream = await this.client.responses.create(
-      params,
-      signal ? { signal } : undefined
-    );
+    let stream: AsyncIterable<OpenAI.Responses.ResponseStreamEvent>;
+    try {
+      stream = await this.client.responses.create(
+        params,
+        signal ? { signal } : undefined
+      ) as AsyncIterable<OpenAI.Responses.ResponseStreamEvent>;
+    } catch (err) {
+      throw normalizeOpenAIContextWindowError(err, config.model);
+    }
 
-    yield* this.transformStream(stream);
+    try {
+      yield* this.transformStream(stream);
+    } catch (err) {
+      throw normalizeOpenAIContextWindowError(err, config.model);
+    }
   }
 
   /**
@@ -194,10 +203,15 @@ export class OpenAIProvider implements LLMProvider {
       params.text = { format: { type: "json_object" } };
     }
 
-    const response = await this.client.responses.create(
-      params,
-      signal ? { signal } : undefined
-    ) as OpenAIResponse;
+    let response: OpenAIResponse;
+    try {
+      response = await this.client.responses.create(
+        params,
+        signal ? { signal } : undefined
+      ) as OpenAIResponse;
+    } catch (err) {
+      throw normalizeOpenAIContextWindowError(err, config.model);
+    }
 
     return this.parseResponse(response);
   }
@@ -516,9 +530,33 @@ export class OpenAIProvider implements LLMProvider {
           break;
 
         case "response.failed": {
-          const error = new Error((event.response as unknown as Record<string, unknown>).error
-            ? ((event.response as unknown as Record<string, unknown>).error as Record<string, string>).message ?? "Request failed"
-            : "Request failed") as Error & {
+          const failedResponse = event.response as unknown as Record<string, unknown>;
+          const responseError = failedResponse.error;
+          const responseErrorRecord =
+            responseError && typeof responseError === "object"
+              ? responseError as Record<string, unknown>
+              : {};
+          const message = typeof responseErrorRecord.message === "string"
+            ? responseErrorRecord.message
+            : "Request failed";
+          const code = typeof responseErrorRecord.code === "string"
+            ? responseErrorRecord.code
+            : undefined;
+          if (isOpenAIContextWindowError({ message, code })) {
+            yield {
+              type: "error",
+              error: new ProviderContextWindowError({
+                provider: "openai",
+                model: typeof failedResponse.model === "string"
+                  ? failedResponse.model
+                  : "unknown",
+                message,
+                providerCode: code,
+              }),
+            };
+            break;
+          }
+          const error = new Error(message) as Error & {
               provider?: string;
               providerResponse?: unknown;
             };
@@ -853,4 +891,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseAssistantMessagePhase(value: unknown): AssistantMessagePhase | undefined {
   return value === "commentary" || value === "final_answer" ? value : undefined;
+}
+
+function normalizeOpenAIContextWindowError(error: unknown, model: string): unknown {
+  const record = error && typeof error === "object"
+    ? error as Record<string, unknown>
+    : {};
+  const message = error instanceof Error ? error.message : String(error);
+  let code = typeof record.code === "string" ? record.code : undefined;
+  if (!code && typeof record.error === "object" && record.error !== null) {
+    const nested = record.error as Record<string, unknown>;
+    code = typeof nested.code === "string" ? nested.code : undefined;
+  }
+
+  if (!isOpenAIContextWindowError({ message, code })) {
+    return error;
+  }
+
+  return new ProviderContextWindowError({
+    provider: "openai",
+    model,
+    message,
+    providerCode: code,
+    cause: error,
+  });
+}
+
+function isOpenAIContextWindowError(args: {
+  message?: string;
+  code?: string;
+}): boolean {
+  const code = args.code?.toLowerCase();
+  if (code && [
+    "context_length_exceeded",
+    "context_window_exceeded",
+    "input_too_large",
+  ].includes(code)) {
+    return true;
+  }
+
+  const message = args.message?.toLowerCase() ?? "";
+  return [
+    "context length",
+    "context window",
+    "maximum context",
+    "too many tokens",
+    "input is too long",
+    "prompt is too long",
+    "exceeds the context",
+  ].some((fragment) => message.includes(fragment));
 }

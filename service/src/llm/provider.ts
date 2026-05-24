@@ -6,6 +6,7 @@
  */
 
 import type {
+  CanonicalProviderId,
   CanonicalMessage,
   CanonicalTool,
   CanonicalStreamEvent,
@@ -13,6 +14,33 @@ import type {
   ModelConfig,
   ModelCapabilities,
 } from "./types.js";
+
+export class ProviderContextWindowError extends Error {
+  readonly provider: CanonicalProviderId;
+  readonly model: string;
+  readonly providerCode?: string;
+  readonly retryable = true;
+
+  constructor(args: {
+    provider: CanonicalProviderId;
+    model: string;
+    message: string;
+    providerCode?: string;
+    cause?: unknown;
+  }) {
+    super(args.message, args.cause ? { cause: args.cause } : undefined);
+    this.name = "ProviderContextWindowError";
+    this.provider = args.provider;
+    this.model = args.model;
+    this.providerCode = args.providerCode;
+  }
+}
+
+export function isProviderContextWindowError(
+  error: unknown,
+): error is ProviderContextWindowError {
+  return error instanceof ProviderContextWindowError;
+}
 
 /**
  * Interface that all LLM providers must implement.

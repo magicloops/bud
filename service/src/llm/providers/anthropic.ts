@@ -7,7 +7,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { MessageStream } from "@anthropic-ai/sdk/lib/MessageStream";
-import type { LLMProvider } from "../provider.js";
+import { ProviderContextWindowError, type LLMProvider } from "../provider.js";
 import { getCatalogEntry, type ReasoningLevel } from "../model-catalog.js";
 import type {
   CanonicalMessage,
@@ -241,12 +241,21 @@ export class AnthropicProvider implements LLMProvider {
 
     this.applyReasoningConfig(params, config);
 
-    const stream = this.client.messages.stream(params, {
-      signal,
-      headers: this.buildHeaders(config),
-    });
+    let stream: MessageStream;
+    try {
+      stream = this.client.messages.stream(params, {
+        signal,
+        headers: this.buildHeaders(config),
+      });
+    } catch (err) {
+      throw normalizeAnthropicContextWindowError(err, config.model);
+    }
 
-    yield* this.transformStream(stream);
+    try {
+      yield* this.transformStream(stream);
+    } catch (err) {
+      throw normalizeAnthropicContextWindowError(err, config.model);
+    }
   }
 
   async invokeSync(
@@ -283,13 +292,23 @@ export class AnthropicProvider implements LLMProvider {
     this.applyReasoningConfig(params, config);
 
     // Use streaming but collect into final response
-    const stream = this.client.messages.stream(params, {
-      signal,
-      headers: this.buildHeaders(config),
-    });
+    let stream: MessageStream;
+    try {
+      stream = this.client.messages.stream(params, {
+        signal,
+        headers: this.buildHeaders(config),
+      });
+    } catch (err) {
+      throw normalizeAnthropicContextWindowError(err, config.model);
+    }
 
     // Collect the full response from the stream
-    const finalMessage = await stream.finalMessage();
+    let finalMessage: Anthropic.Message;
+    try {
+      finalMessage = await stream.finalMessage();
+    } catch (err) {
+      throw normalizeAnthropicContextWindowError(err, config.model);
+    }
     return this.parseResponse(finalMessage);
   }
 
@@ -733,4 +752,50 @@ export class AnthropicProvider implements LLMProvider {
       .map(b => b.text)
       .join("\n");
   }
+}
+
+function normalizeAnthropicContextWindowError(error: unknown, model: string): unknown {
+  const record = error && typeof error === "object"
+    ? error as Record<string, unknown>
+    : {};
+  const message = error instanceof Error ? error.message : String(error);
+  let code = typeof record.code === "string" ? record.code : undefined;
+  if (!code && typeof record.type === "string") {
+    code = record.type;
+  }
+  if (!code && typeof record.error === "object" && record.error !== null) {
+    const nested = record.error as Record<string, unknown>;
+    code = typeof nested.type === "string" ? nested.type : undefined;
+  }
+
+  if (!isAnthropicContextWindowError({ message, code })) {
+    return error;
+  }
+
+  return new ProviderContextWindowError({
+    provider: "anthropic",
+    model,
+    message,
+    providerCode: code,
+    cause: error,
+  });
+}
+
+function isAnthropicContextWindowError(args: {
+  message?: string;
+  code?: string;
+}): boolean {
+  const code = args.code?.toLowerCase();
+  const message = args.message?.toLowerCase() ?? "";
+  if (code === "context_length_exceeded" || code === "input_too_large") {
+    return true;
+  }
+  return [
+    "prompt is too long",
+    "context window",
+    "maximum context",
+    "too many tokens",
+    "input tokens",
+    "exceeds",
+  ].some((fragment) => message.includes(fragment));
 }

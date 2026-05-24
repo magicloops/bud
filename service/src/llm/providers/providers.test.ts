@@ -3,6 +3,7 @@ import test from "node:test";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAIProvider } from "./openai.js";
 import type { CanonicalMessage, ModelConfig } from "../types.js";
+import { isProviderContextWindowError } from "../provider.js";
 
 const messages: CanonicalMessage[] = [
   {
@@ -67,6 +68,35 @@ test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async
   assert.deepEqual(capturedParams[0].include, ["reasoning.encrypted_content"]);
   assert.equal(capturedParams[0].parallel_tool_calls, false);
   assert.equal("reasoning" in capturedParams[1], false);
+});
+
+test("OpenAI provider normalizes context-window request errors", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async () => {
+    const err = new Error("maximum context length exceeded") as Error & { code?: string };
+    err.code = "context_length_exceeded";
+    throw err;
+  };
+
+  await assert.rejects(
+    async () => drain(provider.invoke(messages, [], {
+      model: "gpt-5.4-2026-03-05",
+      maxOutputTokens: 128000,
+      reasoning: { enabled: false },
+    })),
+    (err) => {
+      assert.equal(isProviderContextWindowError(err), true);
+      return true;
+    },
+  );
 });
 
 test("OpenAI provider recursively transforms nested tool schemas for strict mode", async () => {
@@ -746,6 +776,37 @@ test("Anthropic provider lowers adaptive effort models without manual budgets", 
   assert.deepEqual(capturedParams[1].output_config, {
     effort: "max",
   });
+});
+
+test("Anthropic provider normalizes context-window request errors", async () => {
+  const provider = new AnthropicProvider("test-key");
+  const providerWithClient = provider as unknown as {
+    client: {
+      messages: {
+        stream(): AsyncIterable<unknown>;
+      };
+    };
+  };
+
+  providerWithClient.client.messages.stream = () => {
+    const err = new Error("prompt is too long: input tokens exceed maximum context") as Error & {
+      type?: string;
+    };
+    err.type = "input_too_large";
+    throw err;
+  };
+
+  await assert.rejects(
+    async () => drain(provider.invoke(messages, [], {
+      model: "claude-opus-4-6",
+      maxOutputTokens: 128000,
+      reasoning: { enabled: false },
+    })),
+    (err) => {
+      assert.equal(isProviderContextWindowError(err), true);
+      return true;
+    },
+  );
 });
 
 test("Anthropic provider ignores OpenAI assistant phase metadata", async () => {

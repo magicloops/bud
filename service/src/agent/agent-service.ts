@@ -16,6 +16,8 @@ import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import type {
   AssistantMessagePhase,
   CanonicalContentBlock,
+  CanonicalMessage,
+  CanonicalResponse,
   ModelSelectionSource,
   ReasoningLevel,
   ResolvedModelReasoning,
@@ -23,6 +25,7 @@ import type {
 import {
   buildRequestMode,
   createLlmCallId,
+  isProviderContextWindowError,
   recordLlmCall,
   recordLlmToolResultItem,
   resolveEffectiveModelSelection,
@@ -53,6 +56,13 @@ import {
   type AcceptedQuestionResponse,
 } from "./user-question-repository.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
+import { AgentContextCompactor } from "./context-compactor.js";
+import {
+  estimateCanonicalMessagesTokens,
+  resolveContextBudget,
+  shouldCompactContext,
+} from "./context-budget.js";
+import { getCurrentContextCheckpointBoundary } from "./context-checkpoint-repository.js";
 
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
@@ -65,6 +75,7 @@ export class AgentService {
   private readonly toolExecutor: TerminalToolExecutor;
   private readonly webViewToolExecutor: WebViewToolExecutor;
   private readonly transcriptWriter: AgentTranscriptWriter;
+  private readonly contextCompactor: AgentContextCompactor;
   private readonly cancellations = new AgentCancellationRegistry();
   private readonly userQuestions = new AgentUserQuestionRegistry();
   private readonly threadTransitions = new Map<string, Promise<void>>();
@@ -92,6 +103,7 @@ export class AgentService {
     );
     this.webViewToolExecutor = new WebViewToolExecutor(logger, debugEnabled);
     this.transcriptWriter = new AgentTranscriptWriter(runtime);
+    this.contextCompactor = new AgentContextCompactor(logger, debugEnabled);
   }
 
   async startUserMessage(
@@ -329,13 +341,14 @@ export class AgentService {
     const { threadId, turnId, sessionId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
     let supersededQuestionResponse: ResolvedUserQuestionResponse | null = null;
     const providerName = this.modelRunner.resolveProviderName(model);
-    const loadedConversation = await this.conversationLoader.loadWithDiagnostics(threadId, {
+    let loadedConversation = await this.conversationLoader.loadWithDiagnostics(threadId, {
       provider: providerName,
       targetModel: modelReasoning.providerModel,
       targetReasoning: modelReasoning.reasoning,
     });
-    const conversation = loadedConversation.messages;
-    const reconstruction = loadedConversation.reconstruction;
+    let conversation = loadedConversation.messages;
+    let reconstruction = loadedConversation.reconstruction;
+    const compactedBoundaryKeys = new Set<string>();
     this.debug("Starting agent run", {
       threadId,
       sessionId,
@@ -360,6 +373,26 @@ export class AgentService {
     }
 
     try {
+      const preTurnCompaction = await this.compactConversationIfNeeded({
+        threadId,
+        turnId,
+        sessionId,
+        model,
+        modelReasoning,
+        providerName,
+        phase: "pre_turn",
+        reason: "context_limit",
+        conversation,
+        ownerUserId,
+        controller,
+        compactedBoundaryKeys,
+      });
+      if (preTurnCompaction) {
+        loadedConversation = preTurnCompaction.loadedConversation;
+        conversation = loadedConversation.messages;
+        reconstruction = loadedConversation.reconstruction;
+      }
+
       let steps = 0;
       while (steps < config.agentMaxSteps) {
         if (controller.signal.aborted) {
@@ -367,8 +400,12 @@ export class AgentService {
         }
 
         this.runtime.markThinking(threadId);
-        const { response, assistantClientId: streamedAssistantClientId } =
-          await this.modelRunner.invokeModel(
+        let modelResult: {
+          response: CanonicalResponse;
+          assistantClientId: string | null;
+        };
+        try {
+          modelResult = await this.modelRunner.invokeModel(
             threadId,
             turnId,
             conversation,
@@ -376,6 +413,41 @@ export class AgentService {
             modelReasoning,
             controller.signal,
           );
+        } catch (err) {
+          if (!isProviderContextWindowError(err)) {
+            throw err;
+          }
+          const retryCompaction = await this.compactConversationIfNeeded({
+            threadId,
+            turnId,
+            sessionId,
+            model,
+            modelReasoning,
+            providerName,
+            phase: steps === 0 ? "pre_turn" : "mid_turn",
+            reason: "context_error_retry",
+            conversation,
+            ownerUserId,
+            controller,
+            force: true,
+            compactedBoundaryKeys,
+          });
+          if (!retryCompaction) {
+            throw err;
+          }
+          loadedConversation = retryCompaction.loadedConversation;
+          conversation = loadedConversation.messages;
+          reconstruction = loadedConversation.reconstruction;
+          modelResult = await this.modelRunner.invokeModel(
+            threadId,
+            turnId,
+            conversation,
+            model,
+            modelReasoning,
+            controller.signal,
+          );
+        }
+        const { response, assistantClientId: streamedAssistantClientId } = modelResult;
         const llmCallId = createLlmCallId();
         const toolCalls = this.modelRunner.extractToolCalls(response);
         const responseForReplay = response.providerData?.provider === "openai" || providerName === "openai"
@@ -569,6 +641,25 @@ export class AgentService {
           }
 
           steps += toolCalls.length;
+          const midTurnCompaction = await this.compactConversationIfNeeded({
+            threadId,
+            turnId,
+            sessionId,
+            model,
+            modelReasoning,
+            providerName,
+            phase: "mid_turn",
+            reason: "context_limit",
+            conversation,
+            ownerUserId,
+            controller,
+            compactedBoundaryKeys,
+          });
+          if (midTurnCompaction) {
+            loadedConversation = midTurnCompaction.loadedConversation;
+            conversation = loadedConversation.messages;
+            reconstruction = loadedConversation.reconstruction;
+          }
           continue;
         }
 
@@ -653,6 +744,93 @@ export class AgentService {
     }
     this.logger.info({ threadId, budId: thread.budId }, "Resolved budId for thread");
     return { budId: thread.budId };
+  }
+
+  private async compactConversationIfNeeded(args: {
+    threadId: string;
+    turnId: string;
+    sessionId: string;
+    model: string;
+    modelReasoning: ResolvedModelReasoning;
+    providerName: ReturnType<AgentModelRunner["resolveProviderName"]>;
+    phase: "pre_turn" | "mid_turn";
+    reason: "context_limit" | "model_downshift" | "context_error_retry";
+    conversation: CanonicalMessage[];
+    ownerUserId?: string | null;
+    controller: AbortController;
+    force?: boolean;
+    compactedBoundaryKeys?: Set<string>;
+  }): Promise<{ loadedConversation: Awaited<ReturnType<AgentConversationLoader["loadWithDiagnostics"]>> } | null> {
+    const budget = resolveContextBudget({
+      model: args.model,
+      modelReasoning: args.modelReasoning,
+    });
+    const estimatedTokens = estimateCanonicalMessagesTokens(args.conversation);
+    if (!budget.enabled) {
+      return null;
+    }
+    if (!args.force && !shouldCompactContext({ estimatedTokens, budget })) {
+      return null;
+    }
+
+    const boundaries = await getCurrentContextCheckpointBoundary(args.threadId);
+    const boundaryKey = contextCheckpointBoundaryKey(boundaries);
+    if (args.compactedBoundaryKeys?.has(boundaryKey)) {
+      this.logger.info(
+        {
+          threadId: args.threadId,
+          turnId: args.turnId,
+          phase: args.phase,
+          reason: args.reason,
+          boundaryKey,
+          component: "agent_context_compaction",
+        },
+        "Skipping duplicate context compaction for current replay boundary",
+      );
+      return null;
+    }
+
+    const pathContext = args.phase === "mid_turn"
+      ? await this.getPathContextForSession(args.sessionId)
+      : null;
+
+    this.logger.info(
+      {
+        threadId: args.threadId,
+        turnId: args.turnId,
+        phase: args.phase,
+        estimatedTokens,
+        thresholdTokens: budget.thresholdTokens,
+        contextWindowTokens: budget.contextWindowTokens,
+        component: "agent_context_compaction",
+      },
+      "Compacting agent context before provider request",
+    );
+
+    await this.contextCompactor.compact({
+      threadId: args.threadId,
+      turnId: args.turnId,
+      phase: args.phase,
+      trigger: "auto",
+      reason: args.reason,
+      model: args.model,
+      provider: args.providerName,
+      modelReasoning: args.modelReasoning,
+      conversation: args.conversation,
+      inputTokensBefore: estimatedTokens,
+      ownerUserId: args.ownerUserId,
+      currentTerminalContext: formatTerminalPathContext(pathContext),
+      signal: args.controller.signal,
+    });
+    args.compactedBoundaryKeys?.add(boundaryKey);
+
+    return {
+      loadedConversation: await this.conversationLoader.loadWithDiagnostics(args.threadId, {
+        provider: args.providerName,
+        targetModel: args.modelReasoning.providerModel,
+        targetReasoning: args.modelReasoning.reasoning,
+      }),
+    };
   }
 
   private async resolveThreadOwnerUserId(threadId: string): Promise<string | null> {
@@ -895,4 +1073,22 @@ function applyOpenAIAssistantPhaseFallback(
       assistantPhase: fallbackPhase,
     };
   });
+}
+
+function formatTerminalPathContext(pathContext: TerminalPathContext | null): string | null {
+  if (!pathContext) {
+    return null;
+  }
+  return JSON.stringify(pathContext);
+}
+
+function contextCheckpointBoundaryKey(
+  boundaries: Awaited<ReturnType<typeof getCurrentContextCheckpointBoundary>>,
+): string {
+  return [
+    boundaries.messageCreatedAt?.toISOString() ?? "",
+    boundaries.messageId ?? "",
+    boundaries.llmCallCreatedAt?.toISOString() ?? "",
+    boundaries.llmCallId ?? "",
+  ].join("|");
 }
