@@ -149,12 +149,12 @@ Ownership-focused thread submodules:
 - page metadata includes `has_more_before`, `has_more_after`, `before_cursor`, `after_cursor`, `returned`, and `limit`
 
 **Agent Stream Contract**:
-- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, and route-computed `context_budget`
-- `context_budget` is a best-effort snapshot of conversation usage since the latest context checkpoint, measured against the automatic-compaction threshold when enabled or the usable input window when compaction is disabled
+- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, and `context_budget`
+- `context_budget` is a best-effort snapshot of conversation usage since the latest context checkpoint, measured against the automatic-compaction threshold when enabled or the usable input window when compaction is disabled. The primary `estimated_input_tokens` includes both canonical message content and normal agent tool-schema overhead, with `message_estimated_tokens` and `tool_schema_tokens` exposing the split. Active turns prefer the runtime's latest backend compaction-decision snapshot; idle turns use durable reconstruction.
 - `pending_tool` now carries `client_id` and `started_at` in addition to `call_id`, `name`, and `args`
 - `phase` may be `waiting_for_user`; in that state `pending_tool.name` can be `ask_user_questions` and `pending_tool.args` is the normalized `ask_user_questions_request_v1` payload with `request_id`
 - `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
-- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
+- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
 - agent payloads include a per-turn `turn_id`
 - assistant draft events now include top-level `client_id`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
@@ -170,6 +170,7 @@ Ownership-focused thread submodules:
 - terminal tool rows may include `message.metadata.path_context_before` and `message.metadata.path_context_after`; assistant/user rows may include `message.metadata.path_context`
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `agent.message` may now arrive for an intermediate visible assistant text segment before later tool calls; the embedded `message.metadata.segment_kind` distinguishes `intermediate` from `final`
+- `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` are live activity markers for automatic context compaction; they carry token counts and sanitized status metadata but no transcript row, summary, or replacement history. Successful compaction may carry an optional post-compaction `context_budget`.
 - `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
 - no-cursor attaches are live-only; they do not replay buffered `agent.*` or `final`
 - bounded replay can resume from `after=<cursor>`, the standard `Last-Event-ID` header, or the optional `last_event_id` query parameter

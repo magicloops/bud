@@ -57,22 +57,22 @@
 ## Phase 5: Stream Client Contract And Manual Compaction Decision
 
 - [x] Decide whether additive compaction SSE events ship now.
-- [ ] If shipping events, implement `agent.compaction_start`.
-- [ ] If shipping events, implement `agent.compaction_done`.
-- [ ] If shipping events, implement `agent.compaction_failed`.
-- [ ] If shipping events, update web stream types.
+- [x] If shipping events, implement `agent.compaction_start`.
+- [x] If shipping events, implement `agent.compaction_done`.
+- [x] If shipping events, implement `agent.compaction_failed`.
+- [x] If shipping events, update web stream types.
 - [x] Decide whether manual compaction remains deferred.
 - [ ] If manual route ships, add owner authorization and route tests.
-- [ ] Update `docs/proto.md` for any new SSE event shapes.
+- [x] Update `docs/proto.md` for any new SSE event shapes.
 
 ## Phase 6: Validation Docs And Rollout
 
-- [ ] Run focused service tests.
-- [ ] Run service build.
+- [x] Run focused service tests.
+- [x] Run service build.
 - [ ] Run local `db:push` and checked-in migration generation.
 - [ ] Review generated migration SQL and metadata.
 - [ ] Complete manual validation checklist.
-- [ ] Update all affected specs.
+- [x] Update all affected specs.
 - [ ] Document rollout and rollback controls.
 - [ ] Record final validation status in this checklist.
 

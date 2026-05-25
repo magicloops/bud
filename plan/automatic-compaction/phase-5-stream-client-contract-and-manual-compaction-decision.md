@@ -1,7 +1,7 @@
 # Phase 5: Stream Client Contract And Manual Compaction Decision
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Deferred after first automatic-compaction tranche
+**Status**: Partially implemented - stream events and first-party web visibility shipped; manual compaction remains deferred
 
 ---
 
@@ -11,10 +11,10 @@ Make compaction observable to clients without exposing checkpoint internals, and
 
 By the end of this phase:
 
-- optional compaction SSE events are specified and implemented if product wants live visibility
-- first-party clients tolerate or consume those events
+- compaction SSE events are specified and implemented for live visibility
+- first-party web consumes those events for activity text and non-transcript timeline markers
 - protocol docs describe the additive event family
-- manual compaction is either explicitly deferred or scoped behind an owner-authorized route
+- manual compaction is explicitly deferred
 
 ## Scope
 
@@ -39,7 +39,7 @@ By the end of this phase:
 
 Choose one:
 
-- ship additive compaction SSE events in this phase
+- ship additive compaction SSE events in this phase (chosen)
 - keep compaction server-only for the first release and document the deferred event shape
 
 If events ship, they must be optional and safe for existing clients to ignore.
@@ -91,9 +91,16 @@ If events ship, update:
 
 The reference web UI can ignore the event beyond type acceptance unless product wants a visible activity marker.
 
+Current web behavior:
+
+- `agent.compaction_start` shows `Compacting context...` in the existing thinking indicator
+- `agent.compaction_done` appends a subtle non-transcript timeline marker and refreshes `/agent/state`
+- `agent.compaction_failed` appends a subtle failed marker while the turn failure path remains authoritative
+
 ### Task 5: Make the manual compaction decision
 
-Recommended first release decision: defer public manual compaction.
+Recommended first release decision: defer public manual compaction. This is the
+current product decision.
 
 If manual compaction is pulled into scope, use:
 
@@ -157,6 +164,6 @@ If manual route ships, add tests for:
 
 ## Exit Criteria
 
-- Stream observability is either implemented additively or explicitly deferred.
+- Stream observability is implemented additively.
 - Protocol/spec docs match the chosen client contract.
-- Manual compaction is either out of scope or fully owner-authorized and tested.
+- Manual compaction is out of scope for this phase.

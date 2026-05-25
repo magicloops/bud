@@ -3,6 +3,7 @@ import {
   getCatalogEntry,
   type CanonicalContentBlock,
   type CanonicalMessage,
+  type CanonicalTool,
   type ModelCatalogEntry,
   type ResolvedModelReasoning,
 } from "../llm/index.js";
@@ -10,6 +11,7 @@ import {
 const DEFAULT_AUTO_COMPACTION_RATIO = 0.95;
 const MESSAGE_TOKEN_OVERHEAD = 8;
 const CONTENT_BLOCK_TOKEN_OVERHEAD = 4;
+const TOOL_SCHEMA_TOKEN_OVERHEAD = 8;
 
 export type ContextBudgetRequestKind = "agent_turn" | "compaction_summary";
 
@@ -144,6 +146,13 @@ export function estimateCanonicalMessagesTokens(messages: CanonicalMessage[]): n
     (total, message) => total + MESSAGE_TOKEN_OVERHEAD + estimateContentTokens(message.content),
     0,
   );
+}
+
+export function estimateCanonicalToolsTokens(tools: CanonicalTool[]): number {
+  if (tools.length === 0) {
+    return 0;
+  }
+  return estimateTextTokens(JSON.stringify(tools)) + tools.length * TOOL_SCHEMA_TOKEN_OVERHEAD;
 }
 
 export function estimateTextTokens(text: string): number {

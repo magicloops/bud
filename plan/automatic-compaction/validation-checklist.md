@@ -43,12 +43,14 @@
 
 ## Stream And Client Validation
 
-Complete this section only if Phase 5 ships stream events.
+Phase 5 now ships stream events.
 
 - [ ] `agent.compaction_start` arrives before the compaction provider call.
 - [ ] `agent.compaction_done` arrives after completed checkpoint persistence.
 - [ ] `agent.compaction_failed` arrives after failed checkpoint persistence.
 - [ ] Existing web stream reducer tolerates the event family.
+- [ ] Web shows `Compacting context...` while compaction is active.
+- [ ] Web shows a non-transcript timeline marker after compaction completes.
 - [ ] Event payloads contain no raw summary text.
 - [ ] `docs/proto.md` documents the event names and payload fields.
 

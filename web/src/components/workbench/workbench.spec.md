@@ -69,6 +69,7 @@ Message list with auto-scroll and collapsible messages.
 
 **Props**:
 - `messages` - Array of ChatMessage
+- optional `notices` - Non-transcript timeline markers such as completed or failed context compaction events
 - `accentColor` - CSS color for user message accents
 - optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
@@ -87,6 +88,7 @@ Message list with auto-scroll and collapsible messages.
 - Tool content renderers for specialized display
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
+- Context compaction notices render as subtle timeline markers without creating or assuming persisted transcript rows
 - The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
 - Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render
 
@@ -98,10 +100,12 @@ Animated "thinking" indicator shown when agent is working.
 
 **Props**:
 - `isVisible` - Controls visibility with animated enter/exit
+- optional `label` - Overrides the rotating word while a specific activity, such as context compaction, is active
 
 **Features**:
 - Smooth CSS transitions for enter (slide up, fade in) and exit (slide down, fade out)
 - Cycles through 12 playful words every 2 seconds: "Thinking", "Pondering", "Combobulating", etc.
+- Shows caller-provided activity text such as `Compacting context...` without cycling the generic word list
 - Random starting word on each appearance
 - Delayed unmount allows exit animation to complete
 - Spinner icon with `animate-spin`
@@ -161,9 +165,12 @@ Circular composer submit control for the browser-visible context budget snapshot
   segment growing over a Bud accent-muted track
 - clamps the radial border to 100% while preserving raw percentage details in
   the tooltip
-- exposes rounded token counts, basis, confidence, hard model window, Bud usable
-  context window, output reserve, usable input window, and stale state in a
-  tooltip
+- exposes rounded token counts, authoritative basis, provenance, confidence,
+  hard model window, Bud usable context window, output reserve, usable input
+  window, and stale state in a tooltip
+- shows the backend message estimate and normal agent tool-schema overhead in
+  the tooltip when tool schemas contribute to the current budget
+- does not render provider usage diagnostics in the product tooltip
 - handles unknown budget snapshots without crashing the composer
 - keeps the tooltip trigger on a wrapper so context details can still be shown
   when the native submit button is disabled
@@ -177,6 +184,8 @@ Pure presentation helpers for the context budget send-button tooltip and ring.
 - format visual percentages and rounded token counts such as `312k`
 - build tooltip copy from available and unknown context budget snapshots,
   including `Context unknown` for invalid or missing context policy
+- include the message/tool-schema token split in available-budget details
+- keep provider usage diagnostics out of product-facing copy
 - clamp radial ring progress from 0-100%
 
 ### `context-budget-meter-state.test.ts`

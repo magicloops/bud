@@ -12,7 +12,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
 import { CommandComposer } from '@/components/workbench/command-composer'
-import { ChatTimeline } from '@/components/workbench/chat-timeline'
+import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
 import { ThinkingIndicator } from '@/components/workbench/thinking-indicator'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
@@ -40,6 +40,9 @@ import {
 } from '@/lib/models'
 import type {
   ApiAgentState,
+  ApiAgentCompactionDoneEvent,
+  ApiAgentCompactionFailedEvent,
+  ApiAgentCompactionStartEvent,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
   ApiContextBudget,
@@ -99,6 +102,8 @@ function ThreadView() {
   const [contextBudget, setContextBudget] = useState<ApiContextBudget | null>(
     initialAgentState.context_budget ?? null,
   )
+  const [activeCompaction, setActiveCompaction] = useState<ApiAgentCompactionStartEvent | null>(null)
+  const [contextCompactionNotices, setContextCompactionNotices] = useState<ChatTimelineNotice[]>([])
   const [error, setError] = useState<string | null>(null)
   const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
@@ -164,6 +169,11 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(initialAgentState))
     setContextBudget(initialAgentState.context_budget ?? null)
   }, [initialAgentState, initialMessagePage])
+
+  useEffect(() => {
+    setActiveCompaction(null)
+    setContextCompactionNotices([])
+  }, [threadId])
 
   useEffect(() => {
     if (models.length === 0) {
@@ -346,6 +356,52 @@ function ThreadView() {
     })
   }, [finalizeTurn, refreshAgentState, threadId])
 
+  const appendContextCompactionNotice = useCallback((notice: ChatTimelineNotice) => {
+    setContextCompactionNotices((current) => {
+      if (current.some((existing) => existing.notice_id === notice.notice_id)) {
+        return current
+      }
+      return [...current, notice]
+    })
+  }, [])
+
+  const handleCompactionStart = useCallback((event: ApiAgentCompactionStartEvent) => {
+    setActiveCompaction(event)
+    setStatus((current) => (current === 'waiting_for_user' ? current : 'streaming'))
+  }, [])
+
+  const handleCompactionDone = useCallback((event: ApiAgentCompactionDoneEvent) => {
+    setActiveCompaction(null)
+    if (event.context_budget) {
+      setContextBudget(event.context_budget)
+    }
+    appendContextCompactionNotice({
+      notice_id: `context-compaction:${event.checkpoint_id}`,
+      kind: 'context_compaction',
+      status: 'completed',
+      created_at: event.finished_at,
+      phase: event.phase,
+      tokens_before: event.tokens_before,
+      tokens_after: event.tokens_after,
+    })
+    void refreshAgentState(threadId).catch((error) => {
+      console.warn('[context-budget] failed to refresh after compaction event', error)
+    })
+  }, [appendContextCompactionNotice, refreshAgentState, threadId])
+
+  const handleCompactionFailed = useCallback((event: ApiAgentCompactionFailedEvent) => {
+    setActiveCompaction(null)
+    appendContextCompactionNotice({
+      notice_id: `context-compaction-failed:${event.turn_id}:${event.phase}:${event.finished_at}`,
+      kind: 'context_compaction',
+      status: 'failed',
+      created_at: event.finished_at,
+      phase: event.phase,
+      tokens_before: event.tokens_before,
+      error_code: event.error_code,
+    })
+  }, [appendContextCompactionNotice])
+
   const {
     ensureConnected: ensureAgentStreamConnected,
     setStreamCursor: setAgentStreamCursor,
@@ -360,6 +416,9 @@ function ThreadView() {
     onAssistantMessageDelta: applyAssistantMessageDelta,
     onAssistantMessageDone: applyAssistantMessageDone,
     onAssistantMessageEvent: applyAssistantMessageEvent,
+    onCompactionStart: handleCompactionStart,
+    onCompactionDone: handleCompactionDone,
+    onCompactionFailed: handleCompactionFailed,
     onThreadTitle: handleThreadTitleUpdate,
     onFinalizeTurn: handleFinalizeTurn,
     refreshBootstrap: refreshAgentBootstrap,
@@ -477,6 +536,9 @@ function ThreadView() {
         const body = await resp.json().catch(() => ({}))
         throw new Error(body.error ?? `HTTP ${resp.status}`)
       }
+      void refreshAgentState(threadId).catch((error) => {
+        console.warn('[context-budget] failed to refresh after cancel request', error)
+      })
     } catch (err) {
       if (isAuthRedirectPending()) {
         return
@@ -484,7 +546,7 @@ function ThreadView() {
       console.error('Failed to cancel agent turn', err)
       setError(err instanceof Error ? err.message : 'Failed to cancel agent')
     }
-  }, [shouldAbortForUnauthorized, threadId])
+  }, [refreshAgentState, shouldAbortForUnauthorized, threadId])
 
   const handleSubmit = useCallback(async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -579,6 +641,7 @@ function ThreadView() {
         <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
           <ChatTimeline
             messages={messages}
+            notices={contextCompactionNotices}
             accentColor="var(--bud-accent-vibrant)"
             hasOlderMessages={messagePage.has_more_before}
             isLoadingOlderMessages={isLoadingOlderMessages}
@@ -588,7 +651,10 @@ function ThreadView() {
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
           />
-          <ThinkingIndicator isVisible={status === 'streaming'} />
+          <ThinkingIndicator
+            isVisible={status === 'streaming' || activeCompaction !== null}
+            label={activeCompaction ? 'Compacting context...' : undefined}
+          />
         </div>
       )}
       rightPane={(

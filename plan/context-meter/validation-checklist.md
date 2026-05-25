@@ -1,9 +1,24 @@
 # Validation Checklist: Conversation Context Budget Meter
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 9 Automated Validation Complete
+**Status**: Phase 11-14 Automated Validation Complete; Phase 15 Tool-Schema Overhead In Progress
 
 ---
+
+## Authoritative Budget Alignment Validation
+
+- [x] Primary `context_budget.estimated_input_tokens` matches the backend compaction-decision estimate for the same conversation.
+- [x] Primary `context_budget.estimated_input_tokens` includes normal agent tool-schema overhead for ordinary agent turns.
+- [x] Available snapshots expose `message_estimated_tokens` and `tool_schema_tokens`.
+- [x] Primary `percent_of_context_budget` is derived from the backend trigger estimate, not provider usage diagnostics.
+- [x] Provider usage plus delta appears only under optional diagnostic fields.
+- [x] Provider usage diagnostics are not rendered in the product context tooltip.
+- [x] Regression case with trigger estimate below threshold and provider usage above threshold renders below-threshold primary percent.
+- [x] `/agent/state.context_budget` returns latest active runtime budget during an active turn when available.
+- [ ] `/agent/state.context_budget` returns a durable trigger-aligned budget after final turn completion.
+- [ ] `/agent/state.context_budget` is accurate after user cancel during an active turn.
+- [x] `agent.compaction_done.context_budget` updates the web meter immediately when present.
+- [ ] Missing `agent.compaction_done.context_budget` still recovers through `/agent/state` refresh.
 
 ## Automated Backend Validation
 
@@ -15,11 +30,10 @@
 - [ ] Checkpointed thread counts fresh system prompt plus replacement history plus post-checkpoint deltas.
 - [ ] Visible transcript rows before checkpoint do not inflate the snapshot.
 - [x] Tier 0 returns `basis: "model_agnostic_estimate"`.
-- [x] Tier 1 returns `basis: "provider_usage_plus_delta"` when valid usage exists.
-- [x] Tier 1 includes output-token usage for replayed assistant output where available.
-- [ ] Tier 1 ignores usage anchors before the latest checkpoint boundary.
-- [ ] Tier 1 falls back on provider/model/reasoning mismatch.
-- [ ] Tier 1 adds post-call delta estimates.
+- [x] Provider usage diagnostics include output-token usage where available.
+- [ ] Provider usage diagnostics ignore anchors before the latest checkpoint boundary.
+- [ ] Provider usage diagnostics fall back on provider/model/reasoning mismatch.
+- [ ] Provider usage diagnostics add post-call delta estimates.
 - [ ] Snapshot failure returns `reason: "count_failed"` without exposing prompt contents.
 
 ## Usable Context Policy Validation
@@ -45,7 +59,7 @@
 - [ ] Snapshot response excludes checkpoint summary and replacement history contents.
 - [ ] Snapshot response excludes provider ledger payloads.
 - [ ] Existing agent-state fields remain backward compatible.
-- [ ] No `context.budget` SSE event is emitted in the first pass.
+- [ ] No standalone `agent.context_budget` SSE event is emitted in this pass.
 - [x] `/api/models` exposes `usable_context_window_tokens`, `reserved_output_tokens`, and `usable_input_window_tokens`.
 
 ## Automated Frontend Validation
@@ -60,6 +74,9 @@
 - [x] Tooltip/details show rounded token values such as `312k`.
 - [x] Tooltip/details show basis and confidence.
 - [x] Tooltip/details show hard window, usable window, output reserve, and usable input window.
+- [x] Tooltip/details show message and tool-schema estimates when tool schemas contribute to the budget.
+- [x] Tooltip/details show active budget provenance when useful.
+- [x] Tooltip/details omit provider usage diagnostics.
 - [ ] Layout does not overflow in narrow composer widths.
 
 ## Manual Service Validation
@@ -73,6 +90,8 @@
 - [ ] Force or simulate unknown model context window and confirm degraded UI.
 - [ ] Force or simulate invalid local model context policy and confirm `Context unknown`.
 - [ ] During an active long tool loop, confirm the UI can be stale while internal compaction still occurs before provider calls.
+- [ ] Cancel during an active turn and confirm the next `/agent/state` budget is up to date.
+- [ ] Trigger compaction and confirm `agent.compaction_done.context_budget` drops the ring immediately when present.
 
 ## Manual Web Validation
 
@@ -98,8 +117,10 @@
 - [x] `web/src/features/threads/threads.spec.md` updated.
 - [x] `web/src/components/workbench/workbench.spec.md` updated.
 - [x] `bud.spec.md` updated.
-- [x] `docs/proto.md` remains unchanged unless an SSE event is added.
+- [x] `docs/proto.md` updated for additive `agent.compaction_done.context_budget`.
+- [x] `docs/proto.md` updated for context-budget message/tool-schema split.
 
-Phase 9 automated validation was run on 2026-05-24. Remaining unchecked items
-are either broader original context-meter coverage that was not re-run in this
-phase or manual/browser scenarios that still need explicit product validation.
+Phase 11-14 automated validation was run on 2026-05-25. Remaining unchecked
+items are either broader original context-meter coverage that was not re-run in
+this phase or manual/browser scenarios that still need explicit product
+validation.

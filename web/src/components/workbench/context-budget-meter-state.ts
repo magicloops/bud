@@ -47,7 +47,11 @@ export function getContextBudgetMeterPresentation(
       `Bud cap ${formatRoundedTokenCount(budget.usable_context_window_tokens)}, output reserve ${formatRoundedTokenCount(budget.reserved_output_tokens)}.`,
       `Usable input window ${formatRoundedTokenCount(budget.usable_input_window_tokens)}.`,
       `Hard model window ${formatRoundedTokenCount(budget.context_window_tokens)}.`,
+      ...(budget.tool_schema_tokens > 0
+        ? [`Messages ${formatRoundedTokenCount(budget.message_estimated_tokens)}, tool schemas ${formatRoundedTokenCount(budget.tool_schema_tokens)}.`]
+        : []),
       `Basis ${formatEstimateBasis(budget.basis)}, ${budget.confidence} confidence.`,
+      `Source ${formatSnapshotSource(budget.source)}${budget.phase ? ` (${formatSnapshotPhase(budget.phase)})` : ''}.`,
       ...(budget.latest_checkpoint_id ? ['Already compacted earlier context.'] : []),
       ...(budget.stale ? ['Refreshing after the current turn settles.'] : []),
     ],
@@ -115,9 +119,37 @@ function formatUnknownReason(reason: Extract<ApiContextBudget, { status: 'unknow
 function formatEstimateBasis(basis: Extract<ApiContextBudget, { status: 'available' }>['basis']): string {
   switch (basis) {
     case 'model_agnostic_estimate':
-      return 'estimated tokens'
-    case 'provider_usage_plus_delta':
-      return 'last provider usage plus new messages'
+      return 'backend estimate'
+    case 'provider_usage_trigger':
+      return 'provider usage trigger'
+    case 'provider_token_count':
+      return 'provider token count'
+  }
+}
+
+function formatSnapshotSource(source: Extract<ApiContextBudget, { status: 'available' }>['source']): string {
+  switch (source) {
+    case 'durable_reconstruction':
+      return 'durable reconstruction'
+    case 'active_agent_decision':
+      return 'active agent decision'
+    case 'compaction_event':
+      return 'post-compaction snapshot'
+    case 'unknown':
+      return 'unknown'
+  }
+}
+
+function formatSnapshotPhase(phase: NonNullable<Extract<ApiContextBudget, { status: 'available' }>['phase']>): string {
+  switch (phase) {
+    case 'idle':
+      return 'idle'
+    case 'pre_turn':
+      return 'pre-turn'
+    case 'mid_turn':
+      return 'mid-turn'
+    case 'standalone_turn':
+      return 'standalone turn'
   }
 }
 

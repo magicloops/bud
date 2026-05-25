@@ -19,9 +19,10 @@ const THINKING_WORDS = [
 
 type ThinkingIndicatorProps = {
   isVisible: boolean
+  label?: string
 }
 
-export function ThinkingIndicator({ isVisible }: ThinkingIndicatorProps) {
+export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) {
   const [wordIndex, setWordIndex] = useState(() =>
     Math.floor(Math.random() * THINKING_WORDS.length)
   )
@@ -37,21 +38,21 @@ export function ThinkingIndicator({ isVisible }: ThinkingIndicatorProps) {
     }
   }, [isVisible])
 
-  // Word cycling - only while visible
+  // Word cycling - only while visible and not showing a specific activity label
   useEffect(() => {
-    if (!isVisible) return
+    if (!isVisible || label) return
     const interval = setInterval(() => {
       setWordIndex((prev) => (prev + 1) % THINKING_WORDS.length)
     }, 2000)
     return () => clearInterval(interval)
-  }, [isVisible])
+  }, [isVisible, label])
 
   // Reset to random word when becoming visible
   useEffect(() => {
-    if (isVisible) {
+    if (isVisible && !label) {
       setWordIndex(Math.floor(Math.random() * THINKING_WORDS.length))
     }
-  }, [isVisible])
+  }, [isVisible, label])
 
   if (!shouldRender) return null
 
@@ -67,7 +68,7 @@ export function ThinkingIndicator({ isVisible }: ThinkingIndicatorProps) {
       style={{ backgroundColor: 'var(--chat-bg)' }}
     >
       <LoaderCircle className="h-4 w-4 animate-spin flex-shrink-0" />
-      <span className="animate-pulse">{THINKING_WORDS[wordIndex]}...</span>
+      <span className="animate-pulse">{label ?? `${THINKING_WORDS[wordIndex]}...`}</span>
     </div>
   )
 }

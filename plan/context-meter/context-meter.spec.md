@@ -4,7 +4,7 @@ Implementation planning documents for the conversation context budget meter.
 
 ## Purpose
 
-This folder turns the design work in [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md) and [../../design/usable-context-window-and-output-reserve.md](../../design/usable-context-window-and-output-reserve.md) into an actionable phased implementation plan.
+This folder turns the design work in [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md), [../../design/usable-context-window-and-output-reserve.md](../../design/usable-context-window-and-output-reserve.md), and [../../design/authoritative-context-budget-state.md](../../design/authoritative-context-budget-state.md) into an actionable phased implementation plan.
 
 The plan assumes:
 
@@ -12,13 +12,25 @@ The plan assumes:
 - the primary budget is Bud's effective compaction budget while automatic compaction is enabled
 - the effective compaction threshold comes from the same service-side budget resolver used by automatic compaction
 - checkpointed conversations count latest replacement history plus post-checkpoint deltas, not the full visible transcript
-- first-pass clients use agent-state refresh rather than a new `context.budget` SSE event
+- first-pass clients use agent-state refresh rather than a new standalone
+  `agent.context_budget` SSE event
 - provider token-count APIs and local tokenizers are deferred
-- Tier 1 should use provider response usage, including output tokens that may become replayed assistant context
+- the earlier Tier 1 provider usage work now feeds diagnostics unless the
+  backend trigger intentionally adopts provider usage later
 - follow-on usable-context work separates hard model windows from Bud usable context caps
 - output reserve defaults to `maxOutputTokens`, with model-specific overrides
 - the automatic-compaction ratio clamp should move to `0.95`
 - invalid or missing local-model context policy should show `Context unknown`
+- the primary meter should use the same estimate as the backend automatic
+  compaction decision
+- provider usage plus delta is diagnostic-only unless the backend trigger
+  intentionally adopts it
+- provider usage diagnostics are not rendered in the product context tooltip
+- ordinary agent-turn budget estimates include the static normal-agent tool
+  schemas; compaction-summary budgets remain tool-free
+- active budget state should live in `AgentRuntimeStateManager`
+- `agent.compaction_done` may carry an additive post-compaction
+  `context_budget` snapshot
 
 ## Files
 
@@ -134,6 +146,54 @@ Follow-on web UI phase covering:
 - moving the existing context tooltip to the send control
 - preserving unknown, stale, near-threshold, over-threshold, and disabled states
 
+### `phase-11-authoritative-budget-contract-and-tests.md`
+
+Follow-on authoritative-budget contract phase covering:
+
+- primary meter semantics matching backend compaction decisions
+- provider usage diagnostics moved out of primary meter math
+- provenance fields such as source, phase, reason, turn id, and checked time
+- regression coverage for provider-usage-vs-trigger-estimate mismatch
+
+### `phase-12-shared-budget-state-helper.md`
+
+Follow-on backend refactor phase covering:
+
+- a shared context budget state helper for agent decisions and snapshots
+- `AgentService.compactConversationIfNeeded(...)` using the shared helper
+- durable `/agent/state.context_budget` reconstruction using the same primary
+  estimate builder
+- provider usage plus delta retained as optional diagnostics
+
+### `phase-13-runtime-active-budget-state.md`
+
+Follow-on runtime state phase covering:
+
+- storing the latest active budget decision in `AgentRuntimeStateManager`
+- `/agent/state` preferring active runtime budget during active turns
+- final/cancel paths leaving a budget suitable for the next user turn
+- avoiding a separate budget runtime store
+
+### `phase-14-web-refresh-and-compaction-payloads.md`
+
+Follow-on web and stream contract phase covering:
+
+- optional post-compaction `context_budget` on `agent.compaction_done`
+- web applying post-compaction snapshots immediately when present
+- `/agent/state` refresh fallback after send, model changes, resync, final, and
+  cancel
+- product-facing tooltip details without provider usage diagnostics
+
+### `phase-15-calibration-and-trigger-estimator-follow-up.md`
+
+Follow-on calibration phase covering:
+
+- side-by-side trigger estimate vs provider usage diagnostics
+- adding fixed normal-agent tool-schema overhead to trigger estimates
+- measuring whether remaining request overhead explains observed deltas
+- optional further estimator tuning
+- explicit future design requirement before provider usage can drive compaction
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -146,6 +206,7 @@ Manual and automated validation checklist for the rollout.
 
 - [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md) - design source for budget semantics, tiers, and UI
 - [../../design/usable-context-window-and-output-reserve.md](../../design/usable-context-window-and-output-reserve.md) - design source for usable context caps, output reserves, and GPT-5.5 budget behavior
+- [../../design/authoritative-context-budget-state.md](../../design/authoritative-context-budget-state.md) - design source for backend-authoritative meter semantics and active runtime budget state
 - [../../design/context-compaction.md](../../design/context-compaction.md) - compaction checkpoint and threshold design
 - [../automatic-compaction/implementation-spec.md](../automatic-compaction/implementation-spec.md) - implemented automatic compaction plan this meter builds on
 - [../../service/src/agent/agent.spec.md](../../service/src/agent/agent.spec.md) - current agent loop, context budgeting, and checkpoint reconstruction

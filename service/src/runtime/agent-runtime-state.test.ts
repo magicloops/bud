@@ -8,6 +8,7 @@ test("new snapshots are idle and expose a resumable stream cursor", () => {
 
   assert.equal(snapshot.active, false);
   assert.equal(snapshot.phase, "idle");
+  assert.equal(snapshot.context_budget, null);
   assert.equal(typeof snapshot.stream_cursor, "string");
   assert.ok(snapshot.stream_cursor.length > 0);
 });
@@ -19,6 +20,7 @@ test("startTurn creates an active snapshot before any visible event exists", () 
   assert.equal(snapshot.active, true);
   assert.equal(snapshot.turn_id, "turn-1");
   assert.equal(snapshot.phase, "starting");
+  assert.equal(snapshot.context_budget, null);
   assert.equal(typeof snapshot.stream_cursor, "string");
   assert.ok(snapshot.stream_cursor.length > 0);
 
@@ -140,6 +142,7 @@ test("missing resume cursor requires explicit resync", () => {
 test("finishing a turn returns the snapshot to idle with a fresh cursor", () => {
   const runtime = new AgentRuntimeStateManager();
   runtime.startTurn("thread-1", "turn-1");
+  runtime.setContextBudget("thread-1", buildContextBudgetSnapshotFixture("active_agent_decision"));
   runtime.emit("thread-1", {
     event: "final",
     data: { turn_id: "turn-1", status: "succeeded" },
@@ -148,6 +151,7 @@ test("finishing a turn returns the snapshot to idle with a fresh cursor", () => 
   const idle = runtime.finishTurn("thread-1");
   assert.equal(idle.active, false);
   assert.equal(idle.phase, "idle");
+  assert.equal(idle.context_budget, null);
 
   const replayedEvents: string[] = [];
   const attachment = runtime.attachCallback(
@@ -161,6 +165,19 @@ test("finishing a turn returns the snapshot to idle with a fresh cursor", () => 
   assert.equal(attachment.status, "attached");
   assert.deepEqual(replayedEvents, []);
   attachment.detach();
+});
+
+test("runtime snapshots serialize and clear active context budget state", () => {
+  const runtime = new AgentRuntimeStateManager();
+  runtime.startTurn("thread-1", "turn-1");
+
+  const budget = buildContextBudgetSnapshotFixture("active_agent_decision");
+  const snapshot = runtime.setContextBudget("thread-1", budget);
+  assert.deepEqual(snapshot.context_budget, budget);
+  assert.deepEqual(runtime.getSnapshot("thread-1").context_budget, budget);
+
+  const cleared = runtime.startTurn("thread-1", "turn-2");
+  assert.equal(cleared.context_budget, null);
 });
 
 test("runtime snapshots expose pending tool metadata and draft assistant client id", () => {
@@ -311,3 +328,38 @@ test("advanceCursor preserves runtime state while acknowledging external events"
   assert.deepEqual(replayedEvents, []);
   attachment.detach();
 });
+
+function buildContextBudgetSnapshotFixture(source: "active_agent_decision" | "durable_reconstruction") {
+  return {
+    status: "available" as const,
+    model: "gpt-test",
+    provider: "openai",
+    context_window_tokens: 100_000,
+    usable_context_window_tokens: 80_000,
+    reserved_output_tokens: 10_000,
+    usable_input_window_tokens: 70_000,
+    compaction_enabled: true,
+    compaction_threshold_ratio: 0.9,
+    compaction_threshold_tokens: 63_000,
+    effective_budget_tokens: 63_000,
+    message_estimated_tokens: 10_000,
+    tool_schema_tokens: 2_000,
+    estimated_input_tokens: 12_000,
+    remaining_context_tokens: 51_000,
+    percent_of_context_budget: 12_000 / 63_000,
+    percent_of_model_window: 12_000 / 100_000,
+    basis: "model_agnostic_estimate" as const,
+    confidence: "medium" as const,
+    source,
+    phase: source === "active_agent_decision" ? "pre_turn" as const : "idle" as const,
+    reason: source === "active_agent_decision" ? "context_limit" as const : null,
+    turn_id: source === "active_agent_decision" ? "turn-1" : null,
+    checked_at: "2026-05-24T10:00:00.000Z",
+    stale: false,
+    updated_at: "2026-05-24T10:00:00.000Z",
+    latest_checkpoint_id: null,
+    compacted_through_message_id: null,
+    compacted_through_llm_call_id: null,
+    provider_usage_estimate: null,
+  };
+}

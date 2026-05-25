@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { createAuthEventSource } from '@/lib/transport'
 import { isAuthRedirectPending } from '@/lib/auth-redirect'
-import type { ApiAgentState, ApiMessage } from '@/lib/api-types'
+import type {
+  ApiAgentCompactionDoneEvent,
+  ApiAgentCompactionFailedEvent,
+  ApiAgentCompactionStartEvent,
+  ApiAgentState,
+  ApiMessage,
+} from '@/lib/api-types'
 import {
   getThreadStreamHeartbeatConfig,
   getThreadStreamReconnectDelay,
@@ -98,6 +104,9 @@ type UseAgentStreamArgs = {
     text: string
     message?: ApiMessage
   }) => void
+  onCompactionStart?: (event: ApiAgentCompactionStartEvent) => void
+  onCompactionDone?: (event: ApiAgentCompactionDoneEvent) => void
+  onCompactionFailed?: (event: ApiAgentCompactionFailedEvent) => void
   onThreadTitle: (title: string) => void
   onFinalizeTurn: (turnId: string, status: 'succeeded' | 'failed' | 'canceled') => void
   refreshBootstrap: (threadId: string) => Promise<ApiAgentState>
@@ -114,6 +123,9 @@ export function useAgentStream({
   onAssistantMessageDelta,
   onAssistantMessageDone,
   onAssistantMessageEvent,
+  onCompactionStart,
+  onCompactionDone,
+  onCompactionFailed,
   onThreadTitle,
   onFinalizeTurn,
   refreshBootstrap,
@@ -133,6 +145,9 @@ export function useAgentStream({
     onAssistantMessageDelta,
     onAssistantMessageDone,
     onAssistantMessageEvent,
+    onCompactionStart,
+    onCompactionDone,
+    onCompactionFailed,
     onThreadTitle,
     onFinalizeTurn,
     refreshBootstrap,
@@ -148,6 +163,9 @@ export function useAgentStream({
       onAssistantMessageDelta,
       onAssistantMessageDone,
       onAssistantMessageEvent,
+      onCompactionStart,
+      onCompactionDone,
+      onCompactionFailed,
       onThreadTitle,
       onFinalizeTurn,
       refreshBootstrap,
@@ -157,6 +175,9 @@ export function useAgentStream({
     onAssistantMessageDone,
     onAssistantMessageEvent,
     onAssistantMessageStart,
+    onCompactionDone,
+    onCompactionFailed,
+    onCompactionStart,
     onError,
     onFinalizeTurn,
     onStatusChange,
@@ -229,7 +250,6 @@ export function useAgentStream({
 
       reconnectAttemptRef.current = 0
       lastEventTimeRef.current = Date.now()
-      console.log('[agent-sse] connected', { threadId: agentThreadId, after: cursorRef.current })
 
       const { heartbeatTimeoutMs, checkIntervalMs } = getThreadStreamHeartbeatConfig(import.meta.env.DEV)
       heartbeatCheckInterval = setInterval(() => {
@@ -256,7 +276,6 @@ export function useAgentStream({
         callbacksRef.current.onStatusChange(
           data.name === 'ask_user_questions' ? 'waiting_for_user' : 'streaming',
         )
-        console.log('[agent-sse] tool_call', data.name, data.args)
         callbacksRef.current.onToolCall({
           turnId: data.turn_id,
           clientId: data.client_id,
@@ -343,6 +362,42 @@ export function useAgentStream({
       }
     })
 
+    source.addEventListener('agent.compaction_start', (evt) => {
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      callbacksRef.current.onStatusChange('streaming')
+      try {
+        const data = JSON.parse(evt.data) as ApiAgentCompactionStartEvent
+        callbacksRef.current.onCompactionStart?.(data)
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse agent.compaction_start', error)
+      }
+    })
+
+    source.addEventListener('agent.compaction_done', (evt) => {
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      callbacksRef.current.onStatusChange('streaming')
+      try {
+        const data = JSON.parse(evt.data) as ApiAgentCompactionDoneEvent
+        callbacksRef.current.onCompactionDone?.(data)
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse agent.compaction_done', error)
+      }
+    })
+
+    source.addEventListener('agent.compaction_failed', (evt) => {
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      callbacksRef.current.onStatusChange('streaming')
+      try {
+        const data = JSON.parse(evt.data) as ApiAgentCompactionFailedEvent
+        callbacksRef.current.onCompactionFailed?.(data)
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse agent.compaction_failed', error)
+      }
+    })
+
     source.addEventListener('thread.title', (evt) => {
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
@@ -391,7 +446,6 @@ export function useAgentStream({
     source.addEventListener('final', (evt) => {
       lastEventTimeRef.current = Date.now()
       cursorRef.current = evt.lastEventId || cursorRef.current
-      console.log('[agent-sse] final event received')
       let finalEvent: AgentFinalEvent | null = null
       try {
         finalEvent = JSON.parse(evt.data) as AgentFinalEvent

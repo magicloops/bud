@@ -21,7 +21,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - Keep a bounded same-instance replay window with cursor checkpoints
 - Support live-only no-cursor attach plus bounded cursor replay
 - Require explicit `agent.resync_required` when a supplied resume cursor is too old or unknown
-- Keep the runtime-owned snapshot limited to in-flight turn state; browser routes may enrich `/agent/state` with service-derived fields such as `context_budget`
+- Keep the runtime-owned snapshot limited to in-flight turn state plus client-safe active budget state; browser routes may still recompute durable `context_budget` snapshots after idle/final transitions
 
 **Snapshot Shape**:
 - `active`
@@ -32,9 +32,10 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`; terminal-tool args include the effective `wait_for` mode)
 - `pending_tool` may also contain the normalized `ask_user_questions_request_v1` payload while the agent is waiting for a user response
 - `draft_assistant` (`client_id`, `text`, `updated_at`)
+- `context_budget` (latest active context budget decision while a turn is running; cleared on new/final idle transitions)
 - `updated_at`
 
-The route-level `context_budget` field is not owned by this runtime manager. It is computed by the threads route after authorization from model/catalog metadata, persisted conversation state, provider usage, and compaction checkpoints.
+The route-level `context_budget` response prefers this runtime-owned active snapshot while a turn is running. When runtime is idle, or when no active decision has been recorded yet, the threads route computes durable state after authorization from model/catalog metadata, persisted conversation state, provider diagnostics, and compaction checkpoints.
 
 **Phase Values**:
 - `idle`
@@ -51,6 +52,8 @@ The route-level `context_budget` field is not owned by this runtime manager. It 
 - replay is intentionally bounded and process-local
 - resume misses surface explicit resync instead of silent live-only fallback
 - non-agent thread events such as `thread.title` can advance the same cursor space without mutating the active turn phase, pending tool, or draft assistant snapshot
+- service-owned activity events such as `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` advance the cursor and keep the in-flight phase in `thinking` so reconnecting clients can resume after those markers
+- `setContextBudget(...)` and `clearContextBudget(...)` update the client-safe budget snapshot without emitting a standalone SSE event
 
 ### `event-bus.ts`
 
@@ -88,6 +91,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - attach after a known cursor replays only newer visible events
 - stale cursors produce explicit resync
 - finishing a turn returns the snapshot to idle with a fresh cursor
+- context budget snapshots serialize during active turns and clear on new/final idle transitions
 - runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
 - runtime snapshots expose `started_at` on `pending_tool` so long-running tool waits remain diagnosable after reconnect
 - runtime snapshots expose effective terminal wait modes on `pending_tool.args.wait_for`, including default settled `terminal.send` waits
@@ -234,6 +238,7 @@ Internal terminal-runtime ownership helpers extracted from the old monolithic ma
 | `../db/client.js` | Database access |
 | `../db/schema.js` | Table schemas |
 | `../config.js` | Configuration values |
+| `../agent/context-budget-state.js` | Client-safe active context budget snapshot type |
 | `../transport/*.js` | Daemon transport router interface and current WebSocket adapter |
 | `../terminal/types.js` | Type definitions |
 | `../terminal/known-programs.js` | REPL detection |

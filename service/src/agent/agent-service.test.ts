@@ -17,6 +17,82 @@ function createLogger() {
   };
 }
 
+function mockCurrentContextCheckpointBoundary() {
+  let selectCall = 0;
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            orderBy() {
+              return {
+                limit() {
+                  selectCall += 1;
+                  if (selectCall % 2 === 1) {
+                    return Promise.resolve([
+                      {
+                        messageId: "message-boundary-1",
+                        createdAt: new Date("2026-05-01T00:00:00.000Z"),
+                      },
+                    ]);
+                  }
+                  return Promise.resolve([
+                    {
+                      llmCallId: "llm-boundary-1",
+                      createdAt: new Date("2026-05-01T00:00:01.000Z"),
+                    },
+                  ]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+}
+
+type CompactConversationIfNeeded = (args: {
+  threadId: string;
+  turnId: string;
+  sessionId: string;
+  model: string;
+  modelReasoning: {
+    providerModel: string;
+    reasoningLevel: string;
+    reasoning?: unknown;
+  };
+  providerName: "openai";
+  phase: "pre_turn" | "mid_turn";
+  reason: "context_limit" | "context_error_retry";
+  conversation: Array<{ role: "user"; content: string }>;
+  ownerUserId?: string | null;
+  controller: AbortController;
+  force?: boolean;
+  compactedBoundaryKeys?: Set<string>;
+}) => Promise<unknown>;
+
+function buildCompactionArgs() {
+  return {
+    threadId: "017dbb12-3865-44fc-8228-17bc55af2cd5",
+    turnId: "01KQG8FX9YZAR32E4RGWVVA67G",
+    sessionId: "sess_test",
+    model: "gpt-5.5",
+    modelReasoning: {
+      providerModel: "gpt-5.5",
+      reasoningLevel: "low",
+    },
+    providerName: "openai" as const,
+    phase: "pre_turn" as const,
+    reason: "context_limit" as const,
+    conversation: [{ role: "user" as const, content: "Please continue." }],
+    ownerUserId: "user-1",
+    controller: new AbortController(),
+    force: true,
+    compactedBoundaryKeys: new Set<string>(),
+  };
+}
+
 test("cancelThread aborts the active turn, rejects waits, and cancels pending question rows", async (t) => {
   t.after(() => {
     mock.restoreAll();
@@ -67,6 +143,187 @@ test("cancelThread aborts the active turn, rejects waits, and cancels pending qu
   ]);
 });
 
+test("automatic compaction emits start and done runtime events without checkpoint internals", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  mockCurrentContextCheckpointBoundary();
+
+  const runtimeEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
+  const thinkingCursors: string[] = [];
+  const runtime = {
+    emit(_threadId: string, event: { event: string; data: Record<string, unknown> }) {
+      runtimeEvents.push(event);
+      return `cursor-${runtimeEvents.length}`;
+    },
+    setContextBudget() {
+      // noop
+    },
+    markThinking(_threadId: string, cursor?: string) {
+      if (cursor) {
+        thinkingCursors.push(cursor);
+      }
+    },
+  };
+  const service = new AgentService(
+    {} as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  Reflect.set(service, "contextCompactor", {
+    async compact() {
+      assert.equal(runtimeEvents[0]?.event, "agent.compaction_start");
+      return {
+        checkpoint: { checkpointId: "checkpoint-1" },
+        replacementHistory: [{ role: "user", content: "secret summary" }],
+        estimatedTokensAfter: 42,
+      };
+    },
+  });
+  Reflect.set(service, "conversationLoader", {
+    async loadWithDiagnostics() {
+      return {
+        messages: [],
+        reconstruction: {
+          mode: "canonical_only",
+        },
+      };
+    },
+  });
+
+  const compactConversationIfNeeded = Reflect.get(
+    service,
+    "compactConversationIfNeeded",
+  ) as CompactConversationIfNeeded;
+  await compactConversationIfNeeded.call(service, buildCompactionArgs());
+
+  assert.deepEqual(runtimeEvents.map((event) => event.event), [
+    "agent.compaction_start",
+    "agent.compaction_done",
+  ]);
+  assert.deepEqual(thinkingCursors, ["cursor-1", "cursor-2"]);
+  assert.equal(runtimeEvents[0]?.data.turn_id, "01KQG8FX9YZAR32E4RGWVVA67G");
+  assert.equal(runtimeEvents[0]?.data.trigger, "auto");
+  assert.equal(runtimeEvents[0]?.data.reason, "context_limit");
+  assert.equal(runtimeEvents[0]?.data.phase, "pre_turn");
+  assert.equal("checkpoint_id" in runtimeEvents[0]!.data, false);
+  assert.equal("summary" in runtimeEvents[1]!.data, false);
+  assert.equal("replacementHistory" in runtimeEvents[1]!.data, false);
+  assert.equal(runtimeEvents[1]?.data.checkpoint_id, "checkpoint-1");
+  assert.equal(runtimeEvents[1]?.data.tokens_after, 42);
+  assert.equal(
+    (runtimeEvents[1]?.data.context_budget as Record<string, unknown> | undefined)?.source,
+    "compaction_event",
+  );
+});
+
+test("automatic compaction skip stores the active budget decision used by the trigger", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const contextBudgets: Array<Record<string, unknown>> = [];
+  const runtime = {
+    emit() {
+      throw new Error("compaction should not emit when below threshold");
+    },
+    setContextBudget(_threadId: string, snapshot: Record<string, unknown>) {
+      contextBudgets.push(snapshot);
+    },
+    markThinking() {
+      // noop
+    },
+  };
+  const service = new AgentService(
+    {} as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const compactConversationIfNeeded = Reflect.get(
+    service,
+    "compactConversationIfNeeded",
+  ) as CompactConversationIfNeeded;
+  const result = await compactConversationIfNeeded.call(service, {
+    ...buildCompactionArgs(),
+    force: false,
+  });
+
+  assert.equal(result, null);
+  assert.equal(contextBudgets.length, 1);
+  assert.equal(contextBudgets[0]?.status, "available");
+  assert.equal(contextBudgets[0]?.source, "active_agent_decision");
+  assert.equal(contextBudgets[0]?.basis, "model_agnostic_estimate");
+  assert.equal(contextBudgets[0]?.phase, "pre_turn");
+  assert.equal(contextBudgets[0]?.reason, "context_limit");
+  assert.equal(contextBudgets[0]?.turn_id, "01KQG8FX9YZAR32E4RGWVVA67G");
+});
+
+test("automatic compaction emits sanitized failure events", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  mockCurrentContextCheckpointBoundary();
+
+  let failedCheckpointRecorded = false;
+  const runtimeEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
+  const runtime = {
+    emit(_threadId: string, event: { event: string; data: Record<string, unknown> }) {
+      if (event.event === "agent.compaction_failed") {
+        assert.equal(failedCheckpointRecorded, true);
+      }
+      runtimeEvents.push(event);
+      return `cursor-${runtimeEvents.length}`;
+    },
+    setContextBudget() {
+      // noop
+    },
+    markThinking() {
+      // noop
+    },
+  };
+  const service = new AgentService(
+    {} as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  Reflect.set(service, "contextCompactor", {
+    async compact() {
+      failedCheckpointRecorded = true;
+      throw new Error("raw provider failure with summary text");
+    },
+  });
+
+  const compactConversationIfNeeded = Reflect.get(
+    service,
+    "compactConversationIfNeeded",
+  ) as CompactConversationIfNeeded;
+  await assert.rejects(
+    compactConversationIfNeeded.call(service, buildCompactionArgs()),
+    /raw provider failure/,
+  );
+
+  assert.deepEqual(runtimeEvents.map((event) => event.event), [
+    "agent.compaction_start",
+    "agent.compaction_failed",
+  ]);
+  const failed = runtimeEvents[1]!.data;
+  assert.equal(failed.error_code, "context_compaction_failed");
+  assert.equal(failed.retryable, false);
+  assert.equal("error" in failed, false);
+  assert.equal("message" in failed, false);
+  assert.equal("summary" in failed, false);
+  assert.equal("replacement_history" in failed, false);
+});
+
 test("final no-tool response records exactly one LLM call", async (t) => {
   t.after(() => {
     mock.restoreAll();
@@ -98,6 +355,9 @@ test("final no-tool response records exactly one LLM call", async (t) => {
   };
   const runtime = {
     markThinking() {
+      // noop
+    },
+    setContextBudget() {
       // noop
     },
     finishTurn() {
@@ -277,6 +537,9 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
 
   const runtime = {
     markThinking() {
+      // noop
+    },
+    setContextBudget() {
       // noop
     },
     finishTurn() {

@@ -8,7 +8,6 @@ import {
   type CanonicalProviderId,
   type ReasoningConfig,
   type ReasoningLevel,
-  type ResolvedModelReasoning,
   type TokenUsage,
 } from "../llm/index.js";
 import type { AgentRuntimeSnapshot } from "../runtime/agent-runtime-state.js";
@@ -19,53 +18,26 @@ import {
   resolveContextBudget,
 } from "./context-budget.js";
 import {
+  buildContextBudgetStateFromConversation,
+  type ContextBudgetProviderUsageEstimate,
+  type ContextBudgetSnapshot,
+} from "./context-budget-state.js";
+import {
   getLatestCompletedContextCheckpoint,
   type AgentContextCheckpoint,
 } from "./context-checkpoint-repository.js";
+import { AGENT_TOOL_SCHEMA_TOKENS } from "./tool-definitions.js";
 
-export type ContextBudgetEstimateBasis =
-  | "model_agnostic_estimate"
-  | "provider_usage_plus_delta";
-
-export type ContextBudgetConfidence = "low" | "medium" | "high";
-
-export type ContextBudgetSnapshot =
-  | {
-      status: "available";
-      model: string;
-      provider: string;
-      context_window_tokens: number;
-      usable_context_window_tokens: number;
-      reserved_output_tokens: number;
-      usable_input_window_tokens: number;
-      compaction_enabled: boolean;
-      compaction_threshold_ratio: number;
-      compaction_threshold_tokens: number;
-      effective_budget_tokens: number;
-      estimated_input_tokens: number;
-      remaining_context_tokens: number;
-      percent_of_context_budget: number;
-      percent_of_model_window: number;
-      basis: ContextBudgetEstimateBasis;
-      confidence: ContextBudgetConfidence;
-      stale: boolean;
-      updated_at: string;
-      latest_checkpoint_id: string | null;
-      compacted_through_message_id: string | null;
-      compacted_through_llm_call_id: string | null;
-    }
-  | {
-      status: "unknown";
-      model: string;
-      provider: string | null;
-      reason:
-        | "unknown_model_context_window"
-        | "invalid_context_policy"
-        | "conversation_unavailable"
-        | "count_failed";
-      stale: boolean;
-      updated_at: string;
-    };
+export type {
+  ContextBudgetConfidence,
+  ContextBudgetEstimateBasis,
+  ContextBudgetProviderUsageEstimate,
+  ContextBudgetSnapshot,
+  ContextBudgetSnapshotPhase,
+  ContextBudgetSnapshotReason,
+  ContextBudgetSnapshotSource,
+  ContextBudgetUnknownReason,
+} from "./context-budget-state.js";
 
 export type ContextBudgetUsageAnchor = {
   llmCallId: string;
@@ -90,6 +62,7 @@ type LoadedContextBudgetInput = {
   checkpoint: AgentContextCheckpoint | null;
   usageAnchor?: ContextBudgetUsageAnchor | null;
   deltaMessages?: ContextBudgetDeltaMessage[];
+  toolSchemaTokens?: number;
   stale?: boolean;
   now?: Date;
 };
@@ -167,6 +140,10 @@ export async function getThreadContextBudgetSnapshot(args: {
       model: args.thread.modelId ?? config.defaultModel,
       provider: null,
       reason: "count_failed",
+      source: "durable_reconstruction",
+      phase: "idle",
+      turn_id: null,
+      checked_at: now.toISOString(),
       stale: args.runtimeSnapshot?.active === true,
       updated_at: now.toISOString(),
     };
@@ -175,98 +152,51 @@ export async function getThreadContextBudgetSnapshot(args: {
 
 export function buildContextBudgetSnapshot(args: LoadedContextBudgetInput): ContextBudgetSnapshot {
   const now = args.now ?? new Date();
-  const contextWindowTokens = args.budget.contextWindowTokens;
-  if (!contextWindowTokens) {
-    return {
-      status: "unknown",
-      model: args.model,
-      provider: args.provider,
-      reason: "unknown_model_context_window",
-      stale: args.stale === true,
-      updated_at: now.toISOString(),
-    };
-  }
-
-  if (
-    args.budget.usableContextWindowTokens === null ||
-    args.budget.reservedOutputTokens === null ||
-    args.budget.usableInputWindowTokens === null ||
-    args.budget.thresholdTokens === null ||
-    args.budget.effectiveInputBudgetTokens === null
-  ) {
-    return {
-      status: "unknown",
-      model: args.model,
-      provider: args.provider,
-      reason: args.budget.invalidReason ?? "invalid_context_policy",
-      stale: args.stale === true,
-      updated_at: now.toISOString(),
-    };
-  }
-
-  const compactionThresholdTokens = args.budget.thresholdTokens;
-  const effectiveBudgetTokens = args.budget.effectiveInputBudgetTokens;
-  const baseEstimate = estimateCanonicalMessagesTokens(args.conversation);
-  const estimate = selectBestEstimate({
-    baseEstimate,
+  const providerUsageEstimate = buildProviderUsageEstimate({
     usageAnchor: args.usageAnchor ?? null,
     deltaMessages: args.deltaMessages ?? [],
   });
-  const estimatedInputTokens = Math.max(0, estimate.estimatedTokens);
-  const remainingContextTokens = Math.max(0, effectiveBudgetTokens - estimatedInputTokens);
-
-  return {
-    status: "available",
+  return buildContextBudgetStateFromConversation({
     model: args.model,
     provider: args.provider,
-    context_window_tokens: contextWindowTokens,
-    usable_context_window_tokens: args.budget.usableContextWindowTokens,
-    reserved_output_tokens: args.budget.reservedOutputTokens,
-    usable_input_window_tokens: args.budget.usableInputWindowTokens,
-    compaction_enabled: args.budget.enabled,
-    compaction_threshold_ratio: args.budget.thresholdRatio,
-    compaction_threshold_tokens: compactionThresholdTokens,
-    effective_budget_tokens: effectiveBudgetTokens,
-    estimated_input_tokens: estimatedInputTokens,
-    remaining_context_tokens: remainingContextTokens,
-    percent_of_context_budget: safeRatio(estimatedInputTokens, effectiveBudgetTokens),
-    percent_of_model_window: safeRatio(estimatedInputTokens, contextWindowTokens),
-    basis: estimate.basis,
-    confidence: estimate.confidence,
+    budget: args.budget,
+    conversation: args.conversation,
+    checkpoint: args.checkpoint,
+    source: "durable_reconstruction",
+    phase: "idle",
+    reason: null,
+    turnId: null,
+    providerUsageEstimate,
+    toolSchemaTokens: args.toolSchemaTokens ?? AGENT_TOOL_SCHEMA_TOKENS,
     stale: args.stale === true,
-    updated_at: now.toISOString(),
-    latest_checkpoint_id: args.checkpoint?.checkpointId ?? null,
-    compacted_through_message_id: args.checkpoint?.compactedThroughMessageId ?? null,
-    compacted_through_llm_call_id: args.checkpoint?.compactedThroughLlmCallId ?? null,
-  };
+    now,
+    checkedAt: now,
+  });
 }
 
-function selectBestEstimate(args: {
-  baseEstimate: number;
+function buildProviderUsageEstimate(args: {
   usageAnchor: ContextBudgetUsageAnchor | null;
   deltaMessages: ContextBudgetDeltaMessage[];
-}): {
-  estimatedTokens: number;
-  basis: ContextBudgetEstimateBasis;
-  confidence: ContextBudgetConfidence;
-} {
+}): ContextBudgetProviderUsageEstimate | null {
   if (!args.usageAnchor) {
-    return {
-      estimatedTokens: args.baseEstimate,
-      basis: "model_agnostic_estimate",
-      confidence: "medium",
-    };
+    return null;
   }
 
   const deltaTokens = estimateDeltaMessagesTokens(args.deltaMessages, args.usageAnchor.llmCallId);
-  const estimatedTokens =
+  const estimatedInputTokens =
     args.usageAnchor.usage.input_tokens +
     args.usageAnchor.usage.output_tokens +
     deltaTokens;
 
   return {
-    estimatedTokens,
-    basis: "provider_usage_plus_delta",
+    estimated_input_tokens: estimatedInputTokens,
+    input_tokens: args.usageAnchor.usage.input_tokens,
+    output_tokens: args.usageAnchor.usage.output_tokens,
+    ...(args.usageAnchor.usage.reasoning_tokens !== undefined
+      ? { reasoning_tokens: args.usageAnchor.usage.reasoning_tokens }
+      : {}),
+    delta_tokens: deltaTokens,
+    llm_call_id: args.usageAnchor.llmCallId,
     confidence: args.usageAnchor.usage.reasoning_tokens ? "medium" : "high",
   };
 }
@@ -498,8 +428,4 @@ function parseToolCallId(content: string): string | null {
   } catch {
     return null;
   }
-}
-
-function safeRatio(numerator: number, denominator: number): number {
-  return denominator > 0 ? numerator / denominator : 0;
 }

@@ -19,17 +19,32 @@ const AVAILABLE_BUDGET: ApiContextBudget = {
   compaction_threshold_ratio: 0.9,
   compaction_threshold_tokens: 90_000,
   effective_budget_tokens: 90_000,
+  message_estimated_tokens: 43_000,
+  tool_schema_tokens: 2_000,
   estimated_input_tokens: 45_000,
   remaining_context_tokens: 45_000,
   percent_of_context_budget: 0.5,
   percent_of_model_window: 0.375,
-  basis: 'provider_usage_plus_delta',
-  confidence: 'high',
+  basis: 'model_agnostic_estimate',
+  confidence: 'medium',
+  source: 'durable_reconstruction',
+  phase: 'idle',
+  reason: null,
+  turn_id: null,
+  checked_at: '2026-05-24T10:00:00.000Z',
   stale: false,
   updated_at: '2026-05-24T10:00:00.000Z',
   latest_checkpoint_id: null,
   compacted_through_message_id: null,
   compacted_through_llm_call_id: null,
+  provider_usage_estimate: {
+    estimated_input_tokens: 55_000,
+    input_tokens: 40_000,
+    output_tokens: 10_000,
+    delta_tokens: 5_000,
+    llm_call_id: 'llm-call-1',
+    confidence: 'high',
+  },
 }
 
 test('formatRoundedTokenCount rounds compact token counts for the meter tooltip', () => {
@@ -59,8 +74,15 @@ test('getContextBudgetMeterPresentation uses compaction-budget percent as the pr
   assert.ok(presentation.detailLines.some((line) => line.includes('output reserve 10k')))
   assert.ok(presentation.detailLines.some((line) => line.includes('Usable input window 100k')))
   assert.ok(presentation.detailLines.some((line) => line.includes('Hard model window 120k')))
-  assert.ok(presentation.detailLines.some((line) => line.includes('last provider usage plus new messages')))
-  assert.ok(presentation.detailLines.some((line) => line.includes('high confidence')))
+  assert.ok(presentation.detailLines.some((line) => line.includes('Messages 43k')))
+  assert.ok(presentation.detailLines.some((line) => line.includes('tool schemas 2k')))
+  assert.ok(presentation.detailLines.some((line) => line.includes('backend estimate')))
+  assert.ok(presentation.detailLines.some((line) => line.includes('medium confidence')))
+  assert.ok(presentation.detailLines.some((line) => line.includes('durable reconstruction')))
+  assert.equal(
+    presentation.detailLines.some((line) => line.includes('Provider diagnostic')),
+    false,
+  )
 })
 
 test('getContextBudgetMeterPresentation changes tone near the compaction threshold', () => {
@@ -116,6 +138,10 @@ test('getContextBudgetMeterPresentation handles unknown budgets', () => {
     model: 'local-model',
     provider: null,
     reason: 'unknown_model_context_window',
+    source: 'durable_reconstruction',
+    phase: 'idle',
+    turn_id: null,
+    checked_at: '2026-05-24T10:00:00.000Z',
     stale: true,
     updated_at: '2026-05-24T10:00:00.000Z',
   })
@@ -133,6 +159,10 @@ test('getContextBudgetMeterPresentation handles invalid context policy', () => {
     model: 'local-model',
     provider: null,
     reason: 'invalid_context_policy',
+    source: 'durable_reconstruction',
+    phase: 'idle',
+    turn_id: null,
+    checked_at: '2026-05-24T10:00:00.000Z',
     stale: false,
     updated_at: '2026-05-24T10:00:00.000Z',
   })

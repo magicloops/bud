@@ -1,7 +1,7 @@
 # Progress Checklist: Conversation Context Budget Meter
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 10 Implemented; Browser Layout Validation Blocked
+**Status**: Phase 11-14 Implemented; Phase 15 Tool-Schema Overhead In Progress; Phase 10 Browser Layout Validation Blocked
 
 ---
 
@@ -38,7 +38,7 @@
 - [ ] Add bootstrap `context_budget` if selected in Phase 0.
 - [ ] Update first-party web API types.
 - [ ] Add owner/non-owner route tests.
-- [ ] Confirm no dedicated `context.budget` SSE event is introduced.
+- [ ] Confirm no dedicated `agent.context_budget` SSE event is introduced.
 - [ ] Update route/runtime/lib specs.
 
 ## Phase 4: Web Context Meter UI
@@ -118,6 +118,58 @@ Browser layout validation is blocked in this session because the in-app browser
 rejected the local dev URL. Use a permitted preview URL for the remaining manual
 ring/tooltip check.
 
+## Phase 11: Authoritative Budget Contract And Tests
+
+- [x] Clarify `estimated_input_tokens` as the backend authoritative input estimate.
+- [x] Move provider usage plus delta out of primary meter basis.
+- [x] Add provenance fields to service/web budget types.
+- [x] Add optional `provider_usage_estimate` diagnostics.
+- [x] Add regression test for provider usage exceeding threshold while backend trigger estimate is below threshold.
+- [x] Update web presentation tests for default diagnostic hiding.
+- [x] Update affected specs.
+
+## Phase 12: Shared Budget State Helper
+
+- [x] Add shared budget-state helper for `CanonicalMessage[]` inputs.
+- [x] Use helper from `AgentService.compactConversationIfNeeded(...)`.
+- [x] Use helper from durable `/agent/state.context_budget` reconstruction.
+- [x] Preserve provider usage plus delta as optional diagnostics.
+- [x] Align compaction decision logs with snapshot fields.
+- [x] Add focused service tests proving trigger estimate and snapshot primary estimate match.
+
+## Phase 13: Runtime Active Budget State
+
+- [x] Add `context_budget` to `AgentRuntimeSnapshot`.
+- [x] Add runtime mutators for setting/clearing active context budget.
+- [x] Store latest budget decision during pre-turn and mid-turn compaction checks.
+- [x] Make `/agent/state` prefer matching active runtime budget during active turns.
+- [x] Ensure final/cancel paths return an up-to-date budget for the next user turn.
+- [x] Add runtime and agent-service tests.
+
+## Phase 14: Web Refresh And Compaction Payloads
+
+- [x] Add optional `context_budget` to `agent.compaction_done`.
+- [x] Update first-party API/SSE types.
+- [x] Update web stream handling to apply post-compaction budget snapshots.
+- [x] Keep `/agent/state` refresh fallback after compaction/final/resync/cancel.
+- [x] Keep provider usage diagnostics out of the product-facing context tooltip.
+- [x] Remove the temporary `VITE_CONTEXT_BUDGET_DEBUG` front-end flag.
+- [x] Update docs/proto if SSE event shape docs require the additive field.
+
+## Phase 15: Calibration And Trigger Estimator Follow-Up
+
+- [ ] Add safe trigger-vs-provider diagnostic logging.
+- [x] Include normal agent tool-schema overhead in backend trigger estimates and `/agent/state.context_budget`.
+- [x] Expose message-vs-tool-schema token split in context-budget snapshots and tooltip details.
+- [ ] Measure remaining fixed request overhead beyond tool schemas.
+- [ ] Decide whether additional estimator overhead adjustment is justified.
+- [x] Add tests for tool-schema estimator adjustment.
+- [ ] Keep provider usage diagnostic-only unless a future design changes trigger basis.
+
+Phase 15a includes the current normal agent tool schemas in the primary trigger
+estimate. Broader calibration remains open for provider-specific request
+envelope overhead.
+
 ## Deferred Follow-Ups
 
 - [ ] Provider token-count API adapters.
@@ -126,5 +178,5 @@ ring/tooltip check.
 - [ ] Per-model compaction ratio overrides.
 - [ ] Request-kind-specific output reserve fields.
 - [ ] Manual compaction slash command or menu item.
-- [ ] Dedicated `context.budget` SSE event if agent-state refresh is insufficient.
+- [ ] Dedicated `agent.context_budget` SSE event if `/agent/state` refresh and post-compaction snapshots are insufficient.
 - [ ] Persisted budget snapshots or usage analytics.

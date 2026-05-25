@@ -75,7 +75,8 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiMessage` | Message response (`message_id`, `client_id`, role, content) |
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
 | `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, `draft_assistant.client_id`, and optional `context_budget` |
-| `ApiContextBudget` | Browser-visible context budget snapshot for the current conversation since the latest compaction checkpoint, including hard model window, Bud usable context window, output reserve, usable input window, compaction-threshold usage, rounded-token source details, confidence, and unknown/failure states |
+| `ApiContextBudget` | Browser-visible context budget snapshot for the current conversation since the latest compaction checkpoint, including hard model window, Bud usable context window, output reserve, usable input window, compaction-threshold usage, authoritative estimate basis, message/tool-schema token split, provenance (`source`, `phase`, `turn_id`, `checked_at`), optional provider usage diagnostics, confidence, and unknown/failure states |
+| `ApiAgentCompactionStartEvent` / `ApiAgentCompactionDoneEvent` / `ApiAgentCompactionFailedEvent` | Agent SSE activity markers for automatic context compaction, including token counts, phase/reason, checkpoint id on success, optional post-compaction `context_budget`, and sanitized failure metadata |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
 | `ApiUpdateProfileInput` | Username update payload for `/api/me/profile` |
 | `ApiDeviceAuthFlow` / `ApiDeviceAuthApproval` | Device-claim browser contracts |

@@ -190,9 +190,28 @@ export type ApiAskUserQuestionsToolResult = {
 
 export type ApiContextBudgetEstimateBasis =
   | 'model_agnostic_estimate'
-  | 'provider_usage_plus_delta'
+  | 'provider_usage_trigger'
+  | 'provider_token_count'
 
 export type ApiContextBudgetConfidence = 'low' | 'medium' | 'high'
+
+export type ApiContextBudgetSource =
+  | 'durable_reconstruction'
+  | 'active_agent_decision'
+  | 'compaction_event'
+  | 'unknown'
+
+export type ApiContextBudgetPhase = 'idle' | ApiAgentCompactionPhase | null
+
+export type ApiContextBudgetProviderUsageEstimate = {
+  estimated_input_tokens: number
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens?: number
+  delta_tokens: number
+  llm_call_id: string
+  confidence: Extract<ApiContextBudgetConfidence, 'medium' | 'high'>
+}
 
 export type ApiContextBudgetAvailable = {
   status: 'available'
@@ -206,17 +225,25 @@ export type ApiContextBudgetAvailable = {
   compaction_threshold_ratio: number
   compaction_threshold_tokens: number
   effective_budget_tokens: number
+  message_estimated_tokens: number
+  tool_schema_tokens: number
   estimated_input_tokens: number
   remaining_context_tokens: number
   percent_of_context_budget: number
   percent_of_model_window: number
   basis: ApiContextBudgetEstimateBasis
   confidence: ApiContextBudgetConfidence
+  source: ApiContextBudgetSource
+  phase: ApiContextBudgetPhase
+  reason: ApiAgentCompactionReason | null
+  turn_id: string | null
+  checked_at: string | null
   stale: boolean
   updated_at: string
   latest_checkpoint_id: string | null
   compacted_through_message_id: string | null
   compacted_through_llm_call_id: string | null
+  provider_usage_estimate?: ApiContextBudgetProviderUsageEstimate | null
 }
 
 export type ApiContextBudgetUnknown = {
@@ -224,11 +251,53 @@ export type ApiContextBudgetUnknown = {
   model: string
   provider: string | null
   reason: 'unknown_model_context_window' | 'invalid_context_policy' | 'conversation_unavailable' | 'count_failed'
+  source: ApiContextBudgetSource
+  phase: ApiContextBudgetPhase
+  turn_id: string | null
+  checked_at: string | null
   stale: boolean
   updated_at: string
 }
 
 export type ApiContextBudget = ApiContextBudgetAvailable | ApiContextBudgetUnknown
+
+export type ApiAgentCompactionPhase = 'pre_turn' | 'mid_turn' | 'standalone_turn'
+
+export type ApiAgentCompactionReason =
+  | 'context_limit'
+  | 'context_error_retry'
+  | 'model_downshift'
+  | 'user_requested'
+
+export type ApiAgentCompactionTrigger = 'auto' | 'manual' | 'model_downshift'
+
+export type ApiAgentCompactionStartEvent = {
+  turn_id: string
+  trigger: ApiAgentCompactionTrigger
+  reason: ApiAgentCompactionReason
+  phase: ApiAgentCompactionPhase
+  tokens_before: number
+  threshold_tokens: number | null
+  context_window_tokens: number | null
+  usable_context_window_tokens: number | null
+  reserved_output_tokens: number | null
+  usable_input_window_tokens: number | null
+  effective_budget_tokens: number | null
+  started_at: string
+}
+
+export type ApiAgentCompactionDoneEvent = ApiAgentCompactionStartEvent & {
+  checkpoint_id: string
+  tokens_after: number
+  finished_at: string
+  context_budget?: ApiContextBudget | null
+}
+
+export type ApiAgentCompactionFailedEvent = ApiAgentCompactionStartEvent & {
+  error_code: string
+  retryable: boolean
+  finished_at: string
+}
 
 export type ApiAgentState = {
   active: boolean
