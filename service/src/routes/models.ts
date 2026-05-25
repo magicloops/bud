@@ -14,6 +14,7 @@ import {
   type ReasoningLevel,
 } from "../llm/index.js";
 import { requireViewer } from "../auth/session.js";
+import { resolveModelContextPolicy } from "../agent/context-budget.js";
 
 type ModelInfo = {
   id: string;
@@ -27,6 +28,9 @@ type ModelInfo = {
     streaming: boolean;
     structured_outputs: boolean;
     context_window_tokens: number;
+    usable_context_window_tokens: number | null;
+    reserved_output_tokens: number | null;
+    usable_input_window_tokens: number | null;
     max_output_tokens: number;
   };
   reasoning: {
@@ -80,26 +84,32 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
 
     const providerNames = providerRegistry.listProviders();
     const defaults = resolveModelsResponseDefaults(providerNames);
-    const models: ModelInfo[] = listCatalogEntriesForProviders(providerNames).map((entry) => ({
-      id: entry.id,
-      provider: entry.provider,
-      provider_model: entry.providerModel,
-      display_name: entry.displayName,
-      is_default: defaults.defaultModel === entry.id,
-      capabilities: {
-        vision: entry.capabilities.vision,
-        tools: entry.capabilities.tools,
-        streaming: entry.capabilities.streaming,
-        structured_outputs: entry.capabilities.structuredOutputs,
-        context_window_tokens: entry.capabilities.contextWindowTokens,
-        max_output_tokens: entry.capabilities.maxOutputTokens,
-      },
-      reasoning: {
-        kind: entry.reasoning.kind,
-        levels: getReasoningLevelOptions(entry),
-        default_level: entry.reasoning.defaultLevel,
-      },
-    }));
+    const models: ModelInfo[] = listCatalogEntriesForProviders(providerNames).map((entry) => {
+      const contextPolicy = resolveModelContextPolicy(entry);
+      return {
+        id: entry.id,
+        provider: entry.provider,
+        provider_model: entry.providerModel,
+        display_name: entry.displayName,
+        is_default: defaults.defaultModel === entry.id,
+        capabilities: {
+          vision: entry.capabilities.vision,
+          tools: entry.capabilities.tools,
+          streaming: entry.capabilities.streaming,
+          structured_outputs: entry.capabilities.structuredOutputs,
+          context_window_tokens: entry.capabilities.contextWindowTokens,
+          usable_context_window_tokens: contextPolicy.usableContextWindowTokens,
+          reserved_output_tokens: contextPolicy.reservedOutputTokens,
+          usable_input_window_tokens: contextPolicy.usableInputWindowTokens,
+          max_output_tokens: entry.capabilities.maxOutputTokens,
+        },
+        reasoning: {
+          kind: entry.reasoning.kind,
+          levels: getReasoningLevelOptions(entry),
+          default_level: entry.reasoning.defaultLevel,
+        },
+      };
+    });
 
     return reply.send({
       models,

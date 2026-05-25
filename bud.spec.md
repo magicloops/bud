@@ -371,7 +371,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 | `AGENT_REASONING_EFFORT` | low | Compatibility fallback reasoning effort for non-catalog model overrides |
 | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
 | `AGENT_AUTO_COMPACTION_ENABLED` | true | Enable automatic model-context checkpointing for long threads |
-| `AGENT_AUTO_COMPACTION_RATIO` | 0.9 | Estimated context-window usage threshold for proactive compaction, clamped to `0.9` |
+| `AGENT_AUTO_COMPACTION_RATIO` | 0.95 | Estimated usable-input usage threshold for proactive compaction, clamped to `0.95` |
 | `AGENT_DEBUG` | false | Enable agent debug logging |
 | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle after |
 | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions after (`0` disables destructive cleanup) |
@@ -565,7 +565,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/automatic-compaction/implementation-spec.md](./plan/automatic-compaction/implementation-spec.md) | Parent implementation spec for adding automatic model-context compaction while keeping the visible transcript unchanged |
 | [plan/automatic-compaction/progress-checklist.md](./plan/automatic-compaction/progress-checklist.md) | Running implementation checklist for the automatic context-compaction rollout |
 | [plan/automatic-compaction/validation-checklist.md](./plan/automatic-compaction/validation-checklist.md) | Manual and automated validation checklist for automatic context compaction |
-| [plan/context-meter/context-meter.spec.md](./plan/context-meter/context-meter.spec.md) | Folder spec for the phased conversation context budget meter rollout, covering service-owned budget snapshots, Tier 1 provider usage estimates, API exposure, web UI, and validation |
+| [plan/context-meter/context-meter.spec.md](./plan/context-meter/context-meter.spec.md) | Folder spec for the phased conversation context budget meter rollout, covering service-owned budget snapshots, Tier 1 provider usage estimates, usable-context policy follow-on phases, API exposure, web UI, and validation |
 | [plan/context-meter/implementation-spec.md](./plan/context-meter/implementation-spec.md) | Parent implementation spec for showing users remaining model-visible context before automatic compaction |
 | [plan/context-meter/progress-checklist.md](./plan/context-meter/progress-checklist.md) | Running implementation checklist for the conversation context budget meter rollout |
 | [plan/context-meter/validation-checklist.md](./plan/context-meter/validation-checklist.md) | Manual and automated validation checklist for the conversation context budget meter rollout |
@@ -747,6 +747,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/follow-up-message-supersedes-ask-user-questions.md](./design/follow-up-message-supersedes-ask-user-questions.md) | Draft design for letting normal follow-up messages close pending `ask_user_questions` prompts as skipped, separating `waiting_for_user` from active loading UI, and making stale prompt recovery service-owned for web and mobile |
 | [design/context-compaction.md](./design/context-compaction.md) | Draft design for durable service-owned model-context checkpoints that keep long-running threads under model context limits without changing the visible transcript |
 | [design/conversation-context-budget-meter.md](./design/conversation-context-budget-meter.md) | Draft design for showing users remaining model-visible context before automatic compaction, using the same compaction threshold plus tiered token-counting estimates |
+| [design/usable-context-window-and-output-reserve.md](./design/usable-context-window-and-output-reserve.md) | Draft design for separating provider hard context windows from Bud usable context caps, subtracting output reserves, and deriving compaction thresholds from usable input budget |
 | [design/llm-model-catalog-and-reasoning-controls.md](./design/llm-model-catalog-and-reasoning-controls.md) | Design sketch for centralizing Bud's LLM model catalog, making reasoning controls provider/model-specific, and planning the Opus 4.6/4.7 plus GPT-5.4/GPT-5.5 rollout |
 | [design/model-preferences-and-thread-overrides.md](./design/model-preferences-and-thread-overrides.md) | Design for persisting model/reasoning selection at the thread level, defaulting new work to GPT-5.5 low, and recording effective model metadata on new turn messages |
 | [design/message-client-id-and-stable-message-identity.md](./design/message-client-id-and-stable-message-identity.md) | Design for adding a UUIDv7 `client_id` to messages as a stable public/UI identity while retaining `message_id` as the persisted row identifier, and threading that new identity through `/messages`, `/agent/state`, and agent SSE payloads |

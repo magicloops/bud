@@ -143,6 +143,7 @@ loader: async ({ params }) => {
    - Reuses `useAvailableModels()` so model fetching/default selection and per-model reasoning normalization match the new-thread flow
    - Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
    - Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
+   - Tracks `context_budget` from `/agent/state`, passes it to the shared composer meter, and refreshes it after user sends, model preference changes, bootstrap resyncs, and final turn events
    - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, `useFileViewer(...)`, `useWebView(...)`, `ThreadTerminalPane`, `FileViewerPane`, and `WebViewPane`
 
 8. **File Viewer**
@@ -203,6 +204,7 @@ activeFileEntry: FileViewerEntry | null
 activeWebView: ApiThreadWebView | null
 webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
 questionSubmitError: string | null
+contextBudget: ApiContextBudget | null
 ```
 
 **Terminal Event Handling**:
@@ -232,6 +234,7 @@ questionSubmitError: string | null
 From `@/lib/api-types` / `@/lib/terminal-data`:
 - `ApiMessage` - Message from API (`message_id`, `client_id`, role, content)
 - `ApiMessagePage` - Paged transcript window with opaque cursors
+- `ApiContextBudget` - Context meter snapshot attached to `/agent/state`
 - `decodeTerminalData()` - Base64 decode helper
 
 ## Dependencies

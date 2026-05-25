@@ -73,7 +73,12 @@ percent_of_model_window =
   estimated_input_tokens / context_window_tokens
 ```
 
-If `context_window_tokens` is missing, return `status: "unknown"` with `reason: "unknown_model_context_window"`.
+The usable-context follow-on phases replace the disabled-compaction fallback with
+`usable_input_window_tokens`. Until those phases land, the initial meter can use
+`context_window_tokens` as the fallback.
+
+If `context_window_tokens` is missing, return `status: "unknown"` with
+`reason: "unknown_model_context_window"`.
 
 ### Task 3: Load model-visible context through the loader
 
@@ -109,7 +114,8 @@ Cover:
 - no-checkpoint snapshot
 - checkpointed snapshot
 - unknown model context window
-- auto-compaction disabled fallback to full context window
+- auto-compaction disabled fallback behavior, updated by Phase 7 to use usable
+  input window
 - threshold parity with automatic compaction
 - stale flag when active runtime state is present, if runtime state is injectable
 

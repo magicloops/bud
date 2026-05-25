@@ -103,6 +103,8 @@ Central product model catalog and reasoning-control metadata.
 - own the first-party product IDs exposed through `/api/models`
 - map product IDs to provider API model strings
 - keep provider/model-specific reasoning levels, defaults, labels, and capability metadata in one place
+- keep provider hard context-window metadata separate from Bud usable-context
+  policy metadata (`usableContextWindowTokens` and `reservedOutputTokens`)
 - define the global default model (`gpt-5.5`)
 
 **Current Product Models**:
@@ -117,6 +119,16 @@ Central product model catalog and reasoning-control metadata.
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
+
+**Usable Context Policy**:
+- `contextWindowTokens` remains the provider/model hard total context window
+- `usableContextWindowTokens` optionally caps the total window Bud is willing to
+  use before output reservation
+- `reservedOutputTokens` optionally overrides the default output reserve, which
+  otherwise equals `maxOutputTokens`
+- GPT-5.5 currently declares `contextWindowTokens: 1_050_000`,
+  `usableContextWindowTokens: 400_000`, and `reservedOutputTokens: 128_000`,
+  producing a 272,000 token usable input window before the auto-compaction ratio
 
 ### `reasoning-policy.ts`
 

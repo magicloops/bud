@@ -84,10 +84,11 @@ export class AgentContextCompactor {
     const budget = resolveContextBudget({
       model: input.model,
       modelReasoning: input.modelReasoning,
+      requestKind: "compaction_summary",
     });
     let compactionMessages = trimCompactionRequestToEstimatedBudget(
       buildCompactionMessages(input.conversation),
-      budget.thresholdTokens,
+      budget.effectiveInputBudgetTokens,
     );
     let lastContextError: unknown = null;
 

@@ -21,6 +21,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - Keep a bounded same-instance replay window with cursor checkpoints
 - Support live-only no-cursor attach plus bounded cursor replay
 - Require explicit `agent.resync_required` when a supplied resume cursor is too old or unknown
+- Keep the runtime-owned snapshot limited to in-flight turn state; browser routes may enrich `/agent/state` with service-derived fields such as `context_budget`
 
 **Snapshot Shape**:
 - `active`
@@ -32,6 +33,8 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `pending_tool` may also contain the normalized `ask_user_questions_request_v1` payload while the agent is waiting for a user response
 - `draft_assistant` (`client_id`, `text`, `updated_at`)
 - `updated_at`
+
+The route-level `context_budget` field is not owned by this runtime manager. It is computed by the threads route after authorization from model/catalog metadata, persisted conversation state, provider usage, and compaction checkpoints.
 
 **Phase Values**:
 - `idle`

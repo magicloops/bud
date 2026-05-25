@@ -21,6 +21,7 @@ export { generateMessageClientId } from '@/lib/messages'
 export type {
   ApiAgentState,
   ApiBud,
+  ApiContextBudget,
   ApiCurrentUser,
   ApiDeviceAuthApproval,
   ApiDeviceAuthFlow,

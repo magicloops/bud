@@ -218,6 +218,7 @@ Agent SSE ownership for the existing-thread route.
 **Route contract**:
 - the route still owns the initial loader fetches plus the top-level `status`/`error` state
 - the route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to `waiting_for_user`, keeping global loading indicators separate from paused human input
+- the route owns context budget refresh from `/agent/state`; the stream intentionally has no separate context-budget event
 - the hook owns EventSource lifecycle, cursor tracking, reconnect behavior, and event parsing
 
 ### `thread-stream-timing.ts`

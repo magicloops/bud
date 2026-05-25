@@ -3,6 +3,7 @@
 **Status**: Planned
 **Created**: 2026-05-24
 **Design Doc**: [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md)
+**Usable Context Design**: [../../design/usable-context-window-and-output-reserve.md](../../design/usable-context-window-and-output-reserve.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
 **Phase 0**: [phase-0-current-state-and-contract-lock.md](./phase-0-current-state-and-contract-lock.md)
@@ -11,6 +12,10 @@
 **Phase 3**: [phase-3-api-and-agent-state-contract.md](./phase-3-api-and-agent-state-contract.md)
 **Phase 4**: [phase-4-web-context-meter-ui.md](./phase-4-web-context-meter-ui.md)
 **Phase 5**: [phase-5-validation-docs-and-rollout.md](./phase-5-validation-docs-and-rollout.md)
+**Phase 6**: [phase-6-usable-context-policy-resolver.md](./phase-6-usable-context-policy-resolver.md)
+**Phase 7**: [phase-7-agent-compaction-budget-semantics.md](./phase-7-agent-compaction-budget-semantics.md)
+**Phase 8**: [phase-8-api-models-and-web-policy-fields.md](./phase-8-api-models-and-web-policy-fields.md)
+**Phase 9**: [phase-9-usable-context-validation-docs-and-rollout.md](./phase-9-usable-context-validation-docs-and-rollout.md)
 
 ---
 
@@ -46,13 +51,19 @@ Specifically:
 These decisions are fixed for the initial implementation:
 
 - The primary UI shows compaction-budget usage, not raw model-window usage.
-- `AGENT_AUTO_COMPACTION_RATIO` remains capped at `0.9`.
-- Clients must read the effective threshold from the service; no client hardcoding of 90%.
-- If auto-compaction is disabled but the model window is known, the effective meter limit is the full model context window.
+- The initial meter shipped against the existing `AGENT_AUTO_COMPACTION_RATIO`
+  cap, then follow-on usable-context work raises the cap to `0.95`.
+- Clients must read the effective threshold from the service; no client
+  hardcoding of ratio values.
+- If auto-compaction is disabled but context policy is known, the effective
+  meter limit is the usable input window, not the hard model context window.
 - No dedicated `context.budget` SSE event ships in the first pass.
 - The meter can lag while an agent turn is active; internal mid-turn compaction still counts in-memory loop state before later provider calls.
 - Tier 0 model-agnostic counting ships first.
 - Tier 1 uses real provider response usage, including output tokens that may become replayed assistant context.
+- Output reserve defaults to `maxOutputTokens`, with explicit per-model overrides.
+- `/api/models` exposes `usable_input_window_tokens`.
+- Missing or invalid local-model context policy renders `Context unknown`.
 - Provider token-count APIs are deferred.
 - Local tokenizer adapters are deferred.
 - Manual compaction UI or `/compact` handling is deferred.
@@ -116,6 +127,9 @@ type ApiContextBudgetSnapshot = {
   compaction_enabled: boolean;
   compaction_threshold_ratio: number;
   compaction_threshold_tokens: number;
+  usable_context_window_tokens: number;
+  reserved_output_tokens: number;
+  usable_input_window_tokens: number;
   effective_budget_tokens: number;
   estimated_input_tokens: number;
   remaining_context_tokens: number;
@@ -138,7 +152,7 @@ type ApiContextBudgetUnknown = {
   status: "unknown";
   model: string;
   provider: string | null;
-  reason: "unknown_model_context_window" | "conversation_unavailable" | "count_failed";
+  reason: "unknown_model_context_window" | "invalid_context_policy" | "conversation_unavailable" | "count_failed";
   stale: boolean;
   updated_at: string;
 };
@@ -218,6 +232,10 @@ Expected behavior:
 | 3 | [phase-3-api-and-agent-state-contract.md](./phase-3-api-and-agent-state-contract.md) | High | Expose `context_budget` through agent state and first-party API types |
 | 4 | [phase-4-web-context-meter-ui.md](./phase-4-web-context-meter-ui.md) | High | Render the context meter in the web workbench |
 | 5 | [phase-5-validation-docs-and-rollout.md](./phase-5-validation-docs-and-rollout.md) | High | Complete validation, spec updates, and rollout notes |
+| 6 | [phase-6-usable-context-policy-resolver.md](./phase-6-usable-context-policy-resolver.md) | High | Add model usable-context/output-reserve policy resolver and GPT-5.5 budget |
+| 7 | [phase-7-agent-compaction-budget-semantics.md](./phase-7-agent-compaction-budget-semantics.md) | High | Move agent compaction and summary trimming to usable-input semantics |
+| 8 | [phase-8-api-models-and-web-policy-fields.md](./phase-8-api-models-and-web-policy-fields.md) | High | Expose usable-context policy fields through APIs and meter details |
+| 9 | [phase-9-usable-context-validation-docs-and-rollout.md](./phase-9-usable-context-validation-docs-and-rollout.md) | High | Validate usable-context rollout and update specs |
 
 ## Expected Files And Areas
 
@@ -232,6 +250,7 @@ Expected behavior:
 - `service/src/llm/provider-ledger.ts`
 - `service/src/llm/provider.ts`
 - `service/src/llm/model-catalog.ts`
+- `service/src/routes/models.ts`
 - `service/src/routes/threads/`
 
 ### Web
@@ -262,6 +281,8 @@ Expected behavior:
 - Which thread bootstrap response should carry `context_budget`, if any, without introducing duplicate route work?
 - Does `/agent/state` already refresh often enough after compaction completion and provider call completion for the meter to feel current?
 - How should future local model descriptors represent context window, tokenizer file, and chat template metadata?
+- What minimum local model metadata should be required before showing a
+  percentage meter instead of `Context unknown`?
 
 ## Known Unknowns
 
@@ -294,11 +315,15 @@ Expected behavior:
 ## Definition Of Done
 
 - [ ] Backend snapshots use the same threshold math as automatic compaction.
+- [ ] Backend budget math uses usable input windows rather than hard model windows.
+- [ ] GPT-5.5 derives a 258,400 token compaction threshold from a 400k usable
+      cap, 128k output reserve, and 0.95 ratio.
 - [ ] Checkpointed reconstruction is counted correctly.
 - [ ] Tier 0 works for every known model with a context window.
 - [ ] Tier 1 uses input and output token usage when valid.
 - [ ] Unknown/degraded snapshots are stable and client-safe.
 - [ ] `/agent/state` exposes `context_budget` with ownership enforcement.
+- [ ] `/api/models` exposes usable context policy fields.
 - [ ] Web renders the meter near model/reasoning controls.
 - [ ] Tests cover normal, checkpointed, unknown, stale, and Tier 1 cases.
 - [ ] Relevant spec files and this plan are updated.

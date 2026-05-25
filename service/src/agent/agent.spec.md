@@ -17,6 +17,7 @@ The agent service coordinates AI-assisted terminal interactions. When a user sen
 Simple barrel export:
 ```typescript
 export { AgentService } from "./agent-service.js";
+export { buildContextBudgetSnapshot, getThreadContextBudgetSnapshot } from "./context-budget-snapshot.js";
 export { ThreadTitleService, normalizeGeneratedThreadTitle, resolveThreadTitleModel } from "./thread-title-service.js";
 ```
 
@@ -462,13 +463,47 @@ Standalone tests for checkpoint normalization and ownership/boundary stamping.
 
 ### `context-budget.ts`
 
-Token-estimation helper for automatic compaction.
+Token-estimation helper for automatic compaction and browser-visible context budget reporting.
 
 **Responsibilities**:
 - estimate canonical message tokens using a conservative character-based fallback
-- resolve the selected model's catalog context window
-- apply automatic-compaction enablement and ratio configuration
+- resolve the selected model's catalog hard context window, Bud usable context
+  window, output reserve, and usable input window
+- default `reservedOutputTokens` to `maxOutputTokens` unless a catalog entry
+  overrides it
+- apply automatic-compaction enablement and ratio configuration, clamped to
+  `0.95`
+- expose request-kind budget semantics so normal agent turns use the proactive
+  threshold while compaction-summary calls can use the larger usable input window
 - decide whether a candidate provider request should compact before invocation
+
+### `context-budget-snapshot.ts`
+
+Browser-facing context budget snapshot builder used by the owned `/agent/state` route.
+
+**Responsibilities**:
+- resolve the thread's effective model/reasoning selection and selected-model compaction budget
+- load context through `AgentConversationLoader` using the same latest completed checkpoint boundary as the agent loop
+- expose hard model window, Bud usable context window, output reserve, usable
+  input window, compaction threshold, and effective budget fields
+- expose the effective budget as the auto-compaction threshold when compaction
+  is enabled, or the usable input window when compaction is disabled
+- prefer the latest same-provider completed `llm_call.usage` anchor after the checkpoint boundary and add estimated delta messages after that call
+- include both provider input and output tokens from the usage anchor because output tokens are part of the visible conversation before the next request
+- fall back to the model-agnostic canonical message estimate when provider usage is unavailable
+- return an `unknown` snapshot instead of failing `/agent/state` when model-window metadata is missing, context policy is invalid, or counting fails
+- mark snapshots stale while an agent turn is active so clients can avoid treating them as live intra-turn telemetry
+
+### `context-budget-snapshot.test.ts`
+
+Direct tests for snapshot math and fallback behavior.
+
+**Current Coverage**:
+- unknown model context windows return an `unknown` snapshot
+- disabled compaction uses the usable input window as the effective budget
+- invalid context policy returns an `unknown` snapshot
+- provider-usage estimates include output tokens
+- checkpoint ids and stale state are carried into the snapshot
 
 ### `context-compactor.ts`
 
@@ -478,6 +513,8 @@ Local summary compaction collaborator used by `AgentService`.
 - call the selected LLM provider with no tools and a fixed checkpoint-summary prompt
 - build replacement history from a checkpoint summary note, recent real user messages, and optional current terminal context
 - persist completed and failed checkpoint rows
+- trim the temporary compaction request against the model's usable input window
+  rather than the normal proactive auto-compaction threshold
 - retry provider context-window errors by trimming the temporary compaction request while preserving tool-use/tool-result pairs where possible
 - keep summaries and replacement history out of normal browser transcript routes
 
@@ -578,6 +615,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../terminal/types.js` | Readiness hints types |
 | `./conversation-loader.js` | Canonical transcript/context assembly |
 | `./context-budget.js` | Automatic compaction budget estimates and thresholds |
+| `./context-budget-snapshot.js` | Browser-facing context budget snapshots for `/agent/state` |
 | `./context-checkpoint-repository.js` | Durable checkpoint persistence and replay-boundary lookup |
 | `./context-compactor.js` | Local summary compaction and replacement-history construction |
 | `./model-runner.js` | Provider invocation + draft assistant streaming |
@@ -598,7 +636,7 @@ From `../config.js`:
 - `config.agentMaxOutputTokens` - Max tokens per response (default: 128000)
 - `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `low`)
 - `config.agentAutoCompactionEnabled` - Enables automatic context compaction (default: enabled)
-- `config.agentAutoCompactionRatio` - Context-window threshold ratio for automatic compaction, clamped to at most `0.9`
+- `config.agentAutoCompactionRatio` - Usable-input threshold ratio for automatic compaction, clamped to at most `0.95`
 - `config.agentDebug` - Enable debug logging
 - `config.agentOpenaiDebug` - Log raw OpenAI responses
 

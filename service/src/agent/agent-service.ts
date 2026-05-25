@@ -769,6 +769,26 @@ export class AgentService {
     if (!budget.enabled) {
       return null;
     }
+    if (budget.invalidReason) {
+      this.logger.warn(
+        {
+          threadId: args.threadId,
+          turnId: args.turnId,
+          phase: args.phase,
+          reason: args.reason,
+          invalidReason: budget.invalidReason,
+          contextWindowTokens: budget.contextWindowTokens,
+          usableContextWindowTokens: budget.usableContextWindowTokens,
+          reservedOutputTokens: budget.reservedOutputTokens,
+          usableInputWindowTokens: budget.usableInputWindowTokens,
+          component: "agent_context_compaction",
+        },
+        "Context compaction budget policy is invalid",
+      );
+      if (!args.force) {
+        return null;
+      }
+    }
     if (!args.force && !shouldCompactContext({ estimatedTokens, budget })) {
       return null;
     }
@@ -802,6 +822,10 @@ export class AgentService {
         estimatedTokens,
         thresholdTokens: budget.thresholdTokens,
         contextWindowTokens: budget.contextWindowTokens,
+        usableContextWindowTokens: budget.usableContextWindowTokens,
+        reservedOutputTokens: budget.reservedOutputTokens,
+        usableInputWindowTokens: budget.usableInputWindowTokens,
+        effectiveInputBudgetTokens: budget.effectiveInputBudgetTokens,
         component: "agent_context_compaction",
       },
       "Compacting agent context before provider request",

@@ -20,6 +20,9 @@ export type ModelInfo = {
     streaming: boolean
     structured_outputs: boolean
     context_window_tokens: number
+    usable_context_window_tokens: number | null
+    reserved_output_tokens: number | null
+    usable_input_window_tokens: number | null
     max_output_tokens: number
   }
   reasoning: {

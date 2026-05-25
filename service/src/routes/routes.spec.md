@@ -101,7 +101,7 @@ Ownership-focused thread submodules:
 | `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
 | `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync and cached cwd path context when available), triggers agent |
 | `POST` | `/api/threads/:thread_id/read` | Advance the viewer's read watermark to a specific owned transcript row |
-| `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot for the thread |
+| `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot plus context budget snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/agent/question-requests/:request_id/responses` | Submit an owner-scoped response to a pending `ask_user_questions` tool request |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
@@ -149,7 +149,8 @@ Ownership-focused thread submodules:
 - page metadata includes `has_more_before`, `has_more_after`, `before_cursor`, `after_cursor`, `returned`, and `limit`
 
 **Agent Stream Contract**:
-- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
+- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, and route-computed `context_budget`
+- `context_budget` is a best-effort snapshot of conversation usage since the latest context checkpoint, measured against the automatic-compaction threshold when enabled or the usable input window when compaction is disabled
 - `pending_tool` now carries `client_id` and `started_at` in addition to `call_id`, `name`, and `args`
 - `phase` may be `waiting_for_user`; in that state `pending_tool.name` can be `ask_user_questions` and `pending_tool.args` is the normalized `ask_user_questions_request_v1` payload with `request_id`
 - `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
@@ -502,6 +503,9 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
         "streaming": true,
         "structured_outputs": false,
         "context_window_tokens": 1000000,
+        "usable_context_window_tokens": 1000000,
+        "reserved_output_tokens": 128000,
+        "usable_input_window_tokens": 872000,
         "max_output_tokens": 128000
       },
       "reasoning": {

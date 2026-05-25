@@ -188,6 +188,48 @@ export type ApiAskUserQuestionsToolResult = {
   summary_markdown: string
 }
 
+export type ApiContextBudgetEstimateBasis =
+  | 'model_agnostic_estimate'
+  | 'provider_usage_plus_delta'
+
+export type ApiContextBudgetConfidence = 'low' | 'medium' | 'high'
+
+export type ApiContextBudgetAvailable = {
+  status: 'available'
+  model: string
+  provider: string
+  context_window_tokens: number
+  usable_context_window_tokens: number
+  reserved_output_tokens: number
+  usable_input_window_tokens: number
+  compaction_enabled: boolean
+  compaction_threshold_ratio: number
+  compaction_threshold_tokens: number
+  effective_budget_tokens: number
+  estimated_input_tokens: number
+  remaining_context_tokens: number
+  percent_of_context_budget: number
+  percent_of_model_window: number
+  basis: ApiContextBudgetEstimateBasis
+  confidence: ApiContextBudgetConfidence
+  stale: boolean
+  updated_at: string
+  latest_checkpoint_id: string | null
+  compacted_through_message_id: string | null
+  compacted_through_llm_call_id: string | null
+}
+
+export type ApiContextBudgetUnknown = {
+  status: 'unknown'
+  model: string
+  provider: string | null
+  reason: 'unknown_model_context_window' | 'invalid_context_policy' | 'conversation_unavailable' | 'count_failed'
+  stale: boolean
+  updated_at: string
+}
+
+export type ApiContextBudget = ApiContextBudgetAvailable | ApiContextBudgetUnknown
+
 export type ApiAgentState = {
   active: boolean
   turn_id: string | null
@@ -207,6 +249,7 @@ export type ApiAgentState = {
     updated_at: string
   } | null
   updated_at: string
+  context_budget?: ApiContextBudget | null
 }
 
 export type ApiFileSession = {

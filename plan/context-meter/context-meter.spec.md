@@ -4,7 +4,7 @@ Implementation planning documents for the conversation context budget meter.
 
 ## Purpose
 
-This folder turns the design work in [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md) into an actionable phased implementation plan.
+This folder turns the design work in [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md) and [../../design/usable-context-window-and-output-reserve.md](../../design/usable-context-window-and-output-reserve.md) into an actionable phased implementation plan.
 
 The plan assumes:
 
@@ -15,6 +15,10 @@ The plan assumes:
 - first-pass clients use agent-state refresh rather than a new `context.budget` SSE event
 - provider token-count APIs and local tokenizers are deferred
 - Tier 1 should use provider response usage, including output tokens that may become replayed assistant context
+- follow-on usable-context work separates hard model windows from Bud usable context caps
+- output reserve defaults to `maxOutputTokens`, with model-specific overrides
+- the automatic-compaction ratio clamp should move to `0.95`
+- invalid or missing local-model context policy should show `Context unknown`
 
 ## Files
 
@@ -85,6 +89,51 @@ Finalization phase covering:
 - rollout and fallback notes
 - deferred follow-ups
 
+### `phase-6-usable-context-policy-resolver.md`
+
+Follow-on context policy phase covering:
+
+- model catalog usable-context and output-reserve fields
+- shared resolver defaults and invalid policy handling
+- `0.95` ratio clamp
+- GPT-5.5 Codex-style 400k/128k budget policy
+
+### `phase-7-agent-compaction-budget-semantics.md`
+
+Follow-on agent semantics phase covering:
+
+- normal-turn compaction using usable input threshold
+- disabled-compaction effective budget using usable input window
+- compaction summary trimming using the larger usable input window
+- diagnostics that distinguish hard, usable, reserve, input, and threshold values
+
+### `phase-8-api-models-and-web-policy-fields.md`
+
+Follow-on API/UI phase covering:
+
+- `/api/models` usable-context policy fields
+- `context_budget` usable-context policy fields
+- first-party API model/type updates
+- context meter details and `Context unknown` fallback
+
+### `phase-9-usable-context-validation-docs-and-rollout.md`
+
+Follow-on validation phase covering:
+
+- service and web validation for usable-context policy
+- spec updates
+- rollout notes and deferred follow-ups
+
+### `phase-10-radial-send-button-context.md`
+
+Follow-on web UI phase covering:
+
+- replacing the dedicated composer context meter with a circular context-aware
+  send button
+- rendering context usage as a radial border from 0-100%
+- moving the existing context tooltip to the send control
+- preserving unknown, stale, near-threshold, over-threshold, and disabled states
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the plan.
@@ -96,6 +145,7 @@ Manual and automated validation checklist for the rollout.
 ## Dependencies
 
 - [../../design/conversation-context-budget-meter.md](../../design/conversation-context-budget-meter.md) - design source for budget semantics, tiers, and UI
+- [../../design/usable-context-window-and-output-reserve.md](../../design/usable-context-window-and-output-reserve.md) - design source for usable context caps, output reserves, and GPT-5.5 budget behavior
 - [../../design/context-compaction.md](../../design/context-compaction.md) - compaction checkpoint and threshold design
 - [../automatic-compaction/implementation-spec.md](../automatic-compaction/implementation-spec.md) - implemented automatic compaction plan this meter builds on
 - [../../service/src/agent/agent.spec.md](../../service/src/agent/agent.spec.md) - current agent loop, context budgeting, and checkpoint reconstruction

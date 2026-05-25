@@ -76,7 +76,10 @@ Confirm these first-pass names:
 - `confidence`
 - `stale`
 
-Avoid using `remaining_before_compaction_tokens` as the durable API field because auto-compaction-disabled mode uses the full context window as the effective limit.
+Avoid using `remaining_before_compaction_tokens` as the durable API field because
+auto-compaction-disabled mode uses the effective context budget. In the
+usable-context follow-on phases, that effective limit is the usable input window,
+not the hard provider context window.
 
 ### Task 3: Decide thread bootstrap inclusion
 

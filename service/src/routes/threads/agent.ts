@@ -1,5 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { AgentService } from "../../agent/index.js";
+import {
+  AgentService,
+  getThreadContextBudgetSnapshot,
+} from "../../agent/index.js";
 import { AgentQuestionRequestError } from "../../agent/user-question-repository.js";
 import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
 import type { AgentRuntimeStateManager } from "../../runtime/agent-runtime-state.js";
@@ -120,7 +123,15 @@ export async function registerThreadAgentRoutes(
       return;
     }
 
-    reply.send(agentRuntime.getSnapshot(params.threadId));
+    const runtimeSnapshot = agentRuntime.getSnapshot(params.threadId);
+    const contextBudget = await getThreadContextBudgetSnapshot({
+      thread: access.thread,
+      runtimeSnapshot,
+    });
+    reply.send({
+      ...runtimeSnapshot,
+      context_budget: contextBudget,
+    });
   });
 
   server.get("/api/threads/:threadId/agent/stream", async (request, reply) => {

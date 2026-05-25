@@ -1,7 +1,7 @@
 # Progress Checklist: Conversation Context Budget Meter
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Planned
+**Status**: Phase 10 Implemented; Browser Layout Validation Blocked
 
 ---
 
@@ -60,11 +60,71 @@
 - [ ] Document rollout and fallback notes.
 - [ ] Keep deferred follow-ups listed.
 
+## Phase 6: Usable Context Policy Resolver
+
+- [x] Add `usableContextWindowTokens` and `reservedOutputTokens` catalog fields.
+- [x] Add a shared context policy resolver.
+- [x] Default usable context window to `contextWindowTokens`.
+- [x] Default output reserve to `maxOutputTokens`.
+- [x] Raise the automatic-compaction ratio clamp to `0.95`.
+- [x] Configure GPT-5.5 with a 400k usable context cap and 128k output reserve.
+- [x] Return a safe unknown/invalid policy result for missing or invalid usable input.
+- [x] Add resolver tests for defaults, overrides, GPT-5.5, and invalid policy.
+
+## Phase 7: Agent Compaction Budget Semantics
+
+- [x] Expand internal `ContextBudget` with hard, usable, reserve, input, and threshold fields.
+- [x] Update automatic compaction checks to use usable input threshold.
+- [x] Update disabled-compaction effective budget to use usable input window.
+- [x] Update compaction summary trimming to use `usableInputWindowTokens`.
+- [x] Preserve provider-call behavior when budget reporting is unknown.
+- [x] Add GPT-5.5 250k/260k threshold behavior tests.
+
+## Phase 8: API Models And Web Policy Fields
+
+- [x] Add `usable_context_window_tokens` to `/api/models`.
+- [x] Add `reserved_output_tokens` to `/api/models`.
+- [x] Add `usable_input_window_tokens` to `/api/models`.
+- [x] Add usable-context fields to `context_budget` snapshots.
+- [x] Update web API/model types.
+- [x] Update meter details to show hard window, usable window, output reserve, and threshold.
+- [x] Render `Context unknown` for missing or invalid model policy.
+
+## Phase 9: Usable Context Validation Docs And Rollout
+
+- [x] Run focused service validation for context policy and compaction semantics.
+- [x] Run focused web validation for new fields and meter details.
+- [ ] Manually validate GPT-5.5 budget behavior.
+- [ ] Manually validate invalid local-model policy fallback.
+- [x] Update affected specs.
+- [x] Document rollout and deferred follow-ups.
+
+Phase 9 automated validation completed on 2026-05-24. Product/manual validation
+has covered most first-pass behavior; the remaining manual-only checks stay
+tracked in [validation-checklist.md](./validation-checklist.md).
+
+## Phase 10: Radial Send Button Context Meter
+
+- [x] Scope circular send-button context meter behavior.
+- [x] Replace the dedicated visible context meter with the send-button ring.
+- [x] Move the context tooltip trigger to the send control.
+- [x] Preserve unknown, stale, near-threshold, over-threshold, and disabled states.
+- [x] Update web tests for radial/send-button presentation.
+- [x] Update workbench specs after implementation.
+- [x] Validate focused web test and web build.
+- [ ] Validate browser layout.
+
+Browser layout validation is blocked in this session because the in-app browser
+rejected the local dev URL. Use a permitted preview URL for the remaining manual
+ring/tooltip check.
+
 ## Deferred Follow-Ups
 
 - [ ] Provider token-count API adapters.
 - [ ] Local tokenizer adapters.
 - [ ] Local model context-window/tokenizer metadata.
+- [ ] Per-model compaction ratio overrides.
+- [ ] Request-kind-specific output reserve fields.
 - [ ] Manual compaction slash command or menu item.
 - [ ] Dedicated `context.budget` SSE event if agent-state refresh is insufficient.
 - [ ] Persisted budget snapshots or usage analytics.

@@ -51,6 +51,7 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 
 **Behavior**:
 - authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
+- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, using the same effective model selection, usable input window, and compaction threshold as the agent loop
 - accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`
 - validates submitted answers against the persisted question request row
 - returns whether the accepted response continued a live tool call, created a fallback user message, or matched an already-answered idempotent retry

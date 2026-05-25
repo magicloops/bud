@@ -50,6 +50,16 @@ test("model catalog captures provider-specific reasoning levels", () => {
   assert.deepEqual(haiku45.reasoning.levels, ["none", "low", "medium", "high"]);
 });
 
+test("model catalog captures GPT-5.5 usable context policy", () => {
+  const gpt55 = getCatalogEntry("gpt-5.5");
+  assert.ok(gpt55);
+
+  assert.equal(gpt55.capabilities.contextWindowTokens, 1_050_000);
+  assert.equal(gpt55.capabilities.usableContextWindowTokens, 400_000);
+  assert.equal(gpt55.capabilities.maxOutputTokens, 128_000);
+  assert.equal(gpt55.capabilities.reservedOutputTokens, 128_000);
+});
+
 test("reasoning option labels are stable for API clients", () => {
   const opus47 = getCatalogEntry("claude-opus-4-7");
   assert.ok(opus47);

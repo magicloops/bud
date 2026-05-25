@@ -127,6 +127,7 @@ Message input form with options.
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
 - optional `disabledReason` - Human-readable reason to disable normal message composition while a structured prompt is pending
+- optional `contextBudget` - Thread context budget snapshot shown as the send button radial ring and tooltip
 
 **Features**:
 - Multi-line textarea
@@ -135,9 +136,52 @@ Message input form with options.
 - Model selector dropdown (grouped by provider)
 - Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh` and `max`
 - Hides the reasoning selector when a model only exposes `none`
-- Submit button with loading state only during message dispatch
+- Circular context-aware submit button with loading state only during message dispatch
+- The submit button renders context-budget usage as a radial border from 0-100%
+  starting at the top and moving clockwise, and exposes the context tooltip on
+  hover/focus
 - Keeps text entry, model/reasoning controls, and submit available during `waiting_for_user`; `disabledReason` remains available for other caller-owned disable cases
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
+
+### `context-send-button.tsx`
+
+Circular composer submit control for the browser-visible context budget snapshot.
+
+**Props**:
+- optional `contextBudget` - `ApiContextBudget` from `/agent/state`
+- `disabled` - caller-owned form disable state
+- `dispatching` - whether to show the loading spinner instead of the send icon
+
+**Features**:
+- submits the composer form through a native circular `button type="submit"`
+- keeps a compact 40px circular footprint with centered send/loading icons
+- shows visual percentage against the effective compaction budget, not raw
+  model-window usage, as a top-origin clockwise radial border around the button
+- uses the context ring as the only button border, with the black progress
+  segment growing over a Bud accent-muted track
+- clamps the radial border to 100% while preserving raw percentage details in
+  the tooltip
+- exposes rounded token counts, basis, confidence, hard model window, Bud usable
+  context window, output reserve, usable input window, and stale state in a
+  tooltip
+- handles unknown budget snapshots without crashing the composer
+- keeps the tooltip trigger on a wrapper so context details can still be shown
+  when the native submit button is disabled
+
+### `context-budget-meter-state.ts`
+
+Pure presentation helpers for the context budget send-button tooltip and ring.
+
+**Responsibilities**:
+- map usage percentage to normal/elevated/near/over/unknown tones
+- format visual percentages and rounded token counts such as `312k`
+- build tooltip copy from available and unknown context budget snapshots,
+  including `Context unknown` for invalid or missing context policy
+- clamp radial ring progress from 0-100%
+
+### `context-budget-meter-state.test.ts`
+
+Node-runner coverage for rounded token formatting, radial ring clamping, tone thresholds, compaction-budget labels, and unknown snapshot presentation.
 
 ### `question-request-card.tsx`
 

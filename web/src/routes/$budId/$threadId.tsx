@@ -42,6 +42,7 @@ import type {
   ApiAgentState,
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
+  ApiContextBudget,
   ApiCreateMessageResponse,
   ApiMessagePage,
   ApiThread,
@@ -95,6 +96,9 @@ function ThreadView() {
 
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<WorkbenchStatus>(getStatusFromAgentState(initialAgentState))
+  const [contextBudget, setContextBudget] = useState<ApiContextBudget | null>(
+    initialAgentState.context_budget ?? null,
+  )
   const [error, setError] = useState<string | null>(null)
   const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
@@ -158,6 +162,7 @@ function ThreadView() {
   // Update messages when loader data changes
   useEffect(() => {
     setStatus(getStatusFromAgentState(initialAgentState))
+    setContextBudget(initialAgentState.context_budget ?? null)
   }, [initialAgentState, initialMessagePage])
 
   useEffect(() => {
@@ -226,6 +231,7 @@ function ThreadView() {
     applyAgentState(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
+    setContextBudget(nextAgentState.context_budget ?? null)
     return nextAgentState
   }, [applyAgentState])
 
@@ -240,6 +246,7 @@ function ThreadView() {
     mergeLatestBootstrap(nextPage, nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
+    setContextBudget(nextAgentState.context_budget ?? null)
     return nextAgentState
   }, [mergeLatestBootstrap])
 
@@ -280,13 +287,16 @@ function ThreadView() {
       }
 
       upsertThreadSummary(updatedThread)
+      void refreshAgentState(threadId).catch((error) => {
+        console.warn('[context-budget] failed to refresh after model preference change', error)
+      })
     } catch (err) {
       if (isAuthRedirectPending() || sequence !== persistModelSelectionSeqRef.current) {
         return
       }
       setError(err instanceof Error ? err.message : 'Failed to update model preference')
     }
-  }, [patchThreadSummary, threadId, upsertThreadSummary])
+  }, [patchThreadSummary, refreshAgentState, threadId, upsertThreadSummary])
 
   const handleModelChange = useCallback((nextModel: string) => {
     const nextReasoningEffort = normalizeReasoningForModel(models, nextModel, reasoningEffort)
@@ -326,6 +336,16 @@ function ThreadView() {
     }
   }, [applyToolResultMessage, refreshThreadWebView])
 
+  const handleFinalizeTurn = useCallback((
+    turnId: string,
+    finalStatus: 'succeeded' | 'failed' | 'canceled',
+  ) => {
+    finalizeTurn(turnId, finalStatus)
+    void refreshAgentState(threadId).catch((error) => {
+      console.warn('[context-budget] failed to refresh after final event', error)
+    })
+  }, [finalizeTurn, refreshAgentState, threadId])
+
   const {
     ensureConnected: ensureAgentStreamConnected,
     setStreamCursor: setAgentStreamCursor,
@@ -341,7 +361,7 @@ function ThreadView() {
     onAssistantMessageDone: applyAssistantMessageDone,
     onAssistantMessageEvent: applyAssistantMessageEvent,
     onThreadTitle: handleThreadTitleUpdate,
-    onFinalizeTurn: finalizeTurn,
+    onFinalizeTurn: handleFinalizeTurn,
     refreshBootstrap: refreshAgentBootstrap,
   })
   agentStreamCursorSetterRef.current = setAgentStreamCursor
@@ -630,6 +650,7 @@ function ThreadView() {
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
+          contextBudget={contextBudget}
         />
       )}
       debugPanel={(

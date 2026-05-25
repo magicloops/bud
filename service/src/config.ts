@@ -290,8 +290,8 @@ export const config = {
     : toBool(process.env.AGENT_AUTO_COMPACTION_ENABLED),
   agentAutoCompactionRatio: toClampedRatio(
     process.env.AGENT_AUTO_COMPACTION_RATIO,
-    0.9,
-    0.9,
+    0.95,
+    0.95,
   ),
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
