@@ -114,11 +114,12 @@ loader: async ({ params }) => {
    - Delegates SSE attach/resume/reconnect/resync ownership to `useAgentStream(...)` in `web/src/features/threads/`
    - Keeps feature hook error callbacks stable so route rerenders do not
      retrigger web-view fetches or agent stream reconnects
-   - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `thread.title`, `agent.resync_required`, and `final`
+   - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, and `final`
    - Renders pending `ask_user_questions` prompts in the timeline and submits responses to the thread-scoped question-response route
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
+   - Shows `Compacting context...` while automatic compaction is active, appends a subtle non-transcript timeline marker on completion/failure, applies `agent.compaction_done.context_budget` immediately when present, and refreshes `/agent/state.context_budget` after successful compaction
 
 4. **Bud-Level Thread State**
    - Parent `/$budId` route now owns mutable `threads` state rather than treating loader data as immutable
@@ -143,6 +144,7 @@ loader: async ({ params }) => {
    - Reuses `useAvailableModels()` so model fetching/default selection and per-model reasoning normalization match the new-thread flow
    - Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
    - Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
+   - Tracks `context_budget` from `/agent/state`, passes it to the shared composer meter, applies post-compaction stream snapshots, and refreshes it after user sends, model preference changes, bootstrap resyncs, cancel requests, and final turn events
    - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, `useFileViewer(...)`, `useWebView(...)`, `ThreadTerminalPane`, `FileViewerPane`, and `WebViewPane`
 
 8. **File Viewer**
@@ -203,6 +205,9 @@ activeFileEntry: FileViewerEntry | null
 activeWebView: ApiThreadWebView | null
 webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
 questionSubmitError: string | null
+contextBudget: ApiContextBudget | null
+activeCompaction: ApiAgentCompactionStartEvent | null
+contextCompactionNotices: ChatTimelineNotice[]
 ```
 
 **Terminal Event Handling**:
@@ -232,7 +237,12 @@ questionSubmitError: string | null
 From `@/lib/api-types` / `@/lib/terminal-data`:
 - `ApiMessage` - Message from API (`message_id`, `client_id`, role, content)
 - `ApiMessagePage` - Paged transcript window with opaque cursors
+- `ApiContextBudget` - Context meter snapshot attached to `/agent/state`
+- `ApiAgentCompactionStartEvent` - Live compaction activity event used for the thinking label
 - `decodeTerminalData()` - Base64 decode helper
+
+From `@/components/workbench/chat-timeline`:
+- `ChatTimelineNotice` - Non-transcript timeline marker state for route-owned activity notices
 
 ## Dependencies
 

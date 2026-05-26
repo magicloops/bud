@@ -169,6 +169,14 @@ Placeholder to ensure the directory exists in git.
 - Preserves the physical `thread_web_view_pkey` definition as `PRIMARY KEY(thread_id)`
 - Avoids data-changing table rewrites; local validation confirmed an immediate second `pnpm db:push` reports no changes
 
+### `0021_worried_luminals.sql`
+
+**Automatic context compaction checkpoint foundation**:
+- Creates `agent_context_checkpoint` for durable service-owned model-context compaction checkpoints
+- Stores trigger/reason/phase/status, summarizer provider/model/reasoning metadata, raw summary text, provider-neutral replacement history JSON, compacted-through message and LLM-call boundaries, token counts, bounded failure diagnostics, and owner stamps
+- Adds thread/status/created, message-boundary, and LLM-boundary indexes
+- Adds a cascading foreign key to `thread`
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -257,6 +265,9 @@ v19: agent question request persistence for ask_user_questions
  │
  ▼
 v20: Drizzle/PostgreSQL constraint metadata convergence cleanup
+ │
+ ▼
+v21: automatic context compaction checkpoints
 ```
 
 ---

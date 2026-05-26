@@ -1,5 +1,6 @@
 import type { FastifyReply } from "fastify";
 import { monotonicFactory } from "ulid";
+import type { ContextBudgetSnapshot } from "../agent/context-budget-state.js";
 import type { SseEvent } from "./event-bus.js";
 
 export type AgentRuntimePhase =
@@ -32,6 +33,7 @@ export type AgentRuntimeSnapshot = {
   stream_cursor: string;
   pending_tool: AgentPendingTool | null;
   draft_assistant: AgentDraftAssistant | null;
+  context_budget: ContextBudgetSnapshot | null;
   updated_at: string;
 };
 
@@ -60,8 +62,9 @@ type InternalSnapshot = {
         clientId: string;
         text: string;
         updatedAt: Date;
-      }
+    }
     | null;
+  contextBudget: ContextBudgetSnapshot | null;
   updatedAt: Date;
 };
 
@@ -109,6 +112,7 @@ export class AgentRuntimeStateManager {
         snapshot.canCancel = true;
         snapshot.pendingTool = null;
         snapshot.draftAssistant = null;
+        snapshot.contextBudget = null;
       },
       undefined,
     );
@@ -193,6 +197,24 @@ export class AgentRuntimeStateManager {
     return this.updateSnapshot(threadId, () => {}, cursor);
   }
 
+  setContextBudget(
+    threadId: string,
+    contextBudget: ContextBudgetSnapshot | null,
+    cursor?: string,
+  ): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.contextBudget = contextBudget;
+      },
+      cursor,
+    );
+  }
+
+  clearContextBudget(threadId: string, cursor?: string): AgentRuntimeSnapshot {
+    return this.setContextBudget(threadId, null, cursor);
+  }
+
   finishTurn(threadId: string): AgentRuntimeSnapshot {
     return this.updateSnapshot(
       threadId,
@@ -203,6 +225,7 @@ export class AgentRuntimeStateManager {
         snapshot.canCancel = false;
         snapshot.pendingTool = null;
         snapshot.draftAssistant = null;
+        snapshot.contextBudget = null;
       },
       undefined,
     );
@@ -393,6 +416,7 @@ export class AgentRuntimeStateManager {
       streamCursor: cursor,
       pendingTool: null,
       draftAssistant: null,
+      contextBudget: null,
       updatedAt: new Date(),
     };
     this.snapshots.set(threadId, snapshot);
@@ -480,6 +504,7 @@ export class AgentRuntimeStateManager {
             updated_at: snapshot.draftAssistant.updatedAt.toISOString(),
           }
         : null,
+      context_budget: snapshot.contextBudget,
       updated_at: snapshot.updatedAt.toISOString(),
     };
   }

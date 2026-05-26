@@ -71,12 +71,17 @@ export {
   type LlmCallRequestMode,
   type LlmReconstructionDiagnostics,
   type LlmReconstructionMode,
+  type ProviderLedgerBoundary,
   type ProviderLedgerMessage,
   type ProviderLedgerThreadDiagnostics,
 } from "./provider-ledger.js";
 
 // Provider interface
 export type { LLMProvider } from "./provider.js";
+export {
+  ProviderContextWindowError,
+  isProviderContextWindowError,
+} from "./provider.js";
 
 // Registry
 export { ProviderRegistry, providerRegistry } from "./registry.js";

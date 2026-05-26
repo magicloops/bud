@@ -51,6 +51,8 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 
 **Behavior**:
 - authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
+- enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, normal-agent tool-schema overhead, and compaction threshold as the agent loop
+- `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; these events are not transcript rows and omit checkpoint summaries/replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot.
 - accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`
 - validates submitted answers against the persisted question request row
 - returns whether the accepted response continued a live tool call, created a fallback user message, or matched an already-answered idempotent retry

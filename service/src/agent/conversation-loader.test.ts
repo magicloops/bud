@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { db } from "../db/client.js";
 import { AGENT_SYSTEM_PROMPT, AgentConversationLoader } from "./conversation-loader.js";
+import type { AgentContextCheckpoint } from "./context-checkpoint-repository.js";
+
+function createLoader(checkpoint: AgentContextCheckpoint | null = null): AgentConversationLoader {
+  return new AgentConversationLoader({
+    async getLatestCompletedCheckpoint() {
+      return checkpoint;
+    },
+  });
+}
 
 test("system prompt documents only public wait_for modes", () => {
   assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /shell_ready/);
@@ -74,7 +83,7 @@ test("load normalizes persisted tool rows and preserves preferred cwd context", 
     },
   }) as never);
 
-  const loader = new AgentConversationLoader();
+  const loader = createLoader();
   const messages = await loader.load("thread-1");
 
   assert.equal(messages[0]?.role, "system");
@@ -211,7 +220,7 @@ test("load prefers same-provider ledger output over duplicate assistant product 
     };
   });
 
-  const loader = new AgentConversationLoader();
+  const loader = createLoader();
   const messages = await loader.load("thread-1", { provider: "openai" });
 
   assert.deepEqual(messages, [
@@ -282,7 +291,7 @@ test("load derives assistant phase from transcript metadata fallback", async (t)
     },
   }) as never);
 
-  const loader = new AgentConversationLoader();
+  const loader = createLoader();
   const messages = await loader.load("thread-1");
 
   assert.deepEqual(messages.slice(1), [
@@ -297,6 +306,93 @@ test("load derives assistant phase from transcript metadata fallback", async (t)
       content: [{ type: "text", text: "Done.", assistantPhase: "final_answer" }],
     },
   ]);
+});
+
+test("load prepends checkpoint replacement history and keeps visible transcript delta", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            async orderBy() {
+              return [
+                {
+                  messageId: "message-user-after",
+                  role: "user",
+                  content: "Continue after checkpoint",
+                  metadata: null,
+                  createdAt: new Date("2026-05-23T10:01:00.000Z"),
+                },
+              ];
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const loader = createLoader({
+    checkpointId: "checkpoint-1",
+    threadId: "thread-1",
+    trigger: "auto",
+    reason: "context_limit",
+    phase: "pre_turn",
+    implementation: "local_summary",
+    status: "completed",
+    sourceProvider: "openai",
+    sourceModel: "gpt-5.5",
+    sourceReasoningEffort: "low",
+    summary: "Earlier context summary.",
+    replacementHistory: [
+      {
+        role: "system",
+        content: [{ type: "text", text: "stale system prompt" }],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Checkpoint summary" }],
+      },
+    ],
+    compactedThroughMessageCreatedAt: new Date("2026-05-23T10:00:00.000Z"),
+    compactedThroughMessageId: "017dbb12-3865-44fc-8228-17bc55af2cd5",
+    compactedThroughLlmCallCreatedAt: null,
+    compactedThroughLlmCallId: null,
+    inputTokensBefore: 1000,
+    estimatedTokensAfter: 100,
+    error: null,
+    tenantId: null,
+    createdByUserId: "user-1",
+    createdAt: new Date("2026-05-23T10:00:01.000Z"),
+    completedAt: new Date("2026-05-23T10:00:02.000Z"),
+  });
+
+  const { messages, reconstruction } = await loader.loadWithDiagnostics("thread-1");
+
+  assert.deepEqual(messages, [
+    {
+      role: "system",
+      content: [{ type: "text", text: AGENT_SYSTEM_PROMPT }],
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "Checkpoint summary" }],
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "Continue after checkpoint" }],
+    },
+  ]);
+  assert.equal(reconstruction.checkpointApplied, true);
+  assert.equal(reconstruction.checkpointId, "checkpoint-1");
+  assert.equal(reconstruction.checkpointReplacementHistoryMessageCount, 1);
+  assert.equal(
+    reconstruction.compactedThroughMessageId,
+    "017dbb12-3865-44fc-8228-17bc55af2cd5",
+  );
 });
 
 test("loadWithDiagnostics marks provider switches as canonical fallback degradation", async (t) => {
@@ -400,7 +496,7 @@ test("loadWithDiagnostics marks provider switches as canonical fallback degradat
     };
   });
 
-  const loader = new AgentConversationLoader();
+  const loader = createLoader();
   const { messages, reconstruction } = await loader.loadWithDiagnostics("thread-1", {
     provider: "openai",
   });
@@ -595,7 +691,7 @@ test("loadWithDiagnostics keeps compatible Anthropic thinking replay provider-na
     };
   });
 
-  const loader = new AgentConversationLoader();
+  const loader = createLoader();
   const { messages, reconstruction } = await loader.loadWithDiagnostics("thread-1", {
     provider: "anthropic",
     targetModel: "claude-sonnet-4-6",
@@ -808,7 +904,7 @@ test("loadWithDiagnostics falls back when Anthropic thinking replay is incompati
     };
   });
 
-  const loader = new AgentConversationLoader();
+  const loader = createLoader();
   const { messages, reconstruction } = await loader.loadWithDiagnostics("thread-1", {
     provider: "anthropic",
     targetModel: "claude-haiku-4-5-20251001",

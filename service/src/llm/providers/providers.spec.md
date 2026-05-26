@@ -36,6 +36,7 @@ Public product IDs and capability limits are owned by `model-catalog.ts`; the pr
 - **Multiple function calls**: Tracks function calls by output item id/index and emits every completed tool call
 - **Cache telemetry**: Maps `input_tokens_details.cached_tokens` into canonical usage
 - **Response diagnostics**: Attaches the raw `response.completed` payload to `message_done.providerData` so agent parse failures can log the actual OpenAI result
+- **Context-window errors**: Normalizes OpenAI context-length failures into `ProviderContextWindowError` for agent compaction retry
 - **Terminal serial policy**: Sends `parallel_tool_calls: false` so terminal tool execution stays deterministic
 - **Temperature handling**: Automatically sets `undefined` for reasoning models
 - **Assistant phase preservation**: Preserves OpenAI Responses assistant message `phase` (`commentary` / `final_answer`) on replayed assistant text, streaming output, and non-streaming output
@@ -119,6 +120,7 @@ Anthropic provider using the Messages API (~730 lines).
 - **Provider-specific tool choice**: Omits `tool_choice` when no tools are sent and lowers canonical `"none"` to Anthropic's no-tool choice when tools are present
 - **Cache telemetry**: Maps Anthropic cache creation/read token counters into canonical usage
 - **Standard JSON Schema**: Tools use canonical schema directly (no transformation needed)
+- **Context-window errors**: Normalizes Anthropic oversized-request failures into `ProviderContextWindowError` for agent compaction retry
 
 **Message Transformation**:
 | Canonical | Anthropic Messages API |
@@ -195,9 +197,11 @@ Direct request-shape tests for provider lowering without live API calls.
 - OpenAI assistant-history reconstruction lowers canonical `assistantPhase` to Responses input message `phase`
 - OpenAI streamed and non-streaming output message `phase` values are preserved on canonical text blocks
 - OpenAI completed stream events preserve provider payload diagnostics
+- OpenAI context-window request errors normalize to `ProviderContextWindowError`
 - OpenAI strict-mode tool transformation recursively rewrites nested object and array-item schemas so nested optional fields become nullable required fields
 - Anthropic Opus 4.7 sends adaptive thinking with omitted display and `output_config.effort`
 - Anthropic Opus 4.6 sends adaptive thinking with summarized display and `output_config.effort`
+- Anthropic context-window request errors normalize to `ProviderContextWindowError`
 - Anthropic Haiku 4.5 uses manual `thinking.budget_tokens`
 - Anthropic omits `tool_choice` with no tools and lowers canonical no-tool requests when tools are present
 - Anthropic streamed signed thinking preserves the complete thinking text/signature payload and replays it into the next provider request

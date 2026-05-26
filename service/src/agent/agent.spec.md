@@ -17,6 +17,8 @@ The agent service coordinates AI-assisted terminal interactions. When a user sen
 Simple barrel export:
 ```typescript
 export { AgentService } from "./agent-service.js";
+export { buildContextBudgetSnapshot, getThreadContextBudgetSnapshot } from "./context-budget-snapshot.js";
+export { buildContextBudgetDecision, buildContextBudgetStateFromConversation } from "./context-budget-state.js";
 export { ThreadTitleService, normalizeGeneratedThreadTitle, resolveThreadTitleModel } from "./thread-title-service.js";
 ```
 
@@ -62,11 +64,14 @@ Conversation-building ownership extracted from `AgentService`.
 
 **Responsibilities**:
 - seed the canonical system prompt
+- load the latest completed context checkpoint and prepend its replacement history after the fresh system prompt
+- filter transcript rows and provider-ledger rows after the checkpoint boundary so compacted history is not replayed twice
 - load persisted thread messages into canonical provider input order
 - load same-provider provider-ledger assistant output blocks when a target provider is known
 - derive assistant text phase from provider-ledger payloads or product transcript metadata for OpenAI manual replay
 - gate Anthropic reasoning-bearing provider-ledger replay on the current target model and reasoning config
 - return reconstruction diagnostics that distinguish provider-native replay, canonical fallback, mixed degraded replay, omitted provider-only items, and provider switches
+- include checkpoint diagnostics such as checkpoint id, replacement-history count, and compacted-through boundaries without logging raw summary text
 - return same-provider incompatibility diagnostics when Anthropic thinking/redacted-thinking blocks are omitted for canonical fallback
 - skip duplicate product assistant rows whose `metadata.llm_call_id` is already represented by provider-ledger output
 - normalize historical tool rows, including legacy `terminal.interrupt` replay, web-view tool rows, and `screen_stable` wait values
@@ -79,6 +84,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 **Current Coverage**:
 - preferred-cwd metadata is appended to user messages
 - same-provider reconstruction can prefer durable provider-ledger assistant blocks over product assistant rows
+- checkpointed reconstruction uses fresh system prompt, checkpoint replacement history, and post-checkpoint transcript delta
 - provider switches are reconstructed through canonical transcript fallback with explicit degradation diagnostics
 - persisted legacy interrupt rows replay as canonical `terminal_send` with `key: "ctrl+c"`
 - stored `screen_stable` waits replay as canonical `settled`
@@ -142,7 +148,7 @@ Thin agent orchestrator over the extracted conversation/model/tool/transcript ow
 
 The prompt/tool-definition ownership now lives in the extracted modules:
 - `conversation-loader.ts` owns the canonical Bud Agent system prompt used for every turn
-- `model-runner.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, `web_view_list`, and `ask_user_questions` JSON Schema definitions passed to providers
+- `tool-definitions.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, `web_view_list`, and `ask_user_questions` JSON Schema definitions passed to providers, plus the normal agent-turn tool-schema token estimate
 
 **System Prompt Highlights**:
 - tool-calling guidance for `terminal.send` and `terminal.observe`
@@ -182,6 +188,7 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 - `TerminalToolExecutor`
 - `WebViewToolExecutor`
 - `AgentTranscriptWriter`
+- `AgentContextCompactor`
 - `AgentCancellationRegistry`
 - `AgentUserQuestionRegistry`
 
@@ -203,9 +210,11 @@ startUserMessage()
            │
            ├─► resolve provider for selected model
            ├─► conversationLoader.load(provider, target model/reasoning)
+           ├─► maybe auto-compact pre-turn if active context exceeds the selected model threshold
            │
            └─► LOOP (max steps):
                   │
+                  ├─► maybe compact/retry if provider reports context-window overflow
                   ├─► modelRunner.invokeModel()
                   │
                   ├─► emit agent.message_start / delta / done (text responses only)
@@ -220,6 +229,7 @@ startUserMessage()
                   │      │                  └─► terminalToolExecutor.execute(), webViewToolExecutor.execute(), or durable ask-user response wait
                   │      │                  └─► transcriptWriter.recordToolResult()
                   │      │                  └─► persist provider tool-result item
+                  │      │                  └─► maybe auto-compact mid-turn before the next provider call
                   │      │
                   │      └─► no tool → modelRunner.parseFinalResponse()
                   │                    └─► persist provider output ledger
@@ -246,6 +256,10 @@ startUserMessage()
 - While waiting on `ask_user_questions`, `/agent/state.phase` is `waiting_for_user` and `/agent/state.pending_tool` exposes the normalized request with `request_id`.
 - Follow-up supersession records a skipped `ask_user_questions` tool result, emits `final` with `status: "succeeded"` and `reason: "superseded_by_user_message"`, and returns from the old turn without another provider call.
 - Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
+- Automatic context compaction is service-owned and invisible to the visible transcript. When estimated model-visible context exceeds the selected model threshold, the agent emits `agent.compaction_start`, writes an `agent_context_checkpoint` row, emits `agent.compaction_done` with an optional post-compaction `context_budget`, reloads context from fresh system prompt plus checkpoint replacement history, and continues the turn. A per-turn boundary guard avoids writing duplicate checkpoints for the same replay cutoff.
+- Automatic compaction decisions write the latest client-safe context budget into runtime state and log sanitized budget diagnostics, including skipped decisions, the active estimate basis, threshold, ratio, model, provider, snapshot provenance, and replay-boundary duplicate suppression without logging message contents, checkpoint summaries, or provider request bodies.
+- Failed automatic compaction emits `agent.compaction_failed` with a sanitized error code and retryability flag; raw checkpoint summaries, replacement histories, provider requests, and provider error messages are never exposed on the stream.
+- If a provider returns a normalized context-window error, the agent attempts one forced compaction/retry while the automatic-compaction kill switch is enabled. If compaction cannot recover, the turn fails clearly instead of silently dropping transcript history.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - OpenAI debug response logging emits `llm_response` as a structured canonical response object rather than a pre-stringified JSON blob, so log viewers can pretty-print nested fields without escaped newline formatting.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
@@ -310,6 +324,7 @@ Standalone Node tests for `AgentService` orchestration behavior.
 **Current Coverage**:
 - `cancelThread()` aborts the active turn, rejects any pending terminal waits for that thread, and marks pending user-question rows canceled
 - final no-tool responses record exactly one provider-ledger `llm_call` row before final assistant persistence
+- automatic compaction emits sanitized runtime start/done/failure events and advances the runtime stream cursor for resume
 
 ### `ask-user-questions-continuation.integration.test.ts`
 
@@ -321,6 +336,16 @@ Integration-style tests for `AgentService.submitQuestionResponse(...)` and the l
 - fallback responses after a missing live waiter persist a self-contained user message and start a follow-up agent turn
 - scoped fake OpenAI provider registration covers the default `gpt-5.5` model path in continuation tests
 - cancel while waiting rejects pending question waiters and marks durable pending question rows canceled
+
+### `tool-definitions.ts`
+
+Canonical normal-agent tool schema registry shared by provider invocation and context-budget accounting.
+
+**Exports**:
+- `AGENT_CANONICAL_TOOLS` - the JSON Schema tool definitions passed to providers for ordinary agent turns
+- `AGENT_TOOL_SCHEMA_TOKENS` - model-agnostic estimate of those serialized tool schemas, included in normal agent-turn context budgets
+
+Compaction-summary calls intentionally do not use these normal-agent tools and therefore do not add `AGENT_TOOL_SCHEMA_TOKENS` to their temporary summary budget.
 
 ### `model-runner.ts`
 
@@ -434,6 +459,108 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 - pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`
 - completed `ask_user_questions` results persist Q/A payload rows and emit `user_questions` runtime data
 
+### `context-checkpoint-repository.ts`
+
+Service-only repository for durable agent context checkpoints.
+
+**Responsibilities**:
+- load the latest completed checkpoint for a thread
+- record completed and failed checkpoint attempts
+- store canonical replacement history outside the visible `message` transcript
+- resolve thread owner/tenant stamps for automatic checkpoint writes
+- capture compacted-through message and provider-ledger boundaries
+- bound failed-attempt error diagnostics so provider request bodies and credentials are not stored
+
+### `context-checkpoint-repository.test.ts`
+
+Standalone tests for checkpoint normalization and ownership/boundary stamping.
+
+### `context-budget.ts`
+
+Token-estimation helper for automatic compaction and browser-visible context budget reporting.
+
+**Responsibilities**:
+- estimate canonical message tokens using a conservative character-based fallback
+- estimate canonical tool-schema tokens from serialized `CanonicalTool[]` definitions
+- resolve the selected model's catalog hard context window, Bud usable context
+  window, output reserve, and usable input window
+- default `reservedOutputTokens` to `maxOutputTokens` unless a catalog entry
+  overrides it
+- apply automatic-compaction enablement and ratio configuration, clamped to
+  `0.95`
+- expose request-kind budget semantics so normal agent turns use the proactive
+  threshold while compaction-summary calls can use the larger usable input window
+- decide whether a candidate provider request should compact before invocation
+
+### `context-budget.test.ts`
+
+Direct tests for usable context policy and automatic-compaction threshold math.
+
+**Current Coverage**:
+- default usable-context/output-reserve derivation from model catalog entries
+- GPT-5.5 usable input threshold at the `0.95` clamp
+- lower `AGENT_AUTO_COMPACTION_RATIO` overrides, including the 40% test path
+- compaction-summary requests using the larger usable input window
+- invalid context policy detection when output reserve exceeds usable window
+- serialized canonical tool-schema estimates used by normal agent-turn budgets
+
+### `context-budget-snapshot.ts`
+
+Browser-facing context budget snapshot builder used by the owned `/agent/state` route.
+
+**Responsibilities**:
+- resolve the thread's effective model/reasoning selection and selected-model compaction budget
+- load context through `AgentConversationLoader` using the same latest completed checkpoint boundary as the agent loop
+- delegate primary budget math to `context-budget-state.ts` so durable snapshots and active compaction decisions agree
+- include the normal agent tool-schema estimate by default so durable snapshots match provider requests for ordinary agent turns
+- expose hard model window, Bud usable context window, output reserve, usable
+  input window, compaction threshold, and effective budget fields
+- expose the effective budget as the auto-compaction threshold when compaction
+  is enabled, or the usable input window when compaction is disabled
+- load the latest same-provider completed `llm_call.usage` anchor after the checkpoint boundary and add estimated delta messages after that call as optional provider diagnostics
+- include both provider input and output tokens from the usage anchor because output tokens are part of the visible conversation before the next request
+- keep `estimated_input_tokens` and `percent_of_context_budget` aligned with the backend trigger estimate rather than provider diagnostics, with `message_estimated_tokens` and `tool_schema_tokens` exposing the current split
+- return an `unknown` snapshot instead of failing `/agent/state` when model-window metadata is missing, context policy is invalid, or counting fails
+- mark snapshots stale while an agent turn is active so clients can avoid treating them as live intra-turn telemetry
+
+### `context-budget-state.ts`
+
+Shared context budget state builder for active agent decisions and durable agent-state snapshots.
+
+**Responsibilities**:
+- build client-safe available/unknown context budget snapshots from resolved `ContextBudget` plus `CanonicalMessage[]`
+- keep the primary estimate on the model-agnostic canonical-message estimator plus normal agent tool-schema overhead used by the automatic compaction trigger
+- expose provenance fields (`source`, `phase`, `reason`, `turn_id`, `checked_at`) so clients can distinguish durable reconstruction, active decisions, and post-compaction snapshots
+- expose `message_estimated_tokens` and `tool_schema_tokens` alongside total `estimated_input_tokens`
+- attach optional provider usage diagnostics without letting those diagnostics drive compaction threshold percentages
+- return `{ snapshot, shouldCompact, estimatedTokens }` for agent compaction decisions without exposing raw conversation content
+
+### `context-budget-snapshot.test.ts`
+
+Direct tests for snapshot math and fallback behavior.
+
+**Current Coverage**:
+- unknown model context windows return an `unknown` snapshot
+- disabled compaction uses the usable input window as the effective budget
+- invalid context policy returns an `unknown` snapshot
+- provider-usage diagnostics include output tokens but do not change primary budget math
+- provider-usage diagnostics above threshold do not make the primary percent exceed the backend trigger estimate
+- normal agent tool-schema overhead contributes to `estimated_input_tokens`
+- checkpoint ids and stale state are carried into the snapshot
+
+### `context-compactor.ts`
+
+Local summary compaction collaborator used by `AgentService`.
+
+**Responsibilities**:
+- call the selected LLM provider with no tools and a fixed checkpoint-summary prompt
+- build replacement history from a checkpoint summary note, recent real user messages, and optional current terminal context
+- persist completed and failed checkpoint rows
+- trim the temporary compaction request against the model's usable input window
+  rather than the normal proactive auto-compaction threshold
+- retry provider context-window errors by trimming the temporary compaction request while preserving tool-use/tool-result pairs where possible
+- keep summaries and replacement history out of normal browser transcript routes
+
 ### `thread-title-service.ts`
 
 Best-effort thread-title generation for the first durable user message.
@@ -481,6 +608,9 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 | `agent.tool_call` | `{ turn_id, client_id, call_id, name, args, started_at }` | Before executing tool |
 | `agent.tool_result` | `{ turn_id, client_id, call_id, message_id, name, summary, output, output_truncation_reason, started_at, finished_at, duration_ms, ..., message }` | After tool execution, including the persisted canonical tool row |
 | `agent.message` | `{ turn_id, client_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
+| `agent.compaction_start` | `{ turn_id, trigger, reason, phase, tokens_before, threshold_tokens, context_window_tokens, usable_context_window_tokens, reserved_output_tokens, usable_input_window_tokens, effective_budget_tokens, started_at }` | Automatic context compaction begins |
+| `agent.compaction_done` | start payload plus `{ checkpoint_id, tokens_after, finished_at, context_budget? }` | Completed context checkpoint is persisted; optional context budget is the post-compaction snapshot |
+| `agent.compaction_failed` | start payload plus `{ error_code, retryable, finished_at }` | Context checkpoint attempt failed and the failure was recorded when possible |
 | `thread.title` | `{ thread_id, title, source, updated_at }` | Best-effort first-message thread title became durable |
 | `agent.resync_required` | `{ error, provided_cursor }` | Resume cursor was too old or unknown; client must refetch `/messages` plus `/agent/state` |
 | `final` | `{ turn_id, status, message_id?, text?, reason? }` or `{ turn_id, status, error }` | Flow complete |
@@ -509,6 +639,8 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `message.client_id` is the same stable public identity already exposed on the top-level assistant/tool runtime and stream payloads
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
 - `agent.message` may represent an intermediate visible text segment before later tool calls; successful final turn status still arrives separately as `final`
+- `agent.compaction_*` events are live activity markers only and do not correspond to persisted transcript rows
+- compaction event payloads expose token counts, phase, reason, checkpoint id on success, optional post-compaction context budget, and sanitized failure metadata; they intentionally exclude raw summaries and replacement history
 - `thread.title` shares the same SSE frame-id cursor space as the agent events, so bounded resume covers title changes without opening a second stream
 - `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
 - superseded question turns may emit successful `final` events with `reason: "superseded_by_user_message"` and no assistant `message_id` or `text`
@@ -530,7 +662,13 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../runtime/agent-runtime-state.js` | Agent runtime snapshot + bounded-resume emission |
 | `../terminal/types.js` | Readiness hints types |
 | `./conversation-loader.js` | Canonical transcript/context assembly |
+| `./context-budget.js` | Automatic compaction budget estimates and thresholds |
+| `./context-budget-state.js` | Shared client-safe budget snapshot and compaction-decision builder |
+| `./context-budget-snapshot.js` | Browser-facing context budget snapshots for `/agent/state` |
+| `./context-checkpoint-repository.js` | Durable checkpoint persistence and replay-boundary lookup |
+| `./context-compactor.js` | Local summary compaction and replacement-history construction |
 | `./model-runner.js` | Provider invocation + draft assistant streaming |
+| `./tool-definitions.js` | Normal agent tool schema registry and tool-schema token estimate |
 | `./terminal-tool-executor.js` | Terminal tool orchestration |
 | `./web-view-tool-executor.js` | Product web-view tool orchestration |
 | `./transcript-writer.js` | Durable assistant/tool persistence + runtime emission |
@@ -547,6 +685,8 @@ From `../config.js`:
 - `config.agentMaxSteps` - Max tool calls per request (default: 30)
 - `config.agentMaxOutputTokens` - Max tokens per response (default: 128000)
 - `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `low`)
+- `config.agentAutoCompactionEnabled` - Enables automatic context compaction (default: enabled)
+- `config.agentAutoCompactionRatio` - Usable-input threshold ratio for automatic compaction, clamped to at most `0.95`
 - `config.agentDebug` - Enable debug logging
 - `config.agentOpenaiDebug` - Log raw OpenAI responses
 

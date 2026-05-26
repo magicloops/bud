@@ -46,6 +46,7 @@ Drizzle schema definitions. Defines all tables:
 | `messageTable` | Chat messages | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
 | `llmCallTable` | Provider invocation ledger for same-provider replay, cache diagnostics, and reconstruction-mode metadata | `llmCallId`, `threadId`, `turnId`, `stepIndex`, `provider`, `model`, `requestMode`, `providerResponseId`, `usage`, `cacheMetadata`, `createdByUserId` |
 | `llmCallItemTable` | Ordered provider input/output items attached to an LLM call | `llmCallItemId`, `llmCallId`, `threadId`, `direction`, `role`, `kind`, `sequence`, `toolCallId`, `canonicalPayload`, `providerPayload`, `visibility`, `messageId` |
+| `agentContextCheckpointTable` | Durable service-owned model-context compaction checkpoints | `checkpointId`, `threadId`, `trigger`, `reason`, `phase`, `status`, `summary`, `replacementHistory`, compacted-through message/LLM boundaries, token counts, owner stamps |
 | `agentQuestionRequestTable` | Durable `ask_user_questions` request/response rows | `questionRequestId`, `threadId`, `turnId`, `callId`, `clientId`, `status`, `request`, `clientResponse`, `toolResult`, `clientResponseId`, `answeredByUserId` |
 | `threadReadStateTable` | Per-user thread read watermarks for unread/badge math | `threadId`, `userId`, `lastSeenMessageId`, `lastSeenMessageCreatedAt`, `lastSeenAt` |
 | `pushEndpointTable` | Owned mobile push endpoint registrations | `endpointId`, `userId`, `installationId`, `platform`, `provider`, `appId`, `token`, `enabled`, `invalidatedAt` |
@@ -111,6 +112,7 @@ Drizzle schema definitions. Defines all tables:
 | `proxySessionStateValues` | `ready`, `unavailable`, `revoked`, `expired` |
 | `fileSessionStateValues` | `ready`, `unavailable`, `revoked`, `expired` |
 | `agentQuestionRequestStatusValues` | `pending`, `answered`, `expired`, `canceled` |
+| `agentContextCheckpointStatusValues` | `completed`, `failed`, `canceled` |
 
 **Note**: The `system` role is used for context sync messages injected before user messages to inform the agent about terminal state changes.
 
@@ -144,6 +146,8 @@ const byteaColumn = customType<{ data: Buffer }>({
 - `llm_call_item_call_sequence_idx` - Unique ordered item sequence per call and direction
 - `llm_call_item_thread_created_idx` - Provider items by thread/time
 - `llm_call_item_tool_call_idx` / `llm_call_item_message_idx` - Tool/message joins for diagnostics
+- `agent_context_checkpoint_thread_status_created_idx` - Latest completed checkpoint lookup by thread
+- `agent_context_checkpoint_message_boundary_idx` / `agent_context_checkpoint_llm_boundary_idx` - Compacted-through transcript and provider-ledger replay boundaries
 - `agent_question_request_thread_call_idx` - One durable question request per provider tool call in a thread
 - `agent_question_request_client_response_idx` - Idempotent response retry lookup by client response id
 - `agent_question_request_thread_status_idx` / `agent_question_request_owner_status_idx` - Pending/answered prompt lookup by thread or owner
@@ -217,6 +221,7 @@ budTable
     │              ├── 1:N ──► llmCallTable ──► llmCallItemTable
     │              │                                  │
     │              │                                  └── N:1 ──► messageTable (optional visible-row link)
+    │              ├── 1:N ──► agentContextCheckpointTable
     │              ├── 1:N ──► agentQuestionRequestTable
     │              ├── 1:N ──► threadReadStateTable
     │              ├── 1:N ──► pushNotificationOutboxTable
@@ -244,7 +249,7 @@ budTable
 
 `drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0020`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes, add durable web-proxy `proxied_site`, thread attachment, viewer grant, and viewer session tables, add `agent_question_request` for durable `ask_user_questions` prompts, and normalize Drizzle/PostgreSQL constraint metadata so repeated local `db:push` runs converge.
+Checked-in migrations now run cleanly through `0021`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes, add durable web-proxy `proxied_site`, thread attachment, viewer grant, and viewer session tables, add `agent_question_request` for durable `ask_user_questions` prompts, normalize Drizzle/PostgreSQL constraint metadata so repeated local `db:push` runs converge, and add `agent_context_checkpoint` for durable automatic context compaction replay boundaries.
 
 ## Ownership And Multi-Tenancy Support
 
@@ -256,6 +261,12 @@ LLM provider-ledger rows follow thread ownership:
 - visible text items may link to product `message` rows, while reasoning and provider payloads remain service-only and are not returned by browser message routes
 - the initial `llm_call` row and output `llm_call_item` rows are written in one transaction so completed provider calls are not left without replay items
 - provider-ledger diagnostics count completed call rows even when no item rows are present, surfacing itemless/outputless call states instead of hiding them behind item joins
+
+Agent context-checkpoint rows follow thread ownership:
+- `agent_context_checkpoint.created_by_user_id` inherits the owning thread/user for automatic compaction
+- `agent_context_checkpoint.replacement_history` and `summary` are service-owned model replay data, not browser transcript rows
+- completed checkpoints define the replay boundary for future conversation loading; failed/canceled rows are diagnostics only
+- checkpoint summaries may contain user and terminal data and are not exposed by normal browser message routes
 
 Agent question-request rows follow thread ownership:
 - `agent_question_request.created_by_user_id` inherits the owning thread/user for the prompt

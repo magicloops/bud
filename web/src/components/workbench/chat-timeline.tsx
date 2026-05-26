@@ -7,6 +7,7 @@ import { getToolContentRenderer, getRoleContentRenderer } from '@/components/mes
 import type {
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
+  ApiAgentCompactionPhase,
   ApiMessage,
 } from '@/lib/api-types'
 import { toOpenFileCandidate, type FilePathCandidate, type OpenFileCandidate } from '@/lib/file-paths'
@@ -19,6 +20,17 @@ export type ChatMessage = Pick<
   ApiMessage,
   'message_id' | 'client_id' | 'role' | 'display_role' | 'content' | 'created_at' | 'metadata'
 >
+
+export type ChatTimelineNotice = {
+  notice_id: string
+  kind: 'context_compaction'
+  status: 'completed' | 'failed'
+  created_at: string
+  phase: ApiAgentCompactionPhase
+  tokens_before: number | null
+  tokens_after?: number | null
+  error_code?: string | null
+}
 
 let jsonViewComponentPromise: Promise<JsonViewComponent> | null = null
 
@@ -37,6 +49,7 @@ function loadJsonViewComponent() {
 
 type ChatTimelineProps = {
   messages: ChatMessage[]
+  notices?: ChatTimelineNotice[]
   accentColor: string
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
@@ -52,6 +65,7 @@ type ChatTimelineProps = {
 
 const ChatTimelineComponent = ({
   messages,
+  notices = [],
   accentColor,
   hasOlderMessages = false,
   isLoadingOlderMessages = false,
@@ -80,11 +94,29 @@ const ChatTimelineComponent = ({
     () => (config.showSystemMessages ? messages : messages.filter((message) => message.role !== 'system')),
     [messages],
   )
+  const timelineItems = useMemo(() => {
+    const items: Array<
+      | { type: 'message'; message: ChatMessage }
+      | { type: 'notice'; notice: ChatTimelineNotice }
+    > = [
+      ...visibleMessages.map((message) => ({ type: 'message' as const, message })),
+      ...notices.map((notice) => ({ type: 'notice' as const, notice })),
+    ]
+    items.sort((a, b) => {
+      const aTime = new Date(a.type === 'message' ? a.message.created_at : a.notice.created_at).getTime()
+      const bTime = new Date(b.type === 'message' ? b.message.created_at : b.notice.created_at).getTime()
+      return aTime - bTime
+    })
+    return items
+  }, [notices, visibleMessages])
 
   const scrollSyncKey = useMemo(() => {
-    const lastMessage = visibleMessages.at(-1)
-    return `${visibleMessages.length}:${lastMessage?.client_id ?? ''}:${lastMessage?.content.length ?? 0}`
-  }, [visibleMessages])
+    const lastItem = timelineItems.at(-1)
+    const lastKey = lastItem?.type === 'message'
+      ? `${lastItem.message.client_id}:${lastItem.message.content.length}`
+      : lastItem?.notice.notice_id ?? ''
+    return `${timelineItems.length}:${lastKey}`
+  }, [timelineItems])
 
   const ensureJsonViewLoaded = useCallback(() => {
     if (JsonView) {
@@ -148,13 +180,13 @@ const ChatTimelineComponent = ({
           ) : null}
         </div>
       )}
-      {visibleMessages.length === 0 && (
+      {timelineItems.length === 0 && (
         <p className="text-sm text-muted-foreground">No messages yet. Share a task to start the loop.</p>
       )}
-      {visibleMessages.map((message) => (
+      {timelineItems.map((item) => item.type === 'message' ? (
         <ChatTimelineMessage
-          key={message.client_id}
-          message={message}
+          key={item.message.client_id}
+          message={item.message}
           systemColor={systemColor}
           JsonView={JsonView}
           ensureJsonViewLoaded={ensureJsonViewLoaded}
@@ -162,6 +194,8 @@ const ChatTimelineComponent = ({
           onSubmitQuestionResponse={onSubmitQuestionResponse}
           questionSubmitError={questionSubmitError}
         />
+      ) : (
+        <ChatTimelineNoticeRow key={item.notice.notice_id} notice={item.notice} />
       ))}
     </div>
   )
@@ -432,6 +466,61 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
 })
 
 ChatTimelineMessage.displayName = 'ChatTimelineMessage'
+
+function ChatTimelineNoticeRow({ notice }: { notice: ChatTimelineNotice }) {
+  const isFailed = notice.status === 'failed'
+  const phaseLabel = formatCompactionPhase(notice.phase)
+  const tokenLabel = formatCompactionNoticeTokens(notice)
+
+  return (
+    <div className="flex items-center gap-3 py-1 text-[11px] font-mono uppercase tracking-wide text-muted-foreground">
+      <div className="h-px flex-1 bg-black/15" />
+      <div className="rounded-full border border-black/20 bg-background/70 px-3 py-1 shadow-sm">
+        <span className={cn('font-semibold', isFailed ? 'text-destructive' : 'text-foreground')}>
+          {isFailed ? 'Context compaction failed' : 'Context compacted'}
+        </span>
+        <span className="ml-2 text-muted-foreground">
+          {phaseLabel}{tokenLabel ? ` - ${tokenLabel}` : ''}
+        </span>
+      </div>
+      <div className="h-px flex-1 bg-black/15" />
+    </div>
+  )
+}
+
+function formatCompactionPhase(phase: ApiAgentCompactionPhase): string {
+  switch (phase) {
+    case 'pre_turn':
+      return 'Pre-turn'
+    case 'mid_turn':
+      return 'Mid-turn'
+    case 'standalone_turn':
+      return 'Standalone'
+  }
+}
+
+function formatCompactionNoticeTokens(notice: ChatTimelineNotice): string | null {
+  if (
+    notice.status !== 'completed' ||
+    notice.tokens_before === null ||
+    notice.tokens_after === null ||
+    notice.tokens_after === undefined
+  ) {
+    return null
+  }
+  return `${formatCompactTokens(notice.tokens_before)} -> ${formatCompactTokens(notice.tokens_after)}`
+}
+
+function formatCompactTokens(value: number): string {
+  const absolute = Math.abs(value)
+  if (absolute >= 1_000_000) {
+    return `${Math.round(value / 100_000) / 10}m`
+  }
+  if (absolute >= 1_000) {
+    return `${Math.round(value / 1_000)}k`
+  }
+  return String(Math.round(value))
+}
 
 function resolveToolPayload(message: ChatMessage): Record<string, unknown> | null {
   if (message.metadata && typeof message.metadata === 'object') {

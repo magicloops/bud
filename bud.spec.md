@@ -69,6 +69,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
 | **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one active terminal session at a time. |
 | **Message** | A chat message with role (user/assistant/tool/system), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system messages inherit thread ownership. |
+| **Agent Context Checkpoint** | Durable model-context compaction checkpoint for a thread. Stores summary replacement history plus message/provider-ledger boundaries while leaving the visible transcript intact. |
 | **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps, and cached daemon-reported cwd for file-link resolution. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
 
@@ -291,8 +292,9 @@ User Message
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
 
 Current service ownership split:
-- `conversation-loader` builds canonical transcript context from persisted rows
+- `conversation-loader` builds canonical transcript context from persisted rows and latest completed context checkpoint boundaries
 - `model-runner` owns provider resolution, reasoning normalization, draft streaming, and tool-call parsing
+- `context-compactor` summarizes old transcript spans into durable checkpoint replacement history before oversized requests fail, or after one normalized provider context-window error
 - `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
 - `transcript-writer` owns durable assistant/tool writes plus runtime emission boundaries
 
@@ -368,6 +370,8 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 | `DEFAULT_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
 | `AGENT_REASONING_EFFORT` | low | Compatibility fallback reasoning effort for non-catalog model overrides |
 | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
+| `AGENT_AUTO_COMPACTION_ENABLED` | true | Enable automatic model-context checkpointing for long threads |
+| `AGENT_AUTO_COMPACTION_RATIO` | 0.95 | Estimated usable-input usage threshold for proactive compaction, clamped to `0.95` |
 | `AGENT_DEBUG` | false | Enable agent debug logging |
 | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle after |
 | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions after (`0` disables destructive cleanup) |
@@ -394,6 +398,7 @@ Core tables (schema-first locally via `db:push`, with checked-in migrations used
 | `enrollment_token` | One-time registration tokens |
 | `thread` | Conversation containers |
 | `message` | Chat messages |
+| `agent_context_checkpoint` | Durable automatic compaction summaries and transcript/provider-ledger replay boundaries |
 | `terminal_session` | Thread-scoped terminal sessions |
 | `terminal_session_output` | Terminal output chunks |
 | `terminal_session_input_log` | Input audit log |
@@ -556,6 +561,14 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/fortify-llm-call-handling/implementation-spec.md](./plan/fortify-llm-call-handling/implementation-spec.md) | Phased implementation plan for preserving OpenAI/Anthropic output items, durable reasoning continuity, mixed text/tool transcript persistence, multi-tool handling, provider switching fallback, and cache observability |
 | [plan/fortify-llm-call-handling/progress-checklist.md](./plan/fortify-llm-call-handling/progress-checklist.md) | Running checklist for the LLM call-handling fortification rollout |
 | [plan/fortify-llm-call-handling/validation-checklist.md](./plan/fortify-llm-call-handling/validation-checklist.md) | Validation checklist for provider fixtures, durable provider ledger behavior, product transcript refresh behavior, cache telemetry, migrations, and docs |
+| [plan/automatic-compaction/automatic-compaction.spec.md](./plan/automatic-compaction/automatic-compaction.spec.md) | Folder spec for the phased automatic context-compaction rollout, covering durable checkpoints, loader boundaries, local summary compaction, automatic triggers, stream observability, and validation |
+| [plan/automatic-compaction/implementation-spec.md](./plan/automatic-compaction/implementation-spec.md) | Parent implementation spec for adding automatic model-context compaction while keeping the visible transcript unchanged |
+| [plan/automatic-compaction/progress-checklist.md](./plan/automatic-compaction/progress-checklist.md) | Running implementation checklist for the automatic context-compaction rollout |
+| [plan/automatic-compaction/validation-checklist.md](./plan/automatic-compaction/validation-checklist.md) | Manual and automated validation checklist for automatic context compaction |
+| [plan/context-meter/context-meter.spec.md](./plan/context-meter/context-meter.spec.md) | Folder spec for the phased conversation context budget meter rollout, covering service-owned budget snapshots, Tier 1 provider usage estimates, usable-context policy follow-on phases, API exposure, web UI, and validation |
+| [plan/context-meter/implementation-spec.md](./plan/context-meter/implementation-spec.md) | Parent implementation spec for showing users remaining model-visible context before automatic compaction |
+| [plan/context-meter/progress-checklist.md](./plan/context-meter/progress-checklist.md) | Running implementation checklist for the conversation context budget meter rollout |
+| [plan/context-meter/validation-checklist.md](./plan/context-meter/validation-checklist.md) | Manual and automated validation checklist for the conversation context budget meter rollout |
 | [plan/persist-model-prefs/persist-model-prefs.spec.md](./plan/persist-model-prefs/persist-model-prefs.spec.md) | Folder spec for the thread model-preference persistence rollout, covering GPT-5.5 low defaults, thread selection columns, route persistence, web selector adoption, and validation |
 | [plan/persist-model-prefs/implementation-spec.md](./plan/persist-model-prefs/implementation-spec.md) | Phased implementation plan for persisting model/reasoning selection per thread, defaulting new work to GPT-5.5 low, and recording effective selection metadata on new user, assistant, and tool messages |
 | [plan/thread-title-generation/implementation-spec.md](./plan/thread-title-generation/implementation-spec.md) | Phased implementation plan for generating short thread titles from first user messages, persisting `thread.title`, streaming `thread.title` updates, and adopting the contract in the reference web client |
@@ -710,6 +723,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/agent-stream-state-and-resume-implementation.md](./debug/agent-stream-state-and-resume-implementation.md) | Debug note documenting the stale attach replay problem, the split between durable transcript vs in-flight runtime state, and the implemented `/agent/state` plus bounded-resume fix direction |
 | [debug/llm-output-text-and-reasoning-gaps.md](./debug/llm-output-text-and-reasoning-gaps.md) | Debug note reviewing OpenAI/Anthropic stream handling gaps, including live-only assistant text before tool calls, hidden reasoning output, provider ordering/multi-tool issues, and proposed transcript-contract fixes |
 | [debug/agent-sse-stale-tab-reconnect-loop.md](./debug/agent-sse-stale-tab-reconnect-loop.md) | Debug note documenting the validated April 21, 2026 agent-SSE reconnect-loop diagnosis and fix: a single live hook instance could still flap noisily when Bud's manual stale-heartbeat reconnect logic overlapped with the browser's native `EventSource` reconnect behavior, and the resolution was to dedupe manual reconnect scheduling and gate stale-heartbeat escalation to truly open streams |
+| [debug/agent-sse-resync-required-loop.md](./debug/agent-sse-resync-required-loop.md) | Debug note investigating repeated `Agent SSE attach requires resync` logs from an already-open tab, narrowing the issue to stale cursor retry behavior after bounded-resume misses and listing validation steps for native EventSource retry vs failed bootstrap refresh |
 | [debug/serverresponse-maxlisteners-warning.md](./debug/serverresponse-maxlisteners-warning.md) | Debug note reviewing the service `ServerResponse` `MaxListenersExceededWarning`, narrowing the likely cause to repeated stream piping into one response, reproducing the `fastify-sse-v2` async-iterable warning shape, and outlining trace-first remediation |
 | [debug/browser-terminal-input-leak.md](./debug/browser-terminal-input-leak.md) | Debug note documenting why raw xterm `onData` submission lets emulator-generated protocol bytes leak into the shared tmux session, and why the phase-1 fix belongs at the browser boundary |
 | [debug/terminal-interrupt-correctness.md](./debug/terminal-interrupt-correctness.md) | Debug note documenting the current `terminal.interrupt` correctness gaps around premature REPL-context clearing, false-success dispatch reporting, and stale-history interrupt output reconstruction |
@@ -732,6 +746,9 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/mobile-chat-thread-first-backend-contract.md](./design/mobile-chat-thread-first-backend-contract.md) | Design for the first-pass mobile chat backend contract, keeping the existing Bud/thread/message route family while adopting a thread-first mobile list and documenting the required payload/stream cleanup |
 | [design/ask-user-questions-tool-contract.md](./design/ask-user-questions-tool-contract.md) | Draft design for a model-facing `ask_user_questions` tool, including skippable form question types, client response payloads, structured tool-result replay, ownership rules, and human-input notification hooks |
 | [design/follow-up-message-supersedes-ask-user-questions.md](./design/follow-up-message-supersedes-ask-user-questions.md) | Draft design for letting normal follow-up messages close pending `ask_user_questions` prompts as skipped, separating `waiting_for_user` from active loading UI, and making stale prompt recovery service-owned for web and mobile |
+| [design/context-compaction.md](./design/context-compaction.md) | Draft design for durable service-owned model-context checkpoints that keep long-running threads under model context limits without changing the visible transcript |
+| [design/conversation-context-budget-meter.md](./design/conversation-context-budget-meter.md) | Draft design for showing users remaining model-visible context before automatic compaction, using the same compaction threshold plus tiered token-counting estimates |
+| [design/usable-context-window-and-output-reserve.md](./design/usable-context-window-and-output-reserve.md) | Draft design for separating provider hard context windows from Bud usable context caps, subtracting output reserves, and deriving compaction thresholds from usable input budget |
 | [design/llm-model-catalog-and-reasoning-controls.md](./design/llm-model-catalog-and-reasoning-controls.md) | Design sketch for centralizing Bud's LLM model catalog, making reasoning controls provider/model-specific, and planning the Opus 4.6/4.7 plus GPT-5.4/GPT-5.5 rollout |
 | [design/model-preferences-and-thread-overrides.md](./design/model-preferences-and-thread-overrides.md) | Design for persisting model/reasoning selection at the thread level, defaulting new work to GPT-5.5 low, and recording effective model metadata on new turn messages |
 | [design/message-client-id-and-stable-message-identity.md](./design/message-client-id-and-stable-message-identity.md) | Design for adding a UUIDv7 `client_id` to messages as a stable public/UI identity while retaining `message_id` as the persisted row identifier, and threading that new identity through `/messages`, `/agent/state`, and agent SSE payloads |
@@ -764,4 +781,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-22*
+*Last updated: 2026-05-24*

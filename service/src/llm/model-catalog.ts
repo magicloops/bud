@@ -54,6 +54,8 @@ export type ModelCatalogEntry = {
     structuredOutputs: boolean;
     contextWindowTokens: number;
     maxOutputTokens: number;
+    usableContextWindowTokens?: number;
+    reservedOutputTokens?: number;
   };
   reasoning: ReasoningControl;
 };
@@ -259,6 +261,8 @@ export const MODEL_CATALOG = [
       structuredOutputs: true,
       contextWindowTokens: 1_050_000,
       maxOutputTokens: 128_000,
+      usableContextWindowTokens: 400_000,
+      reservedOutputTokens: 128_000,
     },
     reasoning: {
       kind: "openai_reasoning_effort",

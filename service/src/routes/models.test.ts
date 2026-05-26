@@ -24,6 +24,13 @@ type ModelsPayload = {
       levels: Array<{ value: string; label: string }>;
       default_level: string;
     };
+    capabilities: {
+      context_window_tokens: number;
+      usable_context_window_tokens: number | null;
+      reserved_output_tokens: number | null;
+      usable_input_window_tokens: number | null;
+      max_output_tokens: number;
+    };
   }>;
   service_default_model: string | null;
   default_model: string | null;
@@ -191,6 +198,11 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   const gpt55 = payload.models.find((model) => model.id === "gpt-5.5");
   assert.ok(gpt55);
   assert.equal(gpt55.is_default, true);
+  assert.equal(gpt55.capabilities.context_window_tokens, 1_050_000);
+  assert.equal(gpt55.capabilities.usable_context_window_tokens, 400_000);
+  assert.equal(gpt55.capabilities.reserved_output_tokens, 128_000);
+  assert.equal(gpt55.capabilities.usable_input_window_tokens, 272_000);
+  assert.equal(gpt55.capabilities.max_output_tokens, 128_000);
   assert.deepEqual(gpt55.reasoning.levels.map((level) => level.value), [
     "none",
     "low",

@@ -58,6 +58,11 @@ export const agentQuestionRequestStatusValues = [
   "expired",
   "canceled",
 ] as const;
+export const agentContextCheckpointStatusValues = [
+  "completed",
+  "failed",
+  "canceled",
+] as const;
 
 const byteaColumn = customType<{ data: Buffer }>({
   dataType() {
@@ -523,6 +528,64 @@ export const llmCallItemTable = pgTable(
     ),
     toolCallIdx: index("llm_call_item_tool_call_idx").on(table.toolCallId),
     messageIdx: index("llm_call_item_message_idx").on(table.messageId),
+  }),
+);
+
+export const agentContextCheckpointTable = pgTable(
+  "agent_context_checkpoint",
+  {
+    checkpointId: text("checkpoint_id").primaryKey(),
+    threadId: uuid("thread_id").notNull(),
+    trigger: text("trigger").notNull(),
+    reason: text("reason").notNull(),
+    phase: text("phase").notNull(),
+    implementation: text("implementation").notNull().default("local_summary"),
+    status: text("status", { enum: agentContextCheckpointStatusValues }).notNull(),
+    sourceProvider: text("source_provider"),
+    sourceModel: text("source_model"),
+    sourceReasoningEffort: text("source_reasoning_effort"),
+    summary: text("summary"),
+    replacementHistory: jsonb("replacement_history")
+      .$type<Record<string, unknown>[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    compactedThroughMessageCreatedAt: timestamp("compacted_through_message_created_at", {
+      withTimezone: true,
+    }),
+    compactedThroughMessageId: uuid("compacted_through_message_id"),
+    compactedThroughLlmCallCreatedAt: timestamp("compacted_through_llm_call_created_at", {
+      withTimezone: true,
+    }),
+    compactedThroughLlmCallId: text("compacted_through_llm_call_id"),
+    inputTokensBefore: integer("input_tokens_before"),
+    estimatedTokensAfter: integer("estimated_tokens_after"),
+    error: jsonb("error").$type<Record<string, unknown>>(),
+    tenantId: text("tenant_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    threadStatusCreatedIdx: index("agent_context_checkpoint_thread_status_created_idx").on(
+      table.threadId,
+      table.status,
+      table.createdAt,
+    ),
+    messageBoundaryIdx: index("agent_context_checkpoint_message_boundary_idx").on(
+      table.threadId,
+      table.compactedThroughMessageCreatedAt,
+      table.compactedThroughMessageId,
+    ),
+    llmBoundaryIdx: index("agent_context_checkpoint_llm_boundary_idx").on(
+      table.threadId,
+      table.compactedThroughLlmCallCreatedAt,
+      table.compactedThroughLlmCallId,
+    ),
+    threadFk: foreignKey({
+      columns: [table.threadId],
+      foreignColumns: [threadTable.threadId],
+      name: "agent_context_checkpoint_thread_fk",
+    }).onDelete("cascade"),
   }),
 );
 

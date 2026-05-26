@@ -1,5 +1,5 @@
 import { ulid } from "ulid";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, gt, or, type SQL } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { llmCallItemTable, llmCallTable } from "../db/schema.js";
 import type {
@@ -27,6 +27,12 @@ export type LlmReconstructionDiagnostics = {
   targetProvider: CanonicalProviderId | null;
   targetModel?: string | null;
   targetReasoning?: ReasoningConfig | null;
+  checkpointApplied?: boolean;
+  checkpointId?: string;
+  checkpointCreatedAt?: string;
+  checkpointReplacementHistoryMessageCount?: number;
+  compactedThroughMessageId?: string | null;
+  compactedThroughLlmCallId?: string | null;
   degraded: boolean;
   degradedReasons: string[];
   sourceProviders: CanonicalProviderId[];
@@ -86,6 +92,11 @@ export type ProviderLedgerMessage = {
   model: string;
   requestMode: LlmCallRequestMode;
   content: CanonicalContentBlock[];
+};
+
+export type ProviderLedgerBoundary = {
+  createdAt: Date | null;
+  llmCallId: string | null;
 };
 
 export async function recordLlmCall(args: RecordLlmCallArgs): Promise<{ llmCallId: string }> {
@@ -158,7 +169,17 @@ export async function recordLlmToolResultItem(
 export async function loadProviderLedgerMessages(
   threadId: string,
   provider: CanonicalProviderId,
+  options?: { after?: ProviderLedgerBoundary | null },
 ): Promise<ProviderLedgerMessage[]> {
+  const afterBoundary = llmCallAfterBoundary(options?.after ?? null);
+  const conditions: SQL<unknown>[] = [
+    eq(llmCallTable.threadId, threadId),
+    eq(llmCallTable.provider, provider),
+  ];
+  if (afterBoundary) {
+    conditions.push(afterBoundary);
+  }
+
   const rows = await db
     .select({
       llmCallId: llmCallTable.llmCallId,
@@ -173,8 +194,12 @@ export async function loadProviderLedgerMessages(
     })
     .from(llmCallTable)
     .innerJoin(llmCallItemTable, eq(llmCallItemTable.llmCallId, llmCallTable.llmCallId))
-    .where(and(eq(llmCallTable.threadId, threadId), eq(llmCallTable.provider, provider)))
-    .orderBy(asc(llmCallTable.createdAt), asc(llmCallItemTable.sequence));
+    .where(and(...conditions))
+    .orderBy(
+      asc(llmCallTable.createdAt),
+      asc(llmCallTable.llmCallId),
+      asc(llmCallItemTable.sequence),
+    );
 
   const grouped = new Map<
     string,
@@ -222,7 +247,14 @@ export async function loadProviderLedgerMessages(
 
 export async function loadProviderLedgerThreadDiagnostics(
   threadId: string,
+  options?: { after?: ProviderLedgerBoundary | null },
 ): Promise<ProviderLedgerThreadDiagnostics> {
+  const afterBoundary = llmCallAfterBoundary(options?.after ?? null);
+  const conditions: SQL<unknown>[] = [eq(llmCallTable.threadId, threadId)];
+  if (afterBoundary) {
+    conditions.push(afterBoundary);
+  }
+
   const rows = await db
     .select({
       provider: llmCallTable.provider,
@@ -233,7 +265,7 @@ export async function loadProviderLedgerThreadDiagnostics(
     })
     .from(llmCallTable)
     .leftJoin(llmCallItemTable, eq(llmCallItemTable.llmCallId, llmCallTable.llmCallId))
-    .where(eq(llmCallTable.threadId, threadId));
+    .where(and(...conditions));
 
   const callSummariesByProvider: Partial<
     Record<
@@ -490,6 +522,27 @@ function cacheMetadataFromUsage(
       metadata.reconstruction_target_reasoning = reconstruction.targetReasoning;
     }
     metadata.reconstruction_source_providers = reconstruction.sourceProviders;
+    if (reconstruction.checkpointApplied !== undefined) {
+      metadata.reconstruction_checkpoint_applied = reconstruction.checkpointApplied;
+    }
+    if (reconstruction.checkpointId) {
+      metadata.reconstruction_checkpoint_id = reconstruction.checkpointId;
+    }
+    if (reconstruction.checkpointCreatedAt) {
+      metadata.reconstruction_checkpoint_created_at = reconstruction.checkpointCreatedAt;
+    }
+    if (typeof reconstruction.checkpointReplacementHistoryMessageCount === "number") {
+      metadata.reconstruction_checkpoint_replacement_history_message_count =
+        reconstruction.checkpointReplacementHistoryMessageCount;
+    }
+    if (reconstruction.compactedThroughMessageId !== undefined) {
+      metadata.reconstruction_compacted_through_message_id =
+        reconstruction.compactedThroughMessageId;
+    }
+    if (reconstruction.compactedThroughLlmCallId !== undefined) {
+      metadata.reconstruction_compacted_through_llm_call_id =
+        reconstruction.compactedThroughLlmCallId;
+    }
     metadata.reconstruction_provider_native_call_count =
       reconstruction.providerNativeCallCount;
     metadata.reconstruction_provider_native_output_item_count =
@@ -561,6 +614,20 @@ function parseRequestMode(value: string): LlmCallRequestMode {
   return value === "openai_responses" || value === "anthropic_messages"
     ? value
     : "openai_responses";
+}
+
+function llmCallAfterBoundary(boundary: ProviderLedgerBoundary | null): SQL<unknown> | undefined {
+  if (!boundary?.createdAt || !boundary.llmCallId) {
+    return undefined;
+  }
+
+  return or(
+    gt(llmCallTable.createdAt, boundary.createdAt),
+    and(
+      eq(llmCallTable.createdAt, boundary.createdAt),
+      gt(llmCallTable.llmCallId, boundary.llmCallId),
+    ),
+  );
 }
 
 function countMaps(

@@ -1,8 +1,8 @@
 import type { FormEvent, KeyboardEvent } from 'react'
-import { LoaderCircle, Send } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
+import type { ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
+import { ContextSendButton } from './context-send-button'
 
 type CommandComposerProps = {
   messageText: string
@@ -16,6 +16,7 @@ type CommandComposerProps = {
   reasoningEffort: ReasoningLevel
   onReasoningChange: (value: ReasoningLevel) => void
   disabledReason?: string | null
+  contextBudget?: ApiContextBudget | null
 }
 
 export function CommandComposer({
@@ -29,7 +30,8 @@ export function CommandComposer({
   onModelChange,
   reasoningEffort,
   onReasoningChange,
-  disabledReason = null
+  disabledReason = null,
+  contextBudget,
 }: CommandComposerProps) {
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
   const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
@@ -54,7 +56,7 @@ export function CommandComposer({
         onChange={(e) => onMessageChange(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={disabledReason ?? 'Describe the task for Bud…'}
-        className="h-32 w-full resize-none bg-background p-4 pr-16 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
+        className="h-32 w-full resize-none bg-background p-4 pb-20 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
         disabled={inputDisabled}
       />
       <div className="absolute bottom-4 right-4 flex items-center gap-3">
@@ -100,15 +102,11 @@ export function CommandComposer({
             ))}
           </select>
         )}
-        <Button
-          type="submit"
-          size="icon"
+        <ContextSendButton
+          contextBudget={contextBudget}
           disabled={inputDisabled}
-          className="h-12 w-12 rounded-lg border-3 border-black text-black transition-all hover:-translate-y-0.5 disabled:opacity-60"
-          style={{ backgroundColor: 'var(--bud-accent-muted)' }}
-        >
-          {status === 'dispatching' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-        </Button>
+          dispatching={status === 'dispatching'}
+        />
       </div>
     </form>
   )

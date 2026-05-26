@@ -201,13 +201,14 @@ Agent SSE ownership for the existing-thread route.
 - monitor heartbeats and reconnect stale/closed streams
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
-- parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `thread.title`, and `final` events
+- parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.compaction_*`, `thread.title`, and `final` events
 - map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
 - pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering
 - accept `agent.message` for both intermediate assistant text segments and final assistant rows
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
 - pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
 - pass through `ask_user_questions` request args unchanged so the timeline can render the pending form and submit through the thread route
+- pass through automatic context-compaction start/done/failure events to the route for live activity text, non-transcript timeline markers, immediate post-compaction budget snapshots when present, and budget refresh fallback after successful compaction
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly
 - keep latest event handlers in refs so the EventSource lifecycle depends on
   `threadId` rather than callback identity churn from the composing route
@@ -218,6 +219,7 @@ Agent SSE ownership for the existing-thread route.
 **Route contract**:
 - the route still owns the initial loader fetches plus the top-level `status`/`error` state
 - the route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to `waiting_for_user`, keeping global loading indicators separate from paused human input
+- the route owns context budget refresh from `/agent/state`; successful compaction stream events may also carry an additive post-compaction `context_budget` snapshot that the route can apply immediately before the normal refresh fallback
 - the hook owns EventSource lifecycle, cursor tracking, reconnect behavior, and event parsing
 
 ### `thread-stream-timing.ts`

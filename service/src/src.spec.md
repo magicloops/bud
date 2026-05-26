@@ -144,6 +144,7 @@ Environment-based configuration with defaults.
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
 | `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Max tokens per response |
 | `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | low | Compatibility fallback for non-catalog model overrides |
+| `agentAutoCompactionRatio` | `AGENT_AUTO_COMPACTION_RATIO` | 0.95 | Usable-input threshold ratio for automatic compaction, clamped to at most 0.95 |
 | `runLogMaxBytes` | `RUN_LOG_MAX_BYTES` | 100MB | Max stored run logs |
 | `terminalIdleTimeoutMinutes` | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle |
 | `terminalIdleCleanupHours` | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions (`0` disables destructive cleanup) |

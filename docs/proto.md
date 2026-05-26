@@ -562,7 +562,8 @@ Rejected file opens and resolves use the same frame-family shape with
 
 - URL: `GET /api/threads/:thread_id/agent/state`
 - Returns the current best-effort in-flight runtime snapshot for the authorized viewer
-- Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, and `updated_at`
+- Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, and best-effort `context_budget`
+- `context_budget` reports the backend-authoritative model-visible input estimate against the effective auto-compaction budget. For available snapshots, `estimated_input_tokens` is the trigger estimate and equals `message_estimated_tokens + tool_schema_tokens`; normal agent turns include current tool-schema overhead while tool-free compaction-summary requests do not. Budget snapshots also include provenance fields (`source`, `phase`, `turn_id`, `checked_at`) and optional provider usage diagnostics for non-UI calibration.
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
 - For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
@@ -1515,6 +1516,16 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
   - assistant and user messages may carry `message.metadata.path_context` with `schema: "terminal_cwd_v1"`; file-open routes use this server-side metadata when creating a file session from a clicked message link
+- `agent.compaction_start`
+  - emitted when automatic model-visible context compaction begins; no transcript row is created
+  - `{ "turn_id": "01TURN...", "trigger": "auto", "reason": "context_limit|context_error_retry|model_downshift", "phase": "pre_turn|mid_turn", "tokens_before": 123000, "threshold_tokens": 258000, "context_window_tokens": 400000, "usable_context_window_tokens": 400000, "reserved_output_tokens": 128000, "usable_input_window_tokens": 272000, "effective_budget_tokens": 258000, "started_at": "..." }`
+- `agent.compaction_done`
+  - emitted after the completed checkpoint is persisted; no summary or replacement history is included
+  - start payload plus `{ "checkpoint_id": "01CHK...", "tokens_after": 12000, "finished_at": "...", "context_budget"?: { ... } }`
+  - when present, `context_budget` is the post-compaction authoritative budget snapshot and never includes raw checkpoint summaries or replacement history
+- `agent.compaction_failed`
+  - emitted after the failed checkpoint attempt is recorded when possible; raw provider errors and checkpoint internals are omitted
+  - start payload plus `{ "error_code": "context_compaction_failed", "retryable": false, "finished_at": "..." }`
 - `thread.title`
   - `{ "thread_id": "uuid", "title": "Short Title", "source": "generated_first_user_message", "updated_at": "..." }`
 - `agent.resync_required`
@@ -1569,6 +1580,7 @@ Rules:
 - normal follow-up messages while `ask_user_questions` is pending are service-owned supersession: the service stores skipped answers for pending prompts, emits a completed tool row when possible, and may emit successful `final` without `message_id` or `text`
 - completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
+- compaction events are activity markers only; clients must not render them as persisted assistant, user, tool, or system transcript rows
 
 ---
 
@@ -1758,6 +1770,14 @@ No assistant `message_id` or `text` is created for that old turn.
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
+  - `/agent/state.context_budget` and post-compaction budget snapshots expose
+    `message_estimated_tokens` and `tool_schema_tokens`; the primary
+    `estimated_input_tokens` includes normal agent tool-schema overhead for
+    ordinary agent turns
+  - automatic context compaction emits additive `agent.compaction_start`,
+    `agent.compaction_done`, and `agent.compaction_failed` events without
+    exposing checkpoint summaries or replacement history; successful
+    compaction events may include a post-compaction `context_budget` snapshot
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits
   - model-facing `ask_user_questions` lets the agent pause for structured user input; `/agent/state.phase` may be `waiting_for_user`, clients submit `ask_user_questions_response_v1` through the thread-scoped response route, and completed tool rows include a self-contained Q/A result
