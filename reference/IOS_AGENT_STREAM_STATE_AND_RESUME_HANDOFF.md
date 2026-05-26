@@ -2,7 +2,7 @@
 
 **Status:** Current backend contract  
 **Audience:** Backend, web platform, iOS, product  
-**Last Updated:** 2026-03-30
+**Last Updated:** 2026-05-25
 
 ## Purpose
 
@@ -243,6 +243,8 @@ The important part for mobile is:
 
 - resume failure will be explicit
 - mobile should not infer it from missing deltas or custom gap-repair logic
+- the `provided_cursor` in `agent.resync_required` is known invalid for the current backend process and must not be reused for another stream attach
+- any stream reconnect queued before or during resync recovery must wait for the fresh `/agent/state.stream_cursor`, or attach live-only with no cursor if the product explicitly chooses degraded live continuity
 
 ## Recommended Mobile Thread-Open Flow
 
@@ -271,6 +273,17 @@ When a stream disconnect happens:
 5. reconnect from the new cursor
 
 The client should optimize for convergence to the latest coherent state, not perfect delivery of every intermediate token or tool transition.
+
+On `agent.resync_required`, mobile should treat stream recovery as a serialized state transition:
+
+1. close the current stream
+2. immediately invalidate the provided cursor in local state
+3. mark stream recovery as in flight so no background reconnect path can attach with the old cursor
+4. refresh `/messages` and `/agent/state`
+5. store the returned `/agent/state.stream_cursor`
+6. open exactly one new stream with `after=<state.stream_cursor>`
+
+The client should not launch `GET /api/threads/:thread_id/agent/stream?after=<provided_cursor>` again while `/agent/state` is still loading. That request is expected to produce another `agent.resync_required` response and can create a tight resync loop.
 
 ## Runtime Overlay Projection Rules
 

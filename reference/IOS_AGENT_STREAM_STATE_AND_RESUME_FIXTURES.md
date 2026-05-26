@@ -2,7 +2,7 @@
 
 **Status:** Current backend fixtures  
 **Audience:** Backend, web, iOS  
-**Last Updated:** 2026-03-30
+**Last Updated:** 2026-05-25
 
 This document publishes concrete example sequences for the current contract described in:
 
@@ -135,6 +135,16 @@ GET /api/threads/:thread_id/messages?limit=100
 GET /api/threads/:thread_id/agent/state
 GET /api/threads/:thread_id/agent/stream?after=<new_state_cursor>
 ```
+
+Invalid client follow-up:
+
+```http
+GET /api/threads/:thread_id/messages?limit=100
+GET /api/threads/:thread_id/agent/stream?after=01CUR_STALE_1
+GET /api/threads/:thread_id/agent/state
+```
+
+The stale cursor from `provided_cursor` is already known not resumable. The client must quarantine it before any reconnect timer, task, or view refresh can reuse it. If the product intentionally opens the stream before `/agent/state` recovers, it should attach with no cursor and treat that stream as live-only.
 
 ## Fixture 4: Idle Snapshot Before A New Turn Starts
 
