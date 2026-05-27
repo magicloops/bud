@@ -5,7 +5,7 @@ import { config, type ReasoningEffortSetting } from "../config.js";
 import { db } from "../db/client.js";
 import { generateMessageClientId } from "../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../db/thread-metadata.js";
-import { messageTable, threadTable } from "../db/schema.js";
+import { budTable, messageTable, threadTable } from "../db/schema.js";
 import type {
   TerminalPathContext,
   TerminalSession,
@@ -34,12 +34,18 @@ import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner } from "./model-runner.js";
 import {
-  buildToolExecutionTiming,
-  type ExecutedAgentTool,
-  type UserQuestionToolCallDirective,
-  isTerminalToolDirective,
-  isUserQuestionToolDirective,
-} from "./contracts.js";
+	  buildToolExecutionTiming,
+	  type ExecutedAgentTool,
+	  type UserQuestionToolCallDirective,
+	  isBudDisconnectedTransportError,
+	  isTerminalToolDirective,
+	  isUserQuestionToolDirective,
+	} from "./contracts.js";
+import {
+  buildAgentEnvironmentInstruction,
+  buildAgentEnvironmentSnapshot,
+  type AgentEnvironmentSnapshot,
+} from "./environment.js";
 import { TerminalToolExecutor } from "./terminal-tool-executor.js";
 import { AgentTranscriptWriter } from "./transcript-writer.js";
 import { WebViewToolExecutor } from "./web-view-tool-executor.js";
@@ -56,7 +62,7 @@ import {
   type AcceptedQuestionResponse,
 } from "./user-question-repository.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
-import { AGENT_TOOL_SCHEMA_TOKENS } from "./tool-definitions.js";
+import { AGENT_TOOL_SCHEMA_TOKENS, resolveAgentToolsForEnvironment } from "./tool-definitions.js";
 import { AgentContextCompactor, type CompactContextResult } from "./context-compactor.js";
 import {
   type ContextBudget,
@@ -116,17 +122,22 @@ export class AgentService {
     this.contextCompactor = new AgentContextCompactor(logger, debugEnabled);
   }
 
-  async startUserMessage(
-    threadId: string,
-    options?: {
-      model?: string | null;
-      reasoningEffort?: ReasoningEffortSetting | null;
-      modelSelectionSource?: ModelSelectionSource;
-      ownerUserId?: string | null;
-    },
-  ): Promise<{ sessionId: string }> {
-    const model = options?.model ?? config.defaultModel;
-    const modelReasoning = this.modelRunner.resolveModelReasoning(model, options?.reasoningEffort);
+	  async startUserMessage(
+	    threadId: string,
+	    options?: {
+	      model?: string | null;
+	      reasoningEffort?: ReasoningEffortSetting | null;
+	      modelSelectionSource?: ModelSelectionSource;
+	      ownerUserId?: string | null;
+	      environment?: AgentEnvironmentSnapshot | null;
+	    },
+	  ): Promise<{
+	    sessionId: string | null;
+	    environment: AgentEnvironmentSnapshot;
+	    streamCursor: string;
+	  }> {
+	    const model = options?.model ?? config.defaultModel;
+	    const modelReasoning = this.modelRunner.resolveModelReasoning(model, options?.reasoningEffort);
     const modelSelection = {
       model: modelReasoning.entry?.id ?? model,
       reasoningEffort: modelReasoning.reasoningLevel,
@@ -135,37 +146,55 @@ export class AgentService {
       model: string;
       reasoningEffort: ReasoningLevel;
       source: ModelSelectionSource;
-    };
-    const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
-    const turnId = ulid();
-    const controller = new AbortController();
+	    };
+	    const ownerUserId = options?.ownerUserId ?? (await this.resolveThreadOwnerUserId(threadId));
+	    let environment = options?.environment ?? await this.getEnvironmentForThread(threadId);
+	    const turnId = ulid();
+	    const controller = new AbortController();
 
-    await this.withThreadTransition(threadId, async () => {
-      this.runtime.startTurn(threadId, turnId);
-      this.cancellations.set(threadId, controller);
-    });
+	    await this.withThreadTransition(threadId, async () => {
+	      this.runtime.startTurn(threadId, turnId, environment);
+	      this.cancellations.set(threadId, controller);
+	    });
 
-    try {
-      const session = await this.getOrCreateSession(threadId, ownerUserId);
+	    try {
+	      let session: TerminalSession | null = null;
+	      if (environment.mode === "normal") {
+	        try {
+	          session = await this.getOrCreateSession(threadId, ownerUserId);
+	        } catch (err) {
+	          if (!isBudDisconnectedTransportError(err)) {
+	            throw err;
+	          }
+	          environment = await this.getEnvironmentForThread(threadId);
+	          this.runtime.setEnvironment(threadId, environment);
+	        }
+	      }
 
-      void this.runAgentFlow({
-        threadId,
-        turnId,
-        sessionId: session.sessionId,
-        model,
-        modelReasoning,
-        modelSelection,
-        ownerUserId,
-        controller,
-      }).catch((err) => {
-        this.logger.error(
-          { err, sessionId: session.sessionId, threadId, component: "agent" },
-          "Agent flow failed",
-        );
-      });
+	      void this.runAgentFlow({
+	        threadId,
+	        turnId,
+	        sessionId: session?.sessionId ?? null,
+	        model,
+	        modelReasoning,
+	        modelSelection,
+	        environment,
+	        ownerUserId,
+	        controller,
+	      }).catch((err) => {
+	        this.logger.error(
+	          { err, sessionId: session?.sessionId ?? null, threadId, component: "agent" },
+	          "Agent flow failed",
+	        );
+	      });
 
-      return { sessionId: session.sessionId };
-    } catch (err) {
+	      const snapshot = this.runtime.getSnapshot(threadId);
+	      return {
+	        sessionId: session?.sessionId ?? null,
+	        environment,
+	        streamCursor: snapshot.stream_cursor,
+	      };
+	    } catch (err) {
       await this.withThreadTransition(threadId, async () => {
         if (this.cancellations.get(threadId) === controller) {
           this.cancellations.clear(threadId);
@@ -192,14 +221,45 @@ export class AgentService {
     return this.cancellations.has(threadId);
   }
 
-  async getPathContextForThread(threadId: string): Promise<TerminalPathContext | null> {
-    const manager = this.terminalSessionManager as {
-      getPathContextForThread?: (threadId: string) => Promise<TerminalPathContext | null>;
-    };
-    return manager.getPathContextForThread?.(threadId) ?? null;
-  }
+	  async getPathContextForThread(threadId: string): Promise<TerminalPathContext | null> {
+	    const manager = this.terminalSessionManager as {
+	      getPathContextForThread?: (threadId: string) => Promise<TerminalPathContext | null>;
+	    };
+	    return manager.getPathContextForThread?.(threadId) ?? null;
+	  }
 
-  async submitQuestionResponse(args: {
+	  async getEnvironmentForThread(threadId: string): Promise<AgentEnvironmentSnapshot> {
+	    const thread = await db.query.threadTable.findFirst({
+	      where: eq(threadTable.threadId, threadId),
+	      columns: { budId: true },
+	    });
+	    if (!thread) {
+	      throw new Error("thread_not_found");
+	    }
+	    return this.getEnvironmentForBud(thread.budId);
+	  }
+
+	  async getEnvironmentForBud(budId: string): Promise<AgentEnvironmentSnapshot> {
+	    const bud = await db.query.budTable.findFirst({
+	      where: eq(budTable.budId, budId),
+	      columns: {
+	        budId: true,
+	        status: true,
+	        lastSeenAt: true,
+	      },
+	    });
+	    const manager = this.terminalSessionManager as {
+	      isBudOnline?: (budId: string) => boolean;
+	    };
+	    const online = manager.isBudOnline?.(budId) ?? bud?.status === "online";
+	    return buildAgentEnvironmentSnapshot({
+	      budId,
+	      online,
+	      lastSeenAt: bud?.lastSeenAt ?? null,
+	    });
+	  }
+
+	  async submitQuestionResponse(args: {
     threadId: string;
     questionRequestId: string;
     response: unknown;
@@ -334,22 +394,25 @@ export class AgentService {
     });
   }
 
-  private async runAgentFlow(args: {
-    threadId: string;
-    turnId: string;
-    sessionId: string;
-    model: string;
-    modelReasoning: ResolvedModelReasoning;
-    modelSelection: {
-      model: string;
-      reasoningEffort: ReasoningLevel;
-      source: ModelSelectionSource;
-    };
-    ownerUserId?: string | null;
-    controller: AbortController;
-  }): Promise<void> {
-    const { threadId, turnId, sessionId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
-    let supersededQuestionResponse: ResolvedUserQuestionResponse | null = null;
+	  private async runAgentFlow(args: {
+	    threadId: string;
+	    turnId: string;
+	    sessionId: string | null;
+	    model: string;
+	    modelReasoning: ResolvedModelReasoning;
+	    modelSelection: {
+	      model: string;
+	      reasoningEffort: ReasoningLevel;
+	      source: ModelSelectionSource;
+	    };
+	    environment: AgentEnvironmentSnapshot;
+	    ownerUserId?: string | null;
+	    controller: AbortController;
+	  }): Promise<void> {
+	    const { threadId, turnId, model, modelReasoning, modelSelection, ownerUserId, controller } = args;
+	    let currentSessionId = args.sessionId;
+	    let environment = args.environment;
+	    let supersededQuestionResponse: ResolvedUserQuestionResponse | null = null;
     const providerName = this.modelRunner.resolveProviderName(model);
     let loadedConversation = await this.conversationLoader.loadWithDiagnostics(threadId, {
       provider: providerName,
@@ -359,11 +422,11 @@ export class AgentService {
     let conversation = loadedConversation.messages;
     let reconstruction = loadedConversation.reconstruction;
     const compactedBoundaryKeys = new Set<string>();
-    this.debug("Starting agent run", {
-      threadId,
-      sessionId,
-      model,
-      provider: providerName,
+	    this.debug("Starting agent run", {
+	      threadId,
+	      sessionId: currentSessionId,
+	      model,
+	      provider: providerName,
       entries: conversation.length,
       reasoningEffort: modelReasoning.reasoningLevel,
       reconstructionMode: reconstruction.mode,
@@ -371,9 +434,9 @@ export class AgentService {
     if (reconstruction.degraded) {
       this.logger.info(
         {
-          threadId,
-          sessionId,
-          provider: providerName,
+	          threadId,
+	          sessionId: currentSessionId,
+	          provider: providerName,
           model,
           component: "agent",
           reconstruction,
@@ -383,10 +446,10 @@ export class AgentService {
     }
 
     try {
-      const preTurnCompaction = await this.compactConversationIfNeeded({
-        threadId,
-        turnId,
-        sessionId,
+	      const preTurnCompaction = await this.compactConversationIfNeeded({
+	        threadId,
+	        turnId,
+	        sessionId: currentSessionId,
         model,
         modelReasoning,
         providerName,
@@ -405,33 +468,47 @@ export class AgentService {
 
       let steps = 0;
       while (steps < config.agentMaxSteps) {
-        if (controller.signal.aborted) {
-          throw new Error("agent_canceled");
-        }
+	        if (controller.signal.aborted) {
+	          throw new Error("agent_canceled");
+	        }
 
-        this.runtime.markThinking(threadId);
-        let modelResult: {
-          response: CanonicalResponse;
-          assistantClientId: string | null;
-        };
-        try {
-          modelResult = await this.modelRunner.invokeModel(
-            threadId,
-            turnId,
-            conversation,
-            model,
-            modelReasoning,
-            controller.signal,
-          );
-        } catch (err) {
+	        const refreshedEnvironment = await this.refreshEnvironmentForProviderStep({
+	          threadId,
+	          ownerUserId,
+	          currentSessionId,
+	        });
+	        currentSessionId = refreshedEnvironment.sessionId;
+	        environment = refreshedEnvironment.snapshot;
+	        this.runtime.setEnvironment(threadId, environment);
+	        this.runtime.markThinking(threadId);
+	        const modelTools = resolveAgentToolsForEnvironment(environment);
+	        const conversationForModel = applyEnvironmentInstruction(
+	          conversation,
+	          environment,
+	        );
+	        let modelResult: {
+	          response: CanonicalResponse;
+	          assistantClientId: string | null;
+	        };
+	        try {
+	          modelResult = await this.modelRunner.invokeModel(
+	            threadId,
+	            turnId,
+	            conversationForModel,
+	            model,
+	            modelReasoning,
+	            controller.signal,
+	            modelTools,
+	          );
+	        } catch (err) {
           if (!isProviderContextWindowError(err)) {
             throw err;
           }
           const retryCompaction = await this.compactConversationIfNeeded({
-            threadId,
-            turnId,
-            sessionId,
-            model,
+	            threadId,
+	            turnId,
+	            sessionId: currentSessionId,
+	            model,
             modelReasoning,
             providerName,
             phase: steps === 0 ? "pre_turn" : "mid_turn",
@@ -448,15 +525,16 @@ export class AgentService {
           loadedConversation = retryCompaction.loadedConversation;
           conversation = loadedConversation.messages;
           reconstruction = loadedConversation.reconstruction;
-          modelResult = await this.modelRunner.invokeModel(
-            threadId,
-            turnId,
-            conversation,
-            model,
-            modelReasoning,
-            controller.signal,
-          );
-        }
+	          modelResult = await this.modelRunner.invokeModel(
+	            threadId,
+	            turnId,
+	            applyEnvironmentInstruction(conversation, environment),
+	            model,
+	            modelReasoning,
+	            controller.signal,
+	            modelTools,
+	          );
+	        }
         const { response, assistantClientId: streamedAssistantClientId } = modelResult;
         const llmCallId = createLlmCallId();
         const toolCalls = this.modelRunner.extractToolCalls(response);
@@ -472,9 +550,11 @@ export class AgentService {
         const visibleText = collectVisibleText(responseForReplay.content);
         let assistantMessageId: string | null = null;
 
-        if (toolCalls.length > 0 && visibleText.trim().length > 0) {
-          const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
-          const pathContext = await this.getPathContextForSession(sessionId);
+	        if (toolCalls.length > 0 && visibleText.trim().length > 0) {
+	          const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
+	          const pathContext = currentSessionId
+	            ? await this.getPathContextForSession(currentSessionId)
+	            : null;
           const assistantMessage = await this.transcriptWriter.recordAssistantTextSegment({
             threadId,
             turnId,
@@ -549,19 +629,35 @@ export class AgentService {
               startedAt,
             );
 
-            this.debug("Dispatching tool call", {
-              sessionId,
-              threadId,
-              tool: effectiveToolCall.tool,
+	            this.debug("Dispatching tool call", {
+	              sessionId: currentSessionId,
+	              threadId,
+	              tool: effectiveToolCall.tool,
               args: clientArgs,
               callId: effectiveToolCall.callId,
-            });
+	            });
 
-            let execution: ExecutedAgentTool;
-            let shouldRefreshContext = false;
-            const pathContextBefore = isTerminalToolDirective(effectiveToolCall)
-              ? await this.getPathContextForSession(sessionId)
-              : null;
+	            if (
+	              isTerminalToolDirective(effectiveToolCall) ||
+	              !isUserQuestionToolDirective(effectiveToolCall)
+	            ) {
+	              const refreshedToolEnvironment = await this.refreshEnvironmentForProviderStep({
+	                threadId,
+	                ownerUserId,
+	                currentSessionId,
+	              });
+	              currentSessionId = refreshedToolEnvironment.sessionId;
+	              environment = refreshedToolEnvironment.snapshot;
+	              this.runtime.setEnvironment(threadId, environment);
+	            }
+
+	            let execution: ExecutedAgentTool;
+	            let shouldRefreshContext = false;
+	            const pathContextBefore = isTerminalToolDirective(effectiveToolCall)
+	              ? currentSessionId
+	                ? await this.getPathContextForSession(currentSessionId)
+	                : null
+	              : null;
 
             if (isTerminalToolDirective(effectiveToolCall)) {
               execution = await this.toolExecutor.execute(threadId, effectiveToolCall);
@@ -583,11 +679,13 @@ export class AgentService {
               execution = await this.webViewToolExecutor.execute(threadId, effectiveToolCall, ownerUserId);
             }
 
-            const finishedAt = new Date();
-            const timing = buildToolExecutionTiming(startedAt, finishedAt);
-            const pathContextAfter = shouldRefreshContext
-              ? await this.getPathContextForSession(sessionId)
-              : null;
+	            const finishedAt = new Date();
+	            const timing = buildToolExecutionTiming(startedAt, finishedAt);
+	            const pathContextAfter = shouldRefreshContext
+	              ? currentSessionId
+	                ? await this.getPathContextForSession(currentSessionId)
+	                : null
+	              : null;
             const { payload, message } = await this.transcriptWriter.recordToolResult({
               threadId,
               turnId,
@@ -612,9 +710,10 @@ export class AgentService {
               ownerUserId,
             });
 
-            if (shouldRefreshContext && this.contextSyncService) {
-              await this.contextSyncService.refreshSnapshot(sessionId);
-            }
+            const executionError = "error" in execution.result ? execution.result.error : null;
+	            if (shouldRefreshContext && this.contextSyncService && currentSessionId && !executionError) {
+	              await this.contextSyncService.refreshSnapshot(currentSessionId);
+	            }
 
             if (supersededQuestionResponse?.continuation === "supersede") {
               this.runtime.emit(threadId, {
@@ -626,10 +725,10 @@ export class AgentService {
                 },
               });
               this.runtime.finishTurn(threadId);
-              this.debug("Agent turn superseded by follow-up user message", {
-                threadId,
-                sessionId,
-              });
+	              this.debug("Agent turn superseded by follow-up user message", {
+	                threadId,
+	                sessionId: currentSessionId,
+	              });
               this.cancellations.clear(threadId);
               supersededQuestionResponse.onFinalized?.();
               supersededQuestionResponse = null;
@@ -651,10 +750,10 @@ export class AgentService {
           }
 
           steps += toolCalls.length;
-          const midTurnCompaction = await this.compactConversationIfNeeded({
-            threadId,
-            turnId,
-            sessionId,
+	          const midTurnCompaction = await this.compactConversationIfNeeded({
+	            threadId,
+	            turnId,
+	            sessionId: currentSessionId,
             model,
             modelReasoning,
             providerName,
@@ -673,9 +772,11 @@ export class AgentService {
           continue;
         }
 
-        const directive = this.modelRunner.parseFinalResponse(responseForReplay);
-        const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
-        const pathContext = await this.getPathContextForSession(sessionId);
+	        const directive = this.modelRunner.parseFinalResponse(responseForReplay);
+	        const assistantClientId = streamedAssistantClientId ?? generateMessageClientId();
+	        const pathContext = currentSessionId
+	          ? await this.getPathContextForSession(currentSessionId)
+	          : null;
         await this.transcriptWriter.recordFinalAssistant({
           threadId,
           turnId,
@@ -689,8 +790,8 @@ export class AgentService {
         });
 
         this.runtime.finishTurn(threadId);
-        this.debug("Agent final response", {
-          sessionId,
+	        this.debug("Agent final response", {
+	          sessionId: currentSessionId,
           status: directive.status,
           textLength: directive.message.length,
         });
@@ -722,7 +823,7 @@ export class AgentService {
           },
         });
         this.runtime.finishTurn(threadId);
-        this.debug("Agent turn canceled", { threadId, sessionId });
+	        this.debug("Agent turn canceled", { threadId, sessionId: currentSessionId });
         return;
       }
 
@@ -736,30 +837,54 @@ export class AgentService {
       });
       this.runtime.finishTurn(threadId);
 
-      this.debug("Agent run failed", {
-        sessionId,
+	      this.debug("Agent run failed", {
+	        sessionId: currentSessionId,
         error: err instanceof Error ? err.message : err,
       });
       throw err;
     }
   }
 
-  private async fetchBudForThread(threadId: string): Promise<{ budId: string }> {
-    const thread = await db.query.threadTable.findFirst({
+	  private async fetchBudForThread(threadId: string): Promise<{ budId: string }> {
+	    const thread = await db.query.threadTable.findFirst({
       where: eq(threadTable.threadId, threadId),
       columns: { budId: true },
     });
     if (!thread) {
       throw new Error("thread not found");
     }
-    this.logger.info({ threadId, budId: thread.budId }, "Resolved budId for thread");
-    return { budId: thread.budId };
-  }
+	    this.logger.info({ threadId, budId: thread.budId }, "Resolved budId for thread");
+	    return { budId: thread.budId };
+	  }
 
-  private async compactConversationIfNeeded(args: {
-    threadId: string;
-    turnId: string;
-    sessionId: string;
+	  private async refreshEnvironmentForProviderStep(args: {
+	    threadId: string;
+	    ownerUserId?: string | null;
+	    currentSessionId: string | null;
+	  }): Promise<{ snapshot: AgentEnvironmentSnapshot; sessionId: string | null }> {
+	    let environment = await this.getEnvironmentForThread(args.threadId);
+	    let sessionId = args.currentSessionId;
+
+	    if (environment.mode === "normal" && !sessionId) {
+	      try {
+	        const session = await this.getOrCreateSession(args.threadId, args.ownerUserId);
+	        sessionId = session.sessionId;
+	      } catch (err) {
+	        if (!isBudDisconnectedTransportError(err)) {
+	          throw err;
+	        }
+	        environment = await this.getEnvironmentForThread(args.threadId);
+	        sessionId = null;
+	      }
+	    }
+
+	    return { snapshot: environment, sessionId };
+	  }
+
+	  private async compactConversationIfNeeded(args: {
+	    threadId: string;
+	    turnId: string;
+	    sessionId: string | null;
     model: string;
     modelReasoning: ResolvedModelReasoning;
     providerName: ReturnType<AgentModelRunner["resolveProviderName"]>;
@@ -852,9 +977,9 @@ export class AgentService {
       return null;
     }
 
-    const pathContext = args.phase === "mid_turn"
-      ? await this.getPathContextForSession(args.sessionId)
-      : null;
+	    const pathContext = args.phase === "mid_turn" && args.sessionId
+	      ? await this.getPathContextForSession(args.sessionId)
+	      : null;
 
     this.logger.info(
       {
@@ -1323,6 +1448,26 @@ function applyOpenAIAssistantPhaseFallback(
       assistantPhase: fallbackPhase,
     };
   });
+}
+
+function applyEnvironmentInstruction(
+  conversation: CanonicalMessage[],
+  environment: AgentEnvironmentSnapshot,
+): CanonicalMessage[] {
+  const instruction = buildAgentEnvironmentInstruction(environment);
+  if (!instruction) {
+    return conversation;
+  }
+
+  const environmentMessage: CanonicalMessage = {
+    role: "system",
+    content: instruction,
+  };
+  const [first, ...rest] = conversation;
+  if (first?.role === "system") {
+    return [first, environmentMessage, ...rest];
+  }
+  return [environmentMessage, ...conversation];
 }
 
 function formatTerminalPathContext(pathContext: TerminalPathContext | null): string | null {

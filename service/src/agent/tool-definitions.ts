@@ -1,4 +1,5 @@
 import type { CanonicalTool } from "../llm/index.js";
+import type { AgentEnvironmentSnapshot } from "./environment.js";
 import { estimateCanonicalToolsTokens } from "./context-budget.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 
@@ -215,5 +216,25 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
     },
   },
 ];
+
+const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "terminal_send",
+  "terminal_observe",
+  "web_view_open",
+  "web_view_close",
+  "web_view_list",
+]);
+
+export function resolveAgentToolsForEnvironment(
+  environment: AgentEnvironmentSnapshot,
+): CanonicalTool[] {
+  if (environment.mode === "normal") {
+    return AGENT_CANONICAL_TOOLS;
+  }
+
+  return AGENT_CANONICAL_TOOLS.filter((tool) => {
+    return !BUD_SPECIFIC_TOOL_NAMES.has(tool.name);
+  });
+}
 
 export const AGENT_TOOL_SCHEMA_TOKENS = estimateCanonicalToolsTokens(AGENT_CANONICAL_TOOLS);

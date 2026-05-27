@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { db } from "../db/client.js";
 import { AgentService } from "./agent-service.js";
+import {
+  buildAgentEnvironmentSnapshot,
+  type AgentEnvironmentSnapshot,
+} from "./environment.js";
 
 function createLogger() {
   return {
@@ -55,7 +59,7 @@ function mockCurrentContextCheckpointBoundary() {
 type CompactConversationIfNeeded = (args: {
   threadId: string;
   turnId: string;
-  sessionId: string;
+  sessionId: string | null;
   model: string;
   modelReasoning: {
     providerModel: string;
@@ -71,6 +75,20 @@ type CompactConversationIfNeeded = (args: {
   force?: boolean;
   compactedBoundaryKeys?: Set<string>;
 }) => Promise<unknown>;
+
+function buildNormalEnvironment(): AgentEnvironmentSnapshot {
+  return buildAgentEnvironmentSnapshot({
+    budId: "bud-1",
+    online: true,
+    lastSeenAt: new Date("2026-05-01T00:00:00.000Z"),
+  });
+}
+
+function stubNormalEnvironment(service: AgentService): AgentEnvironmentSnapshot {
+  const environment = buildNormalEnvironment();
+  Reflect.set(service, "getEnvironmentForThread", async () => environment);
+  return environment;
+}
 
 function buildCompactionArgs() {
   return {
@@ -357,6 +375,9 @@ test("final no-tool response records exactly one LLM call", async (t) => {
     markThinking() {
       // noop
     },
+    setEnvironment() {
+      // noop
+    },
     setContextBudget() {
       // noop
     },
@@ -375,6 +396,7 @@ test("final no-tool response records exactly one LLM call", async (t) => {
     false,
     false,
   );
+  const environment = stubNormalEnvironment(service);
 
   Reflect.set(service, "conversationLoader", {
     async loadWithDiagnostics() {
@@ -445,7 +467,7 @@ test("final no-tool response records exactly one LLM call", async (t) => {
   const runAgentFlow = Reflect.get(service, "runAgentFlow") as (args: {
     threadId: string;
     turnId: string;
-    sessionId: string;
+    sessionId: string | null;
     model: string;
     modelReasoning: {
       providerModel: string;
@@ -456,6 +478,7 @@ test("final no-tool response records exactly one LLM call", async (t) => {
       reasoningEffort: string;
       source: string;
     };
+    environment: AgentEnvironmentSnapshot;
     ownerUserId?: string | null;
     controller: AbortController;
   }) => Promise<void>;
@@ -474,6 +497,7 @@ test("final no-tool response records exactly one LLM call", async (t) => {
       reasoningEffort: "low",
       source: "service_default",
     },
+    environment,
     ownerUserId: "user-1",
     controller: new AbortController(),
   });
@@ -539,6 +563,9 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
     markThinking() {
       // noop
     },
+    setEnvironment() {
+      // noop
+    },
     setContextBudget() {
       // noop
     },
@@ -556,6 +583,7 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
     false,
     false,
   );
+  const environment = stubNormalEnvironment(service);
 
   Reflect.set(service, "conversationLoader", {
     async loadWithDiagnostics() {
@@ -691,7 +719,7 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
   const runAgentFlow = Reflect.get(service, "runAgentFlow") as (args: {
     threadId: string;
     turnId: string;
-    sessionId: string;
+    sessionId: string | null;
     model: string;
     modelReasoning: {
       providerModel: string;
@@ -702,6 +730,7 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
       reasoningEffort: string;
       source: string;
     };
+    environment: AgentEnvironmentSnapshot;
     ownerUserId?: string | null;
     controller: AbortController;
   }) => Promise<void>;
@@ -720,6 +749,7 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
       reasoningEffort: "low",
       source: "service_default",
     },
+    environment,
     ownerUserId: "user-1",
     controller: new AbortController(),
   });

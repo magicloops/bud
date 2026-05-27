@@ -39,6 +39,7 @@ import {
   type ReasoningLevel,
 } from '@/lib/models'
 import type {
+  ApiAgentEnvironment,
   ApiAgentState,
   ApiAgentCompactionDoneEvent,
   ApiAgentCompactionFailedEvent,
@@ -99,6 +100,9 @@ function ThreadView() {
 
   const [messageText, setMessageText] = useState('')
   const [status, setStatus] = useState<WorkbenchStatus>(getStatusFromAgentState(initialAgentState))
+  const [agentEnvironment, setAgentEnvironment] = useState<ApiAgentEnvironment | null>(
+    initialAgentState.environment ?? null,
+  )
   const [contextBudget, setContextBudget] = useState<ApiContextBudget | null>(
     initialAgentState.context_budget ?? null,
   )
@@ -167,6 +171,7 @@ function ThreadView() {
   // Update messages when loader data changes
   useEffect(() => {
     setStatus(getStatusFromAgentState(initialAgentState))
+    setAgentEnvironment(initialAgentState.environment ?? null)
     setContextBudget(initialAgentState.context_budget ?? null)
   }, [initialAgentState, initialMessagePage])
 
@@ -241,6 +246,7 @@ function ThreadView() {
     applyAgentState(nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
+    setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
     return nextAgentState
   }, [applyAgentState])
@@ -256,6 +262,7 @@ function ThreadView() {
     mergeLatestBootstrap(nextPage, nextAgentState)
     agentStreamCursorSetterRef.current(nextAgentState.stream_cursor)
     setStatus(getStatusFromAgentState(nextAgentState))
+    setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
     return nextAgentState
   }, [mergeLatestBootstrap])
@@ -524,6 +531,54 @@ function ThreadView() {
     webViewHttpTransportUnavailable,
   ])
 
+  useEffect(() => {
+    if (!budId || (terminalConnection !== 'connected' && terminalConnection !== 'offline')) {
+      return
+    }
+    setAgentEnvironment((current) => {
+      const base: ApiAgentEnvironment = current?.bud_id === budId
+        ? current
+        : {
+            mode: 'normal' as const,
+            bud_id: budId,
+            bud_status: 'online' as const,
+            reason: null,
+            last_seen_at: null,
+            tools: {
+              terminal: 'available' as const,
+              web_view: 'available' as const,
+              ask_user_questions: 'available' as const,
+            },
+          }
+
+      if (terminalConnection === 'connected') {
+        return {
+          ...base,
+          mode: 'normal' as const,
+          bud_status: 'online' as const,
+          reason: null,
+          tools: {
+            terminal: 'available' as const,
+            web_view: 'available' as const,
+            ask_user_questions: 'available' as const,
+          },
+        }
+      }
+
+      return {
+        ...base,
+        mode: 'bud_offline' as const,
+        bud_status: 'offline' as const,
+        reason: 'bud_disconnected' as const,
+        tools: {
+          terminal: 'unavailable' as const,
+          web_view: 'unavailable' as const,
+          ask_user_questions: 'available' as const,
+        },
+      }
+    })
+  }, [budId, terminalConnection])
+
   const cancelAgentTurn = useCallback(async () => {
     if (!threadId) return
 
@@ -593,7 +648,11 @@ function ThreadView() {
         message_id: persistedMessageId,
         client_id: persistedClientId,
         message: persistedMessage,
+        agent,
       } = await messageResp.json() as ApiCreateMessageResponse
+      if (agent) {
+        agentStreamCursorSetterRef.current(agent.stream_cursor)
+      }
       reconcilePersistedUserMessage(
         optimisticId,
         persistedMessageId,
@@ -716,6 +775,7 @@ function ThreadView() {
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
           onReasoningChange={handleReasoningChange}
+          environment={agentEnvironment}
           contextBudget={contextBudget}
         />
       )}

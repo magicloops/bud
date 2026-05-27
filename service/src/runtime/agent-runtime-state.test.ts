@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildAgentEnvironmentSnapshot } from "../agent/environment.js";
 import { AgentRuntimeStateManager } from "./agent-runtime-state.js";
 
 test("new snapshots are idle and expose a resumable stream cursor", () => {
@@ -8,6 +9,7 @@ test("new snapshots are idle and expose a resumable stream cursor", () => {
 
   assert.equal(snapshot.active, false);
   assert.equal(snapshot.phase, "idle");
+  assert.equal(snapshot.environment, null);
   assert.equal(snapshot.context_budget, null);
   assert.equal(typeof snapshot.stream_cursor, "string");
   assert.ok(snapshot.stream_cursor.length > 0);
@@ -15,11 +17,13 @@ test("new snapshots are idle and expose a resumable stream cursor", () => {
 
 test("startTurn creates an active snapshot before any visible event exists", () => {
   const runtime = new AgentRuntimeStateManager();
-  const snapshot = runtime.startTurn("thread-1", "turn-1");
+  const environment = buildEnvironmentFixture(true);
+  const snapshot = runtime.startTurn("thread-1", "turn-1", environment);
 
   assert.equal(snapshot.active, true);
   assert.equal(snapshot.turn_id, "turn-1");
   assert.equal(snapshot.phase, "starting");
+  assert.deepEqual(snapshot.environment, environment);
   assert.equal(snapshot.context_budget, null);
   assert.equal(typeof snapshot.stream_cursor, "string");
   assert.ok(snapshot.stream_cursor.length > 0);
@@ -143,6 +147,7 @@ test("finishing a turn returns the snapshot to idle with a fresh cursor", () => 
   const runtime = new AgentRuntimeStateManager();
   runtime.startTurn("thread-1", "turn-1");
   runtime.setContextBudget("thread-1", buildContextBudgetSnapshotFixture("active_agent_decision"));
+  runtime.setEnvironment("thread-1", buildEnvironmentFixture(true));
   runtime.emit("thread-1", {
     event: "final",
     data: { turn_id: "turn-1", status: "succeeded" },
@@ -151,6 +156,7 @@ test("finishing a turn returns the snapshot to idle with a fresh cursor", () => 
   const idle = runtime.finishTurn("thread-1");
   assert.equal(idle.active, false);
   assert.equal(idle.phase, "idle");
+  assert.equal(idle.environment, null);
   assert.equal(idle.context_budget, null);
 
   const replayedEvents: string[] = [];
@@ -178,6 +184,19 @@ test("runtime snapshots serialize and clear active context budget state", () => 
 
   const cleared = runtime.startTurn("thread-1", "turn-2");
   assert.equal(cleared.context_budget, null);
+});
+
+test("runtime snapshots store and update active environment state", () => {
+  const runtime = new AgentRuntimeStateManager();
+  const online = buildEnvironmentFixture(true);
+  const offline = buildEnvironmentFixture(false);
+
+  runtime.startTurn("thread-1", "turn-1", online);
+  assert.deepEqual(runtime.getSnapshot("thread-1").environment, online);
+
+  const updated = runtime.setEnvironment("thread-1", offline);
+  assert.deepEqual(updated.environment, offline);
+  assert.deepEqual(runtime.getSnapshot("thread-1").environment, offline);
 });
 
 test("runtime snapshots expose pending tool metadata and draft assistant client id", () => {
@@ -362,4 +381,12 @@ function buildContextBudgetSnapshotFixture(source: "active_agent_decision" | "du
     compacted_through_llm_call_id: null,
     provider_usage_estimate: null,
   };
+}
+
+function buildEnvironmentFixture(online: boolean) {
+  return buildAgentEnvironmentSnapshot({
+    budId: "bud-1",
+    online,
+    lastSeenAt: new Date("2026-05-24T10:00:00.000Z"),
+  });
 }

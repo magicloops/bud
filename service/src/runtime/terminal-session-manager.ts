@@ -8,7 +8,10 @@ import {
   terminalSessionTable
 } from "../db/schema.js";
 import { TERMINAL_PROTO_VERSION } from "../config.js";
-import type { DaemonTransportRouter } from "../transport/daemon-router.js";
+import type {
+  DaemonTransportRouter,
+  DaemonTransportStatus,
+} from "../transport/daemon-router.js";
 import { daemonTransportRouter } from "../transport/composite-daemon-router.js";
 import type { PendingCommand, ReadinessAssessment } from "../terminal/types.js";
 import { isKnownReplProgram } from "../terminal/known-programs.js";
@@ -120,6 +123,14 @@ export class TerminalSessionManager {
       store: this.sessionStore,
       closeSession: (sessionId, reason) => this.closeSession(sessionId, reason),
     });
+  }
+
+  isBudOnline(budId: string): boolean {
+    return this.daemonTransport.isBudOnline(budId);
+  }
+
+  getBudTransportStatus(budId: string): DaemonTransportStatus {
+    return this.daemonTransport.getTransportStatus(budId);
   }
 
   async ensureSessionRecordForThread(

@@ -106,6 +106,31 @@ export type ApiCreateMessageResponse = {
   message_id: string
   client_id: string
   message: ApiMessage
+  agent?: {
+    started: boolean
+    mode: ApiAgentEnvironmentMode
+    bud_status: ApiAgentBudStatus
+    stream_cursor: string
+  }
+}
+
+export type ApiAgentEnvironmentMode = 'normal' | 'bud_offline'
+
+export type ApiAgentBudStatus = 'online' | 'offline'
+
+export type ApiAgentToolAvailability = 'available' | 'unavailable'
+
+export type ApiAgentEnvironment = {
+  mode: ApiAgentEnvironmentMode
+  bud_id: string
+  bud_status: ApiAgentBudStatus
+  reason: 'bud_disconnected' | null
+  last_seen_at: string | null
+  tools: {
+    terminal: ApiAgentToolAvailability
+    web_view: ApiAgentToolAvailability
+    ask_user_questions: ApiAgentToolAvailability
+  }
 }
 
 export type ApiAskUserQuestionKind =
@@ -318,6 +343,7 @@ export type ApiAgentState = {
     updated_at: string
   } | null
   updated_at: string
+  environment?: ApiAgentEnvironment | null
   context_budget?: ApiContextBudget | null
 }
 

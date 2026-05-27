@@ -119,6 +119,7 @@ loader: async ({ params }) => {
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
+   - Tracks `/agent/state.environment` and message-send `agent.mode` so offline Bud sends remain successful UI submissions while the composer shows Bud-specific tools are unavailable
    - Shows `Compacting context...` while automatic compaction is active, appends a subtle non-transcript timeline marker on completion/failure, applies `agent.compaction_done.context_budget` immediately when present, and refreshes `/agent/state.context_budget` after successful compaction
 
 4. **Bud-Level Thread State**
@@ -206,6 +207,7 @@ activeWebView: ApiThreadWebView | null
 webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
 questionSubmitError: string | null
 contextBudget: ApiContextBudget | null
+agentEnvironment: ApiAgentEnvironment | null
 activeCompaction: ApiAgentCompactionStartEvent | null
 contextCompactionNotices: ChatTimelineNotice[]
 ```

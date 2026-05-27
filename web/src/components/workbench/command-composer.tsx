@@ -1,6 +1,6 @@
 import type { FormEvent, KeyboardEvent } from 'react'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
-import type { ApiContextBudget } from '@/lib/api-types'
+import type { ApiAgentEnvironment, ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { ContextSendButton } from './context-send-button'
 
@@ -16,6 +16,7 @@ type CommandComposerProps = {
   reasoningEffort: ReasoningLevel
   onReasoningChange: (value: ReasoningLevel) => void
   disabledReason?: string | null
+  environment?: ApiAgentEnvironment | null
   contextBudget?: ApiContextBudget | null
 }
 
@@ -31,11 +32,13 @@ export function CommandComposer({
   reasoningEffort,
   onReasoningChange,
   disabledReason = null,
+  environment = null,
   contextBudget,
 }: CommandComposerProps) {
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
   const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
   const inputDisabled = status === 'dispatching' || Boolean(disabledReason)
+  const showBudOfflineNotice = environment?.mode === 'bud_offline'
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -50,6 +53,11 @@ export function CommandComposer({
     <form onSubmit={onSubmit} className="relative border-t-4 border-black bg-background">
       {error && <div className="px-4 pt-3 text-xs text-destructive">{error}</div>}
       {disabledReason && <div className="px-4 pt-3 text-xs text-muted-foreground">{disabledReason}</div>}
+      {showBudOfflineNotice && (
+        <div className="px-4 pt-3 font-mono text-xs text-muted-foreground">
+          Bud is offline. The agent can still respond, but terminal and web-view tools are unavailable.
+        </div>
+      )}
       <textarea
         name="message"
         value={messageText}

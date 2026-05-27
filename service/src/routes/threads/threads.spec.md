@@ -35,6 +35,8 @@ Focused route-handler coverage for thread-list serialization.
 
 Thread message history, read-watermark, and create/send routes, including follow-up supersession of pending `ask_user_questions` prompts, pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available. Create-message responses include the full serialized user message so clients can replace optimistic rows with canonical timestamps and metadata.
 
+Create-message now resolves the current Bud environment before agent startup. When the Bud is offline, the route skips terminal context sync/path-context stamping that would require live Bud transport, still persists the user message, and starts an offline-aware agent turn. Successful create responses include an `agent` object with `started`, `mode`, `bud_status`, and `stream_cursor` so clients can treat Bud-offline startup as a successful send rather than a failed request.
+
 ### `messages.test.ts`
 
 Focused route-handler coverage for the thread read-watermark route.
@@ -51,6 +53,7 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 
 **Behavior**:
 - authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
+- enriches `/agent/state` with the owning Bud's current `environment` snapshot on idle and active responses
 - enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, normal-agent tool-schema overhead, and compaction threshold as the agent loop
 - `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; these events are not transcript rows and omit checkpoint summaries/replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot.
 - accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`
@@ -130,6 +133,7 @@ Regression test for the split thread-route registration surface.
 - thread model-preference updates resolve through the same owned-thread boundary and return `404` for signed-in non-owners
 - question-response submission resolves the thread owner first, loads requests by `(thread_id, question_request_id)`, stamps `answered_by_user_id`, and returns `404` for cross-thread or cross-user request ids
 - normal message creation resolves ownership first, returns duplicate `client_id` retries with the serialized existing message before side effects, then asks `AgentService` to close pending question requests as skipped before persisting and returning the new serialized user message
+- create-message derives Bud environment from the owned thread's Bud id; clients cannot supply or override the environment/Bud identity used for offline startup
 
 ---
 

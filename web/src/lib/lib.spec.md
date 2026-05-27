@@ -74,7 +74,9 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiThread` | Thread response (id, title, session info, stored/effective model selection) |
 | `ApiMessage` | Message response (`message_id`, `client_id`, role, content) |
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
-| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, `draft_assistant.client_id`, and optional `context_budget` |
+| `ApiAgentEnvironment` | Client-safe Bud environment snapshot (`normal` or `bud_offline`) plus terminal, web-view, and user-question tool availability |
+| `ApiCreateMessageResponse` | Message-create response with canonical message fields plus optional `agent` startup metadata such as mode, Bud status, and stream cursor |
+| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, environment, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, `draft_assistant.client_id`, and optional `context_budget` |
 | `ApiContextBudget` | Browser-visible context budget snapshot for the current conversation since the latest compaction checkpoint, including hard model window, Bud usable context window, output reserve, usable input window, compaction-threshold usage, authoritative estimate basis, message/tool-schema token split, provenance (`source`, `phase`, `turn_id`, `checked_at`), optional provider usage diagnostics, confidence, and unknown/failure states |
 | `ApiAgentCompactionStartEvent` / `ApiAgentCompactionDoneEvent` / `ApiAgentCompactionFailedEvent` | Agent SSE activity markers for automatic context compaction, including token counts, phase/reason, checkpoint id on success, optional post-compaction `context_budget`, and sanitized failure metadata |
 | `ApiCurrentUser` | Authenticated user/session/profile payload from `/api/me` |
@@ -102,6 +104,7 @@ Tool transcript note:
 - terminal tool rows and live pending-tool snapshots expose the effective `wait_for` value so clients can detect settled waits without elapsed-time heuristics
 - web-view tool rows may expose a `web_view` runtime payload instead of
   terminal `output`/`readiness` fields
+- message-create responses may expose `agent.mode: "bud_offline"` and `agent.stream_cursor` so routes can treat an offline Bud send as a successful assistant turn rather than a failed submit
 - user-question pending tool rows expose normalized `ask_user_questions_request_v1` payloads, and completed rows may expose `ask_user_questions_tool_result_v1` Q/A summaries
 
 ### `route-auth.ts`
