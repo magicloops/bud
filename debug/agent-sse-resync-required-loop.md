@@ -6,7 +6,8 @@
 - Runtime under investigation: local web app against local service at `localhost:3443`
 - Browser scenario: an already-open site tab repeatedly calls `GET /api/threads/:threadId/agent/stream?after=...`
 - Mobile scenario: local iOS/mobile dev client pointed at the same local service
-- Investigation mode: static code review plus an attempted in-app browser inspection; no code changes were made
+- Initial investigation mode: static code review plus an attempted in-app browser inspection; no code changes were made before the fix design was written
+- Branch resolution: the web reference client now owns stale-cursor bootstrap recovery in `useAgentStream(...)`, backed by a pure `agent-stream-recovery.ts` classifier
 
 ## Repro Steps
 1. Keep an existing Bud web thread tab open.
@@ -27,7 +28,7 @@
   - `[agent-sse] connected { threadId, after: "01KSGJKB9M7YDT9B17K9X90WEC" }`
   - `[agent-sse] error { readyState: 0, evt: Event }`
 - `readyState: 0` is `EventSource.CONNECTING`, not `EventSource.CLOSED`.
-- The current error handler logs this state, then returns without closing the source or scheduling Bud's manual reconnect because `source.readyState !== EventSource.CLOSED` in `web/src/features/threads/use-agent-stream.ts:473-481`.
+- Before the fix, the error handler logged this state, then returned without closing the source or scheduling Bud's manual reconnect because `source.readyState !== EventSource.CLOSED` in `web/src/features/threads/use-agent-stream.ts`.
 - The browser logs do not show `[agent-sse] explicit resync required`, so the client-side `agent.resync_required` listener in `web/src/features/threads/use-agent-stream.ts:414-437` is either not receiving the event or not getting a chance to run before the native reconnect cycle continues.
 - The service-restart / frontend-HMR trigger fits the cursor model: service restart loses the process-local replay buffer, while HMR or a preserved tab can keep the old in-memory `cursorRef.current`.
 
@@ -143,18 +144,26 @@ The server log is best read as a stale resume cursor being rejected correctly af
 
 For the mobile sample, the root appears to be narrower: the client starts the correct refresh work but does not serialize stream recovery behind the fresh `/agent/state` cursor. Reusing the `provided_cursor` from `agent.resync_required` is guaranteed to produce another immediate resync miss until the client discards that cursor.
 
-## Suggested Next Validation
+## Resolution Applied On This Branch
+- The web client now uses a shared bootstrap recovery helper for explicit `agent.resync_required` and native `EventSource.CONNECTING` errors with a cursor.
+- Recovery closes the source, clears the stale cursor, refreshes `/messages` plus `/agent/state`, then reconnects with the fresh `stream_cursor`.
+- Failed bootstrap recovery retries bootstrap instead of reconnecting with the rejected cursor.
+- A focused recovery classifier test covers auth-stop, bootstrap-recover, manual-reconnect, and ignore decisions.
+- Mobile still needs the serialized recovery behavior described above; the iOS handoff docs now call out that `provided_cursor` is known invalid.
+
+## Post-Fix Validation
 1. In the affected browser tab, check console logs for:
    - `[agent-sse] explicit resync required`
-   - `[agent-sse] failed to refresh bootstrap after resync`
+   - `[agent-sse] bootstrap recovery started`
+   - `[agent-sse] bootstrap recovery succeeded`
    - `[agent-sse] connected`
 2. In the Network tab, inspect one `/agent/stream?after=...` response and verify whether the `agent.resync_required` event appears in the EventStream panel before the connection closes.
 3. Watch service logs for `GET /api/threads/:id/agent/state` and `GET /api/threads/:id/messages` immediately after a resync-required response.
-4. If the browser never logs `explicit resync required`, focus on EventSource native retry and response-flush behavior.
-5. If the browser logs the resync but then logs `failed to refresh bootstrap after resync`, focus on why the bootstrap request fails and why reconnects reuse the stale cursor.
+4. Confirm the next stream URL uses the fresh `/agent/state.stream_cursor`.
+5. Confirm the same stale cursor does not repeat every few seconds.
 
 ## Possible Fix Directions
-- Client-owned quick-close recovery: when an EventSource opens and then errors in `CONNECTING` state while `cursorRef.current` is non-null, close it, refresh `/messages` + `/agent/state`, replace the cursor, and create a fresh source. This directly targets the observed open/error loop without waiting for the custom resync event.
+- Chosen: client-owned quick-close recovery. When an EventSource opens and then errors in `CONNECTING` state while `cursorRef.current` is non-null, close it, refresh `/messages` + `/agent/state`, replace the cursor, and create a fresh source. This directly targets the observed open/error loop without waiting for the custom resync event.
 - Clear stale cursor before any resync-recovery retry. If bootstrap refresh fails, the next reconnect should not reuse a cursor already known to be invalid; either pause, retry bootstrap, or reconnect live-only with clear UI state.
 - Server delivery hardening: keep the current resync contract but verify whether `agent.resync_required` is reliably visible in the browser EventStream panel. If it is not, consider an explicit flush/delayed close or a response shape such as `204` plus client-side closed/error handling for stale cursor recovery.
 - Transport ownership: replace native `EventSource` for the agent stream with a fetch-based SSE reader so the app owns reconnect timing, HTTP status handling, and stale-cursor recovery. This is larger but removes the native retry blind spot.

@@ -601,6 +601,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - Fresh attach with no cursor is live-only
 - Resume uses `after=<cursor>` primarily; `Last-Event-ID` and `last_event_id` are compatibility inputs
 - SSE frame `id:` is the opaque bounded-resume cursor shared with `/agent/state.stream_cursor`
+- If a resume cursor misses the bounded replay window, the stream emits `agent.resync_required` and closes. The supplied `provided_cursor` is known invalid for the current backend process; clients must refetch `/messages` and `/agent/state`, then reconnect with the fresh `/agent/state.stream_cursor` rather than retrying the rejected cursor.
 
 ### 3.4 Terminal SSE Stream
 
@@ -1584,6 +1585,8 @@ Resume rules:
 - bounded replay only replays events after a known cursor
 - if the cursor is too old or unknown, the route emits `agent.resync_required`
 - clients recover from replay misses by refetching `/messages` and `/agent/state`
+- clients must quarantine `agent.resync_required.provided_cursor` and suppress reconnect paths that would reuse it while bootstrap recovery is in flight
+- browser clients using native `EventSource` should also treat a `CONNECTING` error with an existing cursor as a stale-cursor recovery signal: close the native source, refresh `/messages` plus `/agent/state`, and attach only after a fresh cursor is available
 
 ### 7.2 Terminal Stream Events
 
@@ -1635,6 +1638,7 @@ Rules:
 - `terminal_output.seq` and `terminal_output.byte_offset` are monotonic per session
 - terminal history correctness comes from durable storage keyed by `(session_id, byte_offset)`
 - agent-stream replay is intentionally bounded and process-local; transcript correctness comes from `/messages` plus `/agent/state`
+- a cursor rejected by `agent.resync_required` is not a durable ordering point and must not be retried without a fresh `/agent/state` bootstrap
 - push delivery correctness comes from the durable `push_notification_outbox` plus per-thread read-watermark suppression rules rather than any in-memory stream state
 - service may ignore heartbeats, closes, or timeouts from superseded Bud sockets after a reconnect replaces the active tracker
 
@@ -1830,6 +1834,7 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
+  - `agent.resync_required.provided_cursor` is explicitly a rejected cursor; clients must refresh `/messages` plus `/agent/state` and reconnect with the fresh state cursor instead of retrying the same `after` URL
   - `/agent/state.environment` now reports the owning Bud's current availability on idle and active snapshots; Bud-offline message sends can start an LLM turn without terminal ensure, and create-message responses include `agent` startup metadata
   - Bud-offline provider calls use a Bud-specific tool denylist that removes terminal and web-view tools while keeping service-level tools such as `ask_user_questions` available by default
   - terminal and web-view transport failures during agent tools now persist structured tool results such as `BUD_DISCONNECTED`, `TIMEOUT`, `EXEC_FAILED`, or `CANCELED` instead of automatically failing the whole turn

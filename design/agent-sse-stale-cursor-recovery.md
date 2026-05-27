@@ -1,8 +1,8 @@
 # Design: Agent SSE Stale Cursor Recovery
 
-Status: Draft
+Status: Implemented for the web reference client; mobile handoff remains guidance
 
-Last updated: 2026-05-25
+Last updated: 2026-05-27
 
 ## Context
 
@@ -29,7 +29,7 @@ GET /api/threads/:id/agent/stream?after=<same-old-cursor>
 Agent SSE attach requires resync
 ```
 
-`readyState: 0` means `EventSource.CONNECTING`. The current web handler logs that error, then returns because the source is not `CLOSED`, intentionally letting the browser's native EventSource retry continue. Native retry reuses the original URL, so the stale `after` cursor is retried every few seconds and the tab never reaches the `/messages` + `/agent/state` bootstrap repair path.
+`readyState: 0` means `EventSource.CONNECTING`. Before this fix, the web handler logged that error, then returned because the source was not `CLOSED`, intentionally letting the browser's native EventSource retry continue. Native retry reused the original URL, so the stale `after` cursor was retried every few seconds and the tab never reached the `/messages` + `/agent/state` bootstrap repair path.
 
 ## Problem
 
@@ -71,6 +71,17 @@ The browser is not converging:
 Add client-owned stale-cursor recovery to `useAgentStream(...)`.
 
 The stream's explicit `agent.resync_required` event remains the preferred path. The new logic is a fallback for the observed case where native EventSource opens and then errors in `CONNECTING` state without delivering that custom event to React.
+
+## Implemented Web Shape
+
+The web reference client now implements the recommended recovery path:
+
+- `agent-stream-recovery.ts` classifies error callbacks into auth stop, bootstrap recovery, manual reconnect, or ignore.
+- `useAgentStream(...)` routes explicit `agent.resync_required` through the same bootstrap recovery helper used for native `CONNECTING` cursor errors.
+- Bootstrap recovery closes the current EventSource, clears the stale cursor, refreshes route-owned `/messages` plus `/agent/state`, stores the returned `stream_cursor`, and reconnects only when the thread/source generation is still current.
+- Recovery timers are separate from normal reconnect timers so failed bootstrap refreshes retry bootstrap instead of reconnecting with the rejected `after` cursor.
+- Thread switches, unmount, and auth redirects invalidate in-flight recovery through an epoch guard.
+- `agent-stream-recovery.test.ts` covers the pure classifier so the riskiest error-state branching remains easy to validate without browser EventSource infrastructure.
 
 ### Recovery Trigger
 
