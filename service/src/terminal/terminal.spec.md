@@ -8,6 +8,31 @@ Provides TypeScript types for terminal protocol messages and a registry of known
 
 ## Files
 
+### `freshness.ts`
+
+Internal terminal freshness and model-visible watermark helper.
+
+**Responsibilities**:
+- derive a compact readiness version from readiness facts shown to the model
+- build `message.metadata.terminal_visibility` for `terminal.send` and `terminal.observe` tool result rows
+- load the latest model-visible terminal watermark from terminal tool message metadata
+- load the latest human-origin terminal input timestamp from `terminal_session_input_log`
+- compare current session output bytes, cwd, readiness, and human input against the latest watermark
+- return one transient freshness instruction for provider context when terminal state may be stale
+
+Freshness never contacts the Bud daemon. It reads service-owned DB/runtime state and lets the model call `terminal.observe` when terminal state matters.
+
+### `freshness.test.ts`
+
+Focused tests for terminal freshness decisions and terminal visibility metadata parsing.
+
+**Current Coverage**:
+- unknown watermarks with existing terminal state produce a freshness hint
+- `terminal.send` visibility can clear the dirty hint even when no new output bytes were shown
+- cwd-only changes participate in the same watermark path
+- human terminal input after the last model-visible terminal result uses the stronger hint
+- visibility metadata is parsed only from tool message metadata
+
 ### `types.ts`
 
 Type definitions for the terminal protocol (v0.2).
@@ -228,9 +253,9 @@ export function getProgramInfo(command: string): ProgramInfo | undefined;
 
 ### `context-sync-service.ts`
 
-Pre-flight terminal context synchronization service.
+Legacy terminal context synchronization service.
 
-**Purpose**: Detects terminal state changes before user messages are processed and injects context update messages to keep the agent informed. This solves the "stale context" problem where the agent thinks it's in a REPL when it's actually back at a shell prompt.
+**Purpose**: Maintains legacy terminal state snapshots and can summarize observed state changes. Normal `POST /messages` sends no longer call `checkAndSync(...)` or run a Bud `terminal_observe` preflight; terminal freshness hints supersede that path for normal sends. `refreshSnapshot(...)` remains useful after state-changing terminal tools to keep snapshot state and pending-command cleanup aligned.
 
 **Key Method**:
 ```typescript
@@ -261,6 +286,7 @@ The Node.js REPL check runs before the generic shell `>` matcher so plain `>` pr
 **Integration Points**:
 - Clears `pendingCommands` when shell detected so inferred send-context stays aligned after REPL exit
 - `refreshSnapshot(...)` now also clears `pendingCommands` when the captured state already looks like shell, so inferred context is less likely to outlive an observed REPL exit
+- `checkAndSync(...)` is not part of the normal user-message send path; it is retained for legacy/debug flows only
 - Uses `claude-haiku-4-5` for fast, cheap LLM summaries
 - Falls back to deterministic local summaries when no provider is available or summary generation fails
 - Injects messages with `role: "system"` (transformed in provider layer for Anthropic)
@@ -289,7 +315,7 @@ if (context.mode === "repl" && context.program === "claude") {
 | `../config.js` | `TERMINAL_PROTO_VERSION` constant |
 | `../db/client.js` | Database access (context-sync-service) |
 | `../db/message-client-id.js` | UUIDv7 generation for injected system-message `client_id` values |
-| `../db/schema.js` | Table schemas (context-sync-service) |
+| `../db/schema.js` | Table schemas (context-sync-service and freshness helper) |
 | `../llm/index.js` | LLM provider registry (context-sync-service) |
 | `../runtime/terminal-session-manager.js` | capturePane access (context-sync-service) |
 

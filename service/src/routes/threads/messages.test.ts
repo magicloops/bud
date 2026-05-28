@@ -125,7 +125,6 @@ test("POST /api/threads/:threadId/read upserts the watermark when the message is
     server,
     {} as never,
     {} as never,
-    {} as never,
   );
 
   const handler = server.routes.get("POST /api/threads/:threadId/read");
@@ -204,7 +203,6 @@ test("POST /api/threads/:threadId/read returns updated=false for stale watermark
     server,
     {} as never,
     {} as never,
-    {} as never,
   );
 
   const handler = server.routes.get("POST /api/threads/:threadId/read");
@@ -268,7 +266,6 @@ test("GET /api/threads/:threadId/messages returns intermediate assistant phase m
   const server = createServer();
   await registerThreadMessageRoutes(
     server,
-    {} as never,
     {} as never,
     {} as never,
   );
@@ -360,7 +357,6 @@ test("POST /api/threads/:threadId/messages rejects invalid explicit reasoning be
   const server = createServer();
   await registerThreadMessageRoutes(
     server,
-    {} as never,
     {} as never,
     {} as never,
   );

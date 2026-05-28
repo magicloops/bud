@@ -1,5 +1,9 @@
 # Design: Terminal Context Synchronization
 
+Status: Superseded for normal user-message sends by [Terminal Freshness Hints](./terminal-freshness-hints.md).
+
+The pre-flight context check described here is no longer on the common `POST /api/threads/:thread_id/messages` path. The service now avoids the Bud `terminal_observe` roundtrip before the primary agent LLM call and instead injects a transient freshness hint when service-side terminal state may be stale. `ContextSyncService` remains available for post-terminal-tool snapshot refresh and legacy/debug uses, but normal sends should not call `checkAndSync(...)`.
+
 ## Problem Statement
 
 When a user sends a new message to the Bud Agent, the agent's understanding of terminal state may be stale. The conversation history contains tool results with context like `{ mode: "repl", program: "claude" }`, but that context reflects the state at the time of the last tool call - not the current state.

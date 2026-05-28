@@ -99,7 +99,7 @@ Ownership-focused thread submodules:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
-| `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with context sync and cached cwd path context when available), triggers agent |
+| `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with cached cwd path context when available), triggers agent |
 | `POST` | `/api/threads/:thread_id/read` | Advance the viewer's read watermark to a specific owned transcript row |
 | `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot plus context budget snapshot for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
@@ -254,16 +254,16 @@ Empty response at the beginning of history:
 }
 ```
 
-**Context Sync Flow** (POST /messages):
-Before creating user message, validates the selected LLM model/reasoning pair and then checks for terminal state changes:
+**Create Message Flow** (POST /messages):
+Before creating a user message, validates the selected LLM model/reasoning pair without observing the Bud terminal:
 1. Resolve explicit `model` / `reasoning_effort`, otherwise use the stored thread selection, otherwise the service default (`gpt-5.5` + `low`)
-2. Return `400 invalid_model` or `400 invalid_reasoning_effort` before duplicate handling, context sync, message insert, thread preference persistence, or agent start when the submitted selection is unsupported
+2. Return `400 invalid_model` or `400 invalid_reasoning_effort` before duplicate handling, message insert, thread preference persistence, or agent start when the submitted selection is unsupported
 3. Duplicate owned `client_id` retries return the existing user message without mutating the thread preference
 4. Fresh explicit selections, missing old thread selections, and invalid stored selections update `thread.model_id` / `thread.reasoning_effort` to the resolved concrete pair
-5. If thread has active terminal session and no active agent run
-6. Call `contextSyncService.checkAndSync(sessionId, threadId, ownerUserId)`
-7. If state changed, a system message is injected before the user message
-8. This keeps the agent informed about terminal state transitions (e.g., REPL exit)
+5. Resolve the Bud environment and stamp cached terminal cwd path context only when normal online mode has cached cwd metadata
+6. Persist the user message and start the agent turn
+7. The agent loop computes terminal freshness from DB/runtime state before provider calls and injects a transient hint when terminal state may be stale
+8. Normal sends no longer call `contextSyncService.checkAndSync(...)`, `terminal_observe`, or the context-summary LLM before the primary agent LLM call
 
 **First-Message Title Flow** (POST /messages):
 - after the durable user row is written and the agent turn is successfully started, the route launches a fire-and-forget thread-title task

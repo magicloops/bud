@@ -13,6 +13,13 @@ import type {
 } from "../runtime/terminal-session-manager.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
+import {
+  buildTerminalFreshnessInstruction,
+  buildTerminalVisibilityMetadata,
+  resolveTerminalFreshness,
+  type TerminalFreshnessSnapshot,
+  type TerminalVisibilityMetadata,
+} from "../terminal/freshness.js";
 import type {
   AssistantMessagePhase,
   CanonicalContentBlock,
@@ -36,6 +43,7 @@ import { AgentModelRunner } from "./model-runner.js";
 import {
 	  buildToolExecutionTiming,
 	  type ExecutedAgentTool,
+	  type ExecutedTerminalTool,
 	  type UserQuestionToolCallDirective,
 	  isBudDisconnectedTransportError,
 	  isTerminalToolDirective,
@@ -481,10 +489,16 @@ export class AgentService {
 	        environment = refreshedEnvironment.snapshot;
 	        this.runtime.setEnvironment(threadId, environment);
 	        this.runtime.markThinking(threadId);
+	        const terminalFreshness = await this.resolveTerminalFreshnessForProviderStep({
+	          threadId,
+	          currentSessionId,
+	          environment,
+	        });
 	        const modelTools = resolveAgentToolsForEnvironment(environment);
-	        const conversationForModel = applyEnvironmentInstruction(
+	        const conversationForModel = applyRuntimeInstructions(
 	          conversation,
 	          environment,
+	          terminalFreshness,
 	        );
 	        let modelResult: {
 	          response: CanonicalResponse;
@@ -528,7 +542,7 @@ export class AgentService {
 	          modelResult = await this.modelRunner.invokeModel(
 	            threadId,
 	            turnId,
-	            applyEnvironmentInstruction(conversation, environment),
+	            applyRuntimeInstructions(conversation, environment, terminalFreshness),
 	            model,
 	            modelReasoning,
 	            controller.signal,
@@ -686,6 +700,15 @@ export class AgentService {
 	                ? await this.getPathContextForSession(currentSessionId)
 	                : null
 	              : null;
+	            let terminalVisibility: TerminalVisibilityMetadata | null = null;
+	            if (isTerminalToolDirective(execution.directive) && currentSessionId) {
+	              const terminalExecution = execution as ExecutedTerminalTool;
+	              terminalVisibility = await this.buildTerminalVisibilityForToolResult(
+	                currentSessionId,
+	                terminalExecution.directive.tool === "terminal.send" ? "terminal_send" : "terminal_observe",
+	                terminalExecution.result.readiness,
+	              );
+	            }
             const { payload, message } = await this.transcriptWriter.recordToolResult({
               threadId,
               turnId,
@@ -697,6 +720,7 @@ export class AgentService {
               llmCallId,
               pathContextBefore,
               pathContextAfter,
+              terminalVisibility,
             });
 
             await recordLlmToolResultItem({
@@ -1116,6 +1140,44 @@ export class AgentService {
     return manager.getPathContextForSession?.(sessionId) ?? null;
   }
 
+  private async resolveTerminalFreshnessForProviderStep(args: {
+    threadId: string;
+    currentSessionId: string | null;
+    environment: AgentEnvironmentSnapshot;
+  }): Promise<TerminalFreshnessSnapshot | null> {
+    if (args.environment.mode !== "normal" || !args.currentSessionId) {
+      return null;
+    }
+
+    const session = await this.terminalSessionManager.getSession(args.currentSessionId);
+    return resolveTerminalFreshness({
+      threadId: args.threadId,
+      session,
+      currentReadiness: session
+        ? this.terminalSessionManager.getLatestReadiness(session.sessionId)
+        : null,
+    });
+  }
+
+  private async buildTerminalVisibilityForToolResult(
+    sessionId: string,
+    source: TerminalVisibilityMetadata["source"],
+    readiness: Record<string, unknown> | null,
+  ): Promise<TerminalVisibilityMetadata | null> {
+    const session = await this.terminalSessionManager.getSession(sessionId);
+    if (!session) {
+      return null;
+    }
+
+    return buildTerminalVisibilityMetadata({
+      sessionId,
+      source,
+      outputLogBytes: session.outputLogBytes,
+      cwd: session.cwd,
+      readiness,
+    });
+  }
+
   private debug(message: string, meta?: Record<string, unknown>): void {
     if (!this.debugEnabled) {
       return;
@@ -1450,24 +1512,29 @@ function applyOpenAIAssistantPhaseFallback(
   });
 }
 
-function applyEnvironmentInstruction(
+function applyRuntimeInstructions(
   conversation: CanonicalMessage[],
   environment: AgentEnvironmentSnapshot,
+  terminalFreshness: TerminalFreshnessSnapshot | null,
 ): CanonicalMessage[] {
-  const instruction = buildAgentEnvironmentInstruction(environment);
-  if (!instruction) {
+  const instructions = [
+    buildAgentEnvironmentInstruction(environment),
+    buildTerminalFreshnessInstruction(terminalFreshness),
+  ].filter((instruction): instruction is string => Boolean(instruction));
+
+  if (instructions.length === 0) {
     return conversation;
   }
 
-  const environmentMessage: CanonicalMessage = {
+  const runtimeMessages: CanonicalMessage[] = instructions.map((instruction) => ({
     role: "system",
     content: instruction,
-  };
+  }));
   const [first, ...rest] = conversation;
   if (first?.role === "system") {
-    return [first, environmentMessage, ...rest];
+    return [first, ...runtimeMessages, ...rest];
   }
-  return [environmentMessage, ...conversation];
+  return [...runtimeMessages, ...conversation];
 }
 
 function formatTerminalPathContext(pathContext: TerminalPathContext | null): string | null {

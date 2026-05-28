@@ -149,6 +149,7 @@ Thread-scoped terminal session composition root.
 | `getSession(sessionId)` | Get by ID |
 | `getPathContextForSession(sessionId)` | Return cached daemon cwd as `terminal_cwd_v1` metadata when available |
 | `getPathContextForThread(threadId)` | Return cached daemon cwd for the active thread session without querying Bud |
+| `getLatestReadiness(sessionId)` | Return the latest cached readiness assessment without querying Bud |
 | `ensureSession(sessionId)` | Send `terminal_ensure` to bud |
 | `sendInput(sessionId, data, options)` | Send input with optional readiness waiting and user audit metadata |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
@@ -219,6 +220,7 @@ These request-response paths replace the previous overloaded `terminal_run` / `t
 - `sendInteraction()` now treats interactive input as a single gesture and emits canonical `key` values such as `ctrl+c`; the older `interaction.keys` array is accepted only as a one-entry compatibility alias
 - `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, readiness, optional `hostCwd`, and conservative timeout summaries
 - terminal result `hostCwd` values update `terminal_session.cwd`; message writers read the cached value later and do not query the daemon when stamping message metadata
+- terminal freshness compares cached output bytes, cwd, and readiness through service-owned DB/runtime state before provider calls; this path never sends a daemon observe request
 - pending send and observe rejections now log request id, wait mode, elapsed time, latest output offset, output event count, and current readiness summary for long-wait diagnostics
 - `observeTerminal(waitFor: "settled")` uses the same one-hour settled budget as `sendInteraction()`, while non-settled observe modes keep the shorter default or trusted explicit timeout
 - `observeTerminal()` now gives the daemon timeout budget plus a local `1000ms` grace window so normal results do not orphan as quickly

@@ -100,6 +100,7 @@ pending → creating → ready ↔ active → idle → closed
 bud/
 ├── package.json            # Repo-root developer script shim, including local HTTPS bootstrap commands
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
+├── PR_SUMMARY.md           # Current PR handoff summary for the terminal freshness implementation
 ├── deploy/                 # Checked-in deployment artifacts such as the Cloudflare front-door Worker
 ├── git_loc_breakdown.py    # Repo-wide LOC analyzer that buckets code, config, markdown, and other tracked text while honoring Git ignore rules
 ├── test_git_loc_breakdown.py # Regression tests for the LOC analyzer's category and summary accounting
@@ -299,8 +300,9 @@ Current service ownership split:
 - `conversation-loader` builds canonical transcript context from persisted rows and latest completed context checkpoint boundaries
 - `model-runner` owns provider resolution, reasoning normalization, draft streaming, and tool-call parsing
 - `context-compactor` summarizes old transcript spans into durable checkpoint replacement history before oversized requests fail, or after one normalized provider context-window error
+- `terminal/freshness` derives service-side terminal freshness hints from DB/runtime state without contacting the Bud before provider calls
 - `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
-- `transcript-writer` owns durable assistant/tool writes plus runtime emission boundaries
+- `transcript-writer` owns durable assistant/tool writes, terminal visibility metadata, plus runtime emission boundaries
 
 ### 3. Terminal Readiness Detection
 
@@ -555,6 +557,13 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/bud-offline-mode/bud-offline-mode.spec.md](./plan/bud-offline-mode/bud-offline-mode.spec.md) | Folder spec for the Bud offline-mode implementation plan, covering offline-aware agent turns, environment state, tool filtering, transport-error tool results, client composer status, and validation |
 | [plan/bud-offline-mode/implementation-spec.md](./plan/bud-offline-mode/implementation-spec.md) | Phased implementation plan for treating Bud availability as an agent environment so offline sends can still produce assistant responses with Bud-specific tools unavailable |
 | [plan/bud-offline-mode/validation-checklist.md](./plan/bud-offline-mode/validation-checklist.md) | Validation checklist for Bud offline mode, covering offline startup, transport recovery, composer UX, manual restart scenarios, and docs/spec alignment |
+| [plan/terminal-freshness/terminal-freshness.spec.md](./plan/terminal-freshness/terminal-freshness.spec.md) | Folder spec for the terminal freshness hints plan, replacing default request-time terminal observes with internal freshness watermarks and transient model hints |
+| [plan/terminal-freshness/implementation-spec.md](./plan/terminal-freshness/implementation-spec.md) | Phased implementation plan for skipping pre-LLM terminal context sync by default, adding model-visible terminal watermarks, and applying transient freshness hints |
+| [plan/terminal-freshness/phase-1-disable-preflight-and-freshness-hint-plumbing.md](./plan/terminal-freshness/phase-1-disable-preflight-and-freshness-hint-plumbing.md) | Initial phase for removing the normal-send preflight observe path and adding internal freshness-hint plumbing |
+| [plan/terminal-freshness/phase-2-terminal-visibility-watermarks.md](./plan/terminal-freshness/phase-2-terminal-visibility-watermarks.md) | Watermark phase for persisting terminal visibility metadata and deriving clean/dirty freshness from output, cwd, readiness/context, status, and human input |
+| [plan/terminal-freshness/phase-3-cleanup-metrics-and-validation.md](./plan/terminal-freshness/phase-3-cleanup-metrics-and-validation.md) | Finalization phase for retiring normal-send context-sync summaries, adding internal metrics, updating specs, and validating behavior |
+| [plan/terminal-freshness/progress-checklist.md](./plan/terminal-freshness/progress-checklist.md) | Running implementation checklist for terminal freshness hints |
+| [plan/terminal-freshness/validation-checklist.md](./plan/terminal-freshness/validation-checklist.md) | Manual and automated validation checklist for terminal freshness hints |
 | [plan/offline-bud-message-send-preflight.md](./plan/offline-bud-message-send-preflight.md) | Phase plan for fixing offline-Bud message sends by rejecting known-offline fresh sends before durable message side effects, while preserving an explicit post-insert race fallback when agent startup loses transport |
 | [plan/llm-models/implementation-spec.md](./plan/llm-models/implementation-spec.md) | Phased implementation plan for centralizing Bud's model catalog, adding the Opus 4.6/4.7 and GPT-5.4/GPT-5.5 model set, and making reasoning controls provider/model-specific |
 | [plan/openai-phases/openai-phases.spec.md](./plan/openai-phases/openai-phases.spec.md) | Folder spec for preserving OpenAI Responses assistant message `phase` values across Bud's manual replay path while keeping Anthropic behavior unchanged |
@@ -761,6 +770,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/conversation-context-budget-meter.md](./design/conversation-context-budget-meter.md) | Draft design for showing users remaining model-visible context before automatic compaction, using the same compaction threshold plus tiered token-counting estimates |
 | [design/usable-context-window-and-output-reserve.md](./design/usable-context-window-and-output-reserve.md) | Draft design for separating provider hard context windows from Bud usable context caps, subtracting output reserves, and deriving compaction thresholds from usable input budget |
 | [design/offline-bud-agent-turns.md](./design/offline-bud-agent-turns.md) | Design for treating Bud availability as an agent-turn environment so offline sends can still produce LLM-only assistant responses while Bud-specific terminal, proxy, file, and web-view tools are unavailable |
+| [design/terminal-freshness-hints.md](./design/terminal-freshness-hints.md) | Implemented design for replacing default request-time terminal context sync with cheap terminal freshness hints, letting the model call `terminal.observe` only when current terminal state matters |
 | [design/mobile-context-compaction-handoff.md](./design/mobile-context-compaction-handoff.md) | Mobile handoff for implementing context budget UI and automatic compaction stream markers without exposing checkpoint internals or changing the visible transcript |
 | [design/llm-model-catalog-and-reasoning-controls.md](./design/llm-model-catalog-and-reasoning-controls.md) | Design sketch for centralizing Bud's LLM model catalog, making reasoning controls provider/model-specific, and planning the Opus 4.6/4.7 plus GPT-5.4/GPT-5.5 rollout |
 | [design/model-preferences-and-thread-overrides.md](./design/model-preferences-and-thread-overrides.md) | Design for persisting model/reasoning selection at the thread level, defaulting new work to GPT-5.5 low, and recording effective model metadata on new turn messages |
@@ -789,10 +799,11 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/removing-terminal-interrupt-in-favor-of-terminal-send.md](./design/removing-terminal-interrupt-in-favor-of-terminal-send.md) | Design review of whether `terminal.interrupt` should be removed from the model-facing contract, arguing that interrupts belong on the general `terminal.send` path and that browser interrupt UX can survive as a thin wrapper over that same send surface |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries, auth/env placeholders, and hosted web-view proxy env placeholders |
 | [deploy/cloudflare/bud-front-door-worker.js](./deploy/cloudflare/bud-front-door-worker.js) | Cloudflare Worker module that forwards service-owned app paths and `*.bud.show` web-view proxy traffic to `bud-service` while preserving forwarded host/proto/port context and the proxy edge secret |
+| [PR_SUMMARY.md](./PR_SUMMARY.md) | Current PR handoff summary for the terminal freshness implementation |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
 | [design/](./design/) | Design documents |
 
 ---
 
-*Last updated: 2026-05-27*
+*Last updated: 2026-05-28*

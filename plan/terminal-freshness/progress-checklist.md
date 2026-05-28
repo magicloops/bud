@@ -1,0 +1,22 @@
+# Progress Checklist: Terminal Freshness Hints
+
+- [x] Create the plan folder, parent implementation spec, phase docs, and checklist docs
+- [x] Add the new plan folder to the root `bud.spec.md` documentation index
+- [x] Phase 1: remove/bypass normal-send preflight context sync
+- [x] Phase 1: add internal terminal freshness snapshot type
+- [x] Phase 1: compute first-pass freshness without daemon access
+- [x] Phase 1: pass freshness into provider context
+- [x] Phase 1: inject transient freshness hint only when online terminal state may be stale
+- [x] Phase 1: prove offline Bud turns do not receive terminal freshness hints
+- [x] Phase 1: add focused tests for hint application and watermark decisions
+- [x] Phase 2: persist `terminal_visibility` metadata for `terminal.observe`
+- [x] Phase 2: persist `terminal_visibility` metadata for `terminal.send`
+- [x] Phase 2: advance watermark for no-visible-output sends that expose terminal facts
+- [x] Phase 2: include output bytes, cwd, readiness/context, status, and human input in unified dirty decisions
+- [ ] Phase 2: add ownership-scoped freshness lookup tests
+- [x] Phase 3: retire or quarantine old context-sync summary injection for normal sends
+- [ ] Phase 3: add internal metrics/logging for freshness behavior
+- [x] Phase 3: update design docs and service specs
+- [x] Phase 3: run automated verification
+- [ ] Phase 3: run manual validation checklist
+- [ ] Record any cache-table or classifier follow-up explicitly if validation shows it is needed

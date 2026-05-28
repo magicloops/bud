@@ -174,7 +174,6 @@ export async function buildServer(): Promise<FastifyInstance> {
     server,
     agentService,
     agentRuntime,
-    contextSyncService,
     threadTitleService,
     terminalSessionManager,
   );
