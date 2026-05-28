@@ -33,9 +33,11 @@ Focused route-handler coverage for thread-list serialization.
 
 ### `messages.ts`
 
-Thread message history, read-watermark, and create/send routes, including follow-up supersession of pending `ask_user_questions` prompts, pre-flight context sync, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available. Create-message responses include the full serialized user message so clients can replace optimistic rows with canonical timestamps and metadata.
+Thread message history, read-watermark, and create/send routes, including follow-up supersession of pending `ask_user_questions` prompts, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available. Create-message responses include the full serialized user message so clients can replace optimistic rows with canonical timestamps and metadata.
 
-Create-message now resolves the current Bud environment before agent startup. When the Bud is offline, the route skips terminal context sync/path-context stamping that would require live Bud transport, still persists the user message, and starts an offline-aware agent turn. Successful create responses include an `agent` object with `started`, `mode`, `bud_status`, and `stream_cursor` so clients can treat Bud-offline startup as a successful send rather than a failed request.
+Create-message now resolves the current Bud environment before agent startup, but it does not run preflight context sync or `terminal_observe` before persisting the user message. When the Bud is offline, the route skips cached terminal path-context stamping, still persists the user message, and starts an offline-aware agent turn. Successful create responses include an `agent` object with `started`, `mode`, `bud_status`, and `stream_cursor` so clients can treat Bud-offline startup as a successful send rather than a failed request.
+
+Terminal freshness is handled inside `AgentService` before provider calls: if DB/runtime state shows terminal output, cwd, readiness, or human input may be newer than the latest model-visible terminal tool result, the provider request receives a transient freshness hint telling the model to call `terminal.observe` when terminal state matters.
 
 ### `messages.test.ts`
 

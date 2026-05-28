@@ -15,6 +15,7 @@ import {
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
 import type { AssistantMessagePhase, ModelSelectionSource, ReasoningLevel } from "../llm/index.js";
 import type { TerminalPathContext } from "../runtime/terminal-session-manager.js";
+import type { TerminalVisibilityMetadata } from "../terminal/freshness.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 
 type PersistedAgentMessage = {
@@ -103,6 +104,7 @@ export class AgentTranscriptWriter {
     llmCallId?: string | null;
     pathContextBefore?: TerminalPathContext | null;
     pathContextAfter?: TerminalPathContext | null;
+    terminalVisibility?: TerminalVisibilityMetadata | null;
   }): Promise<{ payload: Record<string, unknown>; message: SerializedAgentMessage; cursor: string }> {
     const {
       threadId,
@@ -115,6 +117,7 @@ export class AgentTranscriptWriter {
       llmCallId,
       pathContextBefore,
       pathContextAfter,
+      terminalVisibility,
     } = args;
     const serializedTiming = serializeToolExecutionTiming(timing);
     const persistedMetadata = {
@@ -124,6 +127,7 @@ export class AgentTranscriptWriter {
       ...(llmCallId ? { llm_call_id: llmCallId } : {}),
       ...(pathContextBefore ? { path_context_before: pathContextBefore } : {}),
       ...(pathContextAfter ? { path_context_after: pathContextAfter } : {}),
+      ...(terminalVisibility ? { terminal_visibility: terminalVisibility } : {}),
     };
     const [toolMessage] = await db
       .insert(messageTable)

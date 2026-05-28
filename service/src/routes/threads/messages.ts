@@ -1,12 +1,11 @@
 import type { FastifyInstance } from "fastify";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { AgentService, ThreadTitleService } from "../../agent/index.js";
 import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { generateMessageClientId } from "../../db/message-client-id.js";
 import { recordThreadMessageMetadata } from "../../db/thread-metadata.js";
-import { messageTable, terminalSessionTable, threadReadStateTable, threadTable } from "../../db/schema.js";
-import type { ContextSyncService } from "../../terminal/context-sync-service.js";
+import { messageTable, threadReadStateTable, threadTable } from "../../db/schema.js";
 import { isMessageNewerThanWatermark } from "../../notifications/index.js";
 import { resolveEffectiveModelSelection } from "../../llm/index.js";
 import {
@@ -29,7 +28,6 @@ import {
 export async function registerThreadMessageRoutes(
   server: FastifyInstance,
   agentService: AgentService,
-  contextSyncService: ContextSyncService,
   threadTitleService: ThreadTitleService,
 ): Promise<void> {
   server.post("/api/threads/:threadId/read", async (request, reply) => {
@@ -244,43 +242,6 @@ export async function registerThreadMessageRoutes(
     }
 
     const environment = await agentService.getEnvironmentForBud(thread.budId);
-    const session = await db.query.terminalSessionTable.findFirst({
-      where: and(
-        eq(terminalSessionTable.threadId, params.threadId),
-        isNull(terminalSessionTable.closedAt)
-      ),
-      columns: { sessionId: true }
-    });
-
-    if (session && environment.mode === "normal") {
-      const isAgentActive = agentService.isThreadActive(params.threadId);
-
-      if (!isAgentActive) {
-        try {
-          const contextUpdate = await contextSyncService.checkAndSync(
-            session.sessionId,
-            params.threadId,
-            ownerUserId,
-          );
-
-          if (contextUpdate) {
-            server.log.info(
-              { threadId: params.threadId, update: contextUpdate },
-              "Context sync: injected state change message"
-            );
-          }
-        } catch (err) {
-          server.log.warn({ threadId: params.threadId, err }, "Context sync failed");
-        }
-      } else {
-        server.log.debug({ threadId: params.threadId }, "Skipping context sync - agent active");
-      }
-    } else if (session) {
-      server.log.debug(
-        { threadId: params.threadId, mode: environment.mode },
-        "Skipping context sync - bud environment unavailable",
-      );
-    }
 
     const pathContext = environment.mode === "normal"
       ? await agentService.getPathContextForThread(thread.threadId)

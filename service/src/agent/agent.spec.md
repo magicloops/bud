@@ -6,9 +6,10 @@ Agent orchestration layer for AI-assisted terminal interactions using the LLM pr
 
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
 1. Builds conversation context from thread history (canonical format)
-2. Calls the LLM provider (OpenAI, Anthropic) via `providerRegistry`
-3. Executes terminal tool calls on the connected bud daemon, product web-view tool calls through service-side proxied-site routes/helpers, and structured `ask_user_questions` pauses through the thread response route
-4. Loops until a final response or max steps reached
+2. Resolves the current Bud environment plus any service-side terminal freshness hint for the provider request
+3. Calls the LLM provider (OpenAI, Anthropic) via `providerRegistry`
+4. Executes terminal tool calls on the connected bud daemon, product web-view tool calls through service-side proxied-site routes/helpers, and structured `ask_user_questions` pauses through the thread response route
+5. Loops until a final response or max steps reached
 
 ## Files
 
@@ -181,7 +182,7 @@ When the current agent environment is `bud_offline`, provider calls use a Bud-sp
 **Constructor dependencies**:
 - `TerminalSessionManager` (thread-scoped tmux sessions)
 - `AgentRuntimeStateManager` (authoritative `/agent/state` snapshots plus bounded agent-stream resume)
-- optional `ContextSyncService` for post-send refresh after state-changing tool calls
+- optional `ContextSyncService` for post-terminal-tool snapshot refresh after state-changing tool calls
 - logger and debug flags
 
 **Internal collaborators**:
@@ -193,6 +194,7 @@ When the current agent environment is `bud_offline`, provider calls use a Bud-sp
 - `AgentContextCompactor`
 - `AgentCancellationRegistry`
 - `AgentUserQuestionRegistry`
+- terminal freshness helpers from `terminal/freshness.ts`
 
 **Key methods**:
 
@@ -204,7 +206,7 @@ When the current agent environment is `bud_offline`, provider calls use a Bud-sp
 | `submitQuestionResponse(...)` | Validate an owned question response, resolve a live waiter, or persist a fallback user message and start a follow-up turn |
 | `supersedePendingUserQuestionsForFollowUp(...)` | Close pending question requests as skipped before a normal follow-up message starts a fresh turn |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
-| `isThreadActive(threadId)` | Check if thread has active agent run (used by ContextSyncService) |
+| `isThreadActive(threadId)` | Check if thread has active agent run |
 
 **Agent Loop Flow**:
 ```
@@ -218,6 +220,8 @@ startUserMessage()
            └─► LOOP (max steps):
                   │
                   ├─► maybe compact/retry if provider reports context-window overflow
+                  ├─► refresh Bud environment and compute terminal freshness from DB/runtime state
+                  ├─► inject transient offline/freshness instructions when applicable
                   ├─► modelRunner.invokeModel()
                   │
                   ├─► emit agent.message_start / delta / done (text responses only)
@@ -268,6 +272,8 @@ startUserMessage()
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before terminal session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
 - If the resolved environment is `bud_offline`, startup skips context sync, path context, and terminal ensure, then runs the provider with a request-time offline instruction plus the Bud-specific tool denylist. The user message still succeeds so the assistant can explain recovery or ask follow-up questions without terminal/web-view tools.
 - Active turns refresh the Bud environment before provider calls and before Bud-specific tool dispatch, allowing a reconnect during a turn to restore normal tool availability on a later step.
+- Normal online provider calls compute terminal freshness from service-side DB/runtime state only; they do not run preflight `terminal.observe`. Dirty output bytes, cwd, readiness, or human input add one transient instruction telling the model to call `terminal.observe` before terminal-dependent claims/actions.
+- Offline provider calls suppress terminal freshness hints because terminal tools are unavailable and the offline environment instruction is the stronger constraint.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent uses the settled/default result or timeout delta and avoids claiming program progress when no visible delta appears.
 - `terminal.send` is now modeled as one gesture at a time: `text` with optional `submit`, or one semantic `key` such as `ctrl+c`.
@@ -280,6 +286,7 @@ startUserMessage()
 - client-facing tool-call args now include the effective `wait_for` mode even when the model omitted it, so web/mobile can detect settled terminal waits directly from `agent.tool_call.args` or `/agent/state.pending_tool.args`.
 - human terminal interrupts reject the currently pending terminal wait as `interrupted`; `TerminalToolExecutor` turns that into a conservative tool result with `readiness.trigger: "error"` so the model regains control without treating the original command as completed.
 - model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
+- terminal tool rows persist `message.metadata.terminal_visibility` with the model-visible output byte watermark, cwd, readiness version, timestamp, session id, and source (`terminal_send` or `terminal_observe`); the canonical tool `message.content` remains the replay payload and does not include this metadata-only watermark.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
 - `web_view.open`, `web_view.close`, and `web_view.list` are product-level tools backed by owner-scoped proxied-site helpers; they do not expose viewer grants, cookies, or daemon stream ids to the model.
 - `web_view.open` keeps `target_host` optional for simple port-only requests, but the model-facing schema and prompt define the omitted-host default as `localhost` and instruct the model to preserve explicit user-provided `localhost`, `127.0.0.1`, or `::1` hosts exactly.
@@ -431,6 +438,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
 - add the resolved `model`, `reasoning_effort`, and `model_selection_source` to assistant/tool `message.metadata`
 - add cached cwd path context to assistant rows and before/after path context to terminal tool rows
+- add metadata-only terminal visibility watermarks to terminal tool rows for later freshness decisions
 - emit web-view tool results with a `web_view` runtime payload instead of terminal `output` / `readiness` fields
 - emit user-question tool results with a `user_questions` runtime payload instead of terminal `output` / `readiness` fields
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
@@ -475,6 +483,7 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 - emitted intermediate assistant `agent.message` payloads include the serialized commentary phase metadata
 - canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
 - canonical assistant/tool rows receive cached cwd path context metadata when available
+- terminal tool rows can persist metadata-only `terminal_visibility` watermarks without changing replay content
 - pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`
 - completed `ask_user_questions` results persist Q/A payload rows and emit `user_questions` runtime data
 
@@ -680,6 +689,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../runtime/terminal-session-manager.js` | Thread-scoped terminal sessions |
 | `../runtime/agent-runtime-state.js` | Agent runtime snapshot + bounded-resume emission |
 | `../terminal/types.js` | Readiness hints types |
+| `../terminal/freshness.js` | Terminal freshness hinting and terminal visibility watermark helpers |
 | `./conversation-loader.js` | Canonical transcript/context assembly |
 | `./context-budget.js` | Automatic compaction budget estimates and thresholds |
 | `./context-budget-state.js` | Shared client-safe budget snapshot and compaction-decision builder |

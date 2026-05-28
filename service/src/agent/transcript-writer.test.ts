@@ -132,6 +132,15 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     host_cwd: "/Users/adam/bud/service",
     captured_at: "2026-04-21T19:00:04.000Z",
   } as const;
+  const terminalVisibility = {
+    schema: "terminal_visibility_v1",
+    session_id: "sess_test",
+    observed_output_log_bytes: 128,
+    observed_cwd: "/Users/adam/bud/service",
+    observed_readiness_version: "ready|0.90|settled|shell|looks_like_prompt",
+    observed_at: "2026-04-21T19:00:04.250Z",
+    source: "terminal_send",
+  } as const;
 
   const emittedToolCall = writer.emitToolCall(
     "thread-1",
@@ -157,6 +166,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     },
     pathContextBefore,
     pathContextAfter,
+    terminalVisibility,
   });
 
   assert.equal(insertedValues.length, 1);
@@ -171,6 +181,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     model_selection_source: "explicit_request",
     path_context_before: pathContextBefore,
     path_context_after: pathContextAfter,
+    terminal_visibility: terminalVisibility,
   });
 
   assert.equal(events.length, 2);
@@ -219,6 +230,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     model_selection_source: "explicit_request",
     path_context_before: pathContextBefore,
     path_context_after: pathContextAfter,
+    terminal_visibility: terminalVisibility,
   });
 
   assert.deepEqual(result.payload, execution.payload);
@@ -232,6 +244,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     model_selection_source: "explicit_request",
     path_context_before: pathContextBefore,
     path_context_after: pathContextAfter,
+    terminal_visibility: terminalVisibility,
   });
 });
 

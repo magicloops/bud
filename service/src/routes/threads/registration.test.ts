@@ -35,7 +35,6 @@ test("split thread route modules register the expected unique endpoint set", asy
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
   );
   await registerThreadTerminalRoutes(server, {} as never, {} as never);
 
