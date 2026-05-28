@@ -35,6 +35,10 @@
 - **Schema deploy parity (`db:migrate` vs `db:push`)**
   - Align staging/production schema rollout with the actual repo workflow: either generate and commit Drizzle SQL migrations for deploy-time `pnpm db:migrate`, or intentionally switch deploys to the audited `pnpm db:push` wrapper.
   - Capture the current `message.client_id` staging gap as the concrete example: predeploy `pnpm db:migrate` ran, but no generated migration existed, so staging never received the new column before the backfill script ran.
+- **Send-message client_id idempotency hardening**
+  - Follow up on [review/send-message-client-id-idempotency-review.md](./review/send-message-client-id-idempotency-review.md).
+  - Add strict duplicate validation so reused `client_id` requests with conflicting text/cwd/request fingerprint return `409` without side effects.
+  - Close the inserted-but-not-started gap by adding a durable send/agent-start marker or equivalent recovery path, so a retry after a lost HTTP response can restart or resume the assistant turn exactly once.
 - **Cancel vs interrupt contract**
   - Decide and implement the product/API contract for agent cancel vs terminal interrupt so web and mobile do not need to guess whether "stop" means aborting the LLM loop, sending Ctrl+C to the terminal, or both.
 - **Bud base dir + local identity mode**
