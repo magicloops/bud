@@ -148,7 +148,7 @@ Thin agent orchestrator over the extracted conversation/model/tool/transcript ow
 
 The prompt/tool-definition ownership now lives in the extracted modules:
 - `conversation-loader.ts` owns the canonical Bud Agent system prompt used for every turn
-- `tool-definitions.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, `web_view_list`, and `ask_user_questions` JSON Schema definitions passed to providers, plus the normal agent-turn tool-schema token estimate
+- `tool-definitions.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, `web_view_list`, and `ask_user_questions` JSON Schema definitions passed to providers, the Bud-offline tool-catalog resolver, plus the normal agent-turn tool-schema token estimate
 
 **System Prompt Highlights**:
 - tool-calling guidance for `terminal.send` and `terminal.observe`
@@ -174,6 +174,8 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 
 Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. The lower service/daemon parsers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where needed for replay and older clients.
 
+When the current agent environment is `bud_offline`, provider calls use a Bud-specific denylist that removes terminal and web-view tools while keeping service-level tools, including `ask_user_questions`, available by default.
+
 #### AgentService Class
 
 **Constructor dependencies**:
@@ -196,8 +198,9 @@ Model-facing `wait_for` enums advertise only `none`, `changed`, and `settled`. T
 
 | Method | Purpose |
 |--------|---------|
-| `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, then spawns async agent flow while carrying thread-owner stamping plus the resolved model-selection source |
-| `runAgentFlow(...)` | Main loop - delegate conversation/model/tool/transcript work across the extracted ownership seams |
+| `startUserMessage(threadId, options)` | Entry point - seeds active runtime state, captures the resolved Bud environment, then spawns async agent flow while carrying thread-owner stamping plus the resolved model-selection source |
+| `runAgentFlow(...)` | Main loop - delegates conversation/model/tool/transcript work across the extracted ownership seams, refreshing Bud environment before provider/tool steps |
+| `getEnvironmentForThread(threadId)` / `getEnvironmentForBud(budId)` | Client-safe environment resolvers used by send routes, `/agent/state`, and active turns to distinguish normal vs `bud_offline` mode |
 | `submitQuestionResponse(...)` | Validate an owned question response, resolve a live waiter, or persist a fallback user message and start a follow-up turn |
 | `supersedePendingUserQuestionsForFollowUp(...)` | Close pending question requests as skipped before a normal follow-up message starts a fresh turn |
 | `cancelThread(threadId)` | Abort running agent via AbortController |
@@ -262,7 +265,9 @@ startUserMessage()
 - If a provider returns a normalized context-window error, the agent attempts one forced compaction/retry while the automatic-compaction kill switch is enabled. If compaction cannot recover, the turn fails clearly instead of silently dropping transcript history.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - OpenAI debug response logging emits `llm_response` as a structured canonical response object rather than a pre-stringified JSON blob, so log viewers can pretty-print nested fields without escaped newline formatting.
-- `startUserMessage()` now allocates the turn id and seeds `/agent/state` before session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
+- `startUserMessage()` now allocates the turn id and seeds `/agent/state` before terminal session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
+- If the resolved environment is `bud_offline`, startup skips context sync, path context, and terminal ensure, then runs the provider with a request-time offline instruction plus the Bud-specific tool denylist. The user message still succeeds so the assistant can explain recovery or ask follow-up questions without terminal/web-view tools.
+- Active turns refresh the Bud environment before provider calls and before Bud-specific tool dispatch, allowing a reconnect during a turn to restore normal tool availability on a later step.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent uses the settled/default result or timeout delta and avoids claiming program progress when no visible delta appears.
 - `terminal.send` is now modeled as one gesture at a time: `text` with optional `submit`, or one semantic `key` such as `ctrl+c`.
@@ -294,6 +299,7 @@ Product web-view tool execution ownership extracted from `AgentService`.
 - shape tool summaries and persisted payloads without exposing viewer grants, cookies, or daemon stream ids
 - include separate WebSocket proxy transport/capability metadata in tool payloads
 - phrase `web_view.open` and `web_view.list` summaries as static HTTP vs WebSocket/HMR availability rather than treating all proxied sites as equivalent
+- map proxy transport failures, including Bud disconnects, into retryable structured tool results instead of failing the whole agent turn
 
 ### `terminal-send-outcome.ts`
 
@@ -343,9 +349,19 @@ Canonical normal-agent tool schema registry shared by provider invocation and co
 
 **Exports**:
 - `AGENT_CANONICAL_TOOLS` - the JSON Schema tool definitions passed to providers for ordinary agent turns
+- `resolveAgentToolsForEnvironment(environment)` - filters provider tools for the current Bud environment, using a Bud-specific denylist in offline mode so future non-Bud service tools remain available by default
 - `AGENT_TOOL_SCHEMA_TOKENS` - model-agnostic estimate of those serialized tool schemas, included in normal agent-turn context budgets
 
 Compaction-summary calls intentionally do not use these normal-agent tools and therefore do not add `AGENT_TOOL_SCHEMA_TOKENS` to their temporary summary budget.
+
+### `environment.ts`
+
+Client-safe agent environment helpers.
+
+**Responsibilities**:
+- define `normal` vs `bud_offline` agent environment snapshots
+- expose tool availability for terminal, web-view, and `ask_user_questions` in `/agent/state`
+- build request-time offline instructions that are injected into provider calls without becoming transcript rows
 
 ### `model-runner.ts`
 
@@ -369,6 +385,7 @@ Direct tests for the extracted model runner.
 - terminal tool schemas advertise only public `wait_for` modes and omit `timeout_ms`
 - web-view tool schemas advertise product-level `web_view_open`, `web_view_close`, and `web_view_list`
 - user-question tool schema advertises `ask_user_questions` with skippable question kinds and no hard question-count cap
+- offline environment tool resolution removes Bud-specific terminal/web-view tools while preserving service-level tools such as `ask_user_questions`
 - user-question request normalization treats strict-mode `null` optionals as omitted
 - streamed text blocks around multiple tool calls are retained in provider order
 - legacy `keys` arrays normalize into canonical semantic key strings during tool-call parsing
@@ -387,6 +404,7 @@ Terminal tool execution ownership extracted from `AgentService`.
 - derive readiness/context-after snapshots from runtime state plus observed shell evidence
 - shape conservative tool summaries and persisted tool payloads
 - map user-triggered `interrupted` terminal waits into normal tool results with `error: "interrupted"` and conservative readiness
+- map Bud transport failures into structured retryable tool results, including canonical `BUD_DISCONNECTED` codes for offline/disconnected cases
 
 ### `terminal-tool-executor.test.ts`
 
@@ -396,6 +414,7 @@ Direct tests for the extracted terminal tool executor.
 - interrupt-style `terminal.send` remains conservative when no visible delta is observed
 - user-interrupted pending send/observe waits return conservative tool results instead of failing the agent turn
 - ambiguous mixed text+key terminal sends fail before touching the terminal runtime
+- terminal transport failures return structured retryable tool results instead of throwing out of the agent turn
 
 ### `transcript-writer.ts`
 

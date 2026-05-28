@@ -132,6 +132,7 @@ Message input form with options.
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
 - optional `disabledReason` - Human-readable reason to disable normal message composition while a structured prompt is pending
 - optional `contextBudget` - Thread context budget snapshot shown as the send button radial ring and tooltip
+- optional `environment` - Bud environment snapshot used to show composer-level offline status without disabling normal message sends
 
 **Features**:
 - Multi-line textarea
@@ -145,6 +146,7 @@ Message input form with options.
   starting at the top and moving clockwise, and exposes the context tooltip on
   hover/focus
 - Keeps text entry, model/reasoning controls, and submit available during `waiting_for_user`; `disabledReason` remains available for other caller-owned disable cases
+- Shows a compact Bud-offline notice when `/agent/state.environment` or the send response reports `bud_offline`; the composer remains usable because the agent can still respond without Bud-specific tools
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
 
 ### `context-send-button.tsx`

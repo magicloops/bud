@@ -7,7 +7,9 @@ import {
   type LLMProvider,
   type ModelCapabilities,
 } from "../llm/index.js";
+import { buildAgentEnvironmentSnapshot } from "./environment.js";
 import { AgentModelResponseError, AgentModelRunner } from "./model-runner.js";
+import { resolveAgentToolsForEnvironment } from "./tool-definitions.js";
 
 function createRuntime() {
   return {
@@ -205,6 +207,50 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
     (questionsSchema.items?.properties?.kind as { enum?: unknown }).enum,
     ["boolean", "single_choice", "multi_choice", "text", "number"],
   );
+});
+
+test("offline environment tool catalog removes Bud-specific tools only", async (t) => {
+  let capturedTools: CanonicalTool[] = [];
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register(
+    createProvider("openai", ["gpt-5.4-2026-03-05"], (tools) => {
+      capturedTools = tools;
+    }),
+  );
+
+  t.after(() => {
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+  const environment = buildAgentEnvironmentSnapshot({ budId: "bud-1", online: false });
+
+  await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    runner.resolveModelReasoning("gpt-5.4"),
+    undefined,
+    resolveAgentToolsForEnvironment(environment),
+  );
+
+  assert.deepEqual(capturedTools.map((tool) => tool.name), ["ask_user_questions"]);
 });
 
 test("invokeModel carries provider diagnostics from message_done", async (t) => {

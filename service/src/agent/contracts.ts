@@ -94,6 +94,9 @@ export type TerminalCallResult = {
   delta?: TerminalDelta | null;
   view?: TerminalObservationView;
   error?: string;
+  errorCode?: AgentToolErrorCode;
+  retryable?: boolean;
+  errorSummary?: string;
   contextAfter?: {
     mode: "shell" | "repl" | "unknown";
     program?: string;
@@ -124,6 +127,8 @@ export type WebViewCallResult = {
   disabled?: boolean;
   detached?: boolean;
   error?: string;
+  errorCode?: AgentToolErrorCode;
+  retryable?: boolean;
 };
 
 export type ExecutedWebViewTool = {
@@ -156,6 +161,19 @@ export type ToolExecutionTiming = {
   startedAt: Date;
   finishedAt: Date;
   durationMs: number;
+};
+
+export type AgentToolErrorCode =
+  | "BUD_DISCONNECTED"
+  | "TIMEOUT"
+  | "EXEC_FAILED"
+  | "CANCELED";
+
+export type AgentTransportToolError = {
+  error: string;
+  code: AgentToolErrorCode;
+  retryable: boolean;
+  summary: string;
 };
 
 export const DEFAULT_READINESS_HINTS: ReadinessHints = {
@@ -325,6 +343,76 @@ export function buildToolExecutionTiming(
     finishedAt,
     durationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
   };
+}
+
+export function normalizeAgentTransportError(
+  error: unknown,
+  summaries: Partial<Record<AgentToolErrorCode, string>> = {},
+): AgentTransportToolError | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.trim().toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "interrupted" || normalized === "agent_canceled") {
+    return {
+      error: normalized,
+      code: "CANCELED",
+      retryable: false,
+      summary: summaries.CANCELED ?? "The terminal request was canceled before it completed.",
+    };
+  }
+
+  if (
+    normalized === "bud_offline" ||
+    normalized === "bud_disconnected" ||
+    normalized.includes("bud_offline") ||
+    normalized.includes("bud disconnected") ||
+    normalized.includes("bud_disconnected")
+  ) {
+    return {
+      error: "bud_offline",
+      code: "BUD_DISCONNECTED",
+      retryable: true,
+      summary: summaries.BUD_DISCONNECTED ?? "The Bud disconnected before the tool could complete.",
+    };
+  }
+
+  if (
+    normalized === "send_timeout" ||
+    normalized === "observe_timeout" ||
+    normalized.includes("timeout") ||
+    normalized.includes("timed out")
+  ) {
+    return {
+      error: normalized,
+      code: "TIMEOUT",
+      retryable: true,
+      summary: summaries.TIMEOUT ?? "The terminal request timed out before a result was returned.",
+    };
+  }
+
+  if (
+    normalized === "session_not_found" ||
+    normalized === "session_closed" ||
+    normalized.includes("session_not_found") ||
+    normalized.includes("session_closed")
+  ) {
+    return {
+      error: normalized,
+      code: "EXEC_FAILED",
+      retryable: true,
+      summary: summaries.EXEC_FAILED ?? "The terminal session was unavailable before the tool could complete.",
+    };
+  }
+
+  return null;
+}
+
+export function isBudDisconnectedTransportError(error: unknown): boolean {
+  return normalizeAgentTransportError(error)?.code === "BUD_DISCONNECTED";
 }
 
 export function serializeToolExecutionTiming(

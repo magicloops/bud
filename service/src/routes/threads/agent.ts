@@ -124,6 +124,7 @@ export async function registerThreadAgentRoutes(
     }
 
     const runtimeSnapshot = agentRuntime.getSnapshot(params.threadId);
+    const environment = await agentService.getEnvironmentForBud(access.thread.budId);
     const contextBudget = runtimeSnapshot.active && runtimeSnapshot.context_budget
       ? runtimeSnapshot.context_budget
       : await getThreadContextBudgetSnapshot({
@@ -132,6 +133,7 @@ export async function registerThreadAgentRoutes(
         });
     reply.send({
       ...runtimeSnapshot,
+      environment,
       context_budget: contextBudget,
     });
   });

@@ -54,6 +54,10 @@ Review of the message lifecycle, canonical persistence, live stream IDs, `client
 
 Current branch review for the thread model-preference persistence work, separating generated migration/doc/test line count from runtime implementation size and identifying the small cleanup items that should be handled before or shortly after merge.
 
+### `send-message-client-id-idempotency-review.md`
+
+Review of the iOS send-message retry assumptions around `client_id` idempotency. Confirms that same-thread duplicate retries usually recover the existing message without a second agent turn, but identifies follow-up backend gaps around conflicting duplicate bodies, inserted-but-not-started messages, and duplicate response agent metadata.
+
 ### `web-architecture-review-2026-04-20.md`
 
 Review of the web application architecture as of April 20, 2026.

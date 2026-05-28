@@ -1,6 +1,7 @@
 import type { FastifyReply } from "fastify";
 import { monotonicFactory } from "ulid";
 import type { ContextBudgetSnapshot } from "../agent/context-budget-state.js";
+import type { AgentEnvironmentSnapshot } from "../agent/environment.js";
 import type { SseEvent } from "./event-bus.js";
 
 export type AgentRuntimePhase =
@@ -33,6 +34,7 @@ export type AgentRuntimeSnapshot = {
   stream_cursor: string;
   pending_tool: AgentPendingTool | null;
   draft_assistant: AgentDraftAssistant | null;
+  environment: AgentEnvironmentSnapshot | null;
   context_budget: ContextBudgetSnapshot | null;
   updated_at: string;
 };
@@ -64,6 +66,7 @@ type InternalSnapshot = {
         updatedAt: Date;
     }
     | null;
+  environment: AgentEnvironmentSnapshot | null;
   contextBudget: ContextBudgetSnapshot | null;
   updatedAt: Date;
 };
@@ -102,7 +105,11 @@ export class AgentRuntimeStateManager {
     return this.serializeSnapshot(snapshot);
   }
 
-  startTurn(threadId: string, turnId: string): AgentRuntimeSnapshot {
+  startTurn(
+    threadId: string,
+    turnId: string,
+    environment?: AgentEnvironmentSnapshot | null,
+  ): AgentRuntimeSnapshot {
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
@@ -112,6 +119,7 @@ export class AgentRuntimeStateManager {
         snapshot.canCancel = true;
         snapshot.pendingTool = null;
         snapshot.draftAssistant = null;
+        snapshot.environment = environment ?? null;
         snapshot.contextBudget = null;
       },
       undefined,
@@ -215,6 +223,20 @@ export class AgentRuntimeStateManager {
     return this.setContextBudget(threadId, null, cursor);
   }
 
+  setEnvironment(
+    threadId: string,
+    environment: AgentEnvironmentSnapshot | null,
+    cursor?: string,
+  ): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.environment = environment;
+      },
+      cursor,
+    );
+  }
+
   finishTurn(threadId: string): AgentRuntimeSnapshot {
     return this.updateSnapshot(
       threadId,
@@ -225,6 +247,7 @@ export class AgentRuntimeStateManager {
         snapshot.canCancel = false;
         snapshot.pendingTool = null;
         snapshot.draftAssistant = null;
+        snapshot.environment = null;
         snapshot.contextBudget = null;
       },
       undefined,
@@ -416,6 +439,7 @@ export class AgentRuntimeStateManager {
       streamCursor: cursor,
       pendingTool: null,
       draftAssistant: null,
+      environment: null,
       contextBudget: null,
       updatedAt: new Date(),
     };
@@ -504,6 +528,7 @@ export class AgentRuntimeStateManager {
             updated_at: snapshot.draftAssistant.updatedAt.toISOString(),
           }
         : null,
+      environment: snapshot.environment,
       context_budget: snapshot.contextBudget,
       updated_at: snapshot.updatedAt.toISOString(),
     };

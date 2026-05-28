@@ -21,7 +21,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - Keep a bounded same-instance replay window with cursor checkpoints
 - Support live-only no-cursor attach plus bounded cursor replay
 - Require explicit `agent.resync_required` when a supplied resume cursor is too old or unknown
-- Keep the runtime-owned snapshot limited to in-flight turn state plus client-safe active budget state; browser routes may still recompute durable `context_budget` snapshots after idle/final transitions
+- Keep the runtime-owned snapshot limited to in-flight turn state, active Bud environment, and client-safe active budget state; browser routes may still recompute durable `environment` and `context_budget` snapshots after idle/final transitions
 
 **Snapshot Shape**:
 - `active`
@@ -32,6 +32,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`; terminal-tool args include the effective `wait_for` mode)
 - `pending_tool` may also contain the normalized `ask_user_questions_request_v1` payload while the agent is waiting for a user response
 - `draft_assistant` (`client_id`, `text`, `updated_at`)
+- `environment` (client-safe current Bud mode/status and tool availability while a turn is active; route responses refresh current environment for idle and active reads)
 - `context_budget` (latest active context budget decision while a turn is running; cleared on new/final idle transitions)
 - `updated_at`
 
@@ -53,6 +54,7 @@ The route-level `context_budget` response prefers this runtime-owned active snap
 - resume misses surface explicit resync instead of silent live-only fallback
 - non-agent thread events such as `thread.title` can advance the same cursor space without mutating the active turn phase, pending tool, or draft assistant snapshot
 - service-owned activity events such as `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` advance the cursor and keep the in-flight phase in `thinking` so reconnecting clients can resume after those markers
+- `setEnvironment(...)` updates the runtime environment snapshot without emitting a standalone SSE event; `/agent/state` is the authoritative convergence surface for environment
 - `setContextBudget(...)` and `clearContextBudget(...)` update the client-safe budget snapshot without emitting a standalone SSE event
 
 ### `event-bus.ts`
@@ -92,6 +94,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - stale cursors produce explicit resync
 - finishing a turn returns the snapshot to idle with a fresh cursor
 - context budget snapshots serialize during active turns and clear on new/final idle transitions
+- environment snapshots serialize during active turns, can be updated mid-turn, and clear from runtime idle snapshots after finalization
 - runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
 - runtime snapshots expose `started_at` on `pending_tool` so long-running tool waits remain diagnosable after reconnect
 - runtime snapshots expose effective terminal wait modes on `pending_tool.args.wait_for`, including default settled `terminal.send` waits
@@ -141,6 +144,7 @@ Thread-scoped terminal session composition root.
 |--------|-------------|
 | `ensureSessionRecordForThread(threadId, budId, createdByUserId?)` | Single concurrency-safe first-use session boundary shared by route and agent callers |
 | `createSessionForThread(threadId, budId, createdByUserId?)` | Compatibility wrapper over `ensureSessionRecordForThread(...)` |
+| `isBudOnline(budId)` / `getBudTransportStatus(budId)` | Expose current daemon transport availability for route/agent environment resolution |
 | `getSessionForThread(threadId)` | Get the active (non-closed) session |
 | `getSession(sessionId)` | Get by ID |
 | `getPathContextForSession(sessionId)` | Return cached daemon cwd as `terminal_cwd_v1` metadata when available |

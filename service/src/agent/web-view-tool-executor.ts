@@ -23,6 +23,7 @@ import {
   resolveProxyTransportStatus,
   resolveWebSocketProxyTransportStatus,
   serializeProxyTransportStatus,
+  type ProxyTransportStatus,
 } from "../proxy/proxy-session.js";
 import {
   buildToolArgs,
@@ -191,6 +192,7 @@ export class WebViewToolExecutor {
         webView: serializeThreadWebView(attachment, result.site),
         transport: serializeProxyTransportStatus(result.transportStatus),
         websocketTransport: serializeProxyTransportStatus(websocketTransportStatus),
+        ...buildWebViewTransportFailure(result.transportStatus),
       },
       summary,
     );
@@ -279,6 +281,7 @@ export class WebViewToolExecutor {
         webView: current ? serializeThreadWebView(current.attachment, current.site) : null,
         transport: serializeProxyTransportStatus(transportStatus),
         websocketTransport: serializeProxyTransportStatus(websocketTransportStatus),
+        ...buildWebViewTransportFailure(transportStatus),
       },
       summarizeListedWebViews({
         count: sites.length,
@@ -318,6 +321,9 @@ export class WebViewToolExecutor {
         detached: result.detached,
         disabled: result.disabled,
         error: result.error,
+        code: result.errorCode,
+        retryable: result.retryable,
+        ok: result.error ? false : undefined,
       },
     };
   }
@@ -328,6 +334,20 @@ export class WebViewToolExecutor {
     }
     this.logger.info({ ...meta, component: "agent_web_view" }, message);
   }
+}
+
+function buildWebViewTransportFailure(
+  transportStatus: ProxyTransportStatus,
+): Pick<WebViewCallResult, "error" | "errorCode" | "retryable"> {
+  if (transportStatus.available) {
+    return {};
+  }
+
+  return {
+    error: "bud_offline",
+    errorCode: "BUD_DISCONNECTED",
+    retryable: true,
+  };
 }
 
 function summarizeOpenWebView(args: {

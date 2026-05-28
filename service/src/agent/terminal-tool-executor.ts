@@ -8,8 +8,10 @@ import { buildTerminalSendSummary } from "./terminal-send-outcome.js";
 import {
   DEFAULT_READINESS_HINTS,
   buildEffectiveToolArgs,
+  normalizeAgentTransportError,
   serializeTerminalDelta,
   type ExecutedTerminalTool,
+  type AgentTransportToolError,
   type TerminalCallResult,
   type TerminalToolCallDirective,
 } from "./contracts.js";
@@ -41,7 +43,7 @@ export class TerminalToolExecutor {
     threadId: string,
     directive: TerminalToolCallDirective,
   ): Promise<ExecutedTerminalTool> {
-    const result = await this.executeDirective(threadId, directive);
+	    const result = await this.executeDirective(threadId, directive);
     const args = buildEffectiveToolArgs(directive);
     const summary = this.buildToolSummary(directive, result);
     const outputTruncationReason = this.getToolOutputTruncationReason(directive, result);
@@ -66,19 +68,31 @@ export class TerminalToolExecutor {
         omitted_lines: result.omittedLines,
         submitted: result.submitted,
         delta: serializeTerminalDelta(result.delta),
-        view: result.view,
-        error: result.error,
-        context_after: result.contextAfter,
-      },
-    };
-  }
+	        view: result.view,
+	        error: result.error,
+	        code: result.errorCode,
+	        retryable: result.retryable,
+	        ok: result.error ? false : undefined,
+	        context_after: result.contextAfter,
+	      },
+	    };
+	  }
 
-  private async executeDirective(
-    threadId: string,
-    directive: TerminalToolCallDirective,
-  ): Promise<TerminalCallResult> {
-    const session = await this.resolveSession(threadId);
-    const sessionId = session.sessionId;
+	  private async executeDirective(
+	    threadId: string,
+	    directive: TerminalToolCallDirective,
+	  ): Promise<TerminalCallResult> {
+	    let session: TerminalSession;
+	    try {
+	      session = await this.resolveSession(threadId);
+	    } catch (err) {
+	      const transportError = this.normalizeTerminalTransportError(directive, err);
+	      if (transportError) {
+	        return this.buildTransportFailureResult(directive, transportError);
+	      }
+	      throw err;
+	    }
+	    const sessionId = session.sessionId;
 
     const getInferredContext = () => {
       const context = this.terminalSessionManager.getSessionContext(sessionId);
@@ -116,10 +130,18 @@ export class TerminalToolExecutor {
           sessionId,
           { lines, waitFor, view },
         );
-      } catch (err) {
-        if (!this.isInterruptedError(err)) {
-          throw err;
-        }
+	      } catch (err) {
+	        if (!this.isInterruptedError(err)) {
+	          const transportError = this.normalizeTerminalTransportError(directive, err);
+	          if (transportError) {
+	            const result = this.buildTransportFailureResult(directive, transportError);
+	            return {
+	              ...result,
+	              contextAfter: buildContextAfter({ readiness: result.readiness }),
+	            };
+	          }
+	          throw err;
+	        }
 
         const readiness = this.buildInterruptedReadiness();
         this.logReadinessDecision(directive.tool, readiness);
@@ -232,10 +254,18 @@ export class TerminalToolExecutor {
           waitFor: directive.waitFor,
         },
       );
-    } catch (err) {
-      if (!this.isInterruptedError(err)) {
-        throw err;
-      }
+	    } catch (err) {
+	      if (!this.isInterruptedError(err)) {
+	        const transportError = this.normalizeTerminalTransportError(directive, err);
+	        if (transportError) {
+	          const result = this.buildTransportFailureResult(directive, transportError);
+	          return {
+	            ...result,
+	            contextAfter: buildContextAfter({ readiness: result.readiness }),
+	          };
+	        }
+	        throw err;
+	      }
 
       const readiness = this.buildInterruptedReadiness();
       this.logReadinessDecision(directive.tool, readiness);
@@ -271,11 +301,14 @@ export class TerminalToolExecutor {
     directive: TerminalToolCallDirective,
     result: TerminalCallResult,
   ): string {
-    switch (directive.tool) {
-      case "terminal.send":
-        if (result.error === "interrupted") {
-          return "Terminal send wait was interrupted by the user after the input was sent";
-        }
+	    switch (directive.tool) {
+	      case "terminal.send":
+	        if (result.errorSummary) {
+	          return result.errorSummary;
+	        }
+	        if (result.error === "interrupted") {
+	          return "Terminal send wait was interrupted by the user after the input was sent";
+	        }
         return buildTerminalSendSummary(
           {
             text: directive.text,
@@ -287,10 +320,13 @@ export class TerminalToolExecutor {
           typeof result.readiness.trigger === "string" ? result.readiness.trigger : null,
           (result.readiness.hints as ReadinessHints | undefined) ?? DEFAULT_READINESS_HINTS,
         );
-      case "terminal.observe": {
-        if (result.error === "interrupted") {
-          return "Terminal observe wait was interrupted by the user";
-        }
+	      case "terminal.observe": {
+	        if (result.errorSummary) {
+	          return result.errorSummary;
+	        }
+	        if (result.error === "interrupted") {
+	          return "Terminal observe wait was interrupted by the user";
+	        }
         const view = directive.view ?? "delta";
         if (view === "delta") {
           if (directive.waitFor && directive.waitFor !== "none") {
@@ -403,7 +439,7 @@ export class TerminalToolExecutor {
     );
   }
 
-  private buildInterruptedReadiness(): Record<string, unknown> {
+	  private buildInterruptedReadiness(): Record<string, unknown> {
     return {
       ready: false,
       confidence: 0.2,
@@ -413,9 +449,82 @@ export class TerminalToolExecutor {
         may_still_be_processing: true,
       },
     };
-  }
+	  }
 
-  private isInterruptedError(err: unknown): boolean {
+	  private normalizeTerminalTransportError(
+	    directive: TerminalToolCallDirective,
+	    err: unknown,
+	  ): AgentTransportToolError | null {
+	    return normalizeAgentTransportError(err, {
+	      BUD_DISCONNECTED: directive.tool === "terminal.send"
+	        ? "The Bud disconnected before terminal input could be confirmed."
+	        : "The Bud disconnected before terminal output could be observed.",
+	      TIMEOUT: directive.tool === "terminal.send"
+	        ? "Terminal input was sent, but the Bud did not return a result before the timeout."
+	        : "Terminal observation timed out before the Bud returned a result.",
+	      EXEC_FAILED: directive.tool === "terminal.send"
+	        ? "Terminal input could not be delivered because the terminal session was unavailable."
+	        : "Terminal output could not be observed because the terminal session was unavailable.",
+	    });
+	  }
+
+	  private buildTransportFailureResult(
+	    directive: TerminalToolCallDirective,
+	    transportError: AgentTransportToolError,
+	  ): TerminalCallResult {
+	    const readiness = {
+	      ready: false,
+	      confidence: 0.1,
+	      trigger: transportError.code === "TIMEOUT" ? "timeout" : "error",
+	      hints: {
+	        ...DEFAULT_READINESS_HINTS,
+	        may_still_be_processing: true,
+	      },
+	    };
+	    const base = {
+	      readiness,
+	      error: transportError.error,
+	      errorCode: transportError.code,
+	      retryable: transportError.retryable,
+	      errorSummary: transportError.summary,
+	      contextAfter: {
+	        mode: "unknown" as const,
+	        source: "inferred" as const,
+	      },
+	    };
+
+	    if (directive.tool === "terminal.observe") {
+	      const view = directive.view ?? "delta";
+	      return {
+	        kind: "observation",
+	        ...base,
+	        ...(view === "delta"
+	          ? {
+	              delta: {
+	                changed: false,
+	                text: "",
+	                truncated: false,
+	              },
+	            }
+	          : {
+	              output: "",
+	              outputBytes: 0,
+	              truncated: false,
+	            }),
+	        omittedLines: 0,
+	        view,
+	      };
+	    }
+
+	    return {
+	      kind: "interaction_ack",
+	      ...base,
+	      submitted: transportError.code === "TIMEOUT",
+	      delta: null,
+	    };
+	  }
+
+	  private isInterruptedError(err: unknown): boolean {
     return err instanceof Error && err.message === "interrupted";
   }
 

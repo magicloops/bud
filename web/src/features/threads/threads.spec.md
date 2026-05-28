@@ -89,6 +89,27 @@ Node-runner coverage for structured question-response submission flow.
 - auth-aborted and failed submissions report stable outcomes
 - missing selected thread state fails locally without making a request
 
+### `agent-stream-recovery.ts`
+
+Pure recovery classifier for `useAgentStream(...)` error events.
+
+**Responsibilities**:
+- stop stream recovery when auth is gone
+- keep explicit resync and stale-source callbacks from double-reconnecting
+- distinguish native EventSource `CONNECTING` retries with a cursor from normal closed-source reconnects
+- route stale-cursor native retries into bootstrap recovery instead of letting the browser reuse a known-bad `after` URL
+
+### `agent-stream-recovery.test.ts`
+
+Node-runner coverage for the agent stream error recovery classifier.
+
+**Coverage**:
+- auth expiry returns a terminal stop action
+- `CONNECTING` errors with a cursor request bootstrap recovery
+- cursorless native reconnects are ignored
+- closed sources still use the normal manual reconnect path
+- stale-thread and explicit-resync-suppressed callbacks are ignored
+
 ### `use-file-viewer.ts`
 
 Thread-scoped file viewer state and fetch flow for user-clicked transcript paths.
@@ -201,6 +222,7 @@ Agent SSE ownership for the existing-thread route.
 - monitor heartbeats and reconnect stale/closed streams
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
+- detect native EventSource `CONNECTING` error loops with a resume cursor, close the browser-managed source, refresh `/messages` + `/agent/state`, and reconnect with a fresh cursor so service restarts do not retry one stale `after` URL forever
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.compaction_*`, `thread.title`, and `final` events
 - map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
 - pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering

@@ -11,6 +11,7 @@ import {
   type CanonicalReasoningBlock,
   type CanonicalResponse,
   type CanonicalStopReason,
+  type CanonicalTool,
   type CanonicalToolCall,
   type ModelConfig,
   type AssistantMessagePhase,
@@ -115,6 +116,7 @@ export class AgentModelRunner {
     model: string,
     modelReasoning: ResolvedModelReasoning,
     signal?: AbortSignal,
+    tools: CanonicalTool[] = AGENT_CANONICAL_TOOLS,
   ): Promise<StreamedModelResponse> {
     const { providerModel, reasoning, reasoningLevel } = modelReasoning;
     const last = messages.at(-1);
@@ -191,7 +193,7 @@ export class AgentModelRunner {
       this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
     };
 
-    for await (const event of provider.invoke(messages, AGENT_CANONICAL_TOOLS, modelConfig, signal)) {
+    for await (const event of provider.invoke(messages, tools, modelConfig, signal)) {
       switch (event.type) {
         case "message_start":
           responseId = event.id;

@@ -562,7 +562,26 @@ Rejected file opens and resolves use the same frame-family shape with
 
 - URL: `GET /api/threads/:thread_id/agent/state`
 - Returns the current best-effort in-flight runtime snapshot for the authorized viewer
-- Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, and best-effort `context_budget`
+- Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `environment`, `updated_at`, and best-effort `context_budget`
+- `environment` is always returned for the authorized thread, including idle snapshots. It is derived from the thread's owning Bud and current service transport state, not from client-supplied Bud ids.
+- Environment shape:
+
+```json
+{
+  "mode": "normal|bud_offline",
+  "bud_id": "b_01H...",
+  "bud_status": "online|offline",
+  "reason": "bud_disconnected|null",
+  "last_seen_at": "2026-05-26T22:48:20.000Z",
+  "tools": {
+    "terminal": "available|unavailable",
+    "web_view": "available|unavailable",
+    "ask_user_questions": "available"
+  }
+}
+```
+
+- When `mode` is `bud_offline`, provider calls use a Bud-specific tool denylist: `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, and `web_view_list` are omitted. Service-level non-Bud tools remain available by default.
 - `context_budget` reports the backend-authoritative model-visible input estimate against the effective auto-compaction budget. For available snapshots, `estimated_input_tokens` is the trigger estimate and equals `message_estimated_tokens + tool_schema_tokens`; normal agent turns include current tool-schema overhead while tool-free compaction-summary requests do not. Budget snapshots also include provenance fields (`source`, `phase`, `turn_id`, `checked_at`) and optional provider usage diagnostics for non-UI calibration.
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
@@ -582,6 +601,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - Fresh attach with no cursor is live-only
 - Resume uses `after=<cursor>` primarily; `Last-Event-ID` and `last_event_id` are compatibility inputs
 - SSE frame `id:` is the opaque bounded-resume cursor shared with `/agent/state.stream_cursor`
+- If a resume cursor misses the bounded replay window, the stream emits `agent.resync_required` and closes. The supplied `provided_cursor` is known invalid for the current backend process; clients must refetch `/messages` and `/agent/state`, then reconnect with the fresh `/agent/state.stream_cursor` rather than retrying the rejected cursor.
 
 ### 3.4 Terminal SSE Stream
 
@@ -624,8 +644,32 @@ Successful response:
 }
 ```
 
-- New writes return `201 { "message_id": "...", "client_id": "..." }`
-- Duplicate same-thread retries using the same authenticated `client_id` return `200` with the existing identifiers
+- New writes return `201` with the canonical user message and agent-start metadata:
+
+```json
+{
+  "message_id": "uuid",
+  "client_id": "uuidv7",
+  "message": {
+    "message_id": "uuid",
+    "client_id": "uuidv7",
+    "role": "user",
+    "display_role": "User",
+    "content": "string",
+    "metadata": {},
+    "created_at": "2026-05-26T22:48:24.000Z"
+  },
+  "agent": {
+    "started": true,
+    "mode": "normal|bud_offline",
+    "bud_status": "online|offline",
+    "stream_cursor": "01..."
+  }
+}
+```
+
+- Duplicate same-thread retries using the same authenticated `client_id` return `200` with the existing identifiers and canonical message, without starting a second turn
+- Bud offline is not a message-send failure when an offline-aware LLM turn starts. The service skips terminal context sync and terminal ensure for Bud-offline startup, persists the user message, and lets the assistant respond with Bud-specific tools removed.
 
 ### 3.6 Thread Read Watermark Write
 
@@ -1504,8 +1548,10 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
   - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
+  - terminal transport failures are recorded as structured tool results instead of uncaught agent-loop failures. Known offline cases include `error: "bud_offline"`, `code: "BUD_DISCONNECTED"`, `retryable: true`, and `ok: false`; timed-out waits use `TIMEOUT`, canceled waits use `CANCELED`, and unavailable sessions use `EXEC_FAILED`.
   - web-view tool results include a `web_view` payload with owned proxied-site
     and thread-attachment state instead of terminal `output`/`readiness`
+  - web-view transport unavailability is also exposed as a structured tool result with `code: "BUD_DISCONNECTED"`, `retryable: true`, and `ok: false`
   - `ask_user_questions` tool results include a compact live `user_questions`
     payload with `kind: "user_questions"`, `requestId`, and per-question
     answered/skipped responses. The persisted canonical tool row is still
@@ -1539,6 +1585,8 @@ Resume rules:
 - bounded replay only replays events after a known cursor
 - if the cursor is too old or unknown, the route emits `agent.resync_required`
 - clients recover from replay misses by refetching `/messages` and `/agent/state`
+- clients must quarantine `agent.resync_required.provided_cursor` and suppress reconnect paths that would reuse it while bootstrap recovery is in flight
+- browser clients using native `EventSource` should also treat a `CONNECTING` error with an existing cursor as a stale-cursor recovery signal: close the native source, refresh `/messages` plus `/agent/state`, and attach only after a fresh cursor is available
 
 ### 7.2 Terminal Stream Events
 
@@ -1590,6 +1638,7 @@ Rules:
 - `terminal_output.seq` and `terminal_output.byte_offset` are monotonic per session
 - terminal history correctness comes from durable storage keyed by `(session_id, byte_offset)`
 - agent-stream replay is intentionally bounded and process-local; transcript correctness comes from `/messages` plus `/agent/state`
+- a cursor rejected by `agent.resync_required` is not a durable ordering point and must not be retried without a fresh `/agent/state` bootstrap
 - push delivery correctness comes from the durable `push_notification_outbox` plus per-thread read-watermark suppression rules rather than any in-memory stream state
 - service may ignore heartbeats, closes, or timeouts from superseded Bud sockets after a reconnect replaces the active tracker
 
@@ -1703,6 +1752,21 @@ waiting turn emits a skipped `agent.tool_result` when possible and then:
 
 No assistant `message_id` or `text` is created for that old turn.
 
+### 10.6 Bud Offline Message Send
+
+```text
+Browser → Service: POST /api/threads/:thread_id/messages
+Service: authorize thread and resolve owning Bud environment
+Service: if Bud is offline, skip terminal context sync and terminal ensure
+Service: persist user message
+Service: start agent with environment.mode="bud_offline"
+Service → Browser: 201 with canonical message and agent.mode="bud_offline"
+Service → LLM provider: normal transcript plus offline instruction, with Bud-specific tools omitted
+Service → Browser SSE: normal assistant/tool/final events
+```
+
+If the Bud reconnects before a later provider step, the service refreshes environment and can offer the normal Bud-specific tool catalog again. If the Bud disconnects during a Bud-specific tool, the tool result is model-visible and the turn may continue.
+
 ---
 
 ## 11. Security
@@ -1770,6 +1834,10 @@ No assistant `message_id` or `text` is created for that old turn.
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
   - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
+  - `agent.resync_required.provided_cursor` is explicitly a rejected cursor; clients must refresh `/messages` plus `/agent/state` and reconnect with the fresh state cursor instead of retrying the same `after` URL
+  - `/agent/state.environment` now reports the owning Bud's current availability on idle and active snapshots; Bud-offline message sends can start an LLM turn without terminal ensure, and create-message responses include `agent` startup metadata
+  - Bud-offline provider calls use a Bud-specific tool denylist that removes terminal and web-view tools while keeping service-level tools such as `ask_user_questions` available by default
+  - terminal and web-view transport failures during agent tools now persist structured tool results such as `BUD_DISCONNECTED`, `TIMEOUT`, `EXEC_FAILED`, or `CANCELED` instead of automatically failing the whole turn
   - `/agent/state.context_budget` and post-compaction budget snapshots expose
     `message_estimated_tokens` and `tool_schema_tokens`; the primary
     `estimated_input_tokens` includes normal agent tool-schema overhead for

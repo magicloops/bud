@@ -13,6 +13,7 @@ import {
   getThreadStreamReconnectDelay,
   hasMissedThreadStreamHeartbeat,
 } from '@/features/threads/thread-stream-timing'
+import { getAgentStreamErrorRecoveryAction } from './agent-stream-recovery'
 
 type AgentToolCallEvent = {
   turn_id: string
@@ -132,6 +133,9 @@ export function useAgentStream({
 }: UseAgentStreamArgs) {
   const eventSourceRef = useRef<EventSource | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const recoveryInFlightRef = useRef(false)
+  const recoveryEpochRef = useRef(0)
   const reconnectAttemptRef = useRef(0)
   const lastEventTimeRef = useRef<number>(Date.now())
   const cursorRef = useRef<string | null>(initialStreamCursor)
@@ -213,6 +217,90 @@ export function useAgentStream({
       }
     }
 
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+    }
+
+    const clearRecoveryTimer = () => {
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current)
+        recoveryTimerRef.current = null
+      }
+    }
+
+    const recoverBootstrap = (reason: string, providedCursor?: string | null) => {
+      if (isAuthRedirectPending()) {
+        cleanupAgent()
+        return
+      }
+      if (recoveryInFlightRef.current) {
+        return
+      }
+
+      clearReconnectTimer()
+      clearRecoveryTimer()
+      cleanupAgent()
+
+      const staleCursor = providedCursor ?? cursorRef.current
+      cursorRef.current = null
+      recoveryInFlightRef.current = true
+      const recoveryEpoch = recoveryEpochRef.current + 1
+      recoveryEpochRef.current = recoveryEpoch
+      console.warn('[agent-sse] bootstrap recovery started', {
+        threadId: agentThreadId,
+        reason,
+        staleCursor,
+      })
+
+      void callbacksRef.current.refreshBootstrap(agentThreadId)
+        .then((nextAgentState) => {
+          if (recoveryEpochRef.current !== recoveryEpoch) {
+            return
+          }
+          recoveryInFlightRef.current = false
+          cursorRef.current = nextAgentState.stream_cursor
+          reconnectAttemptRef.current = 0
+          callbacksRef.current.onError(null)
+          console.warn('[agent-sse] bootstrap recovery succeeded', {
+            threadId: agentThreadId,
+            reason,
+            nextCursor: nextAgentState.stream_cursor,
+          })
+          if (threadIdRef.current === agentThreadId && !isAuthRedirectPending()) {
+            connectAgentStream(agentThreadId)
+          }
+        })
+        .catch((error) => {
+          if (recoveryEpochRef.current !== recoveryEpoch) {
+            return
+          }
+          recoveryInFlightRef.current = false
+          if (isAuthRedirectPending() || threadIdRef.current !== agentThreadId) {
+            return
+          }
+
+          console.error('[agent-sse] bootstrap recovery failed', {
+            threadId: agentThreadId,
+            reason,
+            error,
+          })
+          callbacksRef.current.onError(error instanceof Error ? error.message : 'Failed to resync thread')
+
+          const nextAttempt = reconnectAttemptRef.current + 1
+          reconnectAttemptRef.current = nextAttempt
+          const delay = getThreadStreamReconnectDelay(nextAttempt)
+          recoveryTimerRef.current = setTimeout(() => {
+            recoveryTimerRef.current = null
+            if (threadIdRef.current === agentThreadId && !isAuthRedirectPending()) {
+              recoverBootstrap(`${reason}_retry`)
+            }
+          }, delay)
+        })
+    }
+
     const scheduleReconnect = (reason: string) => {
       if (isAuthRedirectPending()) {
         cleanupAgent()
@@ -222,14 +310,13 @@ export function useAgentStream({
         return
       }
 
+      clearRecoveryTimer()
       cleanupAgent()
       const nextAttempt = reconnectAttemptRef.current + 1
       reconnectAttemptRef.current = nextAttempt
       const delay = getThreadStreamReconnectDelay(nextAttempt)
       console.warn('[agent-sse] reconnecting', { threadId: agentThreadId, reason, attempt: nextAttempt, delay })
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-      }
+      clearReconnectTimer()
       reconnectTimerRef.current = setTimeout(() => {
         reconnectTimerRef.current = null
         if (threadIdRef.current && !isAuthRedirectPending()) {
@@ -244,8 +331,7 @@ export function useAgentStream({
         heartbeatCheckInterval = null
       }
       if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-        reconnectTimerRef.current = null
+        clearReconnectTimer()
       }
 
       reconnectAttemptRef.current = 0
@@ -410,6 +496,10 @@ export function useAgentStream({
     })
 
     source.addEventListener('agent.resync_required', (evt) => {
+      if (threadIdRef.current !== agentThreadId || eventSourceRef.current !== source) {
+        return
+      }
+
       lastEventTimeRef.current = Date.now()
       suppressErrorReconnect = true
 
@@ -425,22 +515,7 @@ export function useAgentStream({
         payload,
       })
 
-      cleanupAgent()
-      void callbacksRef.current.refreshBootstrap(agentThreadId)
-        .then((nextAgentState) => {
-          cursorRef.current = nextAgentState.stream_cursor
-          if (threadIdRef.current === agentThreadId && !isAuthRedirectPending()) {
-            connectAgentStream(agentThreadId)
-          }
-        })
-        .catch((error) => {
-          if (isAuthRedirectPending()) {
-            return
-          }
-          console.error('[agent-sse] failed to refresh bootstrap after resync', error)
-          callbacksRef.current.onError(error instanceof Error ? error.message : 'Failed to resync thread')
-          scheduleReconnect('resync_refresh_failed')
-        })
+      recoverBootstrap('explicit_resync', payload?.provided_cursor)
     })
 
     source.addEventListener('final', (evt) => {
@@ -453,8 +528,7 @@ export function useAgentStream({
         console.warn('[agent-sse] failed to parse final event', error)
       }
       if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-        reconnectTimerRef.current = null
+        clearReconnectTimer()
       }
       callbacksRef.current.onStatusChange('idle')
       if (finalEvent?.turn_id) {
@@ -469,15 +543,27 @@ export function useAgentStream({
 
     source.addEventListener('error', (evt) => {
       void agentStream.checkUnauthorized().then((unauthorized) => {
-        if (unauthorized || suppressErrorReconnect) {
-          return
-        }
-
         console.warn('[agent-sse] error', { readyState: source.readyState, evt })
-        if (threadIdRef.current && source.readyState !== EventSource.CLOSED) {
+        const recoveryAction = getAgentStreamErrorRecoveryAction({
+          unauthorized,
+          authRedirectPending: isAuthRedirectPending(),
+          suppressErrorReconnect,
+          hasCurrentThread: threadIdRef.current === agentThreadId && eventSourceRef.current === source,
+          hasCursor: cursorRef.current !== null,
+          readyState: source.readyState,
+          connectingState: EventSource.CONNECTING,
+          closedState: EventSource.CLOSED,
+        })
+
+        if (recoveryAction === 'auth_stop') {
+          cleanupAgent()
           return
         }
-        if (threadIdRef.current) {
+        if (recoveryAction === 'bootstrap_recover') {
+          recoverBootstrap('native_connecting_error')
+          return
+        }
+        if (recoveryAction === 'manual_reconnect') {
           scheduleReconnect('connection_error')
         }
       })
@@ -495,6 +581,12 @@ export function useAgentStream({
         clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
       }
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current)
+        recoveryTimerRef.current = null
+      }
+      recoveryInFlightRef.current = false
+      recoveryEpochRef.current += 1
       reconnectAttemptRef.current = 0
       return
     }
@@ -507,6 +599,12 @@ export function useAgentStream({
       clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = null
     }
+    if (recoveryTimerRef.current) {
+      clearTimeout(recoveryTimerRef.current)
+      recoveryTimerRef.current = null
+    }
+    recoveryInFlightRef.current = false
+    recoveryEpochRef.current += 1
     reconnectAttemptRef.current = 0
 
     const cleanup = connectAgentStream(threadId)
@@ -523,6 +621,11 @@ export function useAgentStream({
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current)
       }
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current)
+      }
+      recoveryInFlightRef.current = false
+      recoveryEpochRef.current += 1
     }
   }, [])
 
@@ -540,6 +643,12 @@ export function useAgentStream({
       clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = null
     }
+    if (recoveryTimerRef.current) {
+      clearTimeout(recoveryTimerRef.current)
+      recoveryTimerRef.current = null
+    }
+    recoveryInFlightRef.current = false
+    recoveryEpochRef.current += 1
     reconnectAttemptRef.current = 0
     connectAgentStream(threadIdRef.current)
   }, [connectAgentStream])

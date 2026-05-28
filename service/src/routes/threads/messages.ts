@@ -243,6 +243,7 @@ export async function registerThreadMessageRoutes(
         .where(eq(threadTable.threadId, thread.threadId));
     }
 
+    const environment = await agentService.getEnvironmentForBud(thread.budId);
     const session = await db.query.terminalSessionTable.findFirst({
       where: and(
         eq(terminalSessionTable.threadId, params.threadId),
@@ -251,7 +252,7 @@ export async function registerThreadMessageRoutes(
       columns: { sessionId: true }
     });
 
-    if (session) {
+    if (session && environment.mode === "normal") {
       const isAgentActive = agentService.isThreadActive(params.threadId);
 
       if (!isAgentActive) {
@@ -274,9 +275,16 @@ export async function registerThreadMessageRoutes(
       } else {
         server.log.debug({ threadId: params.threadId }, "Skipping context sync - agent active");
       }
+    } else if (session) {
+      server.log.debug(
+        { threadId: params.threadId, mode: environment.mode },
+        "Skipping context sync - bud environment unavailable",
+      );
     }
 
-    const pathContext = await agentService.getPathContextForThread(thread.threadId);
+    const pathContext = environment.mode === "normal"
+      ? await agentService.getPathContextForThread(thread.threadId)
+      : null;
     const metadata: Record<string, unknown> = {
       ...(body.cwd ? { preferred_cwd: body.cwd } : {}),
       ...(pathContext ? { path_context: pathContext } : {}),
@@ -330,11 +338,12 @@ export async function registerThreadMessageRoutes(
     await recordThreadMessageMetadata(thread.threadId, body.text);
 
     try {
-      await agentService.startUserMessage(thread.threadId, {
+      const agentStart = await agentService.startUserMessage(thread.threadId, {
         model: selection.model,
         reasoningEffort: selection.reasoningEffort,
         modelSelectionSource: selection.source,
         ownerUserId,
+        environment,
       });
 
       void threadTitleService.maybeGenerateFromFirstUserMessage({
@@ -352,6 +361,12 @@ export async function registerThreadMessageRoutes(
         message_id: messageId,
         client_id: serializedUserMessage.client_id,
         message: serializedUserMessage,
+        agent: {
+          started: true,
+          mode: agentStart.environment.mode,
+          bud_status: agentStart.environment.bud_status,
+          stream_cursor: agentStart.streamCursor,
+        },
       });
     } catch (err) {
       server.log.error({ err }, "Agent failed to queue message");

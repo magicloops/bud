@@ -193,7 +193,7 @@ useEffect(() => {
 Nested routes for thread views:
 - `/$budId/` (index) - Redirect to most recent thread or `/new`
 - `/$budId/new` - New thread creation view using shared `WorkspaceShell`, catalog-backed model/reasoning loading, initial thread preference persistence, and browser-generated UUIDv7 `client_id` on first send
-- `/$budId/$threadId` - Existing thread conversation using the same shared shell plus `/messages` + `/agent/state` bootstrap, context budget meter refresh, bounded-resume agent SSE, persisted selector changes, `client_id`-first message reconciliation, a user-clicked file viewer pane, and an owned proxied web-view pane
+- `/$budId/$threadId` - Existing thread conversation using the same shared shell plus `/messages` + `/agent/state` bootstrap, Bud environment status, context budget meter refresh, bounded-resume agent SSE, persisted selector changes, `client_id`-first message reconciliation, a user-clicked file viewer pane, and an owned proxied web-view pane
 
 ## Route Tree
 

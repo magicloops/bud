@@ -263,6 +263,78 @@ test("execute returns conservative tool result when terminal.observe wait is int
   assert.equal(execution.summary, "Terminal observe wait was interrupted by the user");
 });
 
+test("execute returns retryable tool result when bud is offline before session resolution", async () => {
+  const executor = new TerminalToolExecutor(
+    {} as never,
+    createLogger() as never,
+    false,
+    false,
+    async () => {
+      throw new Error("bud_offline");
+    },
+  );
+
+  const execution = await executor.execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.observe",
+    view: "screen",
+    callId: "call_observe_offline",
+  });
+
+  assert.equal(execution.result.kind, "observation");
+  assert.equal(execution.result.error, "bud_offline");
+  assert.equal(execution.result.errorCode, "BUD_DISCONNECTED");
+  assert.equal(execution.result.retryable, true);
+  assert.equal(execution.result.contextAfter?.mode, "unknown");
+  assert.equal(execution.payload.ok, false);
+  assert.equal(execution.payload.code, "BUD_DISCONNECTED");
+  assert.equal(
+    execution.summary,
+    "The Bud disconnected before terminal output could be observed.",
+  );
+});
+
+test("execute returns retryable tool result when bud disconnects during terminal.send", async () => {
+  const executor = new TerminalToolExecutor(
+    {
+      getSessionContext() {
+        return { mode: "shell" };
+      },
+      getLatestReadiness() {
+        return null;
+      },
+      async sendInteraction() {
+        throw new Error("bud_disconnected");
+      },
+    } as never,
+    createLogger() as never,
+    false,
+    false,
+    async () => ({ sessionId: "sess_test" } as never),
+  );
+
+  const execution = await executor.execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    text: "pwd",
+    submit: true,
+    callId: "call_send_offline",
+  });
+
+  assert.equal(execution.result.kind, "interaction_ack");
+  assert.equal(execution.result.submitted, false);
+  assert.equal(execution.result.error, "bud_offline");
+  assert.equal(execution.result.errorCode, "BUD_DISCONNECTED");
+  assert.equal(execution.result.retryable, true);
+  assert.equal(execution.result.contextAfter?.mode, "shell");
+  assert.equal(execution.payload.ok, false);
+  assert.equal(execution.payload.code, "BUD_DISCONNECTED");
+  assert.equal(
+    execution.summary,
+    "The Bud disconnected before terminal input could be confirmed.",
+  );
+});
+
 test("execute rejects ambiguous terminal.send directives before touching the runtime", async () => {
   let sendCalls = 0;
   const executor = new TerminalToolExecutor(
