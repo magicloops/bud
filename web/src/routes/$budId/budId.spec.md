@@ -103,6 +103,7 @@ loader: async ({ params }) => {
    - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
    - Timeline row UI state (expand/copy/payload/overflow) is now message-local and memoized inside `ChatTimeline`, reducing whole-list churn during streaming and interaction
+   - Passes active-agent indicator state into `ChatTimeline` so thinking/compaction feedback renders as a non-transcript footer beneath the latest message instead of as an external sibling
 
 2. **Terminal Integration**
    - Delegates xterm/session/reconnect ownership to `useTerminalSession(...)` in `web/src/features/threads/`
@@ -122,6 +123,7 @@ loader: async ({ params }) => {
    - Relies on `useAgentStream(...)` bootstrap recovery to close native EventSource stale-cursor loops, refetch `/messages` + `/agent/state`, and reconnect from the refreshed stream cursor
    - Tracks `/agent/state.environment` and message-send `agent.mode` so offline Bud sends remain successful UI submissions while the composer shows Bud-specific tools are unavailable
    - Shows `Compacting context...` while automatic compaction is active, appends a subtle non-transcript timeline marker on completion/failure, applies `agent.compaction_done.context_budget` immediately when present, and refreshes `/agent/state.context_budget` after successful compaction
+   - Suppresses the generic timeline activity footer during live assistant text streaming from `agent.message_start` / `agent.message_delta`, then allows it to return after a short delay following `agent.message_done` only when the turn continues
 
 4. **Bud-Level Thread State**
    - Parent `/$budId` route now owns mutable `threads` state rather than treating loader data as immutable
@@ -185,7 +187,7 @@ loader: async ({ params }) => {
    - Submission reconciliation delegates to `submitQuestionResponseFlow(...)` in `web/src/features/threads/question-response-submit.ts`
    - Live continuations keep the stream connected while fallback/idempotent responses refresh the transcript/runtime bootstrap
    - The route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to a paused UI status
-   - The global thinking indicator is hidden while paused for user input
+   - The timeline thinking indicator is hidden while paused for user input
    - Normal composer input stays enabled while a pending structured prompt is visible; follow-up sends use the normal message route and let the service close the prompt
 
 **State**:
@@ -209,6 +211,7 @@ webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
 questionSubmitError: string | null
 contextBudget: ApiContextBudget | null
 agentEnvironment: ApiAgentEnvironment | null
+assistantActivityGate: AssistantActivityGateState
 activeCompaction: ApiAgentCompactionStartEvent | null
 contextCompactionNotices: ChatTimelineNotice[]
 ```
@@ -257,6 +260,7 @@ From `@/components/workbench/chat-timeline`:
 | `@/contexts/layout-context` | Thread panel toggle |
 | `@/contexts/bud-status-context` | Bud online status |
 | `@/features/threads/*` | Extracted transcript, agent-stream, terminal session, file-viewer, and web-view hooks |
+| `@/features/threads/assistant-activity-indicator-state` | Client-side gate for hiding the timeline activity footer while assistant text is visibly streaming |
 | `@/lib/file-paths` | File-open candidate payload type |
 | `@/lib/transport`, `@/lib/api-types`, `@/lib/messages`, `@/lib/models`, `@/lib/auth-redirect` | Split API/runtime helpers |
 | `lucide-react` | Icons |

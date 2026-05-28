@@ -71,11 +71,12 @@ Message list with auto-scroll and collapsible messages.
 - `messages` - Array of ChatMessage
 - optional `notices` - Non-transcript timeline markers such as completed or failed context compaction events
 - `accentColor` - CSS color for user message accents
+- optional `activityIndicatorVisible` / `activityIndicatorLabel` - Route-owned active-agent footer state rendered after the latest timeline item
 - optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
 **Features**:
 - Consumes chronologically ordered thread messages directly from `useThreadMessages(...)` instead of re-sorting the full list locally on every render
-- Auto-scroll to bottom when new messages arrive or when the last visible message grows during assistant streaming
+- Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, or when the active-agent footer appears
 - "Stick to bottom" behavior with manual scroll override
 - Top-of-timeline "Load older messages" control when older history exists
 - Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
@@ -89,10 +90,11 @@ Message list with auto-scroll and collapsible messages.
 - Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
 - Context compaction notices render as subtle timeline markers without creating or assuming persisted transcript rows
+- Active-agent thinking/compaction feedback renders as a non-transcript footer inside the scrollable timeline so the newest message remains fully visible above it
 - The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
 - Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render
 
-**Note**: Renders only the scrollable message area. Parent component provides the container wrapper.
+**Note**: Renders the scrollable message area plus non-transcript timeline footers. Parent component provides the container wrapper.
 
 ### `thinking-indicator.tsx`
 
@@ -111,7 +113,8 @@ Animated "thinking" indicator shown when agent is working.
 - Spinner icon with `animate-spin`
 - Text with `animate-pulse`
 
-**Usage**: Rendered as sibling to ChatTimeline, outside the scroll container, to avoid re-render coupling and scroll interference. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
+**Usage**: Rendered by `ChatTimeline` as a non-transcript footer row after the latest message so scroll-to-bottom includes the indicator. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
+The existing-thread route also suppresses the generic indicator while assistant draft text is actively streaming, then lets it return after a short post-`message_done` delay if the turn continues.
 
 **Message Styling by Role**:
 | Role | Avatar | Background |

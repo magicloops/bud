@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
+import { ThinkingIndicator } from '@/components/workbench/thinking-indicator'
 import type {
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
@@ -51,6 +52,8 @@ type ChatTimelineProps = {
   messages: ChatMessage[]
   notices?: ChatTimelineNotice[]
   accentColor: string
+  activityIndicatorVisible?: boolean
+  activityIndicatorLabel?: string
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
   onLoadOlderMessages?: (() => void) | null
@@ -67,6 +70,8 @@ const ChatTimelineComponent = ({
   messages,
   notices = [],
   accentColor,
+  activityIndicatorVisible = false,
+  activityIndicatorLabel,
   hasOlderMessages = false,
   isLoadingOlderMessages = false,
   onLoadOlderMessages = null,
@@ -115,8 +120,11 @@ const ChatTimelineComponent = ({
     const lastKey = lastItem?.type === 'message'
       ? `${lastItem.message.client_id}:${lastItem.message.content.length}`
       : lastItem?.notice.notice_id ?? ''
-    return `${timelineItems.length}:${lastKey}`
-  }, [timelineItems])
+    const activityKey = activityIndicatorVisible
+      ? `activity:${activityIndicatorLabel ?? 'default'}`
+      : 'activity:hidden'
+    return `${timelineItems.length}:${lastKey}:${activityKey}`
+  }, [activityIndicatorLabel, activityIndicatorVisible, timelineItems])
 
   const ensureJsonViewLoaded = useCallback(() => {
     if (JsonView) {
@@ -161,7 +169,7 @@ const ChatTimelineComponent = ({
   }, [scrollSyncKey])
 
   return (
-    <div ref={setScrollNode} className="flex-1 space-y-3 overflow-y-auto p-4">
+    <div ref={setScrollNode} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
       {onLoadOlderMessages && (
         <div className="flex justify-center pb-1">
           {hasOlderMessages ? (
@@ -197,6 +205,10 @@ const ChatTimelineComponent = ({
       ) : (
         <ChatTimelineNoticeRow key={item.notice.notice_id} notice={item.notice} />
       ))}
+      <ThinkingIndicator
+        isVisible={activityIndicatorVisible}
+        label={activityIndicatorLabel}
+      />
     </div>
   )
 }

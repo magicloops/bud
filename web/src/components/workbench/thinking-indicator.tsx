@@ -54,7 +54,7 @@ export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) 
     }
   }, [isVisible, label])
 
-  if (!shouldRender) return null
+  if (!isVisible && !shouldRender) return null
 
   return (
     <div

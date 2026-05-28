@@ -110,6 +110,36 @@ Node-runner coverage for the agent stream error recovery classifier.
 - closed sources still use the normal manual reconnect path
 - stale-thread and explicit-resync-suppressed callbacks are ignored
 
+### `assistant-activity-indicator-state.ts`
+
+Pure state helpers for the existing-thread route's timeline activity footer.
+
+**Responsibilities**:
+- seed the client-side activity gate from `/agent/state.draft_assistant` during initial load and stream resync
+- suppress the generic thinking indicator while `agent.message_start` / `agent.message_delta` are actively filling a draft assistant row
+- keep suppression through `agent.message_done`, then allow the route-owned delay timer to reveal the indicator again if the turn continues
+- detect final persisted assistant rows from existing metadata such as `segment_kind: "final"` or `assistant_phase: "final_answer"` so final answers do not flash the generic indicator before `final`
+- derive the final activity-indicator visibility from the current workbench status, active compaction override, and client-side suppression gate without requiring new backend events
+
+**Exports**:
+- `ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS`
+- `createAssistantActivityGateFromAgentState(...)`
+- `reduceAssistantActivityGate(...)`
+- `deriveAssistantActivityIndicatorVisible(...)`
+- `isFinalAssistantMessage(...)`
+
+### `assistant-activity-indicator-state.test.ts`
+
+Node-runner coverage for timeline activity-gate transitions.
+
+**Coverage**:
+- bootstrap with and without a draft assistant row
+- assistant message start/delta suppression
+- delayed reveal after `agent.message_done`
+- stale message-done timer protection
+- final vs intermediate persisted assistant-row detection
+- final-event reset and compaction visibility override
+
 ### `use-file-viewer.ts`
 
 Thread-scoped file viewer state and fetch flow for user-clicked transcript paths.
