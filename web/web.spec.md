@@ -143,7 +143,7 @@ Current deployment guidance still favors leaving `VITE_API_BASE_URL` unset in br
 - Message timeline with role-based rendering
 - Stable `client_id`-first message identity across optimistic sends, `/agent/state` bootstrap, agent SSE, and canonical transcript rows
 - Tool call visualization (terminal.run, etc.)
-- Markdown with syntax highlighting
+- Streamdown-backed Markdown for streaming and persisted messages, with code, Mermaid, and math rendering
 - Agent streaming via SSE
 
 ### Browser Auth
@@ -188,8 +188,9 @@ Neobrutalist patterns:
 | `@better-auth/oauth-provider` | Hosted OAuth Provider client plugin |
 | `xterm`, `xterm-addon-fit` | Terminal |
 | `uuid` | UUIDv7 `client_id` generation for browser-created message identities |
-| `react-markdown` | Markdown |
-| `react-syntax-highlighter` | Code highlighting |
+| `streamdown`, `@streamdown/code`, `@streamdown/mermaid`, `@streamdown/math` | Streaming-safe Markdown with code, diagram, and math rendering |
+| `katex` | KaTeX CSS for math output |
+| `react-syntax-highlighter` | File-viewer source preview highlighting |
 | `@microlink/react-json-view` | JSON display |
 | `lucide-react` | Icons |
 | `tailwindcss` | Styling |

@@ -87,7 +87,7 @@ Message list with auto-scroll and collapsible messages.
 - Overflow detection now measures each message row independently via its own DOM observer/update path instead of rescanning every rendered message after each transcript change
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
-- Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
+- Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode with a caret and no-stagger `blurIn` animation until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
 - Context compaction notices render as subtle timeline markers without creating or assuming persisted transcript rows
 - Active-agent thinking/compaction feedback renders as a non-transcript footer inside the scrollable timeline so the newest message remains fully visible above it

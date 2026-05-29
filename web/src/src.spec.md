@@ -45,9 +45,14 @@ Global styles and CSS custom properties.
 **Tailwind Setup**:
 ```css
 @import "tailwindcss";
-@plugin "@tailwindcss/typography";
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
 @import "tw-animate-css";
 ```
+
+Streamdown animation CSS and KaTeX CSS are imported once from `main.tsx` before the app theme CSS.
 
 **Theme System** (OKLCH colors):
 
@@ -144,12 +149,12 @@ main.tsx
 | `@tanstack/react-router` | File-based routing |
 | `better-auth` | Browser auth client |
 | `tailwindcss` | Utility CSS |
-| `@tailwindcss/typography` | Prose styling |
 | `tw-animate-css` | Animation utilities |
 | `lucide-react` | Icons |
 | `xterm`, `xterm-addon-fit` | Terminal emulation |
-| `react-markdown` | Markdown rendering |
-| `react-syntax-highlighter` | Code highlighting |
+| `streamdown`, `@streamdown/code`, `@streamdown/mermaid`, `@streamdown/math` | Streaming-safe Markdown with code, diagram, and math plugins |
+| `katex` | KaTeX CSS for math output |
+| `react-syntax-highlighter` | File-viewer source preview highlighting |
 | `@microlink/react-json-view` | JSON visualization |
 | `class-variance-authority` | Variant styling |
 | `clsx`, `tailwind-merge` | Class name utilities |

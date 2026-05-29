@@ -31,12 +31,17 @@ Re-exports `MarkdownContent` as `UserContent`. Currently uses same renderer as a
 
 ### `markdown-content.tsx`
 
-Shared markdown renderer using `react-markdown` with:
+Shared markdown renderer using `streamdown` with:
 
 **Features**:
-- GitHub Flavored Markdown (`remark-gfm`) - tables, task lists, strikethrough
+- Streamdown `mode="streaming"` for assistant drafts and `mode="static"` for persisted rows
+- Streaming drafts use Streamdown's `blurIn` animation with no per-word stagger, plus caret/control state, so fast model deltas animate without queuing behind later content
+- GitHub Flavored Markdown from Streamdown defaults - tables, task lists, strikethrough
 - Line breaks (`remark-breaks`)
-- Syntax highlighting (`react-syntax-highlighter` with `oneDark` theme)
+- Syntax highlighting through `@streamdown/code`
+- Mermaid diagrams through `@streamdown/mermaid`
+- Math rendering through `@streamdown/math` and KaTeX CSS
+- Raw HTML is explicitly skipped instead of rendered as live HTML
 - External links open in new tabs
 - When `fileActions` are supplied, local Markdown links and inline-code path candidates render explicit file-open controls; external links and low-confidence inline code remain inert/normal
 - The renderer can restrict allowed file path kinds and render unsupported local links inert, which lets Markdown file previews open absolute POSIX links without letting relative preview links navigate to same-origin 404s
@@ -45,18 +50,18 @@ Shared markdown renderer using `react-markdown` with:
   inline-code path affordances cannot produce nested `<button>` markup
 
 **Code Block Handling**:
-- Fenced code blocks (````lang`) use `CodeBlock` component with syntax highlighting and copy button on hover
+- Fenced code blocks (````lang`) use Streamdown's code plugin with copy controls and no Bud `code`/`pre` override
 - Inline code uses `InlineCode` component with click-to-copy; long code wraps instead of truncating for proper baseline alignment
 - Inline file candidates keep the copyable code treatment and add a separate open-file button; the path text can wrap independently from the button, and rendering never opens a file session by itself
 
 **Styling**:
-- Uses Tailwind Typography (`prose`) classes
-- Dark mode support (`dark:prose-invert`)
-- Custom styling for headings, paragraphs, links
+- Uses scoped `.bud-markdown` styles and Streamdown `data-streamdown` selectors for compact chat layout
+- Tailwind v4 scans Streamdown core and plugin packages via `@source` directives in `web/src/index.css`
+- Custom styling for headings, paragraphs, links, and rich block overflow
 
 **Performance**:
 - Memoized with `React.memo`
-- Markdown still renders synchronously, but heavy fenced-code highlighting is now lazy-loaded inside `CodeBlock` so plain prose stays on the initial thread-route path
+- Streamdown receives stable plugin and control objects; rich code/Mermaid/math rendering remains owned by the plugin pipeline
 
 ### `markdown-file-actions.ts`
 
@@ -75,11 +80,12 @@ Pure helper seam for the Markdown renderer's file-open affordances.
 
 | Import | Purpose |
 |--------|---------|
-| `react-markdown` | Markdown parsing and rendering |
-| `remark-gfm` | GitHub Flavored Markdown |
+| `streamdown` | Streaming/static Markdown rendering |
+| `@streamdown/code` | Shiki-backed code block rendering |
+| `@streamdown/mermaid` | Mermaid diagram rendering |
+| `@streamdown/math` | KaTeX math rendering plugin |
 | `remark-breaks` | Soft line breaks |
 | `@/components/ui/inline-code` | Click-to-copy inline code |
-| `@/components/ui/code-block` | Syntax-highlighted code blocks with copy |
 | `../types` | Component type definitions |
 
 ---

@@ -26,6 +26,7 @@ export type MessageFileActionContext = {
 export type MessageContentRendererProps = {
   content: string
   fileActions?: MessageFileActionContext
+  isStreaming?: boolean
 }
 
 /**

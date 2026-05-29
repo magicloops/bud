@@ -1,5 +1,8 @@
 @import "tailwindcss";
-@plugin "@tailwindcss/typography";
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
@@ -145,5 +148,30 @@
   html,
   body {
     overscroll-behavior: none;
+  }
+}
+
+@layer components {
+  .bud-markdown {
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+
+  .bud-markdown a,
+  .bud-markdown code {
+    overflow-wrap: anywhere;
+  }
+
+  .bud-markdown [data-streamdown="code-block"],
+  .bud-markdown [data-streamdown="table-wrapper"],
+  .bud-markdown [data-streamdown="mermaid-block"],
+  .bud-markdown [data-streamdown="image-wrapper"] {
+    max-width: 100%;
+  }
+
+  .bud-markdown [data-streamdown="code-block"],
+  .bud-markdown [data-streamdown="table-wrapper"],
+  .bud-markdown [data-streamdown="mermaid"] {
+    overflow-x: auto;
   }
 }

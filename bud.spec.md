@@ -207,7 +207,7 @@ bud/
 | **Tailwind CSS 4** | Utility-first styling |
 | **Vite** | Build tool and dev server |
 | **xterm.js** | Terminal emulator |
-| **react-markdown** | Markdown rendering |
+| **Streamdown** | Streaming-safe Markdown rendering with code, Mermaid, and math plugins |
 | **Lucide** | Icon library |
 
 ---
@@ -637,6 +637,10 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/file-viewer/implementation-spec.md](./plan/file-viewer/implementation-spec.md) | Parent implementation spec for the web-first, mobile-compatible file viewer workflow built on the existing file-session foundation |
 | [plan/file-viewer/progress-checklist.md](./plan/file-viewer/progress-checklist.md) | Running implementation checklist for the file viewer rollout |
 | [plan/file-viewer/validation-checklist.md](./plan/file-viewer/validation-checklist.md) | Validation checklist for the file viewer backend route, web parser/actions, web viewer states, real-daemon smoke, and mobile handoff |
+| [plan/streamdown/streamdown.spec.md](./plan/streamdown/streamdown.spec.md) | Folder spec for the phased Streamdown web message-rendering migration, covering shared streaming/static markdown rendering, Tailwind v4 sources, plugins, file-open overrides, and validation |
+| [plan/streamdown/implementation-spec.md](./plan/streamdown/implementation-spec.md) | Parent implementation spec for replacing the web client's draft/plain-text plus final/react-markdown split with one Streamdown-backed renderer for assistant drafts and persisted markdown |
+| [plan/streamdown/progress-checklist.md](./plan/streamdown/progress-checklist.md) | Running checklist for Streamdown dependency setup, renderer migration, timeline cutover, visual hardening, cleanup, and spec validation |
+| [plan/streamdown/validation-checklist.md](./plan/streamdown/validation-checklist.md) | Automated and manual validation checklist for Streamdown rendering, code/Mermaid/math plugins, file actions, link safety, theme behavior, and timeline stability |
 | [plan/web-proxy/web-proxy.spec.md](./plan/web-proxy/web-proxy.spec.md) | Folder spec for the phased durable web proxy implementation plan, covering Bud-owned proxied sites, `bud.show` gateway auth, web/mobile surfaces, HTTP/WebSocket fidelity, agent tools, and deferred sharing/gateway extraction |
 | [plan/web-proxy/implementation-spec.md](./plan/web-proxy/implementation-spec.md) | Parent implementation spec for private owner-only local web proxying through durable Bud-scoped endpoint hosts, including product contracts, schema, auth/cookie decisions, rollout phases, and security invariants |
 | [plan/web-proxy/progress-checklist.md](./plan/web-proxy/progress-checklist.md) | Running implementation checklist for the durable web proxy rollout |
@@ -715,6 +719,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
 | [research/research.spec.md](./research/research.spec.md) | Folder spec for current-state research notes that capture implementation findings before promotion to plan, debug, or design docs |
 | [research/terminal-observation-long-waits.md](./research/terminal-observation-long-waits.md) | Research note on the current send/observe wait path, 30-second timeout defaults, output quiescence semantics, optimistic readiness, and post-dispatch quiescence timing for long-running TUIs |
+| [debug/streamdown-paragraph-animation-lag.md](./debug/streamdown-paragraph-animation-lag.md) | Debug note documenting why Streamdown's default word-level animation can lag behind fast assistant deltas and the follow-up no-stagger `blurIn` animation configuration |
 | [debug/service-refactor-phase-1-contract-bugs.md](./debug/service-refactor-phase-1-contract-bugs.md) | Debug note for Phase 1 of the service refactor, covering provider-less boot, shared enrollment-token hashing, legacy run-surface removal, and the Node REPL prompt-classification fix |
 | [debug/service-refactor-phase-2-runtime-and-transport-split.md](./debug/service-refactor-phase-2-runtime-and-transport-split.md) | Debug note for the next service-refactor slice, covering terminal-runtime ownership extraction, pending terminal wait fast-fail behavior, and the route/gateway decomposition rationale |
 | [debug/service-refactor-final-build-fixes.md](./debug/service-refactor-final-build-fixes.md) | Debug note capturing the final closure-pass `service` build failure, including the broken `TerminalObservationView` import and the unsafe websocket-readiness casts that had to be normalized at the gateway boundary before continuing to lint/build sign-off |

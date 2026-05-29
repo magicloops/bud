@@ -11,7 +11,12 @@ import type {
   ApiAgentCompactionPhase,
   ApiMessage,
 } from '@/lib/api-types'
-import { toOpenFileCandidate, type FilePathCandidate, type OpenFileCandidate } from '@/lib/file-paths'
+import {
+  toOpenFileCandidate,
+  type FilePathCandidate,
+  type OpenFileCandidate,
+  type OpenFileSource,
+} from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 
 const MAX_MESSAGE_HEIGHT = 500
@@ -256,21 +261,23 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     isTool && message.metadata?.pending === true ? resolveQuestionRequest(payload) : null
   const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
   const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
-  const fileActions = isAssistant && onOpenFile
+  const assistantFileSource: OpenFileSource | null = isAssistant
     ? {
-        source: {
-          kind: 'assistant_message' as const,
-          message_id: message.message_id,
-          client_id: message.client_id,
-        },
-        onOpenFileCandidate: (candidate: FilePathCandidate) => {
-          onOpenFile(toOpenFileCandidate(candidate, {
-            kind: 'assistant_message',
-            message_id: message.message_id,
-            client_id: message.client_id,
-          }))
-        },
+        kind: 'assistant_message',
+        ...(isDraftAssistant ? {} : { message_id: message.message_id }),
+        client_id: message.client_id,
       }
+    : null
+  const fileActions = assistantFileSource && onOpenFile
+    ? (() => {
+        const source = assistantFileSource
+        return {
+          source,
+          onOpenFileCandidate: (candidate: FilePathCandidate) => {
+            onOpenFile(toOpenFileCandidate(candidate, source))
+          },
+        }
+      })()
     : undefined
   const timeLabel = new Date(message.created_at).toLocaleTimeString()
   const backgroundColor = isUser ? 'var(--chat-message)' : undefined
@@ -407,13 +414,12 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         </div>
       )}
     </div>
-  ) : isDraftAssistant ? (
-    <div className="whitespace-pre-wrap">
-      {message.content}
-      <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded-sm bg-current align-middle" />
-    </div>
   ) : RoleContentRenderer ? (
-    <RoleContentRenderer content={message.content} fileActions={fileActions} />
+    <RoleContentRenderer
+      content={message.content}
+      fileActions={fileActions}
+      isStreaming={isDraftAssistant}
+    />
   ) : (
     <p>{message.content}</p>
   )
