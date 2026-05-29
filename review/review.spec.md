@@ -70,6 +70,10 @@ Review of the web application architecture as of April 20, 2026.
 
 Review and workflow guide for non-`~/.bud` local multi-account daemon testing.
 
+### `bud-daemon-production-binary-readiness.md`
+
+Production-readiness review for shipping the Rust daemon as a downloadable binary, covering installer/release gaps, host dependency preflight, tmux remediation UX, base-dir/local identity prerequisites, install-token ownership flow, protocol hardening, validation needs, open questions, and unknowns.
+
 ### `phase1-bud-tmux-foundation.md`
 
 Earlier phased review note for Bud/tmux terminal foundation work.

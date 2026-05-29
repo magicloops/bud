@@ -124,6 +124,8 @@ type ToolContentRendererProps = {
 ```typescript
 type MessageContentRendererProps = {
   content: string  // The message content text
+  fileActions?: MessageFileActionContext  // Optional user-click file-open actions
+  isStreaming?: boolean  // True for live assistant draft content
 }
 ```
 

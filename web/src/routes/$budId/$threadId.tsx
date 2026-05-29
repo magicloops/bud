@@ -13,7 +13,6 @@ import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } fro
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
-import { ThinkingIndicator } from '@/components/workbench/thinking-indicator'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { WebViewPane } from '@/components/workbench/web-view-pane'
@@ -24,6 +23,13 @@ import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
 import { THREAD_MESSAGE_PAGE_LIMIT, useThreadMessages } from '@/features/threads/use-thread-messages'
 import { submitQuestionResponseFlow } from '@/features/threads/question-response-submit'
+import {
+  ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS,
+  createAssistantActivityGateFromAgentState,
+  deriveAssistantActivityIndicatorVisible,
+  isFinalAssistantMessage,
+  reduceAssistantActivityGate,
+} from '@/features/threads/assistant-activity-indicator-state'
 import {
   apiFetch,
   apiFetchJson,
@@ -106,6 +112,9 @@ function ThreadView() {
   const [contextBudget, setContextBudget] = useState<ApiContextBudget | null>(
     initialAgentState.context_budget ?? null,
   )
+  const [assistantActivityGate, setAssistantActivityGate] = useState(() =>
+    createAssistantActivityGateFromAgentState(initialAgentState),
+  )
   const [activeCompaction, setActiveCompaction] = useState<ApiAgentCompactionStartEvent | null>(null)
   const [contextCompactionNotices, setContextCompactionNotices] = useState<ChatTimelineNotice[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -115,12 +124,23 @@ function ThreadView() {
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
   const initializedModelSelectionThreadRef = useRef<string | null>(null)
   const persistModelSelectionSeqRef = useRef(0)
+  const assistantMessageDoneTimerRef = useRef<number | null>(null)
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
     return isAuthRedirectPending() || response?.status === 401
   }, [])
   const handleFeatureError = useCallback((message: string) => {
     setError(message)
   }, [])
+  const clearAssistantMessageDoneTimer = useCallback(() => {
+    if (assistantMessageDoneTimerRef.current !== null) {
+      window.clearTimeout(assistantMessageDoneTimerRef.current)
+      assistantMessageDoneTimerRef.current = null
+    }
+  }, [])
+  const resetAssistantActivityGate = useCallback((agentState: ApiAgentState) => {
+    clearAssistantMessageDoneTimer()
+    setAssistantActivityGate(createAssistantActivityGateFromAgentState(agentState))
+  }, [clearAssistantMessageDoneTimer])
   const {
     messages,
     messagePage,
@@ -168,12 +188,19 @@ function ThreadView() {
   const webViewHttpTransportUnavailable =
     webView.transport?.available === false || webViewActiveSite?.transport?.available === false
 
+  useEffect(() => {
+    return () => {
+      clearAssistantMessageDoneTimer()
+    }
+  }, [clearAssistantMessageDoneTimer])
+
   // Update messages when loader data changes
   useEffect(() => {
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
     setContextBudget(initialAgentState.context_budget ?? null)
-  }, [initialAgentState, initialMessagePage])
+    resetAssistantActivityGate(initialAgentState)
+  }, [initialAgentState, initialMessagePage, resetAssistantActivityGate])
 
   useEffect(() => {
     setActiveCompaction(null)
@@ -248,8 +275,9 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
+    resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [applyAgentState])
+  }, [applyAgentState, resetAssistantActivityGate])
 
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
     const [nextPage, nextAgentState] = await Promise.all([
@@ -264,8 +292,9 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
+    resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [mergeLatestBootstrap])
+  }, [mergeLatestBootstrap, resetAssistantActivityGate])
 
   const handleThreadTitleUpdate = useCallback((title: string) => {
     upsertThreadSummary({ ...initialThread, title })
@@ -353,15 +382,81 @@ function ThreadView() {
     }
   }, [applyToolResultMessage, refreshThreadWebView])
 
+  const scheduleAssistantActivityReturn = useCallback((turnId: string) => {
+    clearAssistantMessageDoneTimer()
+    assistantMessageDoneTimerRef.current = window.setTimeout(() => {
+      assistantMessageDoneTimerRef.current = null
+      setAssistantActivityGate((current) =>
+        reduceAssistantActivityGate(current, {
+          type: 'message_done_timer',
+          turnId,
+        }),
+      )
+    }, ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS)
+  }, [clearAssistantMessageDoneTimer])
+
+  const handleAssistantMessageStart = useCallback((event: Parameters<typeof applyAssistantMessageStart>[0]) => {
+    clearAssistantMessageDoneTimer()
+    setAssistantActivityGate((current) =>
+      reduceAssistantActivityGate(current, {
+        type: 'assistant_message_start',
+        turnId: event.turnId,
+      }),
+    )
+    applyAssistantMessageStart(event)
+  }, [applyAssistantMessageStart, clearAssistantMessageDoneTimer])
+
+  const handleAssistantMessageDelta = useCallback((event: Parameters<typeof applyAssistantMessageDelta>[0]) => {
+    clearAssistantMessageDoneTimer()
+    setAssistantActivityGate((current) =>
+      reduceAssistantActivityGate(current, {
+        type: 'assistant_message_delta',
+        turnId: event.turnId,
+      }),
+    )
+    applyAssistantMessageDelta(event)
+  }, [applyAssistantMessageDelta, clearAssistantMessageDoneTimer])
+
+  const handleAssistantMessageDone = useCallback((event: Parameters<typeof applyAssistantMessageDone>[0]) => {
+    setAssistantActivityGate((current) =>
+      reduceAssistantActivityGate(current, {
+        type: 'assistant_message_done',
+        turnId: event.turnId,
+      }),
+    )
+    applyAssistantMessageDone(event)
+    scheduleAssistantActivityReturn(event.turnId)
+  }, [applyAssistantMessageDone, scheduleAssistantActivityReturn])
+
+  const handleAssistantMessageEvent = useCallback((event: Parameters<typeof applyAssistantMessageEvent>[0]) => {
+    if (isFinalAssistantMessage(event.message)) {
+      clearAssistantMessageDoneTimer()
+    }
+    setAssistantActivityGate((current) =>
+      reduceAssistantActivityGate(current, {
+        type: 'assistant_message_persisted',
+        turnId: event.turnId,
+        message: event.message,
+      }),
+    )
+    applyAssistantMessageEvent(event)
+  }, [applyAssistantMessageEvent, clearAssistantMessageDoneTimer])
+
   const handleFinalizeTurn = useCallback((
     turnId: string,
     finalStatus: 'succeeded' | 'failed' | 'canceled',
   ) => {
+    clearAssistantMessageDoneTimer()
+    setAssistantActivityGate((current) =>
+      reduceAssistantActivityGate(current, {
+        type: 'final',
+      }),
+    )
     finalizeTurn(turnId, finalStatus)
     void refreshAgentState(threadId).catch((error) => {
       console.warn('[context-budget] failed to refresh after final event', error)
     })
-  }, [finalizeTurn, refreshAgentState, threadId])
+  }, [clearAssistantMessageDoneTimer, finalizeTurn, refreshAgentState, threadId])
 
   const appendContextCompactionNotice = useCallback((notice: ChatTimelineNotice) => {
     setContextCompactionNotices((current) => {
@@ -419,10 +514,10 @@ function ThreadView() {
     onError: setError,
     onToolCall: applyToolCall,
     onToolResultMessage: handleToolResultMessage,
-    onAssistantMessageStart: applyAssistantMessageStart,
-    onAssistantMessageDelta: applyAssistantMessageDelta,
-    onAssistantMessageDone: applyAssistantMessageDone,
-    onAssistantMessageEvent: applyAssistantMessageEvent,
+    onAssistantMessageStart: handleAssistantMessageStart,
+    onAssistantMessageDelta: handleAssistantMessageDelta,
+    onAssistantMessageDone: handleAssistantMessageDone,
+    onAssistantMessageEvent: handleAssistantMessageEvent,
     onCompactionStart: handleCompactionStart,
     onCompactionDone: handleCompactionDone,
     onCompactionFailed: handleCompactionFailed,
@@ -619,6 +714,12 @@ function ThreadView() {
 
     setError(null)
     setStatus('dispatching')
+    clearAssistantMessageDoneTimer()
+    setAssistantActivityGate((current) =>
+      reduceAssistantActivityGate(current, {
+        type: 'final',
+      }),
+    )
     setMessageText('')
 
     const optimisticId = addOptimisticUserMessage(trimmedMessage)
@@ -678,6 +779,7 @@ function ThreadView() {
   }, [
     addOptimisticUserMessage,
     budId,
+    clearAssistantMessageDoneTimer,
     ensureAgentStreamConnected,
     reasoningEffort,
     reconcilePersistedUserMessage,
@@ -688,6 +790,12 @@ function ThreadView() {
     threadId,
   ])
 
+  const activityIndicatorVisible = deriveAssistantActivityIndicatorVisible({
+    status,
+    activeCompaction: activeCompaction !== null,
+    gate: assistantActivityGate,
+  })
+
   return (
     <WorkspaceShell
       title={currentThread.title ?? 'Untitled thread'}
@@ -697,11 +805,13 @@ function ThreadView() {
       status={status}
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
-        <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
+        <div className="flex min-h-0 w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
           <ChatTimeline
             messages={messages}
             notices={contextCompactionNotices}
             accentColor="var(--bud-accent-vibrant)"
+            activityIndicatorVisible={activityIndicatorVisible}
+            activityIndicatorLabel={activeCompaction ? 'Compacting context...' : undefined}
             hasOlderMessages={messagePage.has_more_before}
             isLoadingOlderMessages={isLoadingOlderMessages}
             onLoadOlderMessages={loadOlderMessages}
@@ -709,10 +819,6 @@ function ThreadView() {
             onOpenFile={handleOpenFile}
             onSubmitQuestionResponse={handleSubmitQuestionResponse}
             questionSubmitError={questionSubmitError}
-          />
-          <ThinkingIndicator
-            isVisible={status === 'streaming' || activeCompaction !== null}
-            label={activeCompaction ? 'Compacting context...' : undefined}
           />
         </div>
       )}

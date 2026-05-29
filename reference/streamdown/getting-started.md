@@ -1,0 +1,203 @@
+---
+title: Getting Started
+description: Learn how to install and configure Streamdown in your React application.
+type: guide
+summary: Install Streamdown and render your first streaming Markdown component in under five minutes.
+related:
+  - /docs/configuration
+  - /docs/usage
+---
+
+# Getting Started
+
+
+
+Get up and running with Streamdown in minutes. This guide will walk you through installation, configuration, and your first implementation.
+
+## Requirements
+
+* **Node.js** >= 18
+* **React** >= 19.1.1 (compatible with React 18+)
+* **Tailwind CSS** (for styling)
+
+## Installation
+
+You can install Streamdown directly, or use it as part of the [AI Elements](https://ai-sdk.dev/elements) library.
+
+### Direct Installation
+
+Install Streamdown using your preferred package manager:
+
+<CodeBlockTabs defaultValue="npm">
+  <CodeBlockTabsList>
+    <CodeBlockTabsTrigger value="npm">
+      npm
+    </CodeBlockTabsTrigger>
+
+    <CodeBlockTabsTrigger value="pnpm">
+      pnpm
+    </CodeBlockTabsTrigger>
+
+    <CodeBlockTabsTrigger value="yarn">
+      yarn
+    </CodeBlockTabsTrigger>
+
+    <CodeBlockTabsTrigger value="bun">
+      bun
+    </CodeBlockTabsTrigger>
+  </CodeBlockTabsList>
+
+  <CodeBlockTab value="npm">
+    ```bash
+    npm i streamdown
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="pnpm">
+    ```bash
+    pnpm add streamdown
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="yarn">
+    ```bash
+    yarn add streamdown
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="bun">
+    ```bash
+    bun add streamdown
+    ```
+  </CodeBlockTab>
+</CodeBlockTabs>
+
+### AI Elements
+
+Install the `message` component from AI Elements:
+
+<CodeBlockTabs defaultValue="npm">
+  <CodeBlockTabsList>
+    <CodeBlockTabsTrigger value="npm">
+      npm
+    </CodeBlockTabsTrigger>
+
+    <CodeBlockTabsTrigger value="pnpm">
+      pnpm
+    </CodeBlockTabsTrigger>
+
+    <CodeBlockTabsTrigger value="yarn">
+      yarn
+    </CodeBlockTabsTrigger>
+
+    <CodeBlockTabsTrigger value="bun">
+      bun
+    </CodeBlockTabsTrigger>
+  </CodeBlockTabsList>
+
+  <CodeBlockTab value="npm">
+    ```bash
+    npx ai-elements@latest add message
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="pnpm">
+    ```bash
+    pnpm dlx ai-elements@latest add message
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="yarn">
+    ```bash
+    yarn dlx ai-elements@latest add message
+    ```
+  </CodeBlockTab>
+
+  <CodeBlockTab value="bun">
+    ```bash
+    bun x ai-elements@latest add message
+    ```
+  </CodeBlockTab>
+</CodeBlockTabs>
+
+## Tailwind CSS Configuration
+
+Streamdown uses Tailwind CSS for styling. To ensure the styles are properly applied, you need to configure your Tailwind setup to include Streamdown's source files.
+
+### Tailwind v4
+
+Add the following CSS source directive to your `globals.css` or main CSS file:
+
+```css title="globals.css"
+@source "../node_modules/streamdown/dist/*.js";
+```
+
+The path must be relative from your CSS file to the `node_modules` folder containing `streamdown`. In a standard Next.js project where `globals.css` lives in `app/`, the default path above should work.
+
+If you install optional plugins, add their matching `@source` lines only for packages you've installed. See the plugin pages for exact paths and examples:
+
+* Code: [/docs/plugins/code](/docs/plugins/code)
+* CJK: [/docs/plugins/cjk](/docs/plugins/cjk)
+* Math: [/docs/plugins/math](/docs/plugins/math)
+* Mermaid: [/docs/plugins/mermaid](/docs/plugins/mermaid)
+
+Example: to include the code plugin, add this to `globals.css` (adjust the relative path as needed):
+
+```css title="globals.css"
+@source "../node_modules/@streamdown/code/dist/*.js";
+```
+
+### Animation styles
+
+If you're using the built-in `animated` prop for streaming animation, import the animation CSS in your app:
+
+```tsx title="app/layout.tsx"
+import "streamdown/styles.css";
+```
+
+#### Monorepo setup
+
+In a monorepo (npm workspaces, Turbo, pnpm, etc.), dependencies are typically hoisted to the root `node_modules`. You need to adjust the relative path to point there:
+
+```
+monorepo/
+├── node_modules/streamdown/  ← hoisted here
+├── apps/
+│   └── web/
+│       └── app/
+│           └── globals.css   ← your CSS file
+```
+
+```css title="globals.css"
+/* apps/web/app/globals.css → 3 levels up to reach root node_modules */
+@source "../../../node_modules/streamdown/dist/*.js";
+```
+
+Adjust the number of `../` segments based on where your CSS file lives relative to the root `node_modules`.
+
+### Tailwind v3
+
+Add Streamdown to your `content` array in your `tailwind.config.js`:
+
+```js title="tailwind.config.js"
+module.exports = {
+  content: [
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./node_modules/streamdown/dist/*.js",
+  ],
+  // ... rest of your config
+};
+```
+
+In a monorepo, adjust the path to reach the root `node_modules`:
+
+```js title="tailwind.config.js"
+module.exports = {
+  content: [
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "../../node_modules/streamdown/dist/*.js",
+  ],
+  // ... rest of your config
+};
+```
+

@@ -107,7 +107,7 @@ Inline code component with click-to-copy functionality.
 
 ### `code-block.tsx`
 
-Syntax-highlighted code block with copy button.
+Syntax-highlighted code block with copy button. Chat markdown code blocks now render through Streamdown; this component is retained for file-viewer source/code previews.
 
 **Props**:
 - `code` - The code string to display
@@ -151,7 +151,7 @@ Shared inline status/banner component for user-initiated mutations.
 | `@radix-ui/react-tooltip` | Tooltip primitives |
 | `class-variance-authority` | Variant-based class management |
 | `lucide-react` | Icons (Copy, Check, status indicators) |
-| `react-syntax-highlighter` | Code syntax highlighting |
+| `react-syntax-highlighter` | File-viewer code syntax highlighting |
 | `@/lib/utils` | `cn()` class name utility |
 
 ## Styling Approach

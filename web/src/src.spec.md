@@ -45,9 +45,16 @@ Global styles and CSS custom properties.
 **Tailwind Setup**:
 ```css
 @import "tailwindcss";
-@plugin "@tailwindcss/typography";
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
+@source "../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../node_modules/@streamdown/math/dist/*.js";
 @import "tw-animate-css";
 ```
+
+Streamdown core CSS and KaTeX CSS are imported once from `main.tsx` before the app theme CSS.
+
+`index.css` also owns Bud's scoped Streamdown rich-block overrides under `.bud-markdown`. Those code, Mermaid, table, and math selectors are intentionally left outside Tailwind layers so they can override Streamdown's package utility classes without replacing the Streamdown plugin components.
 
 **Theme System** (OKLCH colors):
 
@@ -76,6 +83,14 @@ Global styles and CSS custom properties.
   html, body { overscroll-behavior: none; }
 }
 ```
+
+**Streamdown Rich Blocks**:
+- top-level Markdown blocks use compact `0.75rem` spacing, while list items use `calc(var(--spacing) * 0.25)` vertical padding and preserve nested-list indentation
+- code blocks use a compact dark surface with reduced `0.85em` code text, no chat line numbers, and above-surface copy controls that use the code surface's dark button treatment; the scoped override also disables Streamdown's code-block paint containment so those controls can render outside the block
+- Streamdown copy/action controls are tightened for the chat column, with code copy controls hidden until hover/focus on mouse-capable devices and protected by a narrow hover bridge
+- Mermaid diagrams use a single bordered diagram surface with no visible label/header; copy/fullscreen controls sit above the surface, hide until hover/focus on fine-pointer devices with a narrow hover bridge for pointer travel, and remain visible on coarse-pointer devices
+- tables use a single bordered table surface with contained overflow; copy controls sit above the surface in a transparent positioning shell, hide until hover/focus on fine-pointer devices with a narrow hover bridge for pointer travel, and remain visible on coarse-pointer devices
+- KaTeX display math is constrained to the message column
 
 ### `routeTree.gen.ts`
 
@@ -144,12 +159,12 @@ main.tsx
 | `@tanstack/react-router` | File-based routing |
 | `better-auth` | Browser auth client |
 | `tailwindcss` | Utility CSS |
-| `@tailwindcss/typography` | Prose styling |
 | `tw-animate-css` | Animation utilities |
 | `lucide-react` | Icons |
 | `xterm`, `xterm-addon-fit` | Terminal emulation |
-| `react-markdown` | Markdown rendering |
-| `react-syntax-highlighter` | Code highlighting |
+| `streamdown`, `@streamdown/code`, `@streamdown/mermaid`, `@streamdown/math` | Streaming-safe Markdown with code, diagram, and math plugins |
+| `katex` | KaTeX CSS for math output |
+| `react-syntax-highlighter` | File-viewer source preview highlighting |
 | `@microlink/react-json-view` | JSON visualization |
 | `class-variance-authority` | Variant styling |
 | `clsx`, `tailwind-merge` | Class name utilities |

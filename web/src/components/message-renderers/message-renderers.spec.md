@@ -46,17 +46,19 @@ type ToolContentRenderer = ComponentType<ToolContentRendererProps>
 type MessageContentRendererProps = {
   content: string
   fileActions?: MessageFileActionContext
+  isStreaming?: boolean
 }
 type MessageContentRenderer = ComponentType<MessageContentRendererProps>
 ```
 
 `MessageFileActionContext` lets parent routes attach explicit user-click handlers for parsed file references. Renderers receive candidate metadata and source message identity but must not open sessions while rendering.
+`isStreaming` lets a role renderer use the same component for live assistant drafts and persisted static rows.
 
 ## Subfolders
 
 ### `roles/` → [roles/roles.spec.md](./roles/roles.spec.md)
 
-Role-based renderers (user, assistant). Uses markdown rendering with syntax highlighting.
+Role-based renderers (user, assistant). Uses Streamdown-backed Markdown with streaming/static modes.
 
 ### `tools/` → [tools/tools.spec.md](./tools/tools.spec.md)
 

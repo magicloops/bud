@@ -63,7 +63,7 @@ Thread list sidebar for conversation navigation.
 
 ### `chat-timeline.tsx`
 
-Message list with auto-scroll and collapsible messages.
+Message list with auto-scroll and full-height message rendering.
 
 **Type**: `ChatMessage` - Thread message data keyed by stable `client_id` identity
 
@@ -71,47 +71,49 @@ Message list with auto-scroll and collapsible messages.
 - `messages` - Array of ChatMessage
 - optional `notices` - Non-transcript timeline markers such as completed or failed context compaction events
 - `accentColor` - CSS color for user message accents
+- optional `activityIndicatorVisible` / `activityIndicatorLabel` - Route-owned active-agent footer state rendered after the latest timeline item
 - optional upward-pagination props for older transcript loading and scroll-anchor preservation
 
 **Features**:
 - Consumes chronologically ordered thread messages directly from `useThreadMessages(...)` instead of re-sorting the full list locally on every render
-- Auto-scroll to bottom when new messages arrive or when the last visible message grows during assistant streaming
+- Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, when the active-agent footer appears, and while that footer expands if the user is already stuck to bottom
 - "Stick to bottom" behavior with manual scroll override
 - Top-of-timeline "Load older messages" control when older history exists
 - Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
-- Collapsible long messages (>500px) with "Show more/less"
 - Copy message button (appears on hover, bottom-right)
 - Tool payload viewer now lazy-loads `@microlink/react-json-view` only when a payload is expanded, with a plain JSON fallback while the viewer chunk loads
-- Per-message expand/copy/payload state now lives inside memoized message rows, so toggling one message does not force the full timeline to churn through list-wide UI state maps
-- Overflow detection now measures each message row independently via its own DOM observer/update path instead of rescanning every rendered message after each transcript change
+- Per-message copy/payload state now lives inside memoized message rows, so toggling one message does not force the full timeline to churn through list-wide UI state maps
+- Messages render at their natural height without the former 500px clamp or expand/collapse row controls
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
-- Assistant draft rows render as plain text with a live cursor until the canonical persisted assistant row replaces them
+- Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode without Streamdown text-reveal animation or caret chrome until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
 - Context compaction notices render as subtle timeline markers without creating or assuming persisted transcript rows
+- Active-agent thinking/compaction feedback renders as a non-transcript footer inside the scrollable timeline so the newest message remains fully visible above it
 - The parent thread route now passes the hook-owned message objects directly, preserving `client_id` identity without an extra route-local remap step
 - Assistant messages can expose explicit file-open actions for conservative local path references parsed from Markdown links and inline code; actions call a parent callback and never create file sessions during render
 
-**Note**: Renders only the scrollable message area. Parent component provides the container wrapper.
+**Note**: Renders the scrollable message area plus non-transcript timeline footers. Parent component provides the container wrapper.
 
 ### `thinking-indicator.tsx`
 
-Animated "thinking" indicator shown when agent is working.
+Thinking indicator shown when agent is working.
 
 **Props**:
-- `isVisible` - Controls visibility with animated enter/exit
+- `isVisible` - Controls visibility and unmounts immediately when hidden
 - optional `label` - Overrides the rotating word while a specific activity, such as context compaction, is active
 
 **Features**:
-- Smooth CSS transitions for enter (slide up, fade in) and exit (slide down, fade out)
 - Cycles through 12 playful words every 2 seconds: "Thinking", "Pondering", "Combobulating", etc.
 - Shows caller-provided activity text such as `Compacting context...` without cycling the generic word list
 - Random starting word on each appearance
-- Delayed unmount allows exit animation to complete
-- Spinner icon with `animate-spin`
+- Enter-only height animation expands from 0 to the compact open state over 200ms
+- Instant unmount on hide so assistant draft text never overlaps a fading indicator
+- Compact 40px open-state height cap with a small `animate-spin` spinner
 - Text with `animate-pulse`
 
-**Usage**: Rendered as sibling to ChatTimeline, outside the scroll container, to avoid re-render coupling and scroll interference. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
+**Usage**: Rendered by `ChatTimeline` as a non-transcript footer row after the latest message so scroll-to-bottom includes the indicator. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
+The existing-thread route also suppresses the generic indicator while assistant draft text is actively streaming, then lets it return after a short post-`message_done` delay if the turn continues.
 
 **Message Styling by Role**:
 | Role | Avatar | Background |

@@ -1,6 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
+import 'streamdown/styles.css'
+import 'katex/dist/katex.min.css'
 import './index.css'
 
 // Import the generated route tree

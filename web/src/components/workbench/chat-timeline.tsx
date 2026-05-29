@@ -4,16 +4,24 @@ import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
+import {
+  ThinkingIndicator,
+  THINKING_INDICATOR_ENTER_DURATION_MS,
+} from '@/components/workbench/thinking-indicator'
 import type {
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
   ApiAgentCompactionPhase,
   ApiMessage,
 } from '@/lib/api-types'
-import { toOpenFileCandidate, type FilePathCandidate, type OpenFileCandidate } from '@/lib/file-paths'
+import {
+  toOpenFileCandidate,
+  type FilePathCandidate,
+  type OpenFileCandidate,
+  type OpenFileSource,
+} from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 
-const MAX_MESSAGE_HEIGHT = 500
 type JsonViewComponent = typeof import('@microlink/react-json-view').default
 
 export type ChatMessage = Pick<
@@ -51,6 +59,8 @@ type ChatTimelineProps = {
   messages: ChatMessage[]
   notices?: ChatTimelineNotice[]
   accentColor: string
+  activityIndicatorVisible?: boolean
+  activityIndicatorLabel?: string
   hasOlderMessages?: boolean
   isLoadingOlderMessages?: boolean
   onLoadOlderMessages?: (() => void) | null
@@ -67,6 +77,8 @@ const ChatTimelineComponent = ({
   messages,
   notices = [],
   accentColor,
+  activityIndicatorVisible = false,
+  activityIndicatorLabel,
   hasOlderMessages = false,
   isLoadingOlderMessages = false,
   onLoadOlderMessages = null,
@@ -115,8 +127,11 @@ const ChatTimelineComponent = ({
     const lastKey = lastItem?.type === 'message'
       ? `${lastItem.message.client_id}:${lastItem.message.content.length}`
       : lastItem?.notice.notice_id ?? ''
-    return `${timelineItems.length}:${lastKey}`
-  }, [timelineItems])
+    const activityKey = activityIndicatorVisible
+      ? `activity:${activityIndicatorLabel ?? 'default'}`
+      : 'activity:hidden'
+    return `${timelineItems.length}:${lastKey}:${activityKey}`
+  }, [activityIndicatorLabel, activityIndicatorVisible, timelineItems])
 
   const ensureJsonViewLoaded = useCallback(() => {
     if (JsonView) {
@@ -160,8 +175,35 @@ const ChatTimelineComponent = ({
     })
   }, [scrollSyncKey])
 
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node || !activityIndicatorVisible || !shouldStickRef.current) {
+      return
+    }
+
+    let frameId: number | null = null
+    const start = window.performance.now()
+    const followIndicatorGrowth = (timestamp: number) => {
+      if (!shouldStickRef.current) {
+        return
+      }
+
+      node.scrollTop = node.scrollHeight
+      if (timestamp - start <= THINKING_INDICATOR_ENTER_DURATION_MS) {
+        frameId = window.requestAnimationFrame(followIndicatorGrowth)
+      }
+    }
+
+    frameId = window.requestAnimationFrame(followIndicatorGrowth)
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+    }
+  }, [activityIndicatorVisible])
+
   return (
-    <div ref={setScrollNode} className="flex-1 space-y-3 overflow-y-auto p-4">
+    <div ref={setScrollNode} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
       {onLoadOlderMessages && (
         <div className="flex justify-center pb-1">
           {hasOlderMessages ? (
@@ -197,6 +239,10 @@ const ChatTimelineComponent = ({
       ) : (
         <ChatTimelineNoticeRow key={item.notice.notice_id} notice={item.notice} />
       ))}
+      <ThinkingIndicator
+        isVisible={activityIndicatorVisible}
+        label={activityIndicatorLabel}
+      />
     </div>
   )
 }
@@ -227,10 +273,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   questionSubmitError = null,
 }: ChatTimelineMessageProps) {
   const [isPayloadExpanded, setIsPayloadExpanded] = useState(false)
-  const [isMessageExpanded, setIsMessageExpanded] = useState(false)
-  const [isOverflowing, setIsOverflowing] = useState(false)
   const [isCopied, setIsCopied] = useState(false)
-  const contentRef = useRef<HTMLDivElement | null>(null)
   const copyResetTimeoutRef = useRef<number | null>(null)
 
   const isUser = message.role === 'user'
@@ -244,26 +287,27 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     isTool && message.metadata?.pending === true ? resolveQuestionRequest(payload) : null
   const ToolContentRenderer = payload?.tool ? getToolContentRenderer(payload.tool as string) : null
   const RoleContentRenderer = !isTool ? getRoleContentRenderer(message.role) : null
-  const fileActions = isAssistant && onOpenFile
+  const assistantFileSource: OpenFileSource | null = isAssistant
     ? {
-        source: {
-          kind: 'assistant_message' as const,
-          message_id: message.message_id,
-          client_id: message.client_id,
-        },
-        onOpenFileCandidate: (candidate: FilePathCandidate) => {
-          onOpenFile(toOpenFileCandidate(candidate, {
-            kind: 'assistant_message',
-            message_id: message.message_id,
-            client_id: message.client_id,
-          }))
-        },
+        kind: 'assistant_message',
+        ...(isDraftAssistant ? {} : { message_id: message.message_id }),
+        client_id: message.client_id,
       }
+    : null
+  const fileActions = assistantFileSource && onOpenFile
+    ? (() => {
+        const source = assistantFileSource
+        return {
+          source,
+          onOpenFileCandidate: (candidate: FilePathCandidate) => {
+            onOpenFile(toOpenFileCandidate(candidate, source))
+          },
+        }
+      })()
     : undefined
   const timeLabel = new Date(message.created_at).toLocaleTimeString()
   const backgroundColor = isUser ? 'var(--chat-message)' : undefined
   const assistantBackground = isAssistant || isTool ? 'var(--chat-message)' : undefined
-  const overlayColor = backgroundColor ?? 'hsl(var(--card))'
   const accentStyles =
     isUser && systemColor
       ? {
@@ -271,31 +315,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
           boxShadow: `3px 3px 0 ${systemColor}`,
         }
       : undefined
-
-  useEffect(() => {
-    const node = contentRef.current
-    if (!node) {
-      return
-    }
-
-    const updateOverflow = () => {
-      const nextOverflowing = node.scrollHeight > MAX_MESSAGE_HEIGHT
-      setIsOverflowing((prev) => (prev === nextOverflowing ? prev : nextOverflowing))
-    }
-
-    const frameId = requestAnimationFrame(updateOverflow)
-    if (typeof ResizeObserver === 'undefined') {
-      return () => cancelAnimationFrame(frameId)
-    }
-
-    const observer = new ResizeObserver(updateOverflow)
-    observer.observe(node)
-
-    return () => {
-      cancelAnimationFrame(frameId)
-      observer.disconnect()
-    }
-  }, [JsonView, isPayloadExpanded, message.content, message.metadata, message.role])
 
   useEffect(() => {
     return () => {
@@ -395,13 +414,12 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         </div>
       )}
     </div>
-  ) : isDraftAssistant ? (
-    <div className="whitespace-pre-wrap">
-      {message.content}
-      <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded-sm bg-current align-middle" />
-    </div>
   ) : RoleContentRenderer ? (
-    <RoleContentRenderer content={message.content} fileActions={fileActions} />
+    <RoleContentRenderer
+      content={message.content}
+      fileActions={fileActions}
+      isStreaming={isDraftAssistant}
+    />
   ) : (
     <p>{message.content}</p>
   )
@@ -436,31 +454,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         <span>{isTool ? `Tool • ${toolName}` : message.display_role || (isUser ? 'User' : message.role)}</span>
         <time>{timeLabel}</time>
       </div>
-      <div className="relative">
-        <div
-          ref={contentRef}
-          className={cn(isOverflowing && !isMessageExpanded && 'max-h-[500px] overflow-hidden')}
-        >
-          {contentNode}
-        </div>
-        {isOverflowing && !isMessageExpanded && (
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-5"
-            style={{
-              background: `linear-gradient(0deg, ${overlayColor} 60%, rgba(0,0,0,0))`,
-            }}
-          />
-        )}
-      </div>
-      {(isOverflowing || isMessageExpanded) && (
-        <button
-          type="button"
-          onClick={() => setIsMessageExpanded((prev) => !prev)}
-          className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
-        >
-          {isMessageExpanded ? 'Collapse message' : 'Expand message'}
-        </button>
-      )}
+      <div>{contentNode}</div>
     </article>
   )
 })
