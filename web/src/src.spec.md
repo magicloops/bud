@@ -52,7 +52,7 @@ Global styles and CSS custom properties.
 @import "tw-animate-css";
 ```
 
-Streamdown animation CSS and KaTeX CSS are imported once from `main.tsx` before the app theme CSS.
+Streamdown core CSS and KaTeX CSS are imported once from `main.tsx` before the app theme CSS.
 
 **Theme System** (OKLCH colors):
 

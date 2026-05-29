@@ -2,7 +2,6 @@ import { memo, useMemo, type ReactNode } from 'react'
 import {
   Streamdown,
   defaultRemarkPlugins,
-  type AnimateOptions,
   type Components,
   type ControlsConfig,
   type PluginConfig,
@@ -28,13 +27,6 @@ type MarkdownContentProps = MessageContentRendererProps & {
 }
 
 const streamdownPlugins: PluginConfig = { code, mermaid, math }
-const streamdownAnimation: AnimateOptions = {
-  animation: 'blurIn',
-  duration: 200,
-  easing: 'ease-out',
-  // Avoid Streamdown's default per-word delay queue so fast deltas do not trail later blocks.
-  stagger: 0,
-}
 const streamdownControls: ControlsConfig = {
   code: { copy: true, download: false },
   table: { copy: true, download: false, fullscreen: false },
@@ -123,8 +115,6 @@ export const MarkdownContent = memo(function MarkdownContent({
 
   return (
     <Streamdown
-      animated={isStreaming ? streamdownAnimation : undefined}
-      caret={isStreaming ? 'block' : undefined}
       className="bud-markdown max-w-none text-sm leading-relaxed [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_p]:leading-relaxed"
       components={components}
       controls={streamdownControls}

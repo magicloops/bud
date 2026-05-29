@@ -31,14 +31,14 @@ The web client currently uses two different renderers for the same assistant mes
 
 The message usually keeps the same `client_id`, so the row can remain mounted while the body changes renderer families. The debug note in [../../debug/assistant-message-render-bounce.md](../../debug/assistant-message-render-bounce.md) identifies that renderer switch as the likely cause of the newest message bounce when streaming finalizes.
 
-The desired direction is to use `streamdown` for both streaming and final markdown rendering. Streamdown is purpose-built for incomplete markdown and has plugins for code, Mermaid, and math. Bud initially enabled Streamdown's built-in word reveal animation, then disabled it after [../../debug/streamdown-paragraph-animation-lag.md](../../debug/streamdown-paragraph-animation-lag.md) showed the default stagger can lag behind fast model deltas. Animation was re-enabled with the fast-streaming `blurIn` direction from [../../reference/streamdown/animation.md](../../reference/streamdown/animation.md), while explicitly setting `stagger: 0` to avoid delayed paragraph queues.
+The desired direction is to use `streamdown` for both streaming and final markdown rendering. Streamdown is purpose-built for incomplete markdown and has plugins for code, Mermaid, and math. Bud initially experimented with Streamdown's text-reveal animation and caret, but the accepted v1 now keeps streaming parser/control state while omitting Streamdown animated text and caret chrome so fast model deltas remain visually calm.
 
 ## Objective
 
 Migrate Bud's web message markdown rendering to Streamdown while preserving the current product behaviors:
 
 - assistant drafts and final assistant rows use one shared markdown renderer
-- streaming assistant text uses Streamdown streaming mode, caret, and no-stagger `blurIn` animation, not a bespoke plain-text branch
+- streaming assistant text uses Streamdown streaming mode, not a bespoke plain-text branch, while omitting Streamdown text-reveal animation and caret chrome
 - persisted assistant/user messages render statically
 - file-open overrides for Markdown links and inline code keep working
 - unsafe/local/external link policies remain at least as strict as today
@@ -53,7 +53,7 @@ Migrate Bud's web message markdown rendering to Streamdown while preserving the 
 - Keep `MarkdownContent` as the exported component name if practical, but replace its internals.
 - Add `isStreaming?: boolean` to message renderer props rather than adding a second renderer registry.
 - Use Streamdown `mode="streaming"` and `isAnimating` only for draft assistant rows.
-- Use explicit Streamdown animation options for draft assistant rows: `blurIn`, `duration: 200`, `ease-out`, and `stagger: 0`.
+- Do not pass Streamdown `animated` or `caret` props for draft assistant rows in the current v1; the visible motion comes from the model stream itself.
 - Use Streamdown `mode="static"` for persisted messages.
 - Use `@streamdown/code`, `@streamdown/mermaid`, and `@streamdown/math`.
 - Import `katex/dist/katex.min.css` for math rendering.
@@ -66,7 +66,7 @@ Migrate Bud's web message markdown rendering to Streamdown while preserving the 
 ## Success Criteria
 
 - [x] `streamdown`, `@streamdown/code`, `@streamdown/mermaid`, and `@streamdown/math` are installed in `web`
-- [x] Streamdown animation CSS and KaTeX CSS are imported once
+- [x] Streamdown core CSS and KaTeX CSS are imported once
 - [x] Tailwind v4 `@source` directives cover Streamdown and installed plugins
 - [x] `MarkdownContent` uses Streamdown for static and streaming modes
 - [x] assistant draft rows no longer render through the plain-text branch

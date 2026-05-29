@@ -4,7 +4,10 @@ import { cn } from '@/lib/utils'
 import { config } from '@/lib/config'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
 import { getToolContentRenderer, getRoleContentRenderer } from '@/components/message-renderers'
-import { ThinkingIndicator } from '@/components/workbench/thinking-indicator'
+import {
+  ThinkingIndicator,
+  THINKING_INDICATOR_ENTER_DURATION_MS,
+} from '@/components/workbench/thinking-indicator'
 import type {
   ApiAskUserQuestionsRequest,
   ApiAskUserQuestionsResponseInput,
@@ -172,6 +175,33 @@ const ChatTimelineComponent = ({
       requestAnimationFrame(syncScroll)
     })
   }, [scrollSyncKey])
+
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node || !activityIndicatorVisible || !shouldStickRef.current) {
+      return
+    }
+
+    let frameId: number | null = null
+    const start = window.performance.now()
+    const followIndicatorGrowth = (timestamp: number) => {
+      if (!shouldStickRef.current) {
+        return
+      }
+
+      node.scrollTop = node.scrollHeight
+      if (timestamp - start <= THINKING_INDICATOR_ENTER_DURATION_MS) {
+        frameId = window.requestAnimationFrame(followIndicatorGrowth)
+      }
+    }
+
+    frameId = window.requestAnimationFrame(followIndicatorGrowth)
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+    }
+  }, [activityIndicatorVisible])
 
   return (
     <div ref={setScrollNode} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">

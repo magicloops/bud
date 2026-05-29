@@ -17,6 +17,8 @@ const THINKING_WORDS = [
   'Combobulating'
 ]
 
+export const THINKING_INDICATOR_ENTER_DURATION_MS = 200
+
 type ThinkingIndicatorProps = {
   isVisible: boolean
   label?: string
@@ -26,16 +28,18 @@ export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) 
   const [wordIndex, setWordIndex] = useState(() =>
     Math.floor(Math.random() * THINKING_WORDS.length)
   )
-  const [shouldRender, setShouldRender] = useState(isVisible)
+  const [isExpanded, setIsExpanded] = useState(false)
 
-  // Delayed unmount for exit animation
+  // Enter-only height animation. Hidden state still unmounts immediately.
   useEffect(() => {
-    if (isVisible) {
-      setShouldRender(true)
-    } else {
-      const timer = setTimeout(() => setShouldRender(false), 200)
-      return () => clearTimeout(timer)
+    if (!isVisible) {
+      setIsExpanded(false)
+      return
     }
+
+    setIsExpanded(false)
+    const frame = window.requestAnimationFrame(() => setIsExpanded(true))
+    return () => window.cancelAnimationFrame(frame)
   }, [isVisible])
 
   // Word cycling - only while visible and not showing a specific activity label
@@ -54,21 +58,20 @@ export function ThinkingIndicator({ isVisible, label }: ThinkingIndicatorProps) 
     }
   }, [isVisible, label])
 
-  if (!isVisible && !shouldRender) return null
+  if (!isVisible) return null
 
   return (
     <div
       className={cn(
-        'flex items-center justify-center gap-2 px-4 py-3 text-sm text-muted-foreground',
-        'transition-all duration-200 ease-out overflow-hidden',
-        isVisible
-          ? 'opacity-100 max-h-12 translate-y-0'
-          : 'opacity-0 max-h-0 translate-y-1'
+        'overflow-hidden transition-[max-height] duration-200 ease-out',
+        isExpanded ? 'max-h-10' : 'max-h-0'
       )}
       style={{ backgroundColor: 'var(--chat-bg)' }}
     >
-      <LoaderCircle className="h-4 w-4 animate-spin flex-shrink-0" />
-      <span className="animate-pulse">{label ?? `${THINKING_WORDS[wordIndex]}...`}</span>
+      <div className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm text-muted-foreground">
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
+        <span className="animate-pulse">{label ?? `${THINKING_WORDS[wordIndex]}...`}</span>
+      </div>
     </div>
   )
 }

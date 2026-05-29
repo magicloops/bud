@@ -61,7 +61,7 @@ RoleContentRenderer ? (
 ) : ...
 ```
 
-The Streamdown renderer owns streaming mode, caret state, and draft animation. Bud uses explicit no-stagger `blurIn` animation so fast model deltas do not visually lag behind newer paragraphs.
+The Streamdown renderer owns streaming mode and draft control state. Bud does not pass Streamdown `animated` or `caret` props in the current v1 so fast model deltas remain visually calm.
 
 ### Task 2: Keep draft metadata semantics
 
@@ -121,7 +121,7 @@ If bounce remains, capture a follow-up against `ChatTimeline` resize anchoring i
 - [ ] draft assistant rows pass `isStreaming={true}`
 - [ ] persisted assistant rows pass `isStreaming={false}` or omit it
 - [ ] draft rows no longer use `whitespace-pre-wrap`
-- [ ] Streamdown streaming mode, caret, and no-stagger `blurIn` animation appear for draft assistant messages without delayed word reveal
+- [ ] Streamdown streaming mode appears for draft assistant messages without text-reveal animation, caret chrome, or delayed word reveal
 - [ ] final persisted row keeps the same visible markdown renderer family
 - [ ] draft file opens omit synthetic `message_id`
 - [ ] persisted file opens include durable `message_id`

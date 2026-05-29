@@ -65,8 +65,6 @@ Render with Streamdown:
 <Streamdown
   mode={isStreaming ? 'streaming' : 'static'}
   isAnimating={isStreaming}
-  animated={isStreaming ? streamdownAnimation : undefined}
-  caret={isStreaming ? 'block' : undefined}
   plugins={{ code, mermaid, math }}
   components={components}
 >
@@ -76,7 +74,7 @@ Render with Streamdown:
 
 Memoize plugin/config/component objects where needed so streaming deltas do not recreate avoidable renderer configuration on every token.
 
-Use explicit animation options instead of Streamdown's boolean `animated` shortcut. The default word-level stagger can visually trail fast provider deltas; Bud uses `blurIn`, `duration: 200`, `easing: "ease-out"`, and `stagger: 0` so new text animates without queuing behind later blocks.
+Do not pass Streamdown `animated` or `caret` props in the current v1. The default word-level stagger can visually trail fast provider deltas, and the extra caret duplicates the motion already produced by incremental assistant text.
 
 ### Task 3: Preserve line-break behavior
 

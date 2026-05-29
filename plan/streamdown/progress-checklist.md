@@ -71,7 +71,7 @@ Use this as the running status board while the Streamdown migration lands.
 - [x] draft assistant rows use `RoleContentRenderer`
 - [x] draft assistant rows pass `isStreaming`
 - [x] plain `whitespace-pre-wrap` draft branch removed
-- [x] Streamdown streaming mode/caret replaces bespoke cursor; animation is re-enabled with no-stagger `blurIn`
+- [x] Streamdown streaming mode replaces the bespoke plain-text draft branch without Streamdown text-reveal animation or caret chrome
 - [x] draft file-action source omits synthetic `message_id`
 - [x] persisted assistant file-action source includes durable `message_id`
 - [x] activity indicator suppression still behaves correctly

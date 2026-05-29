@@ -28,7 +28,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - [ ] send a plain text assistant response and confirm the message does not visibly bounce when finalizing
 - [ ] stream a multi-paragraph response and confirm layout remains stable
-- [ ] stream a fast multi-paragraph response and confirm no-stagger `blurIn` animation does not make earlier paragraphs trail later paragraphs
+- [ ] stream a fast multi-paragraph response and confirm no Streamdown text-reveal animation, caret chrome, or delayed word reveal appears
 - [ ] stream a bulleted list and confirm incomplete markdown renders acceptably
 - [ ] stream a fenced code block and confirm incomplete code does not break the row
 - [ ] confirm final assistant replacement keeps the same visual renderer family

@@ -35,7 +35,7 @@ Shared markdown renderer using `streamdown` with:
 
 **Features**:
 - Streamdown `mode="streaming"` for assistant drafts and `mode="static"` for persisted rows
-- Streaming drafts use Streamdown's `blurIn` animation with no per-word stagger, plus caret/control state, so fast model deltas animate without queuing behind later content
+- Streaming drafts use Streamdown's streaming parser and `isAnimating` control state without Streamdown text-reveal animation or caret chrome
 - GitHub Flavored Markdown from Streamdown defaults - tables, task lists, strikethrough
 - Line breaks (`remark-breaks`)
 - Syntax highlighting through `@streamdown/code`

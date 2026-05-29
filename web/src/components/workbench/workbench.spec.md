@@ -76,7 +76,7 @@ Message list with auto-scroll and collapsible messages.
 
 **Features**:
 - Consumes chronologically ordered thread messages directly from `useThreadMessages(...)` instead of re-sorting the full list locally on every render
-- Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, or when the active-agent footer appears
+- Auto-scroll to bottom when new messages arrive, when the last visible message grows during assistant streaming, when the active-agent footer appears, and while that footer expands if the user is already stuck to bottom
 - "Stick to bottom" behavior with manual scroll override
 - Top-of-timeline "Load older messages" control when older history exists
 - Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
@@ -87,7 +87,7 @@ Message list with auto-scroll and collapsible messages.
 - Overflow detection now measures each message row independently via its own DOM observer/update path instead of rescanning every rendered message after each transcript change
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
-- Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode with a caret and no-stagger `blurIn` animation until the canonical persisted assistant row replaces them
+- Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode without Streamdown text-reveal animation or caret chrome until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
 - Context compaction notices render as subtle timeline markers without creating or assuming persisted transcript rows
 - Active-agent thinking/compaction feedback renders as a non-transcript footer inside the scrollable timeline so the newest message remains fully visible above it
@@ -98,19 +98,19 @@ Message list with auto-scroll and collapsible messages.
 
 ### `thinking-indicator.tsx`
 
-Animated "thinking" indicator shown when agent is working.
+Thinking indicator shown when agent is working.
 
 **Props**:
-- `isVisible` - Controls visibility with animated enter/exit
+- `isVisible` - Controls visibility and unmounts immediately when hidden
 - optional `label` - Overrides the rotating word while a specific activity, such as context compaction, is active
 
 **Features**:
-- Smooth CSS transitions for enter (slide up, fade in) and exit (slide down, fade out)
 - Cycles through 12 playful words every 2 seconds: "Thinking", "Pondering", "Combobulating", etc.
 - Shows caller-provided activity text such as `Compacting context...` without cycling the generic word list
 - Random starting word on each appearance
-- Delayed unmount allows exit animation to complete
-- Spinner icon with `animate-spin`
+- Enter-only height animation expands from 0 to the compact open state over 200ms
+- Instant unmount on hide so assistant draft text never overlaps a fading indicator
+- Compact 40px open-state height cap with a small `animate-spin` spinner
 - Text with `animate-pulse`
 
 **Usage**: Rendered by `ChatTimeline` as a non-transcript footer row after the latest message so scroll-to-bottom includes the indicator. The existing-thread route hides it while the agent is paused in `waiting_for_user`.
