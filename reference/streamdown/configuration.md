@@ -1,0 +1,413 @@
+---
+title: Configuration
+description: Learn how to configure Streamdown in your project.
+type: reference
+summary: All available props and options for the Streamdown component.
+prerequisites:
+  - /docs/getting-started
+related:
+  - /docs/usage
+  - /docs/plugins
+---
+
+# Configuration
+
+
+
+Streamdown can be configured to suit your needs. This guide will walk you through the available options and how to configure them.
+
+## Core Props
+
+<TypeTable
+  type={{
+  children: {
+    description: "The Markdown content to render",
+    type: "string",
+  },
+  parseIncompleteMarkdown: {
+    description:
+      "Enable remend preprocessor for unterminated Markdown blocks",
+    type: "boolean",
+    default: "true",
+  },
+  remend: {
+    description: "Configure which Markdown completions remend should perform",
+    type: "RemendOptions",
+  },
+  normalizeHtmlIndentation: {
+    description:
+      'Normalize indentation in HTML blocks to prevent 4+ space indents from being treated as code blocks',
+    type: 'boolean',
+    default: 'false',
+  },
+  isAnimating: {
+    description:
+      "Indicates if content is currently streaming (disables copy buttons)",
+    type: "boolean",
+    default: "false",
+  },
+  className: {
+    description: "CSS class for the container element",
+    type: "string",
+  },
+  mode: {
+    description: "Mode of the Streamdown component",
+    type: '"streaming" | "static"',
+    default: "streaming",
+    options: ["streaming", "static"],
+  },
+  dir: {
+    description:
+      "Text direction. 'auto' detects per-block using the first strong character algorithm.",
+    type: '"auto" | "ltr" | "rtl"',
+  },
+}}
+/>
+
+## Styling Props
+
+<TypeTable
+  type={{
+  shikiTheme: {
+    description:
+      "Light and dark themes for code syntax highlighting. Accepts bundled theme names or custom theme objects (ThemeRegistrationAny).",
+    type: "[ThemeInput, ThemeInput]",
+    default: "['github-light', 'github-dark']",
+  },
+  components: {
+    description: "Custom component overrides for Markdown elements",
+    type: "object",
+  },
+  allowedTags: {
+    description:
+      "Custom HTML tags to allow through sanitization, with their permitted attributes. Use with 'components' to render custom tags like <ref> or <mention>. Only works with default rehype plugins.",
+    type: "Record<string, string[]>",
+  },
+  literalTagContent: {
+    description:
+      "Tags whose children are treated as plain text (no markdown parsing). Useful when tag children contain underscores or asterisks that would otherwise be formatted. Tags must also appear in allowedTags.",
+    type: "string[]",
+  },
+  prefix: {
+    description:
+      "Tailwind CSS prefix prepended to all utility classes. Enables Tailwind v4 prefix() support. User-supplied className values are also prefixed.",
+    type: "string",
+  },
+}}
+/>
+
+## Plugin Props
+
+<TypeTable
+  type={{
+  rehypePlugins: {
+    description: "Rehype plugins for HTML processing",
+    type: "Pluggable[]",
+    default: "Object.values(defaultRehypePlugins)",
+  },
+  remarkPlugins: {
+    description: "Remark plugins for Markdown processing",
+    type: "Pluggable[]",
+    default: "Object.values(defaultRemarkPlugins)",
+  },
+}}
+/>
+
+**Default Rehype Plugins:**
+
+* `rehype-raw` - HTML support
+* `rehype-sanitize` - XSS protection and safe HTML rendering
+* `rehype-harden` - Security hardening (allows all image and link prefixes, data images enabled)
+
+**Default Remark Plugins:**
+
+* `remark-gfm` - GitHub Flavored Markdown
+
+Math rendering and CJK support require installing separate plugins. See [Mathematics](/docs/plugins/math) and [CJK Language Support](/docs/plugins/cjk).
+
+## Feature-Specific Props
+
+<TypeTable
+  type={{
+  mermaid: {
+    description: "Mermaid diagram configuration and error handling",
+    type: "MermaidOptions",
+  },
+  controls: {
+    description: "Control visibility of interactive buttons",
+    type: "ControlsConfig",
+    default: "true",
+  },
+  animated: {
+    description: "Enable character-by-character animation for streaming content. See [Animation](/docs/animation).",
+    type: "boolean | AnimateOptions",
+  },
+  linkSafety: {
+    description: "Configure link safety modals for external URLs. See [Link Safety](/docs/link-safety).",
+    type: "LinkSafetyConfig",
+    default: "{ enabled: true }",
+  },
+  plugins: {
+    description: "Plugin configuration for math, mermaid, code highlighting, and CJK support. See [Plugins](/docs/plugins).",
+    type: "PluginConfig",
+  },
+  icons: {
+    description:
+      "Custom icons to override the defaults used in controls. See the IconMap interface for available keys.",
+    type: "Partial<IconMap>",
+  },
+  translations: {
+    description:
+      "Override default English labels for controls and modals. See [Internationalization](/docs/internationalization).",
+    type: "Partial<StreamdownTranslations>",
+  },
+  caret: {
+    description: "Show a caret indicator at the end of streaming content. See [Carets](/docs/carets).",
+    type: '"block" | "circle"',
+  },
+  onAnimationStart: {
+    description: "Called when isAnimating transitions from false to true. Suppressed in static mode. Memoize with useCallback. See [Animation](/docs/animation).",
+    type: "() => void",
+  },
+  onAnimationEnd: {
+    description: "Called when isAnimating transitions from true to false. Suppressed in static mode. Memoize with useCallback. See [Animation](/docs/animation).",
+    type: "() => void",
+  },
+}}
+/>
+
+### Mermaid Options
+
+The `mermaid` prop accepts an object with the following properties:
+
+<TypeTable
+  type={{
+  config: {
+    description: "Custom configuration for Mermaid diagrams",
+    type: "MermaidConfig",
+  },
+  errorComponent: {
+    description:
+      "Custom React component for handling Mermaid rendering errors",
+    type: "React.ComponentType<MermaidErrorComponentProps>",
+  },
+}}
+/>
+
+## Element Filtering Props
+
+These props match the [react-markdown](https://github.com/remarkjs/react-markdown) API, making Streamdown a drop-in replacement.
+
+<TypeTable
+  type={{
+  allowedElements: {
+    description:
+      "Tag names to allow (all others are removed). Cannot combine with disallowedElements.",
+    type: "string[]",
+  },
+  disallowedElements: {
+    description:
+      "Tag names to disallow (all others are kept). Cannot combine with allowedElements.",
+    type: "string[]",
+    default: "[]",
+  },
+  allowElement: {
+    description:
+      "Custom filter function called for each element. Return false to remove. Applied after allowedElements/disallowedElements.",
+    type: "(element: Element, index: number, parent: Parent | undefined) => boolean",
+  },
+  unwrapDisallowed: {
+    description:
+      "When true, disallowed elements are replaced by their children instead of being removed entirely.",
+    type: "boolean",
+    default: "false",
+  },
+  skipHtml: {
+    description:
+      "Ignore raw HTML in Markdown completely (removes raw HTML nodes from the tree).",
+    type: "boolean",
+    default: "false",
+  },
+  urlTransform: {
+    description:
+      "Transform all URLs in the Markdown (links, images, etc). Return an empty string to remove the URL. Defaults to defaultUrlTransform (passthrough). URL security is handled by rehype-sanitize and rehype-harden.",
+    type: "(url: string, key: string, node: Element) => string | null | undefined",
+    default: "defaultUrlTransform",
+  },
+}}
+/>
+
+### Element filtering example
+
+```tsx title="app/page.tsx"
+// Only allow paragraphs, links, and emphasis
+<Streamdown allowedElements={["p", "a", "em"]}>
+  {markdown}
+</Streamdown>
+
+// Remove images but keep everything else
+<Streamdown disallowedElements={["img"]}>
+  {markdown}
+</Streamdown>
+
+// Remove images but keep their alt text
+<Streamdown disallowedElements={["img"]} unwrapDisallowed>
+  {markdown}
+</Streamdown>
+
+// Custom filter: remove all h3+ headings
+<Streamdown
+  allowElement={(element) =>
+    !["h3", "h4", "h5", "h6"].includes(element.tagName)
+  }
+>
+  {markdown}
+</Streamdown>
+```
+
+### URL transform example
+
+```tsx title="app/page.tsx"
+import { Streamdown, defaultUrlTransform } from 'streamdown';
+
+// Proxy all image URLs through your CDN
+<Streamdown
+  urlTransform={(url, key, node) => {
+    if (key === 'src') {
+      return `https://your-cdn.com/proxy?url=${encodeURIComponent(url)}`;
+    }
+    return defaultUrlTransform(url, key, node);
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+## Advanced Props
+
+<TypeTable
+  type={{
+  BlockComponent: {
+    description:
+      "Custom block component for rendering individual markdown blocks",
+    type: "React.ComponentType<BlockProps>",
+    default: "Block",
+  },
+  parseMarkdownIntoBlocksFn: {
+    description: "Custom function to parse markdown into blocks",
+    type: "(markdown: string) => string[]",
+    default: "parseMarkdownIntoBlocks",
+  },
+}}
+/>
+
+The `controls` prop can be configured granularly:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  controls={{
+    table: {
+      copy: true, // Show table copy button
+      download: true, // Show table download button
+      fullscreen: true, // Show table fullscreen button
+    },
+    code: {
+      copy: true, // Show code copy button
+      download: true, // Show code download button
+    },
+    mermaid: {
+      download: true, // Show mermaid download button
+      copy: true, // Show mermaid copy button
+      fullscreen: true, // Show mermaid fullscreen button
+      panZoom: true, // Show mermaid pan/zoom controls
+    },
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+### Remend Options
+
+The `remend` prop configures which Markdown completions are performed during streaming. All options default to `true` when not specified. Set an option to `false` to disable that completion:
+
+<TypeTable
+  type={{
+  links: {
+    description: "Complete incomplete links",
+    type: "boolean",
+    default: "true",
+  },
+  images: {
+    description: "Complete incomplete images",
+    type: "boolean",
+    default: "true",
+  },
+  bold: {
+    description: "Complete bold formatting (**)",
+    type: "boolean",
+    default: "true",
+  },
+  italic: {
+    description: "Complete italic formatting (* and _)",
+    type: "boolean",
+    default: "true",
+  },
+  boldItalic: {
+    description: "Complete bold-italic formatting (***)",
+    type: "boolean",
+    default: "true",
+  },
+  inlineCode: {
+    description: "Complete inline code formatting (`)",
+    type: "boolean",
+    default: "true",
+  },
+  strikethrough: {
+    description: "Complete strikethrough formatting (~~)",
+    type: "boolean",
+    default: "true",
+  },
+  katex: {
+    description: "Complete block KaTeX math ($$)",
+    type: "boolean",
+    default: "true",
+  },
+  setextHeadings: {
+    description: "Handle incomplete setext headings",
+    type: "boolean",
+    default: "true",
+  },
+  comparisonOperators: {
+    description: "Escape > as comparison operators in list items",
+    type: "boolean",
+    default: "true",
+  },
+  htmlTags: {
+    description: "Strip incomplete HTML tags at end of streaming text",
+    type: "boolean",
+    default: "true",
+  },
+  linkMode: {
+    description: "How to handle incomplete links: 'protocol' uses a placeholder URL, 'text-only' displays plain text",
+    type: '"protocol" | "text-only"',
+    default: '"protocol"',
+  },
+  handlers: {
+    description: "Custom handlers to extend remend with your own completion logic",
+    type: "RemendHandler[]",
+  },
+}}
+/>
+
+```tsx title="app/page.tsx"
+<Streamdown
+  remend={{
+    links: false, // Disable link completion
+    katex: false, // Disable KaTeX completion
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+

@@ -1,0 +1,262 @@
+---
+title: Animation
+description: Smooth per-word text animation for streaming content.
+type: reference
+summary: Token-by-token text reveal animations that create a natural typing effect during streaming.
+related:
+  - /docs/carets
+  - /docs/memoization
+---
+
+# Animation
+
+
+
+Streamdown supports per-word streaming animation through the built-in `animated` prop. Words fade in as they mount, creating a smooth text-reveal effect during AI streaming. When streaming ends, the animation is removed entirely, leaving zero DOM overhead on completed messages.
+
+## Enabling animation
+
+Import the animation CSS and set the `animated` prop:
+
+```tsx title="app/page.tsx"
+import { Streamdown } from "streamdown";
+import "streamdown/styles.css";
+
+export default function Page() {
+  return (
+    <Streamdown animated isAnimating={status === "streaming"}>
+      {markdown}
+    </Streamdown>
+  );
+}
+```
+
+The `isAnimating` prop controls when the animation is active. When `false`, the animate plugin is excluded from the rehype pipeline entirely, so completed messages render as plain text with no extra `<span>` wrappers.
+
+## How it works
+
+The animation is a rehype transformer that:
+
+1. Walks the HAST tree, visiting text nodes
+2. Splits each text node into per-word `<span>` elements with `data-sd-animate`
+3. Sets CSS custom properties for animation name, duration, and easing
+4. Skips text inside `code`, `pre`, `svg`, `math`, and `annotation` elements
+
+React's reconciliation ensures only newly-mounted spans trigger the CSS animation. Combined with a short default duration (150ms), this makes batch token arrivals look smooth rather than "chunky."
+
+## Animation types
+
+Three built-in animations are included in `styles.css`:
+
+### fadeIn (default)
+
+A simple opacity transition from invisible to visible.
+
+```tsx
+<Streamdown animated={{ animation: "fadeIn" }} isAnimating={status === "streaming"}>
+  {markdown}
+</Streamdown>
+```
+
+### blurIn
+
+Combines opacity with a blur-to-sharp transition. Works well with fast-streaming models where many tokens arrive at once — the blur masks the batch appearance better than pure opacity.
+
+```tsx
+<Streamdown animated={{ animation: "blurIn" }} isAnimating={status === "streaming"}>
+  {markdown}
+</Streamdown>
+```
+
+### slideUp
+
+Words fade in while sliding up 4px, creating a subtle rising effect.
+
+```tsx
+<Streamdown animated={{ animation: "slideUp" }} isAnimating={status === "streaming"}>
+  {markdown}
+</Streamdown>
+```
+
+## Configuration
+
+Pass an options object to `animated` to customize animation behavior:
+
+```tsx title="app/page.tsx"
+import { Streamdown } from "streamdown";
+import "streamdown/styles.css";
+
+export default function Page() {
+  return (
+    <Streamdown
+      animated={{
+        animation: "blurIn",  // "fadeIn" | "blurIn" | "slideUp" | custom string
+        duration: 200,         // milliseconds (default: 150)
+        easing: "ease-out",    // CSS timing function (default: "ease")
+        sep: "word",           // "word" | "char" (default: "word")
+      }}
+      isAnimating={status === "streaming"}
+    >
+      {markdown}
+    </Streamdown>
+  );
+}
+```
+
+### Options
+
+| Option      | Type               | Default    | Description                                                                                      |
+| ----------- | ------------------ | ---------- | ------------------------------------------------------------------------------------------------ |
+| `animation` | `string`           | `"fadeIn"` | Animation name. Built-in: `fadeIn`, `blurIn`, `slideUp`. Custom strings are prefixed with `sd-`. |
+| `duration`  | `number`           | `150`      | Animation duration in milliseconds.                                                              |
+| `easing`    | `string`           | `"ease"`   | CSS timing function.                                                                             |
+| `sep`       | `"word" \| "char"` | `"word"`   | Split text by word or character.                                                                 |
+
+### Character-level animation
+
+Set `sep: "char"` to animate each character individually instead of whole words:
+
+```tsx
+<Streamdown animated={{ animation: "fadeIn", sep: "char" }} isAnimating={status === "streaming"}>
+  {markdown}
+</Streamdown>
+```
+
+This creates a typewriter-like effect but generates more DOM nodes. Use it sparingly.
+
+## Custom animations
+
+Define your own `@keyframes` and reference them by name:
+
+```css title="app/globals.css"
+@keyframes sd-myCustomAnimation {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+```
+
+```tsx
+<Streamdown animated={{ animation: "myCustomAnimation" }} isAnimating={status === "streaming"}>
+  {markdown}
+</Streamdown>
+```
+
+The animation name is automatically prefixed with `sd-`, so define your keyframes as `sd-yourName`.
+
+## Callbacks
+
+Use `onAnimationStart` and `onAnimationEnd` to react to animation state changes. These fire when `isAnimating` transitions from `false` to `true` and vice versa. Both callbacks are suppressed in `mode="static"`.
+
+```tsx title="app/page.tsx"
+import { Streamdown } from "streamdown";
+import "streamdown/styles.css";
+import { useCallback } from "react";
+
+export default function Page() {
+  const handleAnimationStart = useCallback(() => {
+    console.log("Streaming started");
+  }, []);
+
+  const handleAnimationEnd = useCallback(() => {
+    console.log("Streaming ended");
+  }, []);
+
+  return (
+    <Streamdown
+      animated
+      isAnimating={status === "streaming"}
+      onAnimationStart={handleAnimationStart}
+      onAnimationEnd={handleAnimationEnd}
+    >
+      {markdown}
+    </Streamdown>
+  );
+}
+```
+
+Memoize callbacks with `useCallback` to avoid unnecessary effect re-runs.
+
+## Advanced usage
+
+For direct access to the rehype plugin (e.g. in custom pipelines), use `createAnimatePlugin`:
+
+```tsx
+import { createAnimatePlugin } from "streamdown";
+
+const animate = createAnimatePlugin({
+  animation: "blurIn",
+  duration: 200,
+});
+
+// animate.rehypePlugin is a standard rehype plugin
+```
+
+## Skipped elements
+
+The animation skips text inside these elements to avoid breaking their layout:
+
+* `<code>` — inline and block code
+* `<pre>` — preformatted text
+* `<svg>` — vector graphics
+* `<math>` — MathML elements
+* `<annotation>` — MathML annotations
+
+This means code blocks, syntax-highlighted code, math equations, and diagrams render without animation spans.
+
+## Fast-streaming models
+
+Fast models can dump many tokens per React commit. The default 150ms duration with `animation-fill-mode: both` ensures words start invisible and end visible, making simultaneous mounts look intentional.
+
+For smoother results with fast models:
+
+* Use `blurIn` — blur masks batch arrivals better than opacity alone
+* Increase duration slightly to 200-300ms
+* Consider `ease-out` easing for a more natural deceleration
+
+```tsx
+<Streamdown
+  animated={{
+    animation: "blurIn",
+    duration: 250,
+    easing: "ease-out",
+  }}
+  isAnimating={status === "streaming"}
+>
+  {markdown}
+</Streamdown>
+```
+
+## CSS custom properties
+
+Each animated span receives these CSS custom properties via inline styles:
+
+| Property         | Description                  |
+| ---------------- | ---------------------------- |
+| `--sd-animation` | The `@keyframes` name to use |
+| `--sd-duration`  | Animation duration           |
+| `--sd-easing`    | CSS timing function          |
+
+The `[data-sd-animate]` selector in `styles.css` reads these properties:
+
+```css
+[data-sd-animate] {
+  animation: var(--sd-animation, sd-fadeIn)
+    var(--sd-duration, 150ms)
+    var(--sd-easing, ease) both;
+}
+```
+
+You can override these in your own CSS for more control.
+
+## Related features
+
+* [Carets](/docs/carets) — Blinking cursor indicator during streaming
+* [Plugins](/docs/plugins) — Overview of the plugin system
+* [Configuration](/docs/configuration) — All Streamdown props including `isAnimating`
+

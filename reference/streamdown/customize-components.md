@@ -1,0 +1,384 @@
+---
+title: Components
+description: Learn how to customize and extend Streamdown with custom component overrides.
+type: reference
+summary: Override default HTML elements with custom React components for full rendering control.
+prerequisites:
+  - /docs/getting-started
+related:
+  - /docs/styling
+  - /docs/plugins
+---
+
+# Components
+
+
+
+Streamdown allows you to replace any Markdown element with your own React component while maintaining all of Streamdown's functionality.
+
+## Basic Usage
+
+Pass custom components using the `components` prop:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  components={{
+    h1: ({ children }) => (
+      <h1 className="text-4xl font-bold text-blue-600">
+        {children}
+      </h1>
+    ),
+    h2: ({ children }) => (
+      <h2 className="text-3xl font-semibold text-blue-500">
+        {children}
+      </h2>
+    ),
+    p: ({ children }) => (
+      <p className="text-gray-700 leading-relaxed">
+        {children}
+      </p>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+## Available Components
+
+You can override any of the following standard HTML components:
+
+* **Headings**: `h1`, `h2`, `h3`, `h4`, `h5`, `h6`
+* **Text**: `p`, `strong`, `em`
+* **Lists**: `ul`, `ol`, `li`
+* **Links**: `a`
+* **Code**: `code`, `pre`
+* **Quotes**: `blockquote`
+* **Tables**: `table`, `thead`, `tbody`, `tr`, `th`, `td`
+* **Media**: `img`
+* **Other**: `hr`, `sup`, `sub`, `section`
+
+## Component Props
+
+Custom components receive all the props that the default components would receive, including:
+
+* `children` - The content to render
+* `className` - CSS class names from the Markdown AST (if applicable)
+* `node` - The Markdown AST node (for advanced use cases)
+* Element-specific props (e.g., `href` for links, `src` for images)
+
+<Callout type="warn">
+  Custom components **fully replace** the default implementations, including their built-in Tailwind styles. The `className` prop only contains classes from the Markdown AST (e.g., `language-js` on code elements) — it does **not** include the default styles that Streamdown normally applies.
+
+  If you need to preserve the default appearance, you must re-apply the styles yourself. See the [Styling](/docs/styling) documentation for the default classes, or use [CSS selectors with `data-streamdown` attributes](/docs/styling#global-css-targeting) instead of component overrides when you only need visual changes.
+</Callout>
+
+For example, the default `h2` component applies `mt-6 mb-2 font-semibold text-2xl`. When you override it, those styles are lost unless you include them:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  components={{
+    // ❌ Loses default spacing and font styles
+    h2: ({ children }) => (
+      <h2 className="text-blue-500">{children}</h2>
+    ),
+    // ✅ Preserves default styles alongside custom ones
+    h2: ({ children, className }) => (
+      <h2 className={`mt-6 mb-2 font-semibold text-2xl text-blue-500 ${className ?? ''}`}>
+        {children}
+      </h2>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+## Inline Code
+
+When you override `components.code`, you replace the entire code rendering pipeline — inline code, block code with syntax highlighting, mermaid diagrams, and custom renderers. To customize only inline code without affecting block code, use the `inlineCode` virtual component:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  components={{
+    inlineCode: ({ children }) => (
+      <code className="rounded bg-violet-100 px-1.5 py-0.5 text-violet-800 text-sm">
+        {children}
+      </code>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+Block code blocks, syntax highlighting, and mermaid diagrams continue to work normally. You can also combine `inlineCode` with a custom `code` component — `inlineCode` handles inline spans while `code` handles fenced code blocks:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  components={{
+    inlineCode: ({ children }) => (
+      <code className="bg-violet-100 text-violet-800 rounded px-1 text-sm">
+        {children}
+      </code>
+    ),
+    code: MyCustomCodeBlock,
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+## Streaming State
+
+When streaming markdown, custom components can detect if their code fence is still being streamed using the `useIsCodeFenceIncomplete` hook. This is useful for expensive-to-render components where you want to show a loading state until the code block is complete.
+
+```tsx title="app/page.tsx"
+import { Streamdown, useIsCodeFenceIncomplete } from "streamdown";
+
+const MyCodeBlock = ({ children }) => {
+  const isIncomplete = useIsCodeFenceIncomplete();
+
+  if (isIncomplete) {
+    return <div className="animate-pulse bg-muted h-24 rounded" />;
+  }
+
+  return <pre><code>{children}</code></pre>;
+};
+
+export default function Page() {
+  return (
+    <Streamdown
+      components={{ code: MyCodeBlock }}
+      isAnimating={isStreaming}
+    >
+      {markdown}
+    </Streamdown>
+  );
+}
+```
+
+The hook returns `true` when all of the following are true:
+
+* `isAnimating={true}` (streaming mode is active)
+* The component is in the last block being streamed
+* That block has an unclosed code fence (` ``` ` without a closing ` ``` `)
+
+Once the code fence closes, the hook returns `false` and your component can render normally—even while the rest of the markdown continues streaming.
+
+<Callout type="info">
+  This is particularly useful for Mermaid diagrams and syntax highlighters where continuous re-rendering during streaming would cause performance issues.
+</Callout>
+
+```tsx title="app/page.tsx"
+<Streamdown
+  components={{
+    a: ({ href, children, ...props }) => (
+      <a
+        href={href}
+        className="text-purple-600 hover:text-purple-800 underline"
+        {...props}
+      >
+        {children}
+      </a>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+## Preserving Table Interactivity
+
+When overriding the `table` component, the built-in copy and download buttons are lost because custom components fully replace default implementations. To restore them, import the table action components and include them in your custom table:
+
+```tsx title="app/page.tsx"
+import {
+  Streamdown,
+  TableCopyDropdown,
+  TableDownloadDropdown,
+} from "streamdown";
+
+<Streamdown
+  components={{
+    table: ({ children, className }) => (
+      <div data-streamdown="table-wrapper">
+        <div className="flex items-center justify-end gap-1">
+          <TableCopyDropdown />
+          <TableDownloadDropdown />
+        </div>
+        <MyCustomTable className={className}>{children}</MyCustomTable>
+      </div>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+<Callout type="warn">
+  The `data-streamdown="table-wrapper"` attribute is required — the action components use `.closest()` to find this wrapper, then `.querySelector("table")` to locate the `<table>` element inside it. Your custom table component must render a `<table>` element as a descendant of the wrapper div.
+</Callout>
+
+A `TableDownloadButton` component is also available for rendering a single-format download button instead of a dropdown:
+
+```tsx title="app/page.tsx"
+import { TableDownloadButton } from "streamdown";
+
+<TableDownloadButton format="csv" />
+```
+
+### Lower-level utilities
+
+For fully custom implementations, use the extraction and conversion utilities directly:
+
+```tsx title="app/page.tsx"
+import {
+  extractTableDataFromElement,
+  tableDataToCSV,
+  tableDataToTSV,
+  tableDataToMarkdown,
+} from "streamdown";
+
+// Extract structured data from a <table> DOM element
+const data = extractTableDataFromElement(tableElement);
+
+// Convert to various formats
+const csv = tableDataToCSV(data);
+const tsv = tableDataToTSV(data);
+const markdown = tableDataToMarkdown(data);
+```
+
+## Custom HTML Tags
+
+You can render custom HTML tags from AI responses (like `<source>`, `<mention>`, etc.) using the `allowedTags` prop alongside `components`. This is useful when you instruct the AI to output structured data that renders as interactive components.
+
+For example, you might add a system prompt:
+
+```
+When referencing a source, use: <source id="123">Source Title</source>
+```
+
+The AI then outputs markdown containing:
+
+```markdown
+According to the documentation <source id="abc">Getting Started Guide</source>, you should...
+```
+
+### Setup
+
+Use the `allowedTags` prop to specify which custom tags and attributes to allow through sanitization, then map them to React components:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  allowedTags={{
+    source: ["id"],  // Allow <source> tag with id attribute
+  }}
+  components={{
+    source: ({ id, children }) => (
+      <button
+        onClick={() => console.log(`Navigate to source: ${id}`)}
+        className="text-blue-600 underline cursor-pointer"
+      >
+        {children}
+      </button>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+### Multiple Custom Tags
+
+You can allow multiple custom tags:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  allowedTags={{
+    source: ["id"],
+    mention: ["user_id", "type"],
+    action: ["name", "payload"],
+  }}
+  components={{
+    source: ({ id, children }) => (
+      <SourceBadge sourceId={id as string}>{children}</SourceBadge>
+    ),
+    mention: ({ user_id, children }) => (
+      <UserMention userId={user_id as string}>{children}</UserMention>
+    ),
+    action: ({ name, payload, children }) => (
+      <ActionButton name={name as string} payload={payload as string}>
+        {children}
+      </ActionButton>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+### Data Attributes
+
+Use `data*` in the attributes array to allow all `data-*` attributes on a tag:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  allowedTags={{
+    widget: ["data*"],  // Allow all data-* attributes
+  }}
+  components={{
+    widget: (props) => <Widget {...props} />,
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+### Important Notes
+
+* Without `allowedTags`, custom tags are stripped by the sanitizer (content is preserved, tags are removed)
+* Only attributes listed in `allowedTags` are preserved; unlisted attributes are stripped
+* The `allowedTags` prop only works with the default rehype plugins
+
+<Callout type="info">
+  If you provide custom `rehypePlugins`, you'll need to configure `rehype-sanitize` yourself to allow custom tags. See the [Security](/docs/security) documentation for details.
+</Callout>
+
+### Plain text tag content
+
+By default, children of custom HTML tags are parsed as markdown. This means underscores, asterisks, and other markdown metacharacters in tag content get formatted unexpectedly — for example, `<mention>some_user_name</mention>` renders with italicized text instead of a literal underscore.
+
+Use the `literalTagContent` prop to treat the children of specific tags as plain text:
+
+```tsx title="app/page.tsx"
+<Streamdown
+  allowedTags={{
+    mention: ["user_id"],
+  }}
+  literalTagContent={["mention"]}
+  components={{
+    mention: ({ user_id, children }) => (
+      <span className="text-blue-600">@{children}</span>
+    ),
+  }}
+>
+  {markdown}
+</Streamdown>
+```
+
+<Callout type="warn">
+  Tags listed in `literalTagContent` must also be listed in `allowedTags`. Otherwise the tag is stripped by the sanitizer before literal content handling applies.
+</Callout>
+
+### Security Considerations
+
+When allowing custom HTML tags:
+
+* Only whitelist tags you explicitly need
+* Only whitelist attributes you explicitly need
+* Validate attribute values in your component before using them
+* Never allow `script`, `style`, or event handler attributes (`onclick`, etc.)
+
+See the [Security](/docs/security) documentation for more details on HTML handling.
+
