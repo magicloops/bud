@@ -1,6 +1,6 @@
 # Implementation Spec: Streamdown Message Rendering
 
-**Status**: Implemented; manual visual validation deferred
+**Status**: Implemented; rich block manual validation deferred
 **Created**: 2026-05-28
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
@@ -9,6 +9,10 @@
 **Phase 3**: [phase-3-chat-timeline-streaming-cutover.md](./phase-3-chat-timeline-streaming-cutover.md)
 **Phase 4**: [phase-4-visual-controls-and-hardening.md](./phase-4-visual-controls-and-hardening.md)
 **Phase 5**: [phase-5-cleanup-specs-and-validation.md](./phase-5-cleanup-specs-and-validation.md)
+**Phase 6**: [phase-6-streamdown-rich-block-styling.md](./phase-6-streamdown-rich-block-styling.md)
+**Phase 7**: [phase-7-streamdown-mermaid-chrome.md](./phase-7-streamdown-mermaid-chrome.md)
+**Phase 8**: [phase-8-streamdown-table-chrome.md](./phase-8-streamdown-table-chrome.md)
+**Phase 9**: [phase-9-streamdown-code-copy-chrome.md](./phase-9-streamdown-code-copy-chrome.md)
 **Related Docs**:
 - [../../design/streamdown-message-rendering.md](../../design/streamdown-message-rendering.md)
 - [../../debug/assistant-message-render-bounce.md](../../debug/assistant-message-render-bounce.md)
@@ -32,6 +36,8 @@ The web client currently uses two different renderers for the same assistant mes
 The message usually keeps the same `client_id`, so the row can remain mounted while the body changes renderer families. The debug note in [../../debug/assistant-message-render-bounce.md](../../debug/assistant-message-render-bounce.md) identifies that renderer switch as the likely cause of the newest message bounce when streaming finalizes.
 
 The desired direction is to use `streamdown` for both streaming and final markdown rendering. Streamdown is purpose-built for incomplete markdown and has plugins for code, Mermaid, and math. Bud initially experimented with Streamdown's text-reveal animation and caret, but the accepted v1 now keeps streaming parser/control state while omitting Streamdown animated text and caret chrome so fast model deltas remain visually calm.
+
+After the functional migration, Streamdown's default rich-block chrome still needs compact Bud-specific passes. Phase 6 scopes broad rich-block styling, Phase 7 narrows in on Mermaid-specific chrome, Phase 8 aligns table controls with the same quiet above-surface interaction pattern while keeping table overflow intact, and Phase 9 scopes the equivalent code-copy control refinement while preserving code's dark surface treatment.
 
 ## Objective
 
@@ -97,6 +103,10 @@ Migrate Bud's web message markdown rendering to Streamdown while preserving the 
 | 3 | [phase-3-chat-timeline-streaming-cutover.md](./phase-3-chat-timeline-streaming-cutover.md) | Urgent | Draft assistant rows use the same Streamdown renderer as final rows |
 | 4 | [phase-4-visual-controls-and-hardening.md](./phase-4-visual-controls-and-hardening.md) | High | Streamdown controls, plugins, theme behavior, and residual layout issues are hardened |
 | 5 | [phase-5-cleanup-specs-and-validation.md](./phase-5-cleanup-specs-and-validation.md) | High | Old dependencies/spec drift are cleaned up and validation is recorded |
+| 6 | [phase-6-streamdown-rich-block-styling.md](./phase-6-streamdown-rich-block-styling.md) | High | Code, Mermaid, table, and math block styling is tightened for Bud's compact chat UI |
+| 7 | [phase-7-streamdown-mermaid-chrome.md](./phase-7-streamdown-mermaid-chrome.md) | Medium | Mermaid chrome is reduced to one diagram surface with hover/focus controls above the block |
+| 8 | [phase-8-streamdown-table-chrome.md](./phase-8-streamdown-table-chrome.md) | Medium | Table controls adopt the Mermaid-style above-surface hover/focus pattern while preserving horizontal overflow |
+| 9 | [phase-9-streamdown-code-copy-chrome.md](./phase-9-streamdown-code-copy-chrome.md) | Medium | Code copy controls adopt the above-surface hover/focus pattern while preserving the dark code-surface visual language |
 
 ## Expected Files And Areas
 
@@ -147,6 +157,7 @@ Migrate Bud's web message markdown rendering to Streamdown while preserving the 
 | Tailwind misses Streamdown plugin classes in production | Medium | High | Add explicit v4 `@source` entries and verify production build output |
 | Existing `remark-breaks` behavior changes | Medium | Medium | Include `remark-breaks` with Streamdown unless intentionally removed after visual review |
 | Draft file opens lack persisted message path context | Medium | Low | Send only `client_id` for draft rows; include `message_id` once the canonical row exists |
+| Scoped CSS depends on Streamdown internal selector stability | Low | Medium | Inspect actual `data-streamdown` selectors before styling and keep overrides limited to documented/stable structure where possible |
 
 ## Rollout Strategy
 
@@ -155,6 +166,7 @@ Migrate Bud's web message markdown rendering to Streamdown while preserving the 
 3. Cut the timeline draft branch over to the shared renderer.
 4. Validate plugin UI and link/file behavior.
 5. Remove old dependencies and update specs only after the replacement is proven.
+6. Tighten rich block styling as a client-side follow-up without changing renderer ownership.
 
 ## Definition Of Done
 

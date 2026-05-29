@@ -38,7 +38,7 @@ Shared markdown renderer using `streamdown` with:
 - Streaming drafts use Streamdown's streaming parser and `isAnimating` control state without Streamdown text-reveal animation or caret chrome
 - GitHub Flavored Markdown from Streamdown defaults - tables, task lists, strikethrough
 - Line breaks (`remark-breaks`)
-- Syntax highlighting through `@streamdown/code`
+- Syntax highlighting through `@streamdown/code`, configured with the dark GitHub theme in both light and dark app themes so Bud's compact dark code surface keeps readable token colors
 - Mermaid diagrams through `@streamdown/mermaid`
 - Math rendering through `@streamdown/math` and KaTeX CSS
 - Raw HTML is explicitly skipped instead of rendered as live HTML
@@ -50,14 +50,16 @@ Shared markdown renderer using `streamdown` with:
   inline-code path affordances cannot produce nested `<button>` markup
 
 **Code Block Handling**:
-- Fenced code blocks (````lang`) use Streamdown's code plugin with copy controls and no Bud `code`/`pre` override
+- Fenced code blocks (````lang`) use Streamdown's code plugin with copy controls, no visible code-block header, no chat line numbers, and no Bud `code`/`pre` override
+- Code block chrome is compacted through scoped CSS: a dark code surface, reduced `0.85em` code text, hidden Streamdown language header, softened borders, Streamdown code-block containment overrides, and above-surface copy controls that use the code surface's dark treatment while hiding until hover/focus on mouse-capable devices
 - Inline code uses `InlineCode` component with click-to-copy; long code wraps instead of truncating for proper baseline alignment
 - Inline file candidates keep the copyable code treatment and add a separate open-file button; the path text can wrap independently from the button, and rendering never opens a file session by itself
 
 **Styling**:
 - Uses scoped `.bud-markdown` styles and Streamdown `data-streamdown` selectors for compact chat layout
+- Rich block overrides live as unlayered CSS in `web/src/index.css` so they beat Streamdown's Tailwind utility chrome while preserving plugin-owned rendering
 - Tailwind v4 scans Streamdown core and plugin packages via `@source` directives in `web/src/index.css`
-- Custom styling for headings, paragraphs, links, and rich block overflow
+- Custom styling for headings, paragraphs, links, top-level block spacing, list item density, rich block overflow, code copy controls with desktop hover bridges, Mermaid and table single-surface chrome with desktop hover controls, transparent above-surface control shells, narrow hover bridges, and KaTeX display math
 
 **Performance**:
 - Memoized with `React.memo`

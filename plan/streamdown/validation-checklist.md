@@ -37,8 +37,18 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - [ ] fenced TypeScript block renders with highlighting
 - [ ] fenced shell block renders with highlighting
+- [ ] code block chrome matches Bud's compact message styling
+- [ ] code font size is close to the previous renderer density or intentionally revised
+- [ ] chat line-number behavior is explicit and unobtrusive
 - [ ] code copy control works
 - [ ] code controls do not cover code text in the compact chat pane
+- [ ] code copy control aligns with the block edge in light and dark mode
+- [ ] code copy control is hidden until hover/focus on desktop/fine-pointer devices
+- [ ] code copy control stays visible while moving the pointer from the code block to the above-surface control
+- [ ] code copy control remains visible on mobile/coarse-pointer devices
+- [ ] code copy control appears above the code surface without shifting layout
+- [ ] code copy control background uses the dark code surface treatment
+- [ ] no-language fenced code renders without a visible header
 - [ ] wide code blocks scroll or wrap acceptably without breaking the message bubble
 
 ### Mermaid
@@ -46,8 +56,31 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] valid Mermaid flowchart renders
 - [ ] invalid Mermaid syntax fails gracefully
 - [ ] Mermaid controls fit the chat bubble
+- [ ] Mermaid block chrome is visually calmer than the default plugin surface
+- [ ] Mermaid label/header is not visible in chat output
+- [ ] Mermaid block shows only one diagram surface border
+- [ ] Mermaid copy/fullscreen controls are hidden until hover/focus on desktop/fine-pointer devices
+- [ ] Mermaid copy/fullscreen controls stay visible while moving the pointer from the diagram to the above-surface controls
+- [ ] Mermaid copy/fullscreen controls remain visible on mobile/coarse-pointer devices
+- [ ] Mermaid copy/fullscreen controls appear above the diagram surface without shifting layout
 - [ ] Mermaid output is readable in light mode
 - [ ] Mermaid output is readable in dark mode
+
+### Tables
+
+- [ ] normal table renders in light mode
+- [ ] normal table renders in dark mode
+- [ ] table block chrome is visually aligned with Mermaid/code rich blocks
+- [ ] table block shows only one table surface border
+- [ ] table action row does not create a visible top gap
+- [ ] table copy control is hidden until hover/focus on desktop/fine-pointer devices
+- [ ] table copy control stays visible while moving the pointer from the table to the above-surface control
+- [ ] table copy control remains visible on mobile/coarse-pointer devices
+- [ ] table copy control appears above the table surface without shifting layout
+- [ ] table copy action works
+- [ ] wide tables remain horizontally scrollable inside the message column
+- [ ] long cell content remains contained
+- [ ] table controls do not overlap table content in the compact chat pane
 
 ### Math
 
@@ -77,7 +110,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] thinking indicator remains suppressed while assistant text is visibly streaming
 - [ ] final text-only answer does not flash the thinking indicator before `final`
 - [ ] tool-loop response can show activity between assistant text segments
-- [ ] long messages still collapse/expand correctly
+- [ ] long messages render at full natural height without expand/collapse controls
 - [ ] message copy button still copies raw markdown content
 
 ### Theme And Layout
@@ -86,6 +119,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] dark mode message markdown is readable
 - [ ] links and file action buttons match Bud's accent behavior
 - [ ] tables fit the chat pane
+- [ ] block math overflow is contained in the chat pane
 - [ ] blockquotes, headings, and lists have acceptable spacing
 - [ ] Streamdown controls have visible focus states
 - [ ] no text/control overlap in compact chat messages
@@ -104,4 +138,4 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 
 - Human visual validation may be performed outside the implementation turn. If so, leave those items unchecked until someone actually runs them.
 - If residual bounce remains after renderer unification, create or update a debug note before implementing scroll anchoring.
-- Automated validation completed on 2026-05-28; manual validation remains open for the team to run against the already-running dev server.
+- Automated validation completed on 2026-05-29, including the Phase 9 code copy chrome build; manual validation remains open for the team to run against the already-running dev server.

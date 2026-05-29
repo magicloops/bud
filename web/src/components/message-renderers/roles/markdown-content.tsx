@@ -6,7 +6,7 @@ import {
   type ControlsConfig,
   type PluginConfig,
 } from 'streamdown'
-import { code } from '@streamdown/code'
+import { createCodePlugin } from '@streamdown/code'
 import { mermaid } from '@streamdown/mermaid'
 import { math } from '@streamdown/math'
 import remarkBreaks from 'remark-breaks'
@@ -26,7 +26,8 @@ type MarkdownContentProps = MessageContentRendererProps & {
   allowedFilePathKinds?: readonly AllowedFilePathKind[]
 }
 
-const streamdownPlugins: PluginConfig = { code, mermaid, math }
+const codePlugin = createCodePlugin({ themes: ['github-dark', 'github-dark'] })
+const streamdownPlugins: PluginConfig = { code: codePlugin, mermaid, math }
 const streamdownControls: ControlsConfig = {
   code: { copy: true, download: false },
   table: { copy: true, download: false, fullscreen: false },
@@ -119,6 +120,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       components={components}
       controls={streamdownControls}
       isAnimating={isStreaming}
+      lineNumbers={false}
       mode={isStreaming ? 'streaming' : 'static'}
       plugins={streamdownPlugins}
       remarkPlugins={streamdownRemarkPlugins}

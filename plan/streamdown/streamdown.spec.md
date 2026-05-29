@@ -15,6 +15,7 @@ The plan assumes:
 - Streamdown's code, Mermaid, and math plugins should be enabled
 - Tailwind v4 must be configured with Streamdown `@source` directives
 - final visual acceptance will be checked by humans against the already-running dev server
+- rich block styling can be tightened in follow-up phases without changing backend stream semantics
 
 ## Files
 
@@ -79,6 +80,51 @@ Finalization phase covering:
 - automated verification
 - manual validation checklist closure
 - follow-up capture
+
+### `phase-6-streamdown-rich-block-styling.md`
+
+Rich block styling follow-up covering:
+
+- compact code block density and border treatment
+- explicit chat line-number behavior
+- copy/control alignment
+- Mermaid block styling
+- table and math overflow checks
+- scoped `.bud-markdown` and `data-streamdown` selector usage
+
+### `phase-7-streamdown-mermaid-chrome.md`
+
+Mermaid chrome refinement follow-up covering:
+
+- removing the visible Mermaid label/header
+- reducing Mermaid blocks to a single diagram surface border
+- moving copy/fullscreen controls above the diagram surface
+- showing Mermaid controls only on hover/focus on desktop/fine-pointer devices, with an invisible hover bridge preserving the pointer path to the controls
+- keeping Mermaid controls visible on mobile/coarse-pointer devices
+- preserving Streamdown's Mermaid plugin ownership and table styling behavior
+
+### `phase-8-streamdown-table-chrome.md`
+
+Table chrome refinement follow-up covering:
+
+- moving table controls above the table surface
+- showing table controls only on hover/focus on desktop/fine-pointer devices, with an invisible hover bridge preserving the pointer path to the controls
+- keeping table controls visible on mobile/coarse-pointer devices
+- preserving table copy behavior and semantic table rendering
+- keeping wide-table horizontal overflow contained in the message column
+- keeping table and Mermaid selectors aligned by behavior but structurally separate
+
+### `phase-9-streamdown-code-copy-chrome.md`
+
+Code copy chrome refinement follow-up covering:
+
+- moving code copy controls above the code block surface
+- showing code copy controls only on hover/focus on desktop/fine-pointer devices, with an invisible hover bridge preserving the pointer path to the controls
+- keeping code copy controls visible on mobile/coarse-pointer devices
+- preserving Streamdown's code plugin ownership and copy behavior
+- preserving the compact dark code surface treatment for the copy control background instead of reusing the lighter Mermaid/table control background
+- keeping wide-code horizontal overflow and no-language code-block behavior intact
+- implemented as a scoped CSS-only pass in `web/src/index.css`
 
 ### `progress-checklist.md`
 

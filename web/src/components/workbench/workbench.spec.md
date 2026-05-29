@@ -63,7 +63,7 @@ Thread list sidebar for conversation navigation.
 
 ### `chat-timeline.tsx`
 
-Message list with auto-scroll and collapsible messages.
+Message list with auto-scroll and full-height message rendering.
 
 **Type**: `ChatMessage` - Thread message data keyed by stable `client_id` identity
 
@@ -80,11 +80,10 @@ Message list with auto-scroll and collapsible messages.
 - "Stick to bottom" behavior with manual scroll override
 - Top-of-timeline "Load older messages" control when older history exists
 - Supports parent-owned scroll-container refs so route logic can preserve the viewport anchor while prepending older pages
-- Collapsible long messages (>500px) with "Show more/less"
 - Copy message button (appears on hover, bottom-right)
 - Tool payload viewer now lazy-loads `@microlink/react-json-view` only when a payload is expanded, with a plain JSON fallback while the viewer chunk loads
-- Per-message expand/copy/payload state now lives inside memoized message rows, so toggling one message does not force the full timeline to churn through list-wide UI state maps
-- Overflow detection now measures each message row independently via its own DOM observer/update path instead of rescanning every rendered message after each transcript change
+- Per-message copy/payload state now lives inside memoized message rows, so toggling one message does not force the full timeline to churn through list-wide UI state maps
+- Messages render at their natural height without the former 500px clamp or expand/collapse row controls
 - Role-based avatar colors and styling
 - Tool content renderers for specialized display
 - Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode without Streamdown text-reveal animation or caret chrome until the canonical persisted assistant row replaces them

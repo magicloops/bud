@@ -102,7 +102,7 @@ loader: async ({ params }) => {
    - Consumes the paged `{ messages, page }` API contract and the create-message `{ message }` payload for canonical optimistic-row replacement
    - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
-   - Timeline row UI state (expand/copy/payload/overflow) is now message-local and memoized inside `ChatTimeline`, reducing whole-list churn during streaming and interaction
+   - Timeline row UI state (copy/payload) is message-local and memoized inside `ChatTimeline`, reducing whole-list churn during streaming and interaction
    - Passes active-agent indicator state into `ChatTimeline` so thinking/compaction feedback renders as a non-transcript footer beneath the latest message instead of as an external sibling
 
 2. **Terminal Integration**

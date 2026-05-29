@@ -175,3 +175,315 @@
     overflow-x: auto;
   }
 }
+
+/* Streamdown ships Tailwind utility chrome; keep Bud overrides unlayered so
+   they win without replacing the plugin components. */
+.bud-markdown > :not(:last-child) {
+  margin-block-start: 0;
+  margin-block-end: 0.75rem;
+}
+
+.bud-markdown [data-streamdown="list-item"] {
+  padding-block: calc(var(--spacing) * 0.25);
+}
+
+.bud-markdown [data-streamdown="code-block"] {
+  margin-block: 0.75rem;
+  gap: 0;
+  contain-intrinsic-size: none !important;
+  content-visibility: visible !important;
+  overflow: visible;
+  position: relative;
+  border-color: var(--muted);
+  border-radius: var(--radius);
+  background: #24292f;
+  padding: 0;
+}
+
+.bud-markdown [data-streamdown="code-block-header"] {
+  display: none;
+}
+
+.bud-markdown [data-streamdown="code-block-actions"],
+.bud-markdown [data-streamdown="mermaid-block-actions"] {
+  gap: 0.125rem;
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(36 41 47 / 0.92);
+  padding: 0.125rem;
+  color: rgb(201 209 217 / 0.82);
+  backdrop-filter: none;
+}
+
+.bud-markdown [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]) {
+  position: absolute;
+  top: -2rem;
+  right: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  height: auto;
+  margin-top: 0;
+  padding-right: 0;
+  pointer-events: none;
+}
+
+.bud-markdown [data-streamdown="code-block-actions"] {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(36 41 47 / 0.92);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  pointer-events: auto;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bud-markdown [data-streamdown="code-block"]::before {
+    content: "";
+    position: absolute;
+    top: -2rem;
+    right: 0;
+    z-index: 9;
+    width: min(100%, 8rem);
+    height: 2rem;
+  }
+
+  .bud-markdown [data-streamdown="code-block-actions"] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  .bud-markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
+  .bud-markdown [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-actions"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.bud-markdown [data-streamdown="code-block-copy-button"],
+.bud-markdown [data-streamdown="code-block-download-button"],
+.bud-markdown [data-streamdown="mermaid-block-actions"] button,
+.bud-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) > button,
+.bud-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) > div > button {
+  min-height: 1.5rem;
+  min-width: 1.5rem;
+  border-radius: calc(var(--radius) - 4px);
+  padding: 0.25rem;
+}
+
+.bud-markdown [data-streamdown="code-block-copy-button"] {
+  background: transparent;
+}
+
+.bud-markdown [data-streamdown="code-block-body"] {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: #24292f;
+  color: #c9d1d9;
+  padding: 0.875rem 0.75rem 0.75rem;
+  font-size: 0.85em;
+  line-height: 1.55;
+}
+
+.bud-markdown [data-streamdown="code-block-body"] pre {
+  margin: 0;
+  background: transparent !important;
+}
+
+.bud-markdown [data-streamdown="code-block-body"] code {
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+.bud-markdown [data-streamdown="code-block-actions"] button,
+.bud-markdown [data-streamdown="mermaid-block-actions"] button {
+  color: inherit;
+}
+
+.bud-markdown [data-streamdown="code-block-actions"] button:hover,
+.bud-markdown [data-streamdown="mermaid-block-actions"] button:hover {
+  background: rgb(255 255 255 / 0.08);
+  color: rgb(255 255 255 / 0.95);
+}
+
+.bud-markdown [data-streamdown="table-wrapper"] {
+  position: relative;
+  margin-block: 0.75rem;
+  gap: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 0;
+}
+
+.bud-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
+  position: absolute;
+  top: -2rem;
+  right: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  height: 2rem;
+  min-height: 2rem;
+  margin-top: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.125rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.bud-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) > button,
+.bud-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  border: 1px solid var(--muted);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--background);
+  padding: 0.125rem;
+  color: var(--muted-foreground);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  pointer-events: auto;
+}
+
+.bud-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bud-markdown [data-streamdown="table-wrapper"]::before {
+    content: "";
+    position: absolute;
+    top: -2rem;
+    right: 0;
+    z-index: 9;
+    width: min(100%, 8rem);
+    height: 2rem;
+  }
+
+  .bud-markdown [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .bud-markdown [data-streamdown="table-wrapper"]:hover > div:first-child:not(:last-child),
+  .bud-markdown [data-streamdown="table-wrapper"]:focus-within > div:first-child:not(:last-child) {
+    opacity: 1;
+  }
+}
+
+.bud-markdown [data-streamdown="mermaid-block"] {
+  position: relative;
+  margin-block: 0.75rem;
+  gap: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 0;
+}
+
+.bud-markdown [data-streamdown="mermaid-block"] > div:first-child {
+  display: none;
+}
+
+.bud-markdown [data-streamdown="mermaid-block"] > div:has(> [data-streamdown="mermaid-block-actions"]) {
+  position: absolute;
+  top: -2rem;
+  right: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  height: auto;
+  margin-top: 0;
+  pointer-events: none;
+}
+
+.bud-markdown [data-streamdown="mermaid-block-actions"] {
+  border-color: var(--muted);
+  background: var(--background);
+  color: var(--muted-foreground);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+.bud-markdown [data-streamdown="mermaid-block-actions"] button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bud-markdown [data-streamdown="mermaid-block"]::before {
+    content: "";
+    position: absolute;
+    top: -2rem;
+    right: 0;
+    z-index: 9;
+    width: min(100%, 8rem);
+    height: 2rem;
+  }
+
+  .bud-markdown [data-streamdown="mermaid-block-actions"] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  .bud-markdown [data-streamdown="mermaid-block"]:hover [data-streamdown="mermaid-block-actions"],
+  .bud-markdown [data-streamdown="mermaid-block"]:focus-within [data-streamdown="mermaid-block-actions"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.bud-markdown [data-streamdown="mermaid-block"] > div:last-child {
+  overflow: auto;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+
+.bud-markdown [data-streamdown="mermaid"] {
+  padding: 0.5rem;
+}
+
+.bud-markdown [data-streamdown="mermaid"] svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.bud-markdown [data-streamdown="table-wrapper"] > div:first-child {
+  min-height: 1.5rem;
+}
+
+.bud-markdown [data-streamdown="table-wrapper"] > div:last-child {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+
+.bud-markdown [data-streamdown="table"] {
+  min-width: 100%;
+  font-size: 0.875em;
+}
+
+.bud-markdown [data-streamdown="table-header-cell"],
+.bud-markdown [data-streamdown="table-cell"] {
+  padding: 0.375rem 0.625rem;
+}
+
+.bud-markdown .katex {
+  line-height: 1.2;
+}
+
+.bud-markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.125rem;
+}

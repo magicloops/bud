@@ -118,6 +118,119 @@ Use this as the running status board while the Streamdown migration lands.
 - [x] web build passes
 - [x] manual validation status recorded
 
+## Phase 6: Streamdown Rich Block Styling
+
+### Block Structure
+
+- [x] current code block selectors captured from installed Streamdown output
+- [x] current Mermaid block selectors captured from installed Streamdown output
+- [x] current table and math wrapper selectors captured from installed Streamdown output
+
+### Code Blocks
+
+- [x] code blocks use compact Bud styling
+- [x] double-heavy borders removed or softened
+- [x] code text size matches or intentionally revises the previous renderer density
+- [x] chat line-number behavior is explicit
+- [x] wide code remains contained in the message column
+
+### Controls And Rich Blocks
+
+- [x] code copy controls align without covering text
+- [x] controls keep visible keyboard focus states
+- [ ] Mermaid blocks are compact in light mode
+- [ ] Mermaid blocks are compact in dark mode
+- [ ] invalid Mermaid output fails gracefully
+- [x] table and math overflow remains contained
+
+### Validation
+
+- [x] affected specs updated
+- [x] web build passes after styling changes
+- [x] manual rich-block visual validation status recorded
+
+## Phase 7: Streamdown Mermaid Chrome Refinement
+
+### Mermaid Structure
+
+- [x] current Mermaid wrapper DOM confirmed before styling
+- [x] Mermaid/table shared selectors split without table regressions
+
+### Mermaid Chrome
+
+- [x] visible `mermaid` label/header removed
+- [x] outer Mermaid card border removed
+- [x] diagram surface keeps one visible top border
+- [x] copy/fullscreen controls move above the diagram surface
+- [x] controls hide until hover/focus on desktop/fine-pointer devices
+- [x] desktop hover bridge keeps above-surface controls reachable
+- [x] mobile/coarse-pointer controls remain visible without hover
+
+### Validation
+
+- [ ] valid Mermaid reviewed in light mode
+- [ ] valid Mermaid reviewed in dark mode
+- [ ] invalid Mermaid output remains contained
+- [x] affected specs updated
+- [x] web build passes after Mermaid chrome changes
+
+## Phase 8: Streamdown Table Chrome Refinement
+
+### Table Structure
+
+- [x] current table wrapper DOM confirmed before styling
+- [x] horizontal overflow owner identified before controls move above the table
+- [x] table/Mermaid selector split preserved without table regressions
+
+### Table Chrome
+
+- [x] table action row no longer creates a visible top gap
+- [x] table surface keeps one visible top border
+- [x] table copy control moves above the table surface
+- [x] controls hide until hover/focus on desktop/fine-pointer devices
+- [x] desktop hover bridge keeps above-surface controls reachable
+- [x] mobile/coarse-pointer controls remain visible without hover
+- [x] wide tables remain horizontally scrollable
+
+### Validation
+
+- [ ] normal table reviewed in light mode
+- [ ] normal table reviewed in dark mode
+- [ ] wide table output remains contained
+- [ ] table copy action still works
+- [x] affected specs updated
+- [x] web build passes after table chrome changes
+
+## Phase 9: Streamdown Code Copy Chrome Refinement
+
+### Code Structure
+
+- [x] current code block DOM confirmed before styling
+- [x] code action wrapper target identified before moving controls above the surface
+- [x] code body remains the horizontal overflow owner
+- [x] streaming/incomplete code blocks use compatible wrapper structure or are handled explicitly
+
+### Code Copy Chrome
+
+- [x] code copy control moves above the code surface
+- [x] controls hide until hover/focus on desktop/fine-pointer devices
+- [x] desktop hover bridge keeps above-surface controls reachable
+- [x] mobile/coarse-pointer controls remain visible without hover
+- [x] control background uses the dark code surface treatment
+- [x] controls do not cover code text
+- [x] wide code remains horizontally scrollable
+- [x] no-language fenced code still renders without a visible header
+
+### Validation
+
+- [ ] TypeScript fenced code reviewed in light mode
+- [ ] TypeScript fenced code reviewed in dark mode
+- [ ] shell fenced code reviewed
+- [ ] no-language fenced code reviewed
+- [ ] code copy action still works
+- [x] affected specs updated
+- [x] web build passes after code copy chrome changes
+
 ## Overall Progress
 
 | Phase | Status | Notes |
@@ -127,9 +240,14 @@ Use this as the running status board while the Streamdown migration lands.
 | 3 | Complete | Draft assistant rows use the shared renderer with `isStreaming` |
 | 4 | Partial | Scoped CSS is in place; human visual review remains open |
 | 5 | Complete / Manual Deferred | Cleanup, specs, tests, and build are complete; manual validation is left to humans |
+| 6 | Implemented / Manual Deferred | Compact rich-block styling is implemented and build passes; human visual validation remains open |
+| 7 | Implemented / Manual Deferred | Mermaid-specific chrome refinement is implemented and build passes; human visual validation remains open |
+| 8 | Implemented / Manual Deferred | Table chrome alignment is implemented; human visual validation remains open |
+| 9 | Implemented / Manual Deferred | Code copy chrome alignment is implemented; human visual validation remains open |
 
 ## Notes
 
 - Keep this checklist current as soon as implementation or verification status changes.
 - Do not mark manual visual validation complete unless it was actually run.
-- Automated validation completed on 2026-05-28. Manual visual validation remains unchecked in `validation-checklist.md`.
+- Automated validation completed on 2026-05-29, including the Phase 9 code copy chrome build. Manual visual validation remains unchecked in `validation-checklist.md`.
+- Phase 9 is implemented as a CSS-only follow-up; manual visual validation remains open for code hover, copy, and light/dark review.

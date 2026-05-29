@@ -529,6 +529,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | Document | Purpose |
 |----------|---------|
 | [AGENTS.md](./AGENTS.md) | Operating procedures for humans and AI agents (includes spec system instructions) |
+| [reference/product-marketing-handoff.md](./reference/product-marketing-handoff.md) | Product-level overview and marketing-site handoff for Bud's "turn any machine into an agent" positioning, target audience, product surfaces, copy guidance, visual direction, and current-vs-future claim boundaries |
 | [reference/IOS_LOCAL_AUTH_HANDOFF.md](./reference/IOS_LOCAL_AUTH_HANDOFF.md) | Reference handoff for the iOS team with the concrete local OAuth client, `5173`-based auth bundle, required revoke contract, and current validation status |
 | [reference/IOS_LOCAL_HTTPS_ROUTES_HANDOFF.md](./reference/IOS_LOCAL_HTTPS_ROUTES_HANDOFF.md) | iOS handoff for the updated local HTTPS route values, covering `https://localhost:3443` for app/API/auth/WSS and `https://<slug>.bud-show.test:3443` for proxied web-view content |
 | [reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md](./reference/IOS_CHAT_STREAMING_DEBUG_HANDOFF.md) | Reference handoff for the iOS team summarizing the confirmed March 22, 2026 SSE streaming findings, what they rule out, and the remaining raw-byte/parser-focused hypotheses for `/api/threads/:thread_id/agent/stream` |
@@ -811,4 +812,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-28*
+*Last updated: 2026-05-29*

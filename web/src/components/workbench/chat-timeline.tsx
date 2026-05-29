@@ -22,7 +22,6 @@ import {
 } from '@/lib/file-paths'
 import { QuestionRequestCard } from '@/components/workbench/question-request-card'
 
-const MAX_MESSAGE_HEIGHT = 500
 type JsonViewComponent = typeof import('@microlink/react-json-view').default
 
 export type ChatMessage = Pick<
@@ -274,10 +273,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   questionSubmitError = null,
 }: ChatTimelineMessageProps) {
   const [isPayloadExpanded, setIsPayloadExpanded] = useState(false)
-  const [isMessageExpanded, setIsMessageExpanded] = useState(false)
-  const [isOverflowing, setIsOverflowing] = useState(false)
   const [isCopied, setIsCopied] = useState(false)
-  const contentRef = useRef<HTMLDivElement | null>(null)
   const copyResetTimeoutRef = useRef<number | null>(null)
 
   const isUser = message.role === 'user'
@@ -312,7 +308,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const timeLabel = new Date(message.created_at).toLocaleTimeString()
   const backgroundColor = isUser ? 'var(--chat-message)' : undefined
   const assistantBackground = isAssistant || isTool ? 'var(--chat-message)' : undefined
-  const overlayColor = backgroundColor ?? 'hsl(var(--card))'
   const accentStyles =
     isUser && systemColor
       ? {
@@ -320,31 +315,6 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
           boxShadow: `3px 3px 0 ${systemColor}`,
         }
       : undefined
-
-  useEffect(() => {
-    const node = contentRef.current
-    if (!node) {
-      return
-    }
-
-    const updateOverflow = () => {
-      const nextOverflowing = node.scrollHeight > MAX_MESSAGE_HEIGHT
-      setIsOverflowing((prev) => (prev === nextOverflowing ? prev : nextOverflowing))
-    }
-
-    const frameId = requestAnimationFrame(updateOverflow)
-    if (typeof ResizeObserver === 'undefined') {
-      return () => cancelAnimationFrame(frameId)
-    }
-
-    const observer = new ResizeObserver(updateOverflow)
-    observer.observe(node)
-
-    return () => {
-      cancelAnimationFrame(frameId)
-      observer.disconnect()
-    }
-  }, [JsonView, isPayloadExpanded, message.content, message.metadata, message.role])
 
   useEffect(() => {
     return () => {
@@ -484,31 +454,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
         <span>{isTool ? `Tool • ${toolName}` : message.display_role || (isUser ? 'User' : message.role)}</span>
         <time>{timeLabel}</time>
       </div>
-      <div className="relative">
-        <div
-          ref={contentRef}
-          className={cn(isOverflowing && !isMessageExpanded && 'max-h-[500px] overflow-hidden')}
-        >
-          {contentNode}
-        </div>
-        {isOverflowing && !isMessageExpanded && (
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-5"
-            style={{
-              background: `linear-gradient(0deg, ${overlayColor} 60%, rgba(0,0,0,0))`,
-            }}
-          />
-        )}
-      </div>
-      {(isOverflowing || isMessageExpanded) && (
-        <button
-          type="button"
-          onClick={() => setIsMessageExpanded((prev) => !prev)}
-          className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
-        >
-          {isMessageExpanded ? 'Collapse message' : 'Expand message'}
-        </button>
-      )}
+      <div>{contentNode}</div>
     </article>
   )
 })
