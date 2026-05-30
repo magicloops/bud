@@ -13,6 +13,7 @@ The Bud daemon:
 5. reports local journal state after reconnect so the service can reconcile operation/stream outcomes
 6. detects readiness and screen stability so the service can drive terminal interactions safely
 7. tears down transport-bound proxy/file work on disconnect so stale stream tasks cannot block reconnect
+8. exposes `bud doctor` diagnostics for installer and human preflight checks
 
 ## Files
 
@@ -34,6 +35,15 @@ mkcert+Caddy HTTPS parity profile at
 
 Rust package manifest for the daemon crate and its runtime dependencies.
 
+### `build.rs`
+
+Cargo build script for generated protobuf bindings and release metadata.
+
+- compiles `../proto/bud/v1/bud.proto` through `tonic-prost-build`
+- emits build commit, target triple, and Cargo profile into the compiled binary
+  from CI-provided `BUD_BUILD_*` environment variables or local build
+  fallbacks
+
 ## Subfolders
 
 ### `src/` -> [src.spec.md](./src/src.spec.md)
@@ -43,8 +53,9 @@ Modular daemon implementation split across:
 - `main.rs` for the thin entrypoint
 - `lib.rs` for crate wiring
 - `app.rs` for top-level runtime orchestration
-- `config.rs`, `protocol.rs`, `util.rs` for shared types/helpers
+- `config.rs`, `doctor.rs`, `protocol.rs`, `util.rs` for shared types/helpers and local diagnostics
 - `identity.rs` and `claim.rs` for device-auth bootstrap and persistence
+- `version.rs` for `bud --version` build metadata
 - `run.rs` for the retained reference run path
 - `proto_wire.rs` for protobuf `BudEnvelope` typed-payload compatibility encode/decode
 - `grpc_control.rs` for tonic/prost `BudControl.Connect` client bindings and envelope conversion
@@ -156,6 +167,15 @@ cargo run -- --terminal-enabled
 
 The daemon loads the stored identity plus sibling `installation-id`, sends `hello`, answers the HMAC challenge, and resumes the normal runtime loop.
 
+### Local Diagnostics
+
+```bash
+cargo run -- doctor
+cargo run -- --terminal-enabled doctor --format json
+```
+
+`bud doctor` checks the effective base directory, identity file permissions, service URL derivation, production TLS trust when applicable, shell path, terminal artifact directory, tmux availability, and user-service manager availability. It prints OS-specific tmux remediation commands but does not install dependencies automatically.
+
 ## CLI Options
 
 | Option | Env Variable | Default | Description |
@@ -163,14 +183,26 @@ The daemon loads the stored identity plus sibling `installation-id`, sends `hell
 | `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service endpoint used for WebSocket control and device-claim HTTP origin derivation |
 | `--grpc-control-url` | `BUD_GRPC_CONTROL_URL` | - | Optional tonic gRPC control endpoint such as `http://127.0.0.1:50051`; non-auth connection failures fall back to the WebSocket baseline |
 | `--token` | `BUD_ENROLLMENT_TOKEN` | - | Dev-only token-bypass credential for local automation |
+| `--claim-id` | `BUD_CLAIM_ID` | - | Service-generated install claim identifier for authenticated one-command setup |
 | `--name` | `BUD_DEVICE_NAME` | `bud-dev` | Device name |
-| `--cwd` | `BUD_DEFAULT_CWD` | `~` | Working directory |
-| `--identity-file` | `BUD_IDENTITY_FILE` | `~/.bud/identity.json` | Identity storage |
-| `--terminal-base-dir` | `BUD_TERMINAL_BASE_DIR` | `~/.bud` | Base directory for terminal logs and session artifacts |
+| `--base-dir` | `BUD_BASE_DIR` | `~/.bud` or launch-dir `.bud` in local mode | Root for daemon identity, installation id, terminal logs, and future state |
+| `--local` | `BUD_LOCAL` | `false` | Derive default base dir and cwd from the launch directory for development/workspace-local Buds |
+| `--cwd` | `BUD_DEFAULT_CWD` | `$HOME` or launch directory in local mode | Default working directory for run, terminal, and file workspace behavior |
+| `--identity-file` | `BUD_IDENTITY_FILE` | `<base-dir>/identity.json` | Advanced identity storage override |
+| `--terminal-base-dir` | `BUD_TERMINAL_BASE_DIR` | `<base-dir>` | Advanced terminal log/session artifact override |
 | `--terminal-enabled` | `BUD_TERMINAL_ENABLED` | `false` | Enable terminals |
 | `--terminal-cols` | `BUD_TERMINAL_COLS` | `200` | Terminal width |
 | `--terminal-rows` | `BUD_TERMINAL_ROWS` | `50` | Terminal height |
 | `--debug` | `BUD_DEBUG` | `false` | Debug logging |
+
+Subcommand:
+
+| Command | Description |
+|---------|-------------|
+| `doctor` | Runs local preflight diagnostics; supports `--format text|json` and `--strict` |
+
+`bud --version` prints the daemon package version plus build commit, target
+triple, and profile so installed release artifacts are inspectable.
 
 The default local env template targets `ws://localhost:3000/ws`. The optional
 HTTPS parity template targets `wss://localhost:3443/ws` through the repo-root

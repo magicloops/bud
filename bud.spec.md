@@ -98,10 +98,12 @@ pending → creating → ready ↔ active → idle → closed
 
 ```
 bud/
-├── package.json            # Repo-root developer script shim, including local HTTPS bootstrap commands
+├── .github/                # GitHub Actions workflows, including daemon release artifact builds
+├── package.json            # Repo-root developer script shim, including local HTTPS bootstrap and release/installer test commands
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
 ├── PR_SUMMARY.md           # Current PR handoff summary for the terminal freshness implementation
-├── deploy/                 # Checked-in deployment artifacts such as the Cloudflare front-door Worker
+├── deploy/                 # Checked-in deployment artifacts and release-hosting handoff docs
+├── scripts/                # Repo-level automation such as Bud daemon release packaging and manifest generation
 ├── git_loc_breakdown.py    # Repo-wide LOC analyzer that buckets code, config, markdown, and other tracked text while honoring Git ignore rules
 ├── test_git_loc_breakdown.py # Regression tests for the LOC analyzer's category and summary accounting
 │
@@ -605,6 +607,22 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/dev-https-setup-script/progress-checklist.md](./plan/dev-https-setup-script/progress-checklist.md) | Running implementation checklist for the local HTTPS setup-script rollout |
 | [plan/dev-https-setup-script/validation-checklist.md](./plan/dev-https-setup-script/validation-checklist.md) | Validation checklist for local HTTPS setup, launcher process ownership, OAuth/JWKS preflights, iOS provisioning, and unchanged package-local HTTP workflows |
 | [plan/deploy/implementation-spec.md](./plan/deploy/implementation-spec.md) | Phased implementation plan for the prototype Render staging deployment, covering the single-origin contract, service readiness, checked-in Render config, deployed mobile-testing validation, and the post-validation production-provider decision |
+| [plan/daemon-readiness/daemon-readiness.spec.md](./plan/daemon-readiness/daemon-readiness.spec.md) | Folder spec for the daemon production-binary readiness plan, covering one-command install, service-generated claim identifiers, artifact publishing, host preflight, user services, and rollout validation |
+| [plan/daemon-readiness/implementation-spec.md](./plan/daemon-readiness/implementation-spec.md) | Parent implementation spec for shipping the Rust daemon as a production binary installable from `get.bud.dev`, with user-scoped machine installs, launchd/systemd service management, tmux preflight, and authenticated claim binding |
+| [plan/daemon-readiness/phase-1-daemon-runtime-foundation.md](./plan/daemon-readiness/phase-1-daemon-runtime-foundation.md) | Daemon foundation phase covering production config, `--base-dir` / `--local`, `bud doctor`, tmux remediation text, terminal/file root cleanup, and codec hardening |
+| [plan/daemon-readiness/phase-2-service-claim-and-ownership-flow.md](./plan/daemon-readiness/phase-2-service-claim-and-ownership-flow.md) | Service claim phase covering 10 minute single-use install identifiers, service-generated commands, owner stamping, QR fallback, schema/migration work, and ownership validation |
+| [plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md](./plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md) | Release phase covering CI-built daemon artifacts, hosted manifests, SHA-256 verification, platform support, and signing/provenance policy |
+| [plan/daemon-readiness/phase-4-installer-preflight-and-user-service.md](./plan/daemon-readiness/phase-4-installer-preflight-and-user-service.md) | Installer phase covering `install.sh`, manifest verification, `~/.bud/bin/bud`, tmux dependency handling, launchd/systemd user services, foreground fallback, upgrades, and uninstall |
+| [plan/daemon-readiness/phase-5-web-install-surface-and-docs.md](./plan/daemon-readiness/phase-5-web-install-surface-and-docs.md) | Web/docs phase covering the public tokenless command, authenticated generated command UI, claim states, QR fallback, capability disclosure, and install/update/uninstall docs |
+| [plan/daemon-readiness/phase-6-validation-rollout-and-follow-ups.md](./plan/daemon-readiness/phase-6-validation-rollout-and-follow-ups.md) | Release-gate phase covering clean-machine validation, operational checks, staged rollout, rollback guidance, and non-blocking follow-ups such as Homebrew and Linux arm64 |
+| [plan/daemon-readiness/progress-checklist.md](./plan/daemon-readiness/progress-checklist.md) | Running implementation checklist for daemon production-binary readiness |
+| [plan/daemon-readiness/validation-checklist.md](./plan/daemon-readiness/validation-checklist.md) | Release-gate validation checklist for production daemon installation, claim ownership, service management, dependency failures, upgrades, and docs |
+| [plan/install-script/install-script.spec.md](./plan/install-script/install-script.spec.md) | Folder spec for the GitHub Releases plus `get.bud.dev` installer implementation plan |
+| [plan/install-script/implementation-spec.md](./plan/install-script/implementation-spec.md) | Phased implementation plan for using GitHub Releases as the canonical immutable daemon archive and a Cloudflare Worker as the stable installer/manifest front door |
+| [plan/install-script/progress-checklist.md](./plan/install-script/progress-checklist.md) | Running checklist for GitHub Release publication, `get.bud.dev` Worker routing, installer script implementation, promotion, and rollout validation |
+| [plan/install-script/validation-checklist.md](./plan/install-script/validation-checklist.md) | Validation checklist for GitHub Release assets, Worker routes, installer behavior, clean-machine installs, and failure recovery |
+| [.github/github.spec.md](./.github/github.spec.md) | GitHub Actions automation spec, including the Bud daemon release-artifact workflow |
+| [scripts/scripts.spec.md](./scripts/scripts.spec.md) | Repo-level automation spec for Bud release artifact packaging, manifest generation, platform selection, and checksum fixtures |
 | [plan/api-snake-case-normalization.md](./plan/api-snake-case-normalization.md) | Focused implementation plan for normalizing Bud-owned wire contracts to snake_case across the in-use service, web, stream, and any small daemon-facing payload leaks found during implementation |
 | [plan/improve-observe/improve-observe.spec.md](./plan/improve-observe/improve-observe.spec.md) | Folder spec for the phased improve-observe plan, covering one-hour settled waits, post-dispatch send quiescence timing, evidence-based readiness, and interruptible long pending tools |
 | [plan/improve-observe/implementation-spec.md](./plan/improve-observe/implementation-spec.md) | Phased implementation plan for improving `terminal.send` and `terminal.observe(wait_for:"settled")` so settled waits are service-owned, long-running, live-streamed, and not falsely ready on command echo alone |
@@ -709,6 +727,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/client-id/implementation-spec.md](./plan/client-id/implementation-spec.md) | Phased implementation plan for adding stable UUIDv7 `client_id` values to messages, keeping `message_id` as the persisted row identifier, and threading the new identity through transcript reads, user writes, `/agent/state`, agent SSE, and first-party client reconciliation |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [review/bud-daemon-modularization-review.md](./review/bud-daemon-modularization-review.md) | Full architecture review of the Rust Bud daemon, covering current correctness gaps, tmux coupling, backend-neutral terminal abstractions, and a staged refactor plan for splitting `bud/src/main.rs` without changing current behavior |
+| [review/bud-daemon-production-binary-readiness.md](./review/bud-daemon-production-binary-readiness.md) | Production-readiness review for shipping the Rust daemon as a downloadable binary, covering installer/release gaps, tmux preflight, user-service recommendations, claim identifiers, OS support, and validation needs |
+| [review/daemon-service-data-plane-web-proxy-review.md](./review/daemon-service-data-plane-web-proxy-review.md) | Review of the daemon-service data plane and durable web-proxy architecture, covering current browser-to-service-to-daemon flow, WebSocket/H2 carrier behavior, future QUIC/HTTP3 expectations, and gateway extraction boundaries |
 | [review/message-streaming-and-message-ids-review.md](./review/message-streaming-and-message-ids-review.md) | Review of the current user/assistant/tool message lifecycle, when canonical message rows are persisted, how IDs reach the frontend, and how `/messages`, `/agent/state`, and agent SSE reconcile live draft state with durable transcript rows |
 | [review/persist-model-prefs-branch-review.md](./review/persist-model-prefs-branch-review.md) | Current branch review for the thread model-preference persistence work, separating generated migration/doc/test line count from runtime implementation size and identifying cleanup items before merge |
 | [review/send-message-client-id-idempotency-review.md](./review/send-message-client-id-idempotency-review.md) | Review of the iOS send-message retry assumptions around `client_id` idempotency, confirming the existing duplicate-message protection while identifying backend follow-up gaps around conflicting request bodies and inserted-but-not-started agent turns |
@@ -788,6 +808,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
 | [design/local-https-dev-bootstrap.md](./design/local-https-dev-bootstrap.md) | Proposal for reducing Caddy + mkcert local HTTPS configuration fatigue with an opt-in bootstrap that derives the mkcert root, injects `NODE_EXTRA_CA_CERTS` before Node starts, and preflights the public OAuth/JWKS origin |
 | [design/render-deployment-review-and-topology-options.md](./design/render-deployment-review-and-topology-options.md) | Deployment review of the current web/service/Bud topology for a first production-like Render rollout, including current codebase gaps, Render-specific constraints, and cloud-agnostic infrastructure options |
+| [design/release-artifact-hosting-r2-vs-s3.md](./design/release-artifact-hosting-r2-vs-s3.md) | Recommendation for hosting `https://get.bud.dev` installer and release artifacts on Cloudflare R2 behind a Worker, with AWS S3/CloudFront and Render tradeoffs |
 | [design/web-app-overview-and-ios-feature-parity.md](./design/web-app-overview-and-ios-feature-parity.md) | High-level overview of the current web product and the recommended feature-complete iOS parity model, including Bud/thread/terminal UX translation guidance |
 | [design/web-serving-preview-domain-architecture.md](./design/web-serving-preview-domain-architecture.md) | Architecture options and recommendation for production-grade localhost web serving through durable Bud-scoped proxied sites on a dedicated domain such as `bud.show`, including private owner auth, future sharing modes, local dev setup, wildcard host routing, WebSocket/HMR support, gateway extraction, and transport choices |
 | [design/web-serving-productization-plan.md](./design/web-serving-productization-plan.md) | Productization plan and supersession note for evolving the original thread Web view spike into durable Bud-scoped proxied sites, including product routes, agent tools, UI state, private owner auth, and validation |
@@ -805,6 +826,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/removing-terminal-interrupt-in-favor-of-terminal-send.md](./design/removing-terminal-interrupt-in-favor-of-terminal-send.md) | Design review of whether `terminal.interrupt` should be removed from the model-facing contract, arguing that interrupts belong on the general `terminal.send` path and that browser interrupt UX can survive as a thin wrapper over that same send surface |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries, auth/env placeholders, and hosted web-view proxy env placeholders |
 | [deploy/cloudflare/bud-front-door-worker.js](./deploy/cloudflare/bud-front-door-worker.js) | Cloudflare Worker module that forwards service-owned app paths and `*.bud.show` web-view proxy traffic to `bud-service` while preserving forwarded host/proto/port context and the proxy edge secret |
+| [deploy/get-bud-dev/release-hosting.md](./deploy/get-bud-dev/release-hosting.md) | Handoff for publishing CI-generated Bud daemon archives and the stable manifest under `https://get.bud.dev` |
 | [PR_SUMMARY.md](./PR_SUMMARY.md) | Current PR handoff summary for the terminal freshness implementation |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
@@ -812,4 +834,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-29*
+*Last updated: 2026-05-30*

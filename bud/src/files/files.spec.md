@@ -4,7 +4,7 @@ Daemon-side read-only workspace file adapter for Phase 4.4 of the network upgrad
 
 ## Purpose
 
-This folder owns the daemon's local adapter for service-requested file stat/read/range streams and metadata-only file resolution. It revalidates service `file_open` requests against daemon-side policy before touching the filesystem, tries a service-provided message-time cwd hint before live terminal cwd, reads only regular files under the configured workspace root, resolves accepted absolute POSIX paths through `file_resolve`, and streams accepted bytes over the active data-plane carrier with runtime credits.
+This folder owns the daemon's local adapter for service-requested file stat/read/range streams and metadata-only file resolution. It revalidates service `file_open` requests against daemon-side policy before touching the filesystem, tries a service-provided message-time cwd hint before live terminal cwd, reads only regular files under the workspace root configured by the app from the daemon's effective default cwd, resolves accepted absolute POSIX paths through `file_resolve`, and streams accepted bytes over the active data-plane carrier with runtime credits.
 
 ## Files
 
@@ -38,7 +38,7 @@ Phase 4.4 file implementation.
 
 ## Dependencies
 
-- [../app.rs](../app.rs) - dispatches `file_open`, owns the workspace root, routes WebSocket/HTTP2 data-stream credit/reset frames into the manager, and cancels file tasks on daemon transport shutdown
+- [../app.rs](../app.rs) - dispatches `file_open`, owns the workspace root derived from the resolved daemon default cwd, routes WebSocket/HTTP2 data-stream credit/reset frames into the manager, and cancels file tasks on daemon transport shutdown
 - [../transport.rs](../transport.rs) - routes generic stream frames over WebSocket or attached gRPC data according to the active transport
 - [../protocol.rs](../protocol.rs) - `FileOpenFrame`, `FileResolveFrame`, `StreamCreditFrame`, and `StreamResetFrame` definitions
 - [../../src.spec.md](../src.spec.md) - daemon source overview

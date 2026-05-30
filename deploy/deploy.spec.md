@@ -17,10 +17,17 @@ artifact source referenced by those docs.
 
 Cloudflare Worker artifacts for the Render-backed front door.
 
+### `get-bud-dev/` -> [get-bud-dev.spec.md](./get-bud-dev/get-bud-dev.spec.md)
+
+Release-hosting handoff for `https://get.bud.dev`, including versioned daemon
+archive paths, stable manifest path, and the current manual upload contract for
+CI-generated artifacts.
+
 ## Dependencies
 
 - [../plan/deploy/cloudflare-front-door-runbook.md](../plan/deploy/cloudflare-front-door-runbook.md)
 - [../render.yaml](../render.yaml)
+- [../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md](../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md)
 
 ---
 

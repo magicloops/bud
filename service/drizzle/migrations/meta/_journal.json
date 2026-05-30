@@ -155,6 +155,13 @@
       "when": 1779520076263,
       "tag": "0021_worried_luminals",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1780111521231,
+      "tag": "0022_bored_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

@@ -12,7 +12,7 @@ All browser-facing Bud/thread/message/terminal routes now require an authenticat
 
 ### `device-auth.ts`
 
-Bud bootstrap endpoints for QR/link device claims.
+Bud bootstrap endpoints for QR/link device claims and daemon redemption of service-generated install claims.
 
 **Endpoints**:
 
@@ -25,9 +25,28 @@ Bud bootstrap endpoints for QR/link device claims.
 
 **Behavior**:
 - `start` persists requested device metadata plus `installation_id`
+- `start` accepts optional `claim_id` from `BUD_CLAIM_ID`; valid 10 minute install claims are redeemed immediately into an approved Bud secret, while invalid/expired/redeemed claim identifiers fail explicitly instead of falling through to the wrong signed-in user
 - `poll` never exposes Bud secrets to the browser; only the daemon can retrieve `device_secret`
 - `approve` reuses an existing `bud_id` when `installation_id` already belongs to the same user
 - conflicting claims (`installation_id` already owned by another user) are rejected with `installation_claim_conflict`
+
+### `device-install-claims.ts`
+
+Authenticated install-claim issuance and status routes for one-command Bud setup.
+
+**Endpoints**:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/device-install-claims` | Create a 10 minute single-use install claim for the signed-in user and return a complete copyable install command |
+| `GET` | `/api/device-install-claims/:installClaimId` | Read one owned install claim status without exposing the bearer token |
+
+**Behavior**:
+- all routes call `requireViewer(...)`
+- claim tokens are high-entropy bearer values stored only as SHA-256 hashes
+- create returns both `install_command` and `public_install_command`; the authenticated command carries `BUD_CLAIM_ID`
+- reads filter by `device_install_claim.created_by_user_id` and return `404` for signed-in non-owners
+- daemon redemption stamps the resulting Bud owner from the issuing claim owner
 
 ### `buds.ts`
 
@@ -57,6 +76,24 @@ Direct registration coverage for the Bud route family.
 
 **Current Coverage**:
 - the Bud inventory and Bud-session routes still register after the legacy `last_run` dependency removal
+
+### `device-auth.test.ts`
+
+Focused coverage for daemon bootstrap claim redemption.
+
+**Current Coverage**:
+- valid install claim identifiers passed to `/api/device-auth/start` redeem into owner-stamped Bud rows and mark the install claim consumed
+
+### `device-install-claims.test.ts`
+
+Focused route-handler coverage for authenticated install-claim issuance.
+
+**Current Coverage**:
+- route registration for issue/read endpoints
+- unauthenticated issuance returns `401`
+- create stamps `created_by_user_id`, returns a service-generated command, and never returns a device secret
+- signed-in non-owner reads return `404`
+- generated shell commands quote claim tokens safely
 
 ### `threads.ts`
 
@@ -607,6 +644,7 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
 |--------|---------|
 | `fastify` | Request/reply types |
 | `zod` | Request validation |
+| `node:crypto` | Install-claim token generation and hash-at-rest storage |
 | `drizzle-orm` | Query helpers |
 | `../db/client.js` | Database access |
 | `../db/message-client-id.js` | UUIDv7 generation for persisted user-message `client_id` values |

@@ -1,0 +1,14 @@
+name = "get-bud-dev"
+main = "worker.js"
+compatibility_date = "2026-05-30"
+
+[assets]
+directory = "./assets"
+binding = "ASSETS"
+
+[observability.logs]
+enabled = true
+
+[[routes]]
+pattern = "get.bud.dev/*"
+custom_domain = true

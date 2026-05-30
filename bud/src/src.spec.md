@@ -8,6 +8,7 @@ Source code for the Bud device daemon. The daemon is now split into focused modu
 
 Thin CLI entrypoint:
 
+- prints build metadata for `--version` before entering normal CLI parsing
 - parses `BudArgs` with `clap`
 - initializes tracing
 - runs the daemon inside a Tokio `LocalSet`
@@ -18,15 +19,26 @@ Thin CLI entrypoint:
 Crate root for the daemon runtime.
 
 - declares the internal modules
-- re-exports `BudArgs` and `setup_tracing()`
-- exposes `run(args)` as the single high-level entry used by `main.rs`
+- re-exports `BudArgs`, `BudCommand`, and `setup_tracing()`
+- exposes `run(args)` as the single high-level entry used by `main.rs`, dispatching subcommands such as `doctor` before entering the long-running daemon loop
 
 ### `config.rs`
 
 CLI and environment configuration.
 
 - defines `BudArgs`
-- owns daemon defaults for server URL, optional gRPC control/data URLs, identity path, terminal base dir, terminal dimensions, reconnect timing, and debug mode
+- defines `BudCommand`, `DoctorArgs`, and `DoctorFormat`
+- owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
+- resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
+
+### `doctor.rs`
+
+Local diagnostic command implementation.
+
+- evaluates the effective config and path resolution used by the daemon runtime
+- checks OS/architecture support, base-dir and terminal artifact writability, identity file permissions, service URL parsing, production TLS trust when applicable, shell availability, tmux availability, and user-service manager hints
+- prints human-readable output by default and JSON when `bud doctor --format json` is requested
+- emits OS-specific tmux remediation without running package-manager commands automatically
 
 ### `app.rs`
 
@@ -52,6 +64,7 @@ Top-level daemon orchestrator.
 - routing Phase 4.4 `file_open` requests to the workspace file adapter
 - routing Phase 7 `file_resolve` requests to the workspace file adapter for metadata-only absolute POSIX preflight
 - skips the fresh tmux pane cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
+- resolved base-dir/local defaults for identity, installation id, terminal state, legacy run cwd, and file workspace root
 - routing WebSocket-received `stream_data`, `stream_credit`, `stream_reset`,
   and `stream_close` frames to the file/proxy managers where supported
 - capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames; WebSocket-mode daemons additionally advertise `proxy.localhost_websocket`; proxy target-host capabilities advertise exact `localhost`, `127.0.0.1`, and `::1` with `localhost` as the default target host
@@ -85,6 +98,7 @@ Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 
 - encodes active terminal/control frame bodies under typed protobuf oneof payload tags with direct protobuf fields
 - carries optional `host_cwd` fields on typed `terminal_send_result` and `terminal_observe_result` payloads
+- preserves signed optional `terminal_observe.lines` values, including negative tail semantics, through typed protobuf encode/decode
 - encodes core stream lifecycle frames under typed payload tags with direct protobuf fields so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
 - maps Phase 5 `proxy_ws_*` frame types to typed protobuf payload tags with transitional `frame_json`
 - keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and pre-cutover fixture coverage
@@ -202,9 +216,20 @@ Local device identity persistence.
 Browser-mediated device-claim bootstrap.
 
 - starts and polls `/api/device-auth/*`
+- includes `BUD_CLAIM_ID` / `--claim-id` during bootstrap when present so authenticated install commands can redeem without QR approval
 - renders human-readable terminal instructions
 - prints a terminal QR code for headless setups
 - derives the HTTP base URL from the configured WebSocket origin
+
+### `version.rs`
+
+Build metadata helpers for release artifacts.
+
+- formats the `bud --version` output
+- exposes package version, build commit, target triple, and Cargo profile from
+  compile-time environment values emitted by `build.rs`
+- detects `--version` / `-V` before normal daemon startup so release artifacts
+  are inspectable without running service setup or tracing
 
 ### `run.rs`
 
@@ -220,6 +245,7 @@ Terminal runtime composition root.
 
 - defines shared terminal runtime types (`TerminalConfig`, `TerminalManager`, session/capture state)
 - makes `TerminalManager` generic over a `TerminalBackend`, with `TmuxBackend` as the default concrete backend
+- carries the daemon-resolved default cwd used when `terminal_ensure.config.cwd` is absent
 - owns terminal-wide constants, including the post-dispatch guard used before settled send quiescence sampling, and the public `probe_tmux()` helper
 
 ### `terminal/backend.rs`
@@ -245,6 +271,7 @@ Session registry and lifecycle ownership.
 - delivered-capture storage
 - status payload assembly
 - terminal session env defaults (`COLORTERM=truecolor`, `COLORFGBG=15;0`)
+- session cwd fallback comes from `TerminalConfig.default_cwd` instead of a hard-coded home-directory string
 - session creation/reattach orchestration over the backend trait
 
 ### `terminal/interaction.rs`
@@ -363,12 +390,19 @@ app.rs::BudApp
 
 High-value local tests now live next to the extracted abstractions:
 
+- `config.rs`
+  - effective base-dir/local/cwd path derivation and explicit override precedence
+- `version.rs`
+  - version output includes build metadata and version flags are detected
 - `app.rs`
   - WebSocket session shutdown does not wait for stale cloned transport senders
 - `protocol.rs`
   - inbound protocol validation
 - `proto_wire.rs`
   - protobuf compatibility envelope fixture encode/decode
+  - signed `terminal_observe.lines` regression coverage for negative line counts
+- `doctor.rs`
+  - remediation text helpers, production TLS skip/probe behavior, and command/path quoting helpers
 - `proxy/mod.rs`
   - localhost proxy-open policy validation
   - transport-disconnect cleanup resets waiting HTTP proxy streams and closes active WebSocket proxy sessions
@@ -381,6 +415,7 @@ High-value local tests now live next to the extracted abstractions:
   - journal round-trip and corrupt/missing tolerance
 - `terminal/registry.rs`
   - env defaults/overrides
+  - terminal session default cwd fallback
   - terminal-status info merge behavior
 - `terminal/interaction.rs`
   - ctrl-key normalization
@@ -418,7 +453,7 @@ External crates (from `Cargo.toml`):
 | `anyhow` | Error handling |
 | `base64` | Data encoding for frames |
 | `hmac` / `sha2` | Authentication |
-| `reqwest` | Device-auth bootstrap HTTP client and no-redirect localhost proxy requests, configured with native Rustls roots so local mkcert CAs trusted by the OS work for HTTPS parity dev |
+| `reqwest` | Device-auth bootstrap HTTP client, no-redirect localhost proxy requests, and bounded `bud doctor` production TLS trust checks; configured with native Rustls roots so local mkcert CAs trusted by the OS work for HTTPS parity dev |
 | `qrcodegen` | Terminal QR rendering |
 | `tracing` / `tracing-subscriber` | Logging |
 | `ulid` | Message ID generation |

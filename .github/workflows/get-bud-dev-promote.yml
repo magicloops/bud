@@ -1,0 +1,70 @@
+name: Promote get.bud.dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Immutable GitHub Release version to promote, for example v0.1.0."
+        required: true
+      smoke:
+        description: "Run deployed get.bud.dev smoke checks after Worker deploy."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.version }} to get.bud.dev
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release download "${VERSION}" \
+            --pattern "manifest.${VERSION}.json" \
+            --dir "dist/get-bud-dev"
+          test -f "dist/get-bud-dev/manifest.${VERSION}.json"
+
+      - name: Generate Worker promotion assets
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/bud-release.mjs promotion-assets \
+            --manifest "dist/get-bud-dev/manifest.${VERSION}.json" \
+            --github-repository "${GITHUB_REPOSITORY}" \
+            --assets-dir "deploy/get-bud-dev/assets"
+          cat deploy/get-bud-dev/assets/releases/stable/manifest.json
+          cat deploy/get-bud-dev/assets/_release-assets.json
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: deploy/get-bud-dev
+          command: deploy
+
+      - name: Smoke get.bud.dev
+        if: ${{ inputs.smoke == true }}
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          curl -fsSI https://get.bud.dev/install.sh
+          curl -fsSI https://get.bud.dev/releases/stable/manifest.json
+          curl -fsSL https://get.bud.dev/releases/stable/manifest.json \
+            | node -e 'let data=""; process.stdin.on("data", c => data += c); process.stdin.on("end", () => { const manifest = JSON.parse(data); if (manifest.version !== process.env.VERSION) throw new Error(`expected ${process.env.VERSION}, got ${manifest.version}`); console.log(manifest.version); });'
+          curl -fsSI "https://get.bud.dev/releases/${VERSION}/bud-x86_64-unknown-linux-gnu.tar.gz"

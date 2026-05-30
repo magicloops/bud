@@ -38,6 +38,16 @@ Keep it current as we verify behavior locally and as Phase 4/5 work changes the 
 - [ ] The browser claim flow never displays the long-lived `device_secret`.
 - [ ] The browser claim flow never exposes the long-lived `device_secret` in claim-page API responses.
 
+### Device Install Claims
+
+- [ ] Authenticated `POST /api/device-install-claims` returns a complete service-generated install command.
+- [ ] Unauthenticated `POST /api/device-install-claims` returns `401`.
+- [ ] Signed-in users cannot read another user's install claim (`404`).
+- [ ] Expired install claim identifiers cannot redeem.
+- [ ] Already redeemed install claim identifiers cannot redeem twice.
+- [ ] Successful install claim redemption stamps `bud.created_by_user_id` from the issuing user.
+- [ ] Browser install-claim responses never expose the long-lived `device_secret`.
+
 ### Local Ownership Sanity
 
 - [ ] Existing backfilled Buds still appear for local user `dbjb0l3yvGQzdmlFcadq9o7G9efaTcOe`.

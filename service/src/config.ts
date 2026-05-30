@@ -109,6 +109,9 @@ const proxyViewerCookieName =
   process.env.PROXY_VIEWER_COOKIE_NAME ??
   (proxyPublicScheme === "https" ? "__Host-bud_proxy_viewer" : "bud_proxy_viewer");
 const proxyEdgeSecret = toNullable(process.env.PROXY_EDGE_SECRET);
+const daemonInstallerBaseUrl = toUrlString(
+  process.env.DAEMON_INSTALLER_BASE_URL ?? "https://get.bud.dev",
+);
 
 const toReasoningEffort = (value: string | undefined, fallback: ReasoningEffortSetting): ReasoningEffortSetting => {
   if (!value) {
@@ -194,6 +197,7 @@ export const config = {
   grpcDataMaxSessionMemory: toOptionalNumber(process.env.GRPC_DATA_MAX_SESSION_MEMORY),
   grpcDataEnableChannelz: toOptionalNumber(process.env.GRPC_DATA_ENABLE_CHANNELZ),
   daemonTransportPolicy: toDaemonTransportPolicy(process.env.DAEMON_TRANSPORT_POLICY),
+  daemonInstallerBaseUrl,
   dataPlaneMaxChunkBytes,
   dataPlaneInitialCreditBytes,
   dataPlaneMaxInFlightBytes,

@@ -45,6 +45,7 @@ const TMUX_TEXT_TO_ENTER_DELAY_MS: u64 = 10;
 pub struct TerminalConfig {
     pub enabled: bool,
     pub base_log_dir: PathBuf,
+    pub default_cwd: String,
     pub cols: u16,
     pub rows: u16,
     pub shell: String,

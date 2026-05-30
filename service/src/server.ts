@@ -14,6 +14,7 @@ import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 import { ContextSyncService } from "./terminal/context-sync-service.js";
 import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
+import { registerDeviceInstallClaimRoutes } from "./routes/device-install-claims.js";
 import { registerMeRoutes } from "./routes/me.js";
 import { registerProxyRoutes } from "./routes/proxy.js";
 import { registerFileRoutes } from "./routes/files.js";
@@ -164,6 +165,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
   await server.register(fastifySseV2);
   await registerAuthRoutes(server);
+  await registerDeviceInstallClaimRoutes(server);
   await registerDeviceAuthRoutes(server);
   await registerMeRoutes(server);
   await registerBudRoutes(server, terminalSessionManager);

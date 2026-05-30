@@ -44,7 +44,7 @@ use crate::proxy::ProxyManager;
 use crate::run::RunExecutor;
 use crate::terminal::{probe_tmux, TerminalConfig, TerminalManager};
 use crate::transport::{send_transport_frame, send_transport_message, TransportSender};
-use crate::util::{compute_hmac, default_shell, expand_path, new_message_id, now_millis};
+use crate::util::{compute_hmac, default_shell, new_message_id, now_millis};
 
 pub struct BudApp {
     args: BudArgs,
@@ -52,6 +52,7 @@ pub struct BudApp {
     journal_path: PathBuf,
     installation_id_path: PathBuf,
     installation_id: String,
+    default_cwd: String,
     identity: Option<DeviceIdentity>,
     run_executor: RunExecutor,
     terminal_manager: TerminalManager,
@@ -98,12 +99,12 @@ enum HandshakeError {
 
 impl BudApp {
     pub async fn new(args: BudArgs) -> Self {
-        let identity_path = PathBuf::from(shellexpand::tilde(&args.identity_file).into_owned());
+        let resolved_paths = args.resolved_paths();
+        let identity_path = resolved_paths.identity_file.clone();
         let journal_path = identity_path.with_file_name("journal.json");
         let installation_id_path = installation_id_path(&identity_path);
-        let default_cwd = expand_path(&args.cwd)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."));
+        let default_cwd = resolved_paths.default_cwd.clone();
+        let default_cwd_text = default_cwd.to_string_lossy().into_owned();
         let default_shell = default_shell().to_string();
         let tmux_available = probe_tmux();
         let debug_enabled = args.debug;
@@ -113,8 +114,8 @@ impl BudApp {
             .unwrap_or_else(|_| Client::new());
         let terminal_config = TerminalConfig {
             enabled: args.terminal_enabled,
-            base_log_dir: expand_path(&args.terminal_base_dir)
-                .unwrap_or_else(|| PathBuf::from(&args.terminal_base_dir)),
+            base_log_dir: resolved_paths.terminal_base_dir.clone(),
+            default_cwd: default_cwd_text.clone(),
             cols: args.terminal_cols,
             rows: args.terminal_rows,
             shell: default_shell.clone(),
@@ -127,6 +128,7 @@ impl BudApp {
             journal_path,
             installation_id_path,
             installation_id: String::new(),
+            default_cwd: default_cwd_text,
             identity: None,
             run_executor: RunExecutor::new(default_cwd.clone()),
             terminal_manager: TerminalManager::new(terminal_config),
@@ -353,7 +355,7 @@ impl BudApp {
                             device_secret: secret,
                             server_url: self.args.server.clone(),
                             name: self.args.name.clone(),
-                            default_cwd: self.args.cwd.clone(),
+                            default_cwd: self.default_cwd.clone(),
                         };
                         persist_identity(&self.identity_path, &new_identity)
                             .await
@@ -781,7 +783,7 @@ impl BudApp {
                             device_secret: secret,
                             server_url: self.args.server.clone(),
                             name: self.args.name.clone(),
-                            default_cwd: self.args.cwd.clone(),
+                            default_cwd: self.default_cwd.clone(),
                         };
                         persist_identity(&self.identity_path, &new_identity)
                             .await
@@ -1259,9 +1261,16 @@ impl BudApp {
             &self.installation_id,
             &self.args.name,
             self.device_capabilities(HelloTransportMode::WebSocket),
+            self.args.claim_id.as_deref(),
         )
         .await?;
-        print_device_claim_instructions(&start);
+        if self.args.claim_id.is_some() {
+            println!();
+            println!("Redeeming Bud install claim. Waiting for approval...");
+            println!();
+        } else {
+            print_device_claim_instructions(&start);
+        }
 
         loop {
             let poll = poll_device_auth_flow(&self.http_client, &self.args.server, &start).await?;
@@ -1288,11 +1297,12 @@ impl BudApp {
                         device_secret,
                         server_url: self.args.server.clone(),
                         name: self.args.name.clone(),
-                        default_cwd: self.args.cwd.clone(),
+                        default_cwd: self.default_cwd.clone(),
                     };
                     persist_identity(&self.identity_path, &identity).await?;
                     self.identity = Some(identity);
                     self.args.token = None;
+                    self.args.claim_id = None;
                     println!();
                     println!("Device claim approved for Bud `{}`. Connecting...", bud_id);
                     println!();
@@ -1418,18 +1428,24 @@ mod tests {
             grpc_control_url: None,
             grpc_data_url: None,
             token: None,
+            claim_id: None,
             name: "bud-test".into(),
-            cwd: workspace.to_string_lossy().into_owned(),
-            identity_file: workspace
-                .join("identity.json")
-                .to_string_lossy()
-                .into_owned(),
+            cwd: Some(workspace.to_string_lossy().into_owned()),
+            base_dir: None,
+            local: false,
+            identity_file: Some(
+                workspace
+                    .join("identity.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             reconnect_base_sec: 1,
             terminal_enabled: false,
-            terminal_base_dir: workspace.join("terminal").to_string_lossy().into_owned(),
+            terminal_base_dir: Some(workspace.join("terminal").to_string_lossy().into_owned()),
             terminal_cols: 80,
             terminal_rows: 24,
             debug: false,
+            command: None,
         }
     }
 

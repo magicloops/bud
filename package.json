@@ -1,12 +1,15 @@
 {
   "name": "bud",
   "private": true,
-  "description": "Bud repo-level developer scripts.",
+  "description": "Bud repo-level developer scripts and release/installer tests.",
   "scripts": {
     "dev:https": "node dev/local-https.mjs start",
     "dev:https:setup": "node dev/local-https.mjs setup",
     "dev:https:check": "node dev/local-https.mjs check",
-    "dev:https:provision-ios": "node dev/local-https.mjs provision-ios"
+    "dev:https:provision-ios": "node dev/local-https.mjs provision-ios",
+    "test:bud-release": "node --test scripts/bud-release.test.mjs",
+    "test:get-bud-dev": "node --test deploy/get-bud-dev/worker.test.mjs",
+    "test:install-sh": "node --test deploy/get-bud-dev/install-sh.test.mjs"
   },
   "engines": {
     "node": ">=20.19.0 || >=22.12.0"

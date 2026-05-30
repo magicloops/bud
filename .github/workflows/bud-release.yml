@@ -1,0 +1,264 @@
+name: Bud Release Artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "bud-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version. Defaults to Cargo package version for manual runs."
+        required: false
+      channel:
+        description: "Release channel manifest to generate."
+        required: true
+        default: "stable"
+        type: choice
+        options:
+          - stable
+          - canary
+      generate_attestations:
+        description: "Generate GitHub artifact attestations when the repo plan supports them."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      channel: ${{ steps.release.outputs.channel }}
+      published_at: ${{ steps.release.outputs.published_at }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: release
+        name: Resolve release metadata
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_CHANNEL: ${{ github.event.inputs.channel }}
+        run: |
+          set -euo pipefail
+          cargo_version="$(node -e "const fs=require('node:fs'); const m=fs.readFileSync('bud/Cargo.toml','utf8').match(/^version = \"([^\"]+)\"/m); if (!m) process.exit(1); console.log(m[1]);")"
+          raw_version="${INPUT_VERSION:-}"
+          if [[ -z "${raw_version}" ]]; then
+            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+              raw_version="${GITHUB_REF_NAME#bud-}"
+            else
+              raw_version="${cargo_version}"
+            fi
+          fi
+          if [[ "${raw_version}" != v* ]]; then
+            raw_version="v${raw_version}"
+          fi
+          channel="${INPUT_CHANNEL:-stable}"
+          published_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          {
+            echo "version=${raw_version}"
+            echo "channel=${channel}"
+            echo "published_at=${published_at}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "version=${raw_version}"
+          echo "channel=${channel}"
+          echo "published_at=${published_at}"
+          echo "commit=${GITHUB_SHA}"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            min_os: "macOS 13"
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            min_os: "macOS 13"
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            min_os: "glibc 2.35"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain and target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${{ matrix.target }}"
+
+      - name: Install protoc
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install protobuf
+
+      - name: Log build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose
+          cargo --version --verbose
+          protoc --version
+          echo "runner_os=${RUNNER_OS}"
+          echo "runner_arch=${RUNNER_ARCH}"
+          echo "target=${{ matrix.target }}"
+          echo "commit=${GITHUB_SHA}"
+
+      - name: Build release binary
+        shell: bash
+        env:
+          BUD_BUILD_COMMIT: ${{ github.sha }}
+          BUD_BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.target }}" == *apple-darwin ]]; then
+            export MACOSX_DEPLOYMENT_TARGET=13.0
+          fi
+          cargo build --manifest-path bud/Cargo.toml --release --target "${{ matrix.target }}"
+          "bud/target/${{ matrix.target }}/release/bud" --version
+
+      - name: Package release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bud-release.mjs package \
+            --target "${{ matrix.target }}" \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --binary "bud/target/${{ matrix.target }}/release/bud" \
+            --out "dist/bud-release" \
+            --min-os "${{ matrix.min_os }}"
+
+      - name: Generate artifact attestation
+        if: ${{ vars.ENABLE_RELEASE_ATTESTATIONS == 'true' || inputs.generate_attestations == true }}
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/bud-release/bud-${{ matrix.target }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bud-${{ matrix.target }}
+          path: |
+            dist/bud-release/bud-${{ matrix.target }}.tar.gz
+            dist/bud-release/bud-${{ matrix.target }}.json
+          if-no-files-found: error
+
+  manifest:
+    name: Generate release metadata
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/bud-release
+          merge-multiple: true
+
+      - name: Generate release manifest, checksums, and notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          node scripts/bud-release.mjs manifest \
+            --version "${version}" \
+            --channel "${{ needs.prepare.outputs.channel }}" \
+            --published-at "${{ needs.prepare.outputs.published_at }}" \
+            --base-url "https://get.bud.dev" \
+            --metadata-dir "dist/bud-release" \
+            --out "dist/bud-release/manifest.${version}.json"
+          node scripts/bud-release.mjs checksums \
+            --artifact-dir "dist/bud-release" \
+            --out "dist/bud-release/checksums.txt"
+          node scripts/bud-release.mjs notes \
+            --version "${version}" \
+            --channel "${{ needs.prepare.outputs.channel }}" \
+            --commit "${{ github.sha }}" \
+            --metadata-dir "dist/bud-release" \
+            --out "dist/bud-release/release-notes.md"
+          cat "dist/bud-release/manifest.${version}.json"
+          cat dist/bud-release/checksums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bud-release-metadata
+          path: |
+            dist/bud-release/manifest.${{ needs.prepare.outputs.version }}.json
+            dist/bud-release/checksums.txt
+            dist/bud-release/release-notes.md
+          if-no-files-found: error
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - manifest
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/bud-release
+          merge-multiple: true
+
+      - name: Publish immutable release archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            echo "GitHub Release ${VERSION} already exists; refusing to overwrite release assets."
+            exit 1
+          fi
+
+          shopt -s nullglob
+          release_assets=(
+            dist/bud-release/bud-*.tar.gz
+            dist/bud-release/checksums.txt
+            "dist/bud-release/manifest.${VERSION}.json"
+          )
+          if [[ "${#release_assets[@]}" -ne 5 ]]; then
+            printf 'Expected 5 release assets, found %s:\n' "${#release_assets[@]}"
+            for asset in "${release_assets[@]}"; do
+              printf '  %s\n' "${asset}"
+            done
+            exit 1
+          fi
+          for asset in "${release_assets[@]}"; do
+            if [[ ! -f "${asset}" ]]; then
+              echo "Missing release asset: ${asset}"
+              exit 1
+            fi
+          done
+
+          gh release create "${VERSION}" "${release_assets[@]}" \
+            --verify-tag \
+            --title "Bud ${VERSION}" \
+            --notes-file dist/bud-release/release-notes.md
