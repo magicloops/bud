@@ -1317,7 +1317,11 @@ fn read_terminal_observe_field(
             reader.read_string_for_wire_type(wire_type)?,
         ),
         3 => insert_string(frame, "view", reader.read_string_for_wire_type(wire_type)?),
-        4 => insert_u64(frame, "lines", reader.read_varint_for_wire_type(wire_type)?),
+        4 => insert_i32(
+            frame,
+            "lines",
+            decode_i32_varint(reader.read_varint_for_wire_type(wire_type)?),
+        ),
         5 => insert_string(
             frame,
             "wait_for",
@@ -1736,6 +1740,10 @@ fn insert_u64(frame: &mut Map<String, Value>, field: &str, value: u64) {
     frame.insert(field.to_string(), Value::Number(value.into()));
 }
 
+fn insert_i32(frame: &mut Map<String, Value>, field: &str, value: i32) {
+    frame.insert(field.to_string(), Value::Number((value as i64).into()));
+}
+
 fn push_array_value(frame: &mut Map<String, Value>, field: &str, value: Value) {
     match frame.get_mut(field) {
         Some(Value::Array(values)) => values.push(value),
@@ -2051,9 +2059,19 @@ fn write_optional_u64(out: &mut Vec<u8>, field_number: u32, value: Option<u64>) 
 }
 
 fn write_optional_i32(out: &mut Vec<u8>, field_number: u32, value: Option<i64>) {
-    if let Some(value) = value.filter(|value| *value >= 0 && *value <= i32::MAX as i64) {
-        write_varint_field(out, field_number, value as u64);
+    if let Some(value) =
+        value.filter(|value| *value >= i32::MIN as i64 && *value <= i32::MAX as i64)
+    {
+        write_varint_field(out, field_number, encode_i32_varint(value as i32));
     }
+}
+
+fn encode_i32_varint(value: i32) -> u64 {
+    (value as i64) as u64
+}
+
+fn decode_i32_varint(value: u64) -> i32 {
+    (value as i64) as i32
 }
 
 fn write_optional_message(out: &mut Vec<u8>, field_number: u32, value: Option<Vec<u8>>) {
@@ -2329,6 +2347,35 @@ mod tests {
         assert!(!nested_payload_contains_field(
             &bytes,
             126,
+            TYPED_FRAME_JSON_FIELD
+        ));
+
+        let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
+        let decoded_value: Value = serde_json::from_str(&decoded).expect("decode json");
+        assert_eq!(decoded_value, frame);
+    }
+
+    #[test]
+    fn terminal_observe_negative_lines_round_trips_field_level_payload() {
+        let frame = json!({
+            "proto": "0.2",
+            "type": "terminal_observe",
+            "id": "msg_terminal_observe",
+            "ts": 1777132800000_u64,
+            "ext": {},
+            "session_id": "sess_test",
+            "request_id": "req_test",
+            "view": "delta",
+            "lines": -50,
+            "wait_for": "none",
+            "timeout_ms": 1000
+        });
+
+        let bytes = encode_legacy_json_frame(&frame).expect("encode frame");
+        assert_eq!(top_level_payload_fields(&bytes), vec![127]);
+        assert!(!nested_payload_contains_field(
+            &bytes,
+            127,
             TYPED_FRAME_JSON_FIELD
         ));
 

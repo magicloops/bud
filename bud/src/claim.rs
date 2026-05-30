@@ -134,7 +134,7 @@ fn qr_module(qr: &QrCode, x: i32, y: i32) -> bool {
     x >= 0 && y >= 0 && x < qr.size() && y < qr.size() && qr.get_module(x, y)
 }
 
-fn api_base_url_from_ws_url(ws_url: &str) -> Result<Url> {
+pub(crate) fn api_base_url_from_ws_url(ws_url: &str) -> Result<Url> {
     let mut url = Url::parse(ws_url)?;
     match url.scheme() {
         "wss" => url

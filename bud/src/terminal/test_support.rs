@@ -248,6 +248,7 @@ fn test_config() -> TerminalConfig {
     TerminalConfig {
         enabled: true,
         base_log_dir: PathBuf::from("/tmp"),
+        default_cwd: "/tmp".to_string(),
         cols: 200,
         rows: 50,
         shell: "/bin/sh".to_string(),

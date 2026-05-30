@@ -249,7 +249,7 @@ where
             rows = 50;
         }
         let shell = cfg.shell.unwrap_or_else(|| self.config.shell.clone());
-        let cwd = cfg.cwd.unwrap_or_else(|| "~".to_string());
+        let cwd = resolve_terminal_session_cwd(cfg.cwd, &self.config.default_cwd);
 
         let session_exists = self
             .backend
@@ -411,13 +411,19 @@ fn build_terminal_session_env(
     entries
 }
 
+fn resolve_terminal_session_cwd(cwd: Option<String>, default_cwd: &str) -> String {
+    cwd.unwrap_or_else(|| default_cwd.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
     use serde_json::json;
 
-    use super::{build_terminal_session_env, build_terminal_status_payload};
+    use super::{
+        build_terminal_session_env, build_terminal_status_payload, resolve_terminal_session_cwd,
+    };
     use crate::terminal::TerminalStatusSnapshot;
 
     #[test]
@@ -445,6 +451,18 @@ mod tests {
         assert_eq!(
             env.get("TERM_PROGRAM").map(String::as_str),
             Some("bud-test")
+        );
+    }
+
+    #[test]
+    fn terminal_session_cwd_falls_back_to_configured_default() {
+        assert_eq!(
+            resolve_terminal_session_cwd(None, "/tmp/bud-default"),
+            "/tmp/bud-default"
+        );
+        assert_eq!(
+            resolve_terminal_session_cwd(Some("/tmp/thread".to_string()), "/tmp/bud-default"),
+            "/tmp/thread"
         );
     }
 

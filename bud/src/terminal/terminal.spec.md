@@ -14,6 +14,7 @@ Composition root for the terminal runtime.
 
 - owns shared `TerminalState` with active handles and delivered-capture cache
 - exposes `TerminalManager<TmuxBackend>::new(...)`
+- carries the daemon-resolved default cwd used when an ensure request omits `config.cwd`
 - stores the active outbound sender for terminal status/output frames
 - clears active watchers on transport disconnect
 - exposes `fresh_pane_cwd_for_session(session_id)` for file-serving path resolution without creating or mutating a terminal session
@@ -38,6 +39,8 @@ Tmux-backed implementation of `TerminalBackend`.
 ### `registry.rs`
 
 Terminal session lifecycle and ensure/close/resize helpers.
+
+- derives missing session cwd values from `TerminalConfig.default_cwd` instead of a hard-coded home-directory fallback
 
 ### `interaction.rs`
 

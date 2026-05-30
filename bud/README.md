@@ -26,6 +26,8 @@ Bud does not auto-load `.env` itself; you need to export the variables in your s
 | `BUD_SERVER_URL` | `--server` | Service WebSocket URL. For local service dev: `ws://localhost:3000/ws` |
 | `BUD_GRPC_CONTROL_URL` | `--grpc-control-url` | Optional gRPC control endpoint, for example `http://127.0.0.1:50051`; when set, Bud uses tonic control instead of WebSocket |
 | `BUD_DEVICE_NAME` | `--name` | Device name shown during claim and in the UI |
+| `BUD_BASE_DIR` | `--base-dir` | Base directory for identity, installation id, terminal logs, and future daemon state |
+| `BUD_LOCAL` | `--local` | Use `.bud` under the launch directory as the default base dir and use the launch directory as the default cwd |
 | `BUD_DEFAULT_CWD` | `--cwd` | Default working directory |
 | `BUD_IDENTITY_FILE` | `--identity-file` | Path to persisted `{ bud_id, device_secret }` |
 | `BUD_TERMINAL_BASE_DIR` | `--terminal-base-dir` | Base directory for terminal logs and session artifacts |
@@ -41,7 +43,16 @@ endpoint.
 
 Bud also persists a stable non-secret installation identity beside the configured identity file. With the default settings that path is `~/.bud/installation-id`.
 
-Bud does not use the current shell directory as a state root. Running the binary from a different directory only changes isolation if your launcher also points `BUD_IDENTITY_FILE` and `BUD_TERMINAL_BASE_DIR` at that directory.
+By default, Bud uses `~/.bud` for daemon state and `$HOME` as the working directory. For local/dev isolation, use `--local`; Bud will derive state from `.bud` under the launch directory and use that launch directory as the default cwd. Explicit `--base-dir`, `--cwd`, `--identity-file`, and `--terminal-base-dir` values override those derived defaults.
+
+Run a local preflight with:
+
+```bash
+cargo run -- doctor
+cargo run -- --terminal-enabled doctor --format json
+```
+
+When terminal support is enabled and `tmux` is missing, `bud doctor` prints OS-specific install commands. With production config it also attempts a bounded TLS trust check for `api.bud.dev`. Bud does not install tmux automatically.
 
 ## Local Run
 
@@ -131,16 +142,16 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 exec "$SCRIPT_DIR/bud" \
   --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
   --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
-  --identity-file "$SCRIPT_DIR/identity.json" \
-  --terminal-base-dir "$SCRIPT_DIR" \
+  --base-dir "$SCRIPT_DIR/.bud" \
+  --cwd "$SCRIPT_DIR" \
   --terminal-enabled
 ```
 
 With that layout:
 
-- device credentials are stored at `$SCRIPT_DIR/identity.json`
-- the stable installation identity is stored at `$SCRIPT_DIR/installation-id`
-- terminal logs are stored under `$SCRIPT_DIR/sessions/`
+- device credentials are stored at `$SCRIPT_DIR/.bud/identity.json`
+- the stable installation identity is stored at `$SCRIPT_DIR/.bud/installation-id`
+- terminal logs are stored under `$SCRIPT_DIR/.bud/sessions/`
 
 ### Example `make-bud-instance.sh`
 
@@ -170,8 +181,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 exec "$SCRIPT_DIR/bud" \
   --server "${BUD_SERVER_URL:-ws://localhost:3000/ws}" \
   --name "${BUD_DEVICE_NAME:-$(basename "$SCRIPT_DIR")}" \
-  --identity-file "$SCRIPT_DIR/identity.json" \
-  --terminal-base-dir "$SCRIPT_DIR" \
+  --base-dir "$SCRIPT_DIR/.bud" \
+  --cwd "$SCRIPT_DIR" \
   --terminal-enabled
 EOF
 
