@@ -20,20 +20,20 @@
 
 ## Phase 2: Service Claim And Ownership Flow
 
-- [ ] install-claim data model designed
-- [ ] schema updated
-- [ ] `pnpm db:push` run locally
-- [ ] checked-in migration generated
-- [ ] authenticated issuance endpoint added
-- [ ] service-generated command response added
-- [ ] daemon redemption path added
-- [ ] 10 minute TTL enforced
-- [ ] single-use redemption enforced
-- [ ] claim owner stamps redeemed Bud owner
-- [ ] QR/link fallback preserved
-- [ ] cross-user ownership tests added
-- [ ] init-auth validation checklist updated
-- [ ] service/daemon specs updated
+- [x] install-claim data model designed
+- [x] schema updated
+- [x] `pnpm db:push` run locally
+- [x] checked-in migration generated
+- [x] authenticated issuance endpoint added
+- [x] service-generated command response added
+- [x] daemon redemption path added
+- [x] 10 minute TTL enforced
+- [x] single-use redemption enforced
+- [x] claim owner stamps redeemed Bud owner
+- [x] QR/link fallback preserved
+- [x] cross-user ownership tests added
+- [x] init-auth validation checklist updated
+- [x] service/daemon specs updated
 
 ## Phase 3: Release Artifacts And Manifest
 

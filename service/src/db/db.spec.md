@@ -42,6 +42,7 @@ Drizzle schema definitions. Defines all tables:
 | `budTable` | Registered devices | `budId`, `installationId`, `name`, `os`, `arch`, `capabilities`, `status`, `deviceSecret`, `createdByUserId` |
 | `enrollmentTokenTable` | Legacy one-time registration tokens retained for migration/debug compatibility; gateways no longer accept these for production enrollment | `tokenHash`, `expiresAt`, `consumedAt` |
 | `deviceAuthFlowTable` | Browser-mediated device claim state | `flowId`, `installationId`, `pollSecretHash`, `status`, `approvedByUserId`, `budId` |
+| `deviceInstallClaimTable` | Authenticated one-command daemon install claim state | `installClaimId`, `claimTokenHash`, `createdByUserId`, `expiresAt`, `redeemedAt`, `redeemedBudId` |
 | `threadTable` | Conversations | `threadId`, `budId`, `title`, `modelId`, `reasoningEffort`, `lastActivityAt`, `messageCount`, `lastAttentionMessageId`, `lastAttentionMessageCreatedAt`, `lastAttentionKind`, `deletedAt`, `createdByUserId` |
 | `messageTable` | Chat messages | `messageId`, `clientId`, `threadId`, `role`, `content`, `metadata`, `createdByUserId` |
 | `llmCallTable` | Provider invocation ledger for same-provider replay, cache diagnostics, and reconstruction-mode metadata | `llmCallId`, `threadId`, `turnId`, `stepIndex`, `provider`, `model`, `requestMode`, `providerResponseId`, `usage`, `cacheMetadata`, `createdByUserId` |
@@ -135,6 +136,14 @@ const byteaColumn = customType<{ data: Buffer }>({
 
 `budTable.installationId` is unique when present so the same physical install can re-claim the same `bud_id` if only the device secret is lost.
 
+`deviceInstallClaimTable` backs the authenticated one-command install path:
+
+- browser users create 10 minute install claims through `/api/device-install-claims`
+- the copyable shell command carries a high-entropy `BUD_CLAIM_ID` bearer value
+- only the SHA-256 claim-token hash is stored at rest
+- daemon redemption is single-use and records `redeemed_at`, `redeemed_bud_id`, `redeemed_installation_id`, user agent, and IP when available
+- the redeemed Bud inherits `created_by_user_id` from the issuing claim owner
+
 #### Indexes
 
 - `thread_bud_idx` - Threads by bud
@@ -154,6 +163,7 @@ const byteaColumn = customType<{ data: Buffer }>({
 - `run_thread_idx` - Runs by thread + started_at
 - `bud_installation_id_idx` - Device continuity lookup by stable installation identity
 - `device_auth_flow_installation_idx` / `device_auth_flow_status_idx` - Claim lookup, expiry, and polling
+- `device_install_claim_token_hash_idx` / `device_install_claim_owner_expires_idx` - Install-claim bearer lookup and owner-scoped status reads
 - `terminal_session_thread_active_unique_idx` - Enforces at most one non-closed session row per thread
 - Various terminal session indexes for efficient queries
 
@@ -243,13 +253,16 @@ budTable
     └── deviceAuthFlowTable
             ├── N:1 ──► authUserTable (approvedByUserId)
             └── N:1 ──► budTable (budId)
+    └── deviceInstallClaimTable
+            ├── N:1 ──► authUserTable (createdByUserId)
+            └── N:1 ──► budTable (redeemedBudId)
 ```
 
 ## Auth Bootstrap Note
 
 `drizzle-kit push` still needs help with the non-`public` Better Auth schema in this project. [`db-push.ts`](/Users/adam/bud/service/src/scripts/db-push.ts) now creates the `auth` schema and then runs Better Auth's own migration generator against the runtime auth config before delegating back to Drizzle for schema diffs such as `user_profile` and any checked-in auth-schema tables.
 
-Checked-in migrations now run cleanly through `0021`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes, add durable web-proxy `proxied_site`, thread attachment, viewer grant, and viewer session tables, add `agent_question_request` for durable `ask_user_questions` prompts, normalize Drizzle/PostgreSQL constraint metadata so repeated local `db:push` runs converge, and add `agent_context_checkpoint` for durable automatic context compaction replay boundaries.
+Checked-in migrations now run cleanly through `0022`, including the catch-up migrations that add `message.client_id`, backfill existing rows, drop the removed `terminal_session.tmux_session_name` column, remove the dead standalone-run tables plus `terminal_session_input_log.run_id`, add the push-notification read-state, endpoint, outbox, and thread-attention schema, add the network-upgrade daemon session/operation/stream/audit schema, add the Phase 4.1 `proxy_session` schema, add the Phase 4.3 `file_session` schema, add nullable thread model-preference columns, add the append-only `llm_call` / `llm_call_item` ledger used to persist provider output items, reasoning payloads, tool calls, and tool results without exposing provider-only payloads through browser transcript routes, add durable web-proxy `proxied_site`, thread attachment, viewer grant, and viewer session tables, add `agent_question_request` for durable `ask_user_questions` prompts, normalize Drizzle/PostgreSQL constraint metadata so repeated local `db:push` runs converge, add `agent_context_checkpoint` for durable automatic context compaction replay boundaries, and add `device_install_claim` for authenticated one-command Bud installs.
 
 ## Ownership And Multi-Tenancy Support
 
@@ -278,6 +291,11 @@ Push-specific ownership follows the same rule:
 - `thread_read_state.user_id` is the viewer whose badge/read state is being tracked
 - `push_endpoint.user_id` owns the registration and prevents cross-user token mutation
 - `push_notification_outbox.user_id` scopes queued deliveries to the intended viewer
+
+Install-claim ownership is rooted in the authenticated browser user:
+- `device_install_claim.created_by_user_id` scopes browser reads and is the source of truth for redeemed Bud ownership
+- `claim_token_hash` is the daemon bearer lookup key and is unique; raw claim tokens are returned only during issuance
+- `redeemed_bud_id` and `redeemed_installation_id` audit which daemon install consumed the claim
 
 Network-upgrade durable rows follow the same ownership direction:
 - `device_session`, `transport_session`, `bud_operation`, `bud_stream`, and `audit_event` include nullable `tenant_id` and `created_by_user_id`

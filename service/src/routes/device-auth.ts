@@ -6,7 +6,8 @@ import { z } from "zod";
 import { requireViewer } from "../auth/session.js";
 import { config } from "../config.js";
 import { db } from "../db/client.js";
-import { budTable, deviceAuthFlowTable } from "../db/schema.js";
+import { budTable, deviceAuthFlowTable, deviceInstallClaimTable } from "../db/schema.js";
+import { hashDeviceInstallClaimToken } from "./device-install-claims.js";
 
 const DEVICE_AUTH_FLOW_TTL_MS = 15 * 60 * 1000;
 const DEVICE_AUTH_POST_APPROVAL_TTL_MS = 30 * 60 * 1000;
@@ -18,7 +19,8 @@ const DeviceMetadataSchema = z.object({
   os: z.string().trim().min(1).max(64),
   arch: z.string().trim().min(1).max(64),
   version: z.string().trim().min(1).max(120).optional(),
-  capabilities: z.record(z.unknown()).default({})
+  capabilities: z.record(z.unknown()).default({}),
+  claim_id: z.string().trim().min(1).max(256).optional()
 });
 
 const DeviceAuthPollSchema = z.object({
@@ -32,6 +34,7 @@ const DeviceAuthFlowParamsSchema = z.object({
 
 type DeviceAuthFlowRow = typeof deviceAuthFlowTable.$inferSelect;
 type PublicFlowStatus = "pending" | "approved" | "completed" | "rejected" | "expired";
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 function hashPollSecret(secret: string) {
   return createHash("sha256").update(secret).digest("hex");
@@ -73,6 +76,106 @@ function serializePublicFlow(flow: DeviceAuthFlowRow) {
   };
 }
 
+async function approveDeviceAuthFlowForUser(
+  tx: DbTransaction,
+  flow: DeviceAuthFlowRow,
+  ownerUserId: string,
+  now = new Date(),
+) {
+  const status = getFlowStatus(flow, now);
+  if (status === "expired") {
+    return { kind: "expired" as const };
+  }
+  if (status === "rejected") {
+    return {
+      kind: "rejected" as const,
+      errorCode: flow.errorCode ?? "device_claim_rejected"
+    };
+  }
+  if ((status === "approved" || status === "completed") && flow.budId) {
+    if (flow.approvedByUserId && flow.approvedByUserId !== ownerUserId) {
+      return {
+        kind: "conflict" as const,
+        errorCode: flow.errorCode ?? "device_claim_conflict"
+      };
+    }
+    return {
+      kind: "approved" as const,
+      budId: flow.budId
+    };
+  }
+
+  const existingBud = await tx.query.budTable.findFirst({
+    where: eq(budTable.installationId, flow.installationId)
+  });
+
+  if (existingBud?.createdByUserId && existingBud.createdByUserId !== ownerUserId) {
+    await tx
+      .update(deviceAuthFlowTable)
+      .set({
+        status: "rejected",
+        errorCode: "installation_claim_conflict"
+      })
+      .where(eq(deviceAuthFlowTable.flowId, flow.flowId));
+
+    return {
+      kind: "conflict" as const,
+      errorCode: "installation_claim_conflict"
+    };
+  }
+
+  const budId = existingBud?.budId ?? `b_${ulid()}`;
+  const deviceSecret = randomBytes(32).toString("base64url");
+  const nextExpiry = new Date(now.getTime() + DEVICE_AUTH_POST_APPROVAL_TTL_MS);
+
+  if (existingBud) {
+    await tx
+      .update(budTable)
+      .set({
+        installationId: flow.installationId,
+        name: flow.requestedName,
+        os: flow.requestedOs,
+        arch: flow.requestedArch,
+        version: flow.requestedVersion,
+        capabilities: flow.requestedCapabilities,
+        deviceSecret,
+        createdByUserId: existingBud.createdByUserId ?? ownerUserId
+      })
+      .where(eq(budTable.budId, budId));
+  } else {
+    await tx.insert(budTable).values({
+      budId,
+      installationId: flow.installationId,
+      name: flow.requestedName,
+      os: flow.requestedOs,
+      arch: flow.requestedArch,
+      version: flow.requestedVersion,
+      capabilities: flow.requestedCapabilities,
+      status: "offline",
+      deviceSecret,
+      createdByUserId: ownerUserId
+    });
+  }
+
+  await tx
+    .update(deviceAuthFlowTable)
+    .set({
+      status: "approved",
+      approvedByUserId: ownerUserId,
+      budId,
+      issuedDeviceSecret: deviceSecret,
+      approvedAt: now,
+      expiresAt: nextExpiry,
+      errorCode: null
+    })
+    .where(eq(deviceAuthFlowTable.flowId, flow.flowId));
+
+  return {
+    kind: "approved" as const,
+    budId
+  };
+}
+
 export async function registerDeviceAuthRoutes(server: FastifyInstance): Promise<void> {
   server.post("/api/device-auth/start", async (request, reply) => {
     const body = DeviceMetadataSchema.parse(request.body ?? {});
@@ -81,17 +184,99 @@ export async function registerDeviceAuthRoutes(server: FastifyInstance): Promise
     const expiresAt = new Date(Date.now() + DEVICE_AUTH_FLOW_TTL_MS);
     const claimUrl = buildClaimUrl(flowId);
 
-    await db.insert(deviceAuthFlowTable).values({
+    const flowValues = {
       flowId,
       installationId: body.installation_id,
       pollSecretHash: hashPollSecret(pollSecret),
       requestedName: body.name,
       requestedOs: body.os,
       requestedArch: body.arch,
-      requestedVersion: body.version,
+      requestedVersion: body.version ?? null,
       requestedCapabilities: body.capabilities,
       expiresAt
-    });
+    };
+
+    const claimId = body.claim_id;
+    if (claimId) {
+      const result = await db.transaction(async (tx) => {
+        const installClaim = await tx.query.deviceInstallClaimTable.findFirst({
+          where: eq(
+            deviceInstallClaimTable.claimTokenHash,
+            hashDeviceInstallClaimToken(claimId),
+          )
+        });
+        const now = new Date();
+
+        if (!installClaim) {
+          return { kind: "install_claim_not_found" as const };
+        }
+        if (installClaim.expiresAt.getTime() <= now.getTime()) {
+          return { kind: "install_claim_expired" as const };
+        }
+        if (installClaim.redeemedAt) {
+          return { kind: "install_claim_redeemed" as const };
+        }
+
+        await tx.insert(deviceAuthFlowTable).values(flowValues);
+        const flow = {
+          ...flowValues,
+          status: "pending",
+          approvedByUserId: null,
+          budId: null,
+          issuedDeviceSecret: null,
+          errorCode: null,
+          lastPolledAt: null,
+          approvedAt: null,
+          completedAt: null,
+          createdAt: now,
+        } satisfies DeviceAuthFlowRow;
+
+        const approval = await approveDeviceAuthFlowForUser(
+          tx,
+          flow,
+          installClaim.createdByUserId,
+          now,
+        );
+        if (approval.kind !== "approved") {
+          return approval;
+        }
+
+        await tx
+          .update(deviceInstallClaimTable)
+          .set({
+            redeemedAt: now,
+            redeemedBudId: approval.budId,
+            redeemedInstallationId: body.installation_id,
+            redeemedUserAgent:
+              typeof request.headers["user-agent"] === "string"
+                ? request.headers["user-agent"]
+                : null,
+            redeemedIp: request.ip ?? null,
+            updatedAt: now,
+          })
+          .where(eq(deviceInstallClaimTable.installClaimId, installClaim.installClaimId));
+
+        return approval;
+      });
+
+      if (result.kind === "install_claim_not_found") {
+        return reply.status(404).send({ error: "device_install_claim_not_found" });
+      }
+      if (result.kind === "install_claim_expired") {
+        return reply.status(410).send({ error: "device_install_claim_expired" });
+      }
+      if (result.kind === "install_claim_redeemed") {
+        return reply.status(409).send({ error: "device_install_claim_redeemed" });
+      }
+      if (result.kind === "expired") {
+        return reply.status(410).send({ error: "device_auth_flow_expired" });
+      }
+      if (result.kind === "rejected" || result.kind === "conflict") {
+        return reply.status(409).send({ error: result.errorCode });
+      }
+    } else {
+      await db.insert(deviceAuthFlowTable).values(flowValues);
+    }
 
     return reply.status(201).send({
       flow_id: flowId,
@@ -187,99 +372,7 @@ export async function registerDeviceAuthRoutes(server: FastifyInstance): Promise
         return { kind: "not_found" as const };
       }
 
-      const status = getFlowStatus(flow);
-      if (status === "expired") {
-        return { kind: "expired" as const };
-      }
-      if (status === "rejected") {
-        return {
-          kind: "rejected" as const,
-          errorCode: flow.errorCode ?? "device_claim_rejected"
-        };
-      }
-      if ((status === "approved" || status === "completed") && flow.budId) {
-        if (flow.approvedByUserId && flow.approvedByUserId !== viewer.userId) {
-          return {
-            kind: "conflict" as const,
-            errorCode: flow.errorCode ?? "device_claim_conflict"
-          };
-        }
-        return {
-          kind: "approved" as const,
-          budId: flow.budId
-        };
-      }
-
-      const existingBud = await tx.query.budTable.findFirst({
-        where: eq(budTable.installationId, flow.installationId)
-      });
-
-      if (existingBud?.createdByUserId && existingBud.createdByUserId !== viewer.userId) {
-        await tx
-          .update(deviceAuthFlowTable)
-          .set({
-            status: "rejected",
-            errorCode: "installation_claim_conflict"
-          })
-          .where(eq(deviceAuthFlowTable.flowId, flow.flowId));
-
-        return {
-          kind: "conflict" as const,
-          errorCode: "installation_claim_conflict"
-        };
-      }
-
-      const budId = existingBud?.budId ?? `b_${ulid()}`;
-      const deviceSecret = randomBytes(32).toString("base64url");
-      const now = new Date();
-      const nextExpiry = new Date(now.getTime() + DEVICE_AUTH_POST_APPROVAL_TTL_MS);
-
-      if (existingBud) {
-        await tx
-          .update(budTable)
-          .set({
-            installationId: flow.installationId,
-            name: flow.requestedName,
-            os: flow.requestedOs,
-            arch: flow.requestedArch,
-            version: flow.requestedVersion,
-            capabilities: flow.requestedCapabilities,
-            deviceSecret,
-            createdByUserId: existingBud.createdByUserId ?? viewer.userId
-          })
-          .where(eq(budTable.budId, budId));
-      } else {
-        await tx.insert(budTable).values({
-          budId,
-          installationId: flow.installationId,
-          name: flow.requestedName,
-          os: flow.requestedOs,
-          arch: flow.requestedArch,
-          version: flow.requestedVersion,
-          capabilities: flow.requestedCapabilities,
-          status: "offline",
-          deviceSecret,
-          createdByUserId: viewer.userId
-        });
-      }
-
-      await tx
-        .update(deviceAuthFlowTable)
-        .set({
-          status: "approved",
-          approvedByUserId: viewer.userId,
-          budId,
-          issuedDeviceSecret: deviceSecret,
-          approvedAt: now,
-          expiresAt: nextExpiry,
-          errorCode: null
-        })
-        .where(eq(deviceAuthFlowTable.flowId, flow.flowId));
-
-      return {
-        kind: "approved" as const,
-        budId
-      };
+      return approveDeviceAuthFlowForUser(tx, flow, viewer.userId);
     });
 
     if (result.kind === "not_found") {

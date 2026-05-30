@@ -160,10 +160,10 @@ DB:
 
 ## Exit Criteria
 
-- [ ] authenticated web users can mint a 10 minute single-use claim identifier
-- [ ] the service returns a complete copyable install command
-- [ ] daemon redemption binds the Bud to the claim owner
-- [ ] QR/link claim fallback still works for tokenless installs
-- [ ] existing claimed identities are not overwritten silently
-- [ ] ownership tests cover cross-user access and redemption
-- [ ] checked-in migrations exist for schema changes
+- [x] authenticated web users can mint a 10 minute single-use claim identifier
+- [x] the service returns a complete copyable install command
+- [x] daemon redemption binds the Bud to the claim owner
+- [x] QR/link claim fallback still works for tokenless installs
+- [x] existing claimed identities are not overwritten silently
+- [x] ownership tests cover cross-user access and redemption
+- [x] checked-in migrations exist for schema changes

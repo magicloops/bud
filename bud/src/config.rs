@@ -22,6 +22,9 @@ pub struct BudArgs {
     #[arg(long, env = "BUD_ENROLLMENT_TOKEN")]
     pub token: Option<String>,
 
+    #[arg(long, env = "BUD_CLAIM_ID")]
+    pub claim_id: Option<String>,
+
     #[arg(long, env = "BUD_DEVICE_NAME", default_value = "bud-dev")]
     pub name: String,
 
@@ -147,6 +150,7 @@ mod tests {
             grpc_control_url: None,
             grpc_data_url: None,
             token: None,
+            claim_id: None,
             name: "bud-test".into(),
             cwd: None,
             base_dir: None,

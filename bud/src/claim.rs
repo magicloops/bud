@@ -31,18 +31,24 @@ pub async fn start_device_auth_flow(
     installation_id: &str,
     name: &str,
     capabilities: Value,
+    claim_id: Option<&str>,
 ) -> Result<DeviceAuthStartResponse> {
     let api_base = api_base_url_from_ws_url(server_url)?;
+    let mut body = json!({
+        "installation_id": installation_id,
+        "name": name,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "version": env!("CARGO_PKG_VERSION"),
+        "capabilities": capabilities,
+    });
+    if let Some(claim_id) = claim_id {
+        body["claim_id"] = Value::String(claim_id.to_string());
+    }
+
     let response = http_client
         .post(api_base.join("api/device-auth/start")?)
-        .json(&json!({
-            "installation_id": installation_id,
-            "name": name,
-            "os": std::env::consts::OS,
-            "arch": std::env::consts::ARCH,
-            "version": env!("CARGO_PKG_VERSION"),
-            "capabilities": capabilities,
-        }))
+        .json(&body)
         .send()
         .await
         .with_context(|| "failed to start device auth flow")?;

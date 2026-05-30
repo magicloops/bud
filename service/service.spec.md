@@ -62,6 +62,7 @@ Checked-in template for local service setup. Includes:
 - hosted web-view proxy hints for `PROXY_PUBLIC_SCHEME`, `PROXY_BASE_DOMAIN`,
   `PROXY_GATEWAY_ENABLED`, `PROXY_VIEWER_COOKIE_NAME`, and
   `PROXY_EDGE_SECRET` when Cloudflare forwards `*.bud.show` to the service
+- `DAEMON_INSTALLER_BASE_URL` for service-generated Bud installer commands
 - optional APNs push-notification settings (`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_FILE`, `APNS_PRIVATE_KEY`, `APNS_DEFAULT_TOPIC`, `APNS_ALLOWED_TOPICS`)
 - optional LLM provider settings
 
@@ -148,6 +149,8 @@ startup.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/me` | Current authenticated user/profile via cookie or bearer auth |
+| `POST` | `/api/device-install-claims` | Create a 10 minute authenticated Bud install claim and return the service-generated install command |
+| `GET` | `/api/device-install-claims/:id` | Read one owned install claim's status |
 | `GET` | `/api/me/accounts` | Linked-provider account inventory for the current user |
 | `GET` | `/api/me/notifications/summary` | Current unseen-thread badge summary for the signed-in user |
 | `PUT` | `/api/me/push/endpoints/:installation_id` | Create or update a push endpoint registration for the signed-in user |
@@ -293,6 +296,7 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `AGENT_MAX_STEPS` - Max tool calls (default: 1000)
 - `AGENT_DEBUG` - Enable debug logging
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
+- `DAEMON_INSTALLER_BASE_URL` - Installer/artifact origin used when generating copyable Bud install commands (default: `https://get.bud.dev`)
 - `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_FILE` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` / `APNS_ALLOWED_TOPICS` - APNs provider credentials, fallback topic, and accepted Bud app topics
 - `GRPC_CONTROL_ENABLED` / `GRPC_CONTROL_HOST` / `GRPC_CONTROL_PORT` - Optional daemon gRPC control listener
 - `DAEMON_TRANSPORT_POLICY` - Optional daemon carrier preference order; defaults to `websocket_baseline`

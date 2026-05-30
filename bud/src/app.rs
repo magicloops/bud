@@ -1261,9 +1261,16 @@ impl BudApp {
             &self.installation_id,
             &self.args.name,
             self.device_capabilities(HelloTransportMode::WebSocket),
+            self.args.claim_id.as_deref(),
         )
         .await?;
-        print_device_claim_instructions(&start);
+        if self.args.claim_id.is_some() {
+            println!();
+            println!("Redeeming Bud install claim. Waiting for approval...");
+            println!();
+        } else {
+            print_device_claim_instructions(&start);
+        }
 
         loop {
             let poll = poll_device_auth_flow(&self.http_client, &self.args.server, &start).await?;
@@ -1295,6 +1302,7 @@ impl BudApp {
                     persist_identity(&self.identity_path, &identity).await?;
                     self.identity = Some(identity);
                     self.args.token = None;
+                    self.args.claim_id = None;
                     println!();
                     println!("Device claim approved for Bud `{}`. Connecting...", bud_id);
                     println!();
@@ -1420,6 +1428,7 @@ mod tests {
             grpc_control_url: None,
             grpc_data_url: None,
             token: None,
+            claim_id: None,
             name: "bud-test".into(),
             cwd: Some(workspace.to_string_lossy().into_owned()),
             base_dir: None,

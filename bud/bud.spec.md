@@ -173,6 +173,7 @@ cargo run -- --terminal-enabled doctor --format json
 | `--server` | `BUD_SERVER_URL` | `wss://localhost:8443/ws` | Service endpoint used for WebSocket control and device-claim HTTP origin derivation |
 | `--grpc-control-url` | `BUD_GRPC_CONTROL_URL` | - | Optional tonic gRPC control endpoint such as `http://127.0.0.1:50051`; non-auth connection failures fall back to the WebSocket baseline |
 | `--token` | `BUD_ENROLLMENT_TOKEN` | - | Dev-only token-bypass credential for local automation |
+| `--claim-id` | `BUD_CLAIM_ID` | - | Service-generated install claim identifier for authenticated one-command setup |
 | `--name` | `BUD_DEVICE_NAME` | `bud-dev` | Device name |
 | `--base-dir` | `BUD_BASE_DIR` | `~/.bud` or launch-dir `.bud` in local mode | Root for daemon identity, installation id, terminal logs, and future state |
 | `--local` | `BUD_LOCAL` | `false` | Derive default base dir and cwd from the launch directory for development/workspace-local Buds |

@@ -29,6 +29,7 @@ Application entry point and thin Fastify composition root.
 - Apply service-level CORS for direct browser-to-service local development, using the trusted-origin allowlist from `config.betterAuthTrustedOrigins`
 - Advertise the current direct-browser method set (`GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`) during trusted-origin preflight handling so local web workbench and mobile registration calls can use profile updates, push-endpoint upserts, thread deletion, and session closure against `http://localhost:3000`
 - Mount Better Auth routes, OAuth metadata surfaces, current-user session surface, and device-auth claim bootstrap endpoints
+- Mount authenticated device-install-claim issuance/read endpoints used by one-command Bud setup
 - Create manager instances for terminal sessions, agent runtime state, and thread-title generation
 - Start the push-notification outbox worker when APNs credentials are configured
 - Register the split thread-route modules through the `routes/threads.ts` composition entrypoint
@@ -101,6 +102,7 @@ Environment-based configuration with defaults.
 | `grpcDataMaxSessionMemory` | `GRPC_DATA_MAX_SESSION_MEMORY` | - | Optional grpc-js HTTP/2 session memory setting for data |
 | `grpcDataEnableChannelz` | `GRPC_DATA_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle for data |
 | `daemonTransportPolicy` | `DAEMON_TRANSPORT_POLICY` | websocket_baseline | Carrier preference order for daemon control and data-plane selection (`websocket_baseline`, `h2_preferred`, `quic_preferred`) |
+| `daemonInstallerBaseUrl` | `DAEMON_INSTALLER_BASE_URL` | https://get.bud.dev | Installer/artifact origin used when generating service-owned Bud install commands |
 | `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy streams |
 | `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy streams |
 | `dataPlaneMaxInFlightBytes` | `DATA_PLANE_MAX_IN_FLIGHT_BYTES` | 1MB | Cap on accumulated outbound stream credit per runtime stream |

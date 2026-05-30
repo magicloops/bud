@@ -25,6 +25,7 @@ Bud does not auto-load `.env` itself; you need to export the variables in your s
 |-----|------|---------|
 | `BUD_SERVER_URL` | `--server` | Service WebSocket URL. For local service dev: `ws://localhost:3000/ws` |
 | `BUD_GRPC_CONTROL_URL` | `--grpc-control-url` | Optional gRPC control endpoint, for example `http://127.0.0.1:50051`; when set, Bud uses tonic control instead of WebSocket |
+| `BUD_CLAIM_ID` | `--claim-id` | Optional service-generated install claim identifier for authenticated one-command setup |
 | `BUD_DEVICE_NAME` | `--name` | Device name shown during claim and in the UI |
 | `BUD_BASE_DIR` | `--base-dir` | Base directory for identity, installation id, terminal logs, and future daemon state |
 | `BUD_LOCAL` | `--local` | Use `.bud` under the launch directory as the default base dir and use the launch directory as the default cwd |

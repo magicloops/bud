@@ -328,6 +328,38 @@ export const deviceAuthFlowTable = pgTable(
   }),
 );
 
+export const deviceInstallClaimTable = pgTable(
+  "device_install_claim",
+  {
+    installClaimId: text("install_claim_id").primaryKey(),
+    claimTokenHash: text("claim_token_hash").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => authUserTable.id, { onDelete: "cascade" }),
+    tenantId: text("tenant_id"),
+    deviceNameHint: text("device_name_hint"),
+    installScope: text("install_scope").notNull().default("machine"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    redeemedBudId: text("redeemed_bud_id").references(() => budTable.budId, {
+      onDelete: "set null",
+    }),
+    redeemedInstallationId: text("redeemed_installation_id"),
+    redeemedUserAgent: text("redeemed_user_agent"),
+    redeemedIp: text("redeemed_ip"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`).notNull(),
+  },
+  (table) => ({
+    tokenHashIdx: uniqueIndex("device_install_claim_token_hash_idx").on(table.claimTokenHash),
+    ownerExpiresIdx: index("device_install_claim_owner_expires_idx").on(
+      table.createdByUserId,
+      table.expiresAt,
+    ),
+    redeemedBudIdx: index("device_install_claim_redeemed_bud_idx").on(table.redeemedBudId),
+  }),
+);
+
 export const threadTable = pgTable(
   "thread",
   {

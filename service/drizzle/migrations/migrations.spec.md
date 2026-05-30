@@ -177,6 +177,14 @@ Placeholder to ensure the directory exists in git.
 - Adds thread/status/created, message-boundary, and LLM-boundary indexes
 - Adds a cascading foreign key to `thread`
 
+### `0022_bored_rocket_racer.sql`
+
+**Device install claim foundation**:
+- Creates `device_install_claim` for 10 minute authenticated one-command Bud install claims
+- Stores a unique hash-at-rest bearer token, owner stamp, optional device name hint, install scope, expiry, redemption timestamp, redeemed Bud/install ids, user agent, and IP audit metadata
+- Adds owner/expiry, token-hash, and redeemed-Bud indexes
+- Adds foreign keys to `auth.user` and `bud`
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.
@@ -187,7 +195,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0020` currently)
+- Snapshot files for each migration (`0000` through `0022` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -268,6 +276,9 @@ v20: Drizzle/PostgreSQL constraint metadata convergence cleanup
  │
  ▼
 v21: automatic context compaction checkpoints
+ │
+ ▼
+v22: device install claims
 ```
 
 ---

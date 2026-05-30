@@ -27,7 +27,7 @@ CLI and environment configuration.
 
 - defines `BudArgs`
 - defines `BudCommand`, `DoctorArgs`, and `DoctorFormat`
-- owns daemon defaults for server URL, optional gRPC control/data URLs, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
+- owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
 
 ### `doctor.rs`
@@ -215,6 +215,7 @@ Local device identity persistence.
 Browser-mediated device-claim bootstrap.
 
 - starts and polls `/api/device-auth/*`
+- includes `BUD_CLAIM_ID` / `--claim-id` during bootstrap when present so authenticated install commands can redeem without QR approval
 - renders human-readable terminal instructions
 - prints a terminal QR code for headless setups
 - derives the HTTP base URL from the configured WebSocket origin
