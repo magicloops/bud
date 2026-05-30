@@ -40,6 +40,15 @@ Each archive should include:
 
 Do not include tmux.
 
+Implementation:
+
+- `scripts/bud-release.mjs package` packages an already-built `bud` binary into
+  the target archive and writes per-artifact metadata with SHA-256 and size.
+- `.github/workflows/bud-release.yml` builds the required target matrix and
+  uploads each archive plus metadata.
+- `bud --version` reports package version, build commit, target triple, and
+  build profile for installed-artifact inspection.
+
 ## Release Manifest
 
 Publish a machine-readable manifest at a stable channel URL:
@@ -69,6 +78,16 @@ Recommended fields:
 
 The installer must verify the downloaded archive SHA-256 against this manifest before installation.
 
+Implementation:
+
+- `scripts/bud-release.mjs manifest` generates the manifest from actual
+  per-artifact metadata emitted during packaging.
+- `scripts/bud-release.mjs detect-target` and exported
+  `targetForPlatform(...)`/`selectManifestArtifact(...)` define the supported
+  OS/architecture selection table for the Phase 4 installer.
+- `scripts/fixtures/bud-release/manifest-checksum-mismatch.json` and
+  `scripts/bud-release.test.mjs` cover checksum mismatch behavior.
+
 ## CI Build Requirements
 
 - CI owns `protoc`; end-user machines do not need it.
@@ -78,6 +97,11 @@ The installer must verify the downloaded archive SHA-256 against this manifest b
 - Checksums are generated in CI, not manually.
 - Manifest is generated from the actual artifact outputs.
 
+The initial workflow uploads artifacts and manifest as GitHub Actions artifacts.
+Publishing those bytes to `https://get.bud.dev/releases/...` remains a hosting
+credential/deployment task documented in
+[../../deploy/get-bud-dev/release-hosting.md](../../deploy/get-bud-dev/release-hosting.md).
+
 ## Signing And Provenance
 
 Minimum v1:
@@ -85,6 +109,7 @@ Minimum v1:
 - TLS-hosted artifacts
 - SHA-256 manifest verification
 - immutable versioned artifact URLs
+- CI-generated checksums and manifest metadata
 
 Preferred before broad launch:
 

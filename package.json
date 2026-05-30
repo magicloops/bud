@@ -6,7 +6,8 @@
     "dev:https": "node dev/local-https.mjs start",
     "dev:https:setup": "node dev/local-https.mjs setup",
     "dev:https:check": "node dev/local-https.mjs check",
-    "dev:https:provision-ios": "node dev/local-https.mjs provision-ios"
+    "dev:https:provision-ios": "node dev/local-https.mjs provision-ios",
+    "test:bud-release": "node --test scripts/bud-release.test.mjs"
   },
   "engines": {
     "node": ">=20.19.0 || >=22.12.0"

@@ -37,16 +37,16 @@
 
 ## Phase 3: Release Artifacts And Manifest
 
-- [ ] supported artifact matrix finalized
-- [ ] CI release build jobs added
-- [ ] CI owns `protoc`
-- [ ] artifacts include versioned `bud` binary
-- [ ] stable manifest generated
-- [ ] SHA-256 checksums generated
+- [x] supported artifact matrix finalized
+- [x] CI release build jobs added
+- [x] CI owns `protoc`
+- [x] artifacts include versioned `bud` binary
+- [x] stable manifest generated
+- [x] SHA-256 checksums generated
 - [ ] artifact hosting configured under `get.bud.dev`
-- [ ] checksum mismatch fixture added
-- [ ] `bud --version` reports version/commit
-- [ ] signing/provenance policy decided
+- [x] checksum mismatch fixture added
+- [x] `bud --version` reports version/commit
+- [x] signing/provenance policy decided
 
 ## Phase 4: Installer Preflight And User Service
 

@@ -35,6 +35,15 @@ mkcert+Caddy HTTPS parity profile at
 
 Rust package manifest for the daemon crate and its runtime dependencies.
 
+### `build.rs`
+
+Cargo build script for generated protobuf bindings and release metadata.
+
+- compiles `../proto/bud/v1/bud.proto` through `tonic-prost-build`
+- emits build commit, target triple, and Cargo profile into the compiled binary
+  from CI-provided `BUD_BUILD_*` environment variables or local build
+  fallbacks
+
 ## Subfolders
 
 ### `src/` -> [src.spec.md](./src/src.spec.md)
@@ -46,6 +55,7 @@ Modular daemon implementation split across:
 - `app.rs` for top-level runtime orchestration
 - `config.rs`, `doctor.rs`, `protocol.rs`, `util.rs` for shared types/helpers and local diagnostics
 - `identity.rs` and `claim.rs` for device-auth bootstrap and persistence
+- `version.rs` for `bud --version` build metadata
 - `run.rs` for the retained reference run path
 - `proto_wire.rs` for protobuf `BudEnvelope` typed-payload compatibility encode/decode
 - `grpc_control.rs` for tonic/prost `BudControl.Connect` client bindings and envelope conversion
@@ -190,6 +200,9 @@ Subcommand:
 | Command | Description |
 |---------|-------------|
 | `doctor` | Runs local preflight diagnostics; supports `--format text|json` and `--strict` |
+
+`bud --version` prints the daemon package version plus build commit, target
+triple, and profile so installed release artifacts are inspectable.
 
 The default local env template targets `ws://localhost:3000/ws`. The optional
 HTTPS parity template targets `wss://localhost:3443/ws` through the repo-root

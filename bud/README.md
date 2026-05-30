@@ -19,6 +19,14 @@ set -a; source .env; set +a
 
 Bud does not auto-load `.env` itself; you need to export the variables in your shell before running `cargo run`.
 
+Inspect build metadata with:
+
+```bash
+bud --version
+```
+
+Release artifacts include the package version, build commit, target triple, and build profile in that output.
+
 ## Important Env / Flags
 
 | Env | Flag | Purpose |

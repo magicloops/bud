@@ -14,6 +14,7 @@ pub mod run;
 pub mod terminal;
 pub mod transport;
 pub mod util;
+pub mod version;
 
 pub use config::{BudArgs, BudCommand};
 pub use util::setup_tracing;

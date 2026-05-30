@@ -2,8 +2,9 @@
 
 ## Automated Gates
 
-- [ ] `cargo test --manifest-path bud/Cargo.toml`
+- [x] `cargo test --manifest-path bud/Cargo.toml`
 - [ ] daemon release build for every supported target
+- [x] `pnpm test:bud-release`
 - [ ] service tests for install-claim issuance/redemption
 - [ ] service ownership tests for cross-user claim access
 - [ ] DB migration generation and review for install-claim schema

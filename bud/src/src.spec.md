@@ -8,6 +8,7 @@ Source code for the Bud device daemon. The daemon is now split into focused modu
 
 Thin CLI entrypoint:
 
+- prints build metadata for `--version` before entering normal CLI parsing
 - parses `BudArgs` with `clap`
 - initializes tracing
 - runs the daemon inside a Tokio `LocalSet`
@@ -220,6 +221,16 @@ Browser-mediated device-claim bootstrap.
 - prints a terminal QR code for headless setups
 - derives the HTTP base URL from the configured WebSocket origin
 
+### `version.rs`
+
+Build metadata helpers for release artifacts.
+
+- formats the `bud --version` output
+- exposes package version, build commit, target triple, and Cargo profile from
+  compile-time environment values emitted by `build.rs`
+- detects `--version` / `-V` before normal daemon startup so release artifacts
+  are inspectable without running service setup or tracing
+
 ### `run.rs`
 
 Legacy queued command executor retained as reference functionality.
@@ -381,6 +392,8 @@ High-value local tests now live next to the extracted abstractions:
 
 - `config.rs`
   - effective base-dir/local/cwd path derivation and explicit override precedence
+- `version.rs`
+  - version output includes build metadata and version flags are detected
 - `app.rs`
   - WebSocket session shutdown does not wait for stale cloned transport senders
 - `protocol.rs`

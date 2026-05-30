@@ -98,10 +98,12 @@ pending → creating → ready ↔ active → idle → closed
 
 ```
 bud/
+├── .github/                # GitHub Actions workflows, including daemon release artifact builds
 ├── package.json            # Repo-root developer script shim, including local HTTPS bootstrap commands
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
 ├── PR_SUMMARY.md           # Current PR handoff summary for the terminal freshness implementation
-├── deploy/                 # Checked-in deployment artifacts such as the Cloudflare front-door Worker
+├── deploy/                 # Checked-in deployment artifacts and release-hosting handoff docs
+├── scripts/                # Repo-level automation such as Bud daemon release packaging and manifest generation
 ├── git_loc_breakdown.py    # Repo-wide LOC analyzer that buckets code, config, markdown, and other tracked text while honoring Git ignore rules
 ├── test_git_loc_breakdown.py # Regression tests for the LOC analyzer's category and summary accounting
 │
@@ -615,6 +617,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/daemon-readiness/phase-6-validation-rollout-and-follow-ups.md](./plan/daemon-readiness/phase-6-validation-rollout-and-follow-ups.md) | Release-gate phase covering clean-machine validation, operational checks, staged rollout, rollback guidance, and non-blocking follow-ups such as Homebrew and Linux arm64 |
 | [plan/daemon-readiness/progress-checklist.md](./plan/daemon-readiness/progress-checklist.md) | Running implementation checklist for daemon production-binary readiness |
 | [plan/daemon-readiness/validation-checklist.md](./plan/daemon-readiness/validation-checklist.md) | Release-gate validation checklist for production daemon installation, claim ownership, service management, dependency failures, upgrades, and docs |
+| [.github/github.spec.md](./.github/github.spec.md) | GitHub Actions automation spec, including the Bud daemon release-artifact workflow |
+| [scripts/scripts.spec.md](./scripts/scripts.spec.md) | Repo-level automation spec for Bud release artifact packaging, manifest generation, platform selection, and checksum fixtures |
 | [plan/api-snake-case-normalization.md](./plan/api-snake-case-normalization.md) | Focused implementation plan for normalizing Bud-owned wire contracts to snake_case across the in-use service, web, stream, and any small daemon-facing payload leaks found during implementation |
 | [plan/improve-observe/improve-observe.spec.md](./plan/improve-observe/improve-observe.spec.md) | Folder spec for the phased improve-observe plan, covering one-hour settled waits, post-dispatch send quiescence timing, evidence-based readiness, and interruptible long pending tools |
 | [plan/improve-observe/implementation-spec.md](./plan/improve-observe/implementation-spec.md) | Phased implementation plan for improving `terminal.send` and `terminal.observe(wait_for:"settled")` so settled waits are service-owned, long-running, live-streamed, and not falsely ready on command echo alone |
@@ -816,6 +820,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/removing-terminal-interrupt-in-favor-of-terminal-send.md](./design/removing-terminal-interrupt-in-favor-of-terminal-send.md) | Design review of whether `terminal.interrupt` should be removed from the model-facing contract, arguing that interrupts belong on the general `terminal.send` path and that browser interrupt UX can survive as a thin wrapper over that same send surface |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries, auth/env placeholders, and hosted web-view proxy env placeholders |
 | [deploy/cloudflare/bud-front-door-worker.js](./deploy/cloudflare/bud-front-door-worker.js) | Cloudflare Worker module that forwards service-owned app paths and `*.bud.show` web-view proxy traffic to `bud-service` while preserving forwarded host/proto/port context and the proxy edge secret |
+| [deploy/get-bud-dev/release-hosting.md](./deploy/get-bud-dev/release-hosting.md) | Handoff for publishing CI-generated Bud daemon archives and the stable manifest under `https://get.bud.dev` |
 | [PR_SUMMARY.md](./PR_SUMMARY.md) | Current PR handoff summary for the terminal freshness implementation |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
 | [TODO.md](./TODO.md) | Pending tasks |
