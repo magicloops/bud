@@ -65,8 +65,13 @@ Release phase covering:
 - CI release builds
 - hosted manifest
 - SHA-256 verification
+- selected GitHub Releases canonical archive plus `get.bud.dev` Worker front-door shape
 - signing/provenance policy
 - source-package/protobuf build concerns
+
+Detailed GitHub Release publication, Cloudflare Worker, installer script,
+promotion, and fallback work is scoped under
+[../install-script/install-script.spec.md](../install-script/install-script.spec.md).
 
 ### `phase-4-installer-preflight-and-user-service.md`
 
@@ -115,6 +120,7 @@ Release-gate checklist for automated tests, clean installs, missing dependencies
 - [../../review/bud-daemon-production-binary-readiness.md](../../review/bud-daemon-production-binary-readiness.md) - source review and recommendations
 - [../../design/self-serve-bud-install-command-and-local-mode.md](../../design/self-serve-bud-install-command-and-local-mode.md) - prior self-serve install design
 - [../../design/bud-base-dir-and-local-identity.md](../../design/bud-base-dir-and-local-identity.md) - base-dir and local identity design
+- [../install-script/install-script.spec.md](../install-script/install-script.spec.md) - detailed GitHub Releases + `get.bud.dev` installer implementation plan
 - [../../bud/bud.spec.md](../../bud/bud.spec.md) - daemon project spec
 - [../../bud/src/src.spec.md](../../bud/src/src.spec.md) - daemon source spec
 - [../../service/service.spec.md](../../service/service.spec.md) - service project spec

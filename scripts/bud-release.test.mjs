@@ -8,7 +8,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildChecksums,
   buildManifest,
+  buildPromotionAssets,
+  buildReleaseAssetMap,
+  buildReleaseNotes,
   packageArtifact,
   selectManifestArtifact,
   targetForPlatform,
@@ -118,6 +122,132 @@ test("buildManifest uses artifact metadata and supports platform selection", asy
     /^https:\/\/get\.bud\.dev\/releases\/v0\.1\.0\/bud-/,
   );
   assert.ok(existsSync(manifestPath));
+});
+
+test("buildChecksums emits sorted sha256 lines for release archives", async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, "dist");
+
+  for (const target of [
+    ["x86_64-unknown-linux-gnu", "glibc 2.35"],
+    ["aarch64-apple-darwin", "macOS 13"],
+  ]) {
+    await packageArtifact({
+      target: target[0],
+      version: "v0.1.0",
+      binary: await fakeBinary(path.join(dir, target[0])),
+      out: outDir,
+      minOs: target[1],
+      repoRoot: dir,
+    });
+  }
+
+  const checksumPath = path.join(outDir, "checksums.txt");
+  const checksums = await buildChecksums({
+    artifactDir: outDir,
+    out: checksumPath,
+  });
+
+  assert.match(checksums, /^[a-f0-9]{64}  bud-aarch64-apple-darwin\.tar\.gz/m);
+  assert.match(checksums, /^[a-f0-9]{64}  bud-x86_64-unknown-linux-gnu\.tar\.gz/m);
+  assert.deepEqual(checksums.trim().split("\n"), checksums.trim().split("\n").toSorted());
+  assert.equal(await readFile(checksumPath, "utf8"), checksums);
+});
+
+test("buildReleaseNotes includes commit and target matrix", async (t) => {
+  const dir = await tempDir(t);
+  const outDir = path.join(dir, "dist");
+  await packageArtifact({
+    target: "x86_64-unknown-linux-gnu",
+    version: "v0.1.0",
+    binary: await fakeBinary(dir),
+    out: outDir,
+    minOs: "glibc 2.35",
+    repoRoot: dir,
+  });
+
+  const notesPath = path.join(outDir, "release-notes.md");
+  const notes = await buildReleaseNotes({
+    version: "0.1.0",
+    channel: "stable",
+    commit: "abc123",
+    metadataDir: outDir,
+    out: notesPath,
+  });
+
+  assert.match(notes, /^# Bud v0\.1\.0/);
+  assert.match(notes, /Commit: `abc123`/);
+  assert.match(notes, /\| `x86_64-unknown-linux-gnu` \| glibc 2\.35 \|/);
+  assert.equal(await readFile(notesPath, "utf8"), notes);
+});
+
+test("buildReleaseAssetMap maps first-party manifest URLs to GitHub Release assets", async (t) => {
+  const dir = await tempDir(t);
+  const manifestPath = path.join(dir, "manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      version: "v0.1.0",
+      channel: "stable",
+      published_at: "2026-05-30T00:00:00Z",
+      artifacts: [
+        {
+          target: "x86_64-unknown-linux-gnu",
+          url: "https://get.bud.dev/releases/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
+          sha256: "a".repeat(64),
+          min_os: "glibc 2.35",
+          size: 123,
+        },
+      ],
+    }),
+  );
+
+  const mapPath = path.join(dir, "_release-assets.json");
+  const releaseAssets = await buildReleaseAssetMap({
+    manifest: manifestPath,
+    githubRepository: "bud-dev/bud",
+    out: mapPath,
+  });
+
+  assert.deepEqual(releaseAssets, {
+    "v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz":
+      "https://github.com/bud-dev/bud/releases/download/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
+  });
+  assert.deepEqual(JSON.parse(await readFile(mapPath, "utf8")), releaseAssets);
+});
+
+test("buildPromotionAssets writes Worker static manifest and release-map assets", async (t) => {
+  const dir = await tempDir(t);
+  const manifest = {
+    version: "v0.1.0",
+    channel: "stable",
+    published_at: "2026-05-30T00:00:00Z",
+    artifacts: [
+      {
+        target: "x86_64-unknown-linux-gnu",
+        url: "https://get.bud.dev/releases/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
+        sha256: "a".repeat(64),
+        min_os: "glibc 2.35",
+        size: 123,
+      },
+    ],
+  };
+  const manifestPath = path.join(dir, "manifest.json");
+  await writeFile(manifestPath, JSON.stringify(manifest));
+
+  const assetsDir = path.join(dir, "assets");
+  const output = await buildPromotionAssets({
+    manifest: manifestPath,
+    githubRepository: "bud-dev/bud",
+    assetsDir,
+  });
+
+  assert.deepEqual(JSON.parse(await readFile(output.stable_manifest_path, "utf8")), manifest);
+  assert.deepEqual(JSON.parse(await readFile(output.version_manifest_path, "utf8")), manifest);
+  assert.deepEqual(JSON.parse(await readFile(output.release_assets_path, "utf8")), {
+    "v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz":
+      "https://github.com/bud-dev/bud/releases/download/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
+  });
 });
 
 test("checksum mismatch fixture and verifier reject tampered archives", async (t) => {

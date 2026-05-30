@@ -6,8 +6,9 @@
 release artifacts.
 
 Phase 3 produces the artifact bundle and manifest in GitHub Actions. The actual
-host upload is still an operator/deployment step until the production hosting
-backend and credentials are wired into CI.
+GitHub Release is the canonical immutable archive. `get.bud.dev` is a
+Cloudflare Worker front door that serves the installer and manifests while
+redirecting versioned artifact URLs to exact GitHub Release asset URLs.
 
 ## Required Paths
 
@@ -18,6 +19,9 @@ Versioned artifacts are immutable:
 /releases/vX.Y.Z/bud-x86_64-apple-darwin.tar.gz
 /releases/vX.Y.Z/bud-x86_64-unknown-linux-gnu.tar.gz
 ```
+
+These first-party URLs are served by the Worker as redirects to GitHub Release
+assets. The manifest should not expose GitHub `latest` URLs.
 
 The stable channel manifest is mutable and points at immutable artifacts:
 
@@ -30,6 +34,14 @@ The installer path is owned by Phase 4:
 ```text
 /install.sh
 ```
+
+`/install.sh` is now a Worker static asset. The script downloads the stable
+manifest, selects the current OS/architecture target, follows first-party
+artifact URLs through the Worker redirect to GitHub Releases, verifies SHA-256,
+installs to `~/.bud/bin/bud`, writes `~/.bud/bud.env`, runs `bud doctor`, and
+then starts Bud in the foreground unless `BUD_INSTALL_SKIP_BOOTSTRAP=1` is set.
+`BUD_CLAIM_ID` is forwarded only to the first bootstrap process and is not
+persisted in `bud.env`.
 
 ## Manifest Contract
 
@@ -68,16 +80,21 @@ Deferred before broader public launch:
 
 - macOS code signing
 - macOS notarization
-- provenance/attestation publishing
 - automated vulnerability audit gate
+- R2/S3 mirror if GitHub Release availability or customer network policy becomes
+  an install blocker
 
 ## Upload Handoff
 
-Until CI has production hosting credentials, a release operator should:
+Until CI has production Worker-promotion credentials, a release operator should:
 
 1. Run the `Bud Release Artifacts` workflow from a tag or explicit manual run.
-2. Download the uploaded target archives and `bud-release-manifest` artifact.
-3. Upload archives to `/releases/<version>/`.
-4. Upload the manifest to `/releases/stable/manifest.json`.
-5. Confirm every manifest URL is reachable and the SHA-256 matches the hosted
-   bytes before exposing the corresponding installer path.
+2. Confirm the GitHub Release contains the target archives, `checksums.txt`, and
+   per-version manifest.
+3. Promote a stable manifest and release redirect map into the `get-bud-dev`
+   Worker config/assets.
+4. Confirm `/install.sh`, `/releases/stable/manifest.json`,
+   `/releases/<version>/manifest.json`, and each versioned artifact redirect are
+   reachable.
+5. Download each archive through the first-party URL and verify it against the
+   stable manifest SHA-256 before exposing the corresponding installer path.

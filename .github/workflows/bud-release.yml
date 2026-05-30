@@ -18,9 +18,16 @@ on:
         options:
           - stable
           - canary
+      generate_attestations:
+        description: "Generate GitHub artifact attestations when the repo plan supports them."
+        required: true
+        default: false
+        type: boolean
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   prepare:
@@ -146,6 +153,12 @@ jobs:
             --out "dist/bud-release" \
             --min-os "${{ matrix.min_os }}"
 
+      - name: Generate artifact attestation
+        if: ${{ vars.ENABLE_RELEASE_ATTESTATIONS == 'true' || inputs.generate_attestations == true }}
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/bud-release/bud-${{ matrix.target }}.tar.gz
+
       - uses: actions/upload-artifact@v4
         with:
           name: bud-${{ matrix.target }}
@@ -155,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   manifest:
-    name: Generate release manifest
+    name: Generate release metadata
     needs:
       - prepare
       - build
@@ -168,21 +181,84 @@ jobs:
           path: dist/bud-release
           merge-multiple: true
 
-      - name: Generate stable manifest
+      - name: Generate release manifest, checksums, and notes
         shell: bash
         run: |
           set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
           node scripts/bud-release.mjs manifest \
-            --version "${{ needs.prepare.outputs.version }}" \
+            --version "${version}" \
             --channel "${{ needs.prepare.outputs.channel }}" \
             --published-at "${{ needs.prepare.outputs.published_at }}" \
             --base-url "https://get.bud.dev" \
             --metadata-dir "dist/bud-release" \
-            --out "dist/bud-release/manifest.json"
-          cat dist/bud-release/manifest.json
+            --out "dist/bud-release/manifest.${version}.json"
+          node scripts/bud-release.mjs checksums \
+            --artifact-dir "dist/bud-release" \
+            --out "dist/bud-release/checksums.txt"
+          node scripts/bud-release.mjs notes \
+            --version "${version}" \
+            --channel "${{ needs.prepare.outputs.channel }}" \
+            --commit "${{ github.sha }}" \
+            --metadata-dir "dist/bud-release" \
+            --out "dist/bud-release/release-notes.md"
+          cat "dist/bud-release/manifest.${version}.json"
+          cat dist/bud-release/checksums.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bud-release-manifest
-          path: dist/bud-release/manifest.json
+          name: bud-release-metadata
+          path: |
+            dist/bud-release/manifest.${{ needs.prepare.outputs.version }}.json
+            dist/bud-release/checksums.txt
+            dist/bud-release/release-notes.md
           if-no-files-found: error
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - manifest
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/bud-release
+          merge-multiple: true
+
+      - name: Publish immutable release archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            echo "GitHub Release ${VERSION} already exists; refusing to overwrite release assets."
+            exit 1
+          fi
+
+          shopt -s nullglob
+          release_assets=(
+            dist/bud-release/bud-*.tar.gz
+            dist/bud-release/checksums.txt
+            "dist/bud-release/manifest.${VERSION}.json"
+          )
+          if [[ "${#release_assets[@]}" -ne 5 ]]; then
+            printf 'Expected 5 release assets, found %s:\n' "${#release_assets[@]}"
+            for asset in "${release_assets[@]}"; do
+              printf '  %s\n' "${asset}"
+            done
+            exit 1
+          fi
+          for asset in "${release_assets[@]}"; do
+            if [[ ! -f "${asset}" ]]; then
+              echo "Missing release asset: ${asset}"
+              exit 1
+            fi
+          done
+
+          gh release create "${VERSION}" "${release_assets[@]}" \
+            --verify-tag \
+            --title "Bud ${VERSION}" \
+            --notes-file dist/bud-release/release-notes.md

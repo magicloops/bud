@@ -193,6 +193,132 @@ export async function buildManifest(options) {
   return manifest;
 }
 
+export async function buildChecksums(options) {
+  const files = await resolveChecksumFiles(options);
+  if (files.length === 0) {
+    throw new Error("at least one artifact file is required");
+  }
+
+  const lines = [];
+  for (const file of files) {
+    lines.push(`${await sha256File(file)}  ${path.basename(file)}`);
+  }
+  lines.sort((a, b) => a.localeCompare(b));
+  const content = `${lines.join("\n")}\n`;
+
+  if (options.out) {
+    const outPath = path.resolve(options.out);
+    await mkdir(path.dirname(outPath), { recursive: true });
+    await writeFile(outPath, content);
+  }
+
+  return content;
+}
+
+export async function buildReleaseNotes(options) {
+  const version = normalizeVersion(requiredOption(options, "version"));
+  const commit = options.commit ?? "unknown";
+  const channel = options.channel ?? "stable";
+  const metadataFiles = await resolveMetadataFiles(options);
+  if (metadataFiles.length === 0) {
+    throw new Error("at least one artifact metadata file is required");
+  }
+
+  const artifacts = [];
+  for (const metadataFile of metadataFiles) {
+    const metadata = JSON.parse(await readFile(metadataFile, "utf8"));
+    artifacts.push({
+      target: requiredMetadata(metadata, "target"),
+      artifact_name: requiredMetadata(metadata, "artifact_name"),
+      sha256: requiredMetadata(metadata, "sha256"),
+      size: Number(requiredMetadata(metadata, "size")),
+      min_os: requiredMetadata(metadata, "min_os"),
+    });
+  }
+  artifacts.sort((a, b) => a.target.localeCompare(b.target));
+
+  const lines = [
+    `# Bud ${version}`,
+    "",
+    `Commit: \`${commit}\``,
+    `Channel: \`${channel}\``,
+    "",
+    "## Target Matrix",
+    "",
+    "| Target | Minimum OS | Archive | SHA-256 | Size |",
+    "|--------|------------|---------|---------|------|",
+  ];
+  for (const artifact of artifacts) {
+    lines.push(
+      `| \`${artifact.target}\` | ${artifact.min_os} | \`${artifact.artifact_name}\` | \`${artifact.sha256}\` | ${artifact.size} |`,
+    );
+  }
+  lines.push(
+    "",
+    "Installers should use the `get.bud.dev` stable manifest and verify the archive SHA-256 before installing.",
+    "",
+  );
+
+  const content = lines.join("\n");
+  if (options.out) {
+    const outPath = path.resolve(options.out);
+    await mkdir(path.dirname(outPath), { recursive: true });
+    await writeFile(outPath, content);
+  }
+
+  return content;
+}
+
+export async function buildReleaseAssetMap(options) {
+  const manifestPath = path.resolve(requiredOption(options, "manifest"));
+  const githubRepository = requiredOption(options, "githubRepository");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  validateManifestShape(manifest);
+
+  const releaseAssets = {};
+  for (const artifact of manifest.artifacts) {
+    const artifactName = path.basename(new URL(artifact.url).pathname);
+    releaseAssets[`${manifest.version}/${artifactName}`] =
+      `https://github.com/${githubRepository}/releases/download/${manifest.version}/${artifactName}`;
+  }
+
+  if (options.out) {
+    const outPath = path.resolve(options.out);
+    await mkdir(path.dirname(outPath), { recursive: true });
+    await writeFile(outPath, `${JSON.stringify(releaseAssets, null, 2)}\n`);
+  }
+
+  return releaseAssets;
+}
+
+export async function buildPromotionAssets(options) {
+  const manifestPath = path.resolve(requiredOption(options, "manifest"));
+  const assetsDir = path.resolve(requiredOption(options, "assetsDir"));
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  validateManifestShape(manifest);
+
+  const releaseAssets = await buildReleaseAssetMap({
+    manifest: manifestPath,
+    githubRepository: requiredOption(options, "githubRepository"),
+  });
+
+  const stableManifestPath = path.join(assetsDir, "releases", "stable", "manifest.json");
+  const versionManifestPath = path.join(assetsDir, "releases", manifest.version, "manifest.json");
+  const releaseAssetsPath = path.join(assetsDir, "_release-assets.json");
+
+  await mkdir(path.dirname(stableManifestPath), { recursive: true });
+  await mkdir(path.dirname(versionManifestPath), { recursive: true });
+  await writeFile(stableManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(versionManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(releaseAssetsPath, `${JSON.stringify(releaseAssets, null, 2)}\n`);
+
+  return {
+    stable_manifest_path: stableManifestPath,
+    version_manifest_path: versionManifestPath,
+    release_assets_path: releaseAssetsPath,
+  };
+}
+
 export function validateManifestShape(manifest) {
   if (!manifest || typeof manifest !== "object") {
     throw new Error("manifest must be an object");
@@ -230,6 +356,18 @@ async function resolveMetadataFiles(options) {
       .sort();
   }
   return (options.metadataFiles ?? []).map((metadataFile) => path.resolve(metadataFile));
+}
+
+async function resolveChecksumFiles(options) {
+  if (options.artifactDir) {
+    const artifactDir = path.resolve(options.artifactDir);
+    const entries = await readdir(artifactDir);
+    return entries
+      .filter((entry) => /^bud-.+\.tar\.gz$/.test(entry))
+      .map((entry) => path.join(artifactDir, entry))
+      .sort();
+  }
+  return (options.files ?? []).map((file) => path.resolve(file));
 }
 
 function requiredMetadata(metadata, field) {
@@ -274,6 +412,7 @@ function parseArgs(rawArgs) {
   const parsed = {
     _: [],
     metadataFiles: [],
+    files: [],
   };
   for (let i = 0; i < rawArgs.length; i += 1) {
     const arg = rawArgs[i];
@@ -290,6 +429,8 @@ function parseArgs(rawArgs) {
     i += 1;
     if (key === "metadataFile") {
       parsed.metadataFiles.push(next);
+    } else if (key === "file") {
+      parsed.files.push(next);
     } else {
       parsed[key] = next;
     }
@@ -302,6 +443,10 @@ function usage() {
     "Usage:",
     "  node scripts/bud-release.mjs package --target <triple> --version <vX.Y.Z> --binary <path> --out <dir> [--min-os <value>]",
     "  node scripts/bud-release.mjs manifest --version <vX.Y.Z> --channel stable --base-url https://get.bud.dev --metadata-dir <dir> --out <path>",
+    "  node scripts/bud-release.mjs checksums --artifact-dir <dir> --out <path>",
+    "  node scripts/bud-release.mjs notes --version <vX.Y.Z> --commit <sha> --metadata-dir <dir> --out <path>",
+    "  node scripts/bud-release.mjs release-map --manifest <path> --github-repository <owner/repo> --out <path>",
+    "  node scripts/bud-release.mjs promotion-assets --manifest <path> --github-repository <owner/repo> --assets-dir <dir>",
     "  node scripts/bud-release.mjs detect-target",
     "  node scripts/bud-release.mjs verify --file <path> --sha256 <hex>",
   ].join("\n");
@@ -320,6 +465,30 @@ async function main() {
   if (command === "manifest") {
     const manifest = await buildManifest(options);
     console.log(JSON.stringify(manifest, null, 2));
+    return;
+  }
+
+  if (command === "checksums") {
+    const checksums = await buildChecksums(options);
+    process.stdout.write(checksums);
+    return;
+  }
+
+  if (command === "notes") {
+    const notes = await buildReleaseNotes(options);
+    process.stdout.write(notes);
+    return;
+  }
+
+  if (command === "release-map") {
+    const releaseAssets = await buildReleaseAssetMap(options);
+    console.log(JSON.stringify(releaseAssets, null, 2));
+    return;
+  }
+
+  if (command === "promotion-assets") {
+    const promotionAssets = await buildPromotionAssets(options);
+    console.log(JSON.stringify(promotionAssets, null, 2));
     return;
   }
 
