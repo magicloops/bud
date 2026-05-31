@@ -27,17 +27,17 @@ Node.js 24 runtime where available.
 - `actions/checkout@v4` still targets Node.js 20.
 - `actions/upload-artifact@v4` and `actions/download-artifact@v4` should be
   upgraded at the same time to avoid the same warning in later jobs.
-- `cloudflare/wrangler-action@v3` may still warn separately during promotion;
-  keep that as a follow-up if the promotion workflow reports it, since it is
-  maintained outside the official `actions/*` family.
+- `cloudflare/wrangler-action@v3` also warns during promotion and should be
+  upgraded separately.
 
 ## Proposed Fix
 
 - Upgrade `actions/checkout@v4` to `actions/checkout@v5`.
 - Upgrade `actions/upload-artifact@v4` to `actions/upload-artifact@v7`.
 - Upgrade `actions/download-artifact@v4` to `actions/download-artifact@v7`.
+- Upgrade `cloudflare/wrangler-action@v3` to `cloudflare/wrangler-action@v4`
+  once the promotion workflow reports the same warning.
 
 Spec files affected:
 
 - `.github/workflows/workflows.spec.md`
-

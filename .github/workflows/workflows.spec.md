@@ -42,7 +42,8 @@ The workflow:
 - uses `actions/checkout@v5` for Node.js 24-compatible checkout
 - downloads `manifest.<version>.json` from that GitHub Release
 - generates Worker static assets through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
-- deploys [../../deploy/get-bud-dev/worker.js](../../deploy/get-bud-dev/worker.js) with Wrangler
+- deploys [../../deploy/get-bud-dev/worker.js](../../deploy/get-bud-dev/worker.js) with
+  `cloudflare/wrangler-action@v4` and explicitly requests Wrangler v4
 - optionally smoke-tests `/install.sh`, the stable manifest, and a versioned
   artifact redirect
 
