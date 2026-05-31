@@ -20,7 +20,7 @@ jobs:
     name: Promote ${{ inputs.version }} to get.bud.dev
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download release manifest
         shell: bash

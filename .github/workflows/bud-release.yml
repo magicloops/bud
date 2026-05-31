@@ -38,7 +38,7 @@ jobs:
       channel: ${{ steps.release.outputs.channel }}
       published_at: ${{ steps.release.outputs.published_at }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: release
         name: Resolve release metadata
@@ -92,7 +92,7 @@ jobs:
             os: ubuntu-22.04
             min_os: "glibc 2.35"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install stable Rust toolchain and target
         shell: bash
@@ -159,7 +159,7 @@ jobs:
         with:
           subject-path: dist/bud-release/bud-${{ matrix.target }}.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bud-${{ matrix.target }}
           path: |
@@ -174,9 +174,9 @@ jobs:
       - build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist/bud-release
           merge-multiple: true
@@ -205,7 +205,7 @@ jobs:
           cat "dist/bud-release/manifest.${version}.json"
           cat dist/bud-release/checksums.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bud-release-metadata
           path: |
@@ -221,9 +221,9 @@ jobs:
       - manifest
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist/bud-release
           merge-multiple: true

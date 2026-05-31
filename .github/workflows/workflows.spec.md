@@ -15,6 +15,9 @@ Builds Bud daemon release artifacts for the required Phase 3 platform matrix:
 The workflow:
 
 - runs on release tags and manual `workflow_dispatch`
+- uses Node.js 24-compatible official GitHub actions where available
+  (`actions/checkout@v5`, `actions/upload-artifact@v7`, and
+  `actions/download-artifact@v7`)
 - installs Rust stable plus the target triple
 - installs `protoc` in CI so end-user machines do not need protobuf tooling
 - records Rust, target, runner, and commit metadata in logs
@@ -36,6 +39,7 @@ Manual promotion workflow for `https://get.bud.dev`.
 The workflow:
 
 - accepts an immutable GitHub Release version
+- uses `actions/checkout@v5` for Node.js 24-compatible checkout
 - downloads `manifest.<version>.json` from that GitHub Release
 - generates Worker static assets through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
 - deploys [../../deploy/get-bud-dev/worker.js](../../deploy/get-bud-dev/worker.js) with Wrangler
