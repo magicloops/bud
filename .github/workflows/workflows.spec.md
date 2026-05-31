@@ -26,6 +26,8 @@ The workflow:
 - generates a per-version manifest, `checksums.txt`, and release notes
 - publishes the target archives, manifest, and checksums to a GitHub Release
   without overwriting an existing release
+- checks out the repository in the publish job so `gh release create
+  --verify-tag` has a Git repository available for tag verification
 
 ### `get-bud-dev-promote.yml`
 
