@@ -10,5 +10,5 @@ binding = "ASSETS"
 enabled = true
 
 [[routes]]
-pattern = "get.bud.dev/*"
+pattern = "get.bud.dev"
 custom_domain = true

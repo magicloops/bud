@@ -51,7 +51,9 @@ Covers:
 ### `wrangler.toml`
 
 Cloudflare Worker deployment config for the `get.bud.dev` custom domain route
-and static asset binding.
+and static asset binding. The custom-domain route uses the bare hostname
+`get.bud.dev`; Cloudflare custom domains do not allow path or wildcard route
+patterns.
 
 ### `package.json`
 
