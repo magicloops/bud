@@ -65,7 +65,10 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSI https://get.bud.dev
-          curl -fsSL https://get.bud.dev | head -n 1 | grep -Fx '#!/bin/sh'
+          root_script="$(mktemp)"
+          trap 'rm -f "${root_script}"' EXIT
+          curl -fsSL https://get.bud.dev -o "${root_script}"
+          head -n 1 "${root_script}" | grep -Fx '#!/bin/sh'
           curl -fsSI https://get.bud.dev/install.sh
           curl -fsSI https://get.bud.dev/releases/stable/manifest.json
           curl -fsSL https://get.bud.dev/releases/stable/manifest.json \
