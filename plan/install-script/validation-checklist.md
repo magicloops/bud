@@ -18,7 +18,7 @@
 - [x] all target archives are present
 - [x] per-version manifest is present
 - [x] `checksums.txt` is present
-- [ ] downloaded archives match checksums
+- [x] downloaded archives match checksums
 - [ ] release assets are not overwritten after promotion
 - [ ] attestations exist or deferral is documented
 
@@ -43,7 +43,7 @@
 - [x] missing target fails closed
 - [x] checksum mismatch fails before extraction
 - [x] install writes `~/.bud/bin/bud`
-- [ ] `bud --version` works after install
+- [x] `bud --version` works after install
 - [x] existing identity is not overwritten
 - [x] `BUD_CLAIM_ID` is passed to first bootstrap and not persisted
 - [ ] tokenless install falls back to QR/link claim

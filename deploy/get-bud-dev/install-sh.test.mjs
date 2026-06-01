@@ -25,7 +25,7 @@ async function createFakeBudArchive(t, dir, options = {}) {
     [
       "#!/bin/sh",
       'if [ "$1" = "doctor" ]; then',
-      '  echo "doctor" >> "$BUD_TEST_LOG"',
+      '  echo "doctor server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-} terminal=${BUD_TERMINAL_ENABLED:-} claim=${BUD_CLAIM_ID:-}" >> "$BUD_TEST_LOG"',
       options.doctorMessage ? `  echo ${JSON.stringify(options.doctorMessage)} >&2` : "",
       `  exit ${options.doctorExitCode ?? 0}`,
       "fi",
@@ -150,7 +150,10 @@ test("install.sh installs verified artifact and passes claim only to bootstrap",
   assert.ok((await stat(path.join(installRoot, "bin", "bud"))).isFile());
   assert.equal((await readFile(path.join(installRoot, "bud.env"), "utf8")).includes("bic_test"), false);
   const fakeLog = await readFile(logPath, "utf8");
-  assert.match(fakeLog, /^doctor$/m);
+  assert.match(
+    fakeLog,
+    new RegExp(`^doctor server=wss://api\\.bud\\.dev/ws base=${escapeRegExp(installRoot)} terminal=true claim=$`, "m"),
+  );
   assert.match(fakeLog, /bootstrap claim=bic_test server=wss:\/\/api\.bud\.dev\/ws base=/);
 });
 
@@ -327,6 +330,10 @@ test("install.sh surfaces bud doctor dependency remediation without failing inst
   assert.match(result.stderr, /tmux is missing/);
   assert.match(result.stderr, /Bud preflight reported issues/);
   assert.ok((await stat(path.join(installRoot, "bin", "bud"))).isFile());
+  assert.match(
+    await readFile(logPath, "utf8"),
+    new RegExp(`^doctor server=wss://api\\.bud\\.dev/ws base=${escapeRegExp(installRoot)} terminal=true claim=$`, "m"),
+  );
 });
 
 test("install.sh refuses to redeem a new claim over existing identity", async (t) => {
@@ -359,3 +366,7 @@ test("install.sh rejects unsupported host before downloading", async (t) => {
   assert.notEqual(result.code, 0);
   assert.match(result.stderr, /unsupported OS\/architecture/);
 });
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

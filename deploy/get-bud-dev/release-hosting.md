@@ -41,7 +41,8 @@ artifact URLs through the Worker redirect to GitHub Releases, verifies SHA-256,
 installs to `~/.bud/bin/bud`, writes `~/.bud/bud.env`, runs `bud doctor`, and
 then starts Bud in the foreground unless `BUD_INSTALL_SKIP_BOOTSTRAP=1` is set.
 `BUD_CLAIM_ID` is forwarded only to the first bootstrap process and is not
-persisted in `bud.env`.
+persisted in `bud.env`. The preflight `bud doctor` call uses the installer
+server URL and base dir but deliberately does not receive `BUD_CLAIM_ID`.
 
 ## Manifest Contract
 

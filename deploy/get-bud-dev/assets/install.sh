@@ -176,7 +176,7 @@ install_archive() {
 
 run_doctor() {
   log "Running Bud preflight..."
-  if ! "$BUD_BIN" doctor; then
+  if ! (unset BUD_CLAIM_ID; env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" doctor); then
     log "Bud preflight reported issues. Review the messages above, then rerun the installer after resolving them."
   fi
 }
