@@ -5,6 +5,7 @@ compatibility_date = "2026-05-30"
 [assets]
 directory = "./assets"
 binding = "ASSETS"
+run_worker_first = true
 
 [observability.logs]
 enabled = true

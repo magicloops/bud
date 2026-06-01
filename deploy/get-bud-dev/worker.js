@@ -10,6 +10,7 @@ const ALLOWED_METHODS = new Set(["GET", "HEAD"]);
 const ARTIFACT_PATH_RE = /^\/releases\/(v[^/]+)\/(bud-(aarch64-apple-darwin|x86_64-apple-darwin|x86_64-unknown-linux-gnu)\.tar\.gz)$/;
 const VERSION_MANIFEST_PATH_RE = /^\/releases\/(v[^/]+)\/manifest\.json$/;
 const INSTALLER_PATHS = new Set(["/", "/install.sh"]);
+const MUTABLE_RESPONSE_CACHE_CONTROL = "no-store";
 
 export function createGetBudDevWorker(config = {}) {
   const stableManifest = parseJsonConfig(config.stableManifest, "stableManifest");
@@ -31,7 +32,7 @@ export function createGetBudDevWorker(config = {}) {
       }
       return bodyResponse(request, installScript, {
         "content-type": "text/x-shellscript; charset=utf-8",
-        "cache-control": "public, max-age=300",
+        "cache-control": MUTABLE_RESPONSE_CACHE_CONTROL,
       });
     }
 
@@ -42,7 +43,7 @@ export function createGetBudDevWorker(config = {}) {
         return notFound();
       }
       return jsonResponse(request, manifest, {
-        "cache-control": "public, max-age=300, must-revalidate",
+        "cache-control": MUTABLE_RESPONSE_CACHE_CONTROL,
       });
     }
 
@@ -123,7 +124,7 @@ async function installScriptAssetResponse(request, assets) {
   const response = await assets.fetch(new Request(assetUrl.toString(), { method: "GET" }));
   return bodyResponse(request, await response.text(), {
     "content-type": "text/x-shellscript; charset=utf-8",
-    "cache-control": "public, max-age=300",
+    "cache-control": MUTABLE_RESPONSE_CACHE_CONTROL,
   });
 }
 

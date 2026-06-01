@@ -176,6 +176,8 @@ The Worker should be deliberately boring:
 - no directory listing
 - exact allowlist for known route families
 - stable manifest response with short cache/revalidation
+- mutable `/`, `/install.sh`, and stable manifest responses should run through
+  the Worker before static assets and avoid edge/browser caching
 - versioned artifact responses as 302 redirects to exact GitHub Release assets
 - versioned artifact responses can use long browser/CDN cache headers because
   URLs are immutable

@@ -39,6 +39,7 @@ test("serves install.sh with shell content type", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.match(await response.text(), /^#!\/bin\/sh/);
 });
 
@@ -47,6 +48,7 @@ test("serves root installer alias with shell content type", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(await response.text(), "#!/bin/sh\necho install\n");
 });
 
@@ -55,6 +57,7 @@ test("HEAD root installer alias returns headers without a body", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(await response.text(), "");
 });
 
@@ -76,11 +79,13 @@ test("serves installer from static assets binding when no injected script is con
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(await response.text(), "#!/bin/sh\necho asset\n");
 
   const rootResponse = await assetWorker.fetch(request("/"));
   assert.equal(rootResponse.status, 200);
   assert.equal(rootResponse.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(rootResponse.headers.get("cache-control"), "no-store");
   assert.equal(await rootResponse.text(), "#!/bin/sh\necho asset\n");
 });
 
@@ -89,7 +94,7 @@ test("serves stable manifest as JSON", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
-  assert.equal(response.headers.get("cache-control"), "public, max-age=300, must-revalidate");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), stableManifest);
 });
 

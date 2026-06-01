@@ -42,6 +42,7 @@ Expected behavior:
 - `GET /` returns the installer body
 - `HEAD /` returns installer headers with an empty body
 - response headers match `/install.sh`
+- mutable installer responses use `Cache-Control: no-store`
 - `/install.sh` remains supported indefinitely
 - service-generated authenticated install commands keep using `/install.sh`
 - unknown paths still return `404`

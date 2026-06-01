@@ -48,6 +48,12 @@ canonical service-generated command path, while landing-page copy can use:
 curl -fsSL https://get.bud.dev | sh
 ```
 
+The Worker is configured with `assets.run_worker_first = true` so `/`,
+`/install.sh`, and `/releases/stable/manifest.json` always run through Worker
+code before static asset serving. These mutable routes return
+`Cache-Control: no-store`; immutable versioned manifests and archive redirects
+keep long-lived cache headers.
+
 The script downloads the stable manifest, selects the current OS/architecture
 target, follows first-party artifact URLs through the Worker redirect to GitHub
 Releases, verifies SHA-256, installs to `~/.bud/bin/bud`, writes

@@ -44,8 +44,8 @@ The workflow:
 - generates Worker static assets through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
 - deploys [../../deploy/get-bud-dev/worker.js](../../deploy/get-bud-dev/worker.js) with
   `cloudflare/wrangler-action@v4` and explicitly requests Wrangler v4
-- optionally smoke-tests `/install.sh`, the stable manifest, and a versioned
-  artifact redirect
+- optionally smoke-tests `/`, `/install.sh`, the stable manifest, and a
+  versioned artifact redirect
 
 ## Dependencies
 
