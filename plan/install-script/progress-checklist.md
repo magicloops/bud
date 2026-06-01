@@ -14,7 +14,7 @@
 
 - [x] Worker source added
 - [x] Worker config added
-- [ ] `get.bud.dev` custom domain attached
+- [x] `get.bud.dev` custom domain attached
 - [x] `/install.sh` served
 - [x] `/releases/stable/manifest.json` served
 - [x] versioned artifact URLs redirect to GitHub Release assets

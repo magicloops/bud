@@ -10,28 +10,28 @@
 - [x] installer checksum mismatch fixture test
 - [x] installer artifact-download failure fixture test
 - [x] `cargo test --manifest-path bud/Cargo.toml`
-- [ ] release workflow dry run for required target matrix
+- [x] release workflow dry run for required target matrix
 
 ## GitHub Release Archive
 
-- [ ] release exists for test tag
-- [ ] all target archives are present
-- [ ] per-version manifest is present
-- [ ] `checksums.txt` is present
+- [x] release exists for test tag
+- [x] all target archives are present
+- [x] per-version manifest is present
+- [x] `checksums.txt` is present
 - [ ] downloaded archives match checksums
 - [ ] release assets are not overwritten after promotion
 - [ ] attestations exist or deferral is documented
 
 ## get.bud.dev Worker
 
-- [ ] `GET /install.sh` returns shell script
-- [ ] `HEAD /install.sh` returns expected headers
-- [ ] `GET /releases/stable/manifest.json` returns valid JSON
-- [ ] stable manifest artifact URLs use `get.bud.dev`
-- [ ] versioned artifact URL returns redirect to exact GitHub Release asset
-- [ ] unknown path returns `404`
-- [ ] unsupported method returns `405`
-- [ ] Worker does not require GitHub API access at runtime
+- [x] `GET /install.sh` returns shell script
+- [x] `HEAD /install.sh` returns expected headers
+- [x] `GET /releases/stable/manifest.json` returns valid JSON
+- [x] stable manifest artifact URLs use `get.bud.dev`
+- [x] versioned artifact URL returns redirect to exact GitHub Release asset
+- [x] unknown path returns `404`
+- [x] unsupported method returns `405`
+- [x] Worker does not require GitHub API access at runtime
 
 ## Installer
 

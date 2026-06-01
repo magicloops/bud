@@ -242,3 +242,5 @@ server.
 - [design/](./design): design docs
 - [plan/](./plan): phased implementation plans
 - [debug/](./debug): debugging notes
+
+> Licensing note: Bud is public for early release-flow testing. It is not yet open source. Component-level licenses will be added before the first stable public release.
