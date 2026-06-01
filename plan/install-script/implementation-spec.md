@@ -16,6 +16,12 @@ Bud needs a one-command daemon install path:
 curl -fsSL https://get.bud.dev/install.sh | sh
 ```
 
+Landing-page copy can use the shorter root alias:
+
+```bash
+curl -fsSL https://get.bud.dev | sh
+```
+
 The broader daemon-readiness plan originally left artifact hosting open between
 R2, S3, Render, and GitHub Releases. The current v1 decision is:
 
@@ -40,6 +46,7 @@ The shipped path must:
 
 - use immutable versioned GitHub Release assets as the artifact archive
 - expose a stable first-party installer at `https://get.bud.dev/install.sh`
+- expose the same installer at `https://get.bud.dev` for landing-page copy
 - expose a stable manifest at `https://get.bud.dev/releases/stable/manifest.json`
 - keep manifest artifact URLs first-party under `get.bud.dev`
 - redirect first-party artifact URLs to exact versioned GitHub Release assets
@@ -76,6 +83,8 @@ GitHub Actions
   deploys/promotes get.bud.dev Worker config/assets
 
 get.bud.dev Cloudflare Worker
+  /
+    -> static/generated installer shell script alias
   /install.sh
     -> static/generated installer shell script
   /releases/stable/manifest.json
@@ -170,7 +179,8 @@ The Worker should be deliberately boring:
 - versioned artifact responses as 302 redirects to exact GitHub Release assets
 - versioned artifact responses can use long browser/CDN cache headers because
   URLs are immutable
-- `install.sh` response with `Content-Type: text/x-shellscript; charset=utf-8`
+- `/` and `/install.sh` responses with
+  `Content-Type: text/x-shellscript; charset=utf-8`
 - no GitHub API call on normal installer requests
 - optional operator-only endpoint or deploy-time asset for stable promotion
 
@@ -188,6 +198,7 @@ because GitHub API availability should not affect manifest serving.
 | 3 | [phase-3-install-sh.md](./phase-3-install-sh.md) | `install.sh` installs verified target artifacts and hands off to daemon bootstrap |
 | 4 | [phase-4-ci-publish-and-promotion.md](./phase-4-ci-publish-and-promotion.md) | CI publishes releases and promotes stable `get.bud.dev` assets predictably |
 | 5 | [phase-5-validation-rollout-and-fallbacks.md](./phase-5-validation-rollout-and-fallbacks.md) | Clean-machine validation, rollback, GitHub-failure behavior, and future mirror plan are covered |
+| 6 | [phase-6-root-installer-alias.md](./phase-6-root-installer-alias.md) | `https://get.bud.dev` serves the installer script directly for landing-page copy |
 
 ## Key Risks
 

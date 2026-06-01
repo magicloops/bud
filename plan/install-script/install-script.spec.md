@@ -55,6 +55,13 @@ Phase for validation, rollout, and fallback planning, including clean-machine
 tests, GitHub availability failure modes, and the later R2/S3 mirror escape
 hatch.
 
+### `phase-6-root-installer-alias.md`
+
+Phase for serving the same installer shell script from the root
+`https://get.bud.dev` path so landing-page copy can use
+`curl -fsSL https://get.bud.dev | sh` while service-generated commands keep the
+explicit `/install.sh` path.
+
 ### `progress-checklist.md`
 
 Running implementation checklist for this install-script plan.

@@ -24,6 +24,8 @@
 
 ## get.bud.dev Worker
 
+- [ ] `GET /` returns shell script
+- [ ] `HEAD /` returns expected headers
 - [x] `GET /install.sh` returns shell script
 - [x] `HEAD /install.sh` returns expected headers
 - [x] `GET /releases/stable/manifest.json` returns valid JSON

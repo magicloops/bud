@@ -9,6 +9,7 @@ exit 1
 const ALLOWED_METHODS = new Set(["GET", "HEAD"]);
 const ARTIFACT_PATH_RE = /^\/releases\/(v[^/]+)\/(bud-(aarch64-apple-darwin|x86_64-apple-darwin|x86_64-unknown-linux-gnu)\.tar\.gz)$/;
 const VERSION_MANIFEST_PATH_RE = /^\/releases\/(v[^/]+)\/manifest\.json$/;
+const INSTALLER_PATHS = new Set(["/", "/install.sh"]);
 
 export function createGetBudDevWorker(config = {}) {
   const stableManifest = parseJsonConfig(config.stableManifest, "stableManifest");
@@ -24,12 +25,9 @@ export function createGetBudDevWorker(config = {}) {
       return methodNotAllowed();
     }
 
-    if (url.pathname === "/install.sh") {
+    if (INSTALLER_PATHS.has(url.pathname)) {
       if (!config.installScript && assets) {
-        return withHeaders(await assets.fetch(request), {
-          "content-type": "text/x-shellscript; charset=utf-8",
-          "cache-control": "public, max-age=300",
-        });
+        return installScriptAssetResponse(request, assets);
       }
       return bodyResponse(request, installScript, {
         "content-type": "text/x-shellscript; charset=utf-8",
@@ -115,6 +113,17 @@ function withHeaders(response, headers) {
     status: response.status,
     statusText: response.statusText,
     headers: mergedHeaders,
+  });
+}
+
+async function installScriptAssetResponse(request, assets) {
+  const assetUrl = new URL(request.url);
+  assetUrl.pathname = "/install.sh";
+  assetUrl.search = "";
+  const response = await assets.fetch(new Request(assetUrl.toString(), { method: "GET" }));
+  return bodyResponse(request, await response.text(), {
+    "content-type": "text/x-shellscript; charset=utf-8",
+    "cache-control": "public, max-age=300",
   });
 }
 

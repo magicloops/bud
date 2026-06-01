@@ -17,6 +17,7 @@ Cloudflare Worker module for `https://get.bud.dev`.
 
 Responsibilities:
 
+- serves `/` as a landing-page install-script alias
 - serves `/install.sh`
 - serves `/releases/stable/manifest.json`
 - serves versioned `/releases/vX.Y.Z/manifest.json`
@@ -30,7 +31,8 @@ Responsibilities:
 ### `worker.test.mjs`
 
 Node test coverage for Worker route behavior, content types, cache headers,
-versioned artifact redirects, `HEAD`, `405`, and `404` handling.
+root installer alias behavior, versioned artifact redirects, `HEAD`, `405`,
+and `404` handling.
 
 ### `install-sh.test.mjs`
 

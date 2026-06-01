@@ -42,10 +42,27 @@ test("serves install.sh with shell content type", async () => {
   assert.match(await response.text(), /^#!\/bin\/sh/);
 });
 
-test("serves install.sh from static assets binding when no injected script is configured", async () => {
+test("serves root installer alias with shell content type", async () => {
+  const response = await worker.fetch(request("/"));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(await response.text(), "#!/bin/sh\necho install\n");
+});
+
+test("HEAD root installer alias returns headers without a body", async () => {
+  const response = await worker.fetch(request("/", { method: "HEAD" }));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(await response.text(), "");
+});
+
+test("serves installer from static assets binding when no injected script is configured", async () => {
   const assetWorker = createGetBudDevWorker({
     assets: {
-      async fetch() {
+      async fetch(assetRequest) {
+        assert.equal(new URL(assetRequest.url).pathname, "/install.sh");
         return new Response("#!/bin/sh\necho asset\n", {
           headers: {
             "content-type": "application/octet-stream",
@@ -60,6 +77,11 @@ test("serves install.sh from static assets binding when no injected script is co
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
   assert.equal(await response.text(), "#!/bin/sh\necho asset\n");
+
+  const rootResponse = await assetWorker.fetch(request("/"));
+  assert.equal(rootResponse.status, 200);
+  assert.equal(rootResponse.headers.get("content-type"), "text/x-shellscript; charset=utf-8");
+  assert.equal(await rootResponse.text(), "#!/bin/sh\necho asset\n");
 });
 
 test("serves stable manifest as JSON", async () => {
@@ -145,7 +167,7 @@ test("rejects unsupported methods", async () => {
 });
 
 test("returns 404 for unknown paths and unmapped release assets", async () => {
-  assert.equal((await worker.fetch(request("/"))).status, 404);
+  assert.equal((await worker.fetch(request("/missing"))).status, 404);
   assert.equal(
     (await worker.fetch(request("/releases/v0.1.0/bud-aarch64-apple-darwin.tar.gz"))).status,
     404,

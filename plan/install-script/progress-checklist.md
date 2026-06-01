@@ -60,3 +60,12 @@
 - [ ] bad manifest failure mode validated
 - [ ] stable rollback validated
 - [ ] mirror decision made before public launch
+
+## Phase 6: Root Installer Alias
+
+- [x] Worker serves `/` as installer alias
+- [x] Worker tests cover `GET /`
+- [x] Worker tests cover `HEAD /`
+- [x] `/install.sh` remains supported
+- [x] service-generated commands remain on `/install.sh`
+- [ ] live promoted Worker validates root alias behavior

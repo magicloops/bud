@@ -29,20 +29,33 @@ The stable channel manifest is mutable and points at immutable artifacts:
 /releases/stable/manifest.json
 ```
 
-The installer path is owned by Phase 4:
+The explicit installer path is owned by Phase 4:
 
 ```text
 /install.sh
 ```
 
-`/install.sh` is now a Worker static asset. The script downloads the stable
-manifest, selects the current OS/architecture target, follows first-party
-artifact URLs through the Worker redirect to GitHub Releases, verifies SHA-256,
-installs to `~/.bud/bin/bud`, writes `~/.bud/bud.env`, runs `bud doctor`, and
-then starts Bud in the foreground unless `BUD_INSTALL_SKIP_BOOTSTRAP=1` is set.
-`BUD_CLAIM_ID` is forwarded only to the first bootstrap process and is not
-persisted in `bud.env`. The preflight `bud doctor` call uses the installer
-server URL and base dir but deliberately does not receive `BUD_CLAIM_ID`.
+The root path is a landing-page alias for the same script:
+
+```text
+/
+```
+
+Both paths are served directly by the Worker. `/install.sh` remains the
+canonical service-generated command path, while landing-page copy can use:
+
+```sh
+curl -fsSL https://get.bud.dev | sh
+```
+
+The script downloads the stable manifest, selects the current OS/architecture
+target, follows first-party artifact URLs through the Worker redirect to GitHub
+Releases, verifies SHA-256, installs to `~/.bud/bin/bud`, writes
+`~/.bud/bud.env`, runs `bud doctor`, and then starts Bud in the foreground
+unless `BUD_INSTALL_SKIP_BOOTSTRAP=1` is set. `BUD_CLAIM_ID` is forwarded only
+to the first bootstrap process and is not persisted in `bud.env`. The preflight
+`bud doctor` call uses the installer server URL and base dir but deliberately
+does not receive `BUD_CLAIM_ID`.
 
 ## Manifest Contract
 
@@ -94,7 +107,7 @@ Until CI has production Worker-promotion credentials, a release operator should:
    per-version manifest.
 3. Promote a stable manifest and release redirect map into the `get-bud-dev`
    Worker config/assets.
-4. Confirm `/install.sh`, `/releases/stable/manifest.json`,
+4. Confirm `/`, `/install.sh`, `/releases/stable/manifest.json`,
    `/releases/<version>/manifest.json`, and each versioned artifact redirect are
    reachable.
 5. Download each archive through the first-party URL and verify it against the
