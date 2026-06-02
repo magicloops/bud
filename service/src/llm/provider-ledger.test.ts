@@ -2,12 +2,19 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { db } from "../db/client.js";
 import {
+  buildRequestMode,
   canonicalBlockFromLedgerItem,
   loadProviderLedgerMessages,
   loadProviderLedgerThreadDiagnostics,
   recordLlmCall,
   recordLlmToolResultItem,
 } from "./provider-ledger.js";
+
+test("buildRequestMode maps ds4 to OpenAI-compatible Chat Completions", () => {
+  assert.equal(buildRequestMode("openai"), "openai_responses");
+  assert.equal(buildRequestMode("anthropic"), "anthropic_messages");
+  assert.equal(buildRequestMode("ds4"), "ds4_openai_chat");
+});
 
 test("recordLlmCall persists all provider output items and cache metadata", async (t) => {
   t.after(() => {

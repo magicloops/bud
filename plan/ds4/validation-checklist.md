@@ -1,7 +1,7 @@
 # ds4 Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Phase 1 automated and direct-provider live smoke complete; full HTTP agent-turn smoke pending
 **Last Updated**: 2026-06-02
 
 ---
@@ -10,14 +10,14 @@
 
 ### Service Provider And Catalog
 
-- [ ] Catalog accepts provider `ds4`
-- [ ] Catalog includes `ds4-deepseek-v4-flash`
-- [ ] OpenAI and Anthropic global defaults are unchanged
-- [ ] Direct ds4 is absent when `DS4_DIRECT_BASE_URL` is unset
-- [ ] Direct ds4 is present when `DS4_DIRECT_BASE_URL` is set
-- [ ] `ds4_openai_chat` request mode is accepted by provider-ledger typing
-- [ ] Chat Completions text stream fixture parses into canonical text deltas
-- [ ] Chat Completions tool-call stream fixture parses into canonical tool-call events
+- [x] Catalog accepts provider `ds4`
+- [x] Catalog includes `ds4-deepseek-v4-flash`
+- [x] OpenAI and Anthropic global defaults are unchanged
+- [x] Direct ds4 is absent when `DS4_DIRECT_BASE_URL` is unset
+- [x] Direct ds4 is present when `DS4_DIRECT_BASE_URL` is set
+- [x] `ds4_openai_chat` request mode is accepted by provider-ledger typing
+- [x] Chat Completions text stream fixture parses into canonical text deltas
+- [x] Chat Completions tool-call stream fixture parses into canonical tool-call events
 - [ ] Chat Completions malformed/error fixture normalizes to a provider error
 
 ### Routes And Ownership
@@ -59,7 +59,11 @@ Run against an already-running ds4 server. The validation does not require Bud t
 
 ### Direct Service-Local Mode
 
-- [ ] configure `DS4_DIRECT_BASE_URL`
+- [x] configure `DS4_DIRECT_BASE_URL`
+- [x] service-side provider inventory includes `ds4-deepseek-v4-flash` when `DS4_DIRECT_BASE_URL` is set
+- [x] one final-text direct-provider stream completes
+- [x] one terminal tool-call direct-provider stream completes
+- [x] cancellation during direct-provider streaming aborts generation
 - [ ] `GET /api/models` shows `ds4-deepseek-v4-flash`
 - [ ] one final-text agent turn completes
 - [ ] one terminal tool-call agent turn completes
@@ -83,7 +87,7 @@ Run against an already-running ds4 server. The validation does not require Bud t
 ## Documentation And Handoff
 
 - [ ] `docs/proto.md` documents `capabilities.llm` and `local_llm_http`
-- [ ] service LLM/provider specs document provider `ds4`
+- [x] service LLM/provider specs document provider `ds4`
 - [ ] service route specs document Bud-scoped model inventory
 - [ ] service transport/ws specs document local LLM streams
 - [ ] daemon spec documents local LLM config, probe, and forwarding policy

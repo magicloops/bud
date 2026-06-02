@@ -146,13 +146,17 @@ Auth and Bud claim testing do not require an LLM provider key, and the service n
 
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
+- `DS4_DIRECT_BASE_URL` (enables the direct local-dev ds4 Chat Completions provider when a ds4 server is already running; use `http://127.0.0.1:8000/v1` or `http://localhost:8000/v1`)
+- `DS4_DIRECT_MODEL` (defaults to `deepseek-v4-flash`)
+- `DS4_DIRECT_CONTEXT_TOKENS` (defaults to `100000`)
+- `DS4_DIRECT_MAX_OUTPUT_TOKENS` (defaults to `128000`)
 - `DEFAULT_MODEL` (defaults to `gpt-5.5`)
 - `AGENT_REASONING_EFFORT` (defaults to `low`)
 - `OPENAI_MODEL`
 - `AGENT_MAX_STEPS`
 - `AGENT_DEBUG`
 
-`/api/models` is the source of truth for first-party model IDs and valid `reasoning_effort` values. Current product IDs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, and `gpt-5.5`.
+`/api/models` is the source of truth for first-party model IDs and valid `reasoning_effort` values. Current product IDs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.5`, and `ds4-deepseek-v4-flash` when the ds4 provider is configured.
 
 ## Scripts
 

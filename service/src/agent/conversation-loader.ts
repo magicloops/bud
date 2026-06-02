@@ -670,7 +670,9 @@ function emptyProviderLedgerThreadDiagnostics(): ProviderLedgerThreadDiagnostics
 function sortedProviders(
   counts: Partial<Record<CanonicalProviderId, number>>,
 ): CanonicalProviderId[] {
-  return (["openai", "anthropic"] as const).filter((provider) => (counts[provider] ?? 0) > 0);
+  return (["openai", "anthropic", "ds4"] as const).filter(
+    (provider) => (counts[provider] ?? 0) > 0,
+  );
 }
 
 function countModelTranscriptRows(rows: StoredMessageRow[]): number {
@@ -747,7 +749,13 @@ function isProviderLedgerMessageCompatible(
 }
 
 function expectedRequestModeForProvider(provider: CanonicalProviderId): LlmCallRequestMode {
-  return provider === "openai" ? "openai_responses" : "anthropic_messages";
+  if (provider === "openai") {
+    return "openai_responses";
+  }
+  if (provider === "anthropic") {
+    return "anthropic_messages";
+  }
+  return "ds4_openai_chat";
 }
 
 function isAnthropicReasoningBlock(block: CanonicalContentBlock): boolean {

@@ -281,7 +281,17 @@ export const config = {
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
-  // Default model for agent (can be OpenAI or Anthropic)
+  ds4DirectBaseUrl: toNullable(process.env.DS4_DIRECT_BASE_URL),
+  ds4DirectModel: process.env.DS4_DIRECT_MODEL ?? "deepseek-v4-flash",
+  ds4DirectContextTokens: toPositiveInteger(
+    process.env.DS4_DIRECT_CONTEXT_TOKENS,
+    100_000,
+  ),
+  ds4DirectMaxOutputTokens: toPositiveInteger(
+    process.env.DS4_DIRECT_MAX_OUTPUT_TOKENS,
+    128_000,
+  ),
+  // Default product model for agent requests.
   defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.5",
   // Anthropic
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",

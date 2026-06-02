@@ -9,7 +9,7 @@ The service acts as the central hub:
 - Optionally accepts HTTP/2 gRPC control streams from bud daemons
 - Optionally accepts subordinate HTTP/2 gRPC data streams from bud daemons
 - Serves REST API and SSE streams to web clients
-- Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic)
+- Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic, direct local ds4)
 - Persists all data to PostgreSQL
 
 ## Files
@@ -142,6 +142,10 @@ Environment-based configuration with defaults.
 | `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |
 | `googleClientSecret` | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
 | `openaiApiKey` | `OPENAI_API_KEY` | - | OpenAI API key |
+| `ds4DirectBaseUrl` | `DS4_DIRECT_BASE_URL` | - | Optional direct local-dev ds4 OpenAI-compatible base URL; enables ds4 provider registration when set |
+| `ds4DirectModel` | `DS4_DIRECT_MODEL` | deepseek-v4-flash | Model string sent to the local ds4 Chat Completions endpoint |
+| `ds4DirectContextTokens` | `DS4_DIRECT_CONTEXT_TOKENS` | 100000 | Context-window metadata advertised for direct ds4 fallback models |
+| `ds4DirectMaxOutputTokens` | `DS4_DIRECT_MAX_OUTPUT_TOKENS` | 128000 | Max-output metadata and default `max_tokens` for direct ds4 requests |
 | `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
 | `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Max tokens per response |
@@ -178,7 +182,7 @@ Agent orchestration for tool-calling loops using the LLM provider abstraction, n
 
 ### `llm/` → [llm.spec.md](./llm/llm.spec.md)
 
-Provider-agnostic LLM abstraction layer with canonical types and provider implementations (OpenAI, Anthropic).
+Provider-agnostic LLM abstraction layer with canonical types and provider implementations (OpenAI, Anthropic, direct local ds4).
 
 ### `db/` → [db.spec.md](./db/db.spec.md)
 
@@ -250,7 +254,7 @@ Database utility scripts for development and auth/bootstrap operations (seeding,
                                            ▼
                                    ┌──────────────┐
                                    │  providers/  │
-                                   │ OpenAI, etc. │
+                                   │OpenAI/ds4/etc│
                                    └──────────────┘
 ```
 

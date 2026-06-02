@@ -1,4 +1,4 @@
-export type ProviderId = "anthropic" | "openai";
+export type ProviderId = "anthropic" | "openai" | "ds4";
 
 export type ReasoningLevel =
   | "none"
@@ -42,8 +42,8 @@ export type ModelCatalogEntry = {
   provider: ProviderId;
   providerModel: string;
   displayName: string;
-  family: "claude" | "gpt";
-  tier: "frontier" | "balanced" | "fast";
+  family: "claude" | "gpt" | "deepseek";
+  tier: "frontier" | "balanced" | "fast" | "local";
   sortOrder: number;
   defaultForProvider?: boolean;
   globalDefault?: boolean;
@@ -269,6 +269,28 @@ export const MODEL_CATALOG = [
       levels: OPENAI_GPT_5_4_REASONING_LEVELS,
       defaultLevel: "low",
       requestField: "reasoning.effort",
+    },
+  },
+  {
+    id: "ds4-deepseek-v4-flash",
+    provider: "ds4",
+    providerModel: "deepseek-v4-flash",
+    displayName: "ds4 DeepSeek V4",
+    family: "deepseek",
+    tier: "local",
+    sortOrder: 300,
+    capabilities: {
+      vision: false,
+      tools: true,
+      streaming: true,
+      structuredOutputs: false,
+      contextWindowTokens: 100_000,
+      maxOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "none",
+      levels: ["none"],
+      defaultLevel: "none",
     },
   },
 ] as const satisfies readonly ModelCatalogEntry[];

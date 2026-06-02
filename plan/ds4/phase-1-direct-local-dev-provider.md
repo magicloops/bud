@@ -132,16 +132,18 @@ Record live smoke status in [validation-checklist.md](./validation-checklist.md)
 
 ## Validation Checklist
 
-- [ ] service config parses `DS4_DIRECT_*`
-- [ ] provider id `ds4` exists
-- [ ] request mode `ds4_openai_chat` exists
-- [ ] catalog entry `ds4-deepseek-v4-flash` exists
-- [ ] direct provider registers only with explicit config
-- [ ] direct provider parses text streams
-- [ ] direct provider parses tool-call streams
-- [ ] direct provider cancellation works
-- [ ] live final-text smoke passes
-- [ ] live tool-call smoke passes
+- [x] service config parses `DS4_DIRECT_*`
+- [x] provider id `ds4` exists
+- [x] request mode `ds4_openai_chat` exists
+- [x] catalog entry `ds4-deepseek-v4-flash` exists
+- [x] direct provider registers only with explicit config
+- [x] direct provider parses text streams
+- [x] direct provider parses tool-call streams
+- [x] direct provider cancellation works
+- [x] live final-text smoke passes
+- [x] live tool-call smoke passes
+
+Live direct-provider smoke on 2026-06-02 used `DS4_DIRECT_BASE_URL=http://127.0.0.1:8000/v1` against the already-running ds4 server. Final text, Chat Completions tool-call deltas, and abort-signal cancellation all exercised the service `Ds4ChatCompletionsProvider`. A lower `maxOutputTokens: 32` final-text attempt stopped during ds4 `reasoning_content` before visible text; `maxOutputTokens: 128` produced the expected text.
 
 ## Exit Criteria
 

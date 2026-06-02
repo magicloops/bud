@@ -19,6 +19,7 @@ test("model catalog exposes the current default model lineup", () => {
     "gpt-5.4-mini",
     "gpt-5.4-nano",
     "gpt-5.5",
+    "ds4-deepseek-v4-flash",
   ]);
   assert.equal(getGlobalDefaultModelEntry().id, "gpt-5.5");
 });
@@ -28,6 +29,7 @@ test("model catalog captures provider-specific reasoning levels", () => {
   const opus46 = getCatalogEntry("claude-opus-4-6");
   const opus47 = getCatalogEntry("claude-opus-4-7");
   const haiku45 = getCatalogEntry("claude-haiku-4-5");
+  const ds4 = getCatalogEntry("ds4-deepseek-v4-flash");
 
   assert.ok(gpt54);
   assert.deepEqual(gpt54.reasoning.levels, ["none", "low", "medium", "high", "xhigh"]);
@@ -48,6 +50,10 @@ test("model catalog captures provider-specific reasoning levels", () => {
 
   assert.ok(haiku45);
   assert.deepEqual(haiku45.reasoning.levels, ["none", "low", "medium", "high"]);
+
+  assert.ok(ds4);
+  assert.deepEqual(ds4.reasoning.levels, ["none"]);
+  assert.equal(ds4.reasoning.defaultLevel, "none");
 });
 
 test("model catalog captures GPT-5.5 usable context policy", () => {

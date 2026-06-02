@@ -31,6 +31,9 @@ type ModelsPayload = {
       usable_input_window_tokens: number | null;
       max_output_tokens: number;
     };
+    source?: {
+      kind: string;
+    };
   }>;
   service_default_model: string | null;
   default_model: string | null;
@@ -69,9 +72,12 @@ function createServer(): FastifyInstance & { routes: Map<string, RouteHandler> }
   } as unknown as FastifyInstance & { routes: Map<string, RouteHandler> };
 }
 
-function createProvider(name: "anthropic" | "openai", supportedModels: string[]): LLMProvider {
+function createProvider(
+  name: "anthropic" | "openai" | "ds4",
+  supportedModels: string[],
+): LLMProvider {
   const capabilities: ModelCapabilities = {
-    supportsVision: true,
+    supportsVision: name !== "ds4",
     supportsTools: true,
     supportsStreaming: true,
     supportsJsonMode: name === "openai",
@@ -89,7 +95,13 @@ function createProvider(name: "anthropic" | "openai", supportedModels: string[])
       // noop
     },
     supportsModel(model: string) {
-      return name === "openai" ? model.startsWith("gpt-") : model.startsWith("claude-");
+      if (name === "openai") {
+        return model.startsWith("gpt-");
+      }
+      if (name === "anthropic") {
+        return model.startsWith("claude-");
+      }
+      return model === "deepseek-v4-flash";
     },
     getModelCapabilities() {
       return capabilities;
@@ -100,9 +112,11 @@ function createProvider(name: "anthropic" | "openai", supportedModels: string[])
 function registerTestProviders(t: TestContext) {
   const previousOpenAI = providerRegistry.getProvider("openai");
   const previousAnthropic = providerRegistry.getProvider("anthropic");
+  const previousDs4 = providerRegistry.getProvider("ds4");
 
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
+  providerRegistry.unregister("ds4");
   providerRegistry.register(
     createProvider("anthropic", [
       "claude-opus-4-6",
@@ -123,11 +137,15 @@ function registerTestProviders(t: TestContext) {
   t.after(() => {
     providerRegistry.unregister("openai");
     providerRegistry.unregister("anthropic");
+    providerRegistry.unregister("ds4");
     if (previousOpenAI) {
       providerRegistry.register(previousOpenAI);
     }
     if (previousAnthropic) {
       providerRegistry.register(previousAnthropic);
+    }
+    if (previousDs4) {
+      providerRegistry.register(previousDs4);
     }
   });
 }
@@ -211,4 +229,30 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
     "xhigh",
   ]);
   assert.equal(gpt55.reasoning.default_level, "low");
+});
+
+test("GET /api/models includes direct local-dev ds4 model when provider is registered", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  registerTestProviders(t);
+  providerRegistry.register(createProvider("ds4", ["deepseek-v4-flash"]));
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+
+  const server = createServer();
+  await registerModelsRoutes(server);
+  const handler = server.routes.get("GET /api/models");
+  assert.ok(handler, "expected models route to register");
+
+  const reply = new TestReply();
+  const result = await handler({ headers: {} }, reply);
+  const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
+  const ds4 = payload.models.find((model) => model.id === "ds4-deepseek-v4-flash");
+
+  assert.ok(ds4);
+  assert.equal(ds4.provider, "ds4");
+  assert.equal(ds4.provider_model, "deepseek-v4-flash");
+  assert.equal(ds4.reasoning.kind, "none");
+  assert.deepEqual(ds4.reasoning.levels, [{ value: "none", label: "Fast" }]);
+  assert.deepEqual(ds4.source, { kind: "service_local_dev" });
 });

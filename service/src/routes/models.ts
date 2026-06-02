@@ -41,6 +41,9 @@ type ModelInfo = {
     }>;
     default_level: string;
   };
+  source?: {
+    kind: "service_local_dev";
+  };
 };
 
 type ModelsResponseDefaults = {
@@ -108,6 +111,13 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
           levels: getReasoningLevelOptions(entry),
           default_level: entry.reasoning.defaultLevel,
         },
+        ...(entry.provider === "ds4"
+          ? {
+              source: {
+                kind: "service_local_dev" as const,
+              },
+            }
+          : {}),
       };
     });
 

@@ -1,7 +1,7 @@
 # ds4 Progress Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Phase 1 automated implementation complete; live smoke pending
 **Last Updated**: 2026-06-02
 
 ---
@@ -21,16 +21,16 @@
 
 ## Phase 1: Direct Local Dev Provider
 
-- [ ] Add `ds4` provider vocabulary
-- [ ] Add `ds4_openai_chat` request mode
-- [ ] Add `ds4-deepseek-v4-flash` catalog entry
-- [ ] Add `DS4_DIRECT_*` config parsing
-- [ ] Register direct provider only when configured
-- [ ] Implement Chat Completions request lowering
-- [ ] Implement Chat Completions SSE parser
-- [ ] Add direct provider tests
-- [ ] Run direct final-text live smoke
-- [ ] Run direct tool-call live smoke
+- [x] Add `ds4` provider vocabulary
+- [x] Add `ds4_openai_chat` request mode
+- [x] Add `ds4-deepseek-v4-flash` catalog entry
+- [x] Add `DS4_DIRECT_*` config parsing
+- [x] Register direct provider only when configured
+- [x] Implement Chat Completions request lowering
+- [x] Implement Chat Completions SSE parser
+- [x] Add direct provider tests
+- [x] Run direct final-text live smoke
+- [x] Run direct tool-call live smoke
 
 ## Phase 2: Daemon Local LLM Capability
 

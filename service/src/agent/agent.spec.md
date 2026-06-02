@@ -7,7 +7,7 @@ Agent orchestration layer for AI-assisted terminal interactions using the LLM pr
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
 1. Builds conversation context from thread history (canonical format)
 2. Resolves the current Bud environment plus any service-side terminal freshness hint for the provider request
-3. Calls the LLM provider (OpenAI, Anthropic) via `providerRegistry`
+3. Calls the LLM provider (OpenAI, Anthropic, or direct local ds4) via `providerRegistry`
 4. Executes terminal tool calls on the connected bud daemon, product web-view tool calls through service-side proxied-site routes/helpers, and structured `ask_user_questions` pauses through the thread response route
 5. Loops until a final response or max steps reached
 
@@ -451,6 +451,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - Anthropic Opus 4.6/Sonnet 4.6: `low`, `medium`, `high`, `max`
 - Anthropic Opus 4.7: `low`, `medium`, `high`, `xhigh`, `max`
 - Anthropic Haiku 4.5: `none`, `low`, `medium`, `high`
+- ds4 DeepSeek V4 direct local-dev path: `none`
 
 Omitted `reasoning_effort` uses the selected model's catalog default, not the global env default.
 

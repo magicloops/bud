@@ -394,6 +394,7 @@ Route-level coverage for the catalog-backed model inventory.
 
 **Current Coverage**:
 - configured Anthropic/OpenAI providers return the sorted product catalog
+- configured direct local-dev ds4 provider adds `ds4-deepseek-v4-flash` with a `service_local_dev` source marker
 - response includes `service_default_model`, `default_model`, and `default_reasoning_effort`
 - response includes per-model `reasoning` metadata
 - response omits a public `available` flag
@@ -404,6 +405,7 @@ Route-level coverage for the catalog-backed model inventory.
 - top-level response includes `service_default_model`, `default_model`, and `default_reasoning_effort`
 - model entries are sourced from `service/src/llm/model-catalog.ts` and filtered to configured providers
 - model entries expose product `id`, `provider`, `provider_model`, `display_name`, `is_default`, capability limits, and model-specific `reasoning`
+- ds4 model entries additionally expose `source: { kind: "service_local_dev" }` because this Phase 1 path is enabled by service-local config, not remote Bud capability inventory
 - `reasoning.levels` is the client source of truth for valid `reasoning_effort` values
 - no `available` flag is emitted; configured catalog entries are treated as live
 

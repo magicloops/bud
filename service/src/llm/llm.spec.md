@@ -1,13 +1,13 @@
 # llm
 
-Provider-agnostic abstraction layer for LLM integrations (OpenAI, Anthropic, etc.).
+Provider-agnostic abstraction layer for LLM integrations (OpenAI, Anthropic, direct local ds4, etc.).
 
 ## Purpose
 
 The LLM module provides a unified interface for multiple LLM providers, enabling:
 - **Model-agnostic threads**: Switch between providers mid-conversation
 - **Canonical types**: Store messages in provider-neutral format
-- **Reasoning support**: Handle both OpenAI reasoning and Anthropic thinking
+- **Reasoning support**: Handle OpenAI reasoning, Anthropic thinking, and no-reasoning local providers
 - **Streaming**: Unified stream events across providers
 
 ## Architecture
@@ -24,14 +24,14 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
 │              (resolves model → provider)                         │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
-            ┌───────────────┴───────────────┐
-            ▼                               ▼
-┌─────────────────────┐         ┌─────────────────────┐
-│   OpenAIProvider    │         │  AnthropicProvider  │
-│                     │         │                     │
-│ - GPT-5.4, GPT-5.5  │         │ - Claude 4.6, 4.7   │
-│ - Reasoning support │         │ - Extended thinking │
-└─────────────────────┘         └─────────────────────┘
+        ┌───────────────────┬───────────────────┬───────────────────┐
+        ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────────────┐
+│ OpenAIProvider  │ │AnthropicProvider│ │Ds4ChatCompletionsProvider│
+│                 │ │                 │ │                         │
+│ - GPT-5.4/5.5   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
+│ - reasoning     │ │ - thinking      │ │ - Chat Completions SSE  │
+└─────────────────┘ └─────────────────┘ └─────────────────────────┘
 ```
 
 ## Files
@@ -119,6 +119,7 @@ Central product model catalog and reasoning-control metadata.
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
+| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | Direct local ds4 Chat Completions path; no reasoning controls; default `none` |
 
 **Usable Context Policy**:
 - `contextWindowTokens` remains the provider/model hard total context window
@@ -176,6 +177,7 @@ Durable provider-call ledger helpers for same-provider reconstruction and cache 
 - filter replay and diagnostics after a context-checkpoint boundary when automatic compaction has replaced older transcript spans with a summary
 - summarize provider-ledger coverage for a thread so provider switches, same-provider replay incompatibilities, itemless completed calls, and canonical fallback ranges are explicit
 - reconstruct canonical assistant messages from same-provider ledger items before falling back to product transcript rows
+- map provider calls to canonical request modes: `openai_responses`, `anthropic_messages`, or `ds4_openai_chat`
 
 Provider-native payloads are service-internal. Browser message routes continue to read from the `message` table and do not expose `llm_call_item.provider_payload`.
 
@@ -184,6 +186,7 @@ Provider-native payloads are service-internal. Browser message routes continue t
 Standalone tests for provider-ledger persistence/reconstruction helpers.
 
 **Current Coverage**:
+- request-mode mapping covers OpenAI Responses, Anthropic Messages, and ds4 Chat Completions
 - `recordLlmCall()` stores every output block plus cache metadata
 - `recordLlmCall()` stores reconstruction mode, fallback counts, omitted provider-only counts, and source-provider counts in call metadata
 - `recordLlmToolResultItem()` stores `ask_user_questions` tool-result payloads as provider replay input items
@@ -228,12 +231,13 @@ Catalog entries are preferred for product IDs. Legacy aliases remain as hidden c
 
 Barrel exports and provider initialization.
 
-**Exports**: All canonical types, catalog helpers, reasoning policy helpers, provider-ledger helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`
+**Exports**: All canonical types, catalog helpers, reasoning policy helpers, provider-ledger helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`, `Ds4ChatCompletionsProvider`
 
 **`initializeProviders()`**: Called at startup to register providers based on config:
 ```typescript
 providerRegistry.unregister("openai");
 providerRegistry.unregister("anthropic");
+providerRegistry.unregister("ds4");
 
 if (config.openaiApiKey) {
   providerRegistry.register(new OpenAIProvider(config.openaiApiKey, { ... }));
@@ -241,11 +245,15 @@ if (config.openaiApiKey) {
 if (config.anthropicApiKey) {
   providerRegistry.register(new AnthropicProvider(config.anthropicApiKey, { ... }));
 }
+if (config.ds4DirectBaseUrl) {
+  providerRegistry.register(createDs4ProviderFromConfig());
+}
 ```
 
 - provider-less startup is valid for local development and auth/device-claim flows
 - provider-backed features degrade at call sites instead of crashing service boot
 - re-running initialization refreshes the built-in provider registrations instead of accumulating stale entries
+- `DS4_DIRECT_BASE_URL` is the only switch for the direct local-dev ds4 provider; `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, and `DS4_DIRECT_MAX_OUTPUT_TOKENS` tune the local endpoint profile
 
 ## Subfolders
 
@@ -316,6 +324,13 @@ Each provider transforms canonical schemas to their specific requirements:
 - Uses canonical schema directly with minimal transformation
 - Optional fields remain outside `required` array
 
+**ds4** (OpenAI-compatible Chat Completions):
+- Sends canonical messages through `/chat/completions` with `stream: true`
+- Lowers tool definitions to Chat Completions `tools[].function`
+- Converts canonical tool-result blocks to `role: "tool"` messages
+- Emits canonical text/tool stream events from SSE `choices[].delta`
+- Does not send reasoning controls
+
 ## Dependencies
 
 | Package | Purpose |
@@ -323,6 +338,8 @@ Each provider transforms canonical schemas to their specific requirements:
 | `openai` | OpenAI SDK for Responses API |
 | `@types/json-schema` | JSONSchema7 type definitions |
 | `@anthropic-ai/sdk` | Anthropic SDK for Messages API, including adaptive-thinking request passthrough |
+
+The direct ds4 provider uses the platform `fetch` API and does not add a package dependency.
 
 ## TODOs / Technical Debt
 

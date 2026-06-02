@@ -184,11 +184,62 @@ Budget calculation is used for Haiku 4.5 manual thinking and legacy fallback onl
 | `applyReasoningConfig()` | Lower catalog reasoning controls to Anthropic request fields |
 | `buildHeaders()` | Add manual interleaved-thinking beta header only when requested |
 
+### `ds4.ts`
+
+Direct local-dev ds4 provider using ds4's OpenAI-compatible Chat Completions endpoint.
+
+**Supported Models**:
+| Model | Type | Notes |
+|-------|------|-------|
+| `deepseek-v4-flash` | Local DeepSeek | Exposed through catalog product ID `ds4-deepseek-v4-flash` when `DS4_DIRECT_BASE_URL` is configured |
+| `DS4_DIRECT_MODEL` value | Local override | Optional request model override for local ds4 servers using a different model string |
+
+**Key Features**:
+- **Config gated**: Registered only when `DS4_DIRECT_BASE_URL` is non-empty
+- **Base URL normalization**: Accepts `127.0.0.1:8000/v1` by adding `http://`; rejects `127.0.0.0` with a setup error because it does not reach the ds4 listener
+- **SDK-free**: Uses the platform `fetch` API against `${baseURL}/chat/completions`
+- **OpenAI-compatible tools**: Lowers canonical tools to Chat Completions `tools[].function`
+- **Canonical replay**: Converts assistant `tool_use` blocks to `tool_calls` and user `tool_result` blocks to `role: "tool"` messages
+- **SSE streaming**: Parses `data:` SSE chunks and maps `choices[].delta` text/tool-call fragments into canonical stream events
+- **Diagnostics**: Attaches the last structured Chat Completions chunk to `message_done.providerData`
+- **Context-window errors**: Normalizes likely ds4 token/context failures into `ProviderContextWindowError`
+- **No reasoning controls**: The catalog exposes only `reasoning_effort: none`
+
+**Message Transformation**:
+| Canonical | ds4 Chat Completions |
+|-----------|----------------------|
+| System text | `{ role: "system", content }` |
+| User text | `{ role: "user", content }` |
+| Assistant text | `{ role: "assistant", content }` |
+| Tool use | Assistant `tool_calls[]` entry with JSON string arguments |
+| Tool result | `{ role: "tool", tool_call_id, content }` |
+| Image input | Text placeholder because the direct ds4 profile is text-only |
+
+**Streaming Events Mapped**:
+| Chat Completions SSE Chunk | Canonical Event |
+|----------------------------|-----------------|
+| first structured chunk `id` | `message_start` |
+| `delta.content` | `content_start` then `text_delta` |
+| `delta.tool_calls[].function.arguments` | `tool_use_delta` |
+| `finish_reason: "tool_calls"` | `tool_use_done` then `message_done` with `tool_use` |
+| `finish_reason: "length"` | `message_done` with `max_tokens` |
+| `usage.prompt_tokens` / `completion_tokens` | canonical `TokenUsage` |
+
+**Public Methods**:
+| Method | Description |
+|--------|-------------|
+| `invoke()` | Streaming invocation through Chat Completions SSE |
+| `supportsModel()` | Check configured/default ds4 model strings |
+| `getModelCapabilities()` | Return catalog-backed ds4 limits or configured fallback limits |
+
 ### `providers.test.ts`
 
 Direct request-shape tests for provider lowering without live API calls.
 
 **Current Coverage**:
+- ds4 Chat Completions request construction, including base URL trimming, tool messages, named tool choice, JSON response format, and configured request model override
+- ds4 local base URL normalization and rejection of the common `127.0.0.0` typo
+- ds4 SSE parsing for streamed text, streamed tool-call arguments, `tool_calls` stop reason, usage, and provider diagnostics
 - OpenAI `xhigh` sends `reasoning.effort` and `none` omits reasoning
 - OpenAI requests encrypted reasoning content and disables parallel tool calls
 - OpenAI streamed function calls preserve `call_id` and tool name from output-item metadata when arguments finish
@@ -210,15 +261,15 @@ Direct request-shape tests for provider lowering without live API calls.
 
 ## Provider Comparison
 
-| Feature | OpenAI | Anthropic |
-|---------|--------|-----------|
-| **System prompt** | Message item | Separate `system` param |
-| **Tool results** | `function_call_output` item | `tool_result` content block |
-| **Tool call args** | JSON string | Parsed object |
-| **Max tokens** | Optional | **Required** |
-| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy |
-| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent |
-| **JSON mode** | `text.format.type` | Use structured tool output |
+| Feature | OpenAI | Anthropic | ds4 |
+|---------|--------|-----------|-----|
+| **System prompt** | Message item | Separate `system` param | Chat message |
+| **Tool results** | `function_call_output` item | `tool_result` content block | `role: "tool"` message |
+| **Tool call args** | JSON string | Parsed object | JSON string |
+| **Max tokens** | Optional | **Required** | `max_tokens` always sent |
+| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy | none |
+| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent | Ignored; no Chat Completions equivalent |
+| **JSON mode** | `text.format.type` | Use structured tool output | `response_format: { type: "json_object" }` |
 
 ## Adding a New Provider
 
@@ -250,6 +301,8 @@ export class NewProvider implements LLMProvider {
 |---------|----------|---------|
 | `openai` | OpenAI | Responses API SDK |
 | `@anthropic-ai/sdk` | Anthropic | Messages API SDK |
+
+The ds4 provider uses platform `fetch` and adds no SDK dependency.
 
 ---
 

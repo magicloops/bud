@@ -1,13 +1,14 @@
 /**
  * LLM Provider Abstraction Layer
  *
- * Provides a unified interface for multiple LLM providers (OpenAI, Anthropic).
+ * Provides a unified interface for multiple LLM providers (OpenAI, Anthropic, ds4).
  */
 
 import { config } from "../config.js";
 import { providerRegistry } from "./registry.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
+import { createDs4ProviderFromConfig } from "./providers/ds4.js";
 
 // Types
 export type {
@@ -89,6 +90,10 @@ export { ProviderRegistry, providerRegistry } from "./registry.js";
 // Providers
 export { OpenAIProvider } from "./providers/openai.js";
 export { AnthropicProvider } from "./providers/anthropic.js";
+export {
+  Ds4ChatCompletionsProvider,
+  createDs4ProviderFromConfig,
+} from "./providers/ds4.js";
 
 /**
  * Initialize LLM providers based on configuration.
@@ -97,6 +102,7 @@ export { AnthropicProvider } from "./providers/anthropic.js";
 export function initializeProviders(): void {
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
+  providerRegistry.unregister("ds4");
 
   // Register OpenAI provider if API key is configured
   if (config.openaiApiKey) {
@@ -112,6 +118,12 @@ export function initializeProviders(): void {
       timeout: config.anthropicTimeout,
     });
     providerRegistry.register(anthropic);
+  }
+
+  // Register direct local-dev ds4 provider when an OpenAI-compatible endpoint is configured.
+  const ds4 = createDs4ProviderFromConfig();
+  if (ds4) {
+    providerRegistry.register(ds4);
   }
 
   // Provider-less startup is valid for local development and non-LLM flows.
