@@ -571,6 +571,16 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/terminal-freshness/validation-checklist.md](./plan/terminal-freshness/validation-checklist.md) | Manual and automated validation checklist for terminal freshness hints |
 | [plan/offline-bud-message-send-preflight.md](./plan/offline-bud-message-send-preflight.md) | Phase plan for fixing offline-Bud message sends by rejecting known-offline fresh sends before durable message side effects, while preserving an explicit post-insert race fallback when agent startup loses transport |
 | [plan/llm-models/implementation-spec.md](./plan/llm-models/implementation-spec.md) | Phased implementation plan for centralizing Bud's model catalog, adding the Opus 4.6/4.7 and GPT-5.4/GPT-5.5 model set, and making reasoning controls provider/model-specific |
+| [plan/ds4/ds4.spec.md](./plan/ds4/ds4.spec.md) | Folder spec for adding ds4 as a local LLM provider first through direct local service config and then through Bud-scoped local LLM daemon capabilities |
+| [plan/ds4/implementation-spec.md](./plan/ds4/implementation-spec.md) | Phased implementation plan for exposing ds4 as provider `ds4`, adding Bud-scoped model inventory, and invoking Bud-local ds4 through a narrow data-plane stream |
+| [plan/ds4/phase-0-contract-baseline-and-fixtures.md](./plan/ds4/phase-0-contract-baseline-and-fixtures.md) | Contract baseline phase covering ds4 fixtures, model alias policy, request-mode names, reasoning behavior, and initial limits |
+| [plan/ds4/phase-1-direct-local-dev-provider.md](./plan/ds4/phase-1-direct-local-dev-provider.md) | Direct local-dev phase covering service-side ds4 provider registration, Chat Completions parsing, and same-machine ds4 live smoke tests |
+| [plan/ds4/phase-2-daemon-local-llm-capability.md](./plan/ds4/phase-2-daemon-local-llm-capability.md) | Daemon capability phase covering local ds4 config, startup probe, loopback validation, and `capabilities.llm` preservation |
+| [plan/ds4/phase-3-bud-scoped-model-inventory-and-selection.md](./plan/ds4/phase-3-bud-scoped-model-inventory-and-selection.md) | API and selection phase covering Bud-scoped model inventory, owner authorization, ds4 availability validation, and web selector adoption |
+| [plan/ds4/phase-4-local-llm-data-plane-provider.md](./plan/ds4/phase-4-local-llm-data-plane-provider.md) | Bud-backed invocation phase covering `local_llm_http`, daemon loopback forwarding policy, `BudLocalDs4Provider`, cancellation, and provider-ledger recording |
+| [plan/ds4/phase-5-responses-hardening-and-rollout.md](./plan/ds4/phase-5-responses-hardening-and-rollout.md) | Finalization phase covering ds4 Responses compatibility decisions, limits, audit, live validation, and product/deployment handoff |
+| [plan/ds4/progress-checklist.md](./plan/ds4/progress-checklist.md) | Running implementation checklist for the ds4 local LLM rollout |
+| [plan/ds4/validation-checklist.md](./plan/ds4/validation-checklist.md) | Automated and manual validation checklist for direct and Bud-backed ds4 support |
 | [plan/openai-phases/openai-phases.spec.md](./plan/openai-phases/openai-phases.spec.md) | Folder spec for preserving OpenAI Responses assistant message `phase` values across Bud's manual replay path while keeping Anthropic behavior unchanged |
 | [plan/openai-phases/implementation-spec.md](./plan/openai-phases/implementation-spec.md) | Parent implementation spec for preserving OpenAI Responses assistant `phase` through canonical types, OpenAI provider round trip, provider-ledger persistence, transcript fallback, and validation |
 | [plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md](./plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md) | SDK and fixture-baseline phase covering the OpenAI SDK `6.39.0` update, Responses `phase` type inspection, and provider fixture shapes |
@@ -803,6 +813,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/mobile-context-compaction-handoff.md](./design/mobile-context-compaction-handoff.md) | Mobile handoff for implementing context budget UI and automatic compaction stream markers without exposing checkpoint internals or changing the visible transcript |
 | [design/llm-model-catalog-and-reasoning-controls.md](./design/llm-model-catalog-and-reasoning-controls.md) | Design sketch for centralizing Bud's LLM model catalog, making reasoning controls provider/model-specific, and planning the Opus 4.6/4.7 plus GPT-5.4/GPT-5.5 rollout |
 | [design/model-preferences-and-thread-overrides.md](./design/model-preferences-and-thread-overrides.md) | Design for persisting model/reasoning selection at the thread level, defaulting new work to GPT-5.5 low, and recording effective model metadata on new turn messages |
+| [design/local-ds4-llm-over-bud.md](./design/local-ds4-llm-over-bud.md) | Proposed path for exposing ds4 first as a direct local-dev provider, then as a Bud-advertised local LLM capability reachable through a narrow daemon data-plane stream |
 | [design/message-client-id-and-stable-message-identity.md](./design/message-client-id-and-stable-message-identity.md) | Design for adding a UUIDv7 `client_id` to messages as a stable public/UI identity while retaining `message_id` as the persisted row identifier, and threading that new identity through `/messages`, `/agent/state`, and agent SSE payloads |
 | [design/thread-title-generation-and-streaming.md](./design/thread-title-generation-and-streaming.md) | Design for generating a short thread title from the first user message, persisting it onto `thread.title`, and streaming title updates over the existing thread agent stream |
 | [design/mobile-thread-title-stream-handoff.md](./design/mobile-thread-title-stream-handoff.md) | Mobile handoff for the new streamed thread-title update contract, covering the `thread.title` event, client reducer expectations, and recovery rules |
@@ -839,4 +850,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-30*
+*Last updated: 2026-06-02*
