@@ -8,11 +8,32 @@ Contains files served as-is from the web root. These bypass Vite's asset pipelin
 
 ## Files
 
-### `vite.svg`
+### Favicon and App Icon Assets
 
-Vite logo SVG. Default template asset.
+Browser and install-surface icons for Bud:
 
-**Served at**: `/vite.svg`
+- `favicon.ico`
+- `favicon-16x16.png`
+- `favicon-32x32.png`
+- `apple-touch-icon.png`
+- `android-chrome-192x192.png`
+- `android-chrome-512x512.png`
+
+These are referenced from `web/index.html` and, for the Android Chrome icons,
+from `site.webmanifest`.
+
+### `site.webmanifest`
+
+Web App Manifest served directly at `/site.webmanifest`. Vite treats this as a
+normal public asset; the browser discovers it through the manifest link in
+`web/index.html`.
+
+### Logo and Provider Assets
+
+- `bud_logo.png`
+- `bud_logo_web.png`
+- `bud_logo_web_dark.png`
+- `GitHub_Invertocat_Black.png`
 
 ## Notes
 
