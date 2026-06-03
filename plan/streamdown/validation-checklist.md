@@ -38,6 +38,8 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] fenced TypeScript block renders with highlighting
 - [ ] fenced shell block renders with highlighting
 - [ ] code block chrome matches Bud's compact message styling
+- [ ] code block surface has no visible outer border
+- [ ] code block corners visually align with Mermaid/table rich-block surfaces
 - [ ] code font size is close to the previous renderer density or intentionally revised
 - [ ] chat line-number behavior is explicit and unobtrusive
 - [ ] code copy control works

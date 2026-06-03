@@ -194,7 +194,7 @@
   content-visibility: visible !important;
   overflow: visible;
   position: relative;
-  border-color: var(--muted);
+  border: 0;
   border-radius: var(--radius);
   background: #24292f;
   padding: 0;
@@ -276,7 +276,7 @@
   max-width: 100%;
   overflow-x: auto;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius);
   background: #24292f;
   color: #c9d1d9;
   padding: 0.875rem 0.75rem 0.75rem;
