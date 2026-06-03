@@ -26,96 +26,6 @@ type Ds4ProviderConfig = {
   fetch?: FetchLike;
 };
 
-type ChatMessage =
-  | {
-      role: "system" | "user" | "assistant";
-      content: string | null;
-      tool_calls?: ChatToolCall[];
-    }
-  | {
-      role: "tool";
-      tool_call_id: string;
-      content: string;
-    };
-
-type ChatToolCall = {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-};
-
-type ChatCompletionTool = {
-  type: "function";
-  function: {
-    name: string;
-    description?: string;
-    parameters: Record<string, unknown>;
-  };
-};
-
-type ChatToolChoice =
-  | "auto"
-  | "none"
-  | "required"
-  | {
-      type: "function";
-      function: {
-        name: string;
-      };
-    };
-
-type ChatCompletionRequest = {
-  model: string;
-  messages: ChatMessage[];
-  stream: true;
-  stream_options: {
-    include_usage: true;
-  };
-  max_tokens: number;
-  temperature?: number;
-  top_p?: number;
-  response_format?: {
-    type: "json_object";
-  };
-  tools?: ChatCompletionTool[];
-  tool_choice?: ChatToolChoice;
-};
-
-type ChatCompletionChunk = {
-  id?: string;
-  model?: string;
-  choices?: Array<{
-    delta?: {
-      content?: string | null;
-      reasoning_content?: string | null;
-      tool_calls?: Array<{
-        index?: number;
-        id?: string;
-        type?: "function";
-        function?: {
-          name?: string;
-          arguments?: string;
-        };
-      }>;
-    };
-    finish_reason?: string | null;
-  }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-    prompt_tokens_details?: {
-      cached_tokens?: number;
-    };
-    completion_tokens_details?: {
-      reasoning_tokens?: number;
-    };
-  } | null;
-};
-
 type ResponsesInputItem = Record<string, unknown>;
 
 type ResponsesMessageContent =
@@ -215,311 +125,10 @@ type ToolUseDoneEvent = Extract<
   { type: "tool_use_done" }
 >;
 
-type Ds4StreamDiagnostics = {
-  chunkCount: number;
-  parseErrorCount: number;
-  contentDeltaCount: number;
-  contentCharCount: number;
-  reasoningDeltaCount: number;
-  reasoningCharCount: number;
-  toolCallDeltaCount: number;
-  toolCallArgumentCharCount: number;
-  usageChunkCount: number;
-  finishReasons: string[];
-  deltaKeys: string[];
-};
-
-type MutableDs4StreamDiagnostics = Omit<
-  Ds4StreamDiagnostics,
-  "finishReasons" | "deltaKeys"
-> & {
-  finishReasons: Set<string>;
-  deltaKeys: Set<string>;
-};
-
 const PROVIDER_ID: CanonicalProviderId = "ds4";
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 100_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 128_000;
-
-export class Ds4ChatCompletionsProvider implements LLMProvider {
-  readonly name = PROVIDER_ID;
-  readonly supportedModels: string[];
-
-  private readonly baseURL: string;
-  private readonly model: string;
-  private readonly contextWindowTokens: number;
-  private readonly maxOutputTokens: number;
-  private readonly fetchImpl: FetchLike;
-
-  constructor(providerConfig: Ds4ProviderConfig) {
-    if (!providerConfig.baseURL.trim()) {
-      throw new Error("ds4 provider requires a baseURL");
-    }
-
-    this.baseURL = normalizeDs4BaseUrl(providerConfig.baseURL);
-    this.model = providerConfig.model ?? DEFAULT_MODEL;
-    this.contextWindowTokens =
-      providerConfig.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
-    this.maxOutputTokens =
-      providerConfig.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
-    this.fetchImpl = providerConfig.fetch ?? fetch;
-    this.supportedModels = Array.from(new Set([DEFAULT_MODEL, this.model]));
-  }
-
-  supportsModel(model: string): boolean {
-    return this.supportedModels.includes(model);
-  }
-
-  getModelCapabilities(model: string): ModelCapabilities {
-    const catalogEntry = getCatalogEntry(model);
-    if (catalogEntry?.provider === PROVIDER_ID) {
-      return {
-        supportsVision: catalogEntry.capabilities.vision,
-        supportsTools: catalogEntry.capabilities.tools,
-        supportsStreaming: catalogEntry.capabilities.streaming,
-        supportsJsonMode: catalogEntry.capabilities.structuredOutputs,
-        maxContextTokens: catalogEntry.capabilities.contextWindowTokens,
-        maxOutputTokens: catalogEntry.capabilities.maxOutputTokens,
-        supportsReasoning: false,
-        supportsThinking: false,
-        supportsInterleavedThinking: false,
-      };
-    }
-
-    return {
-      supportsVision: false,
-      supportsTools: true,
-      supportsStreaming: true,
-      supportsJsonMode: false,
-      maxContextTokens: this.contextWindowTokens,
-      maxOutputTokens: this.maxOutputTokens,
-      supportsReasoning: false,
-      supportsThinking: false,
-      supportsInterleavedThinking: false,
-    };
-  }
-
-  async *invoke(
-    messages: CanonicalMessage[],
-    tools: CanonicalTool[],
-    modelConfig: ModelConfig,
-    signal?: AbortSignal,
-  ): AsyncIterable<CanonicalStreamEvent> {
-    const response = await this.fetchImpl(`${this.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Accept: "text/event-stream",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(this.buildRequest(messages, tools, modelConfig)),
-      signal,
-    });
-
-    if (!response.ok) {
-      throw await this.toProviderError(response);
-    }
-
-    if (!response.body) {
-      throw new Error("ds4 chat completions response did not include a body");
-    }
-
-    yield* this.transformStream(readSseData(response.body));
-  }
-
-  buildDebugRequestSnapshot(
-    messages: CanonicalMessage[],
-    tools: CanonicalTool[],
-    modelConfig: ModelConfig,
-  ): unknown {
-    return this.buildRequest(messages, tools, modelConfig);
-  }
-
-  private buildRequest(
-    messages: CanonicalMessage[],
-    tools: CanonicalTool[],
-    modelConfig: ModelConfig,
-  ): ChatCompletionRequest {
-    const request: ChatCompletionRequest = {
-      model: this.model,
-      messages: toChatMessages(messages),
-      stream: true,
-      stream_options: {
-        include_usage: true,
-      },
-      max_tokens: modelConfig.maxOutputTokens ?? this.maxOutputTokens,
-    };
-
-    if (typeof modelConfig.temperature === "number") {
-      request.temperature = modelConfig.temperature;
-    }
-    if (typeof modelConfig.topP === "number") {
-      request.top_p = modelConfig.topP;
-    }
-    if (modelConfig.responseFormat === "json") {
-      request.response_format = { type: "json_object" };
-    }
-
-    const chatTools = toChatTools(tools);
-    if (chatTools.length > 0) {
-      request.tools = chatTools;
-      request.tool_choice = toChatToolChoice(modelConfig.toolChoice);
-    } else if (modelConfig.toolChoice === "none") {
-      request.tool_choice = "none";
-    }
-
-    return request;
-  }
-
-  private async toProviderError(response: Response): Promise<Error> {
-    const text = await response.text().catch(() => "");
-    const message = text
-      ? `ds4 chat completions request failed with ${response.status}: ${text}`
-      : `ds4 chat completions request failed with ${response.status}`;
-
-    if (isContextWindowError(response.status, text)) {
-      return new ProviderContextWindowError({
-        provider: PROVIDER_ID,
-        model: this.model,
-        message,
-      });
-    }
-
-    return new Error(message);
-  }
-
-  private async *transformStream(
-    stream: AsyncIterable<string>,
-  ): AsyncIterable<CanonicalStreamEvent> {
-    let messageStarted = false;
-    let textStarted = false;
-    let responseId = `ds4-${ulid()}`;
-    let stopReason: CanonicalStopReason = "end_turn";
-    let usage: TokenUsage | undefined;
-    let finalPayload: ChatCompletionChunk | { done: true } | undefined;
-    const pendingTools = new Map<number, PendingToolCall>();
-    const streamDiagnostics = createStreamDiagnostics();
-
-    for await (const data of stream) {
-      if (data === "[DONE]") {
-        finalPayload ??= { done: true };
-        break;
-      }
-
-      const chunk = parseChunk(data);
-      if (!chunk) {
-        streamDiagnostics.parseErrorCount += 1;
-        continue;
-      }
-
-      recordStreamDiagnostics(streamDiagnostics, chunk);
-      finalPayload = chunk;
-      if (chunk.id) {
-        responseId = chunk.id;
-      }
-
-      if (!messageStarted) {
-        messageStarted = true;
-        yield { type: "message_start", id: responseId };
-      }
-
-      const choice = chunk.choices?.[0];
-      const delta = choice?.delta;
-
-      if (typeof delta?.content === "string" && delta.content.length > 0) {
-        if (!textStarted) {
-          textStarted = true;
-          yield {
-            type: "content_start",
-            index: 0,
-            content_type: "text",
-          };
-        }
-        yield {
-          type: "text_delta",
-          index: 0,
-          delta: delta.content,
-        };
-      }
-
-      for (const toolCall of delta?.tool_calls ?? []) {
-        const toolIndex = toolCall.index ?? pendingTools.size;
-        const pending =
-          pendingTools.get(toolIndex) ??
-          createPendingToolCall(toolIndex, pendingTools.size);
-
-        if (toolCall.id) {
-          pending.id = toolCall.id;
-        }
-        if (toolCall.function?.name) {
-          pending.name = toolCall.function.name;
-        }
-        if (typeof toolCall.function?.arguments === "string") {
-          pending.argumentsText += toolCall.function.arguments;
-        }
-
-        pendingTools.set(toolIndex, pending);
-
-        if (!pending.started && pending.id && pending.name) {
-          pending.started = true;
-          yield {
-            type: "tool_use_start",
-            index: pending.eventIndex,
-            id: pending.id,
-            name: pending.name,
-          };
-        }
-
-        if (pending.started && toolCall.function?.arguments) {
-          yield {
-            type: "tool_use_delta",
-            index: pending.eventIndex,
-            delta: toolCall.function.arguments,
-          };
-        }
-      }
-
-      if (choice?.finish_reason) {
-        stopReason = mapStopReason(choice.finish_reason);
-      }
-      if (chunk.usage) {
-        usage = toUsage(chunk.usage);
-      }
-
-      if (choice?.finish_reason === "tool_calls") {
-        for (const event of doneToolCalls(pendingTools)) {
-          yield event;
-        }
-      }
-    }
-
-    if (!messageStarted) {
-      messageStarted = true;
-      yield { type: "message_start", id: responseId };
-    }
-
-    for (const event of doneToolCalls(pendingTools)) {
-      yield event;
-    }
-
-    if (textStarted) {
-      yield { type: "content_done", index: 0 };
-    }
-
-    yield {
-      type: "message_done",
-      stop_reason: stopReason,
-      usage,
-      providerData: {
-        provider: PROVIDER_ID,
-        payload: {
-          streamDiagnostics: finalizeStreamDiagnostics(streamDiagnostics),
-          finalChunk: finalPayload ?? { done: true },
-        },
-      },
-    };
-  }
-}
 
 export class Ds4ResponsesProvider implements LLMProvider {
   readonly name = PROVIDER_ID;
@@ -1101,21 +710,17 @@ export class Ds4ResponsesProvider implements LLMProvider {
   }
 }
 
-export function createDs4ProviderFromConfig(): Ds4ChatCompletionsProvider | Ds4ResponsesProvider | null {
+export function createDs4ProviderFromConfig(): Ds4ResponsesProvider | null {
   if (!config.ds4DirectBaseUrl) {
     return null;
   }
 
-  const providerConfig = {
+  return new Ds4ResponsesProvider({
     baseURL: config.ds4DirectBaseUrl,
     model: config.ds4DirectModel,
     contextWindowTokens: config.ds4DirectContextTokens,
     maxOutputTokens: config.ds4DirectMaxOutputTokens,
-  };
-
-  return config.ds4DirectEndpoint === "chat_completions"
-    ? new Ds4ChatCompletionsProvider(providerConfig)
-    : new Ds4ResponsesProvider(providerConfig);
+  });
 }
 
 function normalizeDs4BaseUrl(baseURL: string): string {
@@ -1147,120 +752,6 @@ function normalizeDs4BaseUrl(baseURL: string): string {
   }
 
   return parsed.toString().replace(/\/+$/, "");
-}
-
-function toChatMessages(messages: CanonicalMessage[]): ChatMessage[] {
-  const chatMessages: ChatMessage[] = [];
-
-  for (const message of messages) {
-    const blocks = normalizeContent(message.content);
-
-    if (message.role === "system") {
-      chatMessages.push({
-        role: "system",
-        content: textContent(blocks),
-      });
-      continue;
-    }
-
-    if (message.role === "user") {
-      let textParts: string[] = [];
-      const flushUserText = () => {
-        if (textParts.length === 0) {
-          return;
-        }
-        chatMessages.push({
-          role: "user",
-          content: textParts.join("\n"),
-        });
-        textParts = [];
-      };
-
-      for (const block of blocks) {
-        if (block.type === "text") {
-          textParts.push(block.text);
-          continue;
-        }
-
-        if (block.type === "image") {
-          textParts.push("[Image input omitted: ds4 direct provider is text-only]");
-          continue;
-        }
-
-        if (block.type === "tool_result") {
-          flushUserText();
-          chatMessages.push({
-            role: "tool",
-            tool_call_id: block.tool_use_id,
-            content: serializeToolResult(block.content),
-          });
-        }
-      }
-
-      flushUserText();
-      continue;
-    }
-
-    const assistantText: string[] = [];
-    const toolCalls: ChatToolCall[] = [];
-    for (const block of blocks) {
-      if (block.type === "text") {
-        assistantText.push(block.text);
-        continue;
-      }
-
-      if (block.type === "tool_use") {
-        toolCalls.push({
-          id: block.id,
-          type: "function",
-          function: {
-            name: block.name,
-            arguments: JSON.stringify(block.input),
-          },
-        });
-      }
-    }
-
-    if (assistantText.length > 0 || toolCalls.length > 0) {
-      chatMessages.push({
-        role: "assistant",
-        content: assistantText.length > 0 ? assistantText.join("\n") : null,
-        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-      });
-    }
-  }
-
-  return chatMessages;
-}
-
-function toChatTools(tools: CanonicalTool[]): ChatCompletionTool[] {
-  return tools.map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters as Record<string, unknown>,
-    },
-  }));
-}
-
-function toChatToolChoice(toolChoice: ToolChoice | undefined): ChatToolChoice {
-  if (!toolChoice || toolChoice === "auto") {
-    return "auto";
-  }
-  if (toolChoice === "none") {
-    return "none";
-  }
-  if (toolChoice === "required") {
-    return "required";
-  }
-
-  return {
-    type: "function",
-    function: {
-      name: toolChoice.name,
-    },
-  };
 }
 
 function toResponsesInput(messages: CanonicalMessage[]): {
@@ -1473,14 +964,6 @@ async function* readSseData(
   }
 }
 
-function parseChunk(data: string): ChatCompletionChunk | null {
-  try {
-    return JSON.parse(data) as ChatCompletionChunk;
-  } catch {
-    return null;
-  }
-}
-
 function parseResponsesEvent(data: string): ResponsesStreamEvent | null {
   try {
     const parsed = JSON.parse(data) as unknown;
@@ -1488,22 +971,6 @@ function parseResponsesEvent(data: string): ResponsesStreamEvent | null {
   } catch {
     return null;
   }
-}
-
-function createStreamDiagnostics(): MutableDs4StreamDiagnostics {
-  return {
-    chunkCount: 0,
-    parseErrorCount: 0,
-    contentDeltaCount: 0,
-    contentCharCount: 0,
-    reasoningDeltaCount: 0,
-    reasoningCharCount: 0,
-    toolCallDeltaCount: 0,
-    toolCallArgumentCharCount: 0,
-    usageChunkCount: 0,
-    finishReasons: new Set(),
-    deltaKeys: new Set(),
-  };
 }
 
 function createResponsesStreamDiagnostics(): MutableDs4ResponsesStreamDiagnostics {
@@ -1518,45 +985,6 @@ function createResponsesStreamDiagnostics(): MutableDs4ResponsesStreamDiagnostic
     toolCallArgumentCharCount: 0,
     eventTypes: new Set(),
   };
-}
-
-function recordStreamDiagnostics(
-  diagnostics: MutableDs4StreamDiagnostics,
-  chunk: ChatCompletionChunk,
-): void {
-  diagnostics.chunkCount += 1;
-
-  const choice = chunk.choices?.[0];
-  const delta = choice?.delta;
-  if (delta) {
-    for (const key of Object.keys(delta)) {
-      diagnostics.deltaKeys.add(key);
-    }
-    if (typeof delta.content === "string" && delta.content.length > 0) {
-      diagnostics.contentDeltaCount += 1;
-      diagnostics.contentCharCount += delta.content.length;
-    }
-    if (
-      typeof delta.reasoning_content === "string" &&
-      delta.reasoning_content.length > 0
-    ) {
-      diagnostics.reasoningDeltaCount += 1;
-      diagnostics.reasoningCharCount += delta.reasoning_content.length;
-    }
-    for (const toolCall of delta.tool_calls ?? []) {
-      diagnostics.toolCallDeltaCount += 1;
-      if (typeof toolCall.function?.arguments === "string") {
-        diagnostics.toolCallArgumentCharCount += toolCall.function.arguments.length;
-      }
-    }
-  }
-
-  if (choice?.finish_reason) {
-    diagnostics.finishReasons.add(choice.finish_reason);
-  }
-  if (chunk.usage) {
-    diagnostics.usageChunkCount += 1;
-  }
 }
 
 function recordResponsesStreamDiagnostics(
@@ -1595,16 +1023,6 @@ function recordResponsesStreamDiagnostics(
       diagnostics.toolCallArgumentCharCount += delta.length;
     }
   }
-}
-
-function finalizeStreamDiagnostics(
-  diagnostics: MutableDs4StreamDiagnostics,
-): Ds4StreamDiagnostics {
-  return {
-    ...diagnostics,
-    finishReasons: [...diagnostics.finishReasons].sort(),
-    deltaKeys: [...diagnostics.deltaKeys].sort(),
-  };
 }
 
 function finalizeResponsesStreamDiagnostics(
@@ -1664,29 +1082,6 @@ function* doneAllResponseToolCalls(
   calls.sort((left, right) => left.sourceIndex - right.sourceIndex);
   for (const call of calls) {
     yield* doneResponseToolCall(call);
-  }
-}
-
-function* doneToolCalls(
-  pendingTools: Map<number, PendingToolCall>,
-): Iterable<ToolUseDoneEvent> {
-  const calls = [...pendingTools.values()].sort(
-    (a, b) => a.sourceIndex - b.sourceIndex,
-  );
-
-  for (const call of calls) {
-    if (call.done || !call.started) {
-      continue;
-    }
-
-    call.done = true;
-    yield {
-      type: "tool_use_done",
-      index: call.eventIndex,
-      id: call.id,
-      name: call.name,
-      input: parseToolArguments(call.argumentsText),
-    };
   }
 }
 
@@ -1758,17 +1153,6 @@ function reasoningTextFromItem(item: Record<string, unknown>): string {
   return "";
 }
 
-function toUsage(
-  usage: NonNullable<ChatCompletionChunk["usage"]>,
-): TokenUsage {
-  return {
-    input_tokens: usage.prompt_tokens ?? 0,
-    output_tokens: usage.completion_tokens ?? 0,
-    cached_input_tokens: usage.prompt_tokens_details?.cached_tokens,
-    reasoning_tokens: usage.completion_tokens_details?.reasoning_tokens,
-  };
-}
-
 function toResponsesUsage(usage: unknown): TokenUsage | undefined {
   if (!isRecord(usage)) {
     return undefined;
@@ -1793,20 +1177,6 @@ function toResponsesUsage(usage: unknown): TokenUsage | undefined {
         ? outputDetails.reasoning_tokens
         : undefined,
   };
-}
-
-function mapStopReason(reason: string): CanonicalStopReason {
-  if (reason === "tool_calls") {
-    return "tool_use";
-  }
-  if (reason === "length") {
-    return "max_tokens";
-  }
-  if (reason === "content_filter") {
-    return "error";
-  }
-
-  return "end_turn";
 }
 
 function mapResponsesStopReason(status: string): CanonicalStopReason {

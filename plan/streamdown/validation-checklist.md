@@ -48,6 +48,7 @@ Companion checklist for [implementation-spec.md](./implementation-spec.md).
 - [ ] code copy control remains visible on mobile/coarse-pointer devices
 - [ ] code copy control appears above the code surface without shifting layout
 - [ ] code copy control background uses the dark code surface treatment
+- [ ] multi-line fenced code preserves line breaks when chat line numbers are disabled
 - [ ] no-language fenced code renders without a visible header
 - [ ] wide code blocks scroll or wrap acceptably without breaking the message bubble
 

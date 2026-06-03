@@ -4,7 +4,7 @@
 
 - Local ds4 server is already running at `http://127.0.0.1:8000/v1`.
 - Original failing setup used the Phase 1 direct ds4 provider through OpenAI-compatible Chat Completions.
-- Phase 1.5 now defaults direct ds4 to `/v1/responses` when `DS4_DIRECT_ENDPOINT` is unset or set to `responses`; Chat Completions remains available with `DS4_DIRECT_ENDPOINT=chat_completions`.
+- Phase 1.6 removed `DS4_DIRECT_ENDPOINT` and the active Chat Completions provider fallback; Bud's direct ds4 provider now uses `/v1/responses` only.
 - Relevant env:
   - `DS4_DIRECT_BASE_URL=http://127.0.0.1:8000/v1`
   - `DS4_DIRECT_MODEL=deepseek-v4-flash`
@@ -292,12 +292,12 @@ After capture confirms the root cause:
    - ds4 streamed reasoning is either preserved or intentionally excluded with a documented compatibility decision
    - provider reconstruction diagnostics stay `provider_native` during a ds4 tool loop
 
-### Follow-up: Responses direct provider implemented
+### Follow-up: Responses direct provider implemented and Chat fallback removed
 
-Phase 1.5 now implements a direct `Ds4ResponsesProvider` selected by default when `DS4_DIRECT_BASE_URL` is configured:
+Phase 1.5 implemented a direct `Ds4ResponsesProvider`, and Phase 1.6 removed the active Chat Completions fallback. When `DS4_DIRECT_BASE_URL` is configured:
 
-- `DS4_DIRECT_ENDPOINT=responses` posts to `/v1/responses` and records provider-ledger request mode `ds4_openai_responses`.
-- `DS4_DIRECT_ENDPOINT=chat_completions` keeps the previous `/v1/chat/completions` fallback and records `ds4_openai_chat`.
+- direct ds4 posts to `/v1/responses` and records provider-ledger request mode `ds4_openai_responses`.
+- historical `ds4_openai_chat` ledger rows remain parseable for local diagnostics, but new Bud calls do not emit that request mode.
 - Responses request lowering preserves leading system context as `instructions`, canonical tool calls as `function_call`, tool results as `function_call_output`, and ds4-native reasoning payloads as replayable provider-only input items.
 - Responses stream parsing emits canonical reasoning blocks with `providerData.provider="ds4"` when ds4 sends reasoning output items.
 

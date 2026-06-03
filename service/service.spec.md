@@ -64,7 +64,7 @@ Checked-in template for local service setup. Includes:
   `PROXY_EDGE_SECRET` when Cloudflare forwards `*.bud.show` to the service
 - `DAEMON_INSTALLER_BASE_URL` for service-generated Bud installer commands
 - optional APNs push-notification settings (`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_FILE`, `APNS_PRIVATE_KEY`, `APNS_DEFAULT_TOPIC`, `APNS_ALLOWED_TOPICS`)
-- optional LLM provider settings, including direct local-dev ds4 (`DS4_DIRECT_BASE_URL`, `DS4_DIRECT_ENDPOINT`, `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, `DS4_DIRECT_MAX_OUTPUT_TOKENS`)
+- optional LLM provider settings, including direct local-dev ds4 (`DS4_DIRECT_BASE_URL`, `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, `DS4_DIRECT_MAX_OUTPUT_TOKENS`)
 - optional local-only model context drift diagnostics (`AGENT_CONTEXT_DRIFT_DEBUG`)
 
 ### `.env.https.example`

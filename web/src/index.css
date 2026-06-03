@@ -294,6 +294,10 @@
   white-space: pre;
 }
 
+.bud-markdown [data-streamdown="code-block-body"] code > span {
+  display: block;
+}
+
 .bud-markdown [data-streamdown="code-block-actions"] button,
 .bud-markdown [data-streamdown="mermaid-block-actions"] button {
   color: inherit;

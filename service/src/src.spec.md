@@ -142,9 +142,8 @@ Environment-based configuration with defaults.
 | `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |
 | `googleClientSecret` | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
 | `openaiApiKey` | `OPENAI_API_KEY` | - | OpenAI API key |
-| `ds4DirectBaseUrl` | `DS4_DIRECT_BASE_URL` | - | Optional direct local-dev ds4 OpenAI-compatible base URL; enables ds4 provider registration when set |
-| `ds4DirectEndpoint` | `DS4_DIRECT_ENDPOINT` | responses | Direct ds4 request surface (`responses` or `chat_completions`) |
-| `ds4DirectModel` | `DS4_DIRECT_MODEL` | deepseek-v4-flash | Model string sent to the selected local ds4 endpoint |
+| `ds4DirectBaseUrl` | `DS4_DIRECT_BASE_URL` | - | Optional direct local-dev ds4 OpenAI-compatible Responses base URL; enables ds4 provider registration when set |
+| `ds4DirectModel` | `DS4_DIRECT_MODEL` | deepseek-v4-flash | Model string sent to the local ds4 Responses endpoint |
 | `ds4DirectContextTokens` | `DS4_DIRECT_CONTEXT_TOKENS` | 100000 | Context-window metadata advertised for direct ds4 fallback models |
 | `ds4DirectMaxOutputTokens` | `DS4_DIRECT_MAX_OUTPUT_TOKENS` | 128000 | Max-output metadata and default output-token cap for direct ds4 requests |
 | `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
@@ -171,7 +170,6 @@ Environment-based configuration with defaults.
 
 **Type Exports**:
 - `ReasoningEffortSetting` - catalog `ReasoningLevel` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`)
-- `Ds4DirectEndpoint` - direct ds4 endpoint mode (`responses`, `chat_completions`)
 
 ## Subfolders
 

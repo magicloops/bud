@@ -91,7 +91,6 @@ export { ProviderRegistry, providerRegistry } from "./registry.js";
 export { OpenAIProvider } from "./providers/openai.js";
 export { AnthropicProvider } from "./providers/anthropic.js";
 export {
-  Ds4ChatCompletionsProvider,
   Ds4ResponsesProvider,
   createDs4ProviderFromConfig,
 } from "./providers/ds4.js";
@@ -121,7 +120,7 @@ export function initializeProviders(): void {
     providerRegistry.register(anthropic);
   }
 
-  // Register direct local-dev ds4 provider when an OpenAI-compatible endpoint is configured.
+  // Register direct local-dev ds4 provider when an OpenAI-compatible Responses endpoint is configured.
   const ds4 = createDs4ProviderFromConfig();
   if (ds4) {
     providerRegistry.register(ds4);

@@ -186,7 +186,7 @@ Budget calculation is used for Haiku 4.5 manual thinking and legacy fallback onl
 
 ### `ds4.ts`
 
-Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint by default, with a Chat Completions fallback for debugging/comparison.
+Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint.
 
 **Supported Models**:
 | Model | Type | Notes |
@@ -196,14 +196,12 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint b
 
 **Key Features**:
 - **Config gated**: Registered only when `DS4_DIRECT_BASE_URL` is non-empty
-- **Endpoint selectable**: `DS4_DIRECT_ENDPOINT=responses` uses `Ds4ResponsesProvider`; `chat_completions` uses `Ds4ChatCompletionsProvider`
 - **Base URL normalization**: Accepts `127.0.0.1:8000/v1` by adding `http://`; rejects `127.0.0.0` with a setup error because it does not reach the ds4 listener
-- **SDK-free**: Uses the platform `fetch` API against `${baseURL}/responses` or `${baseURL}/chat/completions`
+- **SDK-free**: Uses the platform `fetch` API against `${baseURL}/responses`
 - **Responses replay**: Lowers assistant `tool_use` blocks to `function_call`, user `tool_result` blocks to `function_call_output`, and ds4-native reasoning payloads back into `input`
-- **Chat replay fallback**: Converts assistant `tool_use` blocks to `tool_calls` and user `tool_result` blocks to `role: "tool"` messages
-- **SSE streaming**: Parses `data:` SSE chunks and maps Responses text/reasoning/tool-call events or Chat `choices[].delta` fragments into canonical stream events
-- **Diagnostics**: Attaches stream feature counters plus the terminal Responses event/response or last Chat Completions chunk to `message_done.providerData`; Chat counters include provider-only `reasoning_content` visibility for local ds4 cache debugging
-- **Debug request snapshots**: Exposes the exact selected endpoint request body for local context-drift artifact capture
+- **SSE streaming**: Parses `data:` SSE chunks and maps Responses text/reasoning/tool-call events into canonical stream events
+- **Diagnostics**: Attaches stream feature counters plus the terminal Responses event/response to `message_done.providerData`
+- **Debug request snapshots**: Exposes the exact Responses request body for local context-drift artifact capture
 - **Context-window errors**: Normalizes likely ds4 token/context failures into `ProviderContextWindowError`
 - **No product reasoning controls**: The catalog exposes only `reasoning_effort: none`, while the Responses stream can preserve ds4 reasoning blocks as provider-only replay/debug content
 
@@ -216,16 +214,6 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint b
 | Tool use | `{ type: "function_call", call_id, name, arguments }` |
 | Tool result | `{ type: "function_call_output", call_id, output }` |
 | ds4 reasoning | Provider-native reasoning item when present in `providerData` |
-| Image input | Text placeholder because the direct ds4 profile is text-only |
-
-**Chat Fallback Message Transformation**:
-| Canonical | ds4 Chat Completions |
-|-----------|----------------------|
-| System text | `{ role: "system", content }` |
-| User text | `{ role: "user", content }` |
-| Assistant text | `{ role: "assistant", content }` |
-| Tool use | Assistant `tool_calls[]` entry with JSON string arguments |
-| Tool result | `{ role: "tool", tool_call_id, content }` |
 | Image input | Text placeholder because the direct ds4 profile is text-only |
 
 **Responses Streaming Events Mapped**:
@@ -244,22 +232,11 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint b
 | `response.completed` / `response.incomplete` | `message_done` |
 | `response.failed` | `error` |
 
-**Chat Fallback Streaming Events Mapped**:
-| Chat Completions SSE Chunk | Canonical Event |
-|----------------------------|-----------------|
-| first structured chunk `id` | `message_start` |
-| `delta.content` | `content_start` then `text_delta` |
-| `delta.reasoning_content` | counted in `providerData.payload.streamDiagnostics`; not emitted as canonical reasoning yet |
-| `delta.tool_calls[].function.arguments` | `tool_use_delta` |
-| `finish_reason: "tool_calls"` | `tool_use_done` then `message_done` with `tool_use` |
-| `finish_reason: "length"` | `message_done` with `max_tokens` |
-| `usage.prompt_tokens` / `completion_tokens` | canonical `TokenUsage` |
-
 **Public Methods**:
 | Method | Description |
 |--------|-------------|
-| `invoke()` | Streaming invocation through Responses or Chat Completions SSE |
-| `buildDebugRequestSnapshot()` | Local-only diagnostic hook returning the selected endpoint request body |
+| `invoke()` | Streaming invocation through Responses SSE |
+| `buildDebugRequestSnapshot()` | Local-only diagnostic hook returning the Responses request body |
 | `supportsModel()` | Check configured/default ds4 model strings |
 | `getModelCapabilities()` | Return catalog-backed ds4 limits or configured fallback limits |
 
@@ -268,9 +245,7 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint b
 Direct request-shape tests for provider lowering without live API calls.
 
 **Current Coverage**:
-- ds4 Chat Completions request construction, including base URL trimming, model-facing `terminal_send{command}` tool messages, named tool choice, JSON response format, and configured request model override
 - ds4 local base URL normalization and rejection of the common `127.0.0.0` typo
-- ds4 SSE parsing for streamed text, provider-only reasoning diagnostics, streamed tool-call arguments, `tool_calls` stop reason, usage, and provider diagnostics
 - ds4 Responses request construction, including `instructions`, `function_call`, `function_call_output`, ds4-native reasoning replay payloads, tool choice, optional reasoning request object, and configured request model override
 - ds4 Responses SSE parsing for reasoning blocks, streamed text, streamed function-call arguments, usage, and provider diagnostics
 - ds4 Responses failed events map to canonical provider errors without emitting a synthetic completion
@@ -300,10 +275,10 @@ Direct request-shape tests for provider lowering without live API calls.
 | **System prompt** | Message item | Separate `system` param | Responses `instructions` |
 | **Tool results** | `function_call_output` item | `tool_result` content block | `function_call_output` item |
 | **Tool call args** | JSON string | Parsed object | JSON string |
-| **Max tokens** | Optional | **Required** | `max_output_tokens` by default; Chat fallback sends `max_tokens` |
+| **Max tokens** | Optional | **Required** | `max_output_tokens` |
 | **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy | no product controls; Responses reasoning blocks preserved when emitted |
-| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent | Preserved on Responses replay; Chat fallback ignores |
-| **JSON mode** | `text.format.type` | Use structured tool output | Responses `text.format.type`; Chat fallback `response_format` |
+| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent | Preserved on Responses replay |
+| **JSON mode** | `text.format.type` | Use structured tool output | Responses `text.format.type` |
 
 ## Adding a New Provider
 

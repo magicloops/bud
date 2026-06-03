@@ -146,7 +146,7 @@ Auth and Bud claim testing do not require an LLM provider key, and the service n
 
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
-- `DS4_DIRECT_BASE_URL` (enables the direct local-dev ds4 Chat Completions provider when a ds4 server is already running; use `http://127.0.0.1:8000/v1` or `http://localhost:8000/v1`)
+- `DS4_DIRECT_BASE_URL` (enables the direct local-dev ds4 Responses provider when a ds4 server is already running; use `http://127.0.0.1:8000/v1` or `http://localhost:8000/v1`)
 - `DS4_DIRECT_MODEL` (defaults to `deepseek-v4-flash`)
 - `DS4_DIRECT_CONTEXT_TOKENS` (defaults to `100000`)
 - `DS4_DIRECT_MAX_OUTPUT_TOKENS` (defaults to `128000`)

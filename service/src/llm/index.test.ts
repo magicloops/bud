@@ -39,7 +39,6 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
   const originalAnthropicApiKey = config.anthropicApiKey;
   const originalDs4DirectBaseUrl = config.ds4DirectBaseUrl;
   const originalDs4DirectModel = config.ds4DirectModel;
-  const originalDs4DirectEndpoint = config.ds4DirectEndpoint;
   const originalDs4DirectContextTokens = config.ds4DirectContextTokens;
   const originalDs4DirectMaxOutputTokens = config.ds4DirectMaxOutputTokens;
   const previousOpenAI = providerRegistry.getProvider("openai");
@@ -53,7 +52,6 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
   config.anthropicApiKey = "";
   config.ds4DirectBaseUrl = "http://127.0.0.1:4444/v1";
   config.ds4DirectModel = "deepseek-v4-flash";
-  config.ds4DirectEndpoint = "responses";
   config.ds4DirectContextTokens = 100_000;
   config.ds4DirectMaxOutputTokens = 128_000;
 
@@ -86,7 +84,6 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
     config.anthropicApiKey = originalAnthropicApiKey;
     config.ds4DirectBaseUrl = originalDs4DirectBaseUrl;
     config.ds4DirectModel = originalDs4DirectModel;
-    config.ds4DirectEndpoint = originalDs4DirectEndpoint;
     config.ds4DirectContextTokens = originalDs4DirectContextTokens;
     config.ds4DirectMaxOutputTokens = originalDs4DirectMaxOutputTokens;
     providerRegistry.unregister("openai");

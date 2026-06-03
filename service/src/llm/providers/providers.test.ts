@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AnthropicProvider } from "./anthropic.js";
-import { Ds4ChatCompletionsProvider, Ds4ResponsesProvider } from "./ds4.js";
+import { Ds4ResponsesProvider } from "./ds4.js";
 import { OpenAIProvider } from "./openai.js";
 import type { CanonicalMessage, ModelConfig } from "../types.js";
 import { isProviderContextWindowError } from "../provider.js";
@@ -50,115 +50,13 @@ function sseResponse(chunks: string[], status = 200): Response {
   });
 }
 
-test("ds4 provider sends OpenAI-compatible Chat Completions requests", async () => {
-  const captures: Array<{ url: string; init: RequestInit }> = [];
-  const fetchImpl: typeof fetch = async (url, init) => {
-    captures.push({ url: String(url), init: init ?? {} });
-    return sseResponse([sseData("[DONE]")]);
-  };
-  const provider = new Ds4ChatCompletionsProvider({
-    baseURL: "http://127.0.0.1:4444/v1/",
-    model: "local-deepseek",
-    fetch: fetchImpl,
-  });
-
-  await drain(provider.invoke([
-    { role: "system", content: "System prompt" },
-    { role: "user", content: "Run pwd" },
-    {
-      role: "assistant",
-      content: [
-        { type: "text", text: "Calling tool" },
-        {
-          type: "tool_use",
-          id: "call_1",
-          name: "terminal_send",
-          input: { command: "pwd" },
-        },
-      ],
-    },
-    {
-      role: "user",
-      content: [
-        {
-          type: "tool_result",
-          tool_use_id: "call_1",
-          content: "done",
-        },
-      ],
-    },
-  ], [
-    {
-      name: "terminal_send",
-      description: "Send terminal input",
-      parameters: {
-        type: "object",
-        properties: {
-          command: { type: "string" },
-          raw_text: { type: "string" },
-          key: { type: "string" },
-        },
-        required: [],
-        additionalProperties: false,
-      },
-    },
-  ], {
-    model: "deepseek-v4-flash",
-    maxOutputTokens: 2048,
-    temperature: 0.2,
-    topP: 0.9,
-    responseFormat: "json",
-    toolChoice: { type: "tool", name: "terminal_send" },
-  }));
-
-  const captured = captures[0];
-  assert.ok(captured);
-  assert.equal(captured.url, "http://127.0.0.1:4444/v1/chat/completions");
-  assert.deepEqual(captured.init.headers, {
-    Accept: "text/event-stream",
-    "Content-Type": "application/json",
-  });
-
-  const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
-  assert.equal(body.model, "local-deepseek");
-  assert.equal(body.stream, true);
-  assert.deepEqual(body.stream_options, { include_usage: true });
-  assert.equal(body.max_tokens, 2048);
-  assert.equal(body.temperature, 0.2);
-  assert.equal(body.top_p, 0.9);
-  assert.deepEqual(body.response_format, { type: "json_object" });
-  assert.deepEqual(body.tool_choice, {
-    type: "function",
-    function: { name: "terminal_send" },
-  });
-  assert.deepEqual(body.messages, [
-    { role: "system", content: "System prompt" },
-    { role: "user", content: "Run pwd" },
-    {
-      role: "assistant",
-      content: "Calling tool",
-      tool_calls: [
-        {
-          id: "call_1",
-          type: "function",
-          function: {
-            name: "terminal_send",
-            arguments: "{\"command\":\"pwd\"}",
-          },
-        },
-      ],
-    },
-    { role: "tool", tool_call_id: "call_1", content: "done" },
-  ]);
-});
-
 test("ds4 provider normalizes local base URL and rejects common loopback typo", async () => {
   const captures: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl: typeof fetch = async (url, init) => {
     captures.push({ url: String(url), init: init ?? {} });
     return sseResponse([sseData("[DONE]")]);
   };
-  const provider = new Ds4ChatCompletionsProvider({
+  const provider = new Ds4ResponsesProvider({
     baseURL: "127.0.0.1:8000/v1/",
     fetch: fetchImpl,
   });
@@ -168,182 +66,11 @@ test("ds4 provider normalizes local base URL and rejects common loopback typo", 
     maxOutputTokens: 8,
   }));
 
-  assert.equal(captures[0]?.url, "http://127.0.0.1:8000/v1/chat/completions");
+  assert.equal(captures[0]?.url, "http://127.0.0.1:8000/v1/responses");
   assert.throws(
-    () => new Ds4ChatCompletionsProvider({ baseURL: "http://127.0.0.0:8000/v1" }),
+    () => new Ds4ResponsesProvider({ baseURL: "http://127.0.0.0:8000/v1" }),
     /Use 127\.0\.0\.1 or localhost/,
   );
-});
-
-test("ds4 provider parses streamed text, tool calls, stop reason, usage, and diagnostics", async () => {
-  const splitToolChunk = sseData({
-    id: "chatcmpl_ds4",
-    choices: [
-      {
-        delta: {
-          tool_calls: [
-            {
-              index: 0,
-              id: "call_ds4",
-              type: "function",
-              function: {
-                name: "terminal_send",
-                arguments: "{\"command\"",
-              },
-            },
-          ],
-        },
-      },
-    ],
-  });
-  const chunks = [
-    sseData({
-      id: "chatcmpl_ds4",
-      choices: [
-        {
-          delta: {
-            reasoning_content: "hidden tokens",
-          },
-        },
-      ],
-    }),
-    sseData({
-      id: "chatcmpl_ds4",
-      choices: [
-        {
-          delta: {
-            content: "before tool",
-          },
-        },
-      ],
-    }),
-    splitToolChunk.slice(0, 24),
-    splitToolChunk.slice(24),
-    sseData({
-      id: "chatcmpl_ds4",
-      choices: [
-        {
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                function: {
-                  arguments: ":\"pwd\"}",
-                },
-              },
-            ],
-          },
-        },
-      ],
-    }),
-    sseData({
-      id: "chatcmpl_ds4",
-      choices: [
-        {
-          delta: {},
-          finish_reason: "tool_calls",
-        },
-      ],
-      usage: {
-        prompt_tokens: 12,
-        completion_tokens: 8,
-        prompt_tokens_details: {
-          cached_tokens: 4,
-        },
-        completion_tokens_details: {
-          reasoning_tokens: 0,
-        },
-      },
-    }),
-    sseData("[DONE]"),
-  ];
-
-  const fetchImpl: typeof fetch = async () => sseResponse(chunks);
-  const provider = new Ds4ChatCompletionsProvider({
-    baseURL: "http://127.0.0.1:4444/v1",
-    fetch: fetchImpl,
-  });
-
-  const events = [];
-  for await (const event of provider.invoke(messages, [], {
-    model: "deepseek-v4-flash",
-    maxOutputTokens: 2048,
-  })) {
-    events.push(event);
-  }
-
-  assert.deepEqual(
-    events
-      .filter((event) => event.type !== "content_done")
-      .map((event) => event.type),
-    [
-      "message_start",
-      "content_start",
-      "text_delta",
-      "tool_use_start",
-      "tool_use_delta",
-      "tool_use_delta",
-      "tool_use_done",
-      "message_done",
-    ],
-  );
-
-  const messageStart = events.find((event) => event.type === "message_start");
-  assert.ok(messageStart);
-  assert.equal(messageStart.id, "chatcmpl_ds4");
-
-  const textDelta = events.find((event) => event.type === "text_delta");
-  assert.ok(textDelta);
-  assert.equal(textDelta.delta, "before tool");
-
-  const toolDone = events.find((event) => event.type === "tool_use_done");
-  assert.ok(toolDone);
-  assert.equal(toolDone.id, "call_ds4");
-  assert.equal(toolDone.name, "terminal_send");
-  assert.deepEqual(toolDone.input, { command: "pwd" });
-
-  const messageDone = events.find((event) => event.type === "message_done");
-  assert.ok(messageDone);
-  assert.equal(messageDone.stop_reason, "tool_use");
-  assert.deepEqual(messageDone.usage, {
-    input_tokens: 12,
-    output_tokens: 8,
-    cached_input_tokens: 4,
-    reasoning_tokens: 0,
-  });
-  assert.deepEqual(messageDone.providerData?.provider, "ds4");
-  const providerPayload = messageDone.providerData?.payload as {
-    finalChunk?: {
-      id?: string;
-    };
-    streamDiagnostics?: {
-      chunkCount: number;
-      parseErrorCount: number;
-      contentDeltaCount: number;
-      contentCharCount: number;
-      reasoningDeltaCount: number;
-      reasoningCharCount: number;
-      toolCallDeltaCount: number;
-      toolCallArgumentCharCount: number;
-      usageChunkCount: number;
-      finishReasons: string[];
-      deltaKeys: string[];
-    };
-  };
-  assert.equal(providerPayload.finalChunk?.id, "chatcmpl_ds4");
-  assert.deepEqual(providerPayload.streamDiagnostics, {
-    chunkCount: 5,
-    parseErrorCount: 0,
-    contentDeltaCount: 1,
-    contentCharCount: "before tool".length,
-    reasoningDeltaCount: 1,
-    reasoningCharCount: "hidden tokens".length,
-    toolCallDeltaCount: 2,
-    toolCallArgumentCharCount: '{"command"'.length + ':"pwd"}'.length,
-    usageChunkCount: 1,
-    finishReasons: ["tool_calls"],
-    deltaKeys: ["content", "reasoning_content", "tool_calls"],
-  });
 });
 
 test("ds4 Responses provider sends OpenAI Responses-style requests", async () => {

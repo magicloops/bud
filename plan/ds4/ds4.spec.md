@@ -11,7 +11,7 @@ The plan assumes:
 - ds4 is already running on the machine; Bud does not install, start, or supervise it.
 - ds4 should be represented as provider `ds4`, not as `openai` or `anthropic`, even when using compatible HTTP endpoints.
 - OpenAI Chat Completions was the first implementation target.
-- OpenAI Responses is now the direct service-local default because Chat Completions streams output-only `reasoning_content` that cannot be replayed through request history.
+- OpenAI Responses is now the only active direct service-local endpoint because Chat Completions streams output-only `reasoning_content` that cannot be replayed through request history.
 - Anthropic Messages compatibility remains a later validation target.
 - Bud-backed ds4 models are Bud environment capabilities and must only appear for the owning user and the owning Bud.
 - The hosted service sees prompts and transcript context before forwarding them to the local model; local inference is not end-to-end private from the service.
@@ -59,6 +59,15 @@ Direct-provider follow-up phase covering:
 - direct local-dev provider endpoint switch
 - Responses stream/reasoning/tool-call parsing
 - live cache validation against the Chat Completions `reasoning_content` replay limitation
+
+### `phase-1.6-remove-chat-completions-fallback.md`
+
+Direct-provider cleanup phase covering:
+
+- removed `DS4_DIRECT_ENDPOINT`
+- deleted the ds4 Chat Completions provider fallback
+- making `/v1/responses` the only active direct ds4 endpoint
+- keeping historical `ds4_openai_chat` ledger rows parseable if needed
 
 ### `phase-2-daemon-local-llm-capability.md`
 
@@ -128,8 +137,9 @@ Automated and manual validation checklist for the ds4 rollout.
 ## Fixed Decisions
 
 - Use provider id `ds4` for catalog, provider registry, diagnostics, and provider-ledger rows.
-- Use `ds4_openai_chat` as the first implemented ds4 request mode.
-- Use `ds4_openai_responses` as the direct service-local default request mode, with `ds4_openai_chat` retained behind `DS4_DIRECT_ENDPOINT=chat_completions` for fallback/debug comparison.
+- `ds4_openai_chat` was the first implemented ds4 request mode and remains parseable for historical local ledger rows.
+- Use `ds4_openai_responses` as the only active direct service-local request mode.
+- Phase 1.6 removed the Chat Completions fallback because thinking-enabled ds4 cannot replay Chat `reasoning_content`.
 - Add only `ds4-deepseek-v4-flash` as the first product model; the `deepseek-v4-pro` alias is deferred because ds4 currently maps both names to the same loaded GGUF.
 - Register direct service-local ds4 only when explicit `DS4_DIRECT_*` config is present.
 - Advertise Bud-backed ds4 only when the daemon probes a configured loopback ds4 API successfully.

@@ -582,9 +582,7 @@ export class AgentService {
           stepIndex: steps,
           provider: providerName,
           model: modelReasoning.providerModel,
-          requestMode: buildRequestMode(providerName, {
-            ds4Endpoint: config.ds4DirectEndpoint,
-          }),
+          requestMode: buildRequestMode(providerName),
           providerResponseId: responseForReplay.id,
           output: responseForReplay.content,
           usage: responseForReplay.usage,

@@ -1,7 +1,7 @@
 # Phase 1.5: Direct Responses Provider
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Implemented for direct service-local provider; live cache validation pending
+**Status**: Implemented for direct service-local provider; live cache validation pending. The temporary Chat Completions fallback described in this phase was removed in [Phase 1.6](./phase-1.6-remove-chat-completions-fallback.md).
 
 ---
 

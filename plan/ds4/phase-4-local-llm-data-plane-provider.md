@@ -65,7 +65,7 @@ Service open request:
 
 The open result should include status, selected compatibility mode, response headers needed by the provider parser, and a typed denial reason when the daemon rejects the request.
 
-`/v1/responses` is the preferred path after the Phase 1.5 service-local implementation. If live cache validation rejects Responses for Bud-backed use, use `/v1/chat/completions` with the same stream family and request mode `ds4_openai_chat`.
+`/v1/responses` is the active path after the Phase 1.6 service-local cleanup. If live cache validation rejects Responses for Bud-backed use, treat that as a blocker or scope a new endpoint design instead of restoring the removed Chat Completions fallback implicitly.
 
 ## Implementation Tasks
 
@@ -143,8 +143,8 @@ Add deterministic coverage for:
 - daemon rejects disallowed methods/paths/headers
 - daemon enforces concurrency `1`
 - cancellation resets the stream
-- provider parser handles daemon-streamed ds4 SSE for the selected endpoint
-- provider-ledger stores provider `ds4` and request mode `ds4_openai_responses` or `ds4_openai_chat`
+- provider parser handles daemon-streamed ds4 Responses SSE
+- provider-ledger stores provider `ds4` and request mode `ds4_openai_responses`
 
 ## Validation Checklist
 

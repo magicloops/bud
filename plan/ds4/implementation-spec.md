@@ -44,7 +44,7 @@ By the end of this plan:
 
 - ds4 provider identity is `ds4`; it is not registered as `openai` or `anthropic`.
 - Chat Completions was the first implemented ds4 request surface.
-- Responses is now the direct service-local default because Chat Completions streams output-only `reasoning_content` that cannot be replayed in assistant history.
+- Responses is now the only active direct service-local endpoint because Chat Completions streams output-only `reasoning_content` that cannot be replayed in assistant history.
 - The first product model id is `ds4-deepseek-v4-flash`.
 - The provider model is `deepseek-v4-flash`.
 - The `deepseek-v4-pro` alias is deferred until there is product value in exposing two aliases for the same loaded GGUF.
@@ -72,8 +72,8 @@ Initial catalog entry:
 | Provider | `ds4` |
 | Provider model | `deepseek-v4-flash` |
 | Display name | `ds4 DeepSeek V4` |
-| Direct default request mode | `ds4_openai_responses` |
-| Chat fallback request mode | `ds4_openai_chat` |
+| Direct request mode | `ds4_openai_responses` |
+| Historical request mode | `ds4_openai_chat` remains parseable for old local ledger rows only |
 | Source, direct mode | `service_local_dev` |
 | Source, Bud-backed mode | `bud_local` |
 
@@ -148,7 +148,7 @@ Initial service-to-daemon open frame:
 }
 ```
 
-`/v1/responses` is the preferred path after Phase 1.5 service implementation. If live cache validation rejects the switch for Bud-backed use, the same stream family can carry `/v1/chat/completions` with request mode `ds4_openai_chat`.
+`/v1/responses` is the active path after Phase 1.6. Reintroducing `/v1/chat/completions` for Bud-backed use would require a new design decision because the active service-local fallback has been removed.
 
 The daemon resolves `local_llm_server_id` to configured local state, forwards only allowlisted loopback ds4 requests, and streams response bytes back through normal stream lifecycle frames.
 
@@ -173,6 +173,7 @@ No database schema change is required unless implementation chooses to persist c
 | 0 | [phase-0-contract-baseline-and-fixtures.md](./phase-0-contract-baseline-and-fixtures.md) | Urgent | Lock ds4 request/stream fixtures, model id policy, and request-mode names |
 | 1 | [phase-1-direct-local-dev-provider.md](./phase-1-direct-local-dev-provider.md) | Urgent | Service can invoke a same-machine ds4 server as an opt-in local-dev model |
 | 1.5 | [phase-1.5-direct-responses-provider.md](./phase-1.5-direct-responses-provider.md) | Urgent | Implement direct ds4 `/v1/responses` and validate whether it fixes Chat Completions reasoning replay/cache misses |
+| 1.6 | [phase-1.6-remove-chat-completions-fallback.md](./phase-1.6-remove-chat-completions-fallback.md) | Urgent | Remove the ds4 Chat Completions fallback so Responses is the only active direct endpoint |
 | 2 | [phase-2-daemon-local-llm-capability.md](./phase-2-daemon-local-llm-capability.md) | High | Daemon advertises configured healthy ds4 servers through hello capabilities |
 | 3 | [phase-3-bud-scoped-model-inventory-and-selection.md](./phase-3-bud-scoped-model-inventory-and-selection.md) | High | Browser/API model inventory and message validation are Bud-aware |
 | 4 | [phase-4-local-llm-data-plane-provider.md](./phase-4-local-llm-data-plane-provider.md) | High | Hosted service can invoke Bud-local ds4 through authenticated data-plane streams |
@@ -240,7 +241,7 @@ No database schema change is required unless implementation chooses to persist c
 
 1. Capture ds4 fixtures and lock the provider/request-mode contract.
 2. Land direct local-dev provider support.
-3. Prove direct Chat Completions final-text and tool-call turns against the running server.
+3. Historical: prove direct Chat Completions final-text and tool-call turns against the running server.
 4. Prove direct Responses final-text, reasoning, and tool-call turns against the running server.
 5. Validate `/v1/responses` live cache behavior before relying on it for Bud-backed use.
 6. Add daemon config, probe, and capability advertisement.
@@ -268,6 +269,6 @@ No database schema change is required unless implementation chooses to persist c
 - [ ] explicit ds4 send fails before user-message persistence when ds4 is unavailable
 - [ ] Bud-backed provider streams the selected ds4 endpoint over authenticated data-plane frames
 - [ ] cancellation resets the daemon stream and leaves provider/runtime state coherent
-- [ ] provider ledger records `ds4` calls with the selected request mode (`ds4_openai_responses` or `ds4_openai_chat`)
+- [ ] provider ledger records new `ds4` calls with request mode `ds4_openai_responses`
 - [ ] protocol, service, daemon, web, and root specs are updated as implementation lands
 - [ ] [progress-checklist.md](./progress-checklist.md) and [validation-checklist.md](./validation-checklist.md) are updated with final status

@@ -702,19 +702,14 @@ function completedCallIntegrityCounts(
   };
 }
 
-export function buildRequestMode(
-  provider: CanonicalProviderId,
-  options?: { ds4Endpoint?: "responses" | "chat_completions" },
-): LlmCallRequestMode {
+export function buildRequestMode(provider: CanonicalProviderId): LlmCallRequestMode {
   if (provider === "openai") {
     return "openai_responses";
   }
   if (provider === "anthropic") {
     return "anthropic_messages";
   }
-  return options?.ds4Endpoint === "chat_completions"
-    ? "ds4_openai_chat"
-    : "ds4_openai_responses";
+  return "ds4_openai_responses";
 }
 
 export function createLlmCallId(): string {

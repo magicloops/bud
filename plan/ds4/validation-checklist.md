@@ -1,7 +1,7 @@
 # ds4 Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 1 automated and direct-provider live smoke complete; Phase 1.5 automated Responses coverage complete, live cache validation pending
+**Status**: Phase 1.6 automated cleanup complete; direct Responses live cache validation pending
 **Last Updated**: 2026-06-03
 
 ---
@@ -26,6 +26,11 @@
 - [x] Responses reasoning fixture is preserved or intentionally diagnostic-only
 - [x] Responses tool-call fixture parses into canonical tool-call events
 - [ ] Responses post-tool continuation fixture preserves replay continuity
+- [x] `DS4_DIRECT_ENDPOINT` is removed
+- [x] `Ds4ChatCompletionsProvider` is removed
+- [x] direct ds4 provider code cannot call `/v1/chat/completions`
+- [x] new ds4 provider-ledger rows use `ds4_openai_responses`
+- [x] historical `ds4_openai_chat` rows remain parseable
 
 ### Routes And Ownership
 
@@ -58,7 +63,7 @@
 - [ ] daemon enforces idle/TTL limits
 - [ ] daemon enforces concurrency limit
 - [ ] cancellation sends stream reset
-- [ ] provider-ledger records provider `ds4` and the selected request mode
+- [ ] provider-ledger records provider `ds4` and request mode `ds4_openai_responses`
 
 ## Live Validation
 

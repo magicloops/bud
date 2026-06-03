@@ -28,7 +28,7 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
         ▼                   ▼                   ▼
 ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐
 │ OpenAIProvider  │ │AnthropicProvider│ │Ds4ResponsesProvider      │
-│                 │ │                 │ │/ Chat fallback           │
+│                 │ │                 │ │                          │
 │ - GPT-5.4/5.5   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
 │ - reasoning     │ │ - thinking      │ │ - Responses SSE          │
 └─────────────────┘ └─────────────────┘ └──────────────────────────┘
@@ -120,7 +120,7 @@ Central product model catalog and reasoning-control metadata.
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
-| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | Direct local ds4 Responses path by default, Chat fallback available; no product reasoning controls; default `none` |
+| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | Direct local ds4 Responses path; no product reasoning controls; default `none` |
 
 **Usable Context Policy**:
 - `contextWindowTokens` remains the provider/model hard total context window
@@ -178,7 +178,7 @@ Durable provider-call ledger helpers for same-provider reconstruction and cache 
 - filter replay and diagnostics after a context-checkpoint boundary when automatic compaction has replaced older transcript spans with a summary
 - summarize provider-ledger coverage for a thread so provider switches, same-provider replay incompatibilities, itemless completed calls, and canonical fallback ranges are explicit
 - reconstruct canonical assistant messages from same-provider ledger items before falling back to product transcript rows
-- map provider calls to canonical request modes: `openai_responses`, `anthropic_messages`, `ds4_openai_responses`, or `ds4_openai_chat`
+- map provider calls to canonical request modes: `openai_responses`, `anthropic_messages`, or `ds4_openai_responses`; historical `ds4_openai_chat` rows remain parseable for local diagnostics/reconstruction
 
 Provider-native payloads are service-internal. Browser message routes continue to read from the `message` table and do not expose `llm_call_item.provider_payload`.
 
@@ -187,7 +187,7 @@ Provider-native payloads are service-internal. Browser message routes continue t
 Standalone tests for provider-ledger persistence/reconstruction helpers.
 
 **Current Coverage**:
-- request-mode mapping covers OpenAI Responses, Anthropic Messages, ds4 Responses, and ds4 Chat Completions fallback
+- request-mode mapping covers OpenAI Responses, Anthropic Messages, and ds4 Responses
 - `recordLlmCall()` stores every output block plus cache metadata
 - `recordLlmCall()` stores reconstruction mode, fallback counts, omitted provider-only counts, and source-provider counts in call metadata
 - `recordLlmToolResultItem()` stores `ask_user_questions` tool-result payloads as provider replay input items
@@ -232,7 +232,7 @@ Catalog entries are preferred for product IDs. Legacy aliases remain as hidden c
 
 Barrel exports and provider initialization.
 
-**Exports**: All canonical types, catalog helpers, reasoning policy helpers, provider-ledger helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`, `Ds4ResponsesProvider`, `Ds4ChatCompletionsProvider`
+**Exports**: All canonical types, catalog helpers, reasoning policy helpers, provider-ledger helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`, `Ds4ResponsesProvider`
 
 **`initializeProviders()`**: Called at startup to register providers based on config:
 ```typescript
@@ -254,7 +254,7 @@ if (config.ds4DirectBaseUrl) {
 - provider-less startup is valid for local development and auth/device-claim flows
 - provider-backed features degrade at call sites instead of crashing service boot
 - re-running initialization refreshes the built-in provider registrations instead of accumulating stale entries
-- `DS4_DIRECT_BASE_URL` enables the direct local-dev ds4 provider; `DS4_DIRECT_ENDPOINT=responses|chat_completions` selects the endpoint, and `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, and `DS4_DIRECT_MAX_OUTPUT_TOKENS` tune the local endpoint profile
+- `DS4_DIRECT_BASE_URL` enables the direct local-dev ds4 Responses provider; `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, and `DS4_DIRECT_MAX_OUTPUT_TOKENS` tune the local endpoint profile
 
 ## Subfolders
 
@@ -325,14 +325,13 @@ Each provider transforms canonical schemas to their specific requirements:
 - Uses canonical schema directly with minimal transformation
 - Optional fields remain outside `required` array
 
-**ds4** (OpenAI-compatible Responses by default, Chat fallback):
-- Sends canonical messages through `/responses` with `stream: true` when `DS4_DIRECT_ENDPOINT=responses`
+**ds4** (OpenAI-compatible Responses):
+- Sends canonical messages through `/responses` with `stream: true`
 - Lowers tool definitions to Responses function tools and canonical tool-result blocks to `function_call_output`
 - Replays ds4-native reasoning payloads when prior Responses calls emitted provider-only reasoning blocks
 - Emits canonical reasoning/text/tool stream events from Responses SSE lifecycle events
-- Keeps `/chat/completions` available with `DS4_DIRECT_ENDPOINT=chat_completions`
-- Exposes the exact selected endpoint request body through `buildDebugRequestSnapshot()` for local context-drift artifacts when enabled
-- Attaches stream diagnostics in `providerData`, including whether Chat fallback saw provider-only `reasoning_content` deltas
+- Exposes the exact Responses request body through `buildDebugRequestSnapshot()` for local context-drift artifacts when enabled
+- Attaches Responses stream diagnostics in `providerData`
 
 ## Dependencies
 

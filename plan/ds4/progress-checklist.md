@@ -1,7 +1,7 @@
 # ds4 Progress Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 1 complete; Phase 1.5 service implementation complete, live cache validation pending
+**Status**: Phase 1.6 service cleanup complete; direct Responses live cache validation pending
 **Last Updated**: 2026-06-03
 
 ---
@@ -39,7 +39,7 @@
 - [ ] Capture `/v1/responses` tool-call fixture
 - [ ] Capture `/v1/responses` post-tool continuation fixture
 - [x] Add `ds4_openai_responses` request mode
-- [x] Add `DS4_DIRECT_ENDPOINT=responses|chat_completions`
+- [x] Add `DS4_DIRECT_ENDPOINT=responses|chat_completions` for the temporary Phase 1.5 transition
 - [x] Implement direct `Ds4ResponsesProvider`
 - [x] Preserve Chat Completions fallback during transition
 - [x] Add Responses provider tests
@@ -47,6 +47,19 @@
 - [ ] Run direct Responses terminal tool-call live smoke
 - [ ] Compare Responses live cache behavior against Chat Completions
 - [x] Decide whether direct ds4 defaults to Responses
+
+## Phase 1.6: Remove Chat Completions Fallback
+
+- [x] Remove `DS4_DIRECT_ENDPOINT`
+- [x] Delete `Ds4ChatCompletionsProvider`
+- [x] Remove active `/v1/chat/completions` ds4 request path
+- [x] Make direct ds4 always use `Ds4ResponsesProvider`
+- [x] Make new ds4 ledger rows always use `ds4_openai_responses`
+- [x] Preserve historical `ds4_openai_chat` parsing
+- [x] Remove Chat Completions provider tests
+- [x] Update LLM/provider/config specs
+- [x] Run focused provider/ledger/init tests
+- [x] Run service build
 
 ## Phase 2: Daemon Local LLM Capability
 
@@ -79,7 +92,7 @@
 - [ ] Implement daemon local LLM HTTP forwarding
 - [ ] Enforce daemon target, path, header, body, response, TTL, and concurrency limits
 - [ ] Reset daemon stream on cancellation
-- [ ] Record provider-ledger calls with the selected ds4 request mode
+- [ ] Record provider-ledger calls with `ds4_openai_responses`
 - [ ] Add daemon/service deterministic tests
 - [ ] Run Bud-backed final-text live smoke
 - [ ] Run Bud-backed terminal tool-loop live smoke

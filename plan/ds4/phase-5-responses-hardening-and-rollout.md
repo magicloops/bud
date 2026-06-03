@@ -67,7 +67,7 @@ Phase 1.5 made Responses the service-local default. This task is a final hardeni
 - Bud-backed data-plane docs use `/v1/responses`
 - provider-ledger diagnostics distinguish `ds4_openai_responses`
 
-If live validation later rejects Responses for Bud-backed use, keep Chat Completions as the fallback supported ds4 mode and preserve the documented cache limitation/blocker.
+If live validation later rejects Responses for Bud-backed use, treat that as a blocker for Bud-backed ds4 or scope a new endpoint design. Phase 1.6 removed Chat Completions as an active Bud fallback.
 
 ### Task 3: Decide Anthropic Messages support
 
@@ -77,7 +77,7 @@ Decide whether to implement:
 ds4_anthropic_messages
 ```
 
-This should remain deferred unless ds4's Anthropic-compatible endpoint provides a concrete product benefit over Chat Completions or Responses.
+This should remain deferred unless ds4's Anthropic-compatible endpoint provides a concrete product benefit over Responses.
 
 ### Task 4: Harden operational limits
 
