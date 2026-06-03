@@ -14,7 +14,7 @@ By the end of this phase:
 - daemon and service support `local_llm_http` streams
 - service can open a logical ds4 request without sending raw host/port data
 - daemon forwards allowlisted ds4 API calls to loopback only
-- `BudLocalDs4Provider` parses the selected ds4 endpoint stream into canonical provider events
+- `BudLocalDs4Provider` parses the ds4 Responses stream into canonical provider events
 - cancellation, stream reset, limits, and provider-ledger recording work end to end
 
 ## Scope
@@ -34,7 +34,7 @@ By the end of this phase:
 
 - generic browser proxy reuse
 - arbitrary localhost forwarding
-- endpoint selection work owned by [phase-1.5-direct-responses-provider.md](./phase-1.5-direct-responses-provider.md)
+- endpoint selection work; `/v1/responses` is the only active ds4 endpoint
 - remote LAN model servers
 - UI changes beyond consuming Phase 3 inventory
 
@@ -65,7 +65,20 @@ Service open request:
 
 The open result should include status, selected compatibility mode, response headers needed by the provider parser, and a typed denial reason when the daemon rejects the request.
 
-`/v1/responses` is the active path after the Phase 1.6 service-local cleanup. If live cache validation rejects Responses for Bud-backed use, treat that as a blocker or scope a new endpoint design instead of restoring the removed Chat Completions fallback implicitly.
+`/v1/responses` is the active path after the Phase 1.6 service-local cleanup, and direct live cache validation has passed. If Bud-backed validation later uncovers an endpoint-specific blocker, scope a new endpoint design instead of restoring the removed Chat Completions fallback implicitly.
+
+### Responses API Deltas
+
+The Bud-backed provider should behave like the direct `Ds4ResponsesProvider` with a different byte transport:
+
+- build `POST /v1/responses` request bodies, not Chat Completions `messages`
+- lower leading system context to `instructions`
+- lower assistant tool calls to Responses `function_call` input items
+- lower tool results to `function_call_output`
+- preserve ds4 Responses reasoning items through provider-native `providerData` for same-provider replay/cache continuity
+- parse Responses SSE lifecycle events (`response.created`, output text/reasoning deltas, function-call argument events, `response.completed`/`failed`)
+- record provider-ledger request mode `ds4_openai_responses`
+- do not generate or accept Chat Completions `assistant.reasoning_content`, `tool_calls`, or `role: "tool"` request history
 
 ## Implementation Tasks
 
@@ -98,11 +111,12 @@ Selection rules:
 
 `BudLocalDs4Provider` responsibilities:
 
-- build ds4 endpoint JSON request bodies for the selected request mode
+- build ds4 `/v1/responses` JSON request bodies for `ds4_openai_responses`
 - open a `local_llm_http` stream to logical server id `ds4`
 - stream request body bytes if needed
 - parse response SSE bytes from the daemon stream
-- emit canonical text and tool-call deltas
+- emit canonical text, reasoning, and tool-call deltas
+- preserve Responses provider payloads needed for same-provider replay
 - normalize local unavailable, daemon denial, HTTP error, and parse errors
 - reset the stream on cancellation
 
@@ -112,7 +126,7 @@ Daemon responsibilities:
 
 - resolve `local_llm_server_id` to configured ds4 origin
 - permit only loopback targets from daemon config
-- permit only allowlisted paths under `/v1`
+- permit only allowlisted ds4 paths, with generation limited to `/v1/responses` in this phase
 - permit only expected methods, initially `POST` for generation and possibly `GET` for model probes if needed
 - strip cookies, Better Auth headers, proxy cookies, and Bud credentials
 - inject local-only API auth in the daemon only if a future local runner needs it
@@ -145,6 +159,7 @@ Add deterministic coverage for:
 - cancellation resets the stream
 - provider parser handles daemon-streamed ds4 Responses SSE
 - provider-ledger stores provider `ds4` and request mode `ds4_openai_responses`
+- provider replay after a tool result includes Responses `function_call` / `function_call_output` history rather than Chat Completions `tool_calls` / `role: "tool"`
 
 ## Validation Checklist
 
@@ -154,9 +169,10 @@ Add deterministic coverage for:
 - [ ] daemon strips forbidden headers
 - [ ] daemon enforces method/path/body/response/time limits
 - [ ] provider emits canonical text events
+- [ ] provider emits canonical reasoning events when ds4 Responses sends reasoning output
 - [ ] provider emits canonical tool-call events
 - [ ] cancellation resets daemon stream
-- [ ] provider ledger records the selected ds4 request mode
+- [ ] provider ledger records `ds4_openai_responses`
 - [ ] Bud-backed live final-text smoke passes
 - [ ] Bud-backed live terminal tool-loop smoke passes
 

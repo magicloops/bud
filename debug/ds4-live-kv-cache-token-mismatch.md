@@ -301,7 +301,11 @@ Phase 1.5 implemented a direct `Ds4ResponsesProvider`, and Phase 1.6 removed the
 - Responses request lowering preserves leading system context as `instructions`, canonical tool calls as `function_call`, tool results as `function_call_output`, and ds4-native reasoning payloads as replayable provider-only input items.
 - Responses stream parsing emits canonical reasoning blocks with `providerData.provider="ds4"` when ds4 sends reasoning output items.
 
-Automated provider fixtures and the service build pass for the Responses path. The remaining validation is live: run final-text, terminal tool-call, and post-tool continuation turns against the running ds4 server and compare whether live `common` advances past the prior generated-output boundary.
+Automated provider fixtures and the service build pass for the Responses path. The follow-up live validation compared whether live `common` advanced past the prior generated-output boundary.
+
+### Follow-up: Responses cache behavior validated
+
+Live validation on June 3, 2026 confirmed that `/v1/responses` keeps ds4 cache behavior aligned with the expected continuation boundary. This resolves the Chat Completions `reasoning_content` replay blocker for continuing to daemon capability and data-plane planning with Responses as the chosen endpoint.
 
 ## Spec Files Affected By A Future Fix
 

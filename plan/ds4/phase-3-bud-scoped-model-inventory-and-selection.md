@@ -57,6 +57,8 @@ Bud-local ds4 model response shape should include locality metadata:
   "provider": "ds4",
   "provider_model": "deepseek-v4-flash",
   "display_name": "ds4 DeepSeek V4",
+  "request_mode": "ds4_openai_responses",
+  "compatibility": ["openai_responses"],
   "source": {
     "kind": "bud_local",
     "bud_id": "b_..."
@@ -65,6 +67,16 @@ Bud-local ds4 model response shape should include locality metadata:
 ```
 
 If `bud_id` is absent, do not include Bud-local models.
+
+### Responses API Deltas
+
+The model inventory should expose ds4 as a Responses-backed local model, not as a generic OpenAI-compatible endpoint selector:
+
+- include `request_mode: "ds4_openai_responses"` or equivalent metadata if the existing response shape has a request-mode field
+- include only `openai_responses` compatibility for Bud-local ds4
+- do not expose Chat Completions, Anthropic Messages, `/v1/responses`, `/v1/chat/completions`, or any raw local URL as user-selectable options
+- keep `reasoning_effort` behavior aligned with the catalog: ds4 has no product reasoning controls in the first pass, even though Responses reasoning payloads can be preserved internally for replay/cache behavior
+- unavailable-state messaging should say the Bud-local model is unavailable, not that a different endpoint/mode should be selected
 
 ## Implementation Tasks
 
@@ -88,6 +100,7 @@ Rules:
 - use stable product id `ds4-deepseek-v4-flash`
 - preserve provider id `ds4`
 - include provider model `deepseek-v4-flash`
+- include Responses request mode/compatibility metadata if the route shape supports it
 - include context/output metadata when available
 - include `source.kind = "bud_local"` and the authorized `bud_id`
 - avoid advertising raw local URLs
@@ -125,6 +138,7 @@ Expected behavior:
 - new-thread route loads models with the route Bud id
 - existing-thread route loads models using the thread's Bud id
 - local ds4 models are visually distinguishable from cloud models without implying privacy the system does not provide
+- local ds4 models are not presented with endpoint or compatibility-mode controls
 - stale/unavailable ds4 selections are rendered as unavailable, not removed without explanation
 
 ### Task 6: Add tests
@@ -144,6 +158,7 @@ Add coverage for:
 - [ ] global `/api/models` behavior unchanged
 - [ ] Bud-scoped `/api/models` authorizes Bud ownership
 - [ ] healthy Bud-local ds4 appears for owner
+- [ ] Bud-local ds4 appears as Responses-backed only
 - [ ] absent/unhealthy ds4 does not appear
 - [ ] non-owner receives `404`
 - [ ] message send validates ds4 against thread Bud

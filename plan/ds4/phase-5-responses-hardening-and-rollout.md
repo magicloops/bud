@@ -1,4 +1,4 @@
-# Phase 5: Endpoint Hardening And Rollout
+# Phase 5: Responses Hardening And Rollout
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Status**: Proposed
@@ -44,13 +44,28 @@ Run and record live/manual validation for:
 
 - final-text turn
 - terminal tool-call turn
+- post-tool continuation with Responses `function_call_output` replay
+- reasoning output preservation/replay when ds4 emits Responses reasoning items
 - long output within configured limits
 - malformed tool-call recovery if ds4 produces partial JSON
+- `response.incomplete` handling for output/context limits
+- `response.failed` and upstream HTTP error handling
 - cancel during streaming
 - ds4 process stopped before send
 - ds4 process stopped mid-stream
 - Bud reconnect after ds4 starts or stops
 - two concurrent ds4 requests to one Bud
+
+### Responses API Deltas
+
+Hardening should focus on Responses lifecycle behavior rather than Chat Completions chunk behavior:
+
+- confirm post-tool requests replay `function_call` followed by `function_call_output`
+- confirm provider-native reasoning payloads are kept for same-provider replay when available
+- confirm visible assistant text and reasoning/tool items preserve provider output order
+- confirm `response.completed`, `response.incomplete`, and `response.failed` all produce coherent canonical outcomes
+- confirm daemon-streamed SSE framing preserves multi-line `data:` events and `[DONE]`
+- do not add tests or fallback behavior for Chat Completions `delta.reasoning_content`, `tool_calls`, or `finish_reason`
 
 ### Task 2: Confirm Responses rollout status
 
@@ -60,10 +75,10 @@ Use Phase 1.5 fixtures and live probes to confirm whether the rollout uses:
 ds4_openai_responses
 ```
 
-Phase 1.5 made Responses the service-local default. This task is a final hardening review:
+Phase 1.5 made Responses the service-local default, and live cache validation on June 3, 2026 confirmed that Responses is the chosen endpoint for continuing Bud-backed work. The remaining Phase 5 work is hardening:
 
-- live cache behavior remains better than Chat Completions
-- cancellation and errors are covered
+- live cache behavior remains better than Chat Completions (confirmed)
+- cancellation and Responses error/incomplete events are covered
 - Bud-backed data-plane docs use `/v1/responses`
 - provider-ledger diagnostics distinguish `ds4_openai_responses`
 
@@ -127,7 +142,7 @@ Update:
 - [ ] stopped-ds4-mid-stream behavior is clear
 - [ ] reconnect-time health behavior is clear
 - [ ] concurrency behavior is clear
-- [ ] Responses rollout status confirmed
+- [x] Responses rollout status confirmed
 - [ ] Anthropic Messages support decision recorded
 - [ ] audit/log review complete
 - [ ] docs/spec updates complete

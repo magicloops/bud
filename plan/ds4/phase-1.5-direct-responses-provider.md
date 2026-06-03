@@ -1,7 +1,7 @@
 # Phase 1.5: Direct Responses Provider
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Implemented for direct service-local provider; live cache validation pending. The temporary Chat Completions fallback described in this phase was removed in [Phase 1.6](./phase-1.6-remove-chat-completions-fallback.md).
+**Status**: Implemented for direct service-local provider; live cache validation complete. The temporary Chat Completions fallback described in this phase was removed in [Phase 1.6](./phase-1.6-remove-chat-completions-fallback.md).
 
 ---
 
@@ -30,7 +30,7 @@ By the end of this phase:
 - Bud has a `ds4_openai_responses` request mode (implemented)
 - the direct ds4 provider can use `/v1/responses` as the default request surface (implemented)
 - Chat Completions remains available only as a fallback/debug mode until removed or explicitly retained (implemented)
-- live cache behavior is measured again against ds4 server logs
+- live cache behavior is measured again against ds4 server logs (validated on June 3, 2026)
 
 ## Scope
 
@@ -149,6 +149,8 @@ Record:
 - providerData diagnostic payloads
 
 If Responses still cannot replay hidden reasoning or bind continuation state in Bud's stateless transcript flow, do not switch the default. Document the blocker and revisit ds4-server behavior instead.
+
+Live validation on June 3, 2026 confirmed that `/v1/responses` keeps ds4 cache behavior aligned with the expected continuation boundary. This resolves the Chat Completions replay blocker for continuing to daemon capability and data-plane planning.
 
 ## Implementation Tasks
 
@@ -272,7 +274,7 @@ Record results in:
 - [x] Chat Completions fallback remains available during transition
 - [ ] direct Responses final-text live smoke passes
 - [ ] direct Responses terminal tool-call live smoke passes
-- [ ] direct Responses cache behavior improves over Chat Completions or blocker is documented
+- [x] direct Responses cache behavior improves over Chat Completions
 - [x] provider-ledger rows record `ds4_openai_responses`
 - [x] build and focused provider tests pass
 
@@ -282,9 +284,9 @@ Record results in:
 2. Implement direct `Ds4ResponsesProvider`.
 3. Use Responses as the local-dev default while live final-text, tool-call, and cache validation run.
 4. Keep Chat Completions fallback for one iteration while comparing cache behavior.
-5. If Responses solves the replay issue, update Phase 2-4 data-plane docs to use `/v1/responses` as the default Bud-backed endpoint.
-6. If Responses does not solve it, keep Chat Completions as the functional direct provider and treat the cache miss as a ds4-server compatibility issue.
+5. Responses solved the replay issue; Phase 2-4 data-plane docs now use `/v1/responses` as the active Bud-backed endpoint.
+6. Chat Completions was removed as an active fallback in Phase 1.6.
 
 ## Exit Criteria
 
-This phase is done when Bud has an explicit go/no-go decision for switching direct ds4 from `/v1/chat/completions` to `/v1/responses`, backed by fixtures, provider tests, and live cache validation.
+This phase is done when Bud has an explicit go decision for switching direct ds4 from `/v1/chat/completions` to `/v1/responses`, backed by provider tests and live cache validation.

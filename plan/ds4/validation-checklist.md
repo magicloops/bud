@@ -1,7 +1,7 @@
 # ds4 Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 1.6 automated cleanup complete; direct Responses live cache validation pending
+**Status**: Phase 1.6 automated cleanup complete; direct Responses live cache validation complete
 **Last Updated**: 2026-06-03
 
 ---
@@ -20,7 +20,7 @@
 - [x] Chat Completions tool-call stream fixture parses into canonical tool-call events
 - [x] Chat Completions stream diagnostics detect output-only `reasoning_content`
 - [x] Direct probe confirms Chat Completions ignores replayed `assistant.reasoning_content`
-- [ ] Chat Completions malformed/error fixture normalizes to a provider error
+- [x] Chat Completions malformed/error fixture work retired after provider removal
 - [x] `ds4_openai_responses` request mode is accepted by provider-ledger typing
 - [x] Responses text stream fixture parses into canonical text deltas
 - [x] Responses reasoning fixture is preserved or intentionally diagnostic-only
@@ -36,6 +36,8 @@
 
 - [ ] `GET /api/models` excludes Bud-local ds4 models
 - [ ] owned `GET /api/models?bud_id=...` includes healthy Bud-local ds4
+- [ ] Bud-local ds4 inventory includes Responses request-mode/compatibility metadata
+- [ ] Bud-local ds4 inventory does not expose endpoint or mode selectors
 - [ ] owned `GET /api/models?bud_id=...` excludes absent/unhealthy ds4
 - [ ] non-owner `GET /api/models?bud_id=...` returns `404`
 - [ ] message send rejects unknown ds4 model ids
@@ -47,6 +49,9 @@
 - [ ] daemon rejects non-loopback ds4 URLs
 - [ ] daemon omits `capabilities.llm` when probe fails
 - [ ] daemon advertises `capabilities.llm` when probe succeeds
+- [ ] daemon advertises only `openai_responses` compatibility for ds4
+- [ ] daemon advertises logical request mode `ds4_openai_responses`
+- [ ] daemon advertises logical generation path `/v1/responses`
 - [ ] hello payload does not include raw local URL
 - [ ] service hello schema preserves `capabilities.llm`
 
@@ -57,6 +62,7 @@
 - [ ] daemon rejects unknown local LLM server ids
 - [ ] daemon rejects disallowed paths
 - [ ] daemon rejects disallowed methods
+- [ ] daemon allows ds4 generation only through `/v1/responses`
 - [ ] daemon strips forbidden headers
 - [ ] daemon enforces request body limit
 - [ ] daemon enforces response body limit
@@ -64,6 +70,8 @@
 - [ ] daemon enforces concurrency limit
 - [ ] cancellation sends stream reset
 - [ ] provider-ledger records provider `ds4` and request mode `ds4_openai_responses`
+- [ ] Bud-backed provider replays Responses `function_call` / `function_call_output` history after tool calls
+- [ ] Bud-backed provider preserves Responses reasoning payloads for replay when available
 
 ## Live Validation
 
@@ -80,7 +88,7 @@ Run against an already-running ds4 server. The validation does not require Bud t
 - [ ] direct `/v1/responses` final-text stream completes
 - [ ] direct `/v1/responses` terminal tool-call stream completes
 - [ ] direct `/v1/responses` post-tool continuation completes
-- [ ] direct `/v1/responses` live cache behavior improves over Chat Completions or blocker is documented
+- [x] direct `/v1/responses` live cache behavior improves over Chat Completions
 - [ ] `GET /api/models` shows `ds4-deepseek-v4-flash`
 - [ ] one final-text agent turn completes
 - [ ] one terminal tool-call agent turn completes

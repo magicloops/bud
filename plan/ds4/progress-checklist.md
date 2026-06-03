@@ -1,17 +1,14 @@
 # ds4 Progress Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 1.6 service cleanup complete; direct Responses live cache validation pending
+**Status**: Phase 1.6 service cleanup complete; direct Responses cache validation complete
 **Last Updated**: 2026-06-03
 
 ---
 
 ## Phase 0: Contract Baseline And Fixtures
 
-- [ ] Capture Chat Completions final-text fixture
-- [ ] Capture Chat Completions streaming final-text fixture
-- [ ] Capture Chat Completions tool-call fixture
-- [ ] Capture Chat Completions error fixture
+- [x] Retire remaining Chat Completions fixture capture from the active plan after Phase 1.6
 - [ ] Probe `/v1/responses`
 - [ ] Probe `/v1/messages`
 - [ ] Confirm first product id `ds4-deepseek-v4-flash`
@@ -45,7 +42,7 @@
 - [x] Add Responses provider tests
 - [ ] Run direct Responses final-text live smoke
 - [ ] Run direct Responses terminal tool-call live smoke
-- [ ] Compare Responses live cache behavior against Chat Completions
+- [x] Compare Responses live cache behavior against Chat Completions
 - [x] Decide whether direct ds4 defaults to Responses
 
 ## Phase 1.6: Remove Chat Completions Fallback
@@ -67,6 +64,8 @@
 - [ ] Validate daemon ds4 URL is loopback-only
 - [ ] Probe `GET /v1/models` before hello
 - [ ] Add `capabilities.llm` hello payload
+- [ ] Advertise only `openai_responses` compatibility for ds4
+- [ ] Include logical `ds4_openai_responses` request mode and `/v1/responses` generation path
 - [ ] Keep raw local URL out of hello
 - [ ] Preserve `capabilities.llm` in service hello parsing
 - [ ] Persist local LLM capability metadata with Bud capabilities
@@ -76,7 +75,8 @@
 
 - [ ] Add `GET /api/models?bud_id=<owned-bud-id>`
 - [ ] Authorize Bud ownership before local model projection
-- [ ] Append healthy Bud-local ds4 model metadata
+- [ ] Append healthy Responses-backed Bud-local ds4 model metadata
+- [ ] Avoid endpoint/mode selectors for Bud-local ds4
 - [ ] Keep global `/api/models` behavior unchanged
 - [ ] Validate ds4 model selection against the thread Bud
 - [ ] Reject unavailable ds4 before user-message insert
@@ -88,7 +88,9 @@
 - [ ] Add `local_llm_http` stream family
 - [ ] Add service-to-daemon local LLM open/result frames
 - [ ] Extend provider invocation context with thread/Bud/owner routing data
-- [ ] Implement `BudLocalDs4Provider`
+- [ ] Implement Responses-backed `BudLocalDs4Provider`
+- [ ] Replay Responses `function_call` / `function_call_output` history across tool loops
+- [ ] Preserve ds4 Responses reasoning payloads for same-provider replay where available
 - [ ] Implement daemon local LLM HTTP forwarding
 - [ ] Enforce daemon target, path, header, body, response, TTL, and concurrency limits
 - [ ] Reset daemon stream on cancellation
@@ -103,7 +105,7 @@
 - [ ] Validate stopped-ds4-mid-stream behavior
 - [ ] Validate Bud reconnect health behavior
 - [ ] Validate concurrent request behavior
-- [ ] Confirm `/v1/responses` rollout status from Phase 1.5
+- [x] Confirm `/v1/responses` rollout status from Phase 1.5
 - [ ] Decide `/v1/messages` support
 - [ ] Finalize audit/log coverage
 - [ ] Update product/deployment handoff text

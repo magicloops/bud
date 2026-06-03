@@ -45,6 +45,7 @@ By the end of this plan:
 - ds4 provider identity is `ds4`; it is not registered as `openai` or `anthropic`.
 - Chat Completions was the first implemented ds4 request surface.
 - Responses is now the only active direct service-local endpoint because Chat Completions streams output-only `reasoning_content` that cannot be replayed in assistant history.
+- Responses live cache behavior has been validated and is the chosen endpoint for Bud-backed work.
 - The first product model id is `ds4-deepseek-v4-flash`.
 - The provider model is `deepseek-v4-flash`.
 - The `deepseek-v4-pro` alias is deferred until there is product value in exposing two aliases for the same loaded GGUF.
@@ -110,7 +111,9 @@ The daemon config points at the local API origin without `/v1`. The daemon probe
       {
         "id": "ds4",
         "provider": "ds4",
-        "compatibility": ["openai_chat_completions", "openai_responses", "anthropic_messages"],
+        "compatibility": ["openai_responses"],
+        "request_mode": "ds4_openai_responses",
+        "generation_path": "/v1/responses",
         "models": [
           {
             "id": "deepseek-v4-flash",
@@ -151,6 +154,14 @@ Initial service-to-daemon open frame:
 `/v1/responses` is the active path after Phase 1.6. Reintroducing `/v1/chat/completions` for Bud-backed use would require a new design decision because the active service-local fallback has been removed.
 
 The daemon resolves `local_llm_server_id` to configured local state, forwards only allowlisted loopback ds4 requests, and streams response bytes back through normal stream lifecycle frames.
+
+Responses-specific implications:
+
+- service builds the same `/v1/responses` request shape used by the direct `Ds4ResponsesProvider`
+- daemon forwards bytes only; it does not translate Chat Completions messages or tool calls
+- provider replay uses Responses `function_call` and `function_call_output` items
+- provider-ledger records `ds4_openai_responses` for all new ds4 calls
+- Chat Completions can be reintroduced only through a new design decision
 
 ## Ownership And Permission Boundaries
 
@@ -241,9 +252,9 @@ No database schema change is required unless implementation chooses to persist c
 
 1. Capture ds4 fixtures and lock the provider/request-mode contract.
 2. Land direct local-dev provider support.
-3. Historical: prove direct Chat Completions final-text and tool-call turns against the running server.
+3. Historical: direct Chat Completions smoke coverage informed Phase 1, but it is no longer a forward dependency.
 4. Prove direct Responses final-text, reasoning, and tool-call turns against the running server.
-5. Validate `/v1/responses` live cache behavior before relying on it for Bud-backed use.
+5. Validated `/v1/responses` live cache behavior; Bud-backed work can rely on Responses as the chosen endpoint.
 6. Add daemon config, probe, and capability advertisement.
 7. Add Bud-scoped inventory and unavailable-model validation.
 8. Add the local LLM stream family and Bud-backed provider using the chosen ds4 endpoint.
@@ -254,9 +265,8 @@ No database schema change is required unless implementation chooses to persist c
 
 - Does ds4's `/v1/models` expose context/output metadata reliably, or should Bud always require explicit context config?
 - Should ds4 reasoning be exposed as Bud `reasoning_effort`, a ds4-specific advanced option, or hidden in the first pass?
-- Does `/v1/responses` provide replayable reasoning/continuation state for Bud's stateless transcript flow, or does it require server-side continuation ids?
+- How much provider-native Responses reasoning payload should be retained for exact replay and debugging beyond the current provider-ledger payloads?
 - Should saved ds4 thread preferences remain selected while the Bud is offline, with send disabled, or should the selector force a cloud model before send?
-- How much provider-native ds4 request/response shape should be retained in the ledger for exact replay and debugging?
 - Should runtime health changes be sent through a new `capability_update` frame, or is reconnect-time detection sufficient for the first release?
 - If a future local runner requires an API key, should the daemon inject it locally so the hosted service never sees it?
 

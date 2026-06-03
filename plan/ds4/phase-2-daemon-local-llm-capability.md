@@ -17,6 +17,8 @@ By the end of this phase:
 - service hello parsing preserves the `llm` capability
 - the service can persist and inspect Bud-local LLM capability metadata
 
+Phase 1.6 made `/v1/responses` the only active Bud ds4 endpoint. Phase 2 capability metadata should therefore advertise Responses compatibility only; Chat Completions and Anthropic Messages remain historical/deferred and must not appear as available Bud-local modes.
+
 ## Scope
 
 ### In Scope
@@ -60,7 +62,9 @@ Advertise the capability only after a successful startup probe:
       {
         "id": "ds4",
         "provider": "ds4",
-        "compatibility": ["openai_chat_completions", "openai_responses", "anthropic_messages"],
+        "compatibility": ["openai_responses"],
+        "request_mode": "ds4_openai_responses",
+        "generation_path": "/v1/responses",
         "models": [
           {
             "id": "deepseek-v4-flash",
@@ -78,6 +82,16 @@ Advertise the capability only after a successful startup probe:
 ```
 
 If the probe fails, omit `capabilities.llm` or include no healthy servers. Prefer omission in the first pass to avoid ambiguous client behavior.
+
+### Responses API Deltas
+
+Compared to the original Chat Completions plan:
+
+- `compatibility` advertises only `openai_responses`
+- `request_mode` is always `ds4_openai_responses`
+- `generation_path` is `/v1/responses`; `/v1/chat/completions` is not advertised
+- no `assistant.reasoning_content` or Chat-specific DSML replay behavior is part of the capability contract
+- `/v1/models` remains the startup health probe, but it does not imply support for any endpoint other than the advertised Responses path
 
 ## Implementation Tasks
 
@@ -108,7 +122,7 @@ Failure should not stop the daemon from connecting unless the user explicitly as
 
 Add `llm` to the daemon hello capabilities when the probe succeeds.
 
-Keep the configured local URL out of the hello payload. The service receives only logical server id, provider, compatibility, model metadata, concurrency, and health.
+Keep the configured local URL out of the hello payload. The service receives only logical server id, provider, compatibility, request mode, generation path, model metadata, concurrency, and health.
 
 ### Task 4: Preserve capability in the service
 
@@ -121,6 +135,7 @@ Persist it in the existing Bud capabilities storage path with other capability d
 Update daemon/service protocol docs and specs with:
 
 - local LLM capability shape
+- Responses-only compatibility and generation path
 - loopback-only local target rule
 - startup-probe-only health behavior for the first release
 - note that runtime capability updates are deferred
@@ -130,6 +145,7 @@ Update daemon/service protocol docs and specs with:
 - [ ] daemon rejects non-loopback ds4 URL config
 - [ ] daemon omits `capabilities.llm` when ds4 probe fails
 - [ ] daemon advertises `capabilities.llm` when ds4 probe succeeds
+- [ ] daemon advertises only `openai_responses` compatibility for ds4
 - [ ] hello payload never includes raw local URL
 - [ ] service schema preserves `capabilities.llm`
 - [ ] service stores Bud capability metadata
