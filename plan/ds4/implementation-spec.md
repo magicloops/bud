@@ -7,6 +7,7 @@
 **Validation Checklist**: [validation-checklist.md](./validation-checklist.md)
 **Phase 0**: [phase-0-contract-baseline-and-fixtures.md](./phase-0-contract-baseline-and-fixtures.md)
 **Phase 1**: [phase-1-direct-local-dev-provider.md](./phase-1-direct-local-dev-provider.md)
+**Phase 1.5**: [phase-1.5-direct-responses-provider.md](./phase-1.5-direct-responses-provider.md)
 **Phase 2**: [phase-2-daemon-local-llm-capability.md](./phase-2-daemon-local-llm-capability.md)
 **Phase 3**: [phase-3-bud-scoped-model-inventory-and-selection.md](./phase-3-bud-scoped-model-inventory-and-selection.md)
 **Phase 4**: [phase-4-local-llm-data-plane-provider.md](./phase-4-local-llm-data-plane-provider.md)
@@ -42,7 +43,8 @@ By the end of this plan:
 ## Fixed Decisions
 
 - ds4 provider identity is `ds4`; it is not registered as `openai` or `anthropic`.
-- Chat Completions is the first supported ds4 request surface.
+- Chat Completions was the first implemented ds4 request surface.
+- Responses is now the direct service-local default because Chat Completions streams output-only `reasoning_content` that cannot be replayed in assistant history.
 - The first product model id is `ds4-deepseek-v4-flash`.
 - The provider model is `deepseek-v4-flash`.
 - The `deepseek-v4-pro` alias is deferred until there is product value in exposing two aliases for the same loaded GGUF.
@@ -70,7 +72,8 @@ Initial catalog entry:
 | Provider | `ds4` |
 | Provider model | `deepseek-v4-flash` |
 | Display name | `ds4 DeepSeek V4` |
-| Initial request mode | `ds4_openai_chat` |
+| Direct default request mode | `ds4_openai_responses` |
+| Chat fallback request mode | `ds4_openai_chat` |
 | Source, direct mode | `service_local_dev` |
 | Source, Bud-backed mode | `bud_local` |
 
@@ -136,7 +139,7 @@ Initial service-to-daemon open frame:
   "stream_type": "local_llm_http",
   "local_llm_server_id": "ds4",
   "method": "POST",
-  "path": "/v1/chat/completions",
+  "path": "/v1/responses",
   "headers": {
     "content-type": "application/json",
     "accept": "text/event-stream"
@@ -144,6 +147,8 @@ Initial service-to-daemon open frame:
   "request_body_bytes": 12345
 }
 ```
+
+`/v1/responses` is the preferred path after Phase 1.5 service implementation. If live cache validation rejects the switch for Bud-backed use, the same stream family can carry `/v1/chat/completions` with request mode `ds4_openai_chat`.
 
 The daemon resolves `local_llm_server_id` to configured local state, forwards only allowlisted loopback ds4 requests, and streams response bytes back through normal stream lifecycle frames.
 
@@ -167,10 +172,11 @@ No database schema change is required unless implementation chooses to persist c
 | --- | --- | --- | --- |
 | 0 | [phase-0-contract-baseline-and-fixtures.md](./phase-0-contract-baseline-and-fixtures.md) | Urgent | Lock ds4 request/stream fixtures, model id policy, and request-mode names |
 | 1 | [phase-1-direct-local-dev-provider.md](./phase-1-direct-local-dev-provider.md) | Urgent | Service can invoke a same-machine ds4 server as an opt-in local-dev model |
+| 1.5 | [phase-1.5-direct-responses-provider.md](./phase-1.5-direct-responses-provider.md) | Urgent | Implement direct ds4 `/v1/responses` and validate whether it fixes Chat Completions reasoning replay/cache misses |
 | 2 | [phase-2-daemon-local-llm-capability.md](./phase-2-daemon-local-llm-capability.md) | High | Daemon advertises configured healthy ds4 servers through hello capabilities |
 | 3 | [phase-3-bud-scoped-model-inventory-and-selection.md](./phase-3-bud-scoped-model-inventory-and-selection.md) | High | Browser/API model inventory and message validation are Bud-aware |
 | 4 | [phase-4-local-llm-data-plane-provider.md](./phase-4-local-llm-data-plane-provider.md) | High | Hosted service can invoke Bud-local ds4 through authenticated data-plane streams |
-| 5 | [phase-5-responses-hardening-and-rollout.md](./phase-5-responses-hardening-and-rollout.md) | Medium | Responses compatibility, hardening, live validation, and rollout docs are complete |
+| 5 | [phase-5-responses-hardening-and-rollout.md](./phase-5-responses-hardening-and-rollout.md) | Medium | Chosen endpoint hardening, live validation, compatibility decisions, and rollout docs are complete |
 
 ## Expected Files And Areas
 
@@ -221,7 +227,8 @@ No database schema change is required unless implementation chooses to persist c
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| ds4 Chat Completions stream deltas differ from OpenAI enough to break tool parsing | Medium | High | Capture fixtures first and keep ds4 parsing isolated behind provider tests |
+| ds4 Chat Completions cannot replay output-only reasoning and repeatedly misses live KV cache | High | High | Add Phase 1.5 to validate `/v1/responses` before daemon/data-plane rollout |
+| ds4 Responses stream deltas differ from OpenAI enough to break tool parsing | Medium | High | Capture fixtures first and keep ds4 parsing isolated behind provider tests |
 | Direct local-dev ds4 becomes visible in hosted environments | Low | High | Register only with explicit `DS4_DIRECT_BASE_URL`; label source as service-local-dev |
 | Local model appears globally instead of Bud-scoped | Medium | High | Add route and message-send tests for owner, non-owner, no-`bud_id`, and unavailable cases |
 | Daemon local HTTP path becomes an arbitrary localhost proxy | Medium | High | Resolve logical server ids daemon-side and allowlist methods, paths, headers, and loopback origins |
@@ -233,18 +240,20 @@ No database schema change is required unless implementation chooses to persist c
 
 1. Capture ds4 fixtures and lock the provider/request-mode contract.
 2. Land direct local-dev provider support.
-3. Prove direct ds4 final-text and tool-call turns against the running server.
-4. Add daemon config, probe, and capability advertisement.
-5. Add Bud-scoped inventory and unavailable-model validation.
-6. Add the local LLM stream family and Bud-backed provider.
-7. Prove Bud-backed final-text, terminal tool-loop, cancel, and ds4-stopped flows.
-8. Validate Responses compatibility and decide whether it becomes a second request mode.
-9. Complete docs/spec updates and product handoff.
+3. Prove direct Chat Completions final-text and tool-call turns against the running server.
+4. Prove direct Responses final-text, reasoning, and tool-call turns against the running server.
+5. Validate `/v1/responses` live cache behavior before relying on it for Bud-backed use.
+6. Add daemon config, probe, and capability advertisement.
+7. Add Bud-scoped inventory and unavailable-model validation.
+8. Add the local LLM stream family and Bud-backed provider using the chosen ds4 endpoint.
+9. Prove Bud-backed final-text, terminal tool-loop, cancel, and ds4-stopped flows.
+10. Complete docs/spec updates and product handoff.
 
 ## Open Questions
 
 - Does ds4's `/v1/models` expose context/output metadata reliably, or should Bud always require explicit context config?
 - Should ds4 reasoning be exposed as Bud `reasoning_effort`, a ds4-specific advanced option, or hidden in the first pass?
+- Does `/v1/responses` provide replayable reasoning/continuation state for Bud's stateless transcript flow, or does it require server-side continuation ids?
 - Should saved ds4 thread preferences remain selected while the Bud is offline, with send disabled, or should the selector force a cloud model before send?
 - How much provider-native ds4 request/response shape should be retained in the ledger for exact replay and debugging?
 - Should runtime health changes be sent through a new `capability_update` frame, or is reconnect-time detection sufficient for the first release?
@@ -257,8 +266,8 @@ No database schema change is required unless implementation chooses to persist c
 - [ ] daemon advertises healthy configured ds4 through `capabilities.llm`
 - [ ] Bud-scoped `/api/models` exposes local ds4 only to the owning user
 - [ ] explicit ds4 send fails before user-message persistence when ds4 is unavailable
-- [ ] Bud-backed provider streams ds4 Chat Completions over authenticated data-plane frames
+- [ ] Bud-backed provider streams the selected ds4 endpoint over authenticated data-plane frames
 - [ ] cancellation resets the daemon stream and leaves provider/runtime state coherent
-- [ ] provider ledger records `ds4` calls with `ds4_openai_chat`
+- [ ] provider ledger records `ds4` calls with the selected request mode (`ds4_openai_responses` or `ds4_openai_chat`)
 - [ ] protocol, service, daemon, web, and root specs are updated as implementation lands
 - [ ] [progress-checklist.md](./progress-checklist.md) and [validation-checklist.md](./validation-checklist.md) are updated with final status

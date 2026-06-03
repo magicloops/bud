@@ -586,6 +586,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
 - For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
+- For `terminal.send`, browser-facing `pending_tool.args` uses the model-facing gesture fields: exactly one of `command`, `raw_text`, or `key`. `command` means text plus Enter; `raw_text` means literal text without an implicit Enter; `key` means one semantic key gesture.
 - For web-view tools, `pending_tool.args` contains only product fields such as
   `target_port`, `path`, `title`, `proxied_site_id`, and `disable`; viewer
   grants, cookies, and daemon stream identifiers are never exposed to the model
@@ -1356,6 +1357,7 @@ Supported request families:
 
 Rules:
 - the request is either `text` with optional `submit`, or one semantic `key`
+- agent/model-facing `terminal.send` calls no longer expose `text` or `submit`; the service adapts `command` to `{ "text": command, "submit": true }`, `raw_text` to `{ "text": raw_text, "submit": false }`, and `key` to the Bud `key` field at this boundary
 - canonical keys are backend-neutral names such as `ctrl+c`, `enter`, and `escape`
 - canonical model-facing wait modes are `settled`, `changed`, and `none`
 - `wait_for: "settled"` is the default agent path and uses a service-owned one-hour timeout budget
@@ -1515,6 +1517,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
   - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
+  - For `terminal.send`, `args` exposes exactly one input gesture: `{ "command": "whoami", "wait_for": "settled" }`, `{ "raw_text": "partial", "wait_for": "settled" }`, or `{ "key": "ctrl+c", "wait_for": "settled" }`. It does not expose legacy `text`/`submit` fields.
   - For web-view tools, `args` contains product fields only; examples include
     `target_host`, `target_port`, `path`, `title`, `proxied_site_id`, and
     `disable`. When `web_view.open` omits `target_host`, the service defaults
@@ -1547,6 +1550,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
+  - completed `terminal.send` results expose gesture metadata in addition to the low-level `submitted` dispatch acknowledgement: `input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, and `enter_requested`. Clients should prefer those fields over interpreting `submitted` as "Enter was pressed."
   - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
   - terminal transport failures are recorded as structured tool results instead of uncaught agent-loop failures. Known offline cases include `error: "bud_offline"`, `code: "BUD_DISCONNECTED"`, `retryable: true`, and `ok: false`; timed-out waits use `TIMEOUT`, canceled waits use `CANCELED`, and unavailable sessions use `EXEC_FAILED`.
   - web-view tool results include a `web_view` payload with owned proxied-site
@@ -1700,6 +1704,7 @@ Service → Bud: terminal_send{text|key, submit?, wait_for, timeout_ms}
 Bud → Service: terminal_output(seq, byte_offset, data)*
 Bud → Service: terminal_send_result{submitted, delta, readiness, error}
 Service → Browser SSE: terminal.output* and terminal.ready/status as applicable
+Agent tool args/results exposed to browsers use `terminal.send{command|raw_text|key}` plus gesture metadata; the `text`/`submit` shape above is the current Service → Bud wire frame.
 ```
 
 ### 10.3.1 Human Terminal Interrupt
@@ -1854,6 +1859,8 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
   - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument
   - human terminal interrupt is thread-scoped at `POST /api/threads/:thread_id/terminal/interrupt` and sends `key:"ctrl+c"` through `terminal_send` while rejecting older pending waits as `interrupted`
+  - model-facing `terminal.send` now uses `command`, `raw_text`, or `key` instead of `text` plus optional `submit`; browser-facing tool args follow the same shape while the service still adapts to the existing Bud `terminal_send{text|key, submit?}` wire frame
+  - completed `terminal.send` tool results now include `input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, and `enter_requested` so clients do not infer Enter behavior from `submitted`
   - model-facing `web_view_open`, `web_view_close`, and `web_view_list` tools
     let the agent attach/detach/list product web views without raw proxy-session
     authority

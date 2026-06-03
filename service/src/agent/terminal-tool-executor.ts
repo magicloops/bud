@@ -18,6 +18,38 @@ import {
 
 type SessionResolver = (threadId: string) => Promise<TerminalSession>;
 
+type TerminalSendGesture = {
+  kind: "command" | "raw_text" | "key";
+  command?: string;
+  rawText?: string;
+  key?: string;
+  runtimeText?: string;
+  runtimeSubmit?: boolean;
+};
+
+type TerminalSendGestureResolution =
+  | {
+      ok: true;
+      gesture: TerminalSendGesture;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+type TerminalSendResultMetadata = Pick<
+  TerminalCallResult,
+  "inputDispatched" | "commandSent" | "rawTextSent" | "keySent" | "enterRequested"
+>;
+
+const EMPTY_TERMINAL_SEND_RESULT_METADATA: TerminalSendResultMetadata = {
+  inputDispatched: false,
+  commandSent: false,
+  rawTextSent: false,
+  keySent: null,
+  enterRequested: false,
+};
+
 export class TerminalToolExecutor {
   private readonly terminalSessionManager: TerminalSessionManager;
   private readonly logger: FastifyBaseLogger;
@@ -67,6 +99,11 @@ export class TerminalToolExecutor {
         output_truncation_reason: outputTruncationReason,
         omitted_lines: result.omittedLines,
         submitted: result.submitted,
+        input_dispatched: result.inputDispatched,
+        command_sent: result.commandSent,
+        raw_text_sent: result.rawTextSent,
+        key_sent: result.keySent,
+        enter_requested: result.enterRequested,
         delta: serializeTerminalDelta(result.delta),
 	        view: result.view,
 	        error: result.error,
@@ -201,31 +238,27 @@ export class TerminalToolExecutor {
       };
     }
 
-    const hasTextField = typeof directive.text === "string";
-    const hasText = typeof directive.text === "string" && directive.text.length > 0;
-    const hasKey = typeof directive.key === "string" && directive.key.trim().length > 0;
-    const invalidSendError = this.validateTerminalSendDirective(directive, {
-      hasTextField,
-      hasText,
-      hasKey,
-    });
+    const gestureResolution = this.resolveTerminalSendGesture(directive);
     const contextBefore = getInferredContext();
 
-    if (invalidSendError) {
+    if (!gestureResolution.ok) {
       return {
         kind: "interaction_ack",
         readiness: latestReadiness("invalid_send", false, 0.2),
         submitted: false,
-        error: invalidSendError,
+        ...EMPTY_TERMINAL_SEND_RESULT_METADATA,
+        error: gestureResolution.error,
         contextAfter: buildContextAfter(),
       };
     }
 
-    if (contextBefore.mode === "shell" && directive.submit === true && hasText) {
-      const command = this.parseCommandFromText(directive.text ?? "");
+    const gesture = gestureResolution.gesture;
+
+    if (contextBefore.mode === "shell" && gesture.kind === "command") {
+      const command = this.parseCommandFromText(gesture.command ?? "");
       if (command && isKnownReplProgram(command)) {
         this.terminalSessionManager.setPendingCommand(sessionId, {
-          input: directive.text ?? "",
+          input: gesture.command ?? "",
           command,
           sentAt: Date.now(),
           source: "agent",
@@ -235,9 +268,11 @@ export class TerminalToolExecutor {
 
     this.debug("terminal.send", {
       sessionId,
-      hasText,
-      submit: directive.submit === true,
-      hasKey,
+      gesture: gesture.kind,
+      command: gesture.kind === "command" ? gesture.command : undefined,
+      hasRawText: gesture.kind === "raw_text",
+      key: gesture.kind === "key" ? gesture.key : undefined,
+      enterRequested: this.isEnterRequested(gesture),
       waitFor: directive.waitFor ?? null,
       program: contextBefore.program,
     });
@@ -247,9 +282,9 @@ export class TerminalToolExecutor {
       result = await this.terminalSessionManager.sendInteraction(
         sessionId,
         {
-          text: directive.text,
-          submit: directive.submit,
-          key: directive.key,
+          text: gesture.runtimeText,
+          submit: gesture.runtimeSubmit,
+          key: gesture.key,
           observeAfterMs: directive.observeAfterMs,
           waitFor: directive.waitFor,
         },
@@ -273,6 +308,7 @@ export class TerminalToolExecutor {
         kind: "interaction_ack",
         readiness,
         submitted: true,
+        ...this.buildTerminalSendResultMetadata(gesture, true),
         delta: null,
         error: "interrupted",
         contextAfter: buildContextAfter({ readiness }),
@@ -292,6 +328,7 @@ export class TerminalToolExecutor {
       kind: "interaction_ack",
       readiness: finalReadiness,
       submitted: result.submitted,
+      ...this.buildTerminalSendResultMetadata(gesture, result.submitted),
       delta: result.delta,
       contextAfter,
     };
@@ -306,13 +343,19 @@ export class TerminalToolExecutor {
 	        if (result.errorSummary) {
 	          return result.errorSummary;
 	        }
+	        if (result.error === "ambiguous_interaction") {
+	          return "Invalid terminal.send input: choose exactly one of command, raw_text, or key";
+	        }
+	        if (result.error === "empty_interaction") {
+	          return "Invalid terminal.send input: provide command, raw_text, or key";
+	        }
 	        if (result.error === "interrupted") {
 	          return "Terminal send wait was interrupted by the user after the input was sent";
 	        }
         return buildTerminalSendSummary(
           {
-            text: directive.text,
-            submit: directive.submit,
+            command: directive.command,
+            rawText: directive.rawText,
             key: directive.key,
           },
           result.delta,
@@ -361,27 +404,80 @@ export class TerminalToolExecutor {
     }
   }
 
-  private validateTerminalSendDirective(
+  private resolveTerminalSendGesture(
     directive: Extract<TerminalToolCallDirective, { tool: "terminal.send" }>,
-    state: {
-      hasTextField: boolean;
-      hasText: boolean;
-      hasKey: boolean;
-    },
-  ): string | null {
-    if (state.hasKey && (state.hasTextField || directive.submit === true)) {
-      return "ambiguous_interaction";
+  ): TerminalSendGestureResolution {
+    const commandPresent = typeof directive.command === "string";
+    const rawTextPresent = typeof directive.rawText === "string";
+    const keyPresent = typeof directive.key === "string";
+    const presentCount = [commandPresent, rawTextPresent, keyPresent].filter(Boolean).length;
+
+    if (presentCount > 1) {
+      return { ok: false, error: "ambiguous_interaction" };
     }
 
-    if (directive.submit === true && !state.hasTextField) {
-      return "submit_requires_text";
+    if (commandPresent) {
+      if ((directive.command ?? "").length === 0) {
+        return { ok: false, error: "empty_interaction" };
+      }
+      return {
+        ok: true,
+        gesture: {
+          kind: "command",
+          command: directive.command,
+          runtimeText: directive.command,
+          runtimeSubmit: true,
+        },
+      };
     }
 
-    if (!state.hasText && directive.submit !== true && !state.hasKey) {
-      return "empty_interaction";
+    if (rawTextPresent) {
+      if ((directive.rawText ?? "").length === 0) {
+        return { ok: false, error: "empty_interaction" };
+      }
+      return {
+        ok: true,
+        gesture: {
+          kind: "raw_text",
+          rawText: directive.rawText,
+          runtimeText: directive.rawText,
+          runtimeSubmit: false,
+        },
+      };
     }
 
-    return null;
+    if (keyPresent) {
+      const key = directive.key?.trim();
+      if (!key) {
+        return { ok: false, error: "empty_interaction" };
+      }
+      return {
+        ok: true,
+        gesture: {
+          kind: "key",
+          key,
+        },
+      };
+    }
+
+    return { ok: false, error: "empty_interaction" };
+  }
+
+  private buildTerminalSendResultMetadata(
+    gesture: TerminalSendGesture,
+    inputDispatched: boolean,
+  ): TerminalSendResultMetadata {
+    return {
+      inputDispatched,
+      commandSent: inputDispatched && gesture.kind === "command",
+      rawTextSent: inputDispatched && gesture.kind === "raw_text",
+      keySent: inputDispatched && gesture.kind === "key" ? gesture.key ?? null : null,
+      enterRequested: this.isEnterRequested(gesture),
+    };
+  }
+
+  private isEnterRequested(gesture: TerminalSendGesture): boolean {
+    return gesture.kind === "command" || (gesture.kind === "key" && gesture.key === "enter");
   }
 
   private normalizeReadiness(
@@ -516,10 +612,17 @@ export class TerminalToolExecutor {
 	      };
 	    }
 
+	    const gestureResolution = this.resolveTerminalSendGesture(directive);
+	    const inputDispatched = transportError.code === "TIMEOUT";
+	    const metadata = gestureResolution.ok
+	      ? this.buildTerminalSendResultMetadata(gestureResolution.gesture, inputDispatched)
+	      : EMPTY_TERMINAL_SEND_RESULT_METADATA;
+
 	    return {
 	      kind: "interaction_ack",
 	      ...base,
-	      submitted: transportError.code === "TIMEOUT",
+	      submitted: metadata.inputDispatched,
+	      ...metadata,
 	      delta: null,
 	    };
 	  }

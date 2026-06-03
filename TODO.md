@@ -8,6 +8,9 @@
   - Follow up on the 2-4s first-visible-token gap documented in [debug/llm-first-visible-token-latency.md](./debug/llm-first-visible-token-latency.md).
   - New-thread testing showed roughly 1s responses, so prioritize provider-side prompt/cache behavior, context size, max-output defaults, and instrumentation before assuming a local service bottleneck.
   - Add timing logs for provider request dispatch, first raw stream event, first reasoning event, first text delta, and stream completion so UX progress indicators can distinguish real provider latency from hidden reasoning/tool activity.
+- **Append-only terminal freshness prompt**
+  - Terminal freshness notes were disabled because injecting/removing a transient system message near the top of the model context broke ds4 prompt-cache reuse.
+  - Reintroduce this only through an append-only/tail-positioned approach like [design/runtime-context-append-only-prompts.md](./design/runtime-context-append-only-prompts.md), or rely on the agent explicitly calling `terminal.observe` when current terminal state matters.
 - **OpenAI prompt cache key policy**
   - Decide whether Bud should set OpenAI `prompt_cache_key` on Responses API requests before implementing it.
   - Document the key granularity and privacy boundary, including provider/model/thread/user/Bud scoping, avoiding raw prompt or PII material in keys, and whether supported cache-retention controls should be used.

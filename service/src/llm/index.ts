@@ -92,6 +92,7 @@ export { OpenAIProvider } from "./providers/openai.js";
 export { AnthropicProvider } from "./providers/anthropic.js";
 export {
   Ds4ChatCompletionsProvider,
+  Ds4ResponsesProvider,
   createDs4ProviderFromConfig,
 } from "./providers/ds4.js";
 

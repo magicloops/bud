@@ -10,10 +10,14 @@ import {
   recordLlmToolResultItem,
 } from "./provider-ledger.js";
 
-test("buildRequestMode maps ds4 to OpenAI-compatible Chat Completions", () => {
+test("buildRequestMode maps providers to request modes", () => {
   assert.equal(buildRequestMode("openai"), "openai_responses");
   assert.equal(buildRequestMode("anthropic"), "anthropic_messages");
-  assert.equal(buildRequestMode("ds4"), "ds4_openai_chat");
+  assert.equal(buildRequestMode("ds4"), "ds4_openai_responses");
+  assert.equal(
+    buildRequestMode("ds4", { ds4Endpoint: "chat_completions" }),
+    "ds4_openai_chat",
+  );
 });
 
 test("recordLlmCall persists all provider output items and cache metadata", async (t) => {

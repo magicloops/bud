@@ -14,7 +14,7 @@ By the end of this phase:
 - daemon and service support `local_llm_http` streams
 - service can open a logical ds4 request without sending raw host/port data
 - daemon forwards allowlisted ds4 API calls to loopback only
-- `BudLocalDs4Provider` parses ds4 Chat Completions streams into canonical provider events
+- `BudLocalDs4Provider` parses the selected ds4 endpoint stream into canonical provider events
 - cancellation, stream reset, limits, and provider-ledger recording work end to end
 
 ## Scope
@@ -34,7 +34,7 @@ By the end of this phase:
 
 - generic browser proxy reuse
 - arbitrary localhost forwarding
-- Responses-mode ds4 provider
+- endpoint selection work owned by [phase-1.5-direct-responses-provider.md](./phase-1.5-direct-responses-provider.md)
 - remote LAN model servers
 - UI changes beyond consuming Phase 3 inventory
 
@@ -54,7 +54,7 @@ Service open request:
   "stream_type": "local_llm_http",
   "local_llm_server_id": "ds4",
   "method": "POST",
-  "path": "/v1/chat/completions",
+  "path": "/v1/responses",
   "headers": {
     "content-type": "application/json",
     "accept": "text/event-stream"
@@ -64,6 +64,8 @@ Service open request:
 ```
 
 The open result should include status, selected compatibility mode, response headers needed by the provider parser, and a typed denial reason when the daemon rejects the request.
+
+`/v1/responses` is the preferred path after the Phase 1.5 service-local implementation. If live cache validation rejects Responses for Bud-backed use, use `/v1/chat/completions` with the same stream family and request mode `ds4_openai_chat`.
 
 ## Implementation Tasks
 
@@ -96,7 +98,7 @@ Selection rules:
 
 `BudLocalDs4Provider` responsibilities:
 
-- build Chat Completions JSON request bodies
+- build ds4 endpoint JSON request bodies for the selected request mode
 - open a `local_llm_http` stream to logical server id `ds4`
 - stream request body bytes if needed
 - parse response SSE bytes from the daemon stream
@@ -141,8 +143,8 @@ Add deterministic coverage for:
 - daemon rejects disallowed methods/paths/headers
 - daemon enforces concurrency `1`
 - cancellation resets the stream
-- provider parser handles daemon-streamed Chat Completions SSE
-- provider-ledger stores provider `ds4` and request mode `ds4_openai_chat`
+- provider parser handles daemon-streamed ds4 SSE for the selected endpoint
+- provider-ledger stores provider `ds4` and request mode `ds4_openai_responses` or `ds4_openai_chat`
 
 ## Validation Checklist
 
@@ -154,7 +156,7 @@ Add deterministic coverage for:
 - [ ] provider emits canonical text events
 - [ ] provider emits canonical tool-call events
 - [ ] cancellation resets daemon stream
-- [ ] provider ledger records `ds4_openai_chat`
+- [ ] provider ledger records the selected ds4 request mode
 - [ ] Bud-backed live final-text smoke passes
 - [ ] Bud-backed live terminal tool-loop smoke passes
 

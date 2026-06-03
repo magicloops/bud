@@ -143,14 +143,16 @@ Environment-based configuration with defaults.
 | `googleClientSecret` | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
 | `openaiApiKey` | `OPENAI_API_KEY` | - | OpenAI API key |
 | `ds4DirectBaseUrl` | `DS4_DIRECT_BASE_URL` | - | Optional direct local-dev ds4 OpenAI-compatible base URL; enables ds4 provider registration when set |
-| `ds4DirectModel` | `DS4_DIRECT_MODEL` | deepseek-v4-flash | Model string sent to the local ds4 Chat Completions endpoint |
+| `ds4DirectEndpoint` | `DS4_DIRECT_ENDPOINT` | responses | Direct ds4 request surface (`responses` or `chat_completions`) |
+| `ds4DirectModel` | `DS4_DIRECT_MODEL` | deepseek-v4-flash | Model string sent to the selected local ds4 endpoint |
 | `ds4DirectContextTokens` | `DS4_DIRECT_CONTEXT_TOKENS` | 100000 | Context-window metadata advertised for direct ds4 fallback models |
-| `ds4DirectMaxOutputTokens` | `DS4_DIRECT_MAX_OUTPUT_TOKENS` | 128000 | Max-output metadata and default `max_tokens` for direct ds4 requests |
+| `ds4DirectMaxOutputTokens` | `DS4_DIRECT_MAX_OUTPUT_TOKENS` | 128000 | Max-output metadata and default output-token cap for direct ds4 requests |
 | `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
 | `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Max tokens per response |
 | `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | low | Compatibility fallback for non-catalog model overrides |
 | `agentAutoCompactionRatio` | `AGENT_AUTO_COMPACTION_RATIO` | 0.95 | Usable-input threshold ratio for automatic compaction, clamped to at most 0.95 |
+| `agentContextDriftDebug` | `AGENT_CONTEXT_DRIFT_DEBUG` | false | Enable local-only model context drift snapshots and diffs under `.bud-debug/` |
 | `runLogMaxBytes` | `RUN_LOG_MAX_BYTES` | 100MB | Max stored run logs |
 | `terminalIdleTimeoutMinutes` | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle |
 | `terminalIdleCleanupHours` | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions (`0` disables destructive cleanup) |
@@ -167,8 +169,9 @@ Environment-based configuration with defaults.
 - `PROTO_VERSION = "0.1"` - Base WebSocket protocol
 - `TERMINAL_PROTO_VERSION = "0.2"` - Terminal extensions
 
-**Type Export**:
+**Type Exports**:
 - `ReasoningEffortSetting` - catalog `ReasoningLevel` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`)
+- `Ds4DirectEndpoint` - direct ds4 endpoint mode (`responses`, `chat_completions`)
 
 ## Subfolders
 

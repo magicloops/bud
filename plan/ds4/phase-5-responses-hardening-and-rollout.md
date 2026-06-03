@@ -1,4 +1,4 @@
-# Phase 5: Responses Hardening And Rollout
+# Phase 5: Endpoint Hardening And Rollout
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
 **Status**: Proposed
@@ -7,14 +7,14 @@
 
 ## Objective
 
-Harden the ds4 rollout after Chat Completions works, then decide whether ds4 Responses or Anthropic-compatible Messages should become supported provider modes.
+Harden the ds4 rollout after the direct-provider endpoint decision from [phase-1.5-direct-responses-provider.md](./phase-1.5-direct-responses-provider.md), then decide whether Anthropic-compatible Messages should become a supported provider mode.
 
 By the end of this phase:
 
-- ds4 Chat Completions behavior has live and deterministic validation
+- the chosen ds4 endpoint has live and deterministic validation
 - cancellation, reconnect, unavailable-server, and concurrency cases are covered
 - audit and limit behavior is documented
-- `/v1/responses` has a go/no-go implementation decision
+- `/v1/responses` rollout status is confirmed from Phase 1.5
 - product and deployment docs clearly describe local inference boundaries
 
 ## Scope
@@ -22,8 +22,8 @@ By the end of this phase:
 ### In Scope
 
 - live ds4 validation
-- Responses endpoint compatibility tests
-- optional Responses provider mode design update
+- chosen endpoint compatibility tests
+- Responses hardening follow-up after the Phase 1.5 service-local default switch
 - limits and audit hardening
 - reconnect/unavailable behavior
 - docs/spec finalization
@@ -38,7 +38,7 @@ By the end of this phase:
 
 ## Implementation Tasks
 
-### Task 1: Validate Chat Completions hard cases
+### Task 1: Validate chosen endpoint hard cases
 
 Run and record live/manual validation for:
 
@@ -52,22 +52,22 @@ Run and record live/manual validation for:
 - Bud reconnect after ds4 starts or stops
 - two concurrent ds4 requests to one Bud
 
-### Task 2: Decide Responses support
+### Task 2: Confirm Responses rollout status
 
-Using Phase 0 fixtures and live probes, decide whether to implement:
+Use Phase 1.5 fixtures and live probes to confirm whether the rollout uses:
 
 ```text
 ds4_openai_responses
 ```
 
-Decision criteria:
+Phase 1.5 made Responses the service-local default. This task is a final hardening review:
 
-- streaming text shape maps cleanly to canonical provider events
-- tool-call shape maps cleanly to Bud tool execution
-- provider-native replay is better than Chat Completions for Bud's tool loop
-- reasoning or continuity features justify the additional mode
+- live cache behavior remains better than Chat Completions
+- cancellation and errors are covered
+- Bud-backed data-plane docs use `/v1/responses`
+- provider-ledger diagnostics distinguish `ds4_openai_responses`
 
-If the answer is no, document the blocker and keep Chat Completions as the only supported ds4 mode.
+If live validation later rejects Responses for Bud-backed use, keep Chat Completions as the fallback supported ds4 mode and preserve the documented cache limitation/blocker.
 
 ### Task 3: Decide Anthropic Messages support
 
@@ -127,11 +127,11 @@ Update:
 - [ ] stopped-ds4-mid-stream behavior is clear
 - [ ] reconnect-time health behavior is clear
 - [ ] concurrency behavior is clear
-- [ ] Responses support decision recorded
+- [ ] Responses rollout status confirmed
 - [ ] Anthropic Messages support decision recorded
 - [ ] audit/log review complete
 - [ ] docs/spec updates complete
 
 ## Exit Criteria
 
-This phase is done when Chat Completions ds4 is safe to roll out as an opt-in local LLM option and follow-up compatibility modes have explicit decisions instead of ambiguity.
+This phase is done when the selected ds4 endpoint is safe to roll out as an opt-in local LLM option and follow-up compatibility modes have explicit decisions instead of ambiguity.

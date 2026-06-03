@@ -21,8 +21,7 @@ test("effective tool args expose default terminal wait modes", () => {
     getEffectiveToolWaitFor({
       type: "tool_call",
       tool: "terminal.send",
-      text: "pwd",
-      submit: true,
+      command: "pwd",
       callId: "call-send-default",
     }),
     "settled",
@@ -31,13 +30,11 @@ test("effective tool args expose default terminal wait modes", () => {
     buildEffectiveToolArgs({
       type: "tool_call",
       tool: "terminal.send",
-      text: "pwd",
-      submit: true,
+      command: "pwd",
       callId: "call-send-default",
     }),
     {
-      text: "pwd",
-      submit: true,
+      command: "pwd",
       wait_for: "settled",
     },
   );

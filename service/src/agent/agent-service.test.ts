@@ -577,7 +577,11 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
     },
   };
   const service = new AgentService(
-    {} as never,
+    {
+      async getSession() {
+        return null;
+      },
+    } as never,
     runtime as never,
     createLogger() as never,
     false,
@@ -671,6 +675,33 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
   Reflect.set(service, "toolExecutor", {
     async execute() {
       return {
+        directive: {
+          type: "tool_call",
+          tool: "terminal.observe",
+          callId: "call-observe",
+          view: "screen",
+        },
+        args: { view: "screen" },
+        summary: "Observed terminal screen",
+        outputTruncationReason: null,
+        result: {
+          kind: "observation",
+          output: "screen",
+          readiness: {
+            ready: true,
+            confidence: 1,
+            trigger: "prompt_detected",
+            hints: {
+              looks_like_prompt: true,
+              looks_like_confirmation: false,
+              looks_like_password: false,
+              looks_like_pager: false,
+              looks_like_error: false,
+              may_still_be_processing: false,
+            },
+          },
+          view: "screen",
+        },
         payload: {
           tool: "terminal.observe",
           call_id: "call-observe",

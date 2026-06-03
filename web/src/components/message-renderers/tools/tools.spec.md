@@ -27,20 +27,22 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
 Renders the revised terminal tool contract:
 
 **Props**:
-- `payload.text` / `payload.submit` / `payload.key` - Send-first input summary for `terminal.send`
+- `payload.command` / `payload.raw_text` / `payload.key` - Send-first input summary for `terminal.send`
+- `payload.input_dispatched` / `payload.enter_requested` - Explicit send-result gesture metadata for `terminal.send`
 - `payload.delta` / `payload.readiness` / `payload.context_after` - Delta-first send-result state for `terminal.send`
 - `payload.view` / `payload.lines` - Observation metadata for `terminal.observe`
 
 **Rendering**:
-- `terminal.send`: compact delta-first card showing readiness, context source, submitted state, and any visible delta excerpt
+- `terminal.send`: compact delta-first card showing readiness, context source, input dispatch state, Enter-request state, and any visible delta excerpt
 - `terminal.observe`: dashed observation badge, including explicit wait mode when present
 
 **Example Outputs**:
 ```text
-$ ls -la
+Command
+ls -la
 ```
 ```text
-Submit: Enter
+Enter requested
 Key: ctrl+c
 ```
 

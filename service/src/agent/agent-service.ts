@@ -14,10 +14,7 @@ import type {
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import {
-  buildTerminalFreshnessInstruction,
   buildTerminalVisibilityMetadata,
-  resolveTerminalFreshness,
-  type TerminalFreshnessSnapshot,
   type TerminalVisibilityMetadata,
 } from "../terminal/freshness.js";
 import type {
@@ -489,16 +486,10 @@ export class AgentService {
 	        environment = refreshedEnvironment.snapshot;
 	        this.runtime.setEnvironment(threadId, environment);
 	        this.runtime.markThinking(threadId);
-	        const terminalFreshness = await this.resolveTerminalFreshnessForProviderStep({
-	          threadId,
-	          currentSessionId,
-	          environment,
-	        });
 	        const modelTools = resolveAgentToolsForEnvironment(environment);
 	        const conversationForModel = applyRuntimeInstructions(
 	          conversation,
 	          environment,
-	          terminalFreshness,
 	        );
 	        let modelResult: {
 	          response: CanonicalResponse;
@@ -542,7 +533,7 @@ export class AgentService {
 	          modelResult = await this.modelRunner.invokeModel(
 	            threadId,
 	            turnId,
-	            applyRuntimeInstructions(conversation, environment, terminalFreshness),
+	            applyRuntimeInstructions(conversation, environment),
 	            model,
 	            modelReasoning,
 	            controller.signal,
@@ -591,7 +582,9 @@ export class AgentService {
           stepIndex: steps,
           provider: providerName,
           model: modelReasoning.providerModel,
-          requestMode: buildRequestMode(providerName),
+          requestMode: buildRequestMode(providerName, {
+            ds4Endpoint: config.ds4DirectEndpoint,
+          }),
           providerResponseId: responseForReplay.id,
           output: responseForReplay.content,
           usage: responseForReplay.usage,
@@ -1140,25 +1133,6 @@ export class AgentService {
     return manager.getPathContextForSession?.(sessionId) ?? null;
   }
 
-  private async resolveTerminalFreshnessForProviderStep(args: {
-    threadId: string;
-    currentSessionId: string | null;
-    environment: AgentEnvironmentSnapshot;
-  }): Promise<TerminalFreshnessSnapshot | null> {
-    if (args.environment.mode !== "normal" || !args.currentSessionId) {
-      return null;
-    }
-
-    const session = await this.terminalSessionManager.getSession(args.currentSessionId);
-    return resolveTerminalFreshness({
-      threadId: args.threadId,
-      session,
-      currentReadiness: session
-        ? this.terminalSessionManager.getLatestReadiness(session.sessionId)
-        : null,
-    });
-  }
-
   private async buildTerminalVisibilityForToolResult(
     sessionId: string,
     source: TerminalVisibilityMetadata["source"],
@@ -1515,11 +1489,9 @@ function applyOpenAIAssistantPhaseFallback(
 function applyRuntimeInstructions(
   conversation: CanonicalMessage[],
   environment: AgentEnvironmentSnapshot,
-  terminalFreshness: TerminalFreshnessSnapshot | null,
 ): CanonicalMessage[] {
   const instructions = [
     buildAgentEnvironmentInstruction(environment),
-    buildTerminalFreshnessInstruction(terminalFreshness),
   ].filter((instruction): instruction is string => Boolean(instruction));
 
   if (instructions.length === 0) {

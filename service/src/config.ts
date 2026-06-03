@@ -93,6 +93,8 @@ export type ReasoningEffortSetting = ReasoningLevel;
 
 const DAEMON_TRANSPORT_POLICIES = ["websocket_baseline", "h2_preferred", "quic_preferred"] as const;
 export type DaemonTransportPolicy = (typeof DAEMON_TRANSPORT_POLICIES)[number];
+const DS4_DIRECT_ENDPOINTS = ["responses", "chat_completions"] as const;
+export type Ds4DirectEndpoint = (typeof DS4_DIRECT_ENDPOINTS)[number];
 const defaultProxyBaseDomain =
   process.env.NODE_ENV === "production" ? "bud.show" : "proxy.localhost";
 const defaultProxyPublicScheme =
@@ -128,6 +130,12 @@ const toDaemonTransportPolicy = (value: string | undefined): DaemonTransportPoli
   return normalized && (DAEMON_TRANSPORT_POLICIES as readonly string[]).includes(normalized)
     ? (normalized as DaemonTransportPolicy)
     : "websocket_baseline";
+};
+const toDs4DirectEndpoint = (value: string | undefined): Ds4DirectEndpoint => {
+  const normalized = value?.toLowerCase();
+  return normalized && (DS4_DIRECT_ENDPOINTS as readonly string[]).includes(normalized)
+    ? (normalized as Ds4DirectEndpoint)
+    : "responses";
 };
 
 const apnsKeyId = toNullable(process.env.APNS_KEY_ID);
@@ -282,6 +290,7 @@ export const config = {
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   ds4DirectBaseUrl: toNullable(process.env.DS4_DIRECT_BASE_URL),
+  ds4DirectEndpoint: toDs4DirectEndpoint(process.env.DS4_DIRECT_ENDPOINT),
   ds4DirectModel: process.env.DS4_DIRECT_MODEL ?? "deepseek-v4-flash",
   ds4DirectContextTokens: toPositiveInteger(
     process.env.DS4_DIRECT_CONTEXT_TOKENS,
@@ -310,6 +319,7 @@ export const config = {
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
   agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI),
+  agentContextDriftDebug: toBool(process.env.AGENT_CONTEXT_DRIFT_DEBUG),
   // OpenAI request timeout in milliseconds (default: 2 minutes)
   openaiTimeout: toNumber(process.env.OPENAI_TIMEOUT_MS, 120000),
   terminalEnabled: true,

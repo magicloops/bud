@@ -186,7 +186,7 @@ Budget calculation is used for Haiku 4.5 manual thinking and legacy fallback onl
 
 ### `ds4.ts`
 
-Direct local-dev ds4 provider using ds4's OpenAI-compatible Chat Completions endpoint.
+Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint by default, with a Chat Completions fallback for debugging/comparison.
 
 **Supported Models**:
 | Model | Type | Notes |
@@ -196,16 +196,29 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Chat Completions end
 
 **Key Features**:
 - **Config gated**: Registered only when `DS4_DIRECT_BASE_URL` is non-empty
+- **Endpoint selectable**: `DS4_DIRECT_ENDPOINT=responses` uses `Ds4ResponsesProvider`; `chat_completions` uses `Ds4ChatCompletionsProvider`
 - **Base URL normalization**: Accepts `127.0.0.1:8000/v1` by adding `http://`; rejects `127.0.0.0` with a setup error because it does not reach the ds4 listener
-- **SDK-free**: Uses the platform `fetch` API against `${baseURL}/chat/completions`
-- **OpenAI-compatible tools**: Lowers canonical tools to Chat Completions `tools[].function`
-- **Canonical replay**: Converts assistant `tool_use` blocks to `tool_calls` and user `tool_result` blocks to `role: "tool"` messages
-- **SSE streaming**: Parses `data:` SSE chunks and maps `choices[].delta` text/tool-call fragments into canonical stream events
-- **Diagnostics**: Attaches the last structured Chat Completions chunk to `message_done.providerData`
+- **SDK-free**: Uses the platform `fetch` API against `${baseURL}/responses` or `${baseURL}/chat/completions`
+- **Responses replay**: Lowers assistant `tool_use` blocks to `function_call`, user `tool_result` blocks to `function_call_output`, and ds4-native reasoning payloads back into `input`
+- **Chat replay fallback**: Converts assistant `tool_use` blocks to `tool_calls` and user `tool_result` blocks to `role: "tool"` messages
+- **SSE streaming**: Parses `data:` SSE chunks and maps Responses text/reasoning/tool-call events or Chat `choices[].delta` fragments into canonical stream events
+- **Diagnostics**: Attaches stream feature counters plus the terminal Responses event/response or last Chat Completions chunk to `message_done.providerData`; Chat counters include provider-only `reasoning_content` visibility for local ds4 cache debugging
+- **Debug request snapshots**: Exposes the exact selected endpoint request body for local context-drift artifact capture
 - **Context-window errors**: Normalizes likely ds4 token/context failures into `ProviderContextWindowError`
-- **No reasoning controls**: The catalog exposes only `reasoning_effort: none`
+- **No product reasoning controls**: The catalog exposes only `reasoning_effort: none`, while the Responses stream can preserve ds4 reasoning blocks as provider-only replay/debug content
 
-**Message Transformation**:
+**Responses Message Transformation**:
+| Canonical | ds4 Responses |
+|-----------|---------------|
+| Leading system text | `instructions` |
+| User text | `{ type: "message", role: "user", content: input_text[] }` |
+| Assistant text | `{ type: "message", role: "assistant", content, phase? }` |
+| Tool use | `{ type: "function_call", call_id, name, arguments }` |
+| Tool result | `{ type: "function_call_output", call_id, output }` |
+| ds4 reasoning | Provider-native reasoning item when present in `providerData` |
+| Image input | Text placeholder because the direct ds4 profile is text-only |
+
+**Chat Fallback Message Transformation**:
 | Canonical | ds4 Chat Completions |
 |-----------|----------------------|
 | System text | `{ role: "system", content }` |
@@ -215,11 +228,28 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Chat Completions end
 | Tool result | `{ role: "tool", tool_call_id, content }` |
 | Image input | Text placeholder because the direct ds4 profile is text-only |
 
-**Streaming Events Mapped**:
+**Responses Streaming Events Mapped**:
+| Responses SSE Event | Canonical Event |
+|---------------------|-----------------|
+| `response.created` | `message_start` |
+| `response.output_item.added` reasoning | `reasoning_start` |
+| `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` | `reasoning_delta` |
+| `response.output_item.done` reasoning | `reasoning_done` with ds4 providerData |
+| `response.content_part.added` output text | `content_start` |
+| `response.output_text.delta` | `text_delta` |
+| `response.output_text.done` | `content_done` |
+| `response.output_item.added` function call | `tool_use_start` |
+| `response.function_call_arguments.delta` | `tool_use_delta` |
+| `response.function_call_arguments.done` | `tool_use_done` |
+| `response.completed` / `response.incomplete` | `message_done` |
+| `response.failed` | `error` |
+
+**Chat Fallback Streaming Events Mapped**:
 | Chat Completions SSE Chunk | Canonical Event |
 |----------------------------|-----------------|
 | first structured chunk `id` | `message_start` |
 | `delta.content` | `content_start` then `text_delta` |
+| `delta.reasoning_content` | counted in `providerData.payload.streamDiagnostics`; not emitted as canonical reasoning yet |
 | `delta.tool_calls[].function.arguments` | `tool_use_delta` |
 | `finish_reason: "tool_calls"` | `tool_use_done` then `message_done` with `tool_use` |
 | `finish_reason: "length"` | `message_done` with `max_tokens` |
@@ -228,7 +258,8 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Chat Completions end
 **Public Methods**:
 | Method | Description |
 |--------|-------------|
-| `invoke()` | Streaming invocation through Chat Completions SSE |
+| `invoke()` | Streaming invocation through Responses or Chat Completions SSE |
+| `buildDebugRequestSnapshot()` | Local-only diagnostic hook returning the selected endpoint request body |
 | `supportsModel()` | Check configured/default ds4 model strings |
 | `getModelCapabilities()` | Return catalog-backed ds4 limits or configured fallback limits |
 
@@ -237,9 +268,12 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Chat Completions end
 Direct request-shape tests for provider lowering without live API calls.
 
 **Current Coverage**:
-- ds4 Chat Completions request construction, including base URL trimming, tool messages, named tool choice, JSON response format, and configured request model override
+- ds4 Chat Completions request construction, including base URL trimming, model-facing `terminal_send{command}` tool messages, named tool choice, JSON response format, and configured request model override
 - ds4 local base URL normalization and rejection of the common `127.0.0.0` typo
-- ds4 SSE parsing for streamed text, streamed tool-call arguments, `tool_calls` stop reason, usage, and provider diagnostics
+- ds4 SSE parsing for streamed text, provider-only reasoning diagnostics, streamed tool-call arguments, `tool_calls` stop reason, usage, and provider diagnostics
+- ds4 Responses request construction, including `instructions`, `function_call`, `function_call_output`, ds4-native reasoning replay payloads, tool choice, optional reasoning request object, and configured request model override
+- ds4 Responses SSE parsing for reasoning blocks, streamed text, streamed function-call arguments, usage, and provider diagnostics
+- ds4 Responses failed events map to canonical provider errors without emitting a synthetic completion
 - OpenAI `xhigh` sends `reasoning.effort` and `none` omits reasoning
 - OpenAI requests encrypted reasoning content and disables parallel tool calls
 - OpenAI streamed function calls preserve `call_id` and tool name from output-item metadata when arguments finish
@@ -263,13 +297,13 @@ Direct request-shape tests for provider lowering without live API calls.
 
 | Feature | OpenAI | Anthropic | ds4 |
 |---------|--------|-----------|-----|
-| **System prompt** | Message item | Separate `system` param | Chat message |
-| **Tool results** | `function_call_output` item | `tool_result` content block | `role: "tool"` message |
+| **System prompt** | Message item | Separate `system` param | Responses `instructions` |
+| **Tool results** | `function_call_output` item | `tool_result` content block | `function_call_output` item |
 | **Tool call args** | JSON string | Parsed object | JSON string |
-| **Max tokens** | Optional | **Required** | `max_tokens` always sent |
-| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy | none |
-| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent | Ignored; no Chat Completions equivalent |
-| **JSON mode** | `text.format.type` | Use structured tool output | `response_format: { type: "json_object" }` |
+| **Max tokens** | Optional | **Required** | `max_output_tokens` by default; Chat fallback sends `max_tokens` |
+| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy | no product controls; Responses reasoning blocks preserved when emitted |
+| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent | Preserved on Responses replay; Chat fallback ignores |
+| **JSON mode** | `text.format.type` | Use structured tool output | Responses `text.format.type`; Chat fallback `response_format` |
 
 ## Adding a New Provider
 

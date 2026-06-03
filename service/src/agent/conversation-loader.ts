@@ -63,9 +63,9 @@ You are Bud Agent, coordinating terminal access to a user's machine.
 You have a persistent terminal; state (cwd, env, running processes) persists across turns.
 
 Tools:
-- {"type":"tool_call","tool":"terminal.send","text":"pwd","submit":true}
-- {"type":"tool_call","tool":"terminal.send","text":"python","submit":true}
-- {"type":"tool_call","tool":"terminal.send","text":"q"}
+- {"type":"tool_call","tool":"terminal.send","command":"pwd"}
+- {"type":"tool_call","tool":"terminal.send","command":"python"}
+- {"type":"tool_call","tool":"terminal.send","raw_text":"partial input"}
 - {"type":"tool_call","tool":"terminal.send","key":"ctrl+c"}
 - {"type":"tool_call","tool":"terminal.observe","lines":-50,"wait_for":"settled"}
 - {"type":"tool_call","tool":"web_view.open","target_host":"localhost","target_port":5173,"path":"/"}
@@ -87,10 +87,11 @@ ask_user_questions returns JSON with kind:"user_questions", the original questio
 
 Guidelines:
 - terminal.send is the primary terminal input tool for both shell commands and interactive programs.
-- For normal shell commands, send the command text with submit:true instead of adding a trailing \\n yourself.
+- Use terminal.send.command for line input plus Enter, including normal shell commands, REPL input, confirmations, and prompts.
+- Use terminal.send.raw_text only when you intentionally need to type text without pressing Enter.
 - Multiline shell input is allowed when you intentionally need it (for example heredocs or pasted scripts).
 - terminal.send is also for interactive input, confirmations, single-key actions, and launching interactive programs from shell.
-- terminal.send represents one gesture at a time: either text with optional submit, or one semantic key.
+- terminal.send represents one gesture at a time: exactly one of command, raw_text, or key.
 - Use backend-neutral key names in terminal.send.key, for example "ctrl+c" for Ctrl+C.
 - Omit wait_for for ordinary terminal.send calls. The default behavior is to wait for the terminal to settle before returning.
 - If delta.changed is false or delta.text is empty, do not assume the program accepted the input.
@@ -147,7 +148,7 @@ IMPORTANT REPL-SPECIFIC BEHAVIOR:
   * Ask Claude to perform tasks: "Please review src/main.rs for bugs"
   * To run shell commands, ask Claude: "Run npm test"
   * Do NOT send raw shell syntax like "cat file.txt" - Claude will misinterpret it
-  * To exit, use terminal.send with text "exit" and submit true, or use terminal.send with key:"ctrl+c" if the TUI needs an interrupt
+  * To exit, use terminal.send with command:"exit", or use terminal.send with key:"ctrl+c" if the TUI needs an interrupt
 - When context.program is "python" or "python3":
   * Send Python code, not shell commands
   * Use print() to display output
@@ -410,6 +411,8 @@ export class AgentConversationLoader {
       const payload = JSON.parse(raw) as {
         call_id?: string;
         tool?: string;
+        command?: string;
+        raw_text?: string;
         text?: string;
         submit?: boolean;
         key?: string;
@@ -435,12 +438,23 @@ export class AgentConversationLoader {
           : `tool_${ulid()}`;
 
       switch (payload.tool) {
-        case "terminal.send":
+        case "terminal.send": {
+          let command = typeof payload.command === "string" ? payload.command : undefined;
+          let rawText = typeof payload.raw_text === "string" ? payload.raw_text : undefined;
+
+          if (command === undefined && rawText === undefined && typeof payload.text === "string") {
+            if (payload.submit === true) {
+              command = payload.text;
+            } else {
+              rawText = payload.text;
+            }
+          }
+
           return {
             type: "tool_call",
             tool: "terminal.send",
-            text: typeof payload.text === "string" ? payload.text : undefined,
-            submit: payload.submit === true,
+            command,
+            rawText,
             key: normalizeToolKeyInput(payload.key, payload.keys),
             observeAfterMs:
               typeof payload.observe_after_ms === "number"
@@ -449,6 +463,7 @@ export class AgentConversationLoader {
             waitFor: parseWaitForArg(payload.wait_for),
             callId,
           };
+        }
         case "terminal.observe":
           return {
             type: "tool_call",
@@ -755,7 +770,7 @@ function expectedRequestModeForProvider(provider: CanonicalProviderId): LlmCallR
   if (provider === "anthropic") {
     return "anthropic_messages";
   }
-  return "ds4_openai_chat";
+  return "ds4_openai_responses";
 }
 
 function isAnthropicReasoningBlock(block: CanonicalContentBlock): boolean {

@@ -80,7 +80,7 @@ export type CanonicalMessage = {
  * Normalizes:
  * - OpenAI: reasoning output items with summary (GPT-5 series)
  * - Anthropic: thinking content blocks
- * - ds4: no reasoning blocks in the direct local-dev profile
+ * - ds4: Responses reasoning output items in the direct local-dev profile
  */
 export type CanonicalReasoningBlock =
   | {

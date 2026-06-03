@@ -21,6 +21,7 @@ const CANONICAL_PROVIDER_IDS = [
 export type LlmCallRequestMode =
   | "openai_responses"
   | "anthropic_messages"
+  | "ds4_openai_responses"
   | "ds4_openai_chat";
 
 export type LlmCallVisibility = "provider_only" | "product_text" | "tool";
@@ -622,6 +623,7 @@ function isCanonicalProviderId(value: string): value is CanonicalProviderId {
 function parseRequestMode(value: string): LlmCallRequestMode {
   return value === "openai_responses" ||
     value === "anthropic_messages" ||
+    value === "ds4_openai_responses" ||
     value === "ds4_openai_chat"
     ? value
     : "openai_responses";
@@ -700,14 +702,19 @@ function completedCallIntegrityCounts(
   };
 }
 
-export function buildRequestMode(provider: CanonicalProviderId): LlmCallRequestMode {
+export function buildRequestMode(
+  provider: CanonicalProviderId,
+  options?: { ds4Endpoint?: "responses" | "chat_completions" },
+): LlmCallRequestMode {
   if (provider === "openai") {
     return "openai_responses";
   }
   if (provider === "anthropic") {
     return "anthropic_messages";
   }
-  return "ds4_openai_chat";
+  return options?.ds4Endpoint === "chat_completions"
+    ? "ds4_openai_chat"
+    : "ds4_openai_responses";
 }
 
 export function createLlmCallId(): string {

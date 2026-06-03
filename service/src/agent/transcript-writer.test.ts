@@ -89,30 +89,38 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     directive: {
       type: "tool_call",
       tool: "terminal.send",
-      text: "pwd",
-      submit: true,
+      command: "pwd",
       callId: "call-1",
     },
-    args: { text: "pwd", submit: true, wait_for: "settled" },
-    summary: 'Send "pwd"',
+    args: { command: "pwd", wait_for: "settled" },
+    summary: 'Send command "pwd" and press Enter',
     outputTruncationReason: null,
     result: {
       kind: "interaction_ack",
       readiness: { ready: true, confidence: 0.9, trigger: "settled" },
       submitted: true,
+      inputDispatched: true,
+      commandSent: true,
+      rawTextSent: false,
+      keySent: null,
+      enterRequested: true,
       delta: { changed: true, text: "/repo", truncated: false },
       contextAfter: { mode: "shell", source: "observed" },
     },
     payload: {
       tool: "terminal.send",
       call_id: "call-1",
-      text: "pwd",
-      submit: true,
+      command: "pwd",
       wait_for: "settled",
-      summary: 'Send "pwd"',
+      summary: 'Send command "pwd" and press Enter',
       kind: "interaction_ack",
       readiness: { ready: true, confidence: 0.9, trigger: "settled" },
       submitted: true,
+      input_dispatched: true,
+      command_sent: true,
+      raw_text_sent: false,
+      key_sent: null,
+      enter_requested: true,
       delta: { changed: true, text: "/repo", truncated: false },
       context_after: { mode: "shell", source: "observed" },
     },
@@ -185,10 +193,9 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   });
 
   assert.equal(events.length, 2);
-  assert.deepEqual(emittedToolCall.modelArgs, { text: "pwd", submit: true });
+  assert.deepEqual(emittedToolCall.modelArgs, { command: "pwd" });
   assert.deepEqual(emittedToolCall.clientArgs, {
-    text: "pwd",
-    submit: true,
+    command: "pwd",
     wait_for: "settled",
   });
   assert.deepEqual(events[0], {
@@ -199,7 +206,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true, wait_for: "settled" },
+      args: { command: "pwd", wait_for: "settled" },
       started_at: "2026-04-21T19:00:01.000Z",
     },
   });
@@ -210,7 +217,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
         client_id: "tool-client-1",
         call_id: "call-1",
         name: "terminal.send",
-        args: { text: "pwd", submit: true, wait_for: "settled" },
+        args: { command: "pwd", wait_for: "settled" },
         started_at: "2026-04-21T19:00:01.000Z",
       },
       cursor: "agent.tool_call-cursor",
@@ -220,6 +227,9 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   assert.equal(events[1]?.data.started_at, "2026-04-21T19:00:01.000Z");
   assert.equal(events[1]?.data.finished_at, "2026-04-21T19:00:04.250Z");
   assert.equal(events[1]?.data.duration_ms, 3250);
+  assert.equal(events[1]?.data.input_dispatched, true);
+  assert.equal(events[1]?.data.command_sent, true);
+  assert.equal(events[1]?.data.enter_requested, true);
   assert.deepEqual((events[1]?.data.message as Record<string, unknown>).metadata, {
     ...execution.payload,
     started_at: "2026-04-21T19:00:01.000Z",

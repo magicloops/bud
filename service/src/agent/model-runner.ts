@@ -30,6 +30,10 @@ import {
   normalizeAskUserQuestionsRequest,
 } from "./user-question-contracts.js";
 import { AGENT_CANONICAL_TOOLS } from "./tool-definitions.js";
+import {
+  createModelContextDriftRecorder,
+  type ModelContextDriftRecorderLike,
+} from "./model-context-drift-recorder.js";
 
 type StreamedModelResponse = {
   response: CanonicalResponse;
@@ -75,6 +79,7 @@ export class AgentModelRunner {
   private readonly debugEnabled: boolean;
   private readonly openaiDebugEnabled: boolean;
   private readonly defaultReasoningEffort: ReasoningEffortSetting;
+  private readonly contextDriftRecorder: ModelContextDriftRecorderLike | null;
 
   constructor(
     runtime: AgentRuntimeStateManager,
@@ -82,12 +87,17 @@ export class AgentModelRunner {
     debugEnabled: boolean,
     openaiDebugEnabled: boolean,
     defaultReasoningEffort: ReasoningEffortSetting = config.agentReasoningEffortDefault,
+    contextDriftRecorder?: ModelContextDriftRecorderLike | null,
   ) {
     this.runtime = runtime;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
     this.openaiDebugEnabled = openaiDebugEnabled;
     this.defaultReasoningEffort = defaultReasoningEffort;
+    this.contextDriftRecorder = contextDriftRecorder ?? createModelContextDriftRecorder({
+      enabled: config.agentContextDriftDebug,
+      logger,
+    });
   }
 
   resolveReasoningEffort(
@@ -137,6 +147,21 @@ export class AgentModelRunner {
       reasoning,
       responseFormat: "text",
     };
+    const providerRenderedRequest = this.contextDriftRecorder
+      ? buildProviderDebugRequestSnapshot(provider, messages, tools, modelConfig, this.logger)
+      : undefined;
+    const contextDriftSequence = this.contextDriftRecorder?.capturePrompt({
+      threadId,
+      turnId,
+      provider: providerName,
+      productModel: model,
+      providerModel,
+      reasoningEffort: reasoningLevel,
+      messages,
+      tools,
+      modelConfig,
+      providerRenderedRequest,
+    }) ?? null;
 
     const textBlocks = new Map<number, { text: string; assistantPhase?: AssistantMessagePhase }>();
     const textPhases = new Map<number, AssistantMessagePhase>();
@@ -316,6 +341,12 @@ export class AgentModelRunner {
       toolCallCount: response.toolCalls?.length ?? 0,
     });
     this.debugCanonicalResponse(response);
+    this.contextDriftRecorder?.captureResponse({
+      sequence: contextDriftSequence,
+      threadId,
+      turnId,
+      response,
+    });
 
     return {
       response,
@@ -378,8 +409,8 @@ export class AgentModelRunner {
         return {
           type: "tool_call",
           tool: "terminal.send",
-          text: typeof args.text === "string" ? args.text : undefined,
-          submit: args.submit === true,
+          command: typeof args.command === "string" ? args.command : undefined,
+          rawText: typeof args.raw_text === "string" ? args.raw_text : undefined,
           key: normalizeToolKeyInput(args.key, args.keys),
           observeAfterMs:
             typeof args.observe_after_ms === "number" ? args.observe_after_ms : undefined,
@@ -591,4 +622,33 @@ function parseWebViewTargetHost(value: unknown): "127.0.0.1" | "localhost" | "::
     return value;
   }
   return undefined;
+}
+
+function buildProviderDebugRequestSnapshot(
+  provider: {
+    name: string;
+    buildDebugRequestSnapshot?: (
+      messages: CanonicalMessage[],
+      tools: CanonicalTool[],
+      config: ModelConfig,
+    ) => unknown;
+  },
+  messages: CanonicalMessage[],
+  tools: CanonicalTool[],
+  modelConfig: ModelConfig,
+  logger: FastifyBaseLogger,
+): unknown {
+  if (!provider.buildDebugRequestSnapshot) {
+    return undefined;
+  }
+
+  try {
+    return provider.buildDebugRequestSnapshot(messages, tools, modelConfig);
+  } catch (err) {
+    logger.warn(
+      { err, component: "agent", provider: provider.name },
+      "Skipping provider-rendered context drift snapshot after provider debug request build failure",
+    );
+    return undefined;
+  }
 }

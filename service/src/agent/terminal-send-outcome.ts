@@ -1,8 +1,8 @@
 import type { ReadinessHints, TerminalDelta } from "../terminal/types.js";
 
 type SendDirectiveSummaryInput = {
-  text?: string;
-  submit?: boolean;
+  command?: string;
+  rawText?: string;
   key?: string;
 };
 
@@ -124,26 +124,7 @@ export function buildTerminalSendSummary(
   readinessTrigger?: string | null,
   readinessHints?: Partial<ReadinessHints> | null,
 ): string {
-  const fragments: string[] = [];
-
-  if (typeof input.text === "string" && input.text.trim()) {
-    fragments.push(truncateSummary(JSON.stringify(input.text.trim()), 96));
-  }
-
-  if (input.submit === true) {
-    fragments.push("press Enter");
-  }
-
-  if (input.key) {
-    fragments.push(
-      fragments.length > 0
-        ? `send key ${truncateSummary(input.key, 96)}`
-        : `key ${truncateSummary(input.key, 96)}`,
-    );
-  }
-
-  const action =
-    fragments.length > 0 ? buildSendAction(fragments) : "Send interactive input";
+  const action = buildSendAction(input);
 
   if (!delta) {
     if (readinessTrigger === "timeout") {
@@ -199,7 +180,7 @@ export function buildTerminalSendFollowUpHint(args: {
   }
 
   if (state.status === "ready_at_shell") {
-    return "The terminal appears back at a shell prompt. Use terminal.send with submit:true for the next shell command.";
+    return "The terminal appears back at a shell prompt. Use terminal.send with command for the next shell command.";
   }
 
   if (state.status === "waiting_for_input" && delta?.changed && contextAfter.mode === "repl") {
@@ -222,10 +203,18 @@ function truncateSummary(text: string, maxChars: number): string {
   return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
-function buildSendAction(fragments: string[]): string {
-  if (fragments.length === 1 && fragments[0] === "press Enter") {
-    return "Press Enter";
+function buildSendAction(input: SendDirectiveSummaryInput): string {
+  if (typeof input.command === "string" && input.command.trim()) {
+    return `Send command ${truncateSummary(JSON.stringify(input.command.trim()), 96)} and press Enter`;
   }
 
-  return `Send ${fragments.join(" and ")}`;
+  if (typeof input.rawText === "string" && input.rawText.trim()) {
+    return `Type raw text ${truncateSummary(JSON.stringify(input.rawText.trim()), 96)} without pressing Enter`;
+  }
+
+  if (input.key) {
+    return `Send key ${truncateSummary(input.key, 96)}`;
+  }
+
+  return "Send interactive input";
 }

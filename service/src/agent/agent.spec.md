@@ -6,7 +6,7 @@ Agent orchestration layer for AI-assisted terminal interactions using the LLM pr
 
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
 1. Builds conversation context from thread history (canonical format)
-2. Resolves the current Bud environment plus any service-side terminal freshness hint for the provider request
+2. Resolves the current Bud environment for the provider request
 3. Calls the LLM provider (OpenAI, Anthropic, or direct local ds4) via `providerRegistry`
 4. Executes terminal tool calls on the connected bud daemon, product web-view tool calls through service-side proxied-site routes/helpers, and structured `ask_user_questions` pauses through the thread response route
 5. Loops until a final response or max steps reached
@@ -44,6 +44,7 @@ Shared agent-facing tool/result contracts.
 - define the normalized `terminal.send`, `terminal.observe`, `web_view.*`, and `ask_user_questions` directive unions used across the split agent seams
 - centralize readiness defaults plus tool-argument serialization
 - expose effective client-facing wait modes for terminal tools (`terminal.send` defaults to `wait_for: "settled"`, `terminal.observe` defaults to `wait_for: "none"`)
+- serialize `terminal.send` as exactly one model-facing gesture: `command`, `raw_text`, or `key`
 - normalize legacy wait/key inputs reused during transcript replay and model-tool parsing
 - keep web-view tool args/result payloads separate from terminal wait/readiness defaults
 - keep user-question request/result payloads separate from terminal and web-view result contracts
@@ -166,7 +167,7 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `terminal_send` | `text?`, `submit?`, `key?`, `observe_after_ms?`, `wait_for?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with a settled-by-default synchronous result |
+| `terminal_send` | `command?`, `raw_text?`, `key?`, `observe_after_ms?`, `wait_for?` | Primary terminal input tool for shell commands, multiline shell input, and interactive input, with `command` meaning text plus Enter and a settled-by-default synchronous result |
 | `terminal_observe` | `lines?`, `wait_for?`, `view?` | Observe terminal deltas by default, with explicit full-screen/history modes |
 | `web_view_open` | `target_port`, `target_host?`, `path?`, `title?` | Create/reuse a Bud-scoped proxied site and attach it to the current thread; omitted `target_host` defaults to `localhost`, and explicit loopback hosts must be preserved exactly |
 | `web_view_close` | `proxied_site_id?`, `disable?` | Detach the current thread web view and optionally disable the proxied site |
@@ -194,7 +195,7 @@ When the current agent environment is `bud_offline`, provider calls use a Bud-sp
 - `AgentContextCompactor`
 - `AgentCancellationRegistry`
 - `AgentUserQuestionRegistry`
-- terminal freshness helpers from `terminal/freshness.ts`
+- terminal visibility watermark helpers from `terminal/freshness.ts`
 
 **Key methods**:
 
@@ -220,8 +221,8 @@ startUserMessage()
            └─► LOOP (max steps):
                   │
                   ├─► maybe compact/retry if provider reports context-window overflow
-                  ├─► refresh Bud environment and compute terminal freshness from DB/runtime state
-                  ├─► inject transient offline/freshness instructions when applicable
+                  ├─► refresh Bud environment
+                  ├─► inject transient offline environment instructions when applicable
                   ├─► modelRunner.invokeModel()
                   │
                   ├─► emit agent.message_start / delta / done (text responses only)
@@ -272,20 +273,21 @@ startUserMessage()
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before terminal session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
 - If the resolved environment is `bud_offline`, startup skips context sync, path context, and terminal ensure, then runs the provider with a request-time offline instruction plus the Bud-specific tool denylist. The user message still succeeds so the assistant can explain recovery or ask follow-up questions without terminal/web-view tools.
 - Active turns refresh the Bud environment before provider calls and before Bud-specific tool dispatch, allowing a reconnect during a turn to restore normal tool availability on a later step.
-- Normal online provider calls compute terminal freshness from service-side DB/runtime state only; they do not run preflight `terminal.observe`. Dirty output bytes, cwd, readiness, or human input add one transient instruction telling the model to call `terminal.observe` before terminal-dependent claims/actions.
-- Offline provider calls suppress terminal freshness hints because terminal tools are unavailable and the offline environment instruction is the stronger constraint.
+- Normal online provider calls no longer inject terminal freshness notes because toggling a transient top-of-context system message disrupts prompt-cache reuse for local providers such as ds4. The agent can still call `terminal.observe` explicitly when current terminal output, readiness, or cwd matters.
+- Terminal tool rows still persist `message.metadata.terminal_visibility` watermarks so a future append-only freshness prompt can be reintroduced without losing visibility state.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.send` summaries are now evidence-based rather than optimistic: the agent uses the settled/default result or timeout delta and avoids claiming program progress when no visible delta appears.
-- `terminal.send` is now modeled as one gesture at a time: `text` with optional `submit`, or one semantic `key` such as `ctrl+c`.
-- historical persisted `terminal.interrupt` tool rows are normalized during replay into `terminal_send` with `key: "ctrl+c"`, so old transcripts still round-trip through the current provider/tool format.
+- `terminal.send` is now modeled as one gesture at a time: `command` for text plus Enter, `raw_text` for literal text without implicit Enter, or one semantic `key` such as `ctrl+c`.
+- historical persisted `terminal.send` rows with `text`/`submit` and `terminal.interrupt` rows are normalized during replay into the current `terminal_send` shape, so old transcripts still round-trip through the current provider/tool format.
 - `terminal.observe` guidance now steers the model toward `wait_for: "settled"` instead of the older `screen_stable` mental model, and replay normalization maps any older `screen_stable` tool payloads to `settled`.
 - `terminal.observe` now defaults to `view: "delta"` and exposes `view: "screen"` / `view: "history"` only when the model explicitly needs broader context.
 - model-facing terminal tool schemas no longer advertise `timeout_ms`; the service owns effective timeout policy and ignores legacy model-supplied timeout values during normal agent tool execution.
 - model-facing terminal tool schemas no longer advertise compatibility-only `shell_ready`; the public `wait_for` set is `none`, `changed`, and `settled`.
 - settled `terminal.send` and `terminal.observe(wait_for: "settled")` requests now receive the one-hour service-owned wait budget before dispatching to Bud, while non-settled modes keep shorter budgets.
 - client-facing tool-call args now include the effective `wait_for` mode even when the model omitted it, so web/mobile can detect settled terminal waits directly from `agent.tool_call.args` or `/agent/state.pending_tool.args`.
+- client-facing `terminal.send` tool-call args now expose `command`, `raw_text`, or `key`, not the lower-level Bud `text`/`submit` wire shape.
 - human terminal interrupts reject the currently pending terminal wait as `interrupted`; `TerminalToolExecutor` turns that into a conservative tool result with `readiness.trigger: "error"` so the model regains control without treating the original command as completed.
-- model-facing tool-result payloads now center on readiness, context, and additive `delta` content instead of low-level send-observation metadata.
+- model-facing tool-result payloads now center on readiness, context, additive `delta` content, and explicit `terminal.send` gesture metadata (`input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, `enter_requested`) instead of relying on `submitted` alone.
 - terminal tool rows persist `message.metadata.terminal_visibility` with the model-visible output byte watermark, cwd, readiness version, timestamp, session id, and source (`terminal_send` or `terminal_observe`); the canonical tool `message.content` remains the replay payload and does not include this metadata-only watermark.
 - `context_after.source` now distinguishes observed shell return from inferred REPL/session tracking so the model can treat inferred context as a hint rather than proof.
 - `web_view.open`, `web_view.close`, and `web_view.list` are product-level tools backed by owner-scoped proxied-site helpers; they do not expose viewer grants, cookies, or daemon stream ids to the model.
@@ -377,6 +379,7 @@ Model invocation ownership extracted from `AgentService`.
 **Responsibilities**:
 - resolve provider/model aliases for the selected request model
 - resolve model-specific reasoning through `llm/reasoning-policy.ts`, using catalog defaults and rejecting unsupported combinations before provider invocation
+- optionally capture local model-context drift prompt/response snapshots, plus provider-rendered request snapshots when supported and enabled, when `AGENT_CONTEXT_DRIFT_DEBUG=true`
 - consume provider `invoke()` streams and emit draft assistant runtime events
 - reconstruct canonical responses and normalize provider tool-call payloads
 - keep text blocks before and between tool calls in canonical output order
@@ -400,6 +403,34 @@ Direct tests for the extracted model runner.
 - user-question tool calls parse into normalized `ask_user_questions` directives
 - malformed user-question tool payloads fail closed before client-visible prompts are emitted
 - empty final responses include bounded canonical/provider response diagnostics on the thrown error
+- injected context-drift recorders receive prompt capture data before provider invocation and response capture data after canonical response reconstruction
+
+### `model-context-drift-recorder.ts`
+
+Local-only model context drift instrumentation for comparing consecutive provider inputs.
+
+**Responsibilities**:
+- activate only when the service is started with `AGENT_CONTEXT_DRIFT_DEBUG=true`
+- load optional JSON settings from `.bud-debug/model-context-drift.config.json`
+- write redacted-by-default prompt snapshots, response snapshots, and markdown diffs under per-thread `.bud-debug/model-context-drift/thread_*` directories with sequence numbers scoped to each thread
+- optionally write provider-rendered request snapshots such as selected ds4 endpoint bodies when `providerRenderedSnapshots` is enabled in local JSON config
+- compare consecutive canonical model contexts for append-only continuity, message drift, tool-schema drift, model-config drift, and prior response replay continuity
+- log sanitized drift summaries without raw prompt text unless local config explicitly enables full text in artifacts
+- support optional thread/provider/model filters from the JSON config without adding more env vars
+
+### `model-context-drift-recorder.test.ts`
+
+Standalone tests for local drift instrumentation.
+
+**Current Coverage**:
+- default config loading when no local JSON config exists
+- invalid local JSON config disables recorder creation safely
+- full prompt text is omitted by default while bounded previews remain available
+- semantic hashes ignore object key order while exact hashes preserve order
+- prompt, response, and append-only diff artifacts are written for a tool-call continuation
+- provider-rendered request artifacts are written only when the local config enables them
+- artifact sequence numbers restart per thread directory
+- provider filters skip non-matching captures without creating artifact directories
 
 ### `terminal-tool-executor.ts`
 
@@ -408,6 +439,7 @@ Terminal tool execution ownership extracted from `AgentService`.
 **Responsibilities**:
 - resolve/ensure the thread terminal session before tool execution
 - run `terminal.observe` and `terminal.send`
+- adapt model-facing `terminal.send.command` / `rawText` / `key` directives into the current Bud `terminal_send{text|key, submit?}` wire frame
 - derive readiness/context-after snapshots from runtime state plus observed shell evidence
 - shape conservative tool summaries and persisted tool payloads
 - map user-triggered `interrupted` terminal waits into normal tool results with `error: "interrupted"` and conservative readiness
@@ -419,8 +451,9 @@ Direct tests for the extracted terminal tool executor.
 
 **Current Coverage**:
 - interrupt-style `terminal.send` remains conservative when no visible delta is observed
+- command and raw-text gestures map to the expected Bud wire `text`/`submit` combinations
 - user-interrupted pending send/observe waits return conservative tool results instead of failing the agent turn
-- ambiguous mixed text+key terminal sends fail before touching the terminal runtime
+- ambiguous mixed terminal-send gestures fail before touching the terminal runtime
 - terminal transport failures return structured retryable tool results instead of throwing out of the agent turn
 
 ### `transcript-writer.ts`
@@ -654,11 +687,13 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `client_id` on `agent.tool_call` / `agent.tool_result` matches `/agent/state.pending_tool.client_id` and the later persisted tool row
 - `/agent/state.pending_tool.started_at` matches `agent.tool_call.started_at`, so reconnecting clients can show elapsed time for long pending waits
 - `/agent/state.pending_tool.args.wait_for` and `agent.tool_call.args.wait_for` expose the effective terminal wait mode, including implicit `terminal.send` settled waits and implicit `terminal.observe` non-waits
+- `/agent/state.pending_tool.args` and `agent.tool_call.args` expose the model-facing `terminal.send` gesture fields (`command`, `raw_text`, or `key`) rather than the Bud wire `text`/`submit` fields
 - web-view pending/tool-call args expose only product fields such as `target_port`, `path`, `proxied_site_id`, and `disable`
 - user-question pending/tool-call args expose the normalized `ask_user_questions_request_v1` payload, including `request_id`, labels, and skippable question definitions
 - omitted `web_view.open.target_host` means `localhost`; when present, `target_host` is the exact loopback host the model requested
 - `started_at` on `agent.tool_call` is the service-side tool-start timestamp captured immediately before execution begins
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
+- terminal-send tool-result payloads include `input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, and `enter_requested` alongside the legacy low-level `submitted` dispatch acknowledgement
 - tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop
 - web-view tool-result payloads include `web_view` data instead of terminal readiness/output fields
 - user-question tool-result payloads include `user_questions` data with the structured `ask_user_questions_tool_result_v1` result and Q/A summary
@@ -690,7 +725,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../runtime/terminal-session-manager.js` | Thread-scoped terminal sessions |
 | `../runtime/agent-runtime-state.js` | Agent runtime snapshot + bounded-resume emission |
 | `../terminal/types.js` | Readiness hints types |
-| `../terminal/freshness.js` | Terminal freshness hinting and terminal visibility watermark helpers |
+| `../terminal/freshness.js` | Terminal visibility watermark helpers for terminal tool rows |
 | `./conversation-loader.js` | Canonical transcript/context assembly |
 | `./context-budget.js` | Automatic compaction budget estimates and thresholds |
 | `./context-budget-state.js` | Shared client-safe budget snapshot and compaction-decision builder |
@@ -698,6 +733,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `./context-checkpoint-repository.js` | Durable checkpoint persistence and replay-boundary lookup |
 | `./context-compactor.js` | Local summary compaction and replacement-history construction |
 | `./model-runner.js` | Provider invocation + draft assistant streaming |
+| `./model-context-drift-recorder.js` | Local-only model-context drift snapshots and canonical diff artifacts |
 | `./tool-definitions.js` | Normal agent tool schema registry and tool-schema token estimate |
 | `./terminal-tool-executor.js` | Terminal tool orchestration |
 | `./web-view-tool-executor.js` | Product web-view tool orchestration |
@@ -719,6 +755,7 @@ From `../config.js`:
 - `config.agentAutoCompactionRatio` - Usable-input threshold ratio for automatic compaction, clamped to at most `0.95`
 - `config.agentDebug` - Enable debug logging
 - `config.agentOpenaiDebug` - Log raw OpenAI responses
+- `config.agentContextDriftDebug` - Enable local-only model context drift artifact capture under `.bud-debug/`
 
 ## TODOs / Technical Debt
 

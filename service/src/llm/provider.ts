@@ -76,6 +76,19 @@ export interface LLMProvider {
   ): AsyncIterable<CanonicalStreamEvent>;
 
   /**
+   * Build a provider-specific request snapshot for local diagnostics.
+   *
+   * This must not include credentials or transport-only headers. It is intended
+   * for debug artifact capture and should match the provider request body as
+   * closely as practical.
+   */
+  buildDebugRequestSnapshot?(
+    messages: CanonicalMessage[],
+    tools: CanonicalTool[],
+    config: ModelConfig
+  ): unknown;
+
+  /**
    * Invoke the model without streaming (optional).
    * Default implementation collects stream events.
    *

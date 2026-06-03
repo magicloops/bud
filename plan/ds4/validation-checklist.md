@@ -1,8 +1,8 @@
 # ds4 Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 1 automated and direct-provider live smoke complete; full HTTP agent-turn smoke pending
-**Last Updated**: 2026-06-02
+**Status**: Phase 1 automated and direct-provider live smoke complete; Phase 1.5 automated Responses coverage complete, live cache validation pending
+**Last Updated**: 2026-06-03
 
 ---
 
@@ -18,7 +18,14 @@
 - [x] `ds4_openai_chat` request mode is accepted by provider-ledger typing
 - [x] Chat Completions text stream fixture parses into canonical text deltas
 - [x] Chat Completions tool-call stream fixture parses into canonical tool-call events
+- [x] Chat Completions stream diagnostics detect output-only `reasoning_content`
+- [x] Direct probe confirms Chat Completions ignores replayed `assistant.reasoning_content`
 - [ ] Chat Completions malformed/error fixture normalizes to a provider error
+- [x] `ds4_openai_responses` request mode is accepted by provider-ledger typing
+- [x] Responses text stream fixture parses into canonical text deltas
+- [x] Responses reasoning fixture is preserved or intentionally diagnostic-only
+- [x] Responses tool-call fixture parses into canonical tool-call events
+- [ ] Responses post-tool continuation fixture preserves replay continuity
 
 ### Routes And Ownership
 
@@ -51,7 +58,7 @@
 - [ ] daemon enforces idle/TTL limits
 - [ ] daemon enforces concurrency limit
 - [ ] cancellation sends stream reset
-- [ ] provider-ledger records provider `ds4` and request mode `ds4_openai_chat`
+- [ ] provider-ledger records provider `ds4` and the selected request mode
 
 ## Live Validation
 
@@ -64,6 +71,11 @@ Run against an already-running ds4 server. The validation does not require Bud t
 - [x] one final-text direct-provider stream completes
 - [x] one terminal tool-call direct-provider stream completes
 - [x] cancellation during direct-provider streaming aborts generation
+- [x] Chat Completions agent-turn cache miss cause identified as output-only reasoning replay
+- [ ] direct `/v1/responses` final-text stream completes
+- [ ] direct `/v1/responses` terminal tool-call stream completes
+- [ ] direct `/v1/responses` post-tool continuation completes
+- [ ] direct `/v1/responses` live cache behavior improves over Chat Completions or blocker is documented
 - [ ] `GET /api/models` shows `ds4-deepseek-v4-flash`
 - [ ] one final-text agent turn completes
 - [ ] one terminal tool-call agent turn completes

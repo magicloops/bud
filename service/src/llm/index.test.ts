@@ -39,6 +39,7 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
   const originalAnthropicApiKey = config.anthropicApiKey;
   const originalDs4DirectBaseUrl = config.ds4DirectBaseUrl;
   const originalDs4DirectModel = config.ds4DirectModel;
+  const originalDs4DirectEndpoint = config.ds4DirectEndpoint;
   const originalDs4DirectContextTokens = config.ds4DirectContextTokens;
   const originalDs4DirectMaxOutputTokens = config.ds4DirectMaxOutputTokens;
   const previousOpenAI = providerRegistry.getProvider("openai");
@@ -52,6 +53,7 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
   config.anthropicApiKey = "";
   config.ds4DirectBaseUrl = "http://127.0.0.1:4444/v1";
   config.ds4DirectModel = "deepseek-v4-flash";
+  config.ds4DirectEndpoint = "responses";
   config.ds4DirectContextTokens = 100_000;
   config.ds4DirectMaxOutputTokens = 128_000;
 
@@ -62,11 +64,29 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
     const provider = providerRegistry.getProviderForModel("ds4-deepseek-v4-flash");
     assert.equal(provider.name, "ds4");
     assert.equal(provider.supportsModel("deepseek-v4-flash"), true);
+    assert.deepEqual(provider.buildDebugRequestSnapshot?.(
+      [{ role: "user", content: "hello" }],
+      [],
+      { model: "deepseek-v4-flash", maxOutputTokens: 8 },
+    ), {
+      model: "deepseek-v4-flash",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hello" }],
+        },
+      ],
+      stream: true,
+      max_output_tokens: 8,
+      parallel_tool_calls: false,
+    });
   } finally {
     config.openaiApiKey = originalOpenaiApiKey;
     config.anthropicApiKey = originalAnthropicApiKey;
     config.ds4DirectBaseUrl = originalDs4DirectBaseUrl;
     config.ds4DirectModel = originalDs4DirectModel;
+    config.ds4DirectEndpoint = originalDs4DirectEndpoint;
     config.ds4DirectContextTokens = originalDs4DirectContextTokens;
     config.ds4DirectMaxOutputTokens = originalDs4DirectMaxOutputTokens;
     providerRegistry.unregister("openai");
