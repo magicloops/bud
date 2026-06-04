@@ -55,6 +55,23 @@ pub struct BudArgs {
     #[arg(long, env = "BUD_TERMINAL_ROWS", default_value_t = 50)]
     pub terminal_rows: u16,
 
+    #[arg(long, env = "BUD_LOCAL_LLM_DS4_URL")]
+    pub local_llm_ds4_url: Option<String>,
+
+    #[arg(
+        long,
+        env = "BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS",
+        default_value_t = 100_000
+    )]
+    pub local_llm_ds4_context_tokens: u64,
+
+    #[arg(
+        long,
+        env = "BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS",
+        default_value_t = 128_000
+    )]
+    pub local_llm_ds4_max_output_tokens: u64,
+
     #[arg(long, env = "BUD_DEBUG", default_value_t = false)]
     pub debug: bool,
 
@@ -161,6 +178,9 @@ mod tests {
             terminal_base_dir: None,
             terminal_cols: 80,
             terminal_rows: 24,
+            local_llm_ds4_url: None,
+            local_llm_ds4_context_tokens: 100_000,
+            local_llm_ds4_max_output_tokens: 128_000,
             debug: false,
             command: None,
         }

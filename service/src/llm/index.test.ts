@@ -3,7 +3,7 @@ import test from "node:test";
 import { config } from "../config.js";
 import { initializeProviders, providerRegistry, type LLMProvider } from "./index.js";
 
-test("initializeProviders allows provider-less startup", () => {
+test("initializeProviders allows startup without cloud or direct providers", () => {
   const originalOpenaiApiKey = config.openaiApiKey;
   const originalAnthropicApiKey = config.anthropicApiKey;
   const originalDs4DirectBaseUrl = config.ds4DirectBaseUrl;
@@ -20,7 +20,10 @@ test("initializeProviders allows provider-less startup", () => {
 
   try {
     assert.doesNotThrow(() => initializeProviders());
-    assert.deepEqual(providerRegistry.listProviders(), []);
+    assert.deepEqual(providerRegistry.listProviders(), ["ds4"]);
+    const provider = providerRegistry.getProviderForModel("ds4-deepseek-v4-flash");
+    assert.equal(provider.name, "ds4");
+    assert.equal(provider.supportsModel("deepseek-v4-flash"), true);
   } finally {
     config.openaiApiKey = originalOpenaiApiKey;
     config.anthropicApiKey = originalAnthropicApiKey;

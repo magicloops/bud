@@ -4,7 +4,7 @@
 
 ## Overview
 
-Bud is a three-tier system that connects AI agents to physical devices through persistent terminal sessions. Users interact through a chat-based web interface, where an LLM (via the configured OpenAI or Anthropic provider) can execute commands on remote "buds" (device agents) in real-time.
+Bud is a three-tier system that connects AI agents to physical devices through persistent terminal sessions. Users interact through a chat-based web interface, where an LLM (via the configured OpenAI, Anthropic, direct local ds4, or Bud-local ds4 provider path) can execute commands on remote "buds" (device agents) in real-time.
 
 ### Core Value Proposition
 
@@ -42,7 +42,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |
-| Service → LLM Provider | HTTP | LLM inference via OpenAI Responses API or Anthropic Messages API |
+| Service → LLM Provider | HTTP or authenticated Bud data-plane stream | LLM inference via OpenAI Responses API, Anthropic Messages API, direct local ds4 Responses, or Bud-local ds4 Responses |
 
 ---
 
@@ -490,7 +490,7 @@ The daemon now keeps tmux behind an internal backend adapter so future PTY or mo
 - Built-in tool calling
 - Streaming support
 - Provider/model-specific reasoning controls
-- OpenAI Responses API and Anthropic Messages API both map into Bud's canonical provider interface
+- OpenAI Responses API, Anthropic Messages API, direct local ds4 Responses, and Bud-local ds4 Responses all map into Bud's canonical provider interface
 
 ---
 

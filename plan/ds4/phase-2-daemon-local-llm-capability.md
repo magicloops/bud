@@ -1,7 +1,7 @@
 # Phase 2: Daemon Local LLM Capability
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Implemented; live daemon/ds4 probe validation pending
 
 ---
 

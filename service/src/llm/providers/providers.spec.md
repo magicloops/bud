@@ -186,7 +186,10 @@ Budget calculation is used for Haiku 4.5 manual thinking and legacy fallback onl
 
 ### `ds4.ts`
 
-Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint.
+ds4 provider implementations using ds4's OpenAI-compatible Responses endpoint.
+`Ds4ResponsesProvider` is the direct service-local implementation, while
+`BudLocalDs4Provider` reuses the same request construction and SSE parser over
+the daemon `local_llm_http` data-plane stream.
 
 **Supported Models**:
 | Model | Type | Notes |
@@ -195,9 +198,18 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint.
 | `DS4_DIRECT_MODEL` value | Local override | Optional request model override for local ds4 servers using a different model string |
 
 **Key Features**:
-- **Config gated**: Registered only when `DS4_DIRECT_BASE_URL` is non-empty
+- **Direct config gated**: `Ds4ResponsesProvider` is registered only when
+  `DS4_DIRECT_BASE_URL` is non-empty
+- **Bud-backed fallback provider**: `BudLocalDs4Provider` is registered when
+  direct ds4 is not configured so Bud-scoped model selections can resolve to a
+  provider while global inventory still hides ds4 without a healthy Bud
+  capability
 - **Base URL normalization**: Accepts `127.0.0.1:8000/v1` by adding `http://`; rejects `127.0.0.0` with a setup error because it does not reach the ds4 listener
 - **SDK-free**: Uses the platform `fetch` API against `${baseURL}/responses`
+- **Daemon transport**: Bud-backed calls require provider invocation context
+  with `budId`, open logical server id `ds4`, and stream `POST /v1/responses`
+  over `local_llm_http` without sending raw daemon-local URLs to the service or
+  browser
 - **Responses replay**: Lowers assistant `tool_use` blocks to `function_call`, user `tool_result` blocks to `function_call_output`, and ds4-native reasoning payloads back into `input`
 - **SSE streaming**: Parses `data:` SSE chunks and maps Responses text/reasoning/tool-call events into canonical stream events
 - **Diagnostics**: Attaches stream feature counters plus the terminal Responses event/response to `message_done.providerData`
@@ -240,6 +252,11 @@ Direct local-dev ds4 provider using ds4's OpenAI-compatible Responses endpoint.
 | `supportsModel()` | Check configured/default ds4 model strings |
 | `getModelCapabilities()` | Return catalog-backed ds4 limits or configured fallback limits |
 
+`BudLocalDs4Provider.invoke()` uses the same canonical stream output as the
+direct provider but can fail fast with Bud-local availability errors when no
+eligible carrier, stream family, or daemon capability exists for the invocation
+Bud.
+
 ### `providers.test.ts`
 
 Direct request-shape tests for provider lowering without live API calls.
@@ -249,6 +266,8 @@ Direct request-shape tests for provider lowering without live API calls.
 - ds4 Responses request construction, including `instructions`, `function_call`, `function_call_output`, ds4-native reasoning replay payloads, tool choice, optional reasoning request object, and configured request model override
 - ds4 Responses SSE parsing for reasoning blocks, streamed text, streamed function-call arguments, usage, and provider diagnostics
 - ds4 Responses failed events map to canonical provider errors without emitting a synthetic completion
+- route-level Bud-local tests cover Bud-scoped model inventory projection and
+  unavailable local ds4 rejection before thread/message persistence
 - OpenAI `xhigh` sends `reasoning.effort` and `none` omits reasoning
 - OpenAI requests encrypted reasoning content and disables parallel tool calls
 - OpenAI streamed function calls preserve `call_id` and tool name from output-item metadata when arguments finish

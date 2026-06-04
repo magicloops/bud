@@ -501,10 +501,15 @@ export class AgentService {
 	            turnId,
 	            conversationForModel,
 	            model,
-	            modelReasoning,
-	            controller.signal,
-	            modelTools,
-	          );
+	          modelReasoning,
+	          controller.signal,
+	          modelTools,
+	          {
+	            threadId,
+	            budId: environment.bud_id,
+	            ownerUserId: ownerUserId ?? null,
+	          },
+	        );
 	        } catch (err) {
           if (!isProviderContextWindowError(err)) {
             throw err;
@@ -538,6 +543,11 @@ export class AgentService {
 	            modelReasoning,
 	            controller.signal,
 	            modelTools,
+	            {
+	              threadId,
+	              budId: environment.bud_id,
+	              ownerUserId: ownerUserId ?? null,
+	            },
 	          );
 	        }
         const { response, assistantClientId: streamedAssistantClientId } = modelResult;

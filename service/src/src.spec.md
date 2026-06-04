@@ -9,7 +9,7 @@ The service acts as the central hub:
 - Optionally accepts HTTP/2 gRPC control streams from bud daemons
 - Optionally accepts subordinate HTTP/2 gRPC data streams from bud daemons
 - Serves REST API and SSE streams to web clients
-- Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic, direct local ds4)
+- Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic, direct local ds4, and Bud-local ds4)
 - Persists all data to PostgreSQL
 
 ## Files
@@ -103,8 +103,8 @@ Environment-based configuration with defaults.
 | `grpcDataEnableChannelz` | `GRPC_DATA_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle for data |
 | `daemonTransportPolicy` | `DAEMON_TRANSPORT_POLICY` | websocket_baseline | Carrier preference order for daemon control and data-plane selection (`websocket_baseline`, `h2_preferred`, `quic_preferred`) |
 | `daemonInstallerBaseUrl` | `DAEMON_INSTALLER_BASE_URL` | https://get.bud.dev | Installer/artifact origin used when generating service-owned Bud install commands |
-| `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy streams |
-| `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy streams |
+| `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy/local-LLM streams |
+| `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy/local-LLM streams |
 | `dataPlaneMaxInFlightBytes` | `DATA_PLANE_MAX_IN_FLIGHT_BYTES` | 1MB | Cap on accumulated outbound stream credit per runtime stream |
 | `dataPlaneMaxConcurrentFileStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_FILE_STREAMS_PER_BUD` | 8 | Max active file streams per Bud across carriers |
 | `dataPlaneMaxConcurrentProxyStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_PROXY_STREAMS_PER_BUD` | 16 | Max active proxy streams per Bud across carriers |
@@ -183,7 +183,7 @@ Agent orchestration for tool-calling loops using the LLM provider abstraction, n
 
 ### `llm/` → [llm.spec.md](./llm/llm.spec.md)
 
-Provider-agnostic LLM abstraction layer with canonical types and provider implementations (OpenAI, Anthropic, direct local ds4).
+Provider-agnostic LLM abstraction layer with canonical types and provider implementations (OpenAI, Anthropic, direct local ds4, and Bud-local ds4).
 
 ### `db/` → [db.spec.md](./db/db.spec.md)
 
@@ -223,7 +223,7 @@ HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolate
 
 ### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
 
-Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, carrier health and selection observability, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy and file responses.
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, carrier health and selection observability, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy, file, and Bud-local LLM responses.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 

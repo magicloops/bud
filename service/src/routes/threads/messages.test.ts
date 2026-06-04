@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../../auth/auth.js";
+import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { providerRegistry } from "../../llm/index.js";
 import { registerThreadMessageRoutes } from "./messages.js";
@@ -392,4 +393,72 @@ test("POST /api/threads/:threadId/messages rejects invalid explicit reasoning be
     supported_values: ["none", "low", "medium", "high", "xhigh"],
   });
   assert.equal(selectCalled, false);
+});
+
+test("POST /api/threads/:threadId/messages rejects unavailable Bud-local ds4 before message insert", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  const previousDirectBaseUrl = config.ds4DirectBaseUrl;
+  config.ds4DirectBaseUrl = null;
+  t.after(() => {
+    config.ds4DirectBaseUrl = previousDirectBaseUrl;
+  });
+
+  const server = createServer();
+  await registerThreadMessageRoutes(
+    server,
+    {
+      supersedePendingUserQuestionsForFollowUp() {
+        throw new Error("agent service should not be called when local model is unavailable");
+      },
+    } as never,
+    {} as never,
+  );
+
+  const handler = server.routes.get("POST /api/threads/:threadId/messages");
+  assert.ok(handler, "expected create-message route to register");
+
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => ACCESS.thread as never);
+  mock.method(db.query.budTable, "findFirst", async () => null);
+  mock.method(providerRegistry, "getProviderForModel", () => ({ name: "ds4" }) as never);
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        where() {
+          return {
+            limit() {
+              return Promise.resolve([]);
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  let insertCalled = false;
+  mock.method(db, "insert", () => {
+    insertCalled = true;
+    throw new Error("message insert should not be called when local model is unavailable");
+  });
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: ACCESS.thread.threadId },
+    body: {
+      text: "hello",
+      model: "ds4-deepseek-v4-flash",
+      reasoning_effort: "none",
+    },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 424);
+  assert.deepEqual(response.payload, {
+    error: "local_model_unavailable",
+    message: "Bud-local ds4 is not available for this Bud",
+    model: "ds4-deepseek-v4-flash",
+    bud_id: "bud-1",
+  });
+  assert.equal(insertCalled, false);
 });

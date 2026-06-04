@@ -1,7 +1,7 @@
 # Phase 3: Bud-Scoped Model Inventory And Selection
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Implemented; Bud-backed live UI validation pending
 
 ---
 

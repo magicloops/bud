@@ -1,7 +1,7 @@
 # ds4 Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 1.6 automated cleanup complete; direct Responses live cache validation complete
+**Status**: Phase 2-5 implementation tests passing; Bud-backed live validation pending
 **Last Updated**: 2026-06-03
 
 ---
@@ -34,19 +34,19 @@
 
 ### Routes And Ownership
 
-- [ ] `GET /api/models` excludes Bud-local ds4 models
-- [ ] owned `GET /api/models?bud_id=...` includes healthy Bud-local ds4
-- [ ] Bud-local ds4 inventory includes Responses request-mode/compatibility metadata
-- [ ] Bud-local ds4 inventory does not expose endpoint or mode selectors
+- [x] `GET /api/models` excludes Bud-local ds4 models
+- [x] owned `GET /api/models?bud_id=...` includes healthy Bud-local ds4
+- [x] Bud-local ds4 inventory includes Responses request-mode/compatibility metadata
+- [x] Bud-local ds4 inventory does not expose endpoint or mode selectors
 - [ ] owned `GET /api/models?bud_id=...` excludes absent/unhealthy ds4
-- [ ] non-owner `GET /api/models?bud_id=...` returns `404`
+- [x] non-owner `GET /api/models?bud_id=...` returns `404`
 - [ ] message send rejects unknown ds4 model ids
-- [ ] message send rejects unavailable ds4 before user-message insert
+- [x] message send rejects unavailable ds4 before user-message insert
 - [ ] cloud model sends remain unchanged
 
 ### Daemon Capability
 
-- [ ] daemon rejects non-loopback ds4 URLs
+- [x] daemon rejects non-loopback ds4 URLs
 - [ ] daemon omits `capabilities.llm` when probe fails
 - [ ] daemon advertises `capabilities.llm` when probe succeeds
 - [ ] daemon advertises only `openai_responses` compatibility for ds4
@@ -59,15 +59,16 @@
 
 - [ ] service rejects Bud-backed ds4 when no data-plane carrier is available
 - [ ] service rejects Bud-backed ds4 when Bud lacks ds4 capability
-- [ ] daemon rejects unknown local LLM server ids
-- [ ] daemon rejects disallowed paths
-- [ ] daemon rejects disallowed methods
-- [ ] daemon allows ds4 generation only through `/v1/responses`
-- [ ] daemon strips forbidden headers
-- [ ] daemon enforces request body limit
+- [x] daemon rejects unknown local LLM server ids
+- [x] daemon rejects disallowed paths
+- [x] daemon rejects disallowed methods
+- [x] daemon allows ds4 generation only through `/v1/responses`
+- [x] daemon strips forbidden headers
+- [x] daemon enforces request body limit
 - [ ] daemon enforces response body limit
-- [ ] daemon enforces idle/TTL limits
-- [ ] daemon enforces concurrency limit
+- [x] daemon enforces idle timeout limits
+- [ ] daemon enforces total TTL limit
+- [x] daemon enforces concurrency limit
 - [ ] cancellation sends stream reset
 - [ ] provider-ledger records provider `ds4` and request mode `ds4_openai_responses`
 - [ ] Bud-backed provider replays Responses `function_call` / `function_call_output` history after tool calls
@@ -111,11 +112,11 @@ Run against an already-running ds4 server. The validation does not require Bud t
 
 ## Documentation And Handoff
 
-- [ ] `docs/proto.md` documents `capabilities.llm` and `local_llm_http`
+- [x] `docs/proto.md` documents `capabilities.llm` and `local_llm_http`
 - [x] service LLM/provider specs document provider `ds4`
-- [ ] service route specs document Bud-scoped model inventory
-- [ ] service transport/ws specs document local LLM streams
-- [ ] daemon spec documents local LLM config, probe, and forwarding policy
-- [ ] web specs document Bud-scoped model inventory usage if web changes land
-- [ ] product handoff says local inference still sends prompt context through hosted service
-- [ ] [progress-checklist.md](./progress-checklist.md) is final
+- [x] service route specs document Bud-scoped model inventory
+- [x] service transport/ws specs document local LLM streams
+- [x] daemon spec documents local LLM config, probe, and forwarding policy
+- [x] web specs document Bud-scoped model inventory usage if web changes land
+- [x] product handoff says local inference still sends prompt context through hosted service
+- [ ] [progress-checklist.md](./progress-checklist.md) is final after Bud-backed live validation

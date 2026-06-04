@@ -1,6 +1,6 @@
 # Implementation Spec: ds4 Local LLM Over Bud
 
-**Status**: Proposed
+**Status**: Phases 1-5 implementation hardening complete; Bud-backed live validation pending
 **Created**: 2026-06-02
 **Folder Spec**: [ds4.spec.md](./ds4.spec.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
@@ -258,8 +258,9 @@ No database schema change is required unless implementation chooses to persist c
 6. Add daemon config, probe, and capability advertisement.
 7. Add Bud-scoped inventory and unavailable-model validation.
 8. Add the local LLM stream family and Bud-backed provider using the chosen ds4 endpoint.
-9. Prove Bud-backed final-text, terminal tool-loop, cancel, and ds4-stopped flows.
-10. Complete docs/spec updates and product handoff.
+9. Phase 5 hardening added explicit local LLM limits, audit coverage, and the
+   `/v1/messages` deferral decision.
+10. Prove Bud-backed final-text, terminal tool-loop, cancel, and ds4-stopped flows.
 
 ## Open Questions
 
@@ -272,13 +273,13 @@ No database schema change is required unless implementation chooses to persist c
 
 ## Definition Of Done
 
-- [ ] direct local-dev ds4 appears only when explicitly configured
-- [ ] direct local-dev ds4 can complete final-text and terminal tool-call turns
-- [ ] daemon advertises healthy configured ds4 through `capabilities.llm`
-- [ ] Bud-scoped `/api/models` exposes local ds4 only to the owning user
-- [ ] explicit ds4 send fails before user-message persistence when ds4 is unavailable
-- [ ] Bud-backed provider streams the selected ds4 endpoint over authenticated data-plane frames
+- [x] direct local-dev ds4 appears only when explicitly configured
+- [x] direct local-dev ds4 can complete final-text and terminal tool-call turns
+- [x] daemon advertises healthy configured ds4 through `capabilities.llm`
+- [x] Bud-scoped `/api/models` exposes local ds4 only to the owning user
+- [x] explicit ds4 send fails before user-message persistence when ds4 is unavailable
+- [x] Bud-backed provider streams the selected ds4 endpoint over authenticated data-plane frames
 - [ ] cancellation resets the daemon stream and leaves provider/runtime state coherent
-- [ ] provider ledger records new `ds4` calls with request mode `ds4_openai_responses`
-- [ ] protocol, service, daemon, web, and root specs are updated as implementation lands
-- [ ] [progress-checklist.md](./progress-checklist.md) and [validation-checklist.md](./validation-checklist.md) are updated with final status
+- [x] provider ledger records new `ds4` calls with request mode `ds4_openai_responses`
+- [x] protocol, service, daemon, and web specs are updated as implementation lands
+- [x] [progress-checklist.md](./progress-checklist.md) and [validation-checklist.md](./validation-checklist.md) are updated with implementation status

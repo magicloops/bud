@@ -15,6 +15,12 @@ import type {
   ModelCapabilities,
 } from "./types.js";
 
+export type ProviderInvocationContext = {
+  threadId: string;
+  budId: string;
+  ownerUserId: string | null;
+};
+
 export class ProviderContextWindowError extends Error {
   readonly provider: CanonicalProviderId;
   readonly model: string;
@@ -72,7 +78,8 @@ export interface LLMProvider {
     messages: CanonicalMessage[],
     tools: CanonicalTool[],
     config: ModelConfig,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    context?: ProviderInvocationContext
   ): AsyncIterable<CanonicalStreamEvent>;
 
   /**
@@ -85,7 +92,8 @@ export interface LLMProvider {
   buildDebugRequestSnapshot?(
     messages: CanonicalMessage[],
     tools: CanonicalTool[],
-    config: ModelConfig
+    config: ModelConfig,
+    context?: ProviderInvocationContext
   ): unknown;
 
   /**

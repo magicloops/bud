@@ -1,7 +1,7 @@
 # Phase 5: Responses Hardening And Rollout
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Implementation hardening complete; Bud-backed live validation pending
 
 ---
 
@@ -86,26 +86,29 @@ If live validation later rejects Responses for Bud-backed use, treat that as a b
 
 ### Task 3: Decide Anthropic Messages support
 
-Decide whether to implement:
+Decision: defer Anthropic-compatible Messages support.
 
-```text
-ds4_anthropic_messages
-```
-
-This should remain deferred unless ds4's Anthropic-compatible endpoint provides a concrete product benefit over Responses.
+The active ds4 request mode remains `ds4_openai_responses`. `ds4_anthropic_messages`
+should remain unimplemented unless future ds4 fixtures show a concrete product
+benefit over Responses for thinking-enabled tool loops.
 
 ### Task 4: Harden operational limits
 
 Confirm and document:
 
-- max request body bytes
-- max response bytes
-- idle timeout
-- total stream TTL
-- per-Bud ds4 concurrency
-- cancellation behavior
-- retry policy
-- daemon reconnect behavior
+- max request body bytes: 64 MiB at service and daemon
+- max response bytes: 64 MiB at service and daemon
+- daemon idle timeout: 10 minutes while waiting for request body, response
+  headers, response chunks, or response credit
+- daemon total stream TTL: 2 hours
+- per-Bud ds4 concurrency: one active `local_llm_http` stream at the service
+  and one active local ds4 stream at the daemon
+- cancellation behavior: provider abort sends `stream_reset`; daemon cancels
+  local forwarding and unregisters the active stream
+- retry policy: explicit failures are surfaced to the agent; there is no silent
+  fallback to a cloud model or hidden queueing behind ds4's single-worker limit
+- daemon reconnect behavior: active local LLM streams are reset on transport
+  disconnect; live reconnect health still needs Bud-backed validation
 
 Prefer explicit failure over queueing behavior that hides ds4's single-worker concurrency constraints.
 
@@ -121,6 +124,18 @@ Make sure logs/audit can answer:
 - whether ds4 returned an upstream HTTP error
 
 Do not log raw prompt bodies or sensitive local headers.
+
+Implemented audit coverage:
+
+- service creates `bud_operation` / `bud_stream` rows for Bud-local ds4 opens
+- `local_llm.stream_open` records Bud, user, logical server id, provider,
+  product model, request mode, method/path, request byte count, and carrier kind
+- `local_llm.open_result` records daemon accept/reject status, error code, and
+  response compatibility metadata
+- generic data-plane reset/close audit covers cancellation, transport loss, and
+  stream-limit outcomes
+- provider-ledger rows record provider `ds4` with request mode
+  `ds4_openai_responses`
 
 ### Task 6: Complete handoff docs
 
@@ -143,9 +158,9 @@ Update:
 - [ ] reconnect-time health behavior is clear
 - [ ] concurrency behavior is clear
 - [x] Responses rollout status confirmed
-- [ ] Anthropic Messages support decision recorded
-- [ ] audit/log review complete
-- [ ] docs/spec updates complete
+- [x] Anthropic Messages support decision recorded
+- [x] audit/log review complete
+- [x] docs/spec updates complete
 
 ## Exit Criteria
 

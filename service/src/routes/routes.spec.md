@@ -387,6 +387,7 @@ Available LLM model listing for authenticated product clients.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/models` | Return model inventory for the authenticated viewer |
+| `GET` | `/api/models?bud_id=<owned-bud-id>` | Return global model inventory plus healthy Bud-local model options for one owned Bud |
 
 ### `models.test.ts`
 
@@ -395,6 +396,11 @@ Route-level coverage for the catalog-backed model inventory.
 **Current Coverage**:
 - configured Anthropic/OpenAI providers return the sorted product catalog
 - configured direct local-dev ds4 provider adds `ds4-deepseek-v4-flash` with a `service_local_dev` source marker
+- global inventory excludes Bud-local ds4 when direct service-local ds4 is not
+  configured
+- owned Bud-scoped inventory adds healthy Responses-backed Bud-local ds4 with a
+  `bud_local` source marker
+- signed-in non-owner Bud-scoped inventory returns `404`
 - response includes `service_default_model`, `default_model`, and `default_reasoning_effort`
 - response includes per-model `reasoning` metadata
 - response omits a public `available` flag
@@ -406,6 +412,10 @@ Route-level coverage for the catalog-backed model inventory.
 - model entries are sourced from `service/src/llm/model-catalog.ts` and filtered to configured providers
 - model entries expose product `id`, `provider`, `provider_model`, `display_name`, `is_default`, capability limits, and model-specific `reasoning`
 - ds4 model entries additionally expose `source: { kind: "service_local_dev" }` because this Phase 1 path is enabled by service-local config, not remote Bud capability inventory
+- Bud-local ds4 model entries expose
+  `source: { kind: "bud_local", bud_id }`, `request_mode:
+  "ds4_openai_responses"`, and `compatibility: ["openai_responses"]`; they
+  never expose the daemon-local URL or endpoint selectors
 - `reasoning.levels` is the client source of truth for valid `reasoning_effort` values
 - no `available` flag is emitted; configured catalog entries are treated as live
 

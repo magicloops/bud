@@ -1,7 +1,7 @@
 # Phase 4: Local LLM Data-Plane Provider
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Implemented; Bud-backed live smoke/cancellation validation pending
 
 ---
 

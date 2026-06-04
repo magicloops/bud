@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../../auth/auth.js";
+import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { providerRegistry } from "../../llm/index.js";
 import { registerThreadCoreRoutes } from "./core.js";
@@ -345,6 +346,82 @@ test("PATCH /api/threads/:threadId/model-preference rejects missing model", asyn
     error: "invalid_model",
     message: "Model is required",
     model: "null",
+  });
+  assert.equal(updateCalled, false);
+});
+
+test("PATCH /api/threads/:threadId/model-preference rejects unavailable Bud-local ds4", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  const previousDirectBaseUrl = config.ds4DirectBaseUrl;
+  config.ds4DirectBaseUrl = null;
+  t.after(() => {
+    config.ds4DirectBaseUrl = previousDirectBaseUrl;
+  });
+
+  const server = createServer();
+  await registerThreadCoreRoutes(server, {} as never);
+
+  const handler = server.routes.get("PATCH /api/threads/:threadId/model-preference");
+  assert.ok(handler, "expected thread model preference route to register");
+
+  const thread = {
+    threadId: "11111111-1111-4111-8111-111111111111",
+    budId: "bud-1",
+    title: null,
+    createdAt: new Date("2026-04-21T20:00:00.000Z"),
+    lastActivityAt: new Date("2026-04-21T20:00:00.000Z"),
+    lastMessagePreview: null,
+    messageCount: 0,
+    pinned: false,
+    archived: false,
+    modelId: null,
+    reasoningEffort: null,
+    deletedAt: null,
+    tenantId: null,
+    createdByUserId: "user-1",
+    updatedAt: new Date("2026-04-21T20:00:00.000Z"),
+    lastAttentionMessageId: null,
+    lastAttentionMessageCreatedAt: null,
+    lastAttentionKind: null,
+  };
+
+  mock.method(auth.api, "getSession", async () => ({
+    user: {
+      id: "user-1",
+      email: "test@example.com",
+      emailVerified: true,
+      name: "Test User",
+      image: null,
+    },
+    session: {
+      id: "session-1",
+      expiresAt: new Date("2026-04-21T21:00:00.000Z"),
+    },
+  }) as never);
+  mock.method(db.query.threadTable, "findFirst", async () => thread as never);
+  mock.method(db.query.budTable, "findFirst", async () => null);
+  mock.method(providerRegistry, "getProviderForModel", () => ({ name: "ds4" }) as never);
+
+  let updateCalled = false;
+  mock.method(db, "update", () => {
+    updateCalled = true;
+    throw new Error("update should not be called when local model is unavailable");
+  });
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: thread.threadId },
+    body: { model: "ds4-deepseek-v4-flash", reasoning_effort: "none" },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 424);
+  assert.deepEqual(response.payload, {
+    error: "local_model_unavailable",
+    message: "Bud-local ds4 is not available for this Bud",
+    model: "ds4-deepseek-v4-flash",
+    bud_id: "bud-1",
   });
   assert.equal(updateCalled, false);
 });

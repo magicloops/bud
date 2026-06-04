@@ -19,6 +19,7 @@ import {
   type ResolvedModelReasoning,
   type TokenUsage,
 } from "../llm/index.js";
+import type { ProviderInvocationContext } from "../llm/provider.js";
 import {
   normalizeToolKeyInput,
   parseWaitForArg,
@@ -127,6 +128,7 @@ export class AgentModelRunner {
     modelReasoning: ResolvedModelReasoning,
     signal?: AbortSignal,
     tools: CanonicalTool[] = AGENT_CANONICAL_TOOLS,
+    invocationContext?: ProviderInvocationContext,
   ): Promise<StreamedModelResponse> {
     const { providerModel, reasoning, reasoningLevel } = modelReasoning;
     const last = messages.at(-1);
@@ -148,7 +150,7 @@ export class AgentModelRunner {
       responseFormat: "text",
     };
     const providerRenderedRequest = this.contextDriftRecorder
-      ? buildProviderDebugRequestSnapshot(provider, messages, tools, modelConfig, this.logger)
+      ? buildProviderDebugRequestSnapshot(provider, messages, tools, modelConfig, this.logger, invocationContext)
       : undefined;
     const contextDriftSequence = this.contextDriftRecorder?.capturePrompt({
       threadId,
@@ -218,7 +220,7 @@ export class AgentModelRunner {
       this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
     };
 
-    for await (const event of provider.invoke(messages, tools, modelConfig, signal)) {
+    for await (const event of provider.invoke(messages, tools, modelConfig, signal, invocationContext)) {
       switch (event.type) {
         case "message_start":
           responseId = event.id;
@@ -631,19 +633,21 @@ function buildProviderDebugRequestSnapshot(
       messages: CanonicalMessage[],
       tools: CanonicalTool[],
       config: ModelConfig,
+      context?: ProviderInvocationContext,
     ) => unknown;
   },
   messages: CanonicalMessage[],
   tools: CanonicalTool[],
   modelConfig: ModelConfig,
   logger: FastifyBaseLogger,
+  invocationContext?: ProviderInvocationContext,
 ): unknown {
   if (!provider.buildDebugRequestSnapshot) {
     return undefined;
   }
 
   try {
-    return provider.buildDebugRequestSnapshot(messages, tools, modelConfig);
+    return provider.buildDebugRequestSnapshot(messages, tools, modelConfig, invocationContext);
   } catch (err) {
     logger.warn(
       { err, component: "agent", provider: provider.name },

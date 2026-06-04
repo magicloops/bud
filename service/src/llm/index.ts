@@ -8,7 +8,10 @@ import { config } from "../config.js";
 import { providerRegistry } from "./registry.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
-import { createDs4ProviderFromConfig } from "./providers/ds4.js";
+import {
+  createBudLocalDs4Provider,
+  createDs4ProviderFromConfig,
+} from "./providers/ds4.js";
 
 // Types
 export type {
@@ -91,7 +94,9 @@ export { ProviderRegistry, providerRegistry } from "./registry.js";
 export { OpenAIProvider } from "./providers/openai.js";
 export { AnthropicProvider } from "./providers/anthropic.js";
 export {
+  BudLocalDs4Provider,
   Ds4ResponsesProvider,
+  createBudLocalDs4Provider,
   createDs4ProviderFromConfig,
 } from "./providers/ds4.js";
 
@@ -124,6 +129,8 @@ export function initializeProviders(): void {
   const ds4 = createDs4ProviderFromConfig();
   if (ds4) {
     providerRegistry.register(ds4);
+  } else {
+    providerRegistry.register(createBudLocalDs4Provider());
   }
 
   // Provider-less startup is valid for local development and non-LLM flows.

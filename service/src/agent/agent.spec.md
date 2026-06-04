@@ -7,7 +7,7 @@ Agent orchestration layer for AI-assisted terminal interactions using the LLM pr
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:
 1. Builds conversation context from thread history (canonical format)
 2. Resolves the current Bud environment for the provider request
-3. Calls the LLM provider (OpenAI, Anthropic, or direct local ds4) via `providerRegistry`
+3. Calls the LLM provider (OpenAI, Anthropic, direct local ds4, or Bud-local ds4) via `providerRegistry`
 4. Executes terminal tool calls on the connected bud daemon, product web-view tool calls through service-side proxied-site routes/helpers, and structured `ask_user_questions` pauses through the thread response route
 5. Loops until a final response or max steps reached
 
@@ -381,6 +381,8 @@ Model invocation ownership extracted from `AgentService`.
 - resolve model-specific reasoning through `llm/reasoning-policy.ts`, using catalog defaults and rejecting unsupported combinations before provider invocation
 - optionally capture local model-context drift prompt/response snapshots, plus provider-rendered request snapshots when supported and enabled, when `AGENT_CONTEXT_DRIFT_DEBUG=true`
 - consume provider `invoke()` streams and emit draft assistant runtime events
+- pass thread/Bud/owner invocation context into environment-scoped providers
+  such as Bud-local ds4 while leaving cloud providers free to ignore it
 - reconstruct canonical responses and normalize provider tool-call payloads
 - keep text blocks before and between tool calls in canonical output order
 - expose all parsed tool calls through `extractToolCalls()` while retaining `extractToolCall()` as a first-call compatibility helper

@@ -1,7 +1,7 @@
 # ds4 Progress Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 1.6 service cleanup complete; direct Responses cache validation complete
+**Status**: Phase 2-5 implementation hardening complete; Bud-backed live validation pending
 **Last Updated**: 2026-06-03
 
 ---
@@ -60,42 +60,42 @@
 
 ## Phase 2: Daemon Local LLM Capability
 
-- [ ] Add daemon `BUD_LOCAL_LLM_DS4_*` config
-- [ ] Validate daemon ds4 URL is loopback-only
-- [ ] Probe `GET /v1/models` before hello
-- [ ] Add `capabilities.llm` hello payload
-- [ ] Advertise only `openai_responses` compatibility for ds4
-- [ ] Include logical `ds4_openai_responses` request mode and `/v1/responses` generation path
-- [ ] Keep raw local URL out of hello
-- [ ] Preserve `capabilities.llm` in service hello parsing
-- [ ] Persist local LLM capability metadata with Bud capabilities
-- [ ] Update protocol and spec docs
+- [x] Add daemon `BUD_LOCAL_LLM_DS4_*` config
+- [x] Validate daemon ds4 URL is loopback-only
+- [x] Probe `GET /v1/models` before hello
+- [x] Add `capabilities.llm` hello payload
+- [x] Advertise only `openai_responses` compatibility for ds4
+- [x] Include logical `ds4_openai_responses` request mode and `/v1/responses` generation path
+- [x] Keep raw local URL out of hello
+- [x] Preserve `capabilities.llm` in service hello parsing
+- [x] Persist local LLM capability metadata with Bud capabilities
+- [x] Update protocol and spec docs
 
 ## Phase 3: Bud-Scoped Model Inventory And Selection
 
-- [ ] Add `GET /api/models?bud_id=<owned-bud-id>`
-- [ ] Authorize Bud ownership before local model projection
-- [ ] Append healthy Responses-backed Bud-local ds4 model metadata
-- [ ] Avoid endpoint/mode selectors for Bud-local ds4
-- [ ] Keep global `/api/models` behavior unchanged
-- [ ] Validate ds4 model selection against the thread Bud
-- [ ] Reject unavailable ds4 before user-message insert
-- [ ] Update web model loading to request Bud-scoped inventory
-- [ ] Add route/model-selection tests
+- [x] Add `GET /api/models?bud_id=<owned-bud-id>`
+- [x] Authorize Bud ownership before local model projection
+- [x] Append healthy Responses-backed Bud-local ds4 model metadata
+- [x] Avoid endpoint/mode selectors for Bud-local ds4
+- [x] Keep global `/api/models` behavior unchanged
+- [x] Validate ds4 model selection against the thread Bud
+- [x] Reject unavailable ds4 before user-message insert
+- [x] Update web model loading to request Bud-scoped inventory
+- [x] Add route/model-selection tests
 
 ## Phase 4: Local LLM Data-Plane Provider
 
-- [ ] Add `local_llm_http` stream family
-- [ ] Add service-to-daemon local LLM open/result frames
-- [ ] Extend provider invocation context with thread/Bud/owner routing data
-- [ ] Implement Responses-backed `BudLocalDs4Provider`
-- [ ] Replay Responses `function_call` / `function_call_output` history across tool loops
-- [ ] Preserve ds4 Responses reasoning payloads for same-provider replay where available
-- [ ] Implement daemon local LLM HTTP forwarding
-- [ ] Enforce daemon target, path, header, body, response, TTL, and concurrency limits
-- [ ] Reset daemon stream on cancellation
-- [ ] Record provider-ledger calls with `ds4_openai_responses`
-- [ ] Add daemon/service deterministic tests
+- [x] Add `local_llm_http` stream family
+- [x] Add service-to-daemon local LLM open/result frames
+- [x] Extend provider invocation context with thread/Bud/owner routing data
+- [x] Implement Responses-backed `BudLocalDs4Provider`
+- [x] Replay Responses `function_call` / `function_call_output` history across tool loops
+- [x] Preserve ds4 Responses reasoning payloads for same-provider replay where available
+- [x] Implement daemon local LLM HTTP forwarding
+- [x] Enforce daemon target, path, header, body, response, and concurrency limits
+- [x] Reset daemon stream on cancellation
+- [x] Record provider-ledger calls with `ds4_openai_responses`
+- [x] Add daemon/service deterministic tests
 - [ ] Run Bud-backed final-text live smoke
 - [ ] Run Bud-backed terminal tool-loop live smoke
 
@@ -106,8 +106,8 @@
 - [ ] Validate Bud reconnect health behavior
 - [ ] Validate concurrent request behavior
 - [x] Confirm `/v1/responses` rollout status from Phase 1.5
-- [ ] Decide `/v1/messages` support
-- [ ] Finalize audit/log coverage
-- [ ] Update product/deployment handoff text
-- [ ] Complete final docs/spec updates
+- [x] Decide `/v1/messages` support
+- [x] Finalize audit/log coverage
+- [x] Update product/deployment handoff text
+- [x] Complete final docs/spec updates
 - [ ] Complete validation checklist

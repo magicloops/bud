@@ -50,7 +50,12 @@ New thread creation view - allows users to start a new conversation.
 - Empty terminal display with placeholder message
 - Message composer for initial message
 - Reuses `WorkspaceShell` so the top bar / split panes / composer frame stay aligned with the existing-thread route
-- Loads `/api/models` through the shared `useAvailableModels()` hook using the normalized snake_case catalog contract (`service_default_model`, `default_model`, `default_reasoning_effort`, model `display_name`, `provider_model`, capabilities, and per-model `reasoning`)
+- Loads `/api/models?bud_id=<route bud id>` through the shared
+  `useAvailableModels(budId)` hook using the normalized snake_case catalog
+  contract (`service_default_model`, `default_model`,
+  `default_reasoning_effort`, model `display_name`, `provider_model`,
+  capabilities, per-model `reasoning`, and optional Bud-local ds4 source
+  metadata)
 - Normalizes the selected reasoning level against the selected model and default reasoning metadata, omitting model fields only if the model list has not loaded yet
 - Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
@@ -145,9 +150,13 @@ loader: async ({ params }) => {
 
 7. **Shared Workspace Frame**
    - Reuses `WorkspaceShell` with the same top bar, left/right pane contract, composer slot, and debug-panel slot as `/$budId/new`
-   - Reuses `useAvailableModels()` so model fetching/default selection and per-model reasoning normalization match the new-thread flow
-   - Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
-   - Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
+- Reuses `useAvailableModels(budId)` so model fetching/default selection,
+  Bud-local ds4 availability, and per-model reasoning normalization match the
+  new-thread flow
+- Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
+- Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
+- Shows Bud-local ds4 options with a local-Bud source label while leaving
+  endpoint/mode details hidden
    - Tracks `context_budget` from `/agent/state`, passes it to the shared composer meter, applies post-compaction stream snapshots, and refreshes it after user sends, model preference changes, bootstrap resyncs, cancel requests, and final turn events
    - The route now primarily composes `useThreadMessages(...)`, `useAgentStream(...)`, `useTerminalSession(...)`, `useFileViewer(...)`, `useWebView(...)`, `ThreadTerminalPane`, `FileViewerPane`, and `WebViewPane`
 

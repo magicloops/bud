@@ -109,6 +109,7 @@ const STREAM_TYPE_PROTO_VALUES: Record<string, number> = {
   localhost_http_proxy: 2,
   file_read: 3,
   localhost_websocket_proxy: 4,
+  local_llm_http: 5,
 };
 
 const STREAM_TYPE_JSON_VALUES: Record<number, string> = {
@@ -116,6 +117,7 @@ const STREAM_TYPE_JSON_VALUES: Record<number, string> = {
   2: "localhost_http_proxy",
   3: "file_read",
   4: "localhost_websocket_proxy",
+  5: "local_llm_http",
 };
 
 const OPERATION_STATE_PROTO_VALUES: Record<string, number> = {

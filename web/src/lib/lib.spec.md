@@ -127,11 +127,14 @@ Shared model-list loading for workbench routes.
 - `getReasoningOptionsForModel(models, selectedModel)`
 - `getDefaultReasoningForModel(models, selectedModel)`
 - `normalizeReasoningForModel(models, selectedModel, currentReasoning)`
-- `useAvailableModels()`
+- `useAvailableModels(budId?)`
 
 **Behavior**:
-- Loads `/api/models`
+- Loads `/api/models` globally or `/api/models?bud_id=...` for Bud-scoped
+  workbench routes
 - Consumes catalog-backed product models directly
+- Consumes Bud-local ds4 metadata (`request_mode`, `compatibility`, and
+  `source.kind`) without exposing endpoint or compatibility-mode selectors
 - Consumes usable-context policy fields (`usable_context_window_tokens`,
   `reserved_output_tokens`, and `usable_input_window_tokens`) without
   recomputing budget thresholds client-side

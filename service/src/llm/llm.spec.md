@@ -28,7 +28,7 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
         ▼                   ▼                   ▼
 ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐
 │ OpenAIProvider  │ │AnthropicProvider│ │Ds4ResponsesProvider      │
-│                 │ │                 │ │                          │
+│                 │ │                 │ │ BudLocalDs4Provider      │
 │ - GPT-5.4/5.5   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
 │ - reasoning     │ │ - thinking      │ │ - Responses SSE          │
 └─────────────────┘ └─────────────────┘ └──────────────────────────┘
@@ -86,15 +86,51 @@ interface LLMProvider {
   readonly name: string;
   readonly supportedModels: readonly string[];
 
-  invoke(messages, tools, config, signal?): AsyncIterable<CanonicalStreamEvent>;
-  buildDebugRequestSnapshot?(messages, tools, config): unknown;
+  invoke(messages, tools, config, signal?, context?): AsyncIterable<CanonicalStreamEvent>;
+  buildDebugRequestSnapshot?(messages, tools, config, context?): unknown;
   invokeSync?(messages, tools, config, signal?): Promise<CanonicalResponse>;
   supportsModel(model: string): boolean;
   getModelCapabilities(model: string): ModelCapabilities;
 }
 ```
 
-Also exports `ProviderContextWindowError` and `isProviderContextWindowError()`, the normalized provider error shape used by the agent to trigger a one-shot automatic context compaction retry when a model rejects an oversized request.
+Also exports:
+- `ProviderInvocationContext` with thread/Bud/owner routing metadata for
+  environment-scoped providers such as Bud-local ds4
+- `ProviderContextWindowError` and `isProviderContextWindowError()`, the
+  normalized provider error shape used by the agent to trigger a one-shot
+  automatic context compaction retry when a model rejects an oversized request
+
+### `local-llm-capabilities.ts`
+
+Helpers for projecting daemon `capabilities.llm` into service model behavior.
+
+**Responsibilities**:
+- define the stable Bud-local ds4 product id (`ds4-deepseek-v4-flash`),
+  provider model (`deepseek-v4-flash`), request mode
+  (`ds4_openai_responses`), and compatibility (`openai_responses`)
+- validate healthy daemon ds4 capability metadata
+- produce catalog-backed Bud-local model projections for `/api/models?bud_id=...`
+- distinguish ds4 product-model selections from cloud models during thread and
+  message validation
+
+### `local-llm-data-plane.ts`
+
+Service-side stream client for Bud-local LLM HTTP requests.
+
+**Responsibilities**:
+- select an authenticated data-plane carrier that negotiated
+  `local_llm_http`
+- enforce one active Bud-local LLM stream per Bud in the first pass
+- send `local_llm_open` to the daemon using logical server id `ds4`
+- send the bounded JSON request body as generic `stream_data`
+- expose daemon response bytes as a `ReadableStream<Uint8Array>` for provider
+  SSE parsing
+- create daemon-state operation/stream rows and audit events for Bud-local ds4
+  open, accept/reject, close, reset, cancellation, and limit outcomes without
+  storing raw prompt bodies or sensitive headers
+- translate daemon denials, carrier unavailability, response-size limits, and
+  cancellation into typed provider-facing errors
 
 ### `model-catalog.ts`
 
@@ -120,7 +156,7 @@ Central product model catalog and reasoning-control metadata.
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
-| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | Direct local ds4 Responses path; no product reasoning controls; default `none` |
+| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | Direct local or Bud-local ds4 Responses path; no product reasoning controls; default `none` |
 
 **Usable Context Policy**:
 - `contextWindowTokens` remains the provider/model hard total context window
@@ -248,6 +284,8 @@ if (config.anthropicApiKey) {
 }
 if (config.ds4DirectBaseUrl) {
   providerRegistry.register(createDs4ProviderFromConfig());
+} else {
+  providerRegistry.register(createBudLocalDs4Provider());
 }
 ```
 
@@ -255,6 +293,10 @@ if (config.ds4DirectBaseUrl) {
 - provider-backed features degrade at call sites instead of crashing service boot
 - re-running initialization refreshes the built-in provider registrations instead of accumulating stale entries
 - `DS4_DIRECT_BASE_URL` enables the direct local-dev ds4 Responses provider; `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, and `DS4_DIRECT_MAX_OUTPUT_TOKENS` tune the local endpoint profile
+- when direct ds4 is not configured, a Bud-backed ds4 provider is registered so
+  `ds4-deepseek-v4-flash` can resolve for Bud-scoped threads; global
+  `/api/models` still hides it unless a specific owned Bud advertises healthy
+  local ds4 capability
 
 ## Subfolders
 
@@ -332,6 +374,9 @@ Each provider transforms canonical schemas to their specific requirements:
 - Emits canonical reasoning/text/tool stream events from Responses SSE lifecycle events
 - Exposes the exact Responses request body through `buildDebugRequestSnapshot()` for local context-drift artifacts when enabled
 - Attaches Responses stream diagnostics in `providerData`
+- Supports both service-local direct mode and Bud-backed mode; the Bud-backed
+  mode uses the same request/parse logic but obtains bytes through a
+  `local_llm_http` daemon data-plane stream
 
 ## Dependencies
 
@@ -341,7 +386,9 @@ Each provider transforms canonical schemas to their specific requirements:
 | `@types/json-schema` | JSONSchema7 type definitions |
 | `@anthropic-ai/sdk` | Anthropic SDK for Messages API, including adaptive-thinking request passthrough |
 
-The direct ds4 provider uses the platform `fetch` API and does not add a package dependency.
+The direct ds4 provider uses the platform `fetch` API, and the Bud-backed ds4
+provider uses the existing daemon data-plane router. Neither path adds a package
+dependency.
 
 ## TODOs / Technical Debt
 

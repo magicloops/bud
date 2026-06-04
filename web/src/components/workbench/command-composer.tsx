@@ -88,7 +88,7 @@ export function CommandComposer({
               <optgroup key={provider} label={provider.toUpperCase()}>
                 {providerModels.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.display_name}
+                    {model.display_name}{model.source?.kind === 'bud_local' ? ' · Local Bud' : ''}
                   </option>
                 ))}
               </optgroup>

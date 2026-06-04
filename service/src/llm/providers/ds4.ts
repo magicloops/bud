@@ -1,8 +1,17 @@
+import { Buffer } from "node:buffer";
 import { ulid } from "ulid";
 
 import { config } from "../../config.js";
-import { ProviderContextWindowError, type LLMProvider } from "../provider.js";
+import {
+  ProviderContextWindowError,
+  type LLMProvider,
+  type ProviderInvocationContext,
+} from "../provider.js";
 import { getCatalogEntry } from "../model-catalog.js";
+import {
+  LOCAL_LLM_DS4_SERVER_ID,
+  openBudLocalLlmHttp,
+} from "../local-llm-data-plane.js";
 import type {
   CanonicalContentBlock,
   CanonicalMessage,
@@ -125,7 +134,7 @@ type ToolUseDoneEvent = Extract<
   { type: "tool_use_done" }
 >;
 
-const PROVIDER_ID: CanonicalProviderId = "ds4";
+const PROVIDER_ID = "ds4" satisfies CanonicalProviderId;
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 100_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 128_000;
@@ -134,11 +143,11 @@ export class Ds4ResponsesProvider implements LLMProvider {
   readonly name = PROVIDER_ID;
   readonly supportedModels: string[];
 
-  private readonly baseURL: string;
-  private readonly model: string;
-  private readonly contextWindowTokens: number;
-  private readonly maxOutputTokens: number;
-  private readonly fetchImpl: FetchLike;
+  protected readonly baseURL: string;
+  protected readonly model: string;
+  protected readonly contextWindowTokens: number;
+  protected readonly maxOutputTokens: number;
+  protected readonly fetchImpl: FetchLike;
 
   constructor(providerConfig: Ds4ProviderConfig) {
     if (!providerConfig.baseURL.trim()) {
@@ -223,7 +232,7 @@ export class Ds4ResponsesProvider implements LLMProvider {
     return this.buildRequest(messages, tools, modelConfig);
   }
 
-  private buildRequest(
+  protected buildRequest(
     messages: CanonicalMessage[],
     tools: CanonicalTool[],
     modelConfig: ModelConfig,
@@ -265,7 +274,7 @@ export class Ds4ResponsesProvider implements LLMProvider {
     return request;
   }
 
-  private async toProviderError(response: Response): Promise<Error> {
+  protected async toProviderError(response: Response): Promise<Error> {
     const text = await response.text().catch(() => "");
     const message = text
       ? `ds4 responses request failed with ${response.status}: ${text}`
@@ -282,7 +291,7 @@ export class Ds4ResponsesProvider implements LLMProvider {
     return new Error(message);
   }
 
-  private async *transformStream(
+  protected async *transformStream(
     stream: AsyncIterable<string>,
   ): AsyncIterable<CanonicalStreamEvent> {
     let fallbackIndex = 0;
@@ -710,6 +719,61 @@ export class Ds4ResponsesProvider implements LLMProvider {
   }
 }
 
+export class BudLocalDs4Provider extends Ds4ResponsesProvider {
+  constructor() {
+    super({
+      baseURL: "http://bud-local-ds4.invalid/v1",
+      model: config.ds4DirectModel,
+      contextWindowTokens: config.ds4DirectContextTokens,
+      maxOutputTokens: config.ds4DirectMaxOutputTokens,
+    });
+  }
+
+  override async *invoke(
+    messages: CanonicalMessage[],
+    tools: CanonicalTool[],
+    modelConfig: ModelConfig,
+    signal?: AbortSignal,
+    context?: ProviderInvocationContext,
+  ): AsyncIterable<CanonicalStreamEvent> {
+    if (!context?.budId) {
+      throw new Error("Bud-local ds4 provider requires Bud invocation context");
+    }
+
+    const request = this.buildRequest(messages, tools, modelConfig);
+    const response = await openBudLocalLlmHttp({
+      budId: context.budId,
+      threadId: context.threadId,
+      ownerUserId: context.ownerUserId,
+      localLlmServerId: LOCAL_LLM_DS4_SERVER_ID,
+      provider: PROVIDER_ID,
+      model: this.model,
+      requestMode: "ds4_openai_responses",
+      method: "POST",
+      path: "/v1/responses",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: Buffer.from(JSON.stringify(request), "utf-8"),
+      signal,
+    });
+
+    const httpResponse = new Response(response.body, {
+      status: response.status,
+      headers: response.headers,
+    });
+    if (!httpResponse.ok) {
+      throw await this.toProviderError(httpResponse);
+    }
+    if (!httpResponse.body) {
+      throw new Error("Bud-local ds4 response did not include a body");
+    }
+
+    yield* this.transformStream(readSseData(httpResponse.body));
+  }
+}
+
 export function createDs4ProviderFromConfig(): Ds4ResponsesProvider | null {
   if (!config.ds4DirectBaseUrl) {
     return null;
@@ -721,6 +785,10 @@ export function createDs4ProviderFromConfig(): Ds4ResponsesProvider | null {
     contextWindowTokens: config.ds4DirectContextTokens,
     maxOutputTokens: config.ds4DirectMaxOutputTokens,
   });
+}
+
+export function createBudLocalDs4Provider(): BudLocalDs4Provider {
+  return new BudLocalDs4Provider();
 }
 
 function normalizeDs4BaseUrl(baseURL: string): string {

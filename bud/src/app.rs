@@ -31,14 +31,16 @@ use crate::identity::{
     persist_identity, DeviceIdentity,
 };
 use crate::journal::{load_journal, DaemonJournal};
+use crate::local_llm::{LocalLlmManager, LOCAL_LLM_HTTP_STREAM_TYPE};
 use crate::proto_wire::{decode_bud_frame, encode_bud_frame};
 use crate::protocol::{
     validate_inbound_envelope_proto, Envelope, ErrorFrame, FileOpenFrame, FileResolveFrame,
-    HelloAckFrame, HelloChallengeFrame, ProxyOpenFrame, ProxyWebSocketCloseFrame,
-    ProxyWebSocketErrorFrame, ProxyWebSocketMessageFrame, ProxyWebSocketOpenFrame, RunFrame,
-    StreamCloseFrame, StreamCreditFrame, StreamDataFrame, StreamResetFrame, TerminalCloseFrame,
-    TerminalEnsureFrame, TerminalInputFrame, TerminalObserveFrame, TerminalResizeFrame,
-    TerminalSendFrame, DEFAULT_HEARTBEAT_SEC, PROTO_VERSION, TERMINAL_PROTO_VERSION,
+    HelloAckFrame, HelloChallengeFrame, LocalLlmOpenFrame, ProxyOpenFrame,
+    ProxyWebSocketCloseFrame, ProxyWebSocketErrorFrame, ProxyWebSocketMessageFrame,
+    ProxyWebSocketOpenFrame, RunFrame, StreamCloseFrame, StreamCreditFrame, StreamDataFrame,
+    StreamResetFrame, TerminalCloseFrame, TerminalEnsureFrame, TerminalInputFrame,
+    TerminalObserveFrame, TerminalResizeFrame, TerminalSendFrame, DEFAULT_HEARTBEAT_SEC,
+    PROTO_VERSION, TERMINAL_PROTO_VERSION,
 };
 use crate::proxy::ProxyManager;
 use crate::run::RunExecutor;
@@ -60,6 +62,7 @@ pub struct BudApp {
     proxy_http_client: Client,
     proxy_manager: ProxyManager,
     file_manager: FileManager,
+    local_llm_manager: LocalLlmManager,
     debug_enabled: bool,
 }
 
@@ -112,6 +115,8 @@ impl BudApp {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| Client::new());
+        let local_llm_http_client = proxy_http_client.clone();
+        let local_llm_manager = LocalLlmManager::new(&args, local_llm_http_client);
         let terminal_config = TerminalConfig {
             enabled: args.terminal_enabled,
             base_log_dir: resolved_paths.terminal_base_dir.clone(),
@@ -136,6 +141,7 @@ impl BudApp {
             proxy_http_client,
             proxy_manager: ProxyManager::default(),
             file_manager: FileManager::new(default_cwd),
+            local_llm_manager,
             debug_enabled,
         }
     }
@@ -182,9 +188,11 @@ impl BudApp {
     async fn connect_once_websocket(&mut self) -> Result<()> {
         loop {
             if self.identity.is_none() && self.args.token.is_none() {
+                self.local_llm_manager.refresh_capability().await;
                 self.bootstrap_device_auth().await?;
             }
 
+            self.local_llm_manager.refresh_capability().await;
             let url = Url::parse(&self.args.server)?;
             info!(server = %url, "Connecting to backend");
             let (stream, _) = connect_async(url.clone())
@@ -226,9 +234,11 @@ impl BudApp {
     async fn connect_once_grpc(&mut self, endpoint: String) -> Result<()> {
         loop {
             if self.identity.is_none() && self.args.token.is_none() {
+                self.local_llm_manager.refresh_capability().await;
                 self.bootstrap_device_auth().await?;
             }
 
+            self.local_llm_manager.refresh_capability().await;
             info!(endpoint = %endpoint, "Connecting to backend gRPC control gateway");
             let (frame_tx, mut frame_rx) = mpsc::unbounded_channel::<Value>();
             let (envelope_tx, envelope_rx) = mpsc::channel::<BudEnvelope>(128);
@@ -439,6 +449,11 @@ impl BudApp {
             }
         });
 
+        let mut streams = vec!["terminal_output", "localhost_http_proxy", "file_read"];
+        if self.local_llm_manager.capability().is_some() {
+            streams.push(LOCAL_LLM_HTTP_STREAM_TYPE);
+        }
+
         let attach_frame = json!({
             "proto": PROTO_VERSION,
             "type": "data_attach",
@@ -447,7 +462,7 @@ impl BudApp {
             "ext": {},
             "bud_id": &meta.bud_id,
             "device_session_id": &meta.session_id,
-            "streams": ["terminal_output", "localhost_http_proxy", "file_read"],
+            "streams": streams,
             "max_chunk_bytes": 16 * 1024,
         });
         if frame_tx.send(attach_frame).await.is_err() {
@@ -469,6 +484,7 @@ impl BudApp {
         let reader_frame_tx = frame_tx.clone();
         let proxy_manager = self.proxy_manager.clone();
         let file_manager = self.file_manager.clone();
+        let local_llm_manager = self.local_llm_manager.clone();
         let reader_handle = task::spawn_local(async move {
             loop {
                 match stream.message().await {
@@ -490,7 +506,8 @@ impl BudApp {
                                                 "gRPC data stream credit received"
                                             );
                                             proxy_manager.apply_credit(frame.clone()).await;
-                                            file_manager.apply_credit(frame).await;
+                                            file_manager.apply_credit(frame.clone()).await;
+                                            local_llm_manager.apply_credit(frame).await;
                                         }
                                         Err(err) => warn!(
                                             error = %err,
@@ -501,7 +518,11 @@ impl BudApp {
                                 Ok(envelope) if envelope.kind == "stream_data" => {
                                     match serde_json::from_str::<StreamDataFrame>(&text) {
                                         Ok(frame) => {
-                                            if !proxy_manager.apply_data(frame.clone()).await {
+                                            if !proxy_manager.apply_data(frame.clone()).await
+                                                && !local_llm_manager
+                                                    .apply_data(frame.clone())
+                                                    .await
+                                            {
                                                 warn!(
                                                     stream_id = %frame.stream_id,
                                                     stream_type = %frame.stream_type,
@@ -541,7 +562,8 @@ impl BudApp {
                                                 "gRPC data runtime stream reset"
                                             );
                                             proxy_manager.apply_reset(frame.clone()).await;
-                                            file_manager.apply_reset(frame).await;
+                                            file_manager.apply_reset(frame.clone()).await;
+                                            local_llm_manager.apply_reset(frame).await;
                                         }
                                         Err(err) => warn!(
                                             error = %err,
@@ -693,15 +715,21 @@ impl BudApp {
             .file_manager
             .abort_all_for_transport_disconnect(reason)
             .await;
+        let local_llm_summary = self
+            .local_llm_manager
+            .abort_all_for_transport_disconnect(reason)
+            .await;
         if proxy_summary.streams > 0
             || proxy_summary.websocket_sessions > 0
             || file_summary.streams > 0
+            || local_llm_summary.streams > 0
         {
             info!(
                 reason = %reason,
                 proxy_streams = proxy_summary.streams,
                 proxy_websocket_sessions = proxy_summary.websocket_sessions,
                 file_streams = file_summary.streams,
+                local_llm_streams = local_llm_summary.streams,
                 "canceled transport-bound daemon tasks"
             );
         }
@@ -1077,6 +1105,12 @@ impl BudApp {
                 let frame: FileResolveFrame = serde_json::from_str(text)?;
                 self.file_manager.handle_resolve(frame, sender.clone());
             }
+            "local_llm_open" => {
+                let frame: LocalLlmOpenFrame = serde_json::from_str(text)?;
+                self.local_llm_manager
+                    .handle_open(frame, sender.clone())
+                    .await;
+            }
             "stream_credit" => {
                 let frame: StreamCreditFrame = serde_json::from_str(text)?;
                 tracing::debug!(
@@ -1086,11 +1120,14 @@ impl BudApp {
                     "WebSocket stream credit received"
                 );
                 self.proxy_manager.apply_credit(frame.clone()).await;
-                self.file_manager.apply_credit(frame).await;
+                self.file_manager.apply_credit(frame.clone()).await;
+                self.local_llm_manager.apply_credit(frame).await;
             }
             "stream_data" => {
                 let frame: StreamDataFrame = serde_json::from_str(text)?;
-                if !self.proxy_manager.apply_data(frame.clone()).await {
+                if !self.proxy_manager.apply_data(frame.clone()).await
+                    && !self.local_llm_manager.apply_data(frame.clone()).await
+                {
                     warn!(
                         stream_id = %frame.stream_id,
                         stream_type = %frame.stream_type,
@@ -1121,7 +1158,8 @@ impl BudApp {
                     "WebSocket runtime stream reset"
                 );
                 self.proxy_manager.apply_reset(frame.clone()).await;
-                self.file_manager.apply_reset(frame).await;
+                self.file_manager.apply_reset(frame.clone()).await;
+                self.local_llm_manager.apply_reset(frame).await;
             }
             "stream_close" => {
                 let frame: StreamCloseFrame = serde_json::from_str(text)?;
@@ -1255,6 +1293,7 @@ impl BudApp {
     }
 
     async fn bootstrap_device_auth(&mut self) -> Result<()> {
+        self.local_llm_manager.refresh_capability().await;
         let start = start_device_auth_flow(
             &self.http_client,
             &self.args.server,
@@ -1376,7 +1415,7 @@ impl BudApp {
             && self.args.grpc_data_url.is_some();
         let stream_frames_supported = websocket_mode || grpc_data_mode;
 
-        json!({
+        let mut capabilities = json!({
             "max_concurrency": 1,
             "shell_default": self.terminal_manager.config.shell,
             "sessions": terminal_available,
@@ -1404,7 +1443,13 @@ impl BudApp {
                     "absolute_posix": true
                 }
             },
-        })
+        });
+        if stream_frames_supported {
+            if let Some(llm) = self.local_llm_manager.capability() {
+                capabilities["llm"] = llm;
+            }
+        }
+        capabilities
     }
 }
 
@@ -1444,6 +1489,9 @@ mod tests {
             terminal_base_dir: Some(workspace.join("terminal").to_string_lossy().into_owned()),
             terminal_cols: 80,
             terminal_rows: 24,
+            local_llm_ds4_url: None,
+            local_llm_ds4_context_tokens: 100_000,
+            local_llm_ds4_max_output_tokens: 128_000,
             debug: false,
             command: None,
         }

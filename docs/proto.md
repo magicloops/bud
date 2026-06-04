@@ -112,6 +112,9 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Phase 4.2 localhost proxy streams negotiate `localhost_http_proxy`; proxy bytes use the selected data-plane carrier, which is WebSocket by default and `h2_data` when explicitly selected/configured
 - Phase 5 localhost WebSocket proxy sessions negotiate `localhost_websocket_proxy`; WebSocket control/message/close frames use a dedicated message-oriented proxy frame family over the authenticated binary WebSocket carrier
 - Phase 4.4 file streams negotiate `file_read`; file bytes use the selected data-plane carrier, which is WebSocket by default and `h2_data` when explicitly selected/configured
+- Bud-local ds4 streams negotiate `local_llm_http`; request and response bytes
+  use the selected data-plane carrier, while control frames use logical local
+  LLM server id `ds4` rather than raw daemon-local URLs
 
 ### 3.1 Bud ⇄ Service WebSocket
 
@@ -119,7 +122,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Encoding: protobuf `BudEnvelope` binary frames; daemon sessions require `bud_envelope.websocket_binary`
 - Active terminal/control binary payloads use typed protobuf fields under their oneof payload tags, not whole-frame `frame_json`
 - Core data-plane lifecycle binary payloads (`data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, `stream_close`) also use typed protobuf fields under their oneof payload tags
-- Peers that also advertise `bud_envelope.stream_frames` can use the same authenticated WebSocket as a control+data carrier for `stream_data`, `stream_credit`, `stream_reset`, `stream_close`, `proxy_open_result`, `proxy_ws_*`, and `file_open_result`
+- Peers that also advertise `bud_envelope.stream_frames` can use the same authenticated WebSocket as a control+data carrier for `stream_data`, `stream_credit`, `stream_reset`, `stream_close`, `proxy_open_result`, `proxy_ws_*`, `file_open_result`, and `local_llm_open_result`
 - Bud should send `heartbeat` every 30 seconds
 - Service marks a Bud offline after `offlineGraceSec` with no accepted heartbeat
 - Bud output chunks should stay at or below 16 KiB
@@ -144,15 +147,18 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Stream shape: bidirectional subordinate data stream
 - Current payload bridge: typed oneof payloads with `frame_json` bytes containing the same JSON frame shapes documented below; WebSocket binary envelopes use the same typed stream payload tags for the WebSocket carrier
 - Auth binding: first frame is `data_attach`; service accepts it only if `bud_id` and `device_session_id` match the active authenticated gRPC control session
-- Current migrated traffic: Bud → Service `terminal_output`, Phase 4.2 daemon-backed localhost proxy response bytes, and Phase 4.4 daemon-backed file stat/read/range bytes
+- Current migrated traffic: Bud → Service `terminal_output`, Phase 4.2 daemon-backed localhost proxy response bytes, Phase 4.4 daemon-backed file stat/read/range bytes, and Bud-local ds4 response bytes
 - Current control fallback: if the daemon-side bounded data queue is closed or full, `terminal_output` is sent on `BudControl.Connect`
-- Generic stream frames: `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` are data-plane frames for proxy/file stream work and use the selected carrier; the baseline selected carrier is the authenticated binary WebSocket
+- Generic stream frames: `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` are data-plane frames for proxy/file/local-LLM stream work and use the selected carrier; the baseline selected carrier is the authenticated binary WebSocket
 - Localhost proxy open frames: `proxy_open` and `proxy_open_result` move over the selected carrier's control side; bytes for accepted streams move over that carrier's data side
 - Localhost WebSocket proxy frames: `proxy_ws_open`, `proxy_ws_open_result`, `proxy_ws_message`, `proxy_ws_close`, and `proxy_ws_error` preserve WebSocket message boundaries over the selected WebSocket-capable carrier
 - File open frames: `file_open` and `file_open_result` move over the selected carrier's control side; bytes for accepted read/range streams move over that carrier's data side
+- Local LLM open frames: `local_llm_open` and `local_llm_open_result` move over
+  the selected carrier's control side; request and response bodies for accepted
+  streams move over that carrier's data side
 - Stream credits: Phase 4.0 tracks per-stream receive/send offsets and credit windows for generic streams; accepted bytes consume credit and credit is re-granted only after the receiver has consumed the bytes
 - Chunk limit default: 16 KiB decoded generic stream chunks, configurable with `DATA_PLANE_MAX_CHUNK_BYTES`; gRPC terminal-output chunks keep the legacy `GRPC_DATA_MAX_CHUNK_BYTES` setting
-- Generic stream limits: the service enforces per-Bud file/proxy concurrency, max in-flight credit, idle timeout, absolute stream TTL, file-session max bytes, and proxy response max bytes before forwarding bytes to the browser
+- Generic stream limits: the service enforces per-Bud file/proxy/local-LLM concurrency, max in-flight credit, idle timeout, absolute stream TTL, file-session max bytes, proxy response max bytes, and local LLM request/response byte limits before forwarding bytes to consumers
 - Carrier health: the service treats connected carriers as healthy by default, but optional adapters may mark a carrier degraded/unhealthy; carriers below the healthy threshold are not selected for new streams when another eligible candidate exists
 - Message size default: 4 MiB data envelopes, configurable with `GRPC_DATA_MAX_MESSAGE_BYTES`
 - Deployed traffic must use TLS or an equivalent trusted HTTP/2 front-door termination path
@@ -167,7 +173,7 @@ Initial attach frame:
   "ts": 1731,
   "bud_id": "b_01H...",
   "device_session_id": "s_01H...",
-  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read"],
+  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read", "local_llm_http"],
   "max_chunk_bytes": 16384,
   "ext": {}
 }
@@ -184,7 +190,7 @@ Successful attach reply:
   "bud_id": "b_01H...",
   "device_session_id": "s_01H...",
   "transport_session_id": "ts_01H...",
-  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read"],
+  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read", "local_llm_http"],
   "max_chunk_bytes": 16384,
   "initial_credit_bytes": 1048576,
   "ext": {}
@@ -329,6 +335,63 @@ response header map. The service filters these values before browser emission:
 `Domain` is stripped so local-app cookies remain endpoint-host scoped, reserved
 Bud proxy cookie names/prefixes are rejected, newline-containing values are
 rejected, and configured count/byte caps are applied.
+
+Bud-local LLM open request (Service -> Bud on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "local_llm_open",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "llm_op_01H...",
+  "stream_id": "llm_st_01H...",
+  "stream_type": "local_llm_http",
+  "local_llm_server_id": "ds4",
+  "method": "POST",
+  "path": "/v1/responses",
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json"
+  },
+  "request_body_bytes": 12345,
+  "initial_credit_bytes": 1048576,
+  "max_chunk_bytes": 16384,
+  "ext": {}
+}
+```
+
+The service sends exactly `request_body_bytes` upload bytes on the same
+`stream_id` as generic `stream_data` frames before waiting for
+`local_llm_open_result`. The daemon resolves `local_llm_server_id: "ds4"` to
+its configured loopback ds4 origin and allows only `POST /v1/responses` in this
+phase. Raw localhost URLs, cookies, browser auth headers, Bud credentials, and
+arbitrary endpoint paths are not part of the frame contract.
+
+Bud-local LLM open result (Bud -> Service on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "local_llm_open_result",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "llm_op_01H...",
+  "stream_id": "llm_st_01H...",
+  "accepted": true,
+  "status_code": 200,
+  "headers": {
+    "content-type": "text/event-stream"
+  },
+  "compatibility": "openai_responses",
+  "request_mode": "ds4_openai_responses",
+  "ext": {}
+}
+```
+
+Rejected local LLM opens use the same frame with `accepted: false` and a typed
+`error` object. Accepted responses stream ds4 SSE bytes as generic
+`stream_data`, and cancellation/reset uses normal `stream_reset`.
 
 Localhost WebSocket proxy open request (Service → Bud on control):
 
@@ -1134,6 +1197,28 @@ Dev-only token bypass example:
       "resolve": {
         "absolute_posix": true
       }
+    },
+    "llm": {
+      "local_api": true,
+      "servers": [
+        {
+          "id": "ds4",
+          "provider": "ds4",
+          "compatibility": ["openai_responses"],
+          "request_mode": "ds4_openai_responses",
+          "generation_path": "/v1/responses",
+          "models": [
+            {
+              "id": "deepseek-v4-flash",
+              "display_name": "ds4 DeepSeek V4",
+              "context_window_tokens": 100000,
+              "max_output_tokens": 128000
+            }
+          ],
+          "concurrency": 1,
+          "healthy": true
+        }
+      ]
     }
   },
   "ext": {}
@@ -1181,6 +1266,28 @@ Reconnect example:
       "resolve": {
         "absolute_posix": true
       }
+    },
+    "llm": {
+      "local_api": true,
+      "servers": [
+        {
+          "id": "ds4",
+          "provider": "ds4",
+          "compatibility": ["openai_responses"],
+          "request_mode": "ds4_openai_responses",
+          "generation_path": "/v1/responses",
+          "models": [
+            {
+              "id": "deepseek-v4-flash",
+              "display_name": "ds4 DeepSeek V4",
+              "context_window_tokens": 100000,
+              "max_output_tokens": 128000
+            }
+          ],
+          "concurrency": 1,
+          "healthy": true
+        }
+      ]
     }
   },
   "ext": {}
@@ -1192,6 +1299,9 @@ Rules:
 - `bud_id` is only present on reconnect
 - `installation_id` is optional but, when present, must remain consistent for an already-known Bud
 - normal first-time onboarding uses browser-mediated device claim before challenge-response reconnect
+- `capabilities.llm` is optional and advertised only after the daemon's local
+  ds4 startup probe succeeds; it uses logical server metadata only and must not
+  include a raw local URL
 
 ### 5.2 `hello_challenge` (Service → Bud)
 
@@ -1802,6 +1912,11 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 - localhost WebSocket proxy sessions require an authenticated WebSocket-capable carrier with `localhost_websocket_proxy` negotiated. Endpoint-host viewer auth, site state, and connection limits are enforced before daemon WebSocket open allocation.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, range content-identity, and during-read identity policy before sending bytes
+- Bud-local LLM streams require an authenticated data-plane carrier with
+  `local_llm_http` negotiated and healthy `capabilities.llm` for logical server
+  id `ds4`. The daemon accepts only loopback `http://` ds4 origins from local
+  config, advertises no raw URL, allows only `POST /v1/responses`, strips
+  unsafe headers, and enforces request/response limits.
 - future QUIC data sessions must attach with a short-lived token bound to the active authenticated Bud, device session, control transport session, allowed endpoint candidates, and allowed stream families; token issuance/attach is not part of the active WebSocket/HTTP2 protocol yet
 - push endpoint registrations and unread/read watermarks are user-owned resources; normal client-directed reads and deletes are scoped to the authenticated owner
 - the push registration route may additionally server-side reclaim the same provider token or reused installation id from stale prior ownership so a logged-out account cannot keep receiving notifications for a device now registered by another user
@@ -1837,6 +1952,10 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
     `proxy_ws_close`, and `proxy_ws_error` frames for Vite/HMR-style local-dev
     WebSocket traffic
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
+  - Bud-local ds4 support adds optional `capabilities.llm`, the
+    `local_llm_http` stream family, `local_llm_open` /
+    `local_llm_open_result`, and Responses-only `/v1/responses` forwarding
+    through the authenticated daemon data plane
   - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - `agent.resync_required.provided_cursor` is explicitly a rejected cursor; clients must refresh `/messages` plus `/agent/state` and reconnect with the fresh state cursor instead of retrying the same `after` URL

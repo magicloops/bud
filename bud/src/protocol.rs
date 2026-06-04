@@ -206,6 +206,23 @@ pub struct ProxyOpenFrame {
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
+pub struct LocalLlmOpenFrame {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub operation_id: String,
+    pub stream_id: String,
+    pub stream_type: String,
+    pub local_llm_server_id: String,
+    pub method: String,
+    pub path: String,
+    pub headers: Option<HashMap<String, String>>,
+    pub request_body_bytes: Option<u64>,
+    pub initial_credit_bytes: Option<u64>,
+    pub max_chunk_bytes: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct ProxyWebSocketOpenFrame {
     #[serde(flatten)]
     pub envelope: Envelope,

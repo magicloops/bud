@@ -121,7 +121,7 @@ function ThreadView() {
   const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
-  const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
+  const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
   const initializedModelSelectionThreadRef = useRef<string | null>(null)
   const persistModelSelectionSeqRef = useRef(0)
   const assistantMessageDoneTimerRef = useRef<number | null>(null)
