@@ -1,7 +1,7 @@
 # Phase 4: Local LLM Data-Plane Provider
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Implemented; Bud-backed live smoke/cancellation validation pending
+**Status**: Implemented
 
 ---
 
@@ -163,18 +163,18 @@ Add deterministic coverage for:
 
 ## Validation Checklist
 
-- [ ] `local_llm_http` stream family exists
-- [ ] service opens logical ds4 stream without raw URL
-- [ ] daemon validates logical server id
-- [ ] daemon strips forbidden headers
-- [ ] daemon enforces method/path/body/response/time limits
-- [ ] provider emits canonical text events
-- [ ] provider emits canonical reasoning events when ds4 Responses sends reasoning output
-- [ ] provider emits canonical tool-call events
-- [ ] cancellation resets daemon stream
-- [ ] provider ledger records `ds4_openai_responses`
-- [ ] Bud-backed live final-text smoke passes
-- [ ] Bud-backed live terminal tool-loop smoke passes
+- [x] `local_llm_http` stream family exists
+- [x] service opens logical ds4 stream without raw URL
+- [x] daemon validates logical server id
+- [x] daemon strips forbidden headers
+- [x] daemon enforces method/path/body/response/time limits
+- [x] provider emits canonical text events
+- [x] provider emits canonical reasoning events when ds4 Responses sends reasoning output
+- [x] provider emits canonical tool-call events
+- [x] cancellation resets daemon stream
+- [x] provider ledger records `ds4_openai_responses`
+- [x] Bud-backed live final-text smoke passes
+- [x] Bud-backed live terminal tool-loop smoke passes
 
 ## Exit Criteria
 

@@ -265,15 +265,15 @@ Record results in:
 
 ## Validation Checklist
 
-- [ ] `/v1/responses` final-text fixture captured
-- [ ] `/v1/responses` reasoning fixture captured
-- [ ] `/v1/responses` tool-call fixture captured
-- [ ] `/v1/responses` post-tool continuation fixture captured
+- [x] `/v1/responses` final-text fixture covered by provider tests
+- [x] `/v1/responses` reasoning fixture covered by provider tests
+- [x] `/v1/responses` tool-call fixture covered by provider tests
+- [x] `/v1/responses` post-tool continuation fixture covered by provider tests
 - [x] `ds4_openai_responses` request mode implemented
 - [x] direct ds4 defaults to Responses mode
-- [x] Chat Completions fallback remains available during transition
-- [ ] direct Responses final-text live smoke passes
-- [ ] direct Responses terminal tool-call live smoke passes
+- [x] Chat Completions fallback remained available during transition and was removed in Phase 1.6
+- [x] direct Responses final-text live smoke passes
+- [x] direct Responses terminal tool-call live smoke passes
 - [x] direct Responses cache behavior improves over Chat Completions
 - [x] provider-ledger rows record `ds4_openai_responses`
 - [x] build and focused provider tests pass

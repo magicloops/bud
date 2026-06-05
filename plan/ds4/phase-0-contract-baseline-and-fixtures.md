@@ -1,7 +1,7 @@
 # Phase 0: Contract Baseline And Fixtures
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Superseded by implemented Phases 1-8
 
 ---
 
@@ -105,15 +105,15 @@ Implementation may enforce stricter runtime output limits if service storage, UI
 
 ## Validation Checklist
 
-- [ ] Chat Completions final-text fixture captured
-- [ ] Chat Completions tool-call fixture captured
-- [ ] Chat Completions error fixture captured
-- [ ] Responses endpoint probe recorded
-- [ ] Anthropic Messages endpoint probe recorded
-- [ ] first product model id confirmed
-- [ ] `deepseek-v4-pro` alias deferral confirmed
-- [ ] first-pass reasoning behavior decided
-- [ ] provider-ledger request modes documented
+- [x] Chat Completions final-text fixture capture retired from active plan after Phase 1.6
+- [x] Chat Completions tool-call fixture capture retired from active plan after Phase 1.6
+- [x] Chat Completions error fixture capture retired from active plan after Phase 1.6
+- [x] Responses endpoint probe recorded and selected
+- [x] Anthropic Messages endpoint deferred
+- [x] first product model id confirmed
+- [x] `deepseek-v4-pro` alias deferral confirmed
+- [x] first-pass reasoning behavior decided
+- [x] provider-ledger request modes documented
 
 ## Exit Criteria
 

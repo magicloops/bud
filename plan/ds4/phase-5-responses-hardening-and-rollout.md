@@ -1,7 +1,7 @@
 # Phase 5: Responses Hardening And Rollout
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
+**Status**: Core Bud-backed live validation complete; stopped/reconnect lifecycle checks pending
 
 ---
 
@@ -54,7 +54,8 @@ Run and record live/manual validation for:
 - ds4 process stopped before send
 - ds4 process stopped mid-stream
 - Bud reconnect after ds4 starts or stops
-- two concurrent ds4 requests to one Bud
+- two concurrent ds4 requests to one Bud (validated as explicit rejection
+  rather than queueing or interruption)
 
 ### Responses API Deltas
 
@@ -75,11 +76,17 @@ Use Phase 1.5 fixtures and live probes to confirm whether the rollout uses:
 ds4_openai_responses
 ```
 
-Phase 1.5 made Responses the service-local default, and live cache validation on June 3, 2026 confirmed that Responses is the chosen endpoint for continuing Bud-backed work. Bud-backed cache behavior has also been validated through the web/service path. The remaining Phase 5 work is lifecycle validation:
+Phase 1.5 made Responses the service-local default, and live cache validation
+on June 3, 2026 confirmed that Responses is the chosen endpoint for continuing
+Bud-backed work. Bud-backed cache behavior has also been validated through the
+web/service path. The remaining Phase 5 work is stopped-server and reconnect
+lifecycle validation:
 
 - live cache behavior remains better than Chat Completions (confirmed)
 - Bud-backed live cache behavior is healthy (confirmed)
 - cancellation is covered for the Bud-backed web/service path
+- concurrent Bud-local ds4 requests reject excess local LLM streams instead of
+  interrupting the active thread
 - Responses error/incomplete events still need explicit fault validation
 - Bud-backed data-plane docs use `/v1/responses`
 - provider-ledger diagnostics distinguish `ds4_openai_responses`
@@ -158,7 +165,7 @@ Update:
 - [ ] stopped-ds4-before-send behavior is clear
 - [ ] stopped-ds4-mid-stream behavior is clear
 - [ ] reconnect-time health behavior is clear
-- [ ] concurrency behavior is clear
+- [x] concurrency behavior is clear
 - [x] Responses rollout status confirmed
 - [x] Anthropic Messages support decision recorded
 - [x] audit/log review complete

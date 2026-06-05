@@ -1,8 +1,8 @@
 # ds4 Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
-**Last Updated**: 2026-06-03
+**Status**: Core implementation complete; lifecycle validation follow-ups pending
+**Last Updated**: 2026-06-04
 
 ---
 
@@ -25,7 +25,7 @@
 - [x] Responses text stream fixture parses into canonical text deltas
 - [x] Responses reasoning fixture is preserved or intentionally diagnostic-only
 - [x] Responses tool-call fixture parses into canonical tool-call events
-- [ ] Responses post-tool continuation fixture preserves replay continuity
+- [x] Responses post-tool continuation/replay fixture preserves continuity in provider tests
 - [x] `DS4_DIRECT_ENDPOINT` is removed
 - [x] `Ds4ChatCompletionsProvider` is removed
 - [x] direct ds4 provider code cannot call `/v1/chat/completions`
@@ -53,13 +53,13 @@
 ### Daemon Capability
 
 - [x] daemon rejects non-loopback ds4 URLs
-- [ ] daemon omits `capabilities.llm` when probe fails
-- [ ] daemon advertises `capabilities.llm` when probe succeeds
-- [ ] daemon advertises only `openai_responses` compatibility for ds4
-- [ ] daemon advertises logical request mode `ds4_openai_responses`
-- [ ] daemon advertises logical generation path `/v1/responses`
-- [ ] hello payload does not include raw local URL
-- [ ] service hello schema preserves `capabilities.llm`
+- [x] daemon omits `capabilities.llm` when probe fails
+- [x] daemon advertises `capabilities.llm` when probe succeeds
+- [x] daemon advertises only `openai_responses` compatibility for ds4
+- [x] daemon advertises logical request mode `ds4_openai_responses`
+- [x] daemon advertises logical generation path `/v1/responses`
+- [x] hello payload does not include raw local URL
+- [x] service hello schema preserves `capabilities.llm`
 
 ### Data Plane
 
@@ -76,9 +76,9 @@
 - [ ] daemon enforces total TTL limit
 - [x] daemon enforces concurrency limit
 - [x] cancellation sends stream reset
-- [ ] provider-ledger records provider `ds4` and request mode `ds4_openai_responses`
+- [x] provider-ledger records provider `ds4` and request mode `ds4_openai_responses`
 - [x] Bud-backed provider replays Responses `function_call` / `function_call_output` history after tool calls
-- [ ] Bud-backed provider preserves Responses reasoning payloads for replay when available
+- [x] Bud-backed provider preserves Responses reasoning payloads for replay when available
 
 ## Live Validation
 
@@ -92,14 +92,14 @@ Run against an already-running ds4 server. The validation does not require Bud t
 - [x] one terminal tool-call direct-provider stream completes
 - [x] cancellation during direct-provider streaming aborts generation
 - [x] Chat Completions agent-turn cache miss cause identified as output-only reasoning replay
-- [ ] direct `/v1/responses` final-text stream completes
-- [ ] direct `/v1/responses` terminal tool-call stream completes
-- [ ] direct `/v1/responses` post-tool continuation completes
+- [x] direct `/v1/responses` final-text stream completes
+- [x] direct `/v1/responses` terminal tool-call stream completes
+- [x] direct `/v1/responses` post-tool continuation completes
 - [x] direct `/v1/responses` live cache behavior improves over Chat Completions
-- [ ] `GET /api/models` shows `ds4-deepseek-v4-flash`
-- [ ] one final-text agent turn completes
-- [ ] one terminal tool-call agent turn completes
-- [ ] cancellation during streaming stops generation and leaves the turn coherent
+- [x] `GET /api/models` shows `ds4-deepseek-v4-flash`
+- [x] one final-text agent turn completes
+- [x] one terminal tool-call agent turn completes
+- [x] cancellation during streaming stops generation and leaves the turn coherent
 - [ ] service restart preserves normal OpenAI/Anthropic behavior when ds4 env is removed
 
 ### Bud-Backed Mode
@@ -107,7 +107,7 @@ Run against an already-running ds4 server. The validation does not require Bud t
 - [x] configure `BUD_LOCAL_LLM_DS4_URL`
 - [x] daemon hello advertises `capabilities.llm`
 - [x] owned `GET /api/models?bud_id=...` shows ds4
-- [ ] non-owner cannot see ds4 for that Bud
+- [x] non-owner cannot see ds4 for that Bud
 - [x] one final-text agent turn completes through the daemon stream
 - [x] one terminal tool-call loop completes through the daemon stream
 - [x] cancellation resets the daemon stream
@@ -115,7 +115,7 @@ Run against an already-running ds4 server. The validation does not require Bud t
 - [ ] stopping ds4 before send fails clearly
 - [ ] stopping ds4 mid-stream fails clearly
 - [ ] reconnect after ds4 starts makes capability available again
-- [ ] concurrent requests serialize, reject, or queue according to documented concurrency policy
+- [x] concurrent requests reject according to the documented single-stream concurrency policy
 
 ## Documentation And Handoff
 
@@ -126,4 +126,4 @@ Run against an already-running ds4 server. The validation does not require Bud t
 - [x] daemon spec documents local LLM config, probe, and forwarding policy
 - [x] web specs document Bud-scoped model inventory usage if web changes land
 - [x] product handoff says local inference still sends prompt context through hosted service
-- [ ] [progress-checklist.md](./progress-checklist.md) is final after Bud-backed live validation
+- [ ] [progress-checklist.md](./progress-checklist.md) is final after stopped-ds4/reconnect lifecycle validation

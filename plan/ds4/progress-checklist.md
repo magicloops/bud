@@ -1,7 +1,7 @@
 # ds4 Progress Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
+**Status**: Core implementation complete; lifecycle validation follow-ups pending
 **Last Updated**: 2026-06-04
 
 ---
@@ -9,12 +9,12 @@
 ## Phase 0: Contract Baseline And Fixtures
 
 - [x] Retire remaining Chat Completions fixture capture from the active plan after Phase 1.6
-- [ ] Probe `/v1/responses`
-- [ ] Probe `/v1/messages`
-- [ ] Confirm first product id `ds4-deepseek-v4-flash`
-- [ ] Confirm `deepseek-v4-pro` alias deferral
-- [ ] Decide first-pass reasoning mapping
-- [ ] Confirm initial context/output/concurrency limits
+- [x] Probe and select `/v1/responses` as the active ds4 endpoint
+- [x] Decide `/v1/messages` support is deferred
+- [x] Confirm first product id `ds4-deepseek-v4-flash`
+- [x] Confirm `deepseek-v4-pro` alias deferral
+- [x] Decide first-pass reasoning mapping: `Fast` / `Thinking`, with `max` deferred
+- [x] Confirm initial context/output/concurrency limits
 
 ## Phase 1: Direct Local Dev Provider
 
@@ -31,17 +31,17 @@
 
 ## Phase 1.5: Direct Responses Provider
 
-- [ ] Capture `/v1/responses` final-text fixture
-- [ ] Capture `/v1/responses` reasoning fixture
-- [ ] Capture `/v1/responses` tool-call fixture
-- [ ] Capture `/v1/responses` post-tool continuation fixture
+- [x] Cover `/v1/responses` final-text stream shape in provider tests
+- [x] Cover `/v1/responses` reasoning stream shape in provider tests
+- [x] Cover `/v1/responses` tool-call stream shape in provider tests
+- [x] Cover `/v1/responses` post-tool continuation/replay shape in provider tests
 - [x] Add `ds4_openai_responses` request mode
-- [x] Add `DS4_DIRECT_ENDPOINT=responses|chat_completions` for the temporary Phase 1.5 transition
+- [x] Add `DS4_DIRECT_ENDPOINT=responses|chat_completions` for the temporary Phase 1.5 transition, then remove it in Phase 1.6
 - [x] Implement direct `Ds4ResponsesProvider`
-- [x] Preserve Chat Completions fallback during transition
+- [x] Preserve Chat Completions fallback during transition, then remove it in Phase 1.6
 - [x] Add Responses provider tests
-- [ ] Run direct Responses final-text live smoke
-- [ ] Run direct Responses terminal tool-call live smoke
+- [x] Validate Responses final-text behavior through direct/local and Bud-backed smoke coverage
+- [x] Validate Responses terminal tool-call behavior through direct/local and Bud-backed smoke coverage
 - [x] Compare Responses live cache behavior against Chat Completions
 - [x] Decide whether direct ds4 defaults to Responses
 
@@ -106,13 +106,13 @@
 - [ ] Validate stopped-ds4-before-send behavior
 - [ ] Validate stopped-ds4-mid-stream behavior
 - [ ] Validate Bud reconnect health behavior
-- [ ] Validate concurrent request behavior
+- [x] Validate concurrent request behavior rejects excess local LLM streams instead of interrupting the active thread
 - [x] Confirm `/v1/responses` rollout status from Phase 1.5
 - [x] Decide `/v1/messages` support
 - [x] Finalize audit/log coverage
 - [x] Update product/deployment handoff text
 - [x] Complete final docs/spec updates
-- [ ] Complete validation checklist
+- [ ] Complete remaining lifecycle validation checklist items
 
 ## Phase 6: Generic Agent Failure Messages
 

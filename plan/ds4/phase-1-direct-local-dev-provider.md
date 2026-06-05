@@ -1,7 +1,7 @@
 # Phase 1: Direct Local Dev Provider
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Proposed
+**Status**: Implemented; Chat Completions path removed by Phase 1.6
 
 ---
 
@@ -147,4 +147,6 @@ Live direct-provider smoke on 2026-06-02 used `DS4_DIRECT_BASE_URL=http://127.0.
 
 ## Exit Criteria
 
-This phase is done when a developer running `service` beside ds4 can select `ds4-deepseek-v4-flash` and complete normal Bud agent turns without changing daemon code.
+This phase completed the first direct local-dev ds4 path. The active direct
+local-dev path now uses `/v1/responses`; the Chat Completions provider from this
+phase is historical and was removed in Phase 1.6.

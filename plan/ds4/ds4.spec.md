@@ -130,7 +130,7 @@ Implemented near-term UI/runtime phase covering:
 
 ### `phase-7-ds4-output-budget-and-request-caps.md`
 
-Follow-on budget phase covering:
+Implemented budget phase covering:
 
 - setting ds4 output metadata to the DeepSeek model capability while keeping context-budget reserve explicit
 - generic model capability caps for agent request `maxOutputTokens`

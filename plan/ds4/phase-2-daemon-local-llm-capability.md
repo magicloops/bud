@@ -1,7 +1,7 @@
 # Phase 2: Daemon Local LLM Capability
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Implemented; live daemon/ds4 probe validation pending
+**Status**: Implemented
 
 ---
 
@@ -142,14 +142,14 @@ Update daemon/service protocol docs and specs with:
 
 ## Validation Checklist
 
-- [ ] daemon rejects non-loopback ds4 URL config
-- [ ] daemon omits `capabilities.llm` when ds4 probe fails
-- [ ] daemon advertises `capabilities.llm` when ds4 probe succeeds
-- [ ] daemon advertises only `openai_responses` compatibility for ds4
-- [ ] hello payload never includes raw local URL
-- [ ] service schema preserves `capabilities.llm`
-- [ ] service stores Bud capability metadata
-- [ ] protocol docs describe local LLM capability
+- [x] daemon rejects non-loopback ds4 URL config
+- [x] daemon omits `capabilities.llm` when ds4 probe fails
+- [x] daemon advertises `capabilities.llm` when ds4 probe succeeds
+- [x] daemon advertises only `openai_responses` compatibility for ds4
+- [x] hello payload never includes raw local URL
+- [x] service schema preserves `capabilities.llm`
+- [x] service stores Bud capability metadata
+- [x] protocol docs describe local LLM capability
 
 ## Exit Criteria
 

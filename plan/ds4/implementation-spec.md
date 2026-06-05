@@ -1,6 +1,6 @@
 # Implementation Spec: ds4 Local LLM Over Bud
 
-**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
+**Status**: Core implementation complete; lifecycle validation follow-ups pending
 **Created**: 2026-06-02
 **Folder Spec**: [ds4.spec.md](./ds4.spec.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
@@ -271,16 +271,16 @@ No database schema change is required unless implementation chooses to persist c
 8. Add the local LLM stream family and Bud-backed provider using the chosen ds4 endpoint.
 9. Phase 5 hardening added explicit local LLM limits, audit coverage, and the
    `/v1/messages` deferral decision.
-10. Bud-backed final-text, terminal tool-loop, cancellation, and cache behavior
-    have been validated through the web/service path; stopped-ds4, reconnect,
-    and concurrency lifecycle checks remain open.
+10. Bud-backed final-text, terminal tool-loop, cancellation, cache behavior, and
+    concurrent-request rejection have been validated through the web/service
+    path; stopped-ds4 and reconnect lifecycle checks remain open.
 11. Phase 6 durable transcript failure rows are deferred while the product
     decision around user-facing versus model-facing failure artifacts remains
     open.
-12. Phase 6.1 will surface fast async failures through runtime state and the
+12. Phase 6.1 surfaces fast async failures through runtime state and the
     existing composer error slot without writing transcript rows.
-13. Phase 7 will correct ds4 output metadata, keep output reserve explicit,
-    and cap agent request output tokens from selected-model capabilities.
+13. Phase 7 corrected ds4 output metadata, keeps output reserve explicit,
+    and caps agent request output tokens from selected-model capabilities.
 14. Phase 8 exposes ds4 `Fast` and `Thinking` controls through the existing
     reasoning selector and keeps `max` thinking hidden for the current 100k
     context profile.

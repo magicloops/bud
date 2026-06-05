@@ -1,7 +1,7 @@
 # Phase 3: Bud-Scoped Model Inventory And Selection
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Implemented; Bud-backed live UI validation pending
+**Status**: Implemented
 
 ---
 
@@ -75,7 +75,9 @@ The model inventory should expose ds4 as a Responses-backed local model, not as 
 - include `request_mode: "ds4_openai_responses"` or equivalent metadata if the existing response shape has a request-mode field
 - include only `openai_responses` compatibility for Bud-local ds4
 - do not expose Chat Completions, Anthropic Messages, `/v1/responses`, `/v1/chat/completions`, or any raw local URL as user-selectable options
-- keep `reasoning_effort` behavior aligned with the catalog: ds4 has no product reasoning controls in the first pass, even though Responses reasoning payloads can be preserved internally for replay/cache behavior
+- keep `reasoning_effort` behavior aligned with the catalog: ds4 exposes
+  `Fast` and `Thinking`, while `max` is hidden until the effective context
+  window reaches the ds4 max-thinking threshold
 - unavailable-state messaging should say the Bud-local model is unavailable, not that a different endpoint/mode should be selected
 
 ## Implementation Tasks
@@ -155,15 +157,15 @@ Add coverage for:
 
 ## Validation Checklist
 
-- [ ] global `/api/models` behavior unchanged
-- [ ] Bud-scoped `/api/models` authorizes Bud ownership
-- [ ] healthy Bud-local ds4 appears for owner
-- [ ] Bud-local ds4 appears as Responses-backed only
-- [ ] absent/unhealthy ds4 does not appear
-- [ ] non-owner receives `404`
-- [ ] message send validates ds4 against thread Bud
-- [ ] unavailable ds4 fails before user-message persistence
-- [ ] web requests Bud-scoped inventory on Bud/thread routes
+- [x] global `/api/models` behavior unchanged
+- [x] Bud-scoped `/api/models` authorizes Bud ownership
+- [x] healthy Bud-local ds4 appears for owner
+- [x] Bud-local ds4 appears as Responses-backed only
+- [x] absent/unhealthy ds4 does not appear
+- [x] non-owner receives `404`
+- [x] message send validates ds4 against thread Bud
+- [x] unavailable ds4 fails before user-message persistence
+- [x] web requests Bud-scoped inventory on Bud/thread routes
 
 ## Exit Criteria
 
