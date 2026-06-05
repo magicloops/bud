@@ -341,7 +341,7 @@ function parseCanonicalProviderId(value: string): CanonicalProviderId | null {
 }
 
 function isCanonicalProviderId(value: string): value is CanonicalProviderId {
-  return value === "openai" || value === "anthropic";
+  return value === "openai" || value === "anthropic" || value === "ds4";
 }
 
 function parseTokenUsage(value: unknown): TokenUsage | null {

@@ -23,8 +23,7 @@ test("deriveTerminalSendAcceptance reports no visible change for unchanged scree
 test("buildTerminalSendSummary describes unchanged screens conservatively", () => {
   const summary = buildTerminalSendSummary(
     {
-      text: "Please review src/main.rs",
-      submit: true,
+      command: "Please review src/main.rs",
     },
     {
       changed: false,
@@ -44,15 +43,14 @@ test("buildTerminalSendSummary describes unchanged screens conservatively", () =
 
   assert.equal(
     summary,
-    'Send "Please review src/main.rs" and press Enter; no visible delta observed',
+    'Send command "Please review src/main.rs" and press Enter; no visible delta observed',
   );
 });
 
 test("buildTerminalSendSummary calls out timeout when settled wait expires", () => {
   const summary = buildTerminalSendSummary(
     {
-      text: "npm test",
-      submit: true,
+      command: "npm test",
     },
     {
       changed: true,
@@ -66,7 +64,7 @@ test("buildTerminalSendSummary calls out timeout when settled wait expires", () 
 
   assert.equal(
     summary,
-    'Send "npm test" and press Enter; observed terminal activity before timing out',
+    'Send command "npm test" and press Enter; observed terminal activity before timing out',
   );
 });
 
@@ -179,6 +177,6 @@ test("buildTerminalSendFollowUpHint points back to terminal.send when send retur
 
   assert.equal(
     hint,
-    "The terminal appears back at a shell prompt. Use terminal.send with submit:true for the next shell command.",
+    "The terminal appears back at a shell prompt. Use terminal.send with command for the next shell command.",
   );
 });

@@ -14,10 +14,7 @@ import type {
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import {
-  buildTerminalFreshnessInstruction,
   buildTerminalVisibilityMetadata,
-  resolveTerminalFreshness,
-  type TerminalFreshnessSnapshot,
   type TerminalVisibilityMetadata,
 } from "../terminal/freshness.js";
 import type {
@@ -87,6 +84,7 @@ import {
   type AgentContextCheckpointReason,
   type AgentContextCheckpointTrigger,
 } from "./context-checkpoint-repository.js";
+import { formatAgentRuntimeFailure } from "./failure-message.js";
 
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
@@ -489,16 +487,10 @@ export class AgentService {
 	        environment = refreshedEnvironment.snapshot;
 	        this.runtime.setEnvironment(threadId, environment);
 	        this.runtime.markThinking(threadId);
-	        const terminalFreshness = await this.resolveTerminalFreshnessForProviderStep({
-	          threadId,
-	          currentSessionId,
-	          environment,
-	        });
 	        const modelTools = resolveAgentToolsForEnvironment(environment);
 	        const conversationForModel = applyRuntimeInstructions(
 	          conversation,
 	          environment,
-	          terminalFreshness,
 	        );
 	        let modelResult: {
 	          response: CanonicalResponse;
@@ -510,10 +502,15 @@ export class AgentService {
 	            turnId,
 	            conversationForModel,
 	            model,
-	            modelReasoning,
-	            controller.signal,
-	            modelTools,
-	          );
+	          modelReasoning,
+	          controller.signal,
+	          modelTools,
+	          {
+	            threadId,
+	            budId: environment.bud_id,
+	            ownerUserId: ownerUserId ?? null,
+	          },
+	        );
 	        } catch (err) {
           if (!isProviderContextWindowError(err)) {
             throw err;
@@ -542,11 +539,16 @@ export class AgentService {
 	          modelResult = await this.modelRunner.invokeModel(
 	            threadId,
 	            turnId,
-	            applyRuntimeInstructions(conversation, environment, terminalFreshness),
+	            applyRuntimeInstructions(conversation, environment),
 	            model,
 	            modelReasoning,
 	            controller.signal,
 	            modelTools,
+	            {
+	              threadId,
+	              budId: environment.bud_id,
+	              ownerUserId: ownerUserId ?? null,
+	            },
 	          );
 	        }
         const { response, assistantClientId: streamedAssistantClientId } = modelResult;
@@ -851,19 +853,35 @@ export class AgentService {
         return;
       }
 
-      this.runtime.emit(threadId, {
+      const failure = formatAgentRuntimeFailure(err);
+      const occurredAt = new Date().toISOString();
+      const finalCursor = this.runtime.emit(threadId, {
         event: "final",
         data: {
           turn_id: turnId,
           status: "failed",
-          error: err instanceof Error ? err.message : "agent_failed",
+          error: failure.message,
+          error_code: failure.code,
+          retryable: failure.retryable,
         },
       });
+      this.runtime.setLastError(
+        threadId,
+        {
+          turn_id: turnId,
+          code: failure.code,
+          message: failure.message,
+          retryable: failure.retryable,
+          occurred_at: occurredAt,
+        },
+        finalCursor,
+      );
       this.runtime.finishTurn(threadId);
 
 	      this.debug("Agent run failed", {
 	        sessionId: currentSessionId,
         error: err instanceof Error ? err.message : err,
+        errorCode: failure.code,
       });
       throw err;
     }
@@ -1138,25 +1156,6 @@ export class AgentService {
       getPathContextForSession?: (sessionId: string) => Promise<TerminalPathContext | null>;
     };
     return manager.getPathContextForSession?.(sessionId) ?? null;
-  }
-
-  private async resolveTerminalFreshnessForProviderStep(args: {
-    threadId: string;
-    currentSessionId: string | null;
-    environment: AgentEnvironmentSnapshot;
-  }): Promise<TerminalFreshnessSnapshot | null> {
-    if (args.environment.mode !== "normal" || !args.currentSessionId) {
-      return null;
-    }
-
-    const session = await this.terminalSessionManager.getSession(args.currentSessionId);
-    return resolveTerminalFreshness({
-      threadId: args.threadId,
-      session,
-      currentReadiness: session
-        ? this.terminalSessionManager.getLatestReadiness(session.sessionId)
-        : null,
-    });
   }
 
   private async buildTerminalVisibilityForToolResult(
@@ -1515,11 +1514,9 @@ function applyOpenAIAssistantPhaseFallback(
 function applyRuntimeInstructions(
   conversation: CanonicalMessage[],
   environment: AgentEnvironmentSnapshot,
-  terminalFreshness: TerminalFreshnessSnapshot | null,
 ): CanonicalMessage[] {
   const instructions = [
     buildAgentEnvironmentInstruction(environment),
-    buildTerminalFreshnessInstruction(terminalFreshness),
   ].filter((instruction): instruction is string => Boolean(instruction));
 
   if (instructions.length === 0) {

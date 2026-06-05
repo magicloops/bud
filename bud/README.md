@@ -41,6 +41,9 @@ Release artifacts include the package version, build commit, target triple, and 
 | `BUD_IDENTITY_FILE` | `--identity-file` | Path to persisted `{ bud_id, device_secret }` |
 | `BUD_TERMINAL_BASE_DIR` | `--terminal-base-dir` | Base directory for terminal logs and session artifacts |
 | `BUD_TERMINAL_ENABLED` | `--terminal-enabled` | Enable terminal features |
+| `BUD_LOCAL_LLM_DS4_URL` | `--local-llm-ds4-url` | Optional loopback ds4 API origin, without `/v1`, for Bud-local ds4 forwarding |
+| `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS` | `--local-llm-ds4-context-tokens` | Context-window metadata advertised for local ds4 |
+| `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` | `--local-llm-ds4-max-output-tokens` | Max-output metadata advertised for local ds4 |
 | `BUD_DEBUG` | `--debug` | Extra Bud logging |
 | `BUD_ENROLLMENT_TOKEN` | `--token` | Legacy/manual enrollment fallback |
 

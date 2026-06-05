@@ -13,12 +13,14 @@ import {
   type CanonicalStopReason,
   type CanonicalTool,
   type CanonicalToolCall,
+  type LLMProvider,
   type ModelConfig,
   type AssistantMessagePhase,
   resolveModelReasoning,
   type ResolvedModelReasoning,
   type TokenUsage,
 } from "../llm/index.js";
+import type { ProviderInvocationContext } from "../llm/provider.js";
 import {
   normalizeToolKeyInput,
   parseWaitForArg,
@@ -30,6 +32,10 @@ import {
   normalizeAskUserQuestionsRequest,
 } from "./user-question-contracts.js";
 import { AGENT_CANONICAL_TOOLS } from "./tool-definitions.js";
+import {
+  createModelContextDriftRecorder,
+  type ModelContextDriftRecorderLike,
+} from "./model-context-drift-recorder.js";
 
 type StreamedModelResponse = {
   response: CanonicalResponse;
@@ -41,6 +47,7 @@ type StreamedModelResponse = {
 const MODEL_RESPONSE_TEXT_PREVIEW_CHARS = 4_000;
 const MODEL_RESPONSE_JSON_PREVIEW_CHARS = 8_000;
 const MODEL_RESPONSE_ERROR_MESSAGE_CHARS = 12_000;
+const FALLBACK_AGENT_MAX_OUTPUT_TOKENS = 128_000;
 
 type ModelResponseDiagnostic = {
   id: string;
@@ -75,6 +82,7 @@ export class AgentModelRunner {
   private readonly debugEnabled: boolean;
   private readonly openaiDebugEnabled: boolean;
   private readonly defaultReasoningEffort: ReasoningEffortSetting;
+  private readonly contextDriftRecorder: ModelContextDriftRecorderLike | null;
 
   constructor(
     runtime: AgentRuntimeStateManager,
@@ -82,12 +90,17 @@ export class AgentModelRunner {
     debugEnabled: boolean,
     openaiDebugEnabled: boolean,
     defaultReasoningEffort: ReasoningEffortSetting = config.agentReasoningEffortDefault,
+    contextDriftRecorder?: ModelContextDriftRecorderLike | null,
   ) {
     this.runtime = runtime;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
     this.openaiDebugEnabled = openaiDebugEnabled;
     this.defaultReasoningEffort = defaultReasoningEffort;
+    this.contextDriftRecorder = contextDriftRecorder ?? createModelContextDriftRecorder({
+      enabled: config.agentContextDriftDebug,
+      logger,
+    });
   }
 
   resolveReasoningEffort(
@@ -117,6 +130,7 @@ export class AgentModelRunner {
     modelReasoning: ResolvedModelReasoning,
     signal?: AbortSignal,
     tools: CanonicalTool[] = AGENT_CANONICAL_TOOLS,
+    invocationContext?: ProviderInvocationContext,
   ): Promise<StreamedModelResponse> {
     const { providerModel, reasoning, reasoningLevel } = modelReasoning;
     const last = messages.at(-1);
@@ -133,10 +147,30 @@ export class AgentModelRunner {
 
     const modelConfig: ModelConfig = {
       model: providerModel,
-      maxOutputTokens: config.agentMaxOutputTokens,
+      maxOutputTokens: resolveModelMaxOutputTokens({
+        provider,
+        productModel: model,
+        providerModel,
+        logger: this.logger,
+      }),
       reasoning,
       responseFormat: "text",
     };
+    const providerRenderedRequest = this.contextDriftRecorder
+      ? buildProviderDebugRequestSnapshot(provider, messages, tools, modelConfig, this.logger, invocationContext)
+      : undefined;
+    const contextDriftSequence = this.contextDriftRecorder?.capturePrompt({
+      threadId,
+      turnId,
+      provider: providerName,
+      productModel: model,
+      providerModel,
+      reasoningEffort: reasoningLevel,
+      messages,
+      tools,
+      modelConfig,
+      providerRenderedRequest,
+    }) ?? null;
 
     const textBlocks = new Map<number, { text: string; assistantPhase?: AssistantMessagePhase }>();
     const textPhases = new Map<number, AssistantMessagePhase>();
@@ -193,7 +227,7 @@ export class AgentModelRunner {
       this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
     };
 
-    for await (const event of provider.invoke(messages, tools, modelConfig, signal)) {
+    for await (const event of provider.invoke(messages, tools, modelConfig, signal, invocationContext)) {
       switch (event.type) {
         case "message_start":
           responseId = event.id;
@@ -316,6 +350,12 @@ export class AgentModelRunner {
       toolCallCount: response.toolCalls?.length ?? 0,
     });
     this.debugCanonicalResponse(response);
+    this.contextDriftRecorder?.captureResponse({
+      sequence: contextDriftSequence,
+      threadId,
+      turnId,
+      response,
+    });
 
     return {
       response,
@@ -378,8 +418,8 @@ export class AgentModelRunner {
         return {
           type: "tool_call",
           tool: "terminal.send",
-          text: typeof args.text === "string" ? args.text : undefined,
-          submit: args.submit === true,
+          command: typeof args.command === "string" ? args.command : undefined,
+          rawText: typeof args.raw_text === "string" ? args.raw_text : undefined,
           key: normalizeToolKeyInput(args.key, args.keys),
           observeAfterMs:
             typeof args.observe_after_ms === "number" ? args.observe_after_ms : undefined,
@@ -591,4 +631,99 @@ function parseWebViewTargetHost(value: unknown): "127.0.0.1" | "localhost" | "::
     return value;
   }
   return undefined;
+}
+
+function buildProviderDebugRequestSnapshot(
+  provider: {
+    name: string;
+    buildDebugRequestSnapshot?: (
+      messages: CanonicalMessage[],
+      tools: CanonicalTool[],
+      config: ModelConfig,
+      context?: ProviderInvocationContext,
+    ) => unknown;
+  },
+  messages: CanonicalMessage[],
+  tools: CanonicalTool[],
+  modelConfig: ModelConfig,
+  logger: FastifyBaseLogger,
+  invocationContext?: ProviderInvocationContext,
+): unknown {
+  if (!provider.buildDebugRequestSnapshot) {
+    return undefined;
+  }
+
+  try {
+    return provider.buildDebugRequestSnapshot(messages, tools, modelConfig, invocationContext);
+  } catch (err) {
+    logger.warn(
+      { err, component: "agent", provider: provider.name },
+      "Skipping provider-rendered context drift snapshot after provider debug request build failure",
+    );
+    return undefined;
+  }
+}
+
+function resolveModelMaxOutputTokens(args: {
+  provider: LLMProvider;
+  productModel: string;
+  providerModel: string;
+  logger: FastifyBaseLogger;
+}): number {
+  const configuredMaxOutputTokens = positiveIntegerOrNull(config.agentMaxOutputTokens) ??
+    FALLBACK_AGENT_MAX_OUTPUT_TOKENS;
+  const capabilityMaxOutputTokens = resolveCapabilityMaxOutputTokens(args);
+  if (capabilityMaxOutputTokens === null) {
+    args.logger.warn(
+      {
+        component: "agent",
+        provider: args.provider.name,
+        model: args.productModel,
+        providerModel: args.providerModel,
+        configuredMaxOutputTokens,
+      },
+      "Falling back to configured agent max output tokens because model capabilities were unavailable",
+    );
+    return configuredMaxOutputTokens;
+  }
+
+  return Math.min(configuredMaxOutputTokens, capabilityMaxOutputTokens);
+}
+
+function resolveCapabilityMaxOutputTokens(args: {
+  provider: LLMProvider;
+  productModel: string;
+  providerModel: string;
+  logger: FastifyBaseLogger;
+}): number | null {
+  const productCapability = getCapabilityMaxOutputTokens(args.provider, args.productModel, args.logger);
+  if (productCapability !== null) {
+    return productCapability;
+  }
+  if (args.providerModel === args.productModel) {
+    return null;
+  }
+  return getCapabilityMaxOutputTokens(args.provider, args.providerModel, args.logger);
+}
+
+function getCapabilityMaxOutputTokens(
+  provider: LLMProvider,
+  model: string,
+  logger: FastifyBaseLogger,
+): number | null {
+  try {
+    return positiveIntegerOrNull(provider.getModelCapabilities(model).maxOutputTokens);
+  } catch (err) {
+    logger.warn(
+      { err, component: "agent", provider: provider.name, model },
+      "Failed to resolve model capabilities for output-token cap",
+    );
+    return null;
+  }
+}
+
+function positiveIntegerOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
 }

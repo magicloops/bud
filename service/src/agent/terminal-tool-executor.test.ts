@@ -92,6 +92,9 @@ test("execute keeps ctrl+c summaries conservative when no visible delta is obser
 
   assert.equal(execution.result.kind, "interaction_ack");
   assert.equal(execution.result.submitted, true);
+  assert.equal(execution.result.inputDispatched, true);
+  assert.equal(execution.result.keySent, "ctrl+c");
+  assert.equal(execution.result.enterRequested, false);
   assert.deepEqual(execution.result.delta, {
     changed: false,
     text: "",
@@ -106,6 +109,150 @@ test("execute keeps ctrl+c summaries conservative when no visible delta is obser
     execution.summary,
     "Send key ctrl+c; timed out waiting for settled output and no visible delta was observed",
   );
+});
+
+test("execute maps command gestures to Bud text plus submit", async () => {
+  const pendingCommands: Array<Record<string, unknown>> = [];
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell" };
+    },
+    setPendingCommand(sessionId: string, command: Record<string, unknown>) {
+      pendingCommands.push({ sessionId, ...command });
+    },
+    async sendInteraction(
+      sessionId: string,
+      interaction: {
+        text?: string;
+        submit?: boolean;
+        key?: string;
+        observeAfterMs?: number;
+        waitFor?: string;
+      },
+    ) {
+      assert.equal(sessionId, "sess_test");
+      assert.deepEqual(interaction, {
+        text: "python",
+        submit: true,
+        key: undefined,
+        observeAfterMs: undefined,
+        waitFor: undefined,
+      });
+
+      return {
+        submitted: true,
+        delta: { changed: true, text: ">>> ", truncated: false },
+        readiness: {
+          ready: true,
+          confidence: 0.8,
+          trigger: "settled",
+          hints: {
+            looks_like_prompt: true,
+            looks_like_confirmation: false,
+            looks_like_password: false,
+            looks_like_pager: false,
+            looks_like_error: false,
+            may_still_be_processing: false,
+          },
+        },
+      };
+    },
+  };
+
+  const executor = new TerminalToolExecutor(
+    terminalSessionManager as never,
+    createLogger() as never,
+    false,
+    false,
+    async () => ({ sessionId: "sess_test" } as never),
+  );
+
+  const execution = await executor.execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    command: "python",
+    callId: "call_send_command",
+  });
+
+  assert.deepEqual(execution.args, { command: "python", wait_for: "settled" });
+  assert.equal(execution.payload.command, "python");
+  assert.equal(execution.result.inputDispatched, true);
+  assert.equal(execution.result.commandSent, true);
+  assert.equal(execution.result.rawTextSent, false);
+  assert.equal(execution.result.keySent, null);
+  assert.equal(execution.result.enterRequested, true);
+  assert.equal(pendingCommands[0]?.command, "python");
+  assert.equal(pendingCommands[0]?.input, "python");
+  assert.equal(execution.summary, 'Send command "python" and press Enter; observed new terminal content');
+});
+
+test("execute maps raw_text gestures to Bud text without submit", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell" };
+    },
+    async sendInteraction(
+      sessionId: string,
+      interaction: {
+        text?: string;
+        submit?: boolean;
+        key?: string;
+        observeAfterMs?: number;
+        waitFor?: string;
+      },
+    ) {
+      assert.equal(sessionId, "sess_test");
+      assert.deepEqual(interaction, {
+        text: "partial",
+        submit: false,
+        key: undefined,
+        observeAfterMs: undefined,
+        waitFor: undefined,
+      });
+
+      return {
+        submitted: true,
+        delta: { changed: true, text: "partial", truncated: false },
+        readiness: {
+          ready: false,
+          confidence: 0.5,
+          trigger: "settled",
+          hints: {
+            looks_like_prompt: false,
+            looks_like_confirmation: false,
+            looks_like_password: false,
+            looks_like_pager: false,
+            looks_like_error: false,
+            may_still_be_processing: false,
+          },
+        },
+      };
+    },
+  };
+
+  const executor = new TerminalToolExecutor(
+    terminalSessionManager as never,
+    createLogger() as never,
+    false,
+    false,
+    async () => ({ sessionId: "sess_test" } as never),
+  );
+
+  const execution = await executor.execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    rawText: "partial",
+    callId: "call_send_raw_text",
+  });
+
+  assert.deepEqual(execution.args, { raw_text: "partial", wait_for: "settled" });
+  assert.equal(execution.payload.raw_text, "partial");
+  assert.equal(execution.result.inputDispatched, true);
+  assert.equal(execution.result.commandSent, false);
+  assert.equal(execution.result.rawTextSent, true);
+  assert.equal(execution.result.keySent, null);
+  assert.equal(execution.result.enterRequested, false);
+  assert.equal(execution.summary, 'Type raw text "partial" without pressing Enter; observed new terminal content');
 });
 
 test("execute ignores model-supplied timeout_ms for terminal.observe", async () => {
@@ -207,14 +354,16 @@ test("execute returns conservative tool result when terminal.send wait is interr
   const execution = await executor.execute("thread_test", {
     type: "tool_call",
     tool: "terminal.send",
-    text: "codex \"work\"",
-    submit: true,
+    command: "codex \"work\"",
     callId: "call_send_interrupted",
   });
 
   assert.equal(execution.result.kind, "interaction_ack");
   assert.equal(execution.result.error, "interrupted");
   assert.equal(execution.result.submitted, true);
+  assert.equal(execution.result.inputDispatched, true);
+  assert.equal(execution.result.commandSent, true);
+  assert.equal(execution.result.enterRequested, true);
   assert.equal(execution.result.delta, null);
   assert.equal(execution.result.readiness.ready, false);
   assert.equal(execution.result.readiness.trigger, "error");
@@ -316,13 +465,15 @@ test("execute returns retryable tool result when bud disconnects during terminal
   const execution = await executor.execute("thread_test", {
     type: "tool_call",
     tool: "terminal.send",
-    text: "pwd",
-    submit: true,
+    command: "pwd",
     callId: "call_send_offline",
   });
 
   assert.equal(execution.result.kind, "interaction_ack");
   assert.equal(execution.result.submitted, false);
+  assert.equal(execution.result.inputDispatched, false);
+  assert.equal(execution.result.commandSent, false);
+  assert.equal(execution.result.enterRequested, true);
   assert.equal(execution.result.error, "bud_offline");
   assert.equal(execution.result.errorCode, "BUD_DISCONNECTED");
   assert.equal(execution.result.retryable, true);
@@ -359,7 +510,7 @@ test("execute rejects ambiguous terminal.send directives before touching the run
   const execution = await executor.execute("thread_test", {
     type: "tool_call",
     tool: "terminal.send",
-    text: "pwd",
+    command: "pwd",
     key: "ctrl+c",
     callId: "call_send_invalid",
   });
@@ -367,5 +518,10 @@ test("execute rejects ambiguous terminal.send directives before touching the run
   assert.equal(sendCalls, 0);
   assert.equal(execution.result.error, "ambiguous_interaction");
   assert.equal(execution.result.submitted, false);
-  assert.equal(execution.summary, 'Send "pwd" and send key ctrl+c');
+  assert.equal(execution.result.inputDispatched, false);
+  assert.equal(execution.result.enterRequested, false);
+  assert.equal(
+    execution.summary,
+    "Invalid terminal.send input: choose exactly one of command, raw_text, or key",
+  );
 });

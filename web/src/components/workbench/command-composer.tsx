@@ -51,7 +51,7 @@ export function CommandComposer({
 
   return (
     <form onSubmit={onSubmit} className="relative border-t-4 border-black bg-background">
-      {error && <div className="px-4 pt-3 text-xs text-destructive">{error}</div>}
+      {error && <div className="whitespace-pre-line px-4 pt-3 text-xs text-destructive">{error}</div>}
       {disabledReason && <div className="px-4 pt-3 text-xs text-muted-foreground">{disabledReason}</div>}
       {showBudOfflineNotice && (
         <div className="px-4 pt-3 font-mono text-xs text-muted-foreground">
@@ -88,7 +88,7 @@ export function CommandComposer({
               <optgroup key={provider} label={provider.toUpperCase()}>
                 {providerModels.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.display_name}
+                    {model.display_name}{model.source?.kind === 'bud_local' ? ' · Local Bud' : ''}
                   </option>
                 ))}
               </optgroup>

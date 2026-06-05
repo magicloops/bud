@@ -27,12 +27,9 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    args.into_iter().skip(1).any(|arg| {
-        matches!(
-            arg.as_ref().to_str(),
-            Some("--version") | Some("-V")
-        )
-    })
+    args.into_iter()
+        .skip(1)
+        .any(|arg| matches!(arg.as_ref().to_str(), Some("--version") | Some("-V")))
 }
 
 pub fn maybe_print_version_from_env() -> bool {

@@ -72,3 +72,31 @@ test("resolveEffectiveModelSelection rejects unsupported explicit reasoning", ()
     InvalidReasoningEffortError,
   );
 });
+
+test("resolveEffectiveModelSelection accepts ds4 thinking and rejects ds4 max", () => {
+  const thinking = resolveEffectiveModelSelection({
+    requestedModel: "ds4-deepseek-v4-flash",
+    requestedReasoning: "low",
+    serviceDefaultModel: "gpt-5.5",
+    validateAvailability: false,
+  });
+
+  assert.equal(thinking.model, "ds4-deepseek-v4-flash");
+  assert.equal(thinking.reasoningEffort, "low");
+  assert.deepEqual(thinking.modelReasoning.reasoning, {
+    enabled: true,
+    effort: "low",
+    summaryLevel: "auto",
+  });
+
+  assert.throws(
+    () =>
+      resolveEffectiveModelSelection({
+        requestedModel: "ds4-deepseek-v4-flash",
+        requestedReasoning: "max",
+        serviceDefaultModel: "gpt-5.5",
+        validateAvailability: false,
+      }),
+    InvalidReasoningEffortError,
+  );
+});

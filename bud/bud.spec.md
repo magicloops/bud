@@ -13,7 +13,9 @@ The Bud daemon:
 5. reports local journal state after reconnect so the service can reconcile operation/stream outcomes
 6. detects readiness and screen stability so the service can drive terminal interactions safely
 7. tears down transport-bound proxy/file work on disconnect so stale stream tasks cannot block reconnect
-8. exposes `bud doctor` diagnostics for installer and human preflight checks
+8. optionally advertises and forwards a configured loopback ds4 server through
+   the authenticated data plane using logical `local_llm_http` streams
+9. exposes `bud doctor` diagnostics for installer and human preflight checks
 
 ## Files
 
@@ -61,6 +63,9 @@ Modular daemon implementation split across:
 - `grpc_control.rs` for tonic/prost `BudControl.Connect` client bindings and envelope conversion
 - `transport.rs` for the daemon-side transport sender boundary that wraps WebSocket writes or gRPC control-stream frame writes
 - `journal.rs` for the local reconnect/reconciliation journal foundation
+- `local_llm.rs` for optional Bud-local ds4 probing, capability
+  advertisement, loopback-only `/v1/responses` forwarding, and bounded
+  idle/TTL/concurrency stream guards
 - `terminal/mod.rs` for shared terminal runtime types and composition
 - `terminal/backend.rs` for the backend trait
 - `terminal/registry.rs`, `interaction.rs`, `observe.rs`, `readiness.rs`, and `delta.rs` for the split terminal runtime ownership
@@ -91,6 +96,8 @@ Key boundary decisions:
 
 - `app.rs` owns connection lifecycle and frame dispatch for both WebSocket and opt-in gRPC control.
 - `app.rs` owns transport shutdown cleanup, including aborting the WebSocket writer task and canceling proxy/file stream work before reconnect.
+- `app.rs` also cancels local LLM stream work on disconnect and advertises
+  `capabilities.llm` only when the configured ds4 probe is healthy.
 - `proto_wire.rs` owns the compatibility envelope carrier codec used by both WebSocket binary frames and the tonic gRPC adapter.
 - `grpc_control.rs` owns generated tonic/prost bindings and converts generated `BudEnvelope` messages to/from JSON-frame text for the existing handlers.
 - `transport.rs` owns the transport-neutral sender seam; it carries JSON payloads directly for legacy peers, wraps them in typed-payload protobuf `BudEnvelope` binary frames after WebSocket capability negotiation, or forwards JSON payloads to the gRPC control writer.
@@ -193,6 +200,9 @@ cargo run -- --terminal-enabled doctor --format json
 | `--terminal-enabled` | `BUD_TERMINAL_ENABLED` | `false` | Enable terminals |
 | `--terminal-cols` | `BUD_TERMINAL_COLS` | `200` | Terminal width |
 | `--terminal-rows` | `BUD_TERMINAL_ROWS` | `50` | Terminal height |
+| `--local-llm-ds4-url` | `BUD_LOCAL_LLM_DS4_URL` | - | Optional loopback `http://` ds4 API origin, without `/v1`, used for Bud-local ds4 capability/proxying |
+| `--local-llm-ds4-context-tokens` | `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS` | `100000` | Context-window metadata advertised for the configured local ds4 model |
+| `--local-llm-ds4-max-output-tokens` | `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` | `128000` | Max-output metadata advertised for the configured local ds4 model |
 | `--debug` | `BUD_DEBUG` | `false` | Debug logging |
 
 Subcommand:

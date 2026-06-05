@@ -18,9 +18,9 @@ Internal terminal freshness and model-visible watermark helper.
 - load the latest model-visible terminal watermark from terminal tool message metadata
 - load the latest human-origin terminal input timestamp from `terminal_session_input_log`
 - compare current session output bytes, cwd, readiness, and human input against the latest watermark
-- return one transient freshness instruction for provider context when terminal state may be stale
+- define transient freshness instruction text for future append-only prompt work; the normal agent loop currently does not inject these notes into provider context
 
-Freshness never contacts the Bud daemon. It reads service-owned DB/runtime state and lets the model call `terminal.observe` when terminal state matters.
+Freshness never contacts the Bud daemon. It reads service-owned DB/runtime state for diagnostics and future prompt work while the model can call `terminal.observe` when terminal state matters.
 
 ### `freshness.test.ts`
 
@@ -255,7 +255,7 @@ export function getProgramInfo(command: string): ProgramInfo | undefined;
 
 Legacy terminal context synchronization service.
 
-**Purpose**: Maintains legacy terminal state snapshots and can summarize observed state changes. Normal `POST /messages` sends no longer call `checkAndSync(...)` or run a Bud `terminal_observe` preflight; terminal freshness hints supersede that path for normal sends. `refreshSnapshot(...)` remains useful after state-changing terminal tools to keep snapshot state and pending-command cleanup aligned.
+**Purpose**: Maintains legacy terminal state snapshots and can summarize observed state changes. Normal `POST /messages` sends no longer call `checkAndSync(...)`, run a Bud `terminal_observe` preflight, or inject terminal freshness notes; the agent can call `terminal.observe` explicitly when terminal state matters. `refreshSnapshot(...)` remains useful after state-changing terminal tools to keep snapshot state and pending-command cleanup aligned.
 
 **Key Method**:
 ```typescript

@@ -26,6 +26,10 @@ Current branch review for the LLM call-handling fortification work. Compares the
 
 Review of Bud's OpenAI Responses API assistant-message `phase` handling. Concludes that the current manual replay path drops `commentary` / `final_answer` values, recommends adding an optional canonical assistant phase for OpenAI text blocks, and outlines persistence, replay, and test coverage needed without imposing the field on Anthropic.
 
+### `provider-reasoning-visibility-review.md`
+
+Review of provider-native reasoning visibility across OpenAI Responses, Anthropic Messages, and ds4 Responses. Confirms that reasoning is normalized and saved only in the provider ledger today, not user-visible messages, and recommends adding sanitized live reasoning events plus a separate durable display artifact path.
+
 ### `network-upgrade.md`
 
 Review of the proposed WebSocket-to-HTTP/2-gRPC/QUIC transport upgrade. Compares the reference transport goals against the current daemon, service, web, and DB implementation, then recommends a bounded phased migration through protobuf envelopes, durable operation/stream state, HTTP/2 control/data, proxy/file sessions, optional QUIC, and WebSocket fallback cleanup.

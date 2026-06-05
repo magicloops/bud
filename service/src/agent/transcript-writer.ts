@@ -10,6 +10,7 @@ import {
   type AgentToolCallDirective,
   type ExecutedAgentTool,
   type ToolExecutionTiming,
+  serializeTerminalDelta,
   serializeToolExecutionTiming,
 } from "./contracts.js";
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
@@ -418,6 +419,18 @@ function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<
     readiness: execution.result.readiness,
     truncated: execution.result.truncated,
     omitted_lines: execution.result.omittedLines,
+    submitted: execution.result.submitted,
+    input_dispatched: execution.result.inputDispatched,
+    command_sent: execution.result.commandSent,
+    raw_text_sent: execution.result.rawTextSent,
+    key_sent: execution.result.keySent,
+    enter_requested: execution.result.enterRequested,
+    delta: serializeTerminalDelta(execution.result.delta),
+    view: execution.result.view,
+    context_after: execution.result.contextAfter,
+    error: execution.result.error,
+    code: execution.result.errorCode,
+    retryable: execution.result.retryable,
   };
 }
 

@@ -20,7 +20,7 @@ Opt-in grpc-js server for daemon control streams.
 - registers durable `device_session` and `transport_session` rows with `transport_kind = "h2_grpc"`
 - registers durable/session trackers before sending `hello_ack`, so post-auth frames cannot arrive before the service can route them
 - handles heartbeat, reconnect reconciliation, and terminal result/status/output frames, including optional terminal result `host_cwd` persistence
-- handles daemon `proxy_open_result`, `file_open_result`, and `file_resolve_result` frames and delivers them to the proxy/file runtime bridges
+- handles daemon `proxy_open_result`, `file_open_result`, `file_resolve_result`, and `local_llm_open_result` frames and delivers them to the proxy/file/local-LLM runtime bridges
 - records Bud online/offline transitions through the same terminal manager side effects used by WebSocket
 - starts process-local gateway drain and ends active gRPC streams during service shutdown, with a short force-shutdown fallback
 - explicitly finalizes active gRPC trackers during gateway shutdown so durable `device_session` / `transport_session` rows close before DB pools stop
@@ -41,11 +41,11 @@ Opt-in grpc-js server for daemon data streams.
 - enforces the configured terminal-output data chunk limit before storing output
 - closes the data transport row on data-stream shutdown
 - finalizes subordinate data streams when the owning control tracker closes, drains, times out, or is superseded
-- resets registered runtime streams during data-session finalization so active proxy/file callers do not hang on transport loss
+- resets registered runtime streams during data-session finalization so active proxy/file/local-LLM callers do not hang on transport loss
 - records active data frame and byte counters for smoke assertions and close-log context
 - handles Phase 4.0 generic `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` frames for registered runtime streams
 - enforces generic stream offset, chunk-size, and credit windows before acknowledging consumed bytes
-- invokes registered runtime-stream callbacks so proxy/file callers can consume bytes, observe resets, and close HTTP responses before credit is re-granted
+- invokes registered runtime-stream callbacks so proxy/file/local-LLM callers can consume bytes, observe resets, and close HTTP responses before credit is re-granted
 - rejects mismatched `stream_close.final_offset` values through the shared data-plane runtime instead of promoting them to clean close
 
 ### `data-gateway.test.ts`

@@ -51,7 +51,7 @@ Shared markdown renderer using `streamdown` with:
 
 **Code Block Handling**:
 - Fenced code blocks (````lang`) use Streamdown's code plugin with copy controls, no visible code-block header, no chat line numbers, and no Bud `code`/`pre` override
-- Code block chrome is compacted through scoped CSS: a dark code surface, reduced `0.85em` code text, hidden Streamdown language header, softened borders, Streamdown code-block containment overrides, and above-surface copy controls that use the code surface's dark treatment while hiding until hover/focus on mouse-capable devices
+- Code block chrome is compacted through scoped CSS: a borderless, slightly rounded dark code surface, reduced `0.85em` code text, hidden Streamdown language header, block-level line wrappers even when line numbers are disabled, Streamdown code-block containment overrides, and above-surface copy controls that use the code surface's dark treatment while hiding until hover/focus on mouse-capable devices
 - Inline code uses `InlineCode` component with click-to-copy; long code wraps instead of truncating for proper baseline alignment
 - Inline file candidates keep the copyable code treatment and add a separate open-file button; the path text can wrap independently from the button, and rendering never opens a file session by itself
 

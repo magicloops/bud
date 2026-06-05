@@ -64,7 +64,8 @@ Checked-in template for local service setup. Includes:
   `PROXY_EDGE_SECRET` when Cloudflare forwards `*.bud.show` to the service
 - `DAEMON_INSTALLER_BASE_URL` for service-generated Bud installer commands
 - optional APNs push-notification settings (`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_FILE`, `APNS_PRIVATE_KEY`, `APNS_DEFAULT_TOPIC`, `APNS_ALLOWED_TOPICS`)
-- optional LLM provider settings
+- optional LLM provider settings, including direct local-dev ds4 (`DS4_DIRECT_BASE_URL`, `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, `DS4_DIRECT_MAX_OUTPUT_TOKENS`)
+- optional local-only model context drift diagnostics (`AGENT_CONTEXT_DRIFT_DEBUG`)
 
 ### `.env.https.example`
 
@@ -295,6 +296,7 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `AGENT_REASONING_EFFORT` - Compatibility fallback reasoning effort for non-catalog model overrides (default: `low`)
 - `AGENT_MAX_STEPS` - Max tool calls (default: 1000)
 - `AGENT_DEBUG` - Enable debug logging
+- `AGENT_CONTEXT_DRIFT_DEBUG` - Enable local-only model context drift snapshots and diffs under `.bud-debug/`
 - `PUSH_WORKER_POLL_MS` / `PUSH_WORKER_BATCH_SIZE` - Outbox polling cadence and claim batch size
 - `DAEMON_INSTALLER_BASE_URL` - Installer/artifact origin used when generating copyable Bud install commands (default: `https://get.bud.dev`)
 - `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_FILE` / `APNS_PRIVATE_KEY` / `APNS_DEFAULT_TOPIC` / `APNS_ALLOWED_TOPICS` - APNs provider credentials, fallback topic, and accepted Bud app topics

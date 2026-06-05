@@ -7,6 +7,7 @@ pub mod grpc_control;
 pub mod grpc_data;
 pub mod identity;
 pub mod journal;
+pub mod local_llm;
 pub mod proto_wire;
 pub mod protocol;
 pub mod proxy;

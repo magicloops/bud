@@ -112,6 +112,9 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Phase 4.2 localhost proxy streams negotiate `localhost_http_proxy`; proxy bytes use the selected data-plane carrier, which is WebSocket by default and `h2_data` when explicitly selected/configured
 - Phase 5 localhost WebSocket proxy sessions negotiate `localhost_websocket_proxy`; WebSocket control/message/close frames use a dedicated message-oriented proxy frame family over the authenticated binary WebSocket carrier
 - Phase 4.4 file streams negotiate `file_read`; file bytes use the selected data-plane carrier, which is WebSocket by default and `h2_data` when explicitly selected/configured
+- Bud-local ds4 streams negotiate `local_llm_http`; request and response bytes
+  use the selected data-plane carrier, while control frames use logical local
+  LLM server id `ds4` rather than raw daemon-local URLs
 
 ### 3.1 Bud ⇄ Service WebSocket
 
@@ -119,7 +122,7 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Encoding: protobuf `BudEnvelope` binary frames; daemon sessions require `bud_envelope.websocket_binary`
 - Active terminal/control binary payloads use typed protobuf fields under their oneof payload tags, not whole-frame `frame_json`
 - Core data-plane lifecycle binary payloads (`data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, `stream_close`) also use typed protobuf fields under their oneof payload tags
-- Peers that also advertise `bud_envelope.stream_frames` can use the same authenticated WebSocket as a control+data carrier for `stream_data`, `stream_credit`, `stream_reset`, `stream_close`, `proxy_open_result`, `proxy_ws_*`, and `file_open_result`
+- Peers that also advertise `bud_envelope.stream_frames` can use the same authenticated WebSocket as a control+data carrier for `stream_data`, `stream_credit`, `stream_reset`, `stream_close`, `proxy_open_result`, `proxy_ws_*`, `file_open_result`, and `local_llm_open_result`
 - Bud should send `heartbeat` every 30 seconds
 - Service marks a Bud offline after `offlineGraceSec` with no accepted heartbeat
 - Bud output chunks should stay at or below 16 KiB
@@ -144,15 +147,18 @@ Phase 3 HTTP/2 data fallback is opt-in during rollout:
 - Stream shape: bidirectional subordinate data stream
 - Current payload bridge: typed oneof payloads with `frame_json` bytes containing the same JSON frame shapes documented below; WebSocket binary envelopes use the same typed stream payload tags for the WebSocket carrier
 - Auth binding: first frame is `data_attach`; service accepts it only if `bud_id` and `device_session_id` match the active authenticated gRPC control session
-- Current migrated traffic: Bud → Service `terminal_output`, Phase 4.2 daemon-backed localhost proxy response bytes, and Phase 4.4 daemon-backed file stat/read/range bytes
+- Current migrated traffic: Bud → Service `terminal_output`, Phase 4.2 daemon-backed localhost proxy response bytes, Phase 4.4 daemon-backed file stat/read/range bytes, and Bud-local ds4 response bytes
 - Current control fallback: if the daemon-side bounded data queue is closed or full, `terminal_output` is sent on `BudControl.Connect`
-- Generic stream frames: `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` are data-plane frames for proxy/file stream work and use the selected carrier; the baseline selected carrier is the authenticated binary WebSocket
+- Generic stream frames: `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` are data-plane frames for proxy/file/local-LLM stream work and use the selected carrier; the baseline selected carrier is the authenticated binary WebSocket
 - Localhost proxy open frames: `proxy_open` and `proxy_open_result` move over the selected carrier's control side; bytes for accepted streams move over that carrier's data side
 - Localhost WebSocket proxy frames: `proxy_ws_open`, `proxy_ws_open_result`, `proxy_ws_message`, `proxy_ws_close`, and `proxy_ws_error` preserve WebSocket message boundaries over the selected WebSocket-capable carrier
 - File open frames: `file_open` and `file_open_result` move over the selected carrier's control side; bytes for accepted read/range streams move over that carrier's data side
+- Local LLM open frames: `local_llm_open` and `local_llm_open_result` move over
+  the selected carrier's control side; request and response bodies for accepted
+  streams move over that carrier's data side
 - Stream credits: Phase 4.0 tracks per-stream receive/send offsets and credit windows for generic streams; accepted bytes consume credit and credit is re-granted only after the receiver has consumed the bytes
 - Chunk limit default: 16 KiB decoded generic stream chunks, configurable with `DATA_PLANE_MAX_CHUNK_BYTES`; gRPC terminal-output chunks keep the legacy `GRPC_DATA_MAX_CHUNK_BYTES` setting
-- Generic stream limits: the service enforces per-Bud file/proxy concurrency, max in-flight credit, idle timeout, absolute stream TTL, file-session max bytes, and proxy response max bytes before forwarding bytes to the browser
+- Generic stream limits: the service enforces per-Bud file/proxy/local-LLM concurrency, max in-flight credit, idle timeout, absolute stream TTL, file-session max bytes, proxy response max bytes, and local LLM request/response byte limits before forwarding bytes to consumers
 - Carrier health: the service treats connected carriers as healthy by default, but optional adapters may mark a carrier degraded/unhealthy; carriers below the healthy threshold are not selected for new streams when another eligible candidate exists
 - Message size default: 4 MiB data envelopes, configurable with `GRPC_DATA_MAX_MESSAGE_BYTES`
 - Deployed traffic must use TLS or an equivalent trusted HTTP/2 front-door termination path
@@ -167,7 +173,7 @@ Initial attach frame:
   "ts": 1731,
   "bud_id": "b_01H...",
   "device_session_id": "s_01H...",
-  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read"],
+  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read", "local_llm_http"],
   "max_chunk_bytes": 16384,
   "ext": {}
 }
@@ -184,7 +190,7 @@ Successful attach reply:
   "bud_id": "b_01H...",
   "device_session_id": "s_01H...",
   "transport_session_id": "ts_01H...",
-  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read"],
+  "streams": ["terminal_output", "localhost_http_proxy", "localhost_websocket_proxy", "file_read", "local_llm_http"],
   "max_chunk_bytes": 16384,
   "initial_credit_bytes": 1048576,
   "ext": {}
@@ -329,6 +335,63 @@ response header map. The service filters these values before browser emission:
 `Domain` is stripped so local-app cookies remain endpoint-host scoped, reserved
 Bud proxy cookie names/prefixes are rejected, newline-containing values are
 rejected, and configured count/byte caps are applied.
+
+Bud-local LLM open request (Service -> Bud on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "local_llm_open",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "llm_op_01H...",
+  "stream_id": "llm_st_01H...",
+  "stream_type": "local_llm_http",
+  "local_llm_server_id": "ds4",
+  "method": "POST",
+  "path": "/v1/responses",
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json"
+  },
+  "request_body_bytes": 12345,
+  "initial_credit_bytes": 1048576,
+  "max_chunk_bytes": 16384,
+  "ext": {}
+}
+```
+
+The service sends exactly `request_body_bytes` upload bytes on the same
+`stream_id` as generic `stream_data` frames before waiting for
+`local_llm_open_result`. The daemon resolves `local_llm_server_id: "ds4"` to
+its configured loopback ds4 origin and allows only `POST /v1/responses` in this
+phase. Raw localhost URLs, cookies, browser auth headers, Bud credentials, and
+arbitrary endpoint paths are not part of the frame contract.
+
+Bud-local LLM open result (Bud -> Service on control):
+
+```json
+{
+  "proto": "0.1",
+  "type": "local_llm_open_result",
+  "id": "01...",
+  "ts": 1731,
+  "operation_id": "llm_op_01H...",
+  "stream_id": "llm_st_01H...",
+  "accepted": true,
+  "status_code": 200,
+  "headers": {
+    "content-type": "text/event-stream"
+  },
+  "compatibility": "openai_responses",
+  "request_mode": "ds4_openai_responses",
+  "ext": {}
+}
+```
+
+Rejected local LLM opens use the same frame with `accepted: false` and a typed
+`error` object. Accepted responses stream ds4 SSE bytes as generic
+`stream_data`, and cancellation/reset uses normal `stream_reset`.
 
 Localhost WebSocket proxy open request (Service → Bud on control):
 
@@ -586,6 +649,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
 - For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
+- For `terminal.send`, browser-facing `pending_tool.args` uses the model-facing gesture fields: exactly one of `command`, `raw_text`, or `key`. `command` means text plus Enter; `raw_text` means literal text without an implicit Enter; `key` means one semantic key gesture.
 - For web-view tools, `pending_tool.args` contains only product fields such as
   `target_port`, `path`, `title`, `proxied_site_id`, and `disable`; viewer
   grants, cookies, and daemon stream identifiers are never exposed to the model
@@ -1133,6 +1197,28 @@ Dev-only token bypass example:
       "resolve": {
         "absolute_posix": true
       }
+    },
+    "llm": {
+      "local_api": true,
+      "servers": [
+        {
+          "id": "ds4",
+          "provider": "ds4",
+          "compatibility": ["openai_responses"],
+          "request_mode": "ds4_openai_responses",
+          "generation_path": "/v1/responses",
+          "models": [
+            {
+              "id": "deepseek-v4-flash",
+              "display_name": "ds4 DeepSeek V4",
+              "context_window_tokens": 100000,
+              "max_output_tokens": 384000
+            }
+          ],
+          "concurrency": 1,
+          "healthy": true
+        }
+      ]
     }
   },
   "ext": {}
@@ -1180,6 +1266,28 @@ Reconnect example:
       "resolve": {
         "absolute_posix": true
       }
+    },
+    "llm": {
+      "local_api": true,
+      "servers": [
+        {
+          "id": "ds4",
+          "provider": "ds4",
+          "compatibility": ["openai_responses"],
+          "request_mode": "ds4_openai_responses",
+          "generation_path": "/v1/responses",
+          "models": [
+            {
+              "id": "deepseek-v4-flash",
+              "display_name": "ds4 DeepSeek V4",
+              "context_window_tokens": 100000,
+              "max_output_tokens": 384000
+            }
+          ],
+          "concurrency": 1,
+          "healthy": true
+        }
+      ]
     }
   },
   "ext": {}
@@ -1191,6 +1299,9 @@ Rules:
 - `bud_id` is only present on reconnect
 - `installation_id` is optional but, when present, must remain consistent for an already-known Bud
 - normal first-time onboarding uses browser-mediated device claim before challenge-response reconnect
+- `capabilities.llm` is optional and advertised only after the daemon's local
+  ds4 startup probe succeeds; it uses logical server metadata only and must not
+  include a raw local URL
 
 ### 5.2 `hello_challenge` (Service → Bud)
 
@@ -1356,6 +1467,7 @@ Supported request families:
 
 Rules:
 - the request is either `text` with optional `submit`, or one semantic `key`
+- agent/model-facing `terminal.send` calls no longer expose `text` or `submit`; the service adapts `command` to `{ "text": command, "submit": true }`, `raw_text` to `{ "text": raw_text, "submit": false }`, and `key` to the Bud `key` field at this boundary
 - canonical keys are backend-neutral names such as `ctrl+c`, `enter`, and `escape`
 - canonical model-facing wait modes are `settled`, `changed`, and `none`
 - `wait_for: "settled"` is the default agent path and uses a service-owned one-hour timeout budget
@@ -1515,6 +1627,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
   - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
+  - For `terminal.send`, `args` exposes exactly one input gesture: `{ "command": "whoami", "wait_for": "settled" }`, `{ "raw_text": "partial", "wait_for": "settled" }`, or `{ "key": "ctrl+c", "wait_for": "settled" }`. It does not expose legacy `text`/`submit` fields.
   - For web-view tools, `args` contains product fields only; examples include
     `target_host`, `target_port`, `path`, `title`, `proxied_site_id`, and
     `disable`. When `web_view.open` omits `target_host`, the service defaults
@@ -1547,6 +1660,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 
 - `agent.tool_result`
   - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
+  - completed `terminal.send` results expose gesture metadata in addition to the low-level `submitted` dispatch acknowledgement: `input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, and `enter_requested`. Clients should prefer those fields over interpreting `submitted` as "Enter was pressed."
   - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
   - terminal transport failures are recorded as structured tool results instead of uncaught agent-loop failures. Known offline cases include `error: "bud_offline"`, `code: "BUD_DISCONNECTED"`, `retryable: true`, and `ok: false`; timed-out waits use `TIMEOUT`, canceled waits use `CANCELED`, and unavailable sessions use `EXEC_FAILED`.
   - web-view tool results include a `web_view` payload with owned proxied-site
@@ -1700,6 +1814,7 @@ Service → Bud: terminal_send{text|key, submit?, wait_for, timeout_ms}
 Bud → Service: terminal_output(seq, byte_offset, data)*
 Bud → Service: terminal_send_result{submitted, delta, readiness, error}
 Service → Browser SSE: terminal.output* and terminal.ready/status as applicable
+Agent tool args/results exposed to browsers use `terminal.send{command|raw_text|key}` plus gesture metadata; the `text`/`submit` shape above is the current Service → Bud wire frame.
 ```
 
 ### 10.3.1 Human Terminal Interrupt
@@ -1797,6 +1912,11 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 - localhost WebSocket proxy sessions require an authenticated WebSocket-capable carrier with `localhost_websocket_proxy` negotiated. Endpoint-host viewer auth, site state, and connection limits are enforced before daemon WebSocket open allocation.
 - file read streams require an authenticated data-plane carrier with `file_read` negotiated. The default open-source baseline is binary `BudEnvelope` over WebSocket; `h2_data` and future QUIC carriers may be selected when configured.
 - file sessions are limited to the daemon's `workspace` root in this phase, and the daemon re-checks path, symlink, regular-file, max-byte, range content-identity, and during-read identity policy before sending bytes
+- Bud-local LLM streams require an authenticated data-plane carrier with
+  `local_llm_http` negotiated and healthy `capabilities.llm` for logical server
+  id `ds4`. The daemon accepts only loopback `http://` ds4 origins from local
+  config, advertises no raw URL, allows only `POST /v1/responses`, strips
+  unsafe headers, and enforces request/response limits.
 - future QUIC data sessions must attach with a short-lived token bound to the active authenticated Bud, device session, control transport session, allowed endpoint candidates, and allowed stream families; token issuance/attach is not part of the active WebSocket/HTTP2 protocol yet
 - push endpoint registrations and unread/read watermarks are user-owned resources; normal client-directed reads and deletes are scoped to the authenticated owner
 - the push registration route may additionally server-side reclaim the same provider token or reused installation id from stale prior ownership so a logged-out account cannot keep receiving notifications for a device now registered by another user
@@ -1832,6 +1952,10 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
     `proxy_ws_close`, and `proxy_ws_error` frames for Vite/HMR-style local-dev
     WebSocket traffic
   - Phase 4.4 file sessions stream stat/read/range responses through daemon `file_open` plus data-only generic stream frames
+  - Bud-local ds4 support adds optional `capabilities.llm`, the
+    `local_llm_http` stream family, `local_llm_open` /
+    `local_llm_open_result`, and Responses-only `/v1/responses` forwarding
+    through the authenticated daemon data plane
   - thread-scoped file-viewer opens create 1 MiB file sessions from explicit user clicks in assistant messages, including daemon-preflighted absolute POSIX paths when Bud advertises `files.resolve.absolute_posix`
   - bounded `/agent/state` + `/agent/stream` resume is the active browser runtime contract
   - `agent.resync_required.provided_cursor` is explicitly a rejected cursor; clients must refresh `/messages` plus `/agent/state` and reconnect with the fresh state cursor instead of retrying the same `after` URL
@@ -1854,6 +1978,8 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
   - model-facing terminal tool schemas now advertise only `wait_for` modes `settled`, `changed`, and `none`; lower layers still tolerate compatibility-only `shell_ready` and legacy `screen_stable` where implemented
   - the service owns model-facing terminal timeout policy; `timeout_ms` remains a Bud wire field but is not advertised as a normal agent tool argument
   - human terminal interrupt is thread-scoped at `POST /api/threads/:thread_id/terminal/interrupt` and sends `key:"ctrl+c"` through `terminal_send` while rejecting older pending waits as `interrupted`
+  - model-facing `terminal.send` now uses `command`, `raw_text`, or `key` instead of `text` plus optional `submit`; browser-facing tool args follow the same shape while the service still adapts to the existing Bud `terminal_send{text|key, submit?}` wire frame
+  - completed `terminal.send` tool results now include `input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, and `enter_requested` so clients do not infer Enter behavior from `submitted`
   - model-facing `web_view_open`, `web_view_close`, and `web_view_list` tools
     let the agent attach/detach/list product web views without raw proxy-session
     authority

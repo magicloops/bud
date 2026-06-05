@@ -11,6 +11,10 @@ import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable } from "../db/schema.js";
 import { handleFileOpenResult as handleFileOpenRuntimeResult } from "../files/file-runtime.js";
 import { handleFileResolveResult as handleFileResolveRuntimeResult } from "../files/file-resolve.js";
+import {
+  LOCAL_LLM_HTTP_STREAM_TYPE,
+  handleLocalLlmOpenResult,
+} from "../llm/local-llm-data-plane.js";
 import { decodeBudFrame, encodeBudFrame, UnsupportedBudEnvelopePayloadError } from "../proto/wire.js";
 import { handleProxyOpenResult as handleProxyOpenRuntimeResult } from "../proxy/proxy-runtime.js";
 import {
@@ -228,6 +232,9 @@ export class BudConnection {
         break;
       case "file_open_result":
         await this.handleFileOpenResult(parsed);
+        break;
+      case "local_llm_open_result":
+        await this.handleLocalLlmOpenResult(parsed);
         break;
       case "file_resolve_result":
         await this.handleFileResolveResult(parsed);
@@ -764,6 +771,25 @@ export class BudConnection {
     );
   }
 
+  private async handleLocalLlmOpenResult(raw: unknown): Promise<void> {
+    const frame = handleLocalLlmOpenResult(raw);
+    if (!frame) {
+      this.server.log.warn({ component: "ws_gateway" }, "Invalid local_llm_open_result frame");
+      return;
+    }
+    this.server.log.debug?.(
+      {
+        streamId: frame.stream_id,
+        operationId: frame.operation_id,
+        accepted: frame.accepted,
+        statusCode: frame.status_code ?? null,
+        errorCode: frame.error?.code ?? null,
+        component: "ws_gateway",
+      },
+      "Handled local_llm_open_result frame",
+    );
+  }
+
   private async handleFileResolveResult(raw: unknown): Promise<void> {
     const frame = handleFileResolveRuntimeResult(raw);
     if (!frame) {
@@ -1216,5 +1242,29 @@ function streamFamiliesForHello(hello: HelloFrame): Set<string> {
   if (isRecord(hello.capabilities.proxy) && hello.capabilities.proxy.localhost_websocket === true) {
     families.add("localhost_websocket_proxy");
   }
+  if (helloHasHealthyLocalLlmDs4(hello)) {
+    families.add(LOCAL_LLM_HTTP_STREAM_TYPE);
+  }
   return families;
+}
+
+function helloHasHealthyLocalLlmDs4(hello: HelloFrame): boolean {
+  const llm = hello.capabilities.llm;
+  if (!isRecord(llm) || !Array.isArray(llm.servers)) {
+    return false;
+  }
+  return llm.servers.some((server) => {
+    if (!isRecord(server)) {
+      return false;
+    }
+    const compatibility = Array.isArray(server.compatibility) ? server.compatibility : [];
+    return (
+      server.id === "ds4" &&
+      server.provider === "ds4" &&
+      server.healthy === true &&
+      server.request_mode === "ds4_openai_responses" &&
+      server.generation_path === "/v1/responses" &&
+      compatibility.includes("openai_responses")
+    );
+  });
 }

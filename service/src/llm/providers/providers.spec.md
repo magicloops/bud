@@ -184,11 +184,97 @@ Budget calculation is used for Haiku 4.5 manual thinking and legacy fallback onl
 | `applyReasoningConfig()` | Lower catalog reasoning controls to Anthropic request fields |
 | `buildHeaders()` | Add manual interleaved-thinking beta header only when requested |
 
+### `ds4.ts`
+
+ds4 provider implementations using ds4's OpenAI-compatible Responses endpoint.
+`Ds4ResponsesProvider` is the direct service-local implementation, while
+`BudLocalDs4Provider` reuses the same request construction and SSE parser over
+the daemon `local_llm_http` data-plane stream.
+
+**Supported Models**:
+| Model | Type | Notes |
+|-------|------|-------|
+| `deepseek-v4-flash` | Local DeepSeek | Exposed through catalog product ID `ds4-deepseek-v4-flash` when `DS4_DIRECT_BASE_URL` is configured |
+| `DS4_DIRECT_MODEL` value | Local override | Optional request model override for local ds4 servers using a different model string |
+
+**Key Features**:
+- **Direct config gated**: `Ds4ResponsesProvider` is registered only when
+  `DS4_DIRECT_BASE_URL` is non-empty
+- **Bud-backed fallback provider**: `BudLocalDs4Provider` is registered when
+  direct ds4 is not configured so Bud-scoped model selections can resolve to a
+  provider while global inventory still hides ds4 without a healthy Bud
+  capability
+- **Base URL normalization**: Accepts `127.0.0.1:8000/v1` by adding `http://`; rejects `127.0.0.0` with a setup error because it does not reach the ds4 listener
+- **SDK-free**: Uses the platform `fetch` API against `${baseURL}/responses`
+- **Daemon transport**: Bud-backed calls require provider invocation context
+  with `budId`, open logical server id `ds4`, and stream `POST /v1/responses`
+  over `local_llm_http` without sending raw daemon-local URLs to the service or
+  browser
+- **Responses replay**: Lowers assistant `tool_use` blocks to `function_call`, user `tool_result` blocks to `function_call_output`, and ds4-native reasoning payloads back into `input`
+- **SSE streaming**: Parses `data:` SSE chunks and maps Responses text/reasoning/tool-call events into canonical stream events
+- **Diagnostics**: Attaches stream feature counters plus the terminal Responses event/response to `message_done.providerData`
+- **Debug request snapshots**: Exposes the exact Responses request body for local context-drift artifact capture
+- **Context-window errors**: Normalizes likely ds4 token/context failures into `ProviderContextWindowError`
+- **ds4 thinking controls**: Catalog-driven `Fast` sends explicit
+  `reasoning.effort = "none"` because ds4 treats omitted reasoning as normal
+  thinking; `Thinking` sends a non-`none` Responses reasoning effort
+- **Max thinking deferred**: ds4 `max` is not product-visible until the
+  effective context window reaches ds4's 393,216 token requirement
+- **Output cap metadata**: Defaults direct/Bud-local ds4 provider instances to
+  the catalog-backed 384k max-output capability while the agent may still apply
+  a lower global request cap
+
+**Responses Message Transformation**:
+| Canonical | ds4 Responses |
+|-----------|---------------|
+| Leading system text | `instructions` |
+| User text | `{ type: "message", role: "user", content: input_text[] }` |
+| Assistant text | `{ type: "message", role: "assistant", content, phase? }` |
+| Tool use | `{ type: "function_call", call_id, name, arguments }` |
+| Tool result | `{ type: "function_call_output", call_id, output }` |
+| ds4 reasoning | Provider-native reasoning item when present in `providerData` |
+| Image input | Text placeholder because the direct ds4 profile is text-only |
+
+**Responses Streaming Events Mapped**:
+| Responses SSE Event | Canonical Event |
+|---------------------|-----------------|
+| `response.created` | `message_start` |
+| `response.output_item.added` reasoning | `reasoning_start` |
+| `response.reasoning_summary_text.delta` / `response.reasoning_text.delta` | `reasoning_delta` |
+| `response.output_item.done` reasoning | `reasoning_done` with ds4 providerData |
+| `response.content_part.added` output text | `content_start` |
+| `response.output_text.delta` | `text_delta` |
+| `response.output_text.done` | `content_done` |
+| `response.output_item.added` function call | `tool_use_start` |
+| `response.function_call_arguments.delta` | `tool_use_delta` |
+| `response.function_call_arguments.done` | `tool_use_done` |
+| `response.completed` / `response.incomplete` | `message_done` |
+| `response.failed` | `error` |
+
+**Public Methods**:
+| Method | Description |
+|--------|-------------|
+| `invoke()` | Streaming invocation through Responses SSE |
+| `buildDebugRequestSnapshot()` | Local-only diagnostic hook returning the Responses request body |
+| `supportsModel()` | Check configured/default ds4 model strings |
+| `getModelCapabilities()` | Return catalog-backed ds4 limits or configured fallback limits |
+
+`BudLocalDs4Provider.invoke()` uses the same canonical stream output as the
+direct provider but can fail fast with Bud-local availability errors when no
+eligible carrier, stream family, or daemon capability exists for the invocation
+Bud.
+
 ### `providers.test.ts`
 
 Direct request-shape tests for provider lowering without live API calls.
 
 **Current Coverage**:
+- ds4 local base URL normalization and rejection of the common `127.0.0.0` typo
+- ds4 Responses request construction, including `instructions`, `function_call`, `function_call_output`, ds4-native reasoning replay payloads, tool choice, explicit `reasoning.effort = "none"` for Fast mode, optional thinking request object, and configured request model override
+- ds4 Responses SSE parsing for reasoning blocks, streamed text, streamed function-call arguments, usage, and provider diagnostics
+- ds4 Responses failed events map to canonical provider errors without emitting a synthetic completion
+- route-level Bud-local tests cover Bud-scoped model inventory projection and
+  unavailable local ds4 rejection before thread/message persistence
 - OpenAI `xhigh` sends `reasoning.effort` and `none` omits reasoning
 - OpenAI requests encrypted reasoning content and disables parallel tool calls
 - OpenAI streamed function calls preserve `call_id` and tool name from output-item metadata when arguments finish
@@ -210,15 +296,15 @@ Direct request-shape tests for provider lowering without live API calls.
 
 ## Provider Comparison
 
-| Feature | OpenAI | Anthropic |
-|---------|--------|-----------|
-| **System prompt** | Message item | Separate `system` param |
-| **Tool results** | `function_call_output` item | `tool_result` content block |
-| **Tool call args** | JSON string | Parsed object |
-| **Max tokens** | Optional | **Required** |
-| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy |
-| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent |
-| **JSON mode** | `text.format.type` | Use structured tool output |
+| Feature | OpenAI | Anthropic | ds4 |
+|---------|--------|-----------|-----|
+| **System prompt** | Message item | Separate `system` param | Responses `instructions` |
+| **Tool results** | `function_call_output` item | `tool_result` content block | `function_call_output` item |
+| **Tool call args** | JSON string | Parsed object | JSON string |
+| **Max tokens** | Optional | **Required** | `max_output_tokens` |
+| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy | `reasoning.effort` with catalog `Fast`/`Thinking`; Responses reasoning blocks preserved when emitted |
+| **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent | Preserved on Responses replay |
+| **JSON mode** | `text.format.type` | Use structured tool output | Responses `text.format.type` |
 
 ## Adding a New Provider
 
@@ -250,6 +336,8 @@ export class NewProvider implements LLMProvider {
 |---------|----------|---------|
 | `openai` | OpenAI | Responses API SDK |
 | `@anthropic-ai/sdk` | Anthropic | Messages API SDK |
+
+The ds4 provider uses platform `fetch` and adds no SDK dependency.
 
 ---
 

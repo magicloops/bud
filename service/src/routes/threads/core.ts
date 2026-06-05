@@ -13,6 +13,7 @@ import {
   ThreadParamsSchema,
   UpdateThreadModelPreferenceSchema,
   requireAuthorizedThreadAccess,
+  sendLocalModelAvailabilityError,
   sendModelSelectionError,
   serializeThreadModelSelection,
   serializeThread,
@@ -133,6 +134,12 @@ export async function registerThreadCoreRoutes(
       }
       throw err;
     }
+    if (await sendLocalModelAvailabilityError(reply, {
+      budId: body.bud_id,
+      model: initialSelection.model,
+    })) {
+      return;
+    }
 
     const [thread] = await db
       .insert(threadTable)
@@ -179,6 +186,12 @@ export async function registerThreadCoreRoutes(
         return;
       }
       throw err;
+    }
+    if (await sendLocalModelAvailabilityError(reply, {
+      budId: access.thread.budId,
+      model: selection.model,
+    })) {
+      return;
     }
 
     const [updated] = await db

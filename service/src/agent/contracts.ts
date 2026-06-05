@@ -15,8 +15,8 @@ export type AgentToolCallDirective =
   | {
       type: "tool_call";
       tool: "terminal.send";
-      text?: string;
-      submit?: boolean;
+      command?: string;
+      rawText?: string;
       key?: string;
       observeAfterMs?: number;
       waitFor?: TerminalWaitFor;
@@ -91,6 +91,11 @@ export type TerminalCallResult = {
   truncated?: boolean;
   omittedLines?: number;
   submitted?: boolean;
+  inputDispatched?: boolean;
+  commandSent?: boolean;
+  rawTextSent?: boolean;
+  keySent?: string | null;
+  enterRequested?: boolean;
   delta?: TerminalDelta | null;
   view?: TerminalObservationView;
   error?: string;
@@ -264,8 +269,8 @@ export function buildToolArgs(
   switch (directive.tool) {
     case "terminal.send":
       return {
-        ...(typeof directive.text === "string" ? { text: directive.text } : {}),
-        ...(directive.submit === true ? { submit: true } : {}),
+        ...(typeof directive.command === "string" ? { command: directive.command } : {}),
+        ...(typeof directive.rawText === "string" ? { raw_text: directive.rawText } : {}),
         ...(directive.key ? { key: directive.key } : {}),
         ...(typeof directive.observeAfterMs === "number"
           ? { observe_after_ms: directive.observeAfterMs }

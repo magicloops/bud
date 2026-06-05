@@ -129,7 +129,6 @@ const toDaemonTransportPolicy = (value: string | undefined): DaemonTransportPoli
     ? (normalized as DaemonTransportPolicy)
     : "websocket_baseline";
 };
-
 const apnsKeyId = toNullable(process.env.APNS_KEY_ID);
 const apnsTeamId = toNullable(process.env.APNS_TEAM_ID);
 const apnsKeyFile = toNullable(process.env.APNS_KEY_FILE);
@@ -281,7 +280,17 @@ export const config = {
   enrollmentHashSecret: process.env.ENROLLMENT_HASH_SECRET ?? "dev-secret",
   devTokenBypass: process.env.DEV_BUD_TOKEN_BYPASS ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
-  // Default model for agent (can be OpenAI or Anthropic)
+  ds4DirectBaseUrl: toNullable(process.env.DS4_DIRECT_BASE_URL),
+  ds4DirectModel: process.env.DS4_DIRECT_MODEL ?? "deepseek-v4-flash",
+  ds4DirectContextTokens: toPositiveInteger(
+    process.env.DS4_DIRECT_CONTEXT_TOKENS,
+    100_000,
+  ),
+  ds4DirectMaxOutputTokens: toPositiveInteger(
+    process.env.DS4_DIRECT_MAX_OUTPUT_TOKENS,
+    384_000,
+  ),
+  // Default product model for agent requests.
   defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.5",
   // Anthropic
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
@@ -300,6 +309,7 @@ export const config = {
   runLogMaxBytes: toNumber(process.env.RUN_LOG_MAX_BYTES, 100 * 1024 * 1024),
   agentDebug: toBool(process.env.AGENT_DEBUG),
   agentOpenaiDebug: toBool(process.env.AGENT_DEBUG_OPENAI),
+  agentContextDriftDebug: toBool(process.env.AGENT_CONTEXT_DRIFT_DEBUG),
   // OpenAI request timeout in milliseconds (default: 2 minutes)
   openaiTimeout: toNumber(process.env.OPENAI_TIMEOUT_MS, 120000),
   terminalEnabled: true,

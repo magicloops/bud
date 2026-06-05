@@ -29,6 +29,7 @@ CLI and environment configuration.
 - defines `BudArgs`
 - defines `BudCommand`, `DoctorArgs`, and `DoctorFormat`
 - owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
+- owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` (default 384000)
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
 
 ### `doctor.rs`
@@ -66,8 +67,12 @@ Top-level daemon orchestrator.
 - skips the fresh tmux pane cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
 - resolved base-dir/local defaults for identity, installation id, terminal state, legacy run cwd, and file workspace root
 - routing WebSocket-received `stream_data`, `stream_credit`, `stream_reset`,
-  and `stream_close` frames to the file/proxy managers where supported
+  and `stream_close` frames to the file/proxy/local-LLM managers where supported
+- routing `local_llm_open` requests to the Bud-local ds4 forwarding adapter when
+  `BUD_LOCAL_LLM_DS4_URL` is configured and the startup probe is healthy
 - capability advertisement in the `hello` frame, now including behavior-oriented terminal fields plus localhost proxy/workspace file-read support when the active transport mode can carry generic stream frames; WebSocket-mode daemons additionally advertise `proxy.localhost_websocket`; proxy target-host capabilities advertise exact `localhost`, `127.0.0.1`, and `::1` with `localhost` as the default target host
+- optional `capabilities.llm` advertisement for a healthy local ds4 server using
+  logical server id `ds4`, Responses-only compatibility, and no raw local URL
 
 **Key types**:
 
@@ -87,6 +92,9 @@ Bud <-> service frame definitions and protocol validation.
 - `ProxyWebSocketOpenFrame`, `ProxyWebSocketMessageFrame`, `ProxyWebSocketCloseFrame`, and `ProxyWebSocketErrorFrame` carry the Phase 5 message-oriented WebSocket proxy contract
 - `ProxyOpenFrame` carries optional `request_body_bytes` for bounded
   service-to-daemon HTTP proxy uploads
+- `LocalLlmOpenFrame` carries logical Bud-local LLM open requests for
+  `local_llm_http` streams; the active ds4 path is limited to
+  `POST /v1/responses`
 - HTTP proxy open results may include out-of-band `set_cookies` arrays emitted
   by the local target and filtered by the service before browser delivery
 - keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
@@ -100,6 +108,8 @@ Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 - carries optional `host_cwd` fields on typed `terminal_send_result` and `terminal_observe_result` payloads
 - preserves signed optional `terminal_observe.lines` values, including negative tail semantics, through typed protobuf encode/decode
 - encodes core stream lifecycle frames under typed payload tags with direct protobuf fields so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
+- maps the `local_llm_http` stream family in the protobuf/json stream-type
+  vocabulary so local LLM bytes can use the same generic stream lifecycle frames
 - maps Phase 5 `proxy_ws_*` frame types to typed protobuf payload tags with transitional `frame_json`
 - keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and pre-cutover fixture coverage
 - decodes protobuf envelopes back to JSON text before handing off to existing frame handlers
@@ -124,7 +134,9 @@ tonic/prost adapter for the Phase 3 daemon data client.
 - opens `BudData.Attach` bidirectional streams after gRPC control authentication
 - converts outbound JSON frames into generated `BudEnvelope` messages with `transport_kind = H2_DATA`
 - currently supports the terminal-output data stream while control, heartbeat, terminal requests, and request-scoped terminal results stay on the control stream
-- negotiates `localhost_http_proxy` and `file_read` alongside `terminal_output` when data is configured
+- negotiates `localhost_http_proxy`, `localhost_websocket_proxy`, `file_read`,
+  and `local_llm_http` alongside `terminal_output` when the corresponding
+  daemon capabilities are configured
 - routes generic `stream_data`, `stream_credit`, and `stream_reset` frames into
   the localhost proxy and file managers where supported, rejecting unsupported
   stream families with typed `stream_reset`
@@ -167,6 +179,29 @@ Daemon-side Phase 4.4 workspace file adapter.
 - streams file bytes as generic `stream_data` frames over the active data-plane carrier
 - waits for service `stream_credit` and stops on `stream_reset`
 - cancels active file streams when the active daemon transport disconnects
+
+### `local_llm.rs`
+
+Daemon-side Bud-local LLM adapter for ds4.
+
+- reads optional `BUD_LOCAL_LLM_DS4_URL` config and accepts only loopback
+  `http://` origins without path, query, or fragment; `127.0.0.0` is rejected
+  because it does not reach a normal loopback listener
+- probes `GET /v1/models` with a short timeout before advertising
+  `capabilities.llm`
+- advertises logical server metadata only: `id: "ds4"`, provider `ds4`,
+  compatibility `openai_responses`, request mode `ds4_openai_responses`, and
+  generation path `/v1/responses`
+- handles service `local_llm_open` frames by forwarding only
+  `POST /v1/responses` to the configured loopback origin
+- strips request headers to `accept` and `content-type`, returns only safe
+  response headers, enforces bounded request/response bodies, and streams bytes
+  through generic `stream_data` / `stream_credit` / `stream_reset` /
+  `stream_close`
+- enforces one active stream per daemon plus explicit idle and total-TTL guards
+  (one-hour idle timeout and two-hour total TTL) so slow local inference can run
+  while abandoned streams fail instead of hanging forever
+- aborts active local LLM streams when the active daemon transport disconnects
 
 ### `transport.rs`
 
@@ -358,6 +393,8 @@ app.rs::BudApp
   |
   +--> files/
   |
+  +--> local_llm.rs
+  |
   +--> terminal/mod.rs
          |
          +--> terminal/backend.rs
@@ -409,6 +446,12 @@ High-value local tests now live next to the extracted abstractions:
 - `files/mod.rs`
   - workspace file-open policy and range selection
   - transport-disconnect cleanup resets waiting file streams
+- `local_llm.rs`
+  - loopback-only ds4 origin normalization
+  - local LLM open-frame method/path/server policy
+  - request-header allowlist behavior
+  - request-body byte cap, idle timeout, response-credit idle timeout, and
+    single-stream concurrency behavior
 - `transport.rs`
   - gRPC data-channel terminal-output routing and control fallback
 - `journal.rs`
@@ -453,7 +496,7 @@ External crates (from `Cargo.toml`):
 | `anyhow` | Error handling |
 | `base64` | Data encoding for frames |
 | `hmac` / `sha2` | Authentication |
-| `reqwest` | Device-auth bootstrap HTTP client, no-redirect localhost proxy requests, and bounded `bud doctor` production TLS trust checks; configured with native Rustls roots so local mkcert CAs trusted by the OS work for HTTPS parity dev |
+| `reqwest` | Device-auth bootstrap HTTP client, no-redirect localhost proxy/local LLM requests, ds4 model probes, and bounded `bud doctor` production TLS trust checks; configured with native Rustls roots so local mkcert CAs trusted by the OS work for HTTPS parity dev |
 | `qrcodegen` | Terminal QR rendering |
 | `tracing` / `tracing-subscriber` | Logging |
 | `ulid` | Message ID generation |

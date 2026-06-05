@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { config } from "../config.js";
 import {
   providerRegistry,
   type CanonicalStreamEvent,
   type CanonicalTool,
   type LLMProvider,
   type ModelCapabilities,
+  type ModelConfig,
 } from "../llm/index.js";
 import { buildAgentEnvironmentSnapshot } from "./environment.js";
 import { AgentModelResponseError, AgentModelRunner } from "./model-runner.js";
+import type {
+  ModelContextDriftPromptCaptureArgs,
+  ModelContextDriftRecorderLike,
+  ModelContextDriftResponseCaptureArgs,
+} from "./model-context-drift-recorder.js";
 import { resolveAgentToolsForEnvironment } from "./tool-definitions.js";
 
 function createRuntime() {
@@ -39,8 +46,9 @@ function createLogger() {
 function createProvider(
   name: "anthropic" | "openai",
   supportedModels: string[],
-  onInvoke?: (tools: CanonicalTool[]) => void,
+  onInvoke?: (tools: CanonicalTool[], config: ModelConfig) => void,
   events?: CanonicalStreamEvent[],
+  buildDebugRequestSnapshot?: NonNullable<LLMProvider["buildDebugRequestSnapshot"]>,
 ): LLMProvider {
   const capabilities: ModelCapabilities = {
     supportsVision: true,
@@ -57,8 +65,8 @@ function createProvider(
   return {
     name,
     supportedModels,
-    async *invoke(_messages, tools): AsyncIterable<CanonicalStreamEvent> {
-      onInvoke?.(tools);
+    async *invoke(_messages, tools, modelConfig): AsyncIterable<CanonicalStreamEvent> {
+      onInvoke?.(tools, modelConfig);
       yield* (events ?? [
         { type: "message_start", id: "resp_test" },
         { type: "message_done", stop_reason: "end_turn" },
@@ -70,6 +78,7 @@ function createProvider(
     getModelCapabilities() {
       return capabilities;
     },
+    ...(buildDebugRequestSnapshot ? { buildDebugRequestSnapshot } : {}),
   };
 }
 
@@ -127,6 +136,73 @@ test("resolveReasoningEffort follows model-specific reasoning policies", (t) => 
   );
 });
 
+test("invokeModel caps max output tokens from selected model capabilities", async (t) => {
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+  const previousAgentMaxOutputTokens = config.agentMaxOutputTokens;
+  const capturedConfigs: ModelConfig[] = [];
+  let capabilityModel: string | null = null;
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register({
+    name: "openai",
+    supportedModels: ["gpt-5.4-2026-03-05"],
+    async *invoke(_messages, _tools, modelConfig): AsyncIterable<CanonicalStreamEvent> {
+      capturedConfigs.push(modelConfig);
+      yield { type: "message_start", id: "resp_cap" };
+      yield { type: "message_done", stop_reason: "end_turn" };
+    },
+    supportsModel(model: string) {
+      return model.startsWith("gpt-");
+    },
+    getModelCapabilities(model: string) {
+      capabilityModel = model;
+      return {
+        supportsVision: true,
+        supportsTools: true,
+        supportsStreaming: true,
+        supportsJsonMode: true,
+        maxContextTokens: 128000,
+        maxOutputTokens: 32000,
+        supportsReasoning: true,
+        supportsThinking: false,
+        supportsInterleavedThinking: false,
+      };
+    },
+  });
+  config.agentMaxOutputTokens = 128000;
+
+  t.after(() => {
+    config.agentMaxOutputTokens = previousAgentMaxOutputTokens;
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    runner.resolveModelReasoning("gpt-5.4"),
+  );
+
+  assert.equal(capabilityModel, "gpt-5.4");
+  assert.equal(capturedConfigs[0]?.maxOutputTokens, 32000);
+});
+
 test("invokeModel advertises only public wait modes and no timeout_ms", async (t) => {
   let capturedTools: CanonicalTool[] = [];
   const previousOpenAI = providerRegistry.getProvider("openai");
@@ -180,6 +256,11 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
 
   const sendProperties = sendTool.parameters.properties as Record<string, unknown>;
   const observeProperties = observeTool.parameters.properties as Record<string, unknown>;
+  assert.ok(sendProperties.command);
+  assert.ok(sendProperties.raw_text);
+  assert.ok(sendProperties.key);
+  assert.equal(sendProperties.text, undefined);
+  assert.equal(sendProperties.submit, undefined);
   assert.equal(sendProperties.timeout_ms, undefined);
   assert.equal(observeProperties.timeout_ms, undefined);
   assert.deepEqual(
@@ -308,6 +389,88 @@ test("invokeModel carries provider diagnostics from message_done", async (t) => 
   });
 });
 
+test("invokeModel captures model context drift prompt and response when recorder is provided", async (t) => {
+  const promptCaptures: ModelContextDriftPromptCaptureArgs[] = [];
+  const responseCaptures: ModelContextDriftResponseCaptureArgs[] = [];
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register(
+    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+      { type: "message_start", id: "resp_context_drift" },
+      { type: "content_start", index: 0, content_type: "text", assistantPhase: "final_answer" },
+      { type: "text_delta", index: 0, delta: "done", assistantPhase: "final_answer" },
+      { type: "content_done", index: 0 },
+      { type: "message_done", stop_reason: "end_turn" },
+    ], (messages, tools, config) => ({
+      model: config.model,
+      messageCount: messages.length,
+      toolCount: tools.length,
+    })),
+  );
+
+  t.after(() => {
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const recorder: ModelContextDriftRecorderLike = {
+    capturePrompt(args) {
+      promptCaptures.push(args);
+      return 42;
+    },
+    captureResponse(args) {
+      responseCaptures.push(args);
+    },
+  };
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+    "low",
+    recorder,
+  );
+
+  const modelReasoning = runner.resolveModelReasoning("gpt-5.4");
+  const { response } = await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    modelReasoning,
+  );
+
+  assert.equal(promptCaptures.length, 1);
+  assert.equal(promptCaptures[0]?.threadId, "thread_test");
+  assert.equal(promptCaptures[0]?.turnId, "turn_test");
+  assert.equal(promptCaptures[0]?.provider, "openai");
+  assert.equal(promptCaptures[0]?.productModel, "gpt-5.4");
+  assert.equal(promptCaptures[0]?.providerModel, "gpt-5.4-2026-03-05");
+  assert.equal(promptCaptures[0]?.reasoningEffort, modelReasoning.reasoningLevel);
+  assert.equal(promptCaptures[0]?.messages.length, 1);
+  assert.ok(promptCaptures[0]?.tools.some((tool) => tool.name === "terminal_observe"));
+  assert.equal(promptCaptures[0]?.modelConfig.model, "gpt-5.4-2026-03-05");
+  assert.deepEqual(promptCaptures[0]?.providerRenderedRequest, {
+    model: "gpt-5.4-2026-03-05",
+    messageCount: 1,
+    toolCount: promptCaptures[0]?.tools.length,
+  });
+
+  assert.equal(responseCaptures.length, 1);
+  assert.equal(responseCaptures[0]?.sequence, 42);
+  assert.equal(responseCaptures[0]?.threadId, "thread_test");
+  assert.equal(responseCaptures[0]?.turnId, "turn_test");
+  assert.equal(responseCaptures[0]?.response, response);
+});
+
 test("OpenAI debug logging emits structured LLM response payload", () => {
   const logs: Array<{ meta: Record<string, unknown>; message: string }> = [];
   const logger = {
@@ -376,7 +539,7 @@ test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
         index: 3,
         id: "call_send",
         name: "terminal_send",
-        input: { text: "pwd", submit: true },
+        input: { command: "pwd" },
       },
       { type: "message_done", stop_reason: "tool_use" },
     ]),
@@ -424,7 +587,7 @@ test("invokeModel keeps text blocks around multiple tool calls", async (t) => {
       type: "tool_use",
       id: "call_send",
       name: "terminal_send",
-      input: { text: "pwd", submit: true },
+      input: { command: "pwd" },
     },
   ]);
   assert.deepEqual(
@@ -459,8 +622,8 @@ test("extractToolCall normalizes legacy keys arrays to canonical semantic key st
   assert.deepEqual(directive, {
     type: "tool_call",
     tool: "terminal.send",
-    text: undefined,
-    submit: false,
+    command: undefined,
+    rawText: undefined,
     key: "ctrl+c",
     observeAfterMs: undefined,
     waitFor: undefined,

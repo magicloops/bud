@@ -3,6 +3,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { config } from "../config.js";
 import {
   getDefaultModelEntryForProviders,
@@ -13,7 +14,12 @@ import {
   type ModelCatalogEntry,
   type ReasoningLevel,
 } from "../llm/index.js";
-import { requireViewer } from "../auth/session.js";
+import {
+  BUD_LOCAL_DS4_COMPATIBILITY,
+  BUD_LOCAL_DS4_REQUEST_MODE,
+  listHealthyBudLocalDs4Models,
+} from "../llm/local-llm-capabilities.js";
+import { getAuthorizedBud, requireViewer } from "../auth/session.js";
 import { resolveModelContextPolicy } from "../agent/context-budget.js";
 
 type ModelInfo = {
@@ -40,6 +46,14 @@ type ModelInfo = {
       label: string;
     }>;
     default_level: string;
+  };
+  request_mode?: string;
+  compatibility?: string[];
+  source?: {
+    kind: "service_local_dev";
+  } | {
+    kind: "bud_local";
+    bud_id: string;
   };
 };
 
@@ -71,6 +85,16 @@ function resolveModelsResponseDefaults(providerNames: string[]): ModelsResponseD
   }
 }
 
+const ModelsQuerySchema = z.object({
+  bud_id: z.string().min(1).optional(),
+});
+
+function listGloballyVisibleProviders(): string[] {
+  return providerRegistry
+    .listProviders()
+    .filter((providerName) => providerName !== "ds4" || Boolean(config.ds4DirectBaseUrl));
+}
+
 export async function registerModelsRoutes(server: FastifyInstance): Promise<void> {
   /**
    * GET /api/models
@@ -82,7 +106,8 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
       return;
     }
 
-    const providerNames = providerRegistry.listProviders();
+    const query = ModelsQuerySchema.parse(request.query ?? {});
+    const providerNames = listGloballyVisibleProviders();
     const defaults = resolveModelsResponseDefaults(providerNames);
     const models: ModelInfo[] = listCatalogEntriesForProviders(providerNames).map((entry) => {
       const contextPolicy = resolveModelContextPolicy(entry);
@@ -108,8 +133,66 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
           levels: getReasoningLevelOptions(entry),
           default_level: entry.reasoning.defaultLevel,
         },
+        ...(entry.provider === "ds4"
+          ? {
+              source: {
+                kind: "service_local_dev" as const,
+              },
+              request_mode: BUD_LOCAL_DS4_REQUEST_MODE,
+              compatibility: [...BUD_LOCAL_DS4_COMPATIBILITY],
+            }
+          : {}),
       };
     });
+
+    if (query.bud_id) {
+      const bud = await getAuthorizedBud(viewer, query.bud_id);
+      if (!bud) {
+        reply.code(404).send({ error: "bud_not_found" });
+        return;
+      }
+
+      const existingIds = new Set(models.map((model) => model.id));
+      const localModels =
+        bud.status === "online" ? listHealthyBudLocalDs4Models(bud.capabilities) : [];
+      for (const localModel of localModels) {
+        if (existingIds.has(localModel.entry.id)) {
+          continue;
+        }
+        const contextPolicy = resolveModelContextPolicy(localModel.entry);
+        models.push({
+          id: localModel.entry.id,
+          provider: localModel.entry.provider,
+          provider_model: localModel.providerModel,
+          display_name: localModel.displayName,
+          is_default: defaults.defaultModel === localModel.entry.id,
+          capabilities: {
+            vision: localModel.entry.capabilities.vision,
+            tools: localModel.entry.capabilities.tools,
+            streaming: localModel.entry.capabilities.streaming,
+            structured_outputs: localModel.entry.capabilities.structuredOutputs,
+            context_window_tokens:
+              localModel.contextWindowTokens ?? localModel.entry.capabilities.contextWindowTokens,
+            usable_context_window_tokens: contextPolicy.usableContextWindowTokens,
+            reserved_output_tokens: contextPolicy.reservedOutputTokens,
+            usable_input_window_tokens: contextPolicy.usableInputWindowTokens,
+            max_output_tokens: localModel.maxOutputTokens ?? localModel.entry.capabilities.maxOutputTokens,
+          },
+          reasoning: {
+            kind: localModel.entry.reasoning.kind,
+            levels: getReasoningLevelOptions(localModel.entry),
+            default_level: localModel.entry.reasoning.defaultLevel,
+          },
+          request_mode: BUD_LOCAL_DS4_REQUEST_MODE,
+          compatibility: [...BUD_LOCAL_DS4_COMPATIBILITY],
+          source: {
+            kind: "bud_local",
+            bud_id: bud.budId,
+          },
+        });
+        existingIds.add(localModel.entry.id);
+      }
+    }
 
     return reply.send({
       models,

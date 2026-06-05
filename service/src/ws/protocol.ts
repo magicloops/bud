@@ -37,7 +37,8 @@ const CapabilitiesSchema = z
     tmux_version: z.string().optional(),
     terminal_backends: z.array(z.string()).optional(),
     proxy: z.record(z.unknown()).optional(),
-    files: z.record(z.unknown()).optional()
+    files: z.record(z.unknown()).optional(),
+    llm: z.record(z.unknown()).optional()
   })
   .transform((capabilities) => ({
     max_concurrency: capabilities.max_concurrency,
@@ -48,6 +49,7 @@ const CapabilitiesSchema = z
     ...(capabilities.bud_envelope ? { bud_envelope: capabilities.bud_envelope } : {}),
     ...(capabilities.proxy ? { proxy: capabilities.proxy } : {}),
     ...(capabilities.files ? { files: capabilities.files } : {}),
+    ...(capabilities.llm ? { llm: capabilities.llm } : {}),
   }));
 
 export const HelloSchema = EnvelopeSchema.extend({

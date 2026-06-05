@@ -1,13 +1,13 @@
 # llm
 
-Provider-agnostic abstraction layer for LLM integrations (OpenAI, Anthropic, etc.).
+Provider-agnostic abstraction layer for LLM integrations (OpenAI, Anthropic, direct local ds4, etc.).
 
 ## Purpose
 
 The LLM module provides a unified interface for multiple LLM providers, enabling:
 - **Model-agnostic threads**: Switch between providers mid-conversation
 - **Canonical types**: Store messages in provider-neutral format
-- **Reasoning support**: Handle both OpenAI reasoning and Anthropic thinking
+- **Reasoning support**: Handle OpenAI reasoning, Anthropic thinking, and ds4 Responses reasoning when emitted
 - **Streaming**: Unified stream events across providers
 
 ## Architecture
@@ -24,14 +24,14 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
 │              (resolves model → provider)                         │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
-            ┌───────────────┴───────────────┐
-            ▼                               ▼
-┌─────────────────────┐         ┌─────────────────────┐
-│   OpenAIProvider    │         │  AnthropicProvider  │
-│                     │         │                     │
-│ - GPT-5.4, GPT-5.5  │         │ - Claude 4.6, 4.7   │
-│ - Reasoning support │         │ - Extended thinking │
-└─────────────────────┘         └─────────────────────┘
+        ┌───────────────────┬───────────────────┬───────────────────┐
+        ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌──────────────────────────┐
+│ OpenAIProvider  │ │AnthropicProvider│ │Ds4ResponsesProvider      │
+│                 │ │                 │ │ BudLocalDs4Provider      │
+│ - GPT-5.4/5.5   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
+│ - reasoning     │ │ - thinking      │ │ - Responses + thinking   │
+└─────────────────┘ └─────────────────┘ └──────────────────────────┘
 ```
 
 ## Files
@@ -86,14 +86,51 @@ interface LLMProvider {
   readonly name: string;
   readonly supportedModels: readonly string[];
 
-  invoke(messages, tools, config, signal?): AsyncIterable<CanonicalStreamEvent>;
+  invoke(messages, tools, config, signal?, context?): AsyncIterable<CanonicalStreamEvent>;
+  buildDebugRequestSnapshot?(messages, tools, config, context?): unknown;
   invokeSync?(messages, tools, config, signal?): Promise<CanonicalResponse>;
   supportsModel(model: string): boolean;
   getModelCapabilities(model: string): ModelCapabilities;
 }
 ```
 
-Also exports `ProviderContextWindowError` and `isProviderContextWindowError()`, the normalized provider error shape used by the agent to trigger a one-shot automatic context compaction retry when a model rejects an oversized request.
+Also exports:
+- `ProviderInvocationContext` with thread/Bud/owner routing metadata for
+  environment-scoped providers such as Bud-local ds4
+- `ProviderContextWindowError` and `isProviderContextWindowError()`, the
+  normalized provider error shape used by the agent to trigger a one-shot
+  automatic context compaction retry when a model rejects an oversized request
+
+### `local-llm-capabilities.ts`
+
+Helpers for projecting daemon `capabilities.llm` into service model behavior.
+
+**Responsibilities**:
+- define the stable Bud-local ds4 product id (`ds4-deepseek-v4-flash`),
+  provider model (`deepseek-v4-flash`), request mode
+  (`ds4_openai_responses`), and compatibility (`openai_responses`)
+- validate healthy daemon ds4 capability metadata
+- produce catalog-backed Bud-local model projections for `/api/models?bud_id=...`
+- distinguish ds4 product-model selections from cloud models during thread and
+  message validation
+
+### `local-llm-data-plane.ts`
+
+Service-side stream client for Bud-local LLM HTTP requests.
+
+**Responsibilities**:
+- select an authenticated data-plane carrier that negotiated
+  `local_llm_http`
+- enforce one active Bud-local LLM stream per Bud in the first pass
+- send `local_llm_open` to the daemon using logical server id `ds4`
+- send the bounded JSON request body as generic `stream_data`
+- expose daemon response bytes as a `ReadableStream<Uint8Array>` for provider
+  SSE parsing
+- create daemon-state operation/stream rows and audit events for Bud-local ds4
+  open, accept/reject, close, reset, cancellation, and limit outcomes without
+  storing raw prompt bodies or sensitive headers
+- translate daemon denials, carrier unavailability, response-size limits, and
+  cancellation into typed provider-facing errors
 
 ### `model-catalog.ts`
 
@@ -119,6 +156,7 @@ Central product model catalog and reasoning-control metadata.
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
+| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | ds4 Responses `reasoning.effort`: `none` (`Fast`) and `low` (`Thinking`); default `none`; `max` deferred until context is at least 393,216 |
 
 **Usable Context Policy**:
 - `contextWindowTokens` remains the provider/model hard total context window
@@ -129,6 +167,9 @@ Central product model catalog and reasoning-control metadata.
 - GPT-5.5 currently declares `contextWindowTokens: 1_050_000`,
   `usableContextWindowTokens: 400_000`, and `reservedOutputTokens: 128_000`,
   producing a 272,000 token usable input window before the auto-compaction ratio
+- ds4 DeepSeek V4 declares `contextWindowTokens: 100_000`,
+  `maxOutputTokens: 384_000`, and `reservedOutputTokens: 20_000`, producing an
+  80,000 token usable input window before the auto-compaction ratio
 
 ### `reasoning-policy.ts`
 
@@ -148,7 +189,7 @@ Standalone Node tests for catalog invariants and reasoning option labels.
 
 **Current Coverage**:
 - current product model order and global default
-- provider-specific reasoning levels for GPT-5.4/GPT-5.5, Claude Opus 4.6, Claude Opus 4.7, and Claude Haiku 4.5
+- provider-specific reasoning levels for GPT-5.4/GPT-5.5, Claude Opus 4.6, Claude Opus 4.7, Claude Haiku 4.5, and ds4
 - stable reasoning labels exposed to API clients
 
 ### `reasoning-policy.test.ts`
@@ -160,6 +201,7 @@ Standalone Node tests for effective model-selection precedence.
 - stored thread selections are used when no model is submitted
 - invalid stored selections fall back to the service default
 - null explicit models and unsupported explicit reasoning are rejected
+- ds4 accepts normal `low` thinking and rejects `max` while its context profile is below the max-thinking threshold
 
 ### `provider-ledger.ts`
 
@@ -176,6 +218,7 @@ Durable provider-call ledger helpers for same-provider reconstruction and cache 
 - filter replay and diagnostics after a context-checkpoint boundary when automatic compaction has replaced older transcript spans with a summary
 - summarize provider-ledger coverage for a thread so provider switches, same-provider replay incompatibilities, itemless completed calls, and canonical fallback ranges are explicit
 - reconstruct canonical assistant messages from same-provider ledger items before falling back to product transcript rows
+- map provider calls to canonical request modes: `openai_responses`, `anthropic_messages`, or `ds4_openai_responses`; historical `ds4_openai_chat` rows remain parseable for local diagnostics/reconstruction
 
 Provider-native payloads are service-internal. Browser message routes continue to read from the `message` table and do not expose `llm_call_item.provider_payload`.
 
@@ -184,6 +227,7 @@ Provider-native payloads are service-internal. Browser message routes continue t
 Standalone tests for provider-ledger persistence/reconstruction helpers.
 
 **Current Coverage**:
+- request-mode mapping covers OpenAI Responses, Anthropic Messages, and ds4 Responses
 - `recordLlmCall()` stores every output block plus cache metadata
 - `recordLlmCall()` stores reconstruction mode, fallback counts, omitted provider-only counts, and source-provider counts in call metadata
 - `recordLlmToolResultItem()` stores `ask_user_questions` tool-result payloads as provider replay input items
@@ -228,12 +272,13 @@ Catalog entries are preferred for product IDs. Legacy aliases remain as hidden c
 
 Barrel exports and provider initialization.
 
-**Exports**: All canonical types, catalog helpers, reasoning policy helpers, provider-ledger helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`
+**Exports**: All canonical types, catalog helpers, reasoning policy helpers, provider-ledger helpers, `LLMProvider`, `ProviderRegistry`, `providerRegistry`, `OpenAIProvider`, `AnthropicProvider`, `Ds4ResponsesProvider`
 
 **`initializeProviders()`**: Called at startup to register providers based on config:
 ```typescript
 providerRegistry.unregister("openai");
 providerRegistry.unregister("anthropic");
+providerRegistry.unregister("ds4");
 
 if (config.openaiApiKey) {
   providerRegistry.register(new OpenAIProvider(config.openaiApiKey, { ... }));
@@ -241,11 +286,21 @@ if (config.openaiApiKey) {
 if (config.anthropicApiKey) {
   providerRegistry.register(new AnthropicProvider(config.anthropicApiKey, { ... }));
 }
+if (config.ds4DirectBaseUrl) {
+  providerRegistry.register(createDs4ProviderFromConfig());
+} else {
+  providerRegistry.register(createBudLocalDs4Provider());
+}
 ```
 
 - provider-less startup is valid for local development and auth/device-claim flows
 - provider-backed features degrade at call sites instead of crashing service boot
 - re-running initialization refreshes the built-in provider registrations instead of accumulating stale entries
+- `DS4_DIRECT_BASE_URL` enables the direct local-dev ds4 Responses provider; `DS4_DIRECT_MODEL`, `DS4_DIRECT_CONTEXT_TOKENS`, and `DS4_DIRECT_MAX_OUTPUT_TOKENS` tune the local endpoint profile
+- when direct ds4 is not configured, a Bud-backed ds4 provider is registered so
+  `ds4-deepseek-v4-flash` can resolve for Bud-scoped threads; global
+  `/api/models` still hides it unless a specific owned Bud advertises healthy
+  local ds4 capability
 
 ## Subfolders
 
@@ -281,7 +336,7 @@ for await (const event of provider.invoke(messages, tools, {
 - Automatic context compaction supplies provider-ledger and transcript boundaries so older spans are represented by persisted checkpoint replacement history instead of replayed verbatim.
 - OpenAI same-provider loading preserves or derives assistant text `assistantPhase` so manually replayed Responses assistant messages can include `phase`.
 - Anthropic same-provider loading now checks the current target model and reasoning config before replaying signed `thinking` or `redacted_thinking` provider blocks; incompatible ranges use canonical fallback and persist `same_provider_incompatible_reasoning` diagnostics in call metadata.
-- Providers may attach raw completion payloads as `providerData`; the agent uses those only for diagnostics when a response cannot be parsed into text or a tool call.
+- Providers may attach completion diagnostics as `providerData`; the agent uses those only for debugging response parsing and provider-specific cache/replay behavior.
 - Providers normalize context-window failures into `ProviderContextWindowError`; the agent uses that signal to compact and retry the request once with a fresh conversation load.
 - `invokeSync()` remains an optional adapter capability, but it is no longer the main chat-agent path in this repo.
 
@@ -316,6 +371,19 @@ Each provider transforms canonical schemas to their specific requirements:
 - Uses canonical schema directly with minimal transformation
 - Optional fields remain outside `required` array
 
+**ds4** (OpenAI-compatible Responses):
+- Sends canonical messages through `/responses` with `stream: true`
+- Lowers tool definitions to Responses function tools and canonical tool-result blocks to `function_call_output`
+- Sends explicit `reasoning.effort = "none"` for ds4 `Fast` because ds4 treats omitted `reasoning` as normal thinking
+- Sends non-`none` `reasoning.effort` for ds4 `Thinking`
+- Replays ds4-native reasoning payloads when prior Responses calls emitted provider-only reasoning blocks
+- Emits canonical reasoning/text/tool stream events from Responses SSE lifecycle events
+- Exposes the exact Responses request body through `buildDebugRequestSnapshot()` for local context-drift artifacts when enabled
+- Attaches Responses stream diagnostics in `providerData`
+- Supports both service-local direct mode and Bud-backed mode; the Bud-backed
+  mode uses the same request/parse logic but obtains bytes through a
+  `local_llm_http` daemon data-plane stream
+
 ## Dependencies
 
 | Package | Purpose |
@@ -323,6 +391,10 @@ Each provider transforms canonical schemas to their specific requirements:
 | `openai` | OpenAI SDK for Responses API |
 | `@types/json-schema` | JSONSchema7 type definitions |
 | `@anthropic-ai/sdk` | Anthropic SDK for Messages API, including adaptive-thinking request passthrough |
+
+The direct ds4 provider uses the platform `fetch` API, and the Bud-backed ds4
+provider uses the existing daemon data-plane router. Neither path adds a package
+dependency.
 
 ## TODOs / Technical Debt
 

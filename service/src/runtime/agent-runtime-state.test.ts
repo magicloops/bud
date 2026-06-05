@@ -11,6 +11,7 @@ test("new snapshots are idle and expose a resumable stream cursor", () => {
   assert.equal(snapshot.phase, "idle");
   assert.equal(snapshot.environment, null);
   assert.equal(snapshot.context_budget, null);
+  assert.equal(snapshot.last_error, null);
   assert.equal(typeof snapshot.stream_cursor, "string");
   assert.ok(snapshot.stream_cursor.length > 0);
 });
@@ -25,6 +26,7 @@ test("startTurn creates an active snapshot before any visible event exists", () 
   assert.equal(snapshot.phase, "starting");
   assert.deepEqual(snapshot.environment, environment);
   assert.equal(snapshot.context_budget, null);
+  assert.equal(snapshot.last_error, null);
   assert.equal(typeof snapshot.stream_cursor, "string");
   assert.ok(snapshot.stream_cursor.length > 0);
 
@@ -52,7 +54,7 @@ test("no-cursor attach is live-only for agent runtime streams", () => {
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { command: "pwd" },
     },
   });
 
@@ -88,7 +90,7 @@ test("attach after a known cursor replays only newer visible events", () => {
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { command: "pwd" },
     },
   });
   runtime.setPendingTool(
@@ -97,7 +99,7 @@ test("attach after a known cursor replays only newer visible events", () => {
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { command: "pwd" },
       started_at: "2026-04-21T19:00:01.000Z",
     },
     toolCallCursor,
@@ -173,6 +175,44 @@ test("finishing a turn returns the snapshot to idle with a fresh cursor", () => 
   attachment.detach();
 });
 
+test("runtime snapshots preserve last_error after failed turns and clear it on new turns", () => {
+  const runtime = new AgentRuntimeStateManager();
+  runtime.startTurn("thread-1", "turn-1");
+
+  const finalCursor = runtime.emit("thread-1", {
+    event: "final",
+    data: {
+      turn_id: "turn-1",
+      status: "failed",
+      error: "The local model is already busy. Try again after the current run finishes.\n\nError: DATA_PLANE_STREAM_LIMIT_EXCEEDED",
+      error_code: "DATA_PLANE_STREAM_LIMIT_EXCEEDED",
+      retryable: true,
+    },
+  });
+  const failed = runtime.setLastError(
+    "thread-1",
+    {
+      turn_id: "turn-1",
+      code: "DATA_PLANE_STREAM_LIMIT_EXCEEDED",
+      message: "The local model is already busy. Try again after the current run finishes.\n\nError: DATA_PLANE_STREAM_LIMIT_EXCEEDED",
+      retryable: true,
+      occurred_at: "2026-06-04T00:00:00.000Z",
+    },
+    finalCursor,
+  );
+
+  assert.equal(failed.last_error?.code, "DATA_PLANE_STREAM_LIMIT_EXCEEDED");
+  assert.equal(failed.stream_cursor, finalCursor);
+
+  const idle = runtime.finishTurn("thread-1");
+  assert.equal(idle.active, false);
+  assert.equal(idle.last_error?.turn_id, "turn-1");
+  assert.equal(idle.last_error?.retryable, true);
+
+  const nextTurn = runtime.startTurn("thread-1", "turn-2");
+  assert.equal(nextTurn.last_error, null);
+});
+
 test("runtime snapshots serialize and clear active context budget state", () => {
   const runtime = new AgentRuntimeStateManager();
   runtime.startTurn("thread-1", "turn-1");
@@ -210,7 +250,7 @@ test("runtime snapshots expose pending tool metadata and draft assistant client 
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { command: "pwd" },
     },
   });
   runtime.setPendingTool(
@@ -219,7 +259,7 @@ test("runtime snapshots expose pending tool metadata and draft assistant client 
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { command: "pwd" },
       started_at: "2026-04-21T19:00:01.000Z",
     },
     toolCursor,
@@ -303,7 +343,7 @@ test("advanceCursor preserves runtime state while acknowledging external events"
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { command: "pwd" },
     },
   });
   runtime.setPendingTool(
@@ -312,7 +352,7 @@ test("advanceCursor preserves runtime state while acknowledging external events"
       client_id: "tool-client-1",
       call_id: "call-1",
       name: "terminal.send",
-      args: { text: "pwd", submit: true },
+      args: { command: "pwd" },
       started_at: "2026-04-21T19:00:01.000Z",
     },
     toolCursor,

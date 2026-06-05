@@ -14,7 +14,7 @@ import type { ReasoningLevel } from "./model-catalog.js";
 
 export type CanonicalRole = "system" | "user" | "assistant";
 
-export type CanonicalProviderId = "openai" | "anthropic";
+export type CanonicalProviderId = "openai" | "anthropic" | "ds4";
 
 export type CanonicalProviderData<
   Provider extends CanonicalProviderId = CanonicalProviderId,
@@ -80,6 +80,7 @@ export type CanonicalMessage = {
  * Normalizes:
  * - OpenAI: reasoning output items with summary (GPT-5 series)
  * - Anthropic: thinking content blocks
+ * - ds4: Responses reasoning output items in the direct local-dev profile
  */
 export type CanonicalReasoningBlock =
   | {
@@ -118,7 +119,7 @@ export type ReasoningConfig = {
 
 /**
  * Canonical tool definition.
- * Both OpenAI and Anthropic use JSON Schema for parameters.
+ * Providers use JSON Schema for tool parameters.
  */
 export type CanonicalTool = {
   name: string;

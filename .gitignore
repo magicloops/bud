@@ -27,6 +27,7 @@ build/
 *.log
 *.tmp
 coverage/
+.bud-debug/
 
 # Misc
 *.swp

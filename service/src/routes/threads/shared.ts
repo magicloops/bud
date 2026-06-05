@@ -4,7 +4,7 @@ import { and, eq, gt, lt, or } from "drizzle-orm";
 import { z } from "zod";
 import { config } from "../../config.js";
 import { db } from "../../db/client.js";
-import { messageTable, threadTable } from "../../db/schema.js";
+import { budTable, messageTable, threadTable } from "../../db/schema.js";
 import { getAuthorizedThread, requireViewer } from "../../auth/session.js";
 import {
   isModelSelectionError,
@@ -12,6 +12,10 @@ import {
   type EffectiveModelSelection,
   type ReasoningLevel,
 } from "../../llm/index.js";
+import {
+  hasHealthyBudLocalDs4Capability,
+  isDs4ProductModel,
+} from "../../llm/local-llm-capabilities.js";
 
 type AuthorizedThreadAccess = {
   viewer: NonNullable<Awaited<ReturnType<typeof requireViewer>>>;
@@ -177,6 +181,38 @@ export function sendModelSelectionError(reply: FastifyReply, error: unknown): bo
     bodyPayload.supported_values = error.supportedValues;
   }
   reply.code(400).send(bodyPayload);
+  return true;
+}
+
+export async function sendLocalModelAvailabilityError(
+  reply: FastifyReply,
+  args: { budId: string; model: string },
+): Promise<boolean> {
+  if (!isDs4ProductModel(args.model)) {
+    return false;
+  }
+  if (config.ds4DirectBaseUrl) {
+    return false;
+  }
+
+  const bud = await db.query.budTable.findFirst({
+    where: eq(budTable.budId, args.budId),
+    columns: {
+      status: true,
+      capabilities: true,
+    },
+  });
+
+  if (bud?.status === "online" && hasHealthyBudLocalDs4Capability(bud.capabilities)) {
+    return false;
+  }
+
+  reply.code(424).send({
+    error: "local_model_unavailable",
+    message: "Bud-local ds4 is not available for this Bud",
+    model: args.model,
+    bud_id: args.budId,
+  });
   return true;
 }
 

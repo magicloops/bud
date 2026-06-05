@@ -42,7 +42,7 @@ function NewThreadView() {
   const [error, setError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
-  const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels()
+  const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
 
   // Terminal state (no connection in "new thread" mode)
   const [terminalState] = useState<string>('idle')

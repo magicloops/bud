@@ -2,12 +2,65 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { db } from "../db/client.js";
 import {
+  buildRequestMode,
   canonicalBlockFromLedgerItem,
   loadProviderLedgerMessages,
   loadProviderLedgerThreadDiagnostics,
   recordLlmCall,
   recordLlmToolResultItem,
 } from "./provider-ledger.js";
+
+test("buildRequestMode maps providers to request modes", () => {
+  assert.equal(buildRequestMode("openai"), "openai_responses");
+  assert.equal(buildRequestMode("anthropic"), "anthropic_messages");
+  assert.equal(buildRequestMode("ds4"), "ds4_openai_responses");
+});
+
+test("loadProviderLedgerMessages preserves historical ds4 chat request mode", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  mock.method(db, "select", () => ({
+    from() {
+      return {
+        innerJoin() {
+          return {
+            where() {
+              return {
+                async orderBy() {
+                  return [
+                    {
+                      llmCallId: "llm-call-ds4-chat",
+                      createdAt: new Date("2026-06-02T10:00:00.000Z"),
+                      model: "deepseek-v4-flash",
+                      requestMode: "ds4_openai_chat",
+                      itemKind: "text",
+                      itemDirection: "output",
+                      itemSequence: 0,
+                      canonicalPayload: {
+                        type: "text",
+                        text: "Historical ds4 response.",
+                      },
+                      providerPayload: {},
+                    },
+                  ];
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  }) as never);
+
+  const messages = await loadProviderLedgerMessages("thread-1", "ds4");
+
+  assert.equal(messages[0]?.requestMode, "ds4_openai_chat");
+  assert.deepEqual(messages[0]?.content, [
+    { type: "text", text: "Historical ds4 response." },
+  ]);
+});
 
 test("recordLlmCall persists all provider output items and cache metadata", async (t) => {
   t.after(() => {

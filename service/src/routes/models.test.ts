@@ -3,6 +3,7 @@ import test, { mock, type TestContext } from "node:test";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../auth/auth.js";
 import { config } from "../config.js";
+import { db } from "../db/client.js";
 import {
   providerRegistry,
   type CanonicalStreamEvent,
@@ -31,6 +32,12 @@ type ModelsPayload = {
       usable_input_window_tokens: number | null;
       max_output_tokens: number;
     };
+    source?: {
+      kind: string;
+      bud_id?: string;
+    };
+    request_mode?: string;
+    compatibility?: string[];
   }>;
   service_default_model: string | null;
   default_model: string | null;
@@ -69,9 +76,12 @@ function createServer(): FastifyInstance & { routes: Map<string, RouteHandler> }
   } as unknown as FastifyInstance & { routes: Map<string, RouteHandler> };
 }
 
-function createProvider(name: "anthropic" | "openai", supportedModels: string[]): LLMProvider {
+function createProvider(
+  name: "anthropic" | "openai" | "ds4",
+  supportedModels: string[],
+): LLMProvider {
   const capabilities: ModelCapabilities = {
-    supportsVision: true,
+    supportsVision: name !== "ds4",
     supportsTools: true,
     supportsStreaming: true,
     supportsJsonMode: name === "openai",
@@ -89,7 +99,13 @@ function createProvider(name: "anthropic" | "openai", supportedModels: string[])
       // noop
     },
     supportsModel(model: string) {
-      return name === "openai" ? model.startsWith("gpt-") : model.startsWith("claude-");
+      if (name === "openai") {
+        return model.startsWith("gpt-");
+      }
+      if (name === "anthropic") {
+        return model.startsWith("claude-");
+      }
+      return model === "deepseek-v4-flash";
     },
     getModelCapabilities() {
       return capabilities;
@@ -100,9 +116,11 @@ function createProvider(name: "anthropic" | "openai", supportedModels: string[])
 function registerTestProviders(t: TestContext) {
   const previousOpenAI = providerRegistry.getProvider("openai");
   const previousAnthropic = providerRegistry.getProvider("anthropic");
+  const previousDs4 = providerRegistry.getProvider("ds4");
 
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
+  providerRegistry.unregister("ds4");
   providerRegistry.register(
     createProvider("anthropic", [
       "claude-opus-4-6",
@@ -123,11 +141,15 @@ function registerTestProviders(t: TestContext) {
   t.after(() => {
     providerRegistry.unregister("openai");
     providerRegistry.unregister("anthropic");
+    providerRegistry.unregister("ds4");
     if (previousOpenAI) {
       providerRegistry.register(previousOpenAI);
     }
     if (previousAnthropic) {
       providerRegistry.register(previousAnthropic);
+    }
+    if (previousDs4) {
+      providerRegistry.register(previousDs4);
     }
   });
 }
@@ -211,4 +233,217 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
     "xhigh",
   ]);
   assert.equal(gpt55.reasoning.default_level, "low");
+});
+
+test("GET /api/models includes direct local-dev ds4 model when provider is registered", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  const previousDirectBaseUrl = config.ds4DirectBaseUrl;
+  config.ds4DirectBaseUrl = "http://127.0.0.1:8000/v1";
+  t.after(() => {
+    config.ds4DirectBaseUrl = previousDirectBaseUrl;
+  });
+  registerTestProviders(t);
+  providerRegistry.register(createProvider("ds4", ["deepseek-v4-flash"]));
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+
+  const server = createServer();
+  await registerModelsRoutes(server);
+  const handler = server.routes.get("GET /api/models");
+  assert.ok(handler, "expected models route to register");
+
+  const reply = new TestReply();
+  const result = await handler({ headers: {} }, reply);
+  const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
+  const ds4 = payload.models.find((model) => model.id === "ds4-deepseek-v4-flash");
+
+  assert.ok(ds4);
+  assert.equal(ds4.provider, "ds4");
+  assert.equal(ds4.provider_model, "deepseek-v4-flash");
+  assert.equal(ds4.reasoning.kind, "ds4_responses_reasoning_effort");
+  assert.deepEqual(ds4.reasoning.levels, [
+    { value: "none", label: "Fast" },
+    { value: "low", label: "Thinking" },
+  ]);
+  assert.equal(ds4.reasoning.default_level, "none");
+  assert.deepEqual(ds4.source, { kind: "service_local_dev" });
+  assert.equal(ds4.capabilities.context_window_tokens, 100_000);
+  assert.equal(ds4.capabilities.usable_context_window_tokens, 100_000);
+  assert.equal(ds4.capabilities.reserved_output_tokens, 20_000);
+  assert.equal(ds4.capabilities.usable_input_window_tokens, 80_000);
+  assert.equal(ds4.capabilities.max_output_tokens, 384_000);
+});
+
+test("GET /api/models excludes Bud-local ds4 when no Bud scope is provided", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  const previousDirectBaseUrl = config.ds4DirectBaseUrl;
+  config.ds4DirectBaseUrl = null;
+  t.after(() => {
+    config.ds4DirectBaseUrl = previousDirectBaseUrl;
+  });
+  registerTestProviders(t);
+  providerRegistry.register(createProvider("ds4", ["deepseek-v4-flash"]));
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+
+  const server = createServer();
+  await registerModelsRoutes(server);
+  const handler = server.routes.get("GET /api/models");
+  assert.ok(handler, "expected models route to register");
+
+  const reply = new TestReply();
+  const result = await handler({ headers: {}, query: {} }, reply);
+  const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
+
+  assert.equal(reply.statusCode, 200);
+  assert.equal(payload.models.some((model) => model.id === "ds4-deepseek-v4-flash"), false);
+});
+
+test("GET /api/models appends healthy Bud-local ds4 for an owned online Bud", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  const previousDirectBaseUrl = config.ds4DirectBaseUrl;
+  config.ds4DirectBaseUrl = null;
+  t.after(() => {
+    config.ds4DirectBaseUrl = previousDirectBaseUrl;
+  });
+  registerTestProviders(t);
+  providerRegistry.register(createProvider("ds4", ["deepseek-v4-flash"]));
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.budTable, "findFirst", async () => ({
+    budId: "bud-1",
+    status: "online",
+    capabilities: {
+      llm: {
+        local_api: true,
+        servers: [
+          {
+            id: "ds4",
+            provider: "ds4",
+            compatibility: ["openai_responses"],
+            request_mode: "ds4_openai_responses",
+            generation_path: "/v1/responses",
+            models: [
+              {
+                id: "deepseek-v4-flash",
+                display_name: "ds4 DeepSeek V4",
+                context_window_tokens: 100000,
+                max_output_tokens: 512000,
+              },
+            ],
+            concurrency: 1,
+            healthy: true,
+          },
+        ],
+      },
+    },
+  }) as never);
+
+  const server = createServer();
+  await registerModelsRoutes(server);
+  const handler = server.routes.get("GET /api/models");
+  assert.ok(handler, "expected models route to register");
+
+  const reply = new TestReply();
+  const result = await handler({ headers: {}, query: { bud_id: "bud-1" } }, reply);
+  const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
+  const ds4 = payload.models.find((model) => model.id === "ds4-deepseek-v4-flash");
+
+  assert.equal(reply.statusCode, 200);
+  assert.ok(ds4);
+  assert.equal(ds4.provider, "ds4");
+  assert.equal(ds4.provider_model, "deepseek-v4-flash");
+  assert.equal(ds4.reasoning.kind, "ds4_responses_reasoning_effort");
+  assert.deepEqual(ds4.reasoning.levels, [
+    { value: "none", label: "Fast" },
+    { value: "low", label: "Thinking" },
+  ]);
+  assert.equal(ds4.reasoning.default_level, "none");
+  assert.equal(ds4.request_mode, "ds4_openai_responses");
+  assert.deepEqual(ds4.compatibility, ["openai_responses"]);
+  assert.deepEqual(ds4.source, { kind: "bud_local", bud_id: "bud-1" });
+  assert.equal(ds4.capabilities.context_window_tokens, 100000);
+  assert.equal(ds4.capabilities.usable_context_window_tokens, 100000);
+  assert.equal(ds4.capabilities.reserved_output_tokens, 20000);
+  assert.equal(ds4.capabilities.usable_input_window_tokens, 80000);
+  assert.equal(ds4.capabilities.max_output_tokens, 384000);
+});
+
+test("GET /api/models preserves lower Bud-local ds4 output caps", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  const previousDirectBaseUrl = config.ds4DirectBaseUrl;
+  config.ds4DirectBaseUrl = null;
+  t.after(() => {
+    config.ds4DirectBaseUrl = previousDirectBaseUrl;
+  });
+  registerTestProviders(t);
+  providerRegistry.register(createProvider("ds4", ["deepseek-v4-flash"]));
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.budTable, "findFirst", async () => ({
+    budId: "bud-1",
+    status: "online",
+    capabilities: {
+      llm: {
+        local_api: true,
+        servers: [
+          {
+            id: "ds4",
+            provider: "ds4",
+            compatibility: ["openai_responses"],
+            request_mode: "ds4_openai_responses",
+            generation_path: "/v1/responses",
+            models: [
+              {
+                id: "deepseek-v4-flash",
+                display_name: "ds4 DeepSeek V4",
+                context_window_tokens: 100000,
+                max_output_tokens: 128000,
+              },
+            ],
+            concurrency: 1,
+            healthy: true,
+          },
+        ],
+      },
+    },
+  }) as never);
+
+  const server = createServer();
+  await registerModelsRoutes(server);
+  const handler = server.routes.get("GET /api/models");
+  assert.ok(handler, "expected models route to register");
+
+  const reply = new TestReply();
+  const result = await handler({ headers: {}, query: { bud_id: "bud-1" } }, reply);
+  const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
+  const ds4 = payload.models.find((model) => model.id === "ds4-deepseek-v4-flash");
+
+  assert.equal(reply.statusCode, 200);
+  assert.ok(ds4);
+  assert.equal(ds4.capabilities.max_output_tokens, 128000);
+});
+
+test("GET /api/models returns 404 for non-owned Bud-scoped inventory", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  registerTestProviders(t);
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.budTable, "findFirst", async () => null);
+
+  const server = createServer();
+  await registerModelsRoutes(server);
+  const handler = server.routes.get("GET /api/models");
+  assert.ok(handler, "expected models route to register");
+
+  const reply = new TestReply();
+  const result = await handler({ headers: {}, query: { bud_id: "other-bud" } }, reply);
+
+  assert.equal(reply.statusCode, 404);
+  assert.deepEqual(reply.sent ? reply.payload : result, { error: "bud_not_found" });
 });

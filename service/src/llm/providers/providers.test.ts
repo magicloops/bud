@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AnthropicProvider } from "./anthropic.js";
+import { Ds4ResponsesProvider } from "./ds4.js";
 import { OpenAIProvider } from "./openai.js";
 import type { CanonicalMessage, ModelConfig } from "../types.js";
 import { isProviderContextWindowError } from "../provider.js";
@@ -24,6 +25,502 @@ function emptyStream<T>(): AsyncIterable<T> {
     // Empty fake provider stream.
   })();
 }
+
+function sseData(payload: unknown): string {
+  return `data: ${
+    payload === "[DONE]" ? "[DONE]" : JSON.stringify(payload)
+  }\n\n`;
+}
+
+function sseResponse(chunks: string[], status = 200): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    status,
+    headers: {
+      "Content-Type": "text/event-stream",
+    },
+  });
+}
+
+test("ds4 provider normalizes local base URL and rejects common loopback typo", async () => {
+  const captures: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    captures.push({ url: String(url), init: init ?? {} });
+    return sseResponse([sseData("[DONE]")]);
+  };
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "127.0.0.1:8000/v1/",
+    fetch: fetchImpl,
+  });
+
+  await drain(provider.invoke(messages, [], {
+    model: "deepseek-v4-flash",
+    maxOutputTokens: 8,
+  }));
+
+  assert.equal(captures[0]?.url, "http://127.0.0.1:8000/v1/responses");
+  assert.throws(
+    () => new Ds4ResponsesProvider({ baseURL: "http://127.0.0.0:8000/v1" }),
+    /Use 127\.0\.0\.1 or localhost/,
+  );
+});
+
+test("ds4 Responses provider sends OpenAI Responses-style requests", async () => {
+  const captures: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    captures.push({ url: String(url), init: init ?? {} });
+    return sseResponse([
+      sseData({
+        type: "response.completed",
+        response: {
+          id: "resp_ds4",
+          status: "completed",
+        },
+      }),
+      sseData("[DONE]"),
+    ]);
+  };
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "http://127.0.0.1:4444/v1/",
+    model: "local-deepseek",
+    fetch: fetchImpl,
+  });
+
+  await drain(provider.invoke([
+    { role: "system", content: "System prompt" },
+    { role: "user", content: "Run pwd" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "reasoning",
+          text: "Check terminal state.",
+          providerData: {
+            provider: "ds4",
+            payload: {
+              id: "rs_1",
+              type: "reasoning",
+              summary: [{ type: "summary_text", text: "Check terminal state." }],
+            },
+          },
+        },
+        { type: "text", text: "Calling tool", assistantPhase: "commentary" },
+        {
+          type: "tool_use",
+          id: "call_1",
+          name: "terminal_send",
+          input: { command: "pwd" },
+        },
+      ],
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "call_1",
+          content: "done",
+        },
+      ],
+    },
+  ], [
+    {
+      name: "terminal_send",
+      description: "Send terminal input",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string" },
+          raw_text: { type: "string" },
+          key: { type: "string" },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+    },
+  ], {
+    model: "deepseek-v4-flash",
+    maxOutputTokens: 2048,
+    temperature: 0.2,
+    topP: 0.9,
+    responseFormat: "json",
+    toolChoice: { type: "tool", name: "terminal_send" },
+    reasoning: {
+      enabled: true,
+      effort: "low",
+      summaryLevel: "auto",
+    },
+  }));
+
+  const captured = captures[0];
+  assert.ok(captured);
+  assert.equal(captured.url, "http://127.0.0.1:4444/v1/responses");
+  assert.deepEqual(captured.init.headers, {
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  });
+
+  const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
+  assert.equal(body.model, "local-deepseek");
+  assert.equal(body.stream, true);
+  assert.equal(body.instructions, "System prompt");
+  assert.equal(body.max_output_tokens, 2048);
+  assert.equal(body.temperature, 0.2);
+  assert.equal(body.top_p, 0.9);
+  assert.deepEqual(body.text, { format: { type: "json_object" } });
+  assert.deepEqual(body.reasoning, { effort: "low", summary: "auto" });
+  assert.deepEqual(body.tool_choice, {
+    type: "function",
+    name: "terminal_send",
+  });
+  assert.equal(body.parallel_tool_calls, false);
+  assert.deepEqual(body.input, [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "Run pwd" }],
+    },
+    {
+      id: "rs_1",
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: "Check terminal state." }],
+    },
+    {
+      type: "message",
+      role: "assistant",
+      content: "Calling tool",
+      phase: "commentary",
+    },
+    {
+      type: "function_call",
+      call_id: "call_1",
+      name: "terminal_send",
+      arguments: "{\"command\":\"pwd\"}",
+    },
+    {
+      type: "function_call_output",
+      call_id: "call_1",
+      output: "done",
+    },
+  ]);
+  assert.deepEqual(body.tools, [
+    {
+      type: "function",
+      name: "terminal_send",
+      description: "Send terminal input",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string" },
+          raw_text: { type: "string" },
+          key: { type: "string" },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+    },
+  ]);
+});
+
+test("ds4 Responses provider defaults to the catalog max output capability", async () => {
+  const captures: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    captures.push({ url: String(url), init: init ?? {} });
+    return sseResponse([sseData("[DONE]")]);
+  };
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "http://127.0.0.1:4444/v1/",
+    fetch: fetchImpl,
+  });
+
+  await drain(provider.invoke(messages, [], {
+    model: "deepseek-v4-flash",
+  }));
+
+  const captured = captures[0];
+  assert.ok(captured);
+  const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
+  assert.equal(body.max_output_tokens, 384000);
+});
+
+test("ds4 Responses provider sends explicit none reasoning for Fast mode", async () => {
+  const captures: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    captures.push({ url: String(url), init: init ?? {} });
+    return sseResponse([sseData("[DONE]")]);
+  };
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "http://127.0.0.1:4444/v1/",
+    fetch: fetchImpl,
+  });
+
+  await drain(provider.invoke(messages, [], {
+    model: "deepseek-v4-flash",
+    maxOutputTokens: 2048,
+    reasoning: {
+      enabled: false,
+    },
+  }));
+
+  const captured = captures[0];
+  assert.ok(captured);
+  const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
+  assert.deepEqual(body.reasoning, { effort: "none" });
+});
+
+test("ds4 Responses provider parses reasoning, text, tool calls, usage, and diagnostics", async () => {
+  const chunks = [
+    sseData({
+      type: "response.created",
+      response: {
+        id: "resp_ds4",
+      },
+    }),
+    sseData({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        id: "rs_ds4",
+        type: "reasoning",
+        summary: [],
+      },
+    }),
+    sseData({
+      type: "response.reasoning_summary_text.delta",
+      output_index: 0,
+      delta: "Need terminal state.",
+    }),
+    sseData({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        id: "rs_ds4",
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "Need terminal state." }],
+      },
+    }),
+    sseData({
+      type: "response.output_item.added",
+      output_index: 1,
+      item: {
+        id: "msg_ds4",
+        type: "message",
+        role: "assistant",
+      },
+    }),
+    sseData({
+      type: "response.content_part.added",
+      output_index: 1,
+      content_index: 0,
+      part: { type: "output_text" },
+    }),
+    sseData({
+      type: "response.output_text.delta",
+      output_index: 1,
+      content_index: 0,
+      delta: "before tool",
+    }),
+    sseData({
+      type: "response.output_text.done",
+      output_index: 1,
+      content_index: 0,
+    }),
+    sseData({
+      type: "response.output_item.added",
+      output_index: 2,
+      item: {
+        id: "fc_ds4",
+        type: "function_call",
+        call_id: "call_ds4",
+        name: "terminal_send",
+      },
+    }),
+    sseData({
+      type: "response.function_call_arguments.delta",
+      item_id: "fc_ds4",
+      output_index: 2,
+      delta: "{\"command\"",
+    }),
+    sseData({
+      type: "response.function_call_arguments.done",
+      item_id: "fc_ds4",
+      output_index: 2,
+      arguments: "{\"command\":\"pwd\"}",
+    }),
+    sseData({
+      type: "response.completed",
+      response: {
+        id: "resp_ds4",
+        status: "completed",
+        usage: {
+          input_tokens: 12,
+          output_tokens: 8,
+          input_tokens_details: {
+            cached_tokens: 4,
+          },
+          output_tokens_details: {
+            reasoning_tokens: 3,
+          },
+        },
+      },
+    }),
+    sseData("[DONE]"),
+  ];
+
+  const fetchImpl: typeof fetch = async () => sseResponse(chunks);
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "http://127.0.0.1:4444/v1",
+    fetch: fetchImpl,
+  });
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "deepseek-v4-flash",
+    maxOutputTokens: 2048,
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(
+    events.map((event) => event.type),
+    [
+      "message_start",
+      "reasoning_start",
+      "reasoning_delta",
+      "reasoning_done",
+      "content_start",
+      "text_delta",
+      "content_done",
+      "tool_use_start",
+      "tool_use_delta",
+      "tool_use_done",
+      "message_done",
+    ],
+  );
+
+  const reasoningDone = events.find((event) => event.type === "reasoning_done");
+  assert.ok(reasoningDone);
+  assert.deepEqual(reasoningDone.block, {
+    type: "reasoning",
+    text: "Need terminal state.",
+    providerData: {
+      provider: "ds4",
+      payload: {
+        id: "rs_ds4",
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "Need terminal state." }],
+      },
+    },
+  });
+
+  const textDelta = events.find((event) => event.type === "text_delta");
+  assert.ok(textDelta);
+  assert.equal(textDelta.delta, "before tool");
+
+  const toolDone = events.find((event) => event.type === "tool_use_done");
+  assert.ok(toolDone);
+  assert.equal(toolDone.id, "call_ds4");
+  assert.equal(toolDone.name, "terminal_send");
+  assert.deepEqual(toolDone.input, { command: "pwd" });
+
+  const messageDone = events.find((event) => event.type === "message_done");
+  assert.ok(messageDone);
+  assert.equal(messageDone.stop_reason, "end_turn");
+  assert.deepEqual(messageDone.usage, {
+    input_tokens: 12,
+    output_tokens: 8,
+    cached_input_tokens: 4,
+    reasoning_tokens: 3,
+  });
+  assert.equal(messageDone.providerData?.provider, "ds4");
+  const providerPayload = messageDone.providerData?.payload as {
+    streamDiagnostics?: {
+      eventCount: number;
+      parseErrorCount: number;
+      textDeltaCount: number;
+      textCharCount: number;
+      reasoningDeltaCount: number;
+      reasoningCharCount: number;
+      toolCallDeltaCount: number;
+      toolCallArgumentCharCount: number;
+      eventTypes: string[];
+    };
+    response?: {
+      id?: string;
+    };
+  };
+  assert.equal(providerPayload.response?.id, "resp_ds4");
+  assert.deepEqual(providerPayload.streamDiagnostics, {
+    eventCount: 12,
+    parseErrorCount: 0,
+    textDeltaCount: 1,
+    textCharCount: "before tool".length,
+    reasoningDeltaCount: 1,
+    reasoningCharCount: "Need terminal state.".length,
+    toolCallDeltaCount: 1,
+    toolCallArgumentCharCount: "{\"command\"".length,
+    eventTypes: [
+      "response.completed",
+      "response.content_part.added",
+      "response.created",
+      "response.function_call_arguments.delta",
+      "response.function_call_arguments.done",
+      "response.output_item.added",
+      "response.output_item.done",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.reasoning_summary_text.delta",
+    ],
+  });
+});
+
+test("ds4 Responses provider maps failed events to canonical errors", async () => {
+  const fetchImpl: typeof fetch = async () => sseResponse([
+    sseData({
+      type: "response.created",
+      response: {
+        id: "resp_failed",
+      },
+    }),
+    sseData({
+      type: "response.failed",
+      response: {
+        id: "resp_failed",
+        status: "failed",
+        error: {
+          code: "server_error",
+          message: "ds4 failed",
+        },
+      },
+    }),
+    sseData("[DONE]"),
+  ]);
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "http://127.0.0.1:4444/v1",
+    fetch: fetchImpl,
+  });
+
+  const events = [];
+  for await (const event of provider.invoke(messages, [], {
+    model: "deepseek-v4-flash",
+    maxOutputTokens: 2048,
+  })) {
+    events.push(event);
+  }
+
+  assert.deepEqual(events.map((event) => event.type), ["message_start", "error"]);
+  const errorEvent = events.find((event) => event.type === "error");
+  assert.ok(errorEvent);
+  assert.equal(errorEvent.error.message, "ds4 failed");
+});
 
 test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async () => {
   const provider = new OpenAIProvider("test-key");
@@ -272,8 +769,8 @@ test("OpenAI provider preserves function call name and call_id from streamed ite
         item_id: "fc_tool",
         output_index: 1,
         arguments: JSON.stringify({
-          text: "pwd",
-          submit: true,
+          command: "pwd",
+          raw_text: null,
           key: null,
           observe_after_ms: null,
           wait_for: "settled",
@@ -308,8 +805,8 @@ test("OpenAI provider preserves function call name and call_id from streamed ite
   assert.equal(toolUseDone.id, "call_tool");
   assert.equal(toolUseDone.name, "terminal_send");
   assert.deepEqual(toolUseDone.input, {
-    text: "pwd",
-    submit: true,
+    command: "pwd",
+    raw_text: null,
     key: null,
     observe_after_ms: null,
     wait_for: "settled",
@@ -393,7 +890,7 @@ test("OpenAI provider preserves text between multiple streamed tool calls", asyn
         type: "response.function_call_arguments.done",
         item_id: "fc_second",
         output_index: 3,
-        arguments: JSON.stringify({ text: "pwd", submit: true }),
+        arguments: JSON.stringify({ command: "pwd" }),
       };
       yield {
         type: "response.completed",
@@ -488,7 +985,7 @@ test("OpenAI provider sends assistant history in canonical block order", async (
           type: "tool_use",
           id: "call_second",
           name: "terminal_send",
-          input: { text: "pwd", submit: true },
+          input: { command: "pwd" },
         },
       ],
     },

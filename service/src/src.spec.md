@@ -9,7 +9,7 @@ The service acts as the central hub:
 - Optionally accepts HTTP/2 gRPC control streams from bud daemons
 - Optionally accepts subordinate HTTP/2 gRPC data streams from bud daemons
 - Serves REST API and SSE streams to web clients
-- Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic)
+- Orchestrates AI agent loops via LLM provider abstraction (OpenAI, Anthropic, direct local ds4, and Bud-local ds4)
 - Persists all data to PostgreSQL
 
 ## Files
@@ -103,8 +103,8 @@ Environment-based configuration with defaults.
 | `grpcDataEnableChannelz` | `GRPC_DATA_ENABLE_CHANNELZ` | - | Optional grpc-js channelz toggle for data |
 | `daemonTransportPolicy` | `DAEMON_TRANSPORT_POLICY` | websocket_baseline | Carrier preference order for daemon control and data-plane selection (`websocket_baseline`, `h2_preferred`, `quic_preferred`) |
 | `daemonInstallerBaseUrl` | `DAEMON_INSTALLER_BASE_URL` | https://get.bud.dev | Installer/artifact origin used when generating service-owned Bud install commands |
-| `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy streams |
-| `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy streams |
+| `dataPlaneMaxChunkBytes` | `DATA_PLANE_MAX_CHUNK_BYTES` or `GRPC_DATA_MAX_CHUNK_BYTES` | 16KB | Carrier-neutral max decoded generic stream chunk size for file/proxy/local-LLM streams |
+| `dataPlaneInitialCreditBytes` | `DATA_PLANE_INITIAL_CREDIT_BYTES` or `GRPC_DATA_INITIAL_CREDIT_BYTES` | 1MB | Initial receive credit advertised for generic file/proxy/local-LLM streams |
 | `dataPlaneMaxInFlightBytes` | `DATA_PLANE_MAX_IN_FLIGHT_BYTES` | 1MB | Cap on accumulated outbound stream credit per runtime stream |
 | `dataPlaneMaxConcurrentFileStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_FILE_STREAMS_PER_BUD` | 8 | Max active file streams per Bud across carriers |
 | `dataPlaneMaxConcurrentProxyStreamsPerBud` | `DATA_PLANE_MAX_CONCURRENT_PROXY_STREAMS_PER_BUD` | 16 | Max active proxy streams per Bud across carriers |
@@ -142,11 +142,16 @@ Environment-based configuration with defaults.
 | `googleClientId` | `GOOGLE_CLIENT_ID` | - | Google OAuth client id |
 | `googleClientSecret` | `GOOGLE_CLIENT_SECRET` | - | Google OAuth client secret |
 | `openaiApiKey` | `OPENAI_API_KEY` | - | OpenAI API key |
+| `ds4DirectBaseUrl` | `DS4_DIRECT_BASE_URL` | - | Optional direct local-dev ds4 OpenAI-compatible Responses base URL; enables ds4 provider registration when set |
+| `ds4DirectModel` | `DS4_DIRECT_MODEL` | deepseek-v4-flash | Model string sent to the local ds4 Responses endpoint |
+| `ds4DirectContextTokens` | `DS4_DIRECT_CONTEXT_TOKENS` | 100000 | Context-window metadata advertised for direct ds4 fallback models |
+| `ds4DirectMaxOutputTokens` | `DS4_DIRECT_MAX_OUTPUT_TOKENS` | 384000 | Max-output metadata and default output-token cap for direct ds4 requests |
 | `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
-| `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Max tokens per response |
+| `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Global upper bound for response tokens before selected-model capability caps are applied |
 | `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | low | Compatibility fallback for non-catalog model overrides |
 | `agentAutoCompactionRatio` | `AGENT_AUTO_COMPACTION_RATIO` | 0.95 | Usable-input threshold ratio for automatic compaction, clamped to at most 0.95 |
+| `agentContextDriftDebug` | `AGENT_CONTEXT_DRIFT_DEBUG` | false | Enable local-only model context drift snapshots and diffs under `.bud-debug/` |
 | `runLogMaxBytes` | `RUN_LOG_MAX_BYTES` | 100MB | Max stored run logs |
 | `terminalIdleTimeoutMinutes` | `TERMINAL_IDLE_TIMEOUT_MINUTES` | 30 | Mark session idle |
 | `terminalIdleCleanupHours` | `TERMINAL_IDLE_CLEANUP_HOURS` | 0 | Close idle sessions (`0` disables destructive cleanup) |
@@ -163,7 +168,7 @@ Environment-based configuration with defaults.
 - `PROTO_VERSION = "0.1"` - Base WebSocket protocol
 - `TERMINAL_PROTO_VERSION = "0.2"` - Terminal extensions
 
-**Type Export**:
+**Type Exports**:
 - `ReasoningEffortSetting` - catalog `ReasoningLevel` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`)
 
 ## Subfolders
@@ -178,7 +183,7 @@ Agent orchestration for tool-calling loops using the LLM provider abstraction, n
 
 ### `llm/` → [llm.spec.md](./llm/llm.spec.md)
 
-Provider-agnostic LLM abstraction layer with canonical types and provider implementations (OpenAI, Anthropic).
+Provider-agnostic LLM abstraction layer with canonical types and provider implementations (OpenAI, Anthropic, direct local ds4, and Bud-local ds4).
 
 ### `db/` → [db.spec.md](./db/db.spec.md)
 
@@ -218,7 +223,7 @@ HTTP/2 gRPC daemon control and data gateways using grpc-js/proto-loader, isolate
 
 ### `transport/` → [transport/transport.spec.md](./transport/transport.spec.md)
 
-Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, carrier health and selection observability, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy and file responses.
+Daemon-facing transport router boundary. Runtime code should depend on this interface instead of importing WebSocket gateway send helpers directly. The composite implementation follows `DAEMON_TRANSPORT_POLICY`, keeps WebSocket as the default baseline carrier while optional gRPC control/data adapters remain available, and owns process-local gateway drain state for refusing new long-lived daemon work during shutdown/deploy windows. The folder tracks carrier-neutral runtime stream state, carrier health and selection observability, credit caps, per-Bud stream concurrency, final-offset validation, and generic stream dispatch used by localhost proxy, file, and Bud-local LLM responses.
 
 ### `ws/` → [ws.spec.md](./ws/ws.spec.md)
 
@@ -250,7 +255,7 @@ Database utility scripts for development and auth/bootstrap operations (seeding,
                                            ▼
                                    ┌──────────────┐
                                    │  providers/  │
-                                   │ OpenAI, etc. │
+                                   │OpenAI/ds4/etc│
                                    └──────────────┘
 ```
 

@@ -30,9 +30,16 @@ export type ModelInfo = {
       | 'openai_reasoning_effort'
       | 'anthropic_output_effort'
       | 'anthropic_thinking_budget'
+      | 'ds4_responses_reasoning_effort'
       | 'none'
     levels: ReasoningOption[]
     default_level: ReasoningLevel
+  }
+  request_mode?: string
+  compatibility?: string[]
+  source?: {
+    kind: 'service_local_dev' | 'bud_local'
+    bud_id?: string
   }
 }
 
@@ -73,7 +80,7 @@ export function normalizeReasoningForModel(
   return getDefaultReasoningForModel(models, selectedModel)
 }
 
-export function useAvailableModels() {
+export function useAvailableModels(budId?: string | null) {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
   const [serviceDefaultModel, setServiceDefaultModel] = useState<string | null>(null)
@@ -82,7 +89,9 @@ export function useAvailableModels() {
   useEffect(() => {
     let cancelled = false
 
-    apiFetch('/api/models')
+    const query = budId ? `?bud_id=${encodeURIComponent(budId)}` : ''
+
+    apiFetch(`/api/models${query}`)
       .then(async (response) => {
         if (!response.ok || cancelled) {
           return
@@ -116,7 +125,7 @@ export function useAvailableModels() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [budId])
 
   return {
     models,

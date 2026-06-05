@@ -35,8 +35,12 @@ Owns:
 - heartbeat handling
 - terminal frame parsing and routing
 - WebSocket data-plane carrier registration when `bud_envelope.stream_frames` is advertised
+- Bud-local LLM capability inspection; healthy ds4 Responses capability adds
+  `local_llm_http` to the negotiated WebSocket data-plane stream families
 - generic stream lifecycle dispatch into `transport/data-plane-router.ts`
 - dispatch of generic stream lifecycle frames before throttled activity heartbeat writes, preserving inbound frame order for the shared data-plane runtime
+- daemon `local_llm_open_result` frame dispatch into the service-side local LLM
+  data-plane client
 - daemon `proxy_ws_*` frame dispatch into the proxied WebSocket runtime
 - active-session tracker registration and timeout scheduling
 - Bud offline transition side effects
@@ -101,7 +105,7 @@ Browser/Client                 Service                      Bud Daemon
 - daemons must advertise `capabilities.bud_envelope = { version: 1, websocket_binary: true }`
 - after capability negotiation, the service and daemon exchange protobuf `BudEnvelope` binary frames; JSON text/binary compatibility frames are rejected
 - active terminal/control frame types dispatch through typed payload oneof fields with direct protobuf fields rather than whole-frame `frame_json`
-- capable daemons can additionally advertise `bud_envelope.stream_frames`; the same authenticated socket is then registered as a control+data data-plane carrier for `file_read`, `localhost_http_proxy`, and `localhost_websocket_proxy` when the corresponding daemon capabilities are present
+- capable daemons can additionally advertise `bud_envelope.stream_frames`; the same authenticated socket is then registered as a control+data data-plane carrier for `file_read`, `localhost_http_proxy`, `localhost_websocket_proxy`, and `local_llm_http` when the corresponding daemon capabilities are present
 - `LegacyJsonPayload` remains decode-compatible for older binary fixtures and conformance testing, but not active daemon sessions
 
 **Connection States**:
@@ -225,6 +229,7 @@ The gateway also rejects `hello` frames that do not advertise `bud_envelope.vers
 | `proxy_ws_open_result` / `proxy_ws_message` / `proxy_ws_close` / `proxy_ws_error` | proxied WebSocket runtime delivery |
 | `file_open_result` | file runtime open-result delivery |
 | `file_resolve_result` | metadata-only file resolve delivery for absolute POSIX open preflight |
+| `local_llm_open_result` | Bud-local LLM data-plane open-result delivery |
 
 Database-backed enrollment-token validation is disabled on the gateway. The only token path is the exact `DEV_BUD_TOKEN_BYPASS` local bypass; normal onboarding uses browser-mediated device claim.
 
@@ -251,10 +256,23 @@ Bud's `hello` frame includes capabilities:
     target_hosts?: string[];
   };
   files?: { workspace_read?: true; resolve?: { absolute_posix?: true } };
+  llm?: {
+    local_api?: true;
+    servers?: Array<{
+      id: "ds4";
+      provider: "ds4";
+      compatibility: ["openai_responses"];
+      request_mode: "ds4_openai_responses";
+      generation_path: "/v1/responses";
+      healthy: true;
+    }>;
+  };
 }
 ```
 
 The gateway still tolerates deprecated tmux-shaped hello fields from older daemons during rollout, but it now strips those compatibility fields before persisting `bud.capabilities`. `proxy.localhost_http` and `proxy.localhost_websocket` drive proxy stream-family negotiation; proxy method/host/default metadata is retained as advertised capability context for product surfaces.
+`capabilities.llm` is preserved for Bud-local model inventory and data-plane
+routing, but it must not contain the daemon-local URL.
 
 ## Configuration Used
 

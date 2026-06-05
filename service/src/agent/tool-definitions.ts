@@ -8,17 +8,19 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_send",
     description:
-      "Send input to the current terminal program. Use for shell commands, multiline shell input, REPL/TUI input, confirmations, launching interactive programs, and single-key actions.",
+      "Send one input gesture to the current terminal program. Use command for text plus Enter, raw_text for text without Enter, and key for one semantic key gesture.",
     parameters: {
       type: "object",
       properties: {
-        text: {
+        command: {
           type: "string",
-          description: "Optional text to send literally to the terminal.",
+          description:
+            "Line input to send followed by Enter. Use for shell commands, REPL input, confirmations, and prompts.",
         },
-        submit: {
-          type: "boolean",
-          description: "When true, press Enter after sending the text.",
+        raw_text: {
+          type: "string",
+          description:
+            "Literal text to type without pressing Enter. Use only when intentionally leaving input unsubmitted.",
         },
         key: {
           type: "string",

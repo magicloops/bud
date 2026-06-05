@@ -12,7 +12,17 @@ import type {
   TokenUsage,
 } from "./types.js";
 
-export type LlmCallRequestMode = "openai_responses" | "anthropic_messages";
+const CANONICAL_PROVIDER_IDS = [
+  "openai",
+  "anthropic",
+  "ds4",
+] as const satisfies readonly CanonicalProviderId[];
+
+export type LlmCallRequestMode =
+  | "openai_responses"
+  | "anthropic_messages"
+  | "ds4_openai_responses"
+  | "ds4_openai_chat";
 
 export type LlmCallVisibility = "provider_only" | "product_text" | "tool";
 
@@ -477,7 +487,7 @@ function reasoningBlockFromPayload(
   const providerData = canonicalPayload.providerData;
   if (isRecord(providerData)) {
     const provider = providerData.provider;
-    if (provider === "openai" || provider === "anthropic") {
+    if (provider === "openai" || provider === "anthropic" || provider === "ds4") {
       return {
         type: "reasoning",
         text: canonicalPayload.text,
@@ -607,11 +617,14 @@ function deriveOpenAIAssistantPhases(
 }
 
 function isCanonicalProviderId(value: string): value is CanonicalProviderId {
-  return value === "openai" || value === "anthropic";
+  return value === "openai" || value === "anthropic" || value === "ds4";
 }
 
 function parseRequestMode(value: string): LlmCallRequestMode {
-  return value === "openai_responses" || value === "anthropic_messages"
+  return value === "openai_responses" ||
+    value === "anthropic_messages" ||
+    value === "ds4_openai_responses" ||
+    value === "ds4_openai_chat"
     ? value
     : "openai_responses";
 }
@@ -634,7 +647,7 @@ function countMaps(
   maps: Partial<Record<CanonicalProviderId, Map<string, unknown>>>,
 ): Partial<Record<CanonicalProviderId, number>> {
   const counts: Partial<Record<CanonicalProviderId, number>> = {};
-  for (const provider of ["openai", "anthropic"] as const) {
+  for (const provider of CANONICAL_PROVIDER_IDS) {
     const count = maps[provider]?.size ?? 0;
     if (count > 0) {
       counts[provider] = count;
@@ -664,7 +677,7 @@ function completedCallIntegrityCounts(
   const itemlessCompletedCallCounts: Partial<Record<CanonicalProviderId, number>> = {};
   const outputlessCompletedCallCounts: Partial<Record<CanonicalProviderId, number>> = {};
 
-  for (const provider of ["openai", "anthropic"] as const) {
+  for (const provider of CANONICAL_PROVIDER_IDS) {
     for (const summary of summariesByProvider[provider]?.values() ?? []) {
       if (summary.status !== "completed") {
         continue;
@@ -690,7 +703,13 @@ function completedCallIntegrityCounts(
 }
 
 export function buildRequestMode(provider: CanonicalProviderId): LlmCallRequestMode {
-  return provider === "openai" ? "openai_responses" : "anthropic_messages";
+  if (provider === "openai") {
+    return "openai_responses";
+  }
+  if (provider === "anthropic") {
+    return "anthropic_messages";
+  }
+  return "ds4_openai_responses";
 }
 
 export function createLlmCallId(): string {

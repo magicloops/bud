@@ -1819,6 +1819,7 @@ fn stream_type_proto(value: &str) -> u64 {
         "localhost_http_proxy" => 2,
         "file_read" => 3,
         "localhost_websocket_proxy" => 4,
+        "local_llm_http" => 5,
         _ => 0,
     }
 }
@@ -1828,6 +1829,7 @@ fn stream_type_json(value: u64) -> &'static str {
         2 => "localhost_http_proxy",
         3 => "file_read",
         4 => "localhost_websocket_proxy",
+        5 => "local_llm_http",
         _ => "terminal_interactive",
     }
 }

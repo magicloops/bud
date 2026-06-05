@@ -342,6 +342,126 @@ test("automatic compaction emits sanitized failure events", async (t) => {
   assert.equal("replacement_history" in failed, false);
 });
 
+test("agent flow stores sanitized runtime error after non-cancel provider failure", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const runtimeEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
+  const lastErrors: Array<Record<string, unknown>> = [];
+  let finishCount = 0;
+  const runtime = {
+    emit(_threadId: string, event: { event: string; data: Record<string, unknown> }) {
+      runtimeEvents.push(event);
+      return `cursor-${runtimeEvents.length}`;
+    },
+    setLastError(_threadId: string, error: Record<string, unknown>, cursor?: string) {
+      lastErrors.push({ ...error, cursor });
+    },
+    markThinking() {
+      // noop
+    },
+    setEnvironment() {
+      // noop
+    },
+    finishTurn() {
+      finishCount += 1;
+    },
+  };
+  const service = new AgentService(
+    {} as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+  const environment = stubNormalEnvironment(service);
+
+  Reflect.set(service, "conversationLoader", {
+    async loadWithDiagnostics() {
+      return {
+        messages: [{ role: "user", content: "continue" }],
+        reconstruction: {
+          mode: "canonical_only",
+        },
+      };
+    },
+  });
+  Reflect.set(service, "compactConversationIfNeeded", async () => null);
+  Reflect.set(service, "modelRunner", {
+    resolveProviderName() {
+      return "openai";
+    },
+    async invokeModel() {
+      throw {
+        code: "DATA_PLANE_STREAM_LIMIT_EXCEEDED",
+        message: "Bud already has 1 active local_llm_http stream(s)",
+        retryable: true,
+      };
+    },
+  });
+
+  const runAgentFlow = Reflect.get(service, "runAgentFlow") as (args: {
+    threadId: string;
+    turnId: string;
+    sessionId: string | null;
+    model: string;
+    modelReasoning: {
+      providerModel: string;
+      reasoningLevel: string;
+    };
+    modelSelection: {
+      model: string;
+      reasoningEffort: string;
+      source: string;
+    };
+    environment: AgentEnvironmentSnapshot;
+    ownerUserId?: string | null;
+    controller: AbortController;
+  }) => Promise<void>;
+
+  await assert.rejects(
+    runAgentFlow.call(service, {
+      threadId: "017dbb12-3865-44fc-8228-17bc55af2cd5",
+      turnId: "01KQG8FX9YZAR32E4RGWVVA67G",
+      sessionId: "sess_test",
+      model: "gpt-5.5",
+      modelReasoning: {
+        providerModel: "gpt-5.5",
+        reasoningLevel: "low",
+      },
+      modelSelection: {
+        model: "gpt-5.5",
+        reasoningEffort: "low",
+        source: "service_default",
+      },
+      environment,
+      ownerUserId: "user-1",
+      controller: new AbortController(),
+    }),
+    (error) => {
+      return (
+        Boolean(error) &&
+        typeof error === "object" &&
+        (error as Record<string, unknown>).code === "DATA_PLANE_STREAM_LIMIT_EXCEEDED"
+      );
+    },
+  );
+
+  assert.equal(finishCount, 1);
+  assert.equal(runtimeEvents.length, 1);
+  assert.equal(runtimeEvents[0]?.event, "final");
+  assert.equal(runtimeEvents[0]?.data.status, "failed");
+  assert.equal(runtimeEvents[0]?.data.error_code, "DATA_PLANE_STREAM_LIMIT_EXCEEDED");
+  assert.equal(runtimeEvents[0]?.data.retryable, true);
+  assert.match(String(runtimeEvents[0]?.data.error), /local model is already busy/);
+  assert.doesNotMatch(String(runtimeEvents[0]?.data.error), /local_llm_http/);
+  assert.equal(lastErrors.length, 1);
+  assert.equal(lastErrors[0]?.turn_id, "01KQG8FX9YZAR32E4RGWVVA67G");
+  assert.equal(lastErrors[0]?.code, "DATA_PLANE_STREAM_LIMIT_EXCEEDED");
+  assert.equal(lastErrors[0]?.cursor, "cursor-1");
+});
+
 test("final no-tool response records exactly one LLM call", async (t) => {
   t.after(() => {
     mock.restoreAll();
@@ -577,7 +697,11 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
     },
   };
   const service = new AgentService(
-    {} as never,
+    {
+      async getSession() {
+        return null;
+      },
+    } as never,
     runtime as never,
     createLogger() as never,
     false,
@@ -671,6 +795,33 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
   Reflect.set(service, "toolExecutor", {
     async execute() {
       return {
+        directive: {
+          type: "tool_call",
+          tool: "terminal.observe",
+          callId: "call-observe",
+          view: "screen",
+        },
+        args: { view: "screen" },
+        summary: "Observed terminal screen",
+        outputTruncationReason: null,
+        result: {
+          kind: "observation",
+          output: "screen",
+          readiness: {
+            ready: true,
+            confidence: 1,
+            trigger: "prompt_detected",
+            hints: {
+              looks_like_prompt: true,
+              looks_like_confirmation: false,
+              looks_like_password: false,
+              looks_like_pager: false,
+              looks_like_error: false,
+              may_still_be_processing: false,
+            },
+          },
+          view: "screen",
+        },
         payload: {
           tool: "terminal.observe",
           call_id: "call-observe",

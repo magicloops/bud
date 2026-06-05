@@ -1,8 +1,10 @@
 import type { ToolContentRendererProps } from '../types'
 
 export function TerminalSendContent({ payload }: ToolContentRendererProps) {
-  const text = payload.text as string | undefined
-  const submit = payload.submit === true
+  const command = typeof payload.command === 'string' ? payload.command : null
+  const rawText = typeof payload.raw_text === 'string' ? payload.raw_text : null
+  const legacyText = typeof payload.text === 'string' ? payload.text : null
+  const legacySubmit = payload.submit === true
   const key =
     typeof payload.key === 'string' && payload.key.length > 0
       ? payload.key
@@ -22,6 +24,14 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
     typeof readiness?.confidence === 'number' ? readiness.confidence : null
   const readinessTrigger = typeof readiness?.trigger === 'string' ? readiness.trigger : null
   const submitted = typeof payload.submitted === 'boolean' ? payload.submitted : null
+  const inputDispatched =
+    typeof payload.input_dispatched === 'boolean'
+      ? payload.input_dispatched
+      : submitted
+  const enterRequested =
+    typeof payload.enter_requested === 'boolean'
+      ? payload.enter_requested
+      : command !== null || legacySubmit
   const contextMode = typeof contextAfter?.mode === 'string' ? contextAfter.mode : null
   const contextProgram =
     typeof contextAfter?.programDisplayName === 'string'
@@ -31,7 +41,7 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
         : null
   const contextSource = typeof contextAfter?.source === 'string' ? contextAfter.source : null
 
-  if (!text && !submit && !key) return null
+  if (!command && !rawText && !legacyText && !key && !enterRequested) return null
 
   return (
     <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed">
@@ -50,14 +60,33 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
           </span>
         ) : null}
       </div>
-      {text ? <div className="font-mono text-foreground whitespace-pre-wrap">{text}</div> : null}
-      {submit ? <div className="text-muted-foreground">Submit: Enter</div> : null}
+      {command ? (
+        <>
+          <div className="text-muted-foreground">Command</div>
+          <div className="font-mono text-foreground whitespace-pre-wrap">{command}</div>
+        </>
+      ) : null}
+      {rawText ? (
+        <>
+          <div className="text-muted-foreground">Raw text</div>
+          <div className="font-mono text-foreground whitespace-pre-wrap">{rawText}</div>
+        </>
+      ) : null}
+      {!command && !rawText && legacyText ? (
+        <>
+          <div className="text-muted-foreground">
+            {legacySubmit ? 'Legacy command' : 'Legacy raw text'}
+          </div>
+          <div className="font-mono text-foreground whitespace-pre-wrap">{legacyText}</div>
+        </>
+      ) : null}
       {key ? (
         <div className="text-muted-foreground">Key: {key}</div>
       ) : null}
-      {submitted !== null ? (
+      {enterRequested ? <div className="text-muted-foreground">Enter requested</div> : null}
+      {inputDispatched !== null ? (
         <div className="mt-1 text-muted-foreground">
-          Submitted: {submitted ? 'yes' : 'no'}
+          Input dispatched: {inputDispatched ? 'yes' : 'no'}
         </div>
       ) : null}
       {contextMode ? (

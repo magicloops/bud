@@ -72,12 +72,12 @@ HTTP/2 data adapter for active `BudData.Attach` streams.
 Carrier-neutral data-plane registry and runtime stream dispatcher.
 
 - represents WebSocket control+data, HTTP/2 data, and future QUIC/data-only carriers behind `DataPlaneSessionTracker`
-- selects carriers for stream families such as `file_read`, `localhost_http_proxy`, and `localhost_websocket_proxy`
+- selects carriers for stream families such as `file_read`, `localhost_http_proxy`, `localhost_websocket_proxy`, and `local_llm_http`
 - applies explicit carrier policy order plus per-carrier health, demoting unhealthy or low-score preferred carriers to the next eligible candidate
 - returns selected-carrier health, candidate summaries, and selection reasons so operators can see why WebSocket/H2/QUIC was chosen
 - owns generic stream runtime state for stream ids, offsets, receive/send credits, close/reset flags, and per-stream callbacks
 - serializes inbound `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` handling per `stream_id` so concurrent carrier callbacks cannot reorder lifecycle frames
-- counts active runtime streams per Bud/stream family for file/proxy concurrency enforcement; WebSocket proxy sessions register marker runtime streams so data-plane finalization can close active browser sockets on daemon disconnect
+- counts active runtime streams per Bud/stream family for file/proxy/local-LLM concurrency enforcement; WebSocket proxy sessions register marker runtime streams so data-plane finalization can close active browser sockets on daemon disconnect
 - caps accumulated outbound stream credit to the selected carrier's max in-flight byte limit
 - dispatches `stream_data`, `stream_credit`, `stream_reset`, and `stream_close` for both WebSocket and HTTP/2 paths
 - validates `stream_close.final_offset` exactly against the runtime stream's accepted receive offset and resets on mismatch
@@ -100,7 +100,7 @@ Focused unit coverage for control-router fallback when a preferred HTTP/2 carrie
 
 Current WebSocket-backed adapter for the router interface. It reuses the existing WebSocket session tracker and sends protobuf `BudEnvelope` binary frames to daemons that advertised `bud_envelope.websocket_binary`; sessions without binary-envelope support are refused rather than receiving JSON text fallback frames.
 
-This adapter is the baseline carrier for Phase 0/1. Capable sessions now dispatch active terminal/control frames through typed protobuf oneof payload tags with direct payload fields. When a daemon advertises `bud_envelope.stream_frames`, the authenticated WebSocket is also registered as a control+data data-plane carrier for file/proxy stream frames, including the Phase 5 `localhost_websocket_proxy` family when the daemon advertises `proxy.localhost_websocket`.
+This adapter is the baseline carrier for Phase 0/1. Capable sessions now dispatch active terminal/control frames through typed protobuf oneof payload tags with direct payload fields. When a daemon advertises `bud_envelope.stream_frames`, the authenticated WebSocket is also registered as a control+data data-plane carrier for file/proxy/local-LLM stream frames, including the Phase 5 `localhost_websocket_proxy` family when the daemon advertises `proxy.localhost_websocket` and the `local_llm_http` family when the daemon advertises healthy Bud-local ds4 Responses capability.
 
 During gateway drain, this adapter refuses new long-lived daemon work such as `terminal_ensure`, proxy-open, and file-open/read frames while still allowing short control traffic to continue.
 

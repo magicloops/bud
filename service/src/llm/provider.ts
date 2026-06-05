@@ -15,6 +15,12 @@ import type {
   ModelCapabilities,
 } from "./types.js";
 
+export type ProviderInvocationContext = {
+  threadId: string;
+  budId: string;
+  ownerUserId: string | null;
+};
+
 export class ProviderContextWindowError extends Error {
   readonly provider: CanonicalProviderId;
   readonly model: string;
@@ -72,8 +78,23 @@ export interface LLMProvider {
     messages: CanonicalMessage[],
     tools: CanonicalTool[],
     config: ModelConfig,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    context?: ProviderInvocationContext
   ): AsyncIterable<CanonicalStreamEvent>;
+
+  /**
+   * Build a provider-specific request snapshot for local diagnostics.
+   *
+   * This must not include credentials or transport-only headers. It is intended
+   * for debug artifact capture and should match the provider request body as
+   * closely as practical.
+   */
+  buildDebugRequestSnapshot?(
+    messages: CanonicalMessage[],
+    tools: CanonicalTool[],
+    config: ModelConfig,
+    context?: ProviderInvocationContext
+  ): unknown;
 
   /**
    * Invoke the model without streaming (optional).

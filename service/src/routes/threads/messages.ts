@@ -20,6 +20,7 @@ import {
   newerThanMessageCursor,
   olderThanMessageCursor,
   requireAuthorizedThreadAccess,
+  sendLocalModelAvailabilityError,
   sendModelSelectionError,
   serializeMessage,
   toModelSelectionMetadata,
@@ -196,7 +197,6 @@ export async function registerThreadMessageRoutes(
       }
       throw err;
     }
-
     const existingMessage = await findOwnedUserMessageByClientId(
       thread.threadId,
       viewer.userId,
@@ -209,6 +209,13 @@ export async function registerThreadMessageRoutes(
         client_id: serializedMessage.client_id,
         message: serializedMessage,
       });
+      return;
+    }
+
+    if (await sendLocalModelAvailabilityError(reply, {
+      budId: thread.budId,
+      model: selection.model,
+    })) {
       return;
     }
 

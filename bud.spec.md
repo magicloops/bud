@@ -4,7 +4,7 @@
 
 ## Overview
 
-Bud is a three-tier system that connects AI agents to physical devices through persistent terminal sessions. Users interact through a chat-based web interface, where an LLM (via the configured OpenAI or Anthropic provider) can execute commands on remote "buds" (device agents) in real-time.
+Bud is a three-tier system that connects AI agents to physical devices through persistent terminal sessions. Users interact through a chat-based web interface, where an LLM (via the configured OpenAI, Anthropic, direct local ds4, or Bud-local ds4 provider path) can execute commands on remote "buds" (device agents) in real-time.
 
 ### Core Value Proposition
 
@@ -42,7 +42,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | Daemon → Service | HTTP REST | Device-claim bootstrap (`/api/device-auth/start`, `/api/device-auth/poll`) |
 | Service ↔ Web UI | HTTP REST | CRUD operations for buds, threads, messages, sessions |
 | Service → Web UI | SSE | Real-time streaming of agent events, terminal output |
-| Service → LLM Provider | HTTP | LLM inference via OpenAI Responses API or Anthropic Messages API |
+| Service → LLM Provider | HTTP or authenticated Bud data-plane stream | LLM inference via OpenAI Responses API, Anthropic Messages API, direct local ds4 Responses, or Bud-local ds4 Responses |
 
 ---
 
@@ -490,7 +490,7 @@ The daemon now keeps tmux behind an internal backend adapter so future PTY or mo
 - Built-in tool calling
 - Streaming support
 - Provider/model-specific reasoning controls
-- OpenAI Responses API and Anthropic Messages API both map into Bud's canonical provider interface
+- OpenAI Responses API, Anthropic Messages API, direct local ds4 Responses, and Bud-local ds4 Responses all map into Bud's canonical provider interface
 
 ---
 
@@ -571,6 +571,16 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/terminal-freshness/validation-checklist.md](./plan/terminal-freshness/validation-checklist.md) | Manual and automated validation checklist for terminal freshness hints |
 | [plan/offline-bud-message-send-preflight.md](./plan/offline-bud-message-send-preflight.md) | Phase plan for fixing offline-Bud message sends by rejecting known-offline fresh sends before durable message side effects, while preserving an explicit post-insert race fallback when agent startup loses transport |
 | [plan/llm-models/implementation-spec.md](./plan/llm-models/implementation-spec.md) | Phased implementation plan for centralizing Bud's model catalog, adding the Opus 4.6/4.7 and GPT-5.4/GPT-5.5 model set, and making reasoning controls provider/model-specific |
+| [plan/ds4/ds4.spec.md](./plan/ds4/ds4.spec.md) | Folder spec for adding ds4 as a local LLM provider first through direct local service config and then through Bud-scoped local LLM daemon capabilities |
+| [plan/ds4/implementation-spec.md](./plan/ds4/implementation-spec.md) | Phased implementation plan for exposing ds4 as provider `ds4`, adding Bud-scoped model inventory, and invoking Bud-local ds4 through a narrow data-plane stream |
+| [plan/ds4/phase-0-contract-baseline-and-fixtures.md](./plan/ds4/phase-0-contract-baseline-and-fixtures.md) | Contract baseline phase covering ds4 fixtures, model alias policy, request-mode names, reasoning behavior, and initial limits |
+| [plan/ds4/phase-1-direct-local-dev-provider.md](./plan/ds4/phase-1-direct-local-dev-provider.md) | Direct local-dev phase covering service-side ds4 provider registration, Chat Completions parsing, and same-machine ds4 live smoke tests |
+| [plan/ds4/phase-2-daemon-local-llm-capability.md](./plan/ds4/phase-2-daemon-local-llm-capability.md) | Daemon capability phase covering local ds4 config, startup probe, loopback validation, and `capabilities.llm` preservation |
+| [plan/ds4/phase-3-bud-scoped-model-inventory-and-selection.md](./plan/ds4/phase-3-bud-scoped-model-inventory-and-selection.md) | API and selection phase covering Bud-scoped model inventory, owner authorization, ds4 availability validation, and web selector adoption |
+| [plan/ds4/phase-4-local-llm-data-plane-provider.md](./plan/ds4/phase-4-local-llm-data-plane-provider.md) | Bud-backed invocation phase covering `local_llm_http`, daemon loopback forwarding policy, `BudLocalDs4Provider`, cancellation, and provider-ledger recording |
+| [plan/ds4/phase-5-responses-hardening-and-rollout.md](./plan/ds4/phase-5-responses-hardening-and-rollout.md) | Finalization phase covering ds4 Responses compatibility decisions, limits, audit, live validation, and product/deployment handoff |
+| [plan/ds4/progress-checklist.md](./plan/ds4/progress-checklist.md) | Running implementation checklist for the ds4 local LLM rollout |
+| [plan/ds4/validation-checklist.md](./plan/ds4/validation-checklist.md) | Automated and manual validation checklist for direct and Bud-backed ds4 support |
 | [plan/openai-phases/openai-phases.spec.md](./plan/openai-phases/openai-phases.spec.md) | Folder spec for preserving OpenAI Responses assistant message `phase` values across Bud's manual replay path while keeping Anthropic behavior unchanged |
 | [plan/openai-phases/implementation-spec.md](./plan/openai-phases/implementation-spec.md) | Parent implementation spec for preserving OpenAI Responses assistant `phase` through canonical types, OpenAI provider round trip, provider-ledger persistence, transcript fallback, and validation |
 | [plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md](./plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md) | SDK and fixture-baseline phase covering the OpenAI SDK `6.39.0` update, Responses `phase` type inspection, and provider fixture shapes |
@@ -726,6 +736,14 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/push-notifications/implementation-spec.md](./plan/push-notifications/implementation-spec.md) | Parent implementation spec for push notifications on unseen attention-worthy thread output, including thread-based badge semantics, APNs-first delivery, and phased rollout through read state, outbox, and future human-input triggers |
 | [plan/terminal-send-refactor/terminal-send-refactor.spec.md](./plan/terminal-send-refactor/terminal-send-refactor.spec.md) | Folder spec for the phased `terminal.send` settled-by-default refactor, centered on output quiescence, partial-progress timeout results, and `terminal.observe(wait_for:"settled")` as the explicit longer-wait hatch |
 | [plan/terminal-send-refactor/implementation-spec.md](./plan/terminal-send-refactor/implementation-spec.md) | Phased implementation plan for making `terminal.send` wait for output quiescence by default, reusing the existing `pipe-pane` watcher, keeping `capture-pane` at the edges, and collapsing most immediate send-plus-observe chains into a single send |
+| [plan/send-tool-update/send-tool-update.spec.md](./plan/send-tool-update/send-tool-update.spec.md) | Folder spec for the phased model-facing `terminal.send` update from optional `text`/`submit` to explicit `command`, `raw_text`, and `key` gestures |
+| [plan/send-tool-update/implementation-spec.md](./plan/send-tool-update/implementation-spec.md) | Implementation plan for cutting over the service agent contract, executor/result metadata, docs/tests/client rendering, and optional Bud wire cleanup for the new `terminal.send` gesture shape |
+| [plan/send-tool-update/phase-1-agent-contract-and-parser-cutover.md](./plan/send-tool-update/phase-1-agent-contract-and-parser-cutover.md) | Phase 1 plan for changing the `terminal_send` JSON Schema, prompt guidance, directive types, model-runner parsing, effective args, and historical replay handling |
+| [plan/send-tool-update/phase-2-executor-result-and-stream-clarity.md](./plan/send-tool-update/phase-2-executor-result-and-stream-clarity.md) | Phase 2 plan for mapping `command`/`raw_text`/`key` gestures to runtime input, updating pending-command tracking, send summaries, and explicit gesture result metadata |
+| [plan/send-tool-update/phase-3-docs-tests-fixtures-and-client-rendering.md](./plan/send-tool-update/phase-3-docs-tests-fixtures-and-client-rendering.md) | Phase 3 plan for provider fixtures, first-party tool rendering, protocol/spec updates, automated tests, and manual validation |
+| [plan/send-tool-update/phase-4-daemon-wire-cleanup-decision.md](./plan/send-tool-update/phase-4-daemon-wire-cleanup-decision.md) | Optional Phase 4 decision plan for keeping the current service-to-Bud `text`/`submit` adapter or replacing it with explicit daemon wire gestures and daemon-derived result metadata |
+| [plan/send-tool-update/progress-checklist.md](./plan/send-tool-update/progress-checklist.md) | Running implementation checklist for the send-tool update |
+| [plan/send-tool-update/validation-checklist.md](./plan/send-tool-update/validation-checklist.md) | Automated and manual validation checklist for the send-tool update |
 | [plan/client-id/implementation-spec.md](./plan/client-id/implementation-spec.md) | Phased implementation plan for adding stable UUIDv7 `client_id` values to messages, keeping `message_id` as the persisted row identifier, and threading the new identity through transcript reads, user writes, `/agent/state`, agent SSE, and first-party client reconciliation |
 | [review/bud-daemon-multi-account-review.md](./review/bud-daemon-multi-account-review.md) | Review and workflow guide for non-`~/.bud` local multi-account testing, including copy/run helper script examples |
 | [review/bud-daemon-modularization-review.md](./review/bud-daemon-modularization-review.md) | Full architecture review of the Rust Bud daemon, covering current correctness gaps, tmux coupling, backend-neutral terminal abstractions, and a staged refactor plan for splitting `bud/src/main.rs` without changing current behavior |
@@ -743,6 +761,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [research/research.spec.md](./research/research.spec.md) | Folder spec for current-state research notes that capture implementation findings before promotion to plan, debug, or design docs |
 | [research/terminal-observation-long-waits.md](./research/terminal-observation-long-waits.md) | Research note on the current send/observe wait path, 30-second timeout defaults, output quiescence semantics, optimistic readiness, and post-dispatch quiescence timing for long-running TUIs |
 | [debug/streamdown-paragraph-animation-lag.md](./debug/streamdown-paragraph-animation-lag.md) | Debug note documenting why Streamdown's default word-level animation can lag behind fast assistant deltas and the follow-up no-stagger `blurIn` animation configuration |
+| [debug/streamdown-code-block-line-collapse.md](./debug/streamdown-code-block-line-collapse.md) | Debug note documenting why Streamdown code blocks can collapse multiple highlighted lines into one visual line when Bud disables code line numbers |
+| [debug/streamdown-code-block-rough-edges.md](./debug/streamdown-code-block-rough-edges.md) | Debug note documenting the scoped CSS fix that gives Streamdown code blocks a slightly rounded visible surface aligned with Mermaid and table rich blocks |
 | [debug/service-refactor-phase-1-contract-bugs.md](./debug/service-refactor-phase-1-contract-bugs.md) | Debug note for Phase 1 of the service refactor, covering provider-less boot, shared enrollment-token hashing, legacy run-surface removal, and the Node REPL prompt-classification fix |
 | [debug/service-refactor-phase-2-runtime-and-transport-split.md](./debug/service-refactor-phase-2-runtime-and-transport-split.md) | Debug note for the next service-refactor slice, covering terminal-runtime ownership extraction, pending terminal wait fast-fail behavior, and the route/gateway decomposition rationale |
 | [debug/service-refactor-final-build-fixes.md](./debug/service-refactor-final-build-fixes.md) | Debug note capturing the final closure-pass `service` build failure, including the broken `TerminalObservationView` import and the unsafe websocket-readiness casts that had to be normalized at the gateway boundary before continuing to lint/build sign-off |
@@ -782,6 +802,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [debug/codex-two-second-delay-in-bud-daemon-path.md](./debug/codex-two-second-delay-in-bud-daemon-path.md) | Debug note focused on the exact Bud daemon/browser-terminal path behind the observed Codex startup gap, separating the REPL `terminal_ready` 2s timer from the raw `terminal.output` stream and narrowing the issue to a sparse, variable Codex-in-tmux startup path before the first substantial screen draw |
 | [debug/terminal-send-observe-context-quality.md](./debug/terminal-send-observe-context-quality.md) | Debug note documenting the now-working Claude Code flow under the revised terminal contract, plus the remaining inefficiencies: `terminal.observe` replaying stale pane history and `terminal.send` returning too little semantic post-send context to avoid extra observes |
 | [debug/terminal-send-settled-default-refactor.md](./debug/terminal-send-settled-default-refactor.md) | Debug note for the settled-by-default `terminal.send` implementation, covering the prior send-plus-observe inefficiency, the `pipe-pane`-backed quiescence approach, and the shipped timeout/partial-progress semantics |
+| [debug/terminal-send-submit-omission.md](./debug/terminal-send-submit-omission.md) | Debug note investigating why provider calls that omit `terminal.send.submit` can type shell commands without pressing Enter, why `submitted` still reports true, and recommended prompt/schema/result hardening |
 | [debug/neutral-terminal-wire-contract-gateway-transform-error.md](./debug/neutral-terminal-wire-contract-gateway-transform-error.md) | Debug note documenting the `tsx` transform failure introduced during the neutral terminal wire-contract rollout, where `service/src/ws/gateway.ts` left the `CapabilitiesSchema.transform(...)` call one `)` short and prevented `pnpm dev` from booting |
 | [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md) | Proposal for launch-directory-based Bud base dirs, global-vs-local identity behavior, and the new `--base-dir` / `--local` UX model |
 | [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md) | First-principles design for the Bud rail install modal, one-time install tokens, generic `curl | sh` onboarding, and machine-wide vs local install behavior |
@@ -803,6 +824,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/mobile-context-compaction-handoff.md](./design/mobile-context-compaction-handoff.md) | Mobile handoff for implementing context budget UI and automatic compaction stream markers without exposing checkpoint internals or changing the visible transcript |
 | [design/llm-model-catalog-and-reasoning-controls.md](./design/llm-model-catalog-and-reasoning-controls.md) | Design sketch for centralizing Bud's LLM model catalog, making reasoning controls provider/model-specific, and planning the Opus 4.6/4.7 plus GPT-5.4/GPT-5.5 rollout |
 | [design/model-preferences-and-thread-overrides.md](./design/model-preferences-and-thread-overrides.md) | Design for persisting model/reasoning selection at the thread level, defaulting new work to GPT-5.5 low, and recording effective model metadata on new turn messages |
+| [design/local-ds4-llm-over-bud.md](./design/local-ds4-llm-over-bud.md) | Proposed path for exposing ds4 first as a direct local-dev provider, then as a Bud-advertised local LLM capability reachable through a narrow daemon data-plane stream |
 | [design/message-client-id-and-stable-message-identity.md](./design/message-client-id-and-stable-message-identity.md) | Design for adding a UUIDv7 `client_id` to messages as a stable public/UI identity while retaining `message_id` as the persisted row identifier, and threading that new identity through `/messages`, `/agent/state`, and agent SSE payloads |
 | [design/thread-title-generation-and-streaming.md](./design/thread-title-generation-and-streaming.md) | Design for generating a short thread title from the first user message, persisting it onto `thread.title`, and streaming title updates over the existing thread agent stream |
 | [design/mobile-thread-title-stream-handoff.md](./design/mobile-thread-title-stream-handoff.md) | Mobile handoff for the new streamed thread-title update contract, covering the `thread.title` event, client reducer expectations, and recovery rules |
@@ -823,6 +845,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/terminal-command-and-interaction-contract.md](./design/terminal-command-and-interaction-contract.md) | Design for separating shell command execution, interactive terminal input, and explicit observation so the model no longer encodes `\n` for shell commands and no longer treats post-exec capture as a normal follow-up |
 | [design/terminal-send-confirmation-and-fast-observe.md](./design/terminal-send-confirmation-and-fast-observe.md) | Design for restoring send-plus-proof behavior to TUIs and REPLs by giving `terminal.send` a default fast post-send observation, replacing blind `screen_stable` waits with a `settled` model, and separating transport success from observed program response |
 | [design/terminal-send-settled-by-default.md](./design/terminal-send-settled-by-default.md) | Design for simplifying the common agent path by making `terminal.send` wait for output quiescence by default, using pipe-pane activity as the primary settle detector, keeping capture-pane for baseline/final delta only, and reserving `terminal.observe` for longer waits and advanced cases |
+| [design/terminal-send-command-raw-text-contract.md](./design/terminal-send-command-raw-text-contract.md) | Draft design for replacing model-facing `terminal.send` `text`/`submit` with mutually exclusive `command`, `raw_text`, and `key` gestures while initially preserving the current service-to-Bud wire shape |
 | [design/terminal-delta-observation-and-minimal-tool-payloads.md](./design/terminal-delta-observation-and-minimal-tool-payloads.md) | Design for making `terminal.send` and default `terminal.observe` return additive deltas instead of replay-heavy snapshots, while keeping explicit full-screen/history modes and reducing the model-facing tool payload to success, readiness, and delta |
 | [design/backend-neutral-terminal-wire-contract.md](./design/backend-neutral-terminal-wire-contract.md) | Design for removing tmux-specific leakage from the Bud↔service and service↔browser terminal contract, including `tmux_session`, tmux-shaped hello capabilities, a single-gesture `terminal.send` model with semantic keys, and service-owned tmux session naming |
 | [design/reconsidering-terminal-exec-vs-terminal-send.md](./design/reconsidering-terminal-exec-vs-terminal-send.md) | Design review of whether `terminal.exec` still earns a place in the model-facing contract, given its newline restriction, lack of real exit-code authority, and overlap with the now-working `terminal.send` path |
@@ -839,4 +862,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-05-30*
+*Last updated: 2026-06-03*
