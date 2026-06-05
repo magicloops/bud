@@ -50,6 +50,8 @@ Focused route-handler coverage for the thread read-watermark route.
 - stale read-watermark updates return `updated: false` and do not rewrite the row
 - message history serialization preserves intermediate assistant `metadata.assistant_phase: "commentary"`
 - create-message rejects invalid explicit model/reasoning selections before duplicate lookup or persistence
+- create-message rejects ds4 `max` reasoning while the effective ds4 context
+  window is below the 393,216 token max-thinking requirement
 - create-message rejects unavailable Bud-local ds4 before user-message insert
 
 ### `agent.ts`
@@ -60,7 +62,9 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 - authorizes the owning thread before state reads, SSE attach, cancel, or question-response submission
 - enriches `/agent/state` with the owning Bud's current `environment` snapshot on idle and active responses
 - enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, normal-agent tool-schema overhead, and compaction threshold as the agent loop
+- passes through runtime-only `last_error` snapshots so fast non-cancel agent failures can be recovered by `/agent/state` without creating transcript rows
 - `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; these events are not transcript rows and omit checkpoint summaries/replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot.
+- `/agent/stream` failed `final` events carry sanitized `error`, `error_code`, and `retryable` fields rather than raw provider or daemon transport messages
 - accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`
 - validates submitted answers against the persisted question request row
 - returns whether the accepted response continued a live tool call, created a fallback user message, or matched an already-answered idempotent retry
@@ -71,6 +75,7 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 Focused route-level integration coverage for structured question-response submission.
 
 **Current Coverage**:
+- `/agent/state` includes runtime `last_error` after authorization
 - owned submissions call `AgentService.submitQuestionResponse(...)` and serialize accepted continuation status
 - unauthenticated callers receive `401`
 - signed-in non-owner and cross-thread/missing request submissions receive `404`

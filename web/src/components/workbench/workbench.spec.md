@@ -135,6 +135,7 @@ Message input form with options.
 - optional `disabledReason` - Human-readable reason to disable normal message composition while a structured prompt is pending
 - optional `contextBudget` - Thread context budget snapshot shown as the send button radial ring and tooltip
 - optional `environment` - Bud environment snapshot used to show composer-level offline status without disabling normal message sends
+- `error` - Route-owned runtime/submission error text rendered above the textarea with preserved line breaks for stable diagnostic codes
 
 **Features**:
 - Multi-line textarea
@@ -143,7 +144,7 @@ Message input form with options.
 - Model selector dropdown (grouped by provider)
 - Bud-local ds4 options are labeled with a compact local-Bud source marker while
   endpoint/request-mode details remain hidden from the selector
-- Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh` and `max`
+- Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh`, `max`, and ds4's semantic `Fast`/`Thinking` options
 - Hides the reasoning selector when a model only exposes `none`
 - Circular context-aware submit button with loading state only during message dispatch
 - The submit button renders context-budget usage as a radial border from 0-100%
@@ -151,6 +152,7 @@ Message input form with options.
   hover/focus
 - Keeps text entry, model/reasoning controls, and submit available during `waiting_for_user`; `disabledReason` remains available for other caller-owned disable cases
 - Shows a compact Bud-offline notice when `/agent/state.environment` or the send response reports `bud_offline`; the composer remains usable because the agent can still respond without Bud-specific tools
+- Shows sanitized runtime agent failures from `/agent/state.last_error` or failed `final` events in the existing composer error slot, not in the transcript
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type
 
 ### `context-send-button.tsx`

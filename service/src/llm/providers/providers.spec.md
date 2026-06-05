@@ -215,7 +215,14 @@ the daemon `local_llm_http` data-plane stream.
 - **Diagnostics**: Attaches stream feature counters plus the terminal Responses event/response to `message_done.providerData`
 - **Debug request snapshots**: Exposes the exact Responses request body for local context-drift artifact capture
 - **Context-window errors**: Normalizes likely ds4 token/context failures into `ProviderContextWindowError`
-- **No product reasoning controls**: The catalog exposes only `reasoning_effort: none`, while the Responses stream can preserve ds4 reasoning blocks as provider-only replay/debug content
+- **ds4 thinking controls**: Catalog-driven `Fast` sends explicit
+  `reasoning.effort = "none"` because ds4 treats omitted reasoning as normal
+  thinking; `Thinking` sends a non-`none` Responses reasoning effort
+- **Max thinking deferred**: ds4 `max` is not product-visible until the
+  effective context window reaches ds4's 393,216 token requirement
+- **Output cap metadata**: Defaults direct/Bud-local ds4 provider instances to
+  the catalog-backed 384k max-output capability while the agent may still apply
+  a lower global request cap
 
 **Responses Message Transformation**:
 | Canonical | ds4 Responses |
@@ -263,7 +270,7 @@ Direct request-shape tests for provider lowering without live API calls.
 
 **Current Coverage**:
 - ds4 local base URL normalization and rejection of the common `127.0.0.0` typo
-- ds4 Responses request construction, including `instructions`, `function_call`, `function_call_output`, ds4-native reasoning replay payloads, tool choice, optional reasoning request object, and configured request model override
+- ds4 Responses request construction, including `instructions`, `function_call`, `function_call_output`, ds4-native reasoning replay payloads, tool choice, explicit `reasoning.effort = "none"` for Fast mode, optional thinking request object, and configured request model override
 - ds4 Responses SSE parsing for reasoning blocks, streamed text, streamed function-call arguments, usage, and provider diagnostics
 - ds4 Responses failed events map to canonical provider errors without emitting a synthetic completion
 - route-level Bud-local tests cover Bud-scoped model inventory projection and
@@ -295,7 +302,7 @@ Direct request-shape tests for provider lowering without live API calls.
 | **Tool results** | `function_call_output` item | `tool_result` content block | `function_call_output` item |
 | **Tool call args** | JSON string | Parsed object | JSON string |
 | **Max tokens** | Optional | **Required** | `max_output_tokens` |
-| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy | no product controls; Responses reasoning blocks preserved when emitted |
+| **Reasoning** | `reasoning.effort` | `output_config.effort` + adaptive thinking, or manual `thinking.budget_tokens` for Haiku/legacy | `reasoning.effort` with catalog `Fast`/`Thinking`; Responses reasoning blocks preserved when emitted |
 | **Assistant phase** | Preserves Responses `phase` on assistant text replay | Ignored; no Anthropic equivalent | Preserved on Responses replay |
 | **JSON mode** | `text.format.type` | Use structured tool output | Responses `text.format.type` |
 

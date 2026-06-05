@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { config } from "../config.js";
 import {
   providerRegistry,
   type CanonicalStreamEvent,
   type CanonicalTool,
   type LLMProvider,
   type ModelCapabilities,
+  type ModelConfig,
 } from "../llm/index.js";
 import { buildAgentEnvironmentSnapshot } from "./environment.js";
 import { AgentModelResponseError, AgentModelRunner } from "./model-runner.js";
@@ -44,7 +46,7 @@ function createLogger() {
 function createProvider(
   name: "anthropic" | "openai",
   supportedModels: string[],
-  onInvoke?: (tools: CanonicalTool[]) => void,
+  onInvoke?: (tools: CanonicalTool[], config: ModelConfig) => void,
   events?: CanonicalStreamEvent[],
   buildDebugRequestSnapshot?: NonNullable<LLMProvider["buildDebugRequestSnapshot"]>,
 ): LLMProvider {
@@ -63,8 +65,8 @@ function createProvider(
   return {
     name,
     supportedModels,
-    async *invoke(_messages, tools): AsyncIterable<CanonicalStreamEvent> {
-      onInvoke?.(tools);
+    async *invoke(_messages, tools, modelConfig): AsyncIterable<CanonicalStreamEvent> {
+      onInvoke?.(tools, modelConfig);
       yield* (events ?? [
         { type: "message_start", id: "resp_test" },
         { type: "message_done", stop_reason: "end_turn" },
@@ -132,6 +134,73 @@ test("resolveReasoningEffort follows model-specific reasoning policies", (t) => 
     () => runner.resolveReasoningEffort("claude-sonnet-4-6", "xhigh"),
     /Reasoning effort xhigh is not supported/,
   );
+});
+
+test("invokeModel caps max output tokens from selected model capabilities", async (t) => {
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+  const previousAgentMaxOutputTokens = config.agentMaxOutputTokens;
+  const capturedConfigs: ModelConfig[] = [];
+  let capabilityModel: string | null = null;
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register({
+    name: "openai",
+    supportedModels: ["gpt-5.4-2026-03-05"],
+    async *invoke(_messages, _tools, modelConfig): AsyncIterable<CanonicalStreamEvent> {
+      capturedConfigs.push(modelConfig);
+      yield { type: "message_start", id: "resp_cap" };
+      yield { type: "message_done", stop_reason: "end_turn" };
+    },
+    supportsModel(model: string) {
+      return model.startsWith("gpt-");
+    },
+    getModelCapabilities(model: string) {
+      capabilityModel = model;
+      return {
+        supportsVision: true,
+        supportsTools: true,
+        supportsStreaming: true,
+        supportsJsonMode: true,
+        maxContextTokens: 128000,
+        maxOutputTokens: 32000,
+        supportsReasoning: true,
+        supportsThinking: false,
+        supportsInterleavedThinking: false,
+      };
+    },
+  });
+  config.agentMaxOutputTokens = 128000;
+
+  t.after(() => {
+    config.agentMaxOutputTokens = previousAgentMaxOutputTokens;
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    runner.resolveModelReasoning("gpt-5.4"),
+  );
+
+  assert.equal(capabilityModel, "gpt-5.4");
+  assert.equal(capturedConfigs[0]?.maxOutputTokens, 32000);
 });
 
 test("invokeModel advertises only public wait modes and no timeout_ms", async (t) => {

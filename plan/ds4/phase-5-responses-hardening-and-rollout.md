@@ -1,7 +1,7 @@
 # Phase 5: Responses Hardening And Rollout
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Implementation hardening complete; Bud-backed live validation pending
+**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
 
 ---
 
@@ -42,15 +42,15 @@ By the end of this phase:
 
 Run and record live/manual validation for:
 
-- final-text turn
-- terminal tool-call turn
+- final-text turn (validated Bud-backed through web/service)
+- terminal tool-call turn (validated Bud-backed through web/service)
 - post-tool continuation with Responses `function_call_output` replay
 - reasoning output preservation/replay when ds4 emits Responses reasoning items
 - long output within configured limits
 - malformed tool-call recovery if ds4 produces partial JSON
 - `response.incomplete` handling for output/context limits
 - `response.failed` and upstream HTTP error handling
-- cancel during streaming
+- cancel during streaming (validated Bud-backed through web/service)
 - ds4 process stopped before send
 - ds4 process stopped mid-stream
 - Bud reconnect after ds4 starts or stops
@@ -75,10 +75,12 @@ Use Phase 1.5 fixtures and live probes to confirm whether the rollout uses:
 ds4_openai_responses
 ```
 
-Phase 1.5 made Responses the service-local default, and live cache validation on June 3, 2026 confirmed that Responses is the chosen endpoint for continuing Bud-backed work. The remaining Phase 5 work is hardening:
+Phase 1.5 made Responses the service-local default, and live cache validation on June 3, 2026 confirmed that Responses is the chosen endpoint for continuing Bud-backed work. Bud-backed cache behavior has also been validated through the web/service path. The remaining Phase 5 work is lifecycle validation:
 
 - live cache behavior remains better than Chat Completions (confirmed)
-- cancellation and Responses error/incomplete events are covered
+- Bud-backed live cache behavior is healthy (confirmed)
+- cancellation is covered for the Bud-backed web/service path
+- Responses error/incomplete events still need explicit fault validation
 - Bud-backed data-plane docs use `/v1/responses`
 - provider-ledger diagnostics distinguish `ds4_openai_responses`
 
@@ -98,7 +100,7 @@ Confirm and document:
 
 - max request body bytes: 64 MiB at service and daemon
 - max response bytes: 64 MiB at service and daemon
-- daemon idle timeout: 10 minutes while waiting for request body, response
+- daemon idle timeout: 60 minutes while waiting for request body, response
   headers, response chunks, or response credit
 - daemon total stream TTL: 2 hours
 - per-Bud ds4 concurrency: one active `local_llm_http` stream at the service
@@ -150,9 +152,9 @@ Update:
 
 ## Validation Checklist
 
-- [ ] final-text live smoke passes
-- [ ] terminal tool-call live smoke passes
-- [ ] cancel live smoke passes
+- [x] final-text live smoke passes
+- [x] terminal tool-call live smoke passes
+- [x] cancel live smoke passes
 - [ ] stopped-ds4-before-send behavior is clear
 - [ ] stopped-ds4-mid-stream behavior is clear
 - [ ] reconnect-time health behavior is clear

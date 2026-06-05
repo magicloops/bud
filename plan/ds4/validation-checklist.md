@@ -1,7 +1,7 @@
 # ds4 Validation Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 2-5 implementation tests passing; Bud-backed live validation pending
+**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
 **Last Updated**: 2026-06-03
 
 ---
@@ -31,17 +31,23 @@
 - [x] direct ds4 provider code cannot call `/v1/chat/completions`
 - [x] new ds4 provider-ledger rows use `ds4_openai_responses`
 - [x] historical `ds4_openai_chat` rows remain parseable
+- [x] ds4 catalog exposes `Fast` and `Thinking` reasoning options
+- [x] ds4 catalog omits `max` while context remains below 393,216 tokens
+- [x] ds4 `Fast` request lowering sends explicit `reasoning.effort = "none"`
 
 ### Routes And Ownership
 
 - [x] `GET /api/models` excludes Bud-local ds4 models
 - [x] owned `GET /api/models?bud_id=...` includes healthy Bud-local ds4
+- [x] direct and Bud-local ds4 inventory includes `Fast`/`Thinking`
+  reasoning metadata
 - [x] Bud-local ds4 inventory includes Responses request-mode/compatibility metadata
 - [x] Bud-local ds4 inventory does not expose endpoint or mode selectors
 - [ ] owned `GET /api/models?bud_id=...` excludes absent/unhealthy ds4
 - [x] non-owner `GET /api/models?bud_id=...` returns `404`
 - [ ] message send rejects unknown ds4 model ids
 - [x] message send rejects unavailable ds4 before user-message insert
+- [x] message send rejects ds4 `max` reasoning before user-message insert
 - [ ] cloud model sends remain unchanged
 
 ### Daemon Capability
@@ -69,9 +75,9 @@
 - [x] daemon enforces idle timeout limits
 - [ ] daemon enforces total TTL limit
 - [x] daemon enforces concurrency limit
-- [ ] cancellation sends stream reset
+- [x] cancellation sends stream reset
 - [ ] provider-ledger records provider `ds4` and request mode `ds4_openai_responses`
-- [ ] Bud-backed provider replays Responses `function_call` / `function_call_output` history after tool calls
+- [x] Bud-backed provider replays Responses `function_call` / `function_call_output` history after tool calls
 - [ ] Bud-backed provider preserves Responses reasoning payloads for replay when available
 
 ## Live Validation
@@ -98,13 +104,14 @@ Run against an already-running ds4 server. The validation does not require Bud t
 
 ### Bud-Backed Mode
 
-- [ ] configure `BUD_LOCAL_LLM_DS4_URL`
-- [ ] daemon hello advertises `capabilities.llm`
-- [ ] owned `GET /api/models?bud_id=...` shows ds4
+- [x] configure `BUD_LOCAL_LLM_DS4_URL`
+- [x] daemon hello advertises `capabilities.llm`
+- [x] owned `GET /api/models?bud_id=...` shows ds4
 - [ ] non-owner cannot see ds4 for that Bud
-- [ ] one final-text agent turn completes through the daemon stream
-- [ ] one terminal tool-call loop completes through the daemon stream
-- [ ] cancellation resets the daemon stream
+- [x] one final-text agent turn completes through the daemon stream
+- [x] one terminal tool-call loop completes through the daemon stream
+- [x] cancellation resets the daemon stream
+- [x] Bud-backed `/v1/responses` live cache behavior is healthy
 - [ ] stopping ds4 before send fails clearly
 - [ ] stopping ds4 mid-stream fails clearly
 - [ ] reconnect after ds4 starts makes capability available again

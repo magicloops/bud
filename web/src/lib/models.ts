@@ -30,6 +30,7 @@ export type ModelInfo = {
       | 'openai_reasoning_effort'
       | 'anthropic_output_effort'
       | 'anthropic_thinking_budget'
+      | 'ds4_responses_reasoning_effort'
       | 'none'
     levels: ReasoningOption[]
     default_level: ReasoningLevel

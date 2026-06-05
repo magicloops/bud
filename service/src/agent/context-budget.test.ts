@@ -54,6 +54,37 @@ test("resolveContextBudget derives GPT-5.5 usable input threshold", () => {
   }
 });
 
+test("resolveContextBudget derives valid ds4 usable input window", () => {
+  const previousRatio = config.agentAutoCompactionRatio;
+  const previousEnabled = config.agentAutoCompactionEnabled;
+  config.agentAutoCompactionRatio = 1;
+  config.agentAutoCompactionEnabled = true;
+  try {
+    const selection = resolveEffectiveModelSelection({
+      requestedModel: "ds4-deepseek-v4-flash",
+      serviceDefaultModel: "gpt-5.5",
+      validateAvailability: false,
+    });
+
+    const budget = resolveContextBudget({
+      model: selection.model,
+      modelReasoning: selection.modelReasoning,
+    });
+
+    assert.equal(budget.contextWindowTokens, 100_000);
+    assert.equal(budget.usableContextWindowTokens, 100_000);
+    assert.equal(budget.reservedOutputTokens, 20_000);
+    assert.equal(budget.usableInputWindowTokens, 80_000);
+    assert.equal(budget.thresholdRatio, 0.95);
+    assert.equal(budget.thresholdTokens, 76_000);
+    assert.equal(budget.effectiveInputBudgetTokens, 76_000);
+    assert.equal(budget.invalidReason, null);
+  } finally {
+    config.agentAutoCompactionRatio = previousRatio;
+    config.agentAutoCompactionEnabled = previousEnabled;
+  }
+});
+
 test("resolveContextBudget honors lower auto-compaction ratio overrides", () => {
   const previousRatio = config.agentAutoCompactionRatio;
   const previousEnabled = config.agentAutoCompactionEnabled;

@@ -84,6 +84,7 @@ import {
   type AgentContextCheckpointReason,
   type AgentContextCheckpointTrigger,
 } from "./context-checkpoint-repository.js";
+import { formatAgentRuntimeFailure } from "./failure-message.js";
 
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
@@ -852,19 +853,35 @@ export class AgentService {
         return;
       }
 
-      this.runtime.emit(threadId, {
+      const failure = formatAgentRuntimeFailure(err);
+      const occurredAt = new Date().toISOString();
+      const finalCursor = this.runtime.emit(threadId, {
         event: "final",
         data: {
           turn_id: turnId,
           status: "failed",
-          error: err instanceof Error ? err.message : "agent_failed",
+          error: failure.message,
+          error_code: failure.code,
+          retryable: failure.retryable,
         },
       });
+      this.runtime.setLastError(
+        threadId,
+        {
+          turn_id: turnId,
+          code: failure.code,
+          message: failure.message,
+          retryable: failure.retryable,
+          occurred_at: occurredAt,
+        },
+        finalCursor,
+      );
       this.runtime.finishTurn(threadId);
 
 	      this.debug("Agent run failed", {
 	        sessionId: currentSessionId,
         error: err instanceof Error ? err.message : err,
+        errorCode: failure.code,
       });
       throw err;
     }

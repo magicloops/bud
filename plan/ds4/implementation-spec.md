@@ -1,6 +1,6 @@
 # Implementation Spec: ds4 Local LLM Over Bud
 
-**Status**: Phases 1-5 implementation hardening complete; Bud-backed live validation pending
+**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
 **Created**: 2026-06-02
 **Folder Spec**: [ds4.spec.md](./ds4.spec.md)
 **Progress Checklist**: [progress-checklist.md](./progress-checklist.md)
@@ -12,6 +12,10 @@
 **Phase 3**: [phase-3-bud-scoped-model-inventory-and-selection.md](./phase-3-bud-scoped-model-inventory-and-selection.md)
 **Phase 4**: [phase-4-local-llm-data-plane-provider.md](./phase-4-local-llm-data-plane-provider.md)
 **Phase 5**: [phase-5-responses-hardening-and-rollout.md](./phase-5-responses-hardening-and-rollout.md)
+**Phase 6**: [phase-6-generic-agent-failure-messages.md](./phase-6-generic-agent-failure-messages.md)
+**Phase 6.1**: [phase-6.1-runtime-error-surfacing.md](./phase-6.1-runtime-error-surfacing.md)
+**Phase 7**: [phase-7-ds4-output-budget-and-request-caps.md](./phase-7-ds4-output-budget-and-request-caps.md)
+**Phase 8**: [phase-8-ds4-thinking-mode-controls.md](./phase-8-ds4-thinking-mode-controls.md)
 **Related Design**: [../../design/local-ds4-llm-over-bud.md](../../design/local-ds4-llm-over-bud.md)
 
 ---
@@ -78,7 +82,10 @@ Initial catalog entry:
 | Source, direct mode | `service_local_dev` |
 | Source, Bud-backed mode | `bud_local` |
 
-Reasoning controls remain a Phase 0 decision gate. The conservative first pass should expose no extra reasoning selector for ds4 unless fixtures confirm a stable parameter mapping to Bud's existing `reasoning_effort` values.
+Phase 8 scopes ds4 reasoning controls. The implemented first pass exposes
+`Fast` and `Thinking` through Bud's existing `reasoning_effort` value while
+keeping `max` hidden until the effective ds4 context window reaches 393,216
+tokens.
 
 ## Configuration
 
@@ -88,7 +95,7 @@ Direct service-local development:
 DS4_DIRECT_BASE_URL=http://127.0.0.1:8000/v1
 DS4_DIRECT_MODEL=deepseek-v4-flash
 DS4_DIRECT_CONTEXT_TOKENS=100000
-DS4_DIRECT_MAX_OUTPUT_TOKENS=128000
+DS4_DIRECT_MAX_OUTPUT_TOKENS=384000
 ```
 
 Bud daemon local LLM discovery:
@@ -96,7 +103,7 @@ Bud daemon local LLM discovery:
 ```text
 BUD_LOCAL_LLM_DS4_URL=http://127.0.0.1:8000
 BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS=100000
-BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS=128000
+BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS=384000
 ```
 
 The daemon config points at the local API origin without `/v1`. The daemon probes `GET /v1/models` and stores the exact loopback target locally.
@@ -119,7 +126,7 @@ The daemon config points at the local API origin without `/v1`. The daemon probe
             "id": "deepseek-v4-flash",
             "display_name": "ds4 DeepSeek V4",
             "context_window_tokens": 100000,
-            "max_output_tokens": 128000
+            "max_output_tokens": 384000
           }
         ],
         "concurrency": 1,
@@ -189,6 +196,10 @@ No database schema change is required unless implementation chooses to persist c
 | 3 | [phase-3-bud-scoped-model-inventory-and-selection.md](./phase-3-bud-scoped-model-inventory-and-selection.md) | High | Browser/API model inventory and message validation are Bud-aware |
 | 4 | [phase-4-local-llm-data-plane-provider.md](./phase-4-local-llm-data-plane-provider.md) | High | Hosted service can invoke Bud-local ds4 through authenticated data-plane streams |
 | 5 | [phase-5-responses-hardening-and-rollout.md](./phase-5-responses-hardening-and-rollout.md) | Medium | Chosen endpoint hardening, live validation, compatibility decisions, and rollout docs are complete |
+| 6 | [phase-6-generic-agent-failure-messages.md](./phase-6-generic-agent-failure-messages.md) | Deferred | Fast async agent failures leave generic durable user-visible failure messages |
+| 6.1 | [phase-6.1-runtime-error-surfacing.md](./phase-6.1-runtime-error-surfacing.md) | Medium | Fast async agent failures surface through runtime state and the existing composer error slot without transcript rows |
+| 7 | [phase-7-ds4-output-budget-and-request-caps.md](./phase-7-ds4-output-budget-and-request-caps.md) | Medium | ds4 output metadata reflects model capability, context reserve is explicit, and request caps honor model capabilities |
+| 8 | [phase-8-ds4-thinking-mode-controls.md](./phase-8-ds4-thinking-mode-controls.md) | Medium | ds4 exposes `Fast` and `Thinking` controls while sending explicit non-thinking request semantics |
 
 ## Expected Files And Areas
 
@@ -260,12 +271,25 @@ No database schema change is required unless implementation chooses to persist c
 8. Add the local LLM stream family and Bud-backed provider using the chosen ds4 endpoint.
 9. Phase 5 hardening added explicit local LLM limits, audit coverage, and the
    `/v1/messages` deferral decision.
-10. Prove Bud-backed final-text, terminal tool-loop, cancel, and ds4-stopped flows.
+10. Bud-backed final-text, terminal tool-loop, cancellation, and cache behavior
+    have been validated through the web/service path; stopped-ds4, reconnect,
+    and concurrency lifecycle checks remain open.
+11. Phase 6 durable transcript failure rows are deferred while the product
+    decision around user-facing versus model-facing failure artifacts remains
+    open.
+12. Phase 6.1 will surface fast async failures through runtime state and the
+    existing composer error slot without writing transcript rows.
+13. Phase 7 will correct ds4 output metadata, keep output reserve explicit,
+    and cap agent request output tokens from selected-model capabilities.
+14. Phase 8 exposes ds4 `Fast` and `Thinking` controls through the existing
+    reasoning selector and keeps `max` thinking hidden for the current 100k
+    context profile.
 
 ## Open Questions
 
 - Does ds4's `/v1/models` expose context/output metadata reliably, or should Bud always require explicit context config?
-- Should ds4 reasoning be exposed as Bud `reasoning_effort`, a ds4-specific advanced option, or hidden in the first pass?
+- Should ds4 `max` thinking appear automatically once effective context reaches
+  393,216 tokens, or should it require an explicit feature flag?
 - How much provider-native Responses reasoning payload should be retained for exact replay and debugging beyond the current provider-ledger payloads?
 - Should saved ds4 thread preferences remain selected while the Bud is offline, with send disabled, or should the selector force a cloud model before send?
 - Should runtime health changes be sent through a new `capability_update` frame, or is reconnect-time detection sufficient for the first release?
@@ -279,7 +303,7 @@ No database schema change is required unless implementation chooses to persist c
 - [x] Bud-scoped `/api/models` exposes local ds4 only to the owning user
 - [x] explicit ds4 send fails before user-message persistence when ds4 is unavailable
 - [x] Bud-backed provider streams the selected ds4 endpoint over authenticated data-plane frames
-- [ ] cancellation resets the daemon stream and leaves provider/runtime state coherent
+- [x] cancellation resets the daemon stream and leaves provider/runtime state coherent
 - [x] provider ledger records new `ds4` calls with request mode `ds4_openai_responses`
 - [x] protocol, service, daemon, and web specs are updated as implementation lands
 - [x] [progress-checklist.md](./progress-checklist.md) and [validation-checklist.md](./validation-checklist.md) are updated with implementation status

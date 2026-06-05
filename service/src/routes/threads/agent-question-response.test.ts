@@ -6,6 +6,7 @@ import { db } from "../../db/client.js";
 import { registerThreadAgentRoutes } from "./agent.js";
 import { AgentQuestionRequestError } from "../../agent/user-question-repository.js";
 import { AskUserQuestionsContractError } from "../../agent/user-question-contracts.js";
+import { buildAgentEnvironmentSnapshot } from "../../agent/environment.js";
 
 type RouteHandler = (request: Record<string, unknown>, reply: TestReply) => Promise<unknown> | unknown;
 type TestLogEntry = {
@@ -109,6 +110,68 @@ const THREAD = {
   createdAt: new Date("2026-05-19T20:00:00.000Z"),
   updatedAt: new Date("2026-05-19T20:00:00.000Z"),
 };
+
+test("agent-state route includes runtime last_error after authorization", async (t) => {
+  t.after(() => mock.restoreAll());
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => THREAD as never);
+
+  const environment = buildAgentEnvironmentSnapshot({
+    budId: THREAD.budId,
+    online: true,
+    lastSeenAt: new Date("2026-05-19T20:00:00.000Z"),
+  });
+  const lastError = {
+    turn_id: "01KT80FP55HJS8MYBN9TB9AW57",
+    code: "DATA_PLANE_STREAM_LIMIT_EXCEEDED",
+    message: "The local model is already busy. Try again after the current run finishes.\n\nError: DATA_PLANE_STREAM_LIMIT_EXCEEDED",
+    retryable: true,
+    occurred_at: "2026-06-04T00:28:13.870Z",
+  };
+  const contextBudget = {
+    status: "available",
+    source: "active_agent_decision",
+    checked_at: "2026-06-04T00:28:13.868Z",
+  };
+  const agentRuntime = {
+    getSnapshot(threadId: string) {
+      assert.equal(threadId, THREAD_ID);
+      return {
+        active: true,
+        turn_id: lastError.turn_id,
+        phase: "thinking",
+        can_cancel: true,
+        stream_cursor: "cursor-runtime",
+        pending_tool: null,
+        draft_assistant: null,
+        environment,
+        context_budget: contextBudget,
+        last_error: lastError,
+        updated_at: "2026-06-04T00:28:13.870Z",
+      };
+    },
+  };
+  const agentService = {
+    async getEnvironmentForBud(budId: string) {
+      assert.equal(budId, THREAD.budId);
+      return environment;
+    },
+  };
+
+  const server = createServer();
+  await registerThreadAgentRoutes(server, agentService as never, agentRuntime as never);
+  const handler = server.routes.get("GET /api/threads/:threadId/agent/state");
+  assert.ok(handler);
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: THREAD_ID },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal((response.payload as Record<string, unknown>).last_error, lastError);
+  assert.equal((response.payload as Record<string, unknown>).environment, environment);
+  assert.equal((response.payload as Record<string, unknown>).context_budget, contextBudget);
+});
 
 test("question-response route submits owned responses through AgentService", async (t) => {
   t.after(() => mock.restoreAll());

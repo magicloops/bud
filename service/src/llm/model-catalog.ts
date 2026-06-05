@@ -32,6 +32,13 @@ export type ReasoningControl =
       thinking: "manual";
     }
   | {
+      kind: "ds4_responses_reasoning_effort";
+      levels: readonly ReasoningLevel[];
+      defaultLevel: ReasoningLevel;
+      requestField: "reasoning.effort";
+      maxRequiresContextWindowTokens: number;
+    }
+  | {
       kind: "none";
       levels: readonly ["none"];
       defaultLevel: "none";
@@ -69,6 +76,8 @@ const OPENAI_GPT_5_4_REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh
 const CLAUDE_4_6_REASONING_LEVELS = ["low", "medium", "high", "max"] as const;
 const CLAUDE_OPUS_4_7_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 const CLAUDE_HAIKU_4_5_REASONING_LEVELS = ["none", "low", "medium", "high"] as const;
+const DS4_RESPONSES_REASONING_LEVELS = ["none", "low"] as const;
+export const DS4_MAX_THINKING_CONTEXT_WINDOW_TOKENS = 393_216;
 
 export const MODEL_CATALOG = [
   {
@@ -285,12 +294,15 @@ export const MODEL_CATALOG = [
       streaming: true,
       structuredOutputs: false,
       contextWindowTokens: 100_000,
-      maxOutputTokens: 128_000,
+      maxOutputTokens: 384_000,
+      reservedOutputTokens: 20_000,
     },
     reasoning: {
-      kind: "none",
-      levels: ["none"],
+      kind: "ds4_responses_reasoning_effort",
+      levels: DS4_RESPONSES_REASONING_LEVELS,
       defaultLevel: "none",
+      requestField: "reasoning.effort",
+      maxRequiresContextWindowTokens: DS4_MAX_THINKING_CONTEXT_WINDOW_TOKENS,
     },
   },
 ] as const satisfies readonly ModelCatalogEntry[];
@@ -358,6 +370,24 @@ export function formatReasoningLevel(level: ReasoningLevel): string {
 export function getReasoningLevelOptions(entry: ModelCatalogEntry): ReasoningLevelOption[] {
   return entry.reasoning.levels.map((level) => ({
     value: level,
-    label: formatReasoningLevel(level),
+    label: formatReasoningLevelForEntry(entry, level),
   }));
+}
+
+function formatReasoningLevelForEntry(
+  entry: ModelCatalogEntry,
+  level: ReasoningLevel,
+): string {
+  if (entry.reasoning.kind === "ds4_responses_reasoning_effort") {
+    switch (level) {
+      case "low":
+        return "Thinking";
+      case "max":
+        return "Max thinking";
+      default:
+        return formatReasoningLevel(level);
+    }
+  }
+
+  return formatReasoningLevel(level);
 }

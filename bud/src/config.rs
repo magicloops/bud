@@ -68,7 +68,7 @@ pub struct BudArgs {
     #[arg(
         long,
         env = "BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS",
-        default_value_t = 128_000
+        default_value_t = 384_000
     )]
     pub local_llm_ds4_max_output_tokens: u64,
 
@@ -180,7 +180,7 @@ mod tests {
             terminal_rows: 24,
             local_llm_ds4_url: None,
             local_llm_ds4_context_tokens: 100_000,
-            local_llm_ds4_max_output_tokens: 128_000,
+            local_llm_ds4_max_output_tokens: 384_000,
             debug: false,
             command: None,
         }

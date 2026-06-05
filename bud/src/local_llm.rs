@@ -32,7 +32,7 @@ const MAX_REQUEST_BODY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RESPONSE_BODY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_CONCURRENT_STREAMS: usize = 1;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
-const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const STREAM_TOTAL_TTL: Duration = Duration::from_secs(2 * 60 * 60);
 const REQUEST_HEADER_ALLOWLIST: &[&str] = &["accept", "content-type"];
 const RESPONSE_HEADER_ALLOWLIST: &[&str] = &["content-length", "content-type"];
@@ -922,7 +922,7 @@ mod tests {
             terminal_rows: 24,
             local_llm_ds4_url: None,
             local_llm_ds4_context_tokens: 100_000,
-            local_llm_ds4_max_output_tokens: 128_000,
+            local_llm_ds4_max_output_tokens: 384_000,
             debug: false,
             command: None,
         }

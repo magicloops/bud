@@ -57,6 +57,8 @@ New thread creation view - allows users to start a new conversation.
   capabilities, per-model `reasoning`, and optional Bud-local ds4 source
   metadata)
 - Normalizes the selected reasoning level against the selected model and default reasoning metadata, omitting model fields only if the model list has not loaded yet
+- Shows ds4 `Fast`/`Thinking` reasoning choices from `/api/models` without a
+  ds4-specific route branch
 - Generates a browser UUIDv7 `client_id` before the first message send
 - Thread creation flow:
   1. POST `/api/threads` with `{ bud_id, model, reasoning_effort }` to create the thread and persist its initial model preference
@@ -127,6 +129,7 @@ loader: async ({ params }) => {
    - Shared auth-expiry detection before reconnecting, including reconnect-loop aborts after redirect
    - Relies on `useAgentStream(...)` bootstrap recovery to close native EventSource stale-cursor loops, refetch `/messages` + `/agent/state`, and reconnect from the refreshed stream cursor
    - Tracks `/agent/state.environment` and message-send `agent.mode` so offline Bud sends remain successful UI submissions while the composer shows Bud-specific tools are unavailable
+   - Tracks `/agent/state.last_error` on loader bootstrap, normal state refresh, and stream resync so non-cancel runtime failures render in the composer error slot even if the live failed final event was missed
    - Shows `Compacting context...` while automatic compaction is active, appends a subtle non-transcript timeline marker on completion/failure, applies `agent.compaction_done.context_budget` immediately when present, and refreshes `/agent/state.context_budget` after successful compaction
    - Suppresses the generic timeline activity footer during live assistant text streaming from `agent.message_start` / `agent.message_delta`, then allows it to return after a short delay following `agent.message_done` only when the turn continues
 
@@ -153,6 +156,8 @@ loader: async ({ params }) => {
 - Reuses `useAvailableModels(budId)` so model fetching/default selection,
   Bud-local ds4 availability, and per-model reasoning normalization match the
   new-thread flow
+- Uses the same `/api/models` reasoning metadata for ds4 `Fast`/`Thinking`
+  selections as new-thread mode
 - Initializes the selector from the loaded thread's `effective_model` and `effective_reasoning_effort`
 - Persists selector changes through `PATCH /api/threads/:threadId/model-preference` and optimistically patches Bud-level thread-summary state
 - Shows Bud-local ds4 options with a local-Bud source label while leaving
@@ -220,6 +225,7 @@ webViewStatus: 'idle' | 'loading' | 'ready' | 'error'
 questionSubmitError: string | null
 contextBudget: ApiContextBudget | null
 agentEnvironment: ApiAgentEnvironment | null
+error: string | null
 assistantActivityGate: AssistantActivityGateState
 activeCompaction: ApiAgentCompactionStartEvent | null
 contextCompactionNotices: ChatTimelineNotice[]

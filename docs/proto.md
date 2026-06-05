@@ -1212,7 +1212,7 @@ Dev-only token bypass example:
               "id": "deepseek-v4-flash",
               "display_name": "ds4 DeepSeek V4",
               "context_window_tokens": 100000,
-              "max_output_tokens": 128000
+              "max_output_tokens": 384000
             }
           ],
           "concurrency": 1,
@@ -1281,7 +1281,7 @@ Reconnect example:
               "id": "deepseek-v4-flash",
               "display_name": "ds4 DeepSeek V4",
               "context_window_tokens": 100000,
-              "max_output_tokens": 128000
+              "max_output_tokens": 384000
             }
           ],
           "concurrency": 1,

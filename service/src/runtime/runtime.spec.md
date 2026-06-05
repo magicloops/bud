@@ -21,7 +21,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - Keep a bounded same-instance replay window with cursor checkpoints
 - Support live-only no-cursor attach plus bounded cursor replay
 - Require explicit `agent.resync_required` when a supplied resume cursor is too old or unknown
-- Keep the runtime-owned snapshot limited to in-flight turn state, active Bud environment, and client-safe active budget state; browser routes may still recompute durable `environment` and `context_budget` snapshots after idle/final transitions
+- Keep the runtime-owned snapshot limited to in-flight turn state, active Bud environment, client-safe active budget state, and the latest non-cancel runtime failure; browser routes may still recompute durable `environment` and `context_budget` snapshots after idle/final transitions
 
 **Snapshot Shape**:
 - `active`
@@ -34,6 +34,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `draft_assistant` (`client_id`, `text`, `updated_at`)
 - `environment` (client-safe current Bud mode/status and tool availability while a turn is active; route responses refresh current environment for idle and active reads)
 - `context_budget` (latest active context budget decision while a turn is running; cleared on new/final idle transitions)
+- `last_error` (client-safe, in-memory non-cancel agent failure snapshot with `turn_id`, stable `code`, sanitized `message`, `retryable`, and `occurred_at`; cleared when a new turn starts)
 - `updated_at`
 
 The route-level `context_budget` response prefers this runtime-owned active snapshot while a turn is running. When runtime is idle, or when no active decision has been recorded yet, the threads route computes durable state after authorization from model/catalog metadata, persisted conversation state, provider diagnostics, and compaction checkpoints.
@@ -56,6 +57,7 @@ The route-level `context_budget` response prefers this runtime-owned active snap
 - service-owned activity events such as `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` advance the cursor and keep the in-flight phase in `thinking` so reconnecting clients can resume after those markers
 - `setEnvironment(...)` updates the runtime environment snapshot without emitting a standalone SSE event; `/agent/state` is the authoritative convergence surface for environment
 - `setContextBudget(...)` and `clearContextBudget(...)` update the client-safe budget snapshot without emitting a standalone SSE event
+- `setLastError(...)` and `clearLastError(...)` update the runtime-only failure snapshot without writing transcript rows; `finishTurn(...)` preserves it so `/agent/state` can recover missed fast failure events
 
 ### `event-bus.ts`
 
@@ -95,6 +97,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - finishing a turn returns the snapshot to idle with a fresh cursor
 - context budget snapshots serialize during active turns and clear on new/final idle transitions
 - environment snapshots serialize during active turns, can be updated mid-turn, and clear from runtime idle snapshots after finalization
+- runtime failure snapshots serialize as `last_error`, survive failed-turn finalization, and clear when a new turn starts
 - runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
 - runtime snapshots expose `started_at` on `pending_tool` so long-running tool waits remain diagnosable after reconnect
 - runtime snapshots expose effective terminal wait modes on `pending_tool.args.wait_for`, including default settled `terminal.send` waits

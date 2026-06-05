@@ -395,6 +395,51 @@ test("POST /api/threads/:threadId/messages rejects invalid explicit reasoning be
   assert.equal(selectCalled, false);
 });
 
+test("POST /api/threads/:threadId/messages rejects ds4 max reasoning while context is 100k", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const server = createServer();
+  await registerThreadMessageRoutes(
+    server,
+    {} as never,
+    {} as never,
+  );
+
+  const handler = server.routes.get("POST /api/threads/:threadId/messages");
+  assert.ok(handler, "expected create-message route to register");
+
+  mock.method(auth.api, "getSession", async () => SESSION as never);
+  mock.method(db.query.threadTable, "findFirst", async () => ACCESS.thread as never);
+  mock.method(providerRegistry, "getProviderForModel", () => ({ name: "ds4" }) as never);
+
+  let selectCalled = false;
+  mock.method(db, "select", () => {
+    selectCalled = true;
+    throw new Error("select should not be called for invalid ds4 reasoning");
+  });
+
+  const response = await invokeRoute(handler, {
+    params: { threadId: ACCESS.thread.threadId },
+    body: {
+      text: "hello",
+      model: "ds4-deepseek-v4-flash",
+      reasoning_effort: "max",
+    },
+    headers: {},
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.payload, {
+    error: "invalid_reasoning_effort",
+    message: "Reasoning effort max is not supported by ds4-deepseek-v4-flash",
+    model: "ds4-deepseek-v4-flash",
+    supported_values: ["none", "low"],
+  });
+  assert.equal(selectCalled, false);
+});
+
 test("POST /api/threads/:threadId/messages rejects unavailable Bud-local ds4 before message insert", async (t) => {
   t.after(() => {
     mock.restoreAll();

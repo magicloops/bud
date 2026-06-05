@@ -81,7 +81,7 @@ Suggested config:
 DS4_DIRECT_BASE_URL=http://127.0.0.1:8000/v1
 DS4_DIRECT_MODEL=deepseek-v4-flash
 DS4_DIRECT_CONTEXT_TOKENS=100000
-DS4_DIRECT_MAX_OUTPUT_TOKENS=128000
+DS4_DIRECT_MAX_OUTPUT_TOKENS=384000
 ```
 
 Implementation direction:
@@ -102,7 +102,7 @@ Add daemon config for a local ds4 API without starting the server:
 ```text
 BUD_LOCAL_LLM_DS4_URL=http://127.0.0.1:8000
 BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS=100000
-BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS=128000
+BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS=384000
 ```
 
 Daemon behavior:
@@ -128,7 +128,7 @@ Example capability:
             "id": "deepseek-v4-flash",
             "display_name": "ds4 DeepSeek V4",
             "context_window_tokens": 100000,
-            "max_output_tokens": 128000
+            "max_output_tokens": 384000
           }
         ],
         "concurrency": 1,

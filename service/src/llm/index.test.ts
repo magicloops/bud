@@ -56,7 +56,7 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
   config.ds4DirectBaseUrl = "http://127.0.0.1:4444/v1";
   config.ds4DirectModel = "deepseek-v4-flash";
   config.ds4DirectContextTokens = 100_000;
-  config.ds4DirectMaxOutputTokens = 128_000;
+  config.ds4DirectMaxOutputTokens = 384_000;
 
   try {
     initializeProviders();

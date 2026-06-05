@@ -13,6 +13,7 @@ import {
   type CanonicalStopReason,
   type CanonicalTool,
   type CanonicalToolCall,
+  type LLMProvider,
   type ModelConfig,
   type AssistantMessagePhase,
   resolveModelReasoning,
@@ -46,6 +47,7 @@ type StreamedModelResponse = {
 const MODEL_RESPONSE_TEXT_PREVIEW_CHARS = 4_000;
 const MODEL_RESPONSE_JSON_PREVIEW_CHARS = 8_000;
 const MODEL_RESPONSE_ERROR_MESSAGE_CHARS = 12_000;
+const FALLBACK_AGENT_MAX_OUTPUT_TOKENS = 128_000;
 
 type ModelResponseDiagnostic = {
   id: string;
@@ -145,7 +147,12 @@ export class AgentModelRunner {
 
     const modelConfig: ModelConfig = {
       model: providerModel,
-      maxOutputTokens: config.agentMaxOutputTokens,
+      maxOutputTokens: resolveModelMaxOutputTokens({
+        provider,
+        productModel: model,
+        providerModel,
+        logger: this.logger,
+      }),
       reasoning,
       responseFormat: "text",
     };
@@ -655,4 +662,68 @@ function buildProviderDebugRequestSnapshot(
     );
     return undefined;
   }
+}
+
+function resolveModelMaxOutputTokens(args: {
+  provider: LLMProvider;
+  productModel: string;
+  providerModel: string;
+  logger: FastifyBaseLogger;
+}): number {
+  const configuredMaxOutputTokens = positiveIntegerOrNull(config.agentMaxOutputTokens) ??
+    FALLBACK_AGENT_MAX_OUTPUT_TOKENS;
+  const capabilityMaxOutputTokens = resolveCapabilityMaxOutputTokens(args);
+  if (capabilityMaxOutputTokens === null) {
+    args.logger.warn(
+      {
+        component: "agent",
+        provider: args.provider.name,
+        model: args.productModel,
+        providerModel: args.providerModel,
+        configuredMaxOutputTokens,
+      },
+      "Falling back to configured agent max output tokens because model capabilities were unavailable",
+    );
+    return configuredMaxOutputTokens;
+  }
+
+  return Math.min(configuredMaxOutputTokens, capabilityMaxOutputTokens);
+}
+
+function resolveCapabilityMaxOutputTokens(args: {
+  provider: LLMProvider;
+  productModel: string;
+  providerModel: string;
+  logger: FastifyBaseLogger;
+}): number | null {
+  const productCapability = getCapabilityMaxOutputTokens(args.provider, args.productModel, args.logger);
+  if (productCapability !== null) {
+    return productCapability;
+  }
+  if (args.providerModel === args.productModel) {
+    return null;
+  }
+  return getCapabilityMaxOutputTokens(args.provider, args.providerModel, args.logger);
+}
+
+function getCapabilityMaxOutputTokens(
+  provider: LLMProvider,
+  model: string,
+  logger: FastifyBaseLogger,
+): number | null {
+  try {
+    return positiveIntegerOrNull(provider.getModelCapabilities(model).maxOutputTokens);
+  } catch (err) {
+    logger.warn(
+      { err, component: "agent", provider: provider.name, model },
+      "Failed to resolve model capabilities for output-token cap",
+    );
+    return null;
+  }
+}
+
+function positiveIntegerOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
 }

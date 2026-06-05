@@ -60,6 +60,20 @@ Direct tests for shared contract helpers.
 - web-view tool args do not gain terminal `wait_for` defaults
 - web-view tool results include HTTP proxy transport plus separate WebSocket proxy capability/transport metadata when available
 
+### `failure-message.ts`
+
+Client-safe non-cancel agent failure formatter.
+
+**Responsibilities**:
+- preserve stable error codes when present on provider/data-plane errors
+- map local LLM stream-limit and idle-timeout failures to bounded, user-visible copy
+- mark retryability from the source error when available, otherwise from known stable codes
+- avoid exposing raw provider payloads, daemon transport messages, local URLs, request bodies, or stack traces in browser-visible errors
+
+### `failure-message.test.ts`
+
+Direct coverage for local model stream-limit, local model idle-timeout, and generic fallback sanitization.
+
 ### `conversation-loader.ts`
 
 Conversation-building ownership extracted from `AgentService`.
@@ -268,6 +282,7 @@ startUserMessage()
 - Automatic compaction decisions write the latest client-safe context budget into runtime state and log sanitized budget diagnostics, including skipped decisions, the active estimate basis, threshold, ratio, model, provider, snapshot provenance, and replay-boundary duplicate suppression without logging message contents, checkpoint summaries, or provider request bodies.
 - Failed automatic compaction emits `agent.compaction_failed` with a sanitized error code and retryability flag; raw checkpoint summaries, replacement histories, provider requests, and provider error messages are never exposed on the stream.
 - If a provider returns a normalized context-window error, the agent attempts one forced compaction/retry while the automatic-compaction kill switch is enabled. If compaction cannot recover, the turn fails clearly instead of silently dropping transcript history.
+- Non-cancel agent failures are formatted through `failure-message.ts`, emitted on `final(status: "failed")` with sanitized `error`, `error_code`, and `retryable`, and stored in runtime `/agent/state.last_error`; they are not persisted as transcript rows and are not replayed to future model calls.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - OpenAI debug response logging emits `llm_response` as a structured canonical response object rather than a pre-stringified JSON blob, so log viewers can pretty-print nested fields without escaped newline formatting.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before terminal session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
@@ -379,6 +394,9 @@ Model invocation ownership extracted from `AgentService`.
 **Responsibilities**:
 - resolve provider/model aliases for the selected request model
 - resolve model-specific reasoning through `llm/reasoning-policy.ts`, using catalog defaults and rejecting unsupported combinations before provider invocation
+- cap provider request `maxOutputTokens` to the lower of
+  `config.agentMaxOutputTokens` and the selected model/provider capability,
+  using product-model capabilities before provider-model fallback
 - optionally capture local model-context drift prompt/response snapshots, plus provider-rendered request snapshots when supported and enabled, when `AGENT_CONTEXT_DRIFT_DEBUG=true`
 - consume provider `invoke()` streams and emit draft assistant runtime events
 - pass thread/Bud/owner invocation context into environment-scoped providers
@@ -677,7 +695,7 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 | `agent.compaction_failed` | start payload plus `{ error_code, retryable, finished_at }` | Context checkpoint attempt failed and the failure was recorded when possible |
 | `thread.title` | `{ thread_id, title, source, updated_at }` | Best-effort first-message thread title became durable |
 | `agent.resync_required` | `{ error, provided_cursor }` | Resume cursor was too old or unknown; client must refetch `/messages` plus `/agent/state` |
-| `final` | `{ turn_id, status, message_id?, text?, reason? }` or `{ turn_id, status, error }` | Flow complete |
+| `final` | `{ turn_id, status, message_id?, text?, reason? }` or `{ turn_id, status, error, error_code?, retryable? }` | Flow complete |
 
 Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 
@@ -710,6 +728,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `thread.title` shares the same SSE frame-id cursor space as the agent events, so bounded resume covers title changes without opening a second stream
 - `final` still matters for completion status, but successful turns no longer require a mandatory transcript refetch just to learn the assistant/tool row IDs
 - superseded question turns may emit successful `final` events with `reason: "superseded_by_user_message"` and no assistant `message_id` or `text`
+- failed `final` events use sanitized browser-visible error text plus stable `error_code` and `retryable`; the same payload is exposed as `/agent/state.last_error` until the next turn starts
 - replay resume is keyed off the SSE frame `id:` / runtime cursor rather than the JSON payload
 - no-cursor attaches are live-only; bounded replay only happens when the client resumes from an explicit cursor
 - stale or unknown cursors now surface explicit `agent.resync_required` instead of silent live-only fallback
@@ -734,6 +753,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `./context-budget-snapshot.js` | Browser-facing context budget snapshots for `/agent/state` |
 | `./context-checkpoint-repository.js` | Durable checkpoint persistence and replay-boundary lookup |
 | `./context-compactor.js` | Local summary compaction and replacement-history construction |
+| `./failure-message.js` | Client-safe agent failure formatting for runtime/UI error surfacing |
 | `./model-runner.js` | Provider invocation + draft assistant streaming |
 | `./model-context-drift-recorder.js` | Local-only model-context drift snapshots and canonical diff artifacts |
 | `./tool-definitions.js` | Normal agent tool schema registry and tool-schema token estimate |
@@ -751,7 +771,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 From `../config.js`:
 - `config.defaultModel` - Product model to use when requests omit `model` (default: `gpt-5.5`)
 - `config.agentMaxSteps` - Max tool calls per request (default: 30)
-- `config.agentMaxOutputTokens` - Max tokens per response (default: 128000)
+- `config.agentMaxOutputTokens` - Global upper bound for response tokens before selected-model capability caps are applied (default: 128000)
 - `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `low`)
 - `config.agentAutoCompactionEnabled` - Enables automatic context compaction (default: enabled)
 - `config.agentAutoCompactionRatio` - Usable-input threshold ratio for automatic compaction, clamped to at most `0.95`

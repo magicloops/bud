@@ -230,6 +230,52 @@ test("ds4 Responses provider sends OpenAI Responses-style requests", async () =>
   ]);
 });
 
+test("ds4 Responses provider defaults to the catalog max output capability", async () => {
+  const captures: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    captures.push({ url: String(url), init: init ?? {} });
+    return sseResponse([sseData("[DONE]")]);
+  };
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "http://127.0.0.1:4444/v1/",
+    fetch: fetchImpl,
+  });
+
+  await drain(provider.invoke(messages, [], {
+    model: "deepseek-v4-flash",
+  }));
+
+  const captured = captures[0];
+  assert.ok(captured);
+  const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
+  assert.equal(body.max_output_tokens, 384000);
+});
+
+test("ds4 Responses provider sends explicit none reasoning for Fast mode", async () => {
+  const captures: Array<{ url: string; init: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    captures.push({ url: String(url), init: init ?? {} });
+    return sseResponse([sseData("[DONE]")]);
+  };
+  const provider = new Ds4ResponsesProvider({
+    baseURL: "http://127.0.0.1:4444/v1/",
+    fetch: fetchImpl,
+  });
+
+  await drain(provider.invoke(messages, [], {
+    model: "deepseek-v4-flash",
+    maxOutputTokens: 2048,
+    reasoning: {
+      enabled: false,
+    },
+  }));
+
+  const captured = captures[0];
+  assert.ok(captured);
+  const body = JSON.parse(captured.init.body as string) as Record<string, unknown>;
+  assert.deepEqual(body.reasoning, { effort: "none" });
+});
+
 test("ds4 Responses provider parses reasoning, text, tool calls, usage, and diagnostics", async () => {
   const chunks = [
     sseData({

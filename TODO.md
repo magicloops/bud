@@ -11,6 +11,10 @@
 - **Append-only terminal freshness prompt**
   - Terminal freshness notes were disabled because injecting/removing a transient system message near the top of the model context broke ds4 prompt-cache reuse.
   - Reintroduce this only through an append-only/tail-positioned approach like [design/runtime-context-append-only-prompts.md](./design/runtime-context-append-only-prompts.md), or rely on the agent explicitly calling `terminal.observe` when current terminal state matters.
+- **Persistent agent error handling**
+  - Phase 6.1 added runtime-only `/agent/state.last_error` surfacing for missed async failures, but it is intentionally in-memory and not durable across service restarts.
+  - Revisit the durable product contract from [plan/ds4/phase-6-generic-agent-failure-messages.md](./plan/ds4/phase-6-generic-agent-failure-messages.md): decide whether failures belong in the visible thread timeline, a persisted non-message thread event, durable agent state, or some combination.
+  - Keep the model-visibility decision explicit; infrastructure failures should not be replayed into future model context unless a separate sanitized runtime note is deliberately designed.
 - **OpenAI prompt cache key policy**
   - Decide whether Bud should set OpenAI `prompt_cache_key` on Responses API requests before implementing it.
   - Document the key granularity and privacy boundary, including provider/model/thread/user/Bud scoping, avoiding raw prompt or PII material in keys, and whether supported cache-retention controls should be used.

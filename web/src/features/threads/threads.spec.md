@@ -110,6 +110,19 @@ Node-runner coverage for the agent stream error recovery classifier.
 - closed sources still use the normal manual reconnect path
 - stale-thread and explicit-resync-suppressed callbacks are ignored
 
+### `agent-state-error.ts`
+
+Pure helper for applying `/agent/state.last_error` to route-owned composer error state.
+
+**Responsibilities**:
+- return the sanitized runtime failure message when `last_error` is present
+- return `null` when a refresh should clear the composer error
+- keep stream bootstrap recovery and route-level state refreshes using the same runtime-error policy
+
+### `agent-state-error.test.ts`
+
+Node-runner coverage for reading and clearing runtime agent error messages from `ApiAgentState`.
+
 ### `assistant-activity-indicator-state.ts`
 
 Pure state helpers for the existing-thread route's timeline activity footer.
@@ -253,6 +266,7 @@ Agent SSE ownership for the existing-thread route.
 - dedupe reconnect scheduling and heartbeat watchdog installation so browser-managed EventSource reconnects do not stack multiple stale-watch intervals inside one hook instance, and suppress stale-heartbeat escalation while the browser is already reconnecting the source
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - detect native EventSource `CONNECTING` error loops with a resume cursor, close the browser-managed source, refresh `/messages` + `/agent/state`, and reconnect with a fresh cursor so service restarts do not retry one stale `after` URL forever
+- apply refreshed `/agent/state.last_error` after bootstrap recovery so missed fast failure events remain visible in the composer error slot
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.compaction_*`, `thread.title`, and `final` events
 - map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
 - pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering

@@ -1,8 +1,8 @@
 # ds4 Progress Checklist
 
 **Parent Plan**: [implementation-spec.md](./implementation-spec.md)
-**Status**: Phase 2-5 implementation hardening complete; Bud-backed live validation pending
-**Last Updated**: 2026-06-03
+**Status**: Core Bud-backed live validation complete; stopped/reconnect/concurrency lifecycle checks pending
+**Last Updated**: 2026-06-04
 
 ---
 
@@ -96,11 +96,13 @@
 - [x] Reset daemon stream on cancellation
 - [x] Record provider-ledger calls with `ds4_openai_responses`
 - [x] Add daemon/service deterministic tests
-- [ ] Run Bud-backed final-text live smoke
-- [ ] Run Bud-backed terminal tool-loop live smoke
+- [x] Run Bud-backed final-text live smoke
+- [x] Run Bud-backed terminal tool-loop live smoke
 
 ## Phase 5: Responses Hardening And Rollout
 
+- [x] Validate Bud-backed cancellation behavior
+- [x] Validate Bud-backed Responses cache behavior
 - [ ] Validate stopped-ds4-before-send behavior
 - [ ] Validate stopped-ds4-mid-stream behavior
 - [ ] Validate Bud reconnect health behavior
@@ -111,3 +113,43 @@
 - [x] Update product/deployment handoff text
 - [x] Complete final docs/spec updates
 - [ ] Complete validation checklist
+
+## Phase 6: Generic Agent Failure Messages
+
+- [ ] Deferred: decide whether durable failure artifacts belong in transcript, model context, both, or neither
+- [ ] Add generic client-safe agent failure formatter
+- [ ] Persist failed assistant transcript rows for non-cancel failures
+- [ ] Emit failed rows through existing `agent.message` and `final` events
+- [ ] Keep canceled turns from creating failed assistant rows
+- [ ] Avoid assistant-completed push/outbox side effects for failed rows unless explicitly chosen
+- [ ] Add focused agent/transcript/runtime tests
+- [ ] Update agent/runtime/route/web specs
+
+## Phase 6.1: Runtime Agent Error Surfacing
+
+- [x] Add generic client-safe runtime failure formatter
+- [x] Add runtime-state `last_error` to `/agent/state`
+- [x] Set `last_error` on non-cancel agent failures
+- [x] Clear `last_error` on new accepted sends, success, and cancellation
+- [x] Pipe refreshed `last_error` to the existing composer error slot
+- [x] Keep runtime failures out of transcript rows and model replay
+- [x] Add service runtime/route and web feature tests
+
+## Phase 7: ds4 Output Budget And Request Caps
+
+- [x] Decide and apply ds4 `maxOutputTokens = 384000` with `reservedOutputTokens = 20000`
+- [x] Update service catalog, ds4 provider, and direct config defaults
+- [x] Update daemon ds4 advertised max-output default
+- [x] Cap agent request `maxOutputTokens` from selected model/provider capabilities
+- [x] Normalize Bud-local ds4 projection so daemon metadata cannot widen product caps
+- [x] Update ds4 env examples and capability examples
+- [x] Add catalog, models route, provider, model-runner, and daemon tests
+
+## Phase 8: ds4 Thinking Mode Controls
+
+- [x] Add ds4-specific catalog reasoning control metadata
+- [x] Expose ds4 `Fast` and `Thinking` options through `/api/models`
+- [x] Keep ds4 `max` hidden for the current 100k context profile
+- [x] Lower ds4 `Fast` to explicit `reasoning.effort = "none"`
+- [x] Reject explicit ds4 `max` before durable message side effects
+- [x] Add catalog, model route, reasoning-policy, provider, and message route tests

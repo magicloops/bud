@@ -145,10 +145,10 @@ Environment-based configuration with defaults.
 | `ds4DirectBaseUrl` | `DS4_DIRECT_BASE_URL` | - | Optional direct local-dev ds4 OpenAI-compatible Responses base URL; enables ds4 provider registration when set |
 | `ds4DirectModel` | `DS4_DIRECT_MODEL` | deepseek-v4-flash | Model string sent to the local ds4 Responses endpoint |
 | `ds4DirectContextTokens` | `DS4_DIRECT_CONTEXT_TOKENS` | 100000 | Context-window metadata advertised for direct ds4 fallback models |
-| `ds4DirectMaxOutputTokens` | `DS4_DIRECT_MAX_OUTPUT_TOKENS` | 128000 | Max-output metadata and default output-token cap for direct ds4 requests |
+| `ds4DirectMaxOutputTokens` | `DS4_DIRECT_MAX_OUTPUT_TOKENS` | 384000 | Max-output metadata and default output-token cap for direct ds4 requests |
 | `defaultModel` | `DEFAULT_MODEL` or `OPENAI_MODEL` | gpt-5.5 | Product model for agent requests that omit `model` |
 | `agentMaxSteps` | `AGENT_MAX_STEPS` | 1000 | Max tool calls per request |
-| `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Max tokens per response |
+| `agentMaxOutputTokens` | `AGENT_MAX_OUTPUT_TOKENS` | 128000 | Global upper bound for response tokens before selected-model capability caps are applied |
 | `agentReasoningEffortDefault` | `AGENT_REASONING_EFFORT` | low | Compatibility fallback for non-catalog model overrides |
 | `agentAutoCompactionRatio` | `AGENT_AUTO_COMPACTION_RATIO` | 0.95 | Usable-input threshold ratio for automatic compaction, clamped to at most 0.95 |
 | `agentContextDriftDebug` | `AGENT_CONTEXT_DRIFT_DEBUG` | false | Enable local-only model context drift snapshots and diffs under `.bud-debug/` |

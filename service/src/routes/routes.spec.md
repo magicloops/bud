@@ -138,7 +138,7 @@ Ownership-focused thread submodules:
 | `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
 | `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with cached cwd path context when available), triggers agent |
 | `POST` | `/api/threads/:thread_id/read` | Advance the viewer's read watermark to a specific owned transcript row |
-| `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot plus context budget snapshot for the thread |
+| `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot plus context budget and last runtime-error snapshots for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/agent/question-requests/:request_id/responses` | Submit an owner-scoped response to a pending `ask_user_questions` tool request |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
@@ -186,7 +186,7 @@ Ownership-focused thread submodules:
 - page metadata includes `has_more_before`, `has_more_after`, `before_cursor`, `after_cursor`, `returned`, and `limit`
 
 **Agent Stream Contract**:
-- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, and `context_budget`
+- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, `context_budget`, and runtime-only `last_error`
 - `context_budget` is a best-effort snapshot of conversation usage since the latest context checkpoint, measured against the automatic-compaction threshold when enabled or the usable input window when compaction is disabled. The primary `estimated_input_tokens` includes both canonical message content and normal agent tool-schema overhead, with `message_estimated_tokens` and `tool_schema_tokens` exposing the split. Active turns prefer the runtime's latest backend compaction-decision snapshot; idle turns use durable reconstruction.
 - `pending_tool` now carries `client_id` and `started_at` in addition to `call_id`, `name`, and `args`
 - `phase` may be `waiting_for_user`; in that state `pending_tool.name` can be `ask_user_questions` and `pending_tool.args` is the normalized `ask_user_questions_request_v1` payload with `request_id`
@@ -396,6 +396,9 @@ Route-level coverage for the catalog-backed model inventory.
 **Current Coverage**:
 - configured Anthropic/OpenAI providers return the sorted product catalog
 - configured direct local-dev ds4 provider adds `ds4-deepseek-v4-flash` with a `service_local_dev` source marker
+- direct local-dev and Bud-local ds4 entries expose `Fast` and `Thinking`
+  reasoning metadata while keeping ds4 `max` hidden for the current 100k
+  context profile
 - global inventory excludes Bud-local ds4 when direct service-local ds4 is not
   configured
 - owned Bud-scoped inventory adds healthy Responses-backed Bud-local ds4 with a
@@ -411,12 +414,15 @@ Route-level coverage for the catalog-backed model inventory.
 - top-level response includes `service_default_model`, `default_model`, and `default_reasoning_effort`
 - model entries are sourced from `service/src/llm/model-catalog.ts` and filtered to configured providers
 - model entries expose product `id`, `provider`, `provider_model`, `display_name`, `is_default`, capability limits, and model-specific `reasoning`
-- ds4 model entries additionally expose `source: { kind: "service_local_dev" }` because this Phase 1 path is enabled by service-local config, not remote Bud capability inventory
+- ds4 model entries additionally expose `source: { kind: "service_local_dev" }`
+  because this Phase 1 path is enabled by service-local config, not remote Bud
+  capability inventory, plus `reasoning.kind:
+  "ds4_responses_reasoning_effort"` with `Fast`/`Thinking` levels
 - Bud-local ds4 model entries expose
   `source: { kind: "bud_local", bud_id }`, `request_mode:
   "ds4_openai_responses"`, and `compatibility: ["openai_responses"]`; they
   never expose the daemon-local URL or endpoint selectors
-- `reasoning.levels` is the client source of truth for valid `reasoning_effort` values
+- `reasoning.levels` is the client source of truth for valid `reasoning_effort` values, including ds4's semantic `Fast`/`Thinking` labels
 - no `available` flag is emitted; configured catalog entries are treated as live
 
 ### `proxy.ts`

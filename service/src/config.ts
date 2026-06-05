@@ -288,7 +288,7 @@ export const config = {
   ),
   ds4DirectMaxOutputTokens: toPositiveInteger(
     process.env.DS4_DIRECT_MAX_OUTPUT_TOKENS,
-    128_000,
+    384_000,
   ),
   // Default product model for agent requests.
   defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.5",

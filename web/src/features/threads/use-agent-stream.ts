@@ -14,6 +14,7 @@ import {
   hasMissedThreadStreamHeartbeat,
 } from '@/features/threads/thread-stream-timing'
 import { getAgentStreamErrorRecoveryAction } from './agent-stream-recovery'
+import { getAgentStateRuntimeErrorMessage } from './agent-state-error'
 
 type AgentToolCallEvent = {
   turn_id: string
@@ -67,6 +68,8 @@ type AgentFinalEvent = {
   message_id?: string
   text?: string
   error?: string
+  error_code?: string
+  retryable?: boolean
 }
 
 type AgentResyncRequiredEvent = {
@@ -263,7 +266,7 @@ export function useAgentStream({
           recoveryInFlightRef.current = false
           cursorRef.current = nextAgentState.stream_cursor
           reconnectAttemptRef.current = 0
-          callbacksRef.current.onError(null)
+          callbacksRef.current.onError(getAgentStateRuntimeErrorMessage(nextAgentState))
           console.warn('[agent-sse] bootstrap recovery succeeded', {
             threadId: agentThreadId,
             reason,

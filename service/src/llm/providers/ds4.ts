@@ -137,7 +137,7 @@ type ToolUseDoneEvent = Extract<
 const PROVIDER_ID = "ds4" satisfies CanonicalProviderId;
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 100_000;
-const DEFAULT_MAX_OUTPUT_TOKENS = 128_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 384_000;
 
 export class Ds4ResponsesProvider implements LLMProvider {
   readonly name = PROVIDER_ID;
@@ -256,10 +256,14 @@ export class Ds4ResponsesProvider implements LLMProvider {
     if (modelConfig.responseFormat === "json") {
       request.text = { format: { type: "json_object" } };
     }
-    if (modelConfig.reasoning?.enabled) {
+    if (modelConfig.reasoning) {
       request.reasoning = {
-        effort: modelConfig.reasoning.effort,
-        summary: modelConfig.reasoning.summaryLevel ?? "auto",
+        effort: modelConfig.reasoning.enabled
+          ? modelConfig.reasoning.effort ?? "low"
+          : "none",
+        ...(modelConfig.reasoning.enabled
+          ? { summary: modelConfig.reasoning.summaryLevel ?? "auto" }
+          : {}),
       };
     }
 

@@ -45,7 +45,7 @@ By the end of this phase:
 DS4_DIRECT_BASE_URL=http://127.0.0.1:8000/v1
 DS4_DIRECT_MODEL=deepseek-v4-flash
 DS4_DIRECT_CONTEXT_TOKENS=100000
-DS4_DIRECT_MAX_OUTPUT_TOKENS=128000
+DS4_DIRECT_MAX_OUTPUT_TOKENS=384000
 ```
 
 Register the provider only when `DS4_DIRECT_BASE_URL` is present.

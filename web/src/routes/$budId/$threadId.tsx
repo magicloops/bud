@@ -18,6 +18,7 @@ import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { WebViewPane } from '@/components/workbench/web-view-pane'
 import { DebugPanel } from '@/components/debug-panel'
 import { useAgentStream } from '@/features/threads/use-agent-stream'
+import { getAgentStateRuntimeErrorMessage } from '@/features/threads/agent-state-error'
 import { useFileViewer } from '@/features/threads/use-file-viewer'
 import { useWebView } from '@/features/threads/use-web-view'
 import { useTerminalSession } from '@/features/threads/use-terminal-session'
@@ -117,7 +118,7 @@ function ThreadView() {
   )
   const [activeCompaction, setActiveCompaction] = useState<ApiAgentCompactionStartEvent | null>(null)
   const [contextCompactionNotices, setContextCompactionNotices] = useState<ChatTimelineNotice[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(() => getAgentStateRuntimeErrorMessage(initialAgentState))
   const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
@@ -199,6 +200,7 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
     setContextBudget(initialAgentState.context_budget ?? null)
+    setError(getAgentStateRuntimeErrorMessage(initialAgentState))
     resetAssistantActivityGate(initialAgentState)
   }, [initialAgentState, initialMessagePage, resetAssistantActivityGate])
 
@@ -275,6 +277,7 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
+    setError(getAgentStateRuntimeErrorMessage(nextAgentState))
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
   }, [applyAgentState, resetAssistantActivityGate])
@@ -292,6 +295,7 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
+    setError(getAgentStateRuntimeErrorMessage(nextAgentState))
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
   }, [mergeLatestBootstrap, resetAssistantActivityGate])

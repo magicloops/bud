@@ -45,7 +45,7 @@ Phase 1.6 made `/v1/responses` the only active Bud ds4 endpoint. Phase 2 capabil
 ```text
 BUD_LOCAL_LLM_DS4_URL=http://127.0.0.1:8000
 BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS=100000
-BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS=128000
+BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS=384000
 ```
 
 The URL must be a loopback HTTP origin. The daemon appends `/v1/models` for probing and later resolves allowlisted API paths from the logical server id.
@@ -70,7 +70,7 @@ Advertise the capability only after a successful startup probe:
             "id": "deepseek-v4-flash",
             "display_name": "ds4 DeepSeek V4",
             "context_window_tokens": 100000,
-            "max_output_tokens": 128000
+            "max_output_tokens": 384000
           }
         ],
         "concurrency": 1,

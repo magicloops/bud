@@ -33,6 +33,11 @@ export function listHealthyBudLocalDs4Models(capabilities: unknown): BudLocalDs4
     (model): model is Record<string, unknown> =>
       isRecord(model) && model.id === BUD_LOCAL_DS4_PROVIDER_MODEL,
   );
+  const advertisedContextWindowTokens = positiveIntegerOrNull(
+    advertised?.context_window_tokens,
+  );
+  const advertisedMaxOutputTokens = positiveIntegerOrNull(advertised?.max_output_tokens);
+  const catalogMaxOutputTokens = entry.capabilities.maxOutputTokens;
 
   return [
     {
@@ -41,13 +46,13 @@ export function listHealthyBudLocalDs4Models(capabilities: unknown): BudLocalDs4
       displayName:
         typeof advertised?.display_name === "string" ? advertised.display_name : entry.displayName,
       contextWindowTokens:
-        typeof advertised?.context_window_tokens === "number"
-          ? advertised.context_window_tokens
+        advertisedContextWindowTokens !== null
+          ? advertisedContextWindowTokens
           : entry.capabilities.contextWindowTokens,
       maxOutputTokens:
-        typeof advertised?.max_output_tokens === "number"
-          ? advertised.max_output_tokens
-          : entry.capabilities.maxOutputTokens,
+        advertisedMaxOutputTokens !== null
+          ? Math.min(advertisedMaxOutputTokens, catalogMaxOutputTokens)
+          : catalogMaxOutputTokens,
     },
   ];
 }
@@ -85,4 +90,10 @@ function getHealthyBudLocalDs4Server(capabilities: unknown): Record<string, unkn
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function positiveIntegerOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : null;
 }

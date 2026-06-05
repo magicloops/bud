@@ -98,7 +98,7 @@ ds4_anthropic_messages
 Confirm initial configured defaults:
 
 - context window tokens: `100000`
-- max output tokens: `128000`
+- max output tokens: `384000`
 - per-Bud concurrency: `1`
 
 Implementation may enforce stricter runtime output limits if service storage, UI latency, or agent-loop behavior requires it.

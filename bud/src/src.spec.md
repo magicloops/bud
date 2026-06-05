@@ -29,7 +29,7 @@ CLI and environment configuration.
 - defines `BudArgs`
 - defines `BudCommand`, `DoctorArgs`, and `DoctorFormat`
 - owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
-- owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS`
+- owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` (default 384000)
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
 
 ### `doctor.rs`
@@ -199,8 +199,8 @@ Daemon-side Bud-local LLM adapter for ds4.
   through generic `stream_data` / `stream_credit` / `stream_reset` /
   `stream_close`
 - enforces one active stream per daemon plus explicit idle and total-TTL guards
-  so slow local inference can run while abandoned streams fail instead of
-  hanging forever
+  (one-hour idle timeout and two-hour total TTL) so slow local inference can run
+  while abandoned streams fail instead of hanging forever
 - aborts active local LLM streams when the active daemon transport disconnects
 
 ### `transport.rs`

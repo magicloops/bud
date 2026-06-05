@@ -110,6 +110,42 @@ Finalization phase covering:
 - live/manual validation
 - deployment and product handoff
 
+### `phase-6-generic-agent-failure-messages.md`
+
+Deferred hardening phase covering:
+
+- generic durable failed-turn transcript visibility
+- sanitized user-facing failure messages
+- failed assistant rows without provider-specific branches
+- preserving canceled-turn behavior
+
+### `phase-6.1-runtime-error-surfacing.md`
+
+Implemented near-term UI/runtime phase covering:
+
+- runtime-state `last_error` for missed async agent failures
+- existing composer error-slot rendering for ds4 local-model failures
+- sanitized failure formatting without transcript rows
+- keeping runtime failures out of model-visible conversation context
+
+### `phase-7-ds4-output-budget-and-request-caps.md`
+
+Follow-on budget phase covering:
+
+- setting ds4 output metadata to the DeepSeek model capability while keeping context-budget reserve explicit
+- generic model capability caps for agent request `maxOutputTokens`
+- Bud-local capability projection normalization
+- valid ds4 context-budget API metadata
+
+### `phase-8-ds4-thinking-mode-controls.md`
+
+Implemented reasoning-control phase covering:
+
+- ds4 `Fast` versus `Thinking` model reasoning options
+- explicit ds4 `/v1/responses` non-thinking request semantics
+- provider-specific lowering for ds4 `reasoning.effort`
+- `max` thinking deferral until the effective context window is at least 393,216 tokens
+
 ### `progress-checklist.md`
 
 Running implementation checklist for the ds4 rollout.
@@ -121,6 +157,7 @@ Automated and manual validation checklist for the ds4 rollout.
 ## Dependencies
 
 - [../../design/local-ds4-llm-over-bud.md](../../design/local-ds4-llm-over-bud.md) - source design
+- [../../design/ds4-thinking-mode-controls.md](../../design/ds4-thinking-mode-controls.md) - ds4 thinking selector design
 - [../../reference/ds4/server.md](../../reference/ds4/server.md) - ds4 server API reference
 - [../llm-models/implementation-spec.md](../llm-models/implementation-spec.md) - model catalog and reasoning-control precedent
 - [../swappable-transport/implementation-spec.md](../swappable-transport/implementation-spec.md) - WebSocket-first data-plane carrier precedent

@@ -26,6 +26,14 @@ export type AgentDraftAssistant = {
   updated_at: string;
 };
 
+export type AgentRuntimeLastError = {
+  turn_id: string;
+  code: string;
+  message: string;
+  retryable: boolean;
+  occurred_at: string;
+};
+
 export type AgentRuntimeSnapshot = {
   active: boolean;
   turn_id: string | null;
@@ -36,6 +44,7 @@ export type AgentRuntimeSnapshot = {
   draft_assistant: AgentDraftAssistant | null;
   environment: AgentEnvironmentSnapshot | null;
   context_budget: ContextBudgetSnapshot | null;
+  last_error: AgentRuntimeLastError | null;
   updated_at: string;
 };
 
@@ -68,6 +77,7 @@ type InternalSnapshot = {
     | null;
   environment: AgentEnvironmentSnapshot | null;
   contextBudget: ContextBudgetSnapshot | null;
+  lastError: AgentRuntimeLastError | null;
   updatedAt: Date;
 };
 
@@ -121,6 +131,7 @@ export class AgentRuntimeStateManager {
         snapshot.draftAssistant = null;
         snapshot.environment = environment ?? null;
         snapshot.contextBudget = null;
+        snapshot.lastError = null;
       },
       undefined,
     );
@@ -221,6 +232,30 @@ export class AgentRuntimeStateManager {
 
   clearContextBudget(threadId: string, cursor?: string): AgentRuntimeSnapshot {
     return this.setContextBudget(threadId, null, cursor);
+  }
+
+  setLastError(
+    threadId: string,
+    lastError: AgentRuntimeLastError,
+    cursor?: string,
+  ): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.lastError = lastError;
+      },
+      cursor,
+    );
+  }
+
+  clearLastError(threadId: string, cursor?: string): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.lastError = null;
+      },
+      cursor,
+    );
   }
 
   setEnvironment(
@@ -441,6 +476,7 @@ export class AgentRuntimeStateManager {
       draftAssistant: null,
       environment: null,
       contextBudget: null,
+      lastError: null,
       updatedAt: new Date(),
     };
     this.snapshots.set(threadId, snapshot);
@@ -530,6 +566,7 @@ export class AgentRuntimeStateManager {
         : null,
       environment: snapshot.environment,
       context_budget: snapshot.contextBudget,
+      last_error: snapshot.lastError,
       updated_at: snapshot.updatedAt.toISOString(),
     };
   }

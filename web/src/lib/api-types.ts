@@ -324,6 +324,14 @@ export type ApiAgentCompactionFailedEvent = ApiAgentCompactionStartEvent & {
   finished_at: string
 }
 
+export type ApiAgentLastError = {
+  turn_id: string
+  code: string
+  message: string
+  retryable: boolean
+  occurred_at: string
+}
+
 export type ApiAgentState = {
   active: boolean
   turn_id: string | null
@@ -345,6 +353,7 @@ export type ApiAgentState = {
   updated_at: string
   environment?: ApiAgentEnvironment | null
   context_budget?: ApiContextBudget | null
+  last_error?: ApiAgentLastError | null
 }
 
 export type ApiFileSession = {

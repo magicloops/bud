@@ -30,7 +30,7 @@ The LLM module provides a unified interface for multiple LLM providers, enabling
 │ OpenAIProvider  │ │AnthropicProvider│ │Ds4ResponsesProvider      │
 │                 │ │                 │ │ BudLocalDs4Provider      │
 │ - GPT-5.4/5.5   │ │ - Claude 4.6/4.7│ │ - local DeepSeek model   │
-│ - reasoning     │ │ - thinking      │ │ - Responses SSE          │
+│ - reasoning     │ │ - thinking      │ │ - Responses + thinking   │
 └─────────────────┘ └─────────────────┘ └──────────────────────────┘
 ```
 
@@ -156,7 +156,7 @@ Central product model catalog and reasoning-control metadata.
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.5` | `gpt-5.5` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `low` |
-| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | Direct local or Bud-local ds4 Responses path; no product reasoning controls; default `none` |
+| `ds4-deepseek-v4-flash` | `deepseek-v4-flash` | ds4 Responses `reasoning.effort`: `none` (`Fast`) and `low` (`Thinking`); default `none`; `max` deferred until context is at least 393,216 |
 
 **Usable Context Policy**:
 - `contextWindowTokens` remains the provider/model hard total context window
@@ -167,6 +167,9 @@ Central product model catalog and reasoning-control metadata.
 - GPT-5.5 currently declares `contextWindowTokens: 1_050_000`,
   `usableContextWindowTokens: 400_000`, and `reservedOutputTokens: 128_000`,
   producing a 272,000 token usable input window before the auto-compaction ratio
+- ds4 DeepSeek V4 declares `contextWindowTokens: 100_000`,
+  `maxOutputTokens: 384_000`, and `reservedOutputTokens: 20_000`, producing an
+  80,000 token usable input window before the auto-compaction ratio
 
 ### `reasoning-policy.ts`
 
@@ -186,7 +189,7 @@ Standalone Node tests for catalog invariants and reasoning option labels.
 
 **Current Coverage**:
 - current product model order and global default
-- provider-specific reasoning levels for GPT-5.4/GPT-5.5, Claude Opus 4.6, Claude Opus 4.7, and Claude Haiku 4.5
+- provider-specific reasoning levels for GPT-5.4/GPT-5.5, Claude Opus 4.6, Claude Opus 4.7, Claude Haiku 4.5, and ds4
 - stable reasoning labels exposed to API clients
 
 ### `reasoning-policy.test.ts`
@@ -198,6 +201,7 @@ Standalone Node tests for effective model-selection precedence.
 - stored thread selections are used when no model is submitted
 - invalid stored selections fall back to the service default
 - null explicit models and unsupported explicit reasoning are rejected
+- ds4 accepts normal `low` thinking and rejects `max` while its context profile is below the max-thinking threshold
 
 ### `provider-ledger.ts`
 
@@ -370,6 +374,8 @@ Each provider transforms canonical schemas to their specific requirements:
 **ds4** (OpenAI-compatible Responses):
 - Sends canonical messages through `/responses` with `stream: true`
 - Lowers tool definitions to Responses function tools and canonical tool-result blocks to `function_call_output`
+- Sends explicit `reasoning.effort = "none"` for ds4 `Fast` because ds4 treats omitted `reasoning` as normal thinking
+- Sends non-`none` `reasoning.effort` for ds4 `Thinking`
 - Replays ds4-native reasoning payloads when prior Responses calls emitted provider-only reasoning blocks
 - Emits canonical reasoning/text/tool stream events from Responses SSE lifecycle events
 - Exposes the exact Responses request body through `buildDebugRequestSnapshot()` for local context-drift artifacts when enabled
