@@ -2,17 +2,17 @@
 
 ## Automated
 
-- [ ] `service` conversation-loader test: reasoning rows are skipped
+- [x] `service` conversation-loader test: reasoning rows are skipped
 - [ ] `service` provider-ledger test: provider-native reasoning replay remains
   unchanged
-- [ ] `service` runtime test: `draft_reasoning` serializes and clears
-- [ ] `service` model-runner test: canonical reasoning events produce returned
+- [x] `service` runtime test: `draft_reasoning` serializes and clears
+- [x] `service` model-runner test: canonical reasoning events produce returned
   reasoning segments and runtime events
-- [ ] `service` transcript-writer test: reasoning rows persist with expected
+- [x] `service` transcript-writer test: reasoning rows persist with expected
   metadata and owner stamping
-- [ ] `web` thread-message-state test: draft reasoning start/delta/done
+- [x] `web` thread-message-state test: draft reasoning start/delta/done
   reconciliation
-- [ ] `web` thread-message-state test: failed/canceled final clears draft
+- [x] `web` thread-message-state test: failed/canceled final clears draft
   reasoning
 - [ ] `web` rendering test or smoke: `role: "reasoning"` renders visibly
 
@@ -48,15 +48,15 @@
 ## Product Behavior
 
 - [ ] Reasoning is visible by default
-- [ ] Reasoning rows do not update thread previews
-- [ ] Reasoning rows do not enqueue push notifications
-- [ ] Reasoning rows do not appear in model-visible prompt reconstruction
+- [x] Reasoning rows do not update thread previews
+- [x] Reasoning rows do not enqueue push notifications
+- [x] Reasoning rows do not appear in model-visible prompt reconstruction
 - [ ] Reasoning rows are owner-scoped through existing thread/message routes
 - [ ] Older web clients tolerate the additive message role and SSE events
 
 ## Docs
 
-- [ ] `docs/proto.md` documents reasoning messages and events
-- [ ] Service specs updated
-- [ ] Web specs updated
+- [x] `docs/proto.md` documents reasoning messages and events
+- [x] Service specs updated
+- [x] Web specs updated
 - [ ] Mobile handoff created after web validation

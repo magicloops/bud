@@ -68,7 +68,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 |--------|-------------|
 | **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
 | **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one active terminal session at a time. |
-| **Message** | A chat message with role (user/assistant/tool/system), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system messages inherit thread ownership. |
+| **Message** | A chat message or visible reasoning artifact with role (user/assistant/tool/system/reasoning), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system/reasoning messages inherit thread ownership; reasoning rows are display-only and excluded from model-visible replay, previews, attention, and push notifications. |
 | **Agent Context Checkpoint** | Durable model-context compaction checkpoint for a thread. Stores summary replacement history plus message/provider-ledger boundaries while leaving the visible transcript intact. |
 | **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps, and cached daemon-reported cwd for file-link resolution. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
@@ -302,11 +302,11 @@ Bud availability is treated as an agent environment. When a thread's Bud is offl
 
 Current service ownership split:
 - `conversation-loader` builds canonical transcript context from persisted rows and latest completed context checkpoint boundaries
-- `model-runner` owns provider resolution, reasoning normalization, draft streaming, and tool-call parsing
+- `model-runner` owns provider resolution, reasoning normalization, draft assistant/reasoning streaming, and tool-call parsing
 - `context-compactor` summarizes old transcript spans into durable checkpoint replacement history before oversized requests fail, or after one normalized provider context-window error
 - `terminal/freshness` derives service-side terminal freshness hints from DB/runtime state without contacting the Bud before provider calls
 - `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
-- `transcript-writer` owns durable assistant/tool writes, terminal visibility metadata, plus runtime emission boundaries
+- `transcript-writer` owns durable assistant/tool/reasoning writes, terminal visibility metadata, plus runtime emission boundaries
 
 ### 3. Terminal Readiness Detection
 
@@ -868,4 +868,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-06-03*
+*Last updated: 2026-06-05*

@@ -19,12 +19,31 @@ import type {
 import { resolveAgentToolsForEnvironment } from "./tool-definitions.js";
 
 function createRuntime() {
+  const events: Array<{ threadId: string; event: string; data: Record<string, unknown> }> = [];
+  const draftReasoning: Array<{
+    threadId: string;
+    draft: Record<string, unknown>;
+    cursor: string;
+  }> = [];
   return {
-    emit() {
-      return "cursor_1";
+    events,
+    draftReasoning,
+    emit(threadId: string, event: { event: string; data: Record<string, unknown> }) {
+      events.push({ threadId, event: event.event, data: event.data });
+      return `cursor_${events.length}`;
     },
     setDraftAssistant() {
       // noop
+    },
+    setDraftReasoning(
+      threadId: string,
+      draft: Record<string, unknown>,
+      cursor: string,
+    ) {
+      draftReasoning.push({ threadId, draft, cursor });
+    },
+    getSnapshot() {
+      return { stream_cursor: "cursor_snapshot" };
     },
   };
 }
@@ -387,6 +406,85 @@ test("invokeModel carries provider diagnostics from message_done", async (t) => 
     id: "resp_raw",
     output: [],
   });
+});
+
+test("invokeModel emits and returns visible reasoning segments", async (t) => {
+  const previousOpenAI = providerRegistry.getProvider("openai");
+  const previousAnthropic = providerRegistry.getProvider("anthropic");
+
+  providerRegistry.unregister("openai");
+  providerRegistry.unregister("anthropic");
+  providerRegistry.register(
+    createProvider("openai", ["gpt-5.4-2026-03-05"], undefined, [
+      { type: "message_start", id: "resp_reasoning" },
+      { type: "reasoning_start", index: 0 },
+      { type: "reasoning_delta", index: 0, delta: "Check terminal state." },
+      {
+        type: "reasoning_done",
+        index: 0,
+        block: {
+          type: "reasoning",
+          text: "Check terminal state.",
+          providerData: {
+            provider: "openai",
+            payload: { type: "reasoning", id: "rs_1" },
+          },
+        },
+      },
+      { type: "content_start", index: 1, content_type: "text", assistantPhase: "final_answer" },
+      { type: "text_delta", index: 1, delta: "Done.", assistantPhase: "final_answer" },
+      { type: "content_done", index: 1 },
+      { type: "message_done", stop_reason: "end_turn" },
+    ]),
+  );
+
+  t.after(() => {
+    providerRegistry.unregister("openai");
+    if (previousOpenAI) {
+      providerRegistry.register(previousOpenAI);
+    }
+    if (previousAnthropic) {
+      providerRegistry.register(previousAnthropic);
+    }
+  });
+
+  const runtime = createRuntime();
+  const runner = new AgentModelRunner(
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const result = await runner.invokeModel(
+    "thread_test",
+    "turn_test",
+    [{ role: "user", content: "hello" }],
+    "gpt-5.4",
+    runner.resolveModelReasoning("gpt-5.4"),
+    undefined,
+    undefined,
+    undefined,
+    { llmCallId: "llm-call-1" },
+  );
+
+  assert.equal(result.reasoningSegments.length, 1);
+  assert.equal(result.reasoningSegments[0]?.text, "Check terminal state.");
+  assert.equal(result.reasoningSegments[0]?.llmCallId, "llm-call-1");
+  assert.equal(result.reasoningSegments[0]?.provider, "openai");
+  assert.deepEqual(
+    runtime.events.map((event) => event.event),
+    [
+      "agent.reasoning_start",
+      "agent.reasoning_delta",
+      "agent.message_start",
+      "agent.message_delta",
+      "agent.message_done",
+    ],
+  );
+  assert.equal(runtime.events[0]?.data.llm_call_id, "llm-call-1");
+  assert.equal(runtime.events[1]?.data.delta, "Check terminal state.");
+  assert.equal(runtime.draftReasoning.at(-1)?.draft.text, "Check terminal state.");
 });
 
 test("invokeModel captures model context drift prompt and response when recorder is provided", async (t) => {

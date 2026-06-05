@@ -29,7 +29,8 @@
     "smoke:ws-file": "cargo build --manifest-path ../bud/Cargo.toml && tsx src/scripts/smoke-ws-file.ts",
     "smoke:ws-proxy": "cargo build --manifest-path ../bud/Cargo.toml && tsx src/scripts/smoke-ws-proxy.ts",
     "oauth:provision:ios-local": "tsx src/scripts/provision-ios-local-oauth-client.ts",
-    "oauth:provision:ios-staging": "node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts"
+    "oauth:provision:ios-staging": "node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts",
+    "oauth:provision:ios-production": "node --env-file=.env.production --import tsx src/scripts/provision-ios-production-oauth-client.ts"
   },
   "engines": {
     "node": ">=20.19.0 || >=22.12.0"

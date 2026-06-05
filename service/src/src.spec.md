@@ -231,7 +231,7 @@ WebSocket gateway composition plus extracted Bud connection, tracker, protocol, 
 
 ### `scripts/` → [scripts.spec.md](./scripts/scripts.spec.md)
 
-Database utility scripts for development and auth/bootstrap operations (seeding, migrations, inspection, local iOS client provisioning, staging iOS client provisioning).
+Database utility scripts for development and auth/bootstrap operations (seeding, migrations, inspection, local iOS client provisioning, staging iOS client provisioning, production iOS client provisioning).
 
 ## Architecture
 

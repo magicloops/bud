@@ -20,8 +20,10 @@ Message/transcript ownership for the existing-thread route.
 - fetch older transcript pages through `before=<cursor>`
 - create and reconcile optimistic user messages
 - apply runtime pending-tool and draft-assistant overlays
+- apply runtime draft-reasoning overlays
 - preserve pending `ask_user_questions` overlays from `/agent/state` so a refresh can recover the form while the service is waiting on the user
 - reconcile canonical assistant/tool messages from the agent stream
+- reconcile live reasoning draft rows with persisted `role: "reasoning"` messages from the agent stream
 - keep visible assistant draft text in the timeline when a tool call arrives, so text streamed before or between tool calls is not removed while waiting for the persisted assistant row
 - clear per-turn synthetic rows when a turn finishes or fails
 
@@ -41,9 +43,11 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 - stable `client_id` identity comparison and chronological sorting
 - optimistic user-message reconciliation into canonical persisted rows, including server timestamps and metadata
 - pending-tool / draft-assistant synthetic-row detection and cleanup
+- draft-reasoning synthetic-row detection, update, reconciliation, and cleanup
 - pending `ask_user_questions` synthetic rows carry the server `started_at` timestamp when available so refresh and live stream rows sort consistently
 - live tool-call events and `/agent/state` snapshots share the same pending-tool row builder
 - `/agent/state` overlay application
+- `/agent/state.draft_reasoning` overlay application
 - latest-bootstrap merges that preserve older already-loaded transcript history
 - per-turn finalization cleanup rules
 
@@ -64,8 +68,11 @@ Node-runner coverage for transcript reconciliation rules.
 - live `agent.tool_call` events build pending `ask_user_questions` prompt rows
 - `/agent/state` bootstrap preserves pending `ask_user_questions` prompt rows
 - latest-bootstrap refreshes do not duplicate pending `ask_user_questions` prompt rows
+- `/agent/state` bootstrap preserves draft reasoning rows
+- live `agent.reasoning_*` events reconcile draft reasoning rows into persisted `reasoning` messages
 - latest-bootstrap preservation of older history/cursors
 - turn finalization cleanup semantics
+- failed/canceled turn finalization clears draft reasoning rows
 - persisted commentary assistant rows survive draft replacement and successful turn finalization
 
 ### `question-response-submit.ts`
@@ -267,13 +274,15 @@ Agent SSE ownership for the existing-thread route.
 - handle explicit `agent.resync_required` by calling back into a route-provided bootstrap refresh
 - detect native EventSource `CONNECTING` error loops with a resume cursor, close the browser-managed source, refresh `/messages` + `/agent/state`, and reconnect with a fresh cursor so service restarts do not retry one stale `after` URL forever
 - apply refreshed `/agent/state.last_error` after bootstrap recovery so missed fast failure events remain visible in the composer error slot
-- parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.compaction_*`, `thread.title`, and `final` events
+- parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.reasoning_*`, `agent.compaction_*`, `thread.title`, and `final` events
 - map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
 - pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering
 - accept `agent.message` for both intermediate assistant text segments and final assistant rows
+- accept `agent.reasoning_done` as the canonical persisted `role: "reasoning"` row for a visible provider reasoning segment
 - tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
 - pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
 - pass through `ask_user_questions` request args unchanged so the timeline can render the pending form and submit through the thread route
+- pass through visible provider reasoning start/delta/done events to the transcript state hook
 - pass through automatic context-compaction start/done/failure events to the route for live activity text, non-transcript timeline markers, immediate post-compaction budget snapshots when present, and budget refresh fallback after successful compaction
 - emit narrow callback events to the route/message feature modules instead of mutating route-local state directly
 - keep latest event handlers in refs so the EventSource lifecycle depends on

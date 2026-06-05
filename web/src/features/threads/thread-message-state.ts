@@ -10,11 +10,17 @@ export const isPendingToolMessage = (message: ApiMessage) =>
 export const isDraftAssistantMessage = (message: ApiMessage) =>
   message.role === 'assistant' && message.metadata?.draft === true
 
+export const isDraftReasoningMessage = (message: ApiMessage) =>
+  message.role === 'reasoning' && message.metadata?.draft === true
+
 export const isSyntheticMessage = (message: ApiMessage) =>
-  isOptimisticMessage(message) || isPendingToolMessage(message) || isDraftAssistantMessage(message)
+  isOptimisticMessage(message) ||
+  isPendingToolMessage(message) ||
+  isDraftAssistantMessage(message) ||
+  isDraftReasoningMessage(message)
 
 export const isAgentSyntheticMessage = (message: ApiMessage) =>
-  isPendingToolMessage(message) || isDraftAssistantMessage(message)
+  isPendingToolMessage(message) || isDraftAssistantMessage(message) || isDraftReasoningMessage(message)
 
 export const sortMessagesChronologically = (messages: ApiMessage[]) =>
   [...messages].sort((left, right) => {
@@ -118,6 +124,28 @@ export const removeDraftAssistantMessageForTurn = (existing: ApiMessage[], turnI
     return metadata.turn_id !== turnId
   })
 
+export const upsertDraftReasoningMessage = (
+  existing: ApiMessage[],
+  clientId: string,
+  updater: (current: ApiMessage | null) => ApiMessage,
+) => {
+  const current = existing.find((message) => getMessageIdentity(message) === clientId) ?? null
+  return upsertMessage(existing, updater(current))
+}
+
+export const removeDraftReasoningMessage = (existing: ApiMessage[], clientId: string) =>
+  existing.filter((message) => !isDraftReasoningMessage(message) || getMessageIdentity(message) !== clientId)
+
+export const removeDraftReasoningMessagesForTurn = (existing: ApiMessage[], turnId: string) =>
+  existing.filter((message) => {
+    if (!isDraftReasoningMessage(message)) {
+      return true
+    }
+
+    const metadata = message.metadata ?? {}
+    return metadata.turn_id !== turnId
+  })
+
 export type PendingToolCallMessageInput = {
   turnId: string
   clientId: string
@@ -192,6 +220,32 @@ export const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): 
   }
 }
 
+export const buildDraftReasoningMessagesFromState = (agentState: ApiAgentState): ApiMessage[] => {
+  if (!agentState.active || !agentState.turn_id) {
+    return []
+  }
+
+  return (agentState.draft_reasoning ?? []).map((draft) => ({
+    message_id: draft.client_id,
+    client_id: draft.client_id,
+    role: 'reasoning',
+    display_role: 'Reasoning',
+    content: draft.text,
+    created_at: draft.started_at ?? draft.updated_at,
+    metadata: {
+      artifact_kind: 'reasoning',
+      model_visible: false,
+      turn_id: agentState.turn_id,
+      draft: true,
+      llm_call_id: draft.llm_call_id,
+      reasoning_index: draft.index,
+      provider: draft.provider,
+      provider_model: draft.provider_model,
+      started_at: draft.started_at,
+    },
+  }))
+}
+
 export const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAgentState) => {
   let nextMessages = messages.filter((message) => !isAgentSyntheticMessage(message))
 
@@ -203,6 +257,10 @@ export const applyAgentStateOverlay = (messages: ApiMessage[], agentState: ApiAg
   const draftAssistantMessage = buildDraftAssistantMessageFromState(agentState)
   if (draftAssistantMessage) {
     nextMessages = upsertMessage(nextMessages, draftAssistantMessage)
+  }
+
+  for (const draftReasoningMessage of buildDraftReasoningMessagesFromState(agentState)) {
+    nextMessages = upsertMessage(nextMessages, draftReasoningMessage)
   }
 
   return sortMessagesChronologically(nextMessages)
@@ -245,8 +303,9 @@ export const finalizeTurnMessages = (
   status: 'succeeded' | 'failed' | 'canceled',
 ) => {
   const withoutPendingTools = removePendingToolMessagesForTurn(messages, turnId)
+  const withoutDraftReasoning = removeDraftReasoningMessagesForTurn(withoutPendingTools, turnId)
   if (status === 'failed' || status === 'canceled') {
-    return removeDraftAssistantMessageForTurn(withoutPendingTools, turnId)
+    return removeDraftAssistantMessageForTurn(withoutDraftReasoning, turnId)
   }
-  return withoutPendingTools
+  return withoutDraftReasoning
 }

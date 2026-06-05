@@ -66,6 +66,10 @@ Current branch review for the thread model-preference persistence work, separati
 
 Review of the iOS send-message retry assumptions around `client_id` idempotency. Confirms that same-thread duplicate retries usually recover the existing message without a second agent turn, but identifies follow-up backend gaps around conflicting duplicate bodies, inserted-but-not-started messages, and duplicate response agent metadata.
 
+### `prod-url-and-oauth-provisioning-review.md`
+
+Review of the staging-to-production public URL migration. Identifies active `https://staging.bud.dev` references, staging-named OAuth provisioning entrypoints, ignored env-file risks, Render/Cloudflare/provider updates needed for `https://app.bud.dev`, and validation steps for production OAuth, mobile, and daemon claim flows.
+
 ### `bud-offline-roundtrip-review.md`
 
 Review of the Bud-offline message-send behavior, comparing online and offline browser/service/daemon/DB roundtrips before the primary agent LLM call, including what live Bud data is captured, what is skipped offline, and the main latency/state risks.

@@ -625,7 +625,7 @@ Rejected file opens and resolves use the same frame-family shape with
 
 - URL: `GET /api/threads/:thread_id/agent/state`
 - Returns the current best-effort in-flight runtime snapshot for the authorized viewer
-- Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `environment`, `updated_at`, and best-effort `context_budget`
+- Snapshot includes `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `draft_reasoning`, `environment`, `updated_at`, and best-effort `context_budget`
 - `environment` is always returned for the authorized thread, including idle snapshots. It is derived from the thread's owning Bud and current service transport state, not from client-supplied Bud ids.
 - Environment shape:
 
@@ -647,6 +647,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - When `mode` is `bud_offline`, provider calls use a Bud-specific tool denylist: `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, and `web_view_list` are omitted. Service-level non-Bud tools remain available by default.
 - `context_budget` reports the backend-authoritative model-visible input estimate against the effective auto-compaction budget. For available snapshots, `estimated_input_tokens` is the trigger estimate and equals `message_estimated_tokens + tool_schema_tokens`; normal agent turns include current tool-schema overhead while tool-free compaction-summary requests do not. Budget snapshots also include provenance fields (`source`, `phase`, `turn_id`, `checked_at`) and optional provider usage diagnostics for non-UI calibration.
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
+- `draft_reasoning` is an additive list of in-flight provider reasoning text visible to the browser but not included in future model-visible conversation reconstruction. Each item includes `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`.
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
 - For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
 - For `terminal.send`, browser-facing `pending_tool.args` uses the model-facing gesture fields: exactly one of `command`, `raw_text`, or `key`. `command` means text plus Enter; `raw_text` means literal text without an implicit Enter; `key` means one semantic key gesture.
@@ -1624,6 +1625,15 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "delta": "Cloning " }`
 - `agent.message_done`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository..." }`
+- `agent.reasoning_start`
+  - starts a visible provider reasoning draft row
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "llm_call_id": "01LLM...", "index": 0, "provider": "ds4", "provider_model": "deepseek-v4-flash", "started_at": "2026-06-05T20:00:01.000Z" }`
+- `agent.reasoning_delta`
+  - appends sanitized display text to the draft reasoning row; provider replay payloads are not included
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "delta": "I should inspect the terminal state." }`
+- `agent.reasoning_done`
+  - replaces the draft reasoning row with a persisted canonical `role: "reasoning"` message
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "message_id": "uuid", "text": "I should inspect the terminal state.", "message": { "message_id": "uuid", "client_id": "uuidv7", "role": "reasoning", "display_role": "Reasoning", "content": "I should inspect the terminal state.", "metadata": { "artifact_kind": "reasoning", "model_visible": false, "llm_call_id": "01LLM..." }, "created_at": "2026-06-05T20:00:05.000Z" } }`
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
   - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
@@ -1735,6 +1745,7 @@ Rules:
 - `id:` on the agent stream is the opaque resume cursor
 - keep-alive heartbeats are valid SSE events even when no replayable data exists
 - first-party clients should key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`
+- first-party clients should key draft reasoning rows by `client_id`, overlay `/agent/state.draft_reasoning` after bootstrap/recovery, and reconcile persisted reasoning from `agent.reasoning_done` or `/messages`
 - first-party clients must not remove a visible assistant draft just because an `agent.tool_call` arrives; text before or between tool calls is persisted as an assistant `agent.message`
 - first-party clients should use `agent.tool_call.args.wait_for` or `/agent/state.pending_tool.args.wait_for` to detect settled terminal waits instead of inferring long-running terminal progress from elapsed time
 - first-party clients should render `ask_user_questions` prompts from either a live `agent.tool_call` or `/agent/state.pending_tool` after refresh, and submit answers through the thread-scoped response route
@@ -1743,6 +1754,7 @@ Rules:
 - completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
 - compaction events are activity markers only; clients must not render them as persisted assistant, user, tool, or system transcript rows
+- reasoning messages are browser-visible transcript rows only; clients must not treat `role: "reasoning"` rows as assistant text for thread previews, push notifications, or model-visible replay
 
 ---
 
@@ -1970,6 +1982,11 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
     `agent.compaction_done`, and `agent.compaction_failed` events without
     exposing checkpoint summaries or replacement history; successful
     compaction events may include a post-compaction `context_budget` snapshot
+  - provider reasoning can now stream as `agent.reasoning_start`,
+    `agent.reasoning_delta`, and `agent.reasoning_done`, persist as
+    `role:"reasoning"` transcript rows, and recover in-flight drafts through
+    `/agent/state.draft_reasoning`; provider replay payloads remain in
+    `llm_call_item`
   - `agent.message` may persist intermediate assistant text before later tool calls, and clients keep streamed draft text visible when tool calls arrive
   - browser-facing `agent.tool_call.args` and `/agent/state.pending_tool.args` now expose the effective terminal `wait_for` mode, including implicit `terminal_send` settled waits
   - model-facing `ask_user_questions` lets the agent pause for structured user input; `/agent/state.phase` may be `waiting_for_user`, clients submit `ask_user_questions_response_v1` through the thread-scoped response route, and completed tool rows include a self-contained Q/A result

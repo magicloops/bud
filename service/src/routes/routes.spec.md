@@ -138,7 +138,7 @@ Ownership-focused thread submodules:
 | `GET` | `/api/threads/:thread_id/messages` | Get owned messages with cursor pagination (`limit`, optional `before` / `after`) |
 | `POST` | `/api/threads/:thread_id/messages` | Send a user-owned message (with cached cwd path context when available), triggers agent |
 | `POST` | `/api/threads/:thread_id/read` | Advance the viewer's read watermark to a specific owned transcript row |
-| `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot plus context budget and last runtime-error snapshots for the thread |
+| `GET` | `/api/threads/:thread_id/agent/state` | Get the owned best-effort in-flight runtime snapshot plus draft assistant/reasoning, context budget, and last runtime-error snapshots for the thread |
 | `GET` | `/api/threads/:thread_id/agent/stream` | SSE for owned agent events |
 | `POST` | `/api/threads/:thread_id/agent/question-requests/:request_id/responses` | Submit an owner-scoped response to a pending `ask_user_questions` tool request |
 | `POST` | `/api/threads/:thread_id/cancel` | Cancel an owned running agent |
@@ -180,21 +180,24 @@ Ownership-focused thread submodules:
 - page results are always ordered oldest-to-newest within the returned window
 - cursors are opaque but derived from `(created_at, message_id)` so tied timestamps remain stable
 - persisted transcript rows now expose required `client_id` alongside `message_id`
+- persisted reasoning rows are returned through the same message history contract with `role: "reasoning"` and `metadata.model_visible: false`; they are display-only and are excluded from future model-visible context, previews, attention, and push
 - `before` requests older history than the cursor boundary (exclusive)
 - `after` requests newer history than the cursor boundary (exclusive)
 - the latest-page request is `GET /api/threads/:thread_id/messages?limit=<n>` with no cursor
 - page metadata includes `has_more_before`, `has_more_after`, `before_cursor`, `after_cursor`, `returned`, and `limit`
 
 **Agent Stream Contract**:
-- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `updated_at`, `context_budget`, and runtime-only `last_error`
+- `GET /api/threads/:thread_id/agent/state` returns the current best-effort runtime snapshot with `active`, `turn_id`, `phase`, `can_cancel`, `stream_cursor`, `pending_tool`, `draft_assistant`, `draft_reasoning`, `updated_at`, `context_budget`, and runtime-only `last_error`
 - `context_budget` is a best-effort snapshot of conversation usage since the latest context checkpoint, measured against the automatic-compaction threshold when enabled or the usable input window when compaction is disabled. The primary `estimated_input_tokens` includes both canonical message content and normal agent tool-schema overhead, with `message_estimated_tokens` and `tool_schema_tokens` exposing the split. Active turns prefer the runtime's latest backend compaction-decision snapshot; idle turns use durable reconstruction.
 - `pending_tool` now carries `client_id` and `started_at` in addition to `call_id`, `name`, and `args`
 - `phase` may be `waiting_for_user`; in that state `pending_tool.name` can be `ask_user_questions` and `pending_tool.args` is the normalized `ask_user_questions_request_v1` payload with `request_id`
 - `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
-- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
+- `draft_reasoning` carries visible in-flight provider reasoning segments keyed by `client_id`
+- `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.reasoning_start`, `agent.reasoning_delta`, `agent.reasoning_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
 - agent payloads include a per-turn `turn_id`
 - assistant draft events now include top-level `client_id`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
+- reasoning draft events include top-level `client_id`; the persisted reasoning row arrives later as `agent.reasoning_done.message`
 - tool events expose the real `call_id` plus top-level `client_id`
 - `agent.tool_call` now includes service-side `started_at`
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
@@ -207,6 +210,7 @@ Ownership-focused thread submodules:
 - terminal tool rows may include `message.metadata.path_context_before` and `message.metadata.path_context_after`; assistant/user rows may include `message.metadata.path_context`
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `agent.message` may now arrive for an intermediate visible assistant text segment before later tool calls; the embedded `message.metadata.segment_kind` distinguishes `intermediate` from `final`
+- `agent.reasoning_done` embeds the persisted canonical `role: "reasoning"` transcript row, while `agent.reasoning_start` / `agent.reasoning_delta` are client-side draft events
 - `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` are live activity markers for automatic context compaction; they carry token counts and sanitized status metadata but no transcript row, summary, or replacement history. Successful compaction may carry an optional post-compaction `context_budget`.
 - `final` still marks completion, but the stream remains attached; the route no longer relies on attach-time replay to bootstrap the next turn
 - no-cursor attaches are live-only; they do not replay buffered `agent.*` or `final`
@@ -615,7 +619,7 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
 {
   "message_id": "uuid",
   "client_id": "uuidv7",
-  "role": "user | assistant | tool | system",
+  "role": "user | assistant | tool | system | reasoning",
   "display_role": "string",
   "content": "string",
   "metadata": {},
@@ -638,7 +642,7 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
     {
       "message_id": "uuid",
       "client_id": "uuidv7",
-      "role": "user | assistant | tool | system",
+      "role": "user | assistant | tool | system | reasoning",
       "display_role": "string",
       "content": "string",
       "metadata": {},

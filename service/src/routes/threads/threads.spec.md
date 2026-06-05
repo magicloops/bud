@@ -37,6 +37,8 @@ Focused route-handler coverage for thread-list serialization.
 
 Thread message history, read-watermark, and create/send routes, including follow-up supersession of pending `ask_user_questions` prompts, first-message title kickoff, and user-message `path_context` stamping from cached terminal cwd when available. Create-message responses include the full serialized user message so clients can replace optimistic rows with canonical timestamps and metadata.
 
+Message history returns normal user/assistant/tool/system transcript rows plus persisted `role: "reasoning"` display artifacts. Reasoning rows are browser-visible, owner-scoped through the same route, and intentionally excluded from model-visible reconstruction, thread previews, attention, and push notification side effects.
+
 Create-message now resolves the current Bud environment before agent startup, but it does not run preflight context sync or `terminal_observe` before persisting the user message. When the Bud is offline, the route skips cached terminal path-context stamping, still persists the user message, and starts an offline-aware agent turn. Successful create responses include an `agent` object with `started`, `mode`, `bud_status`, and `stream_cursor` so clients can treat Bud-offline startup as a successful send rather than a failed request.
 
 Terminal freshness is handled inside `AgentService` before provider calls: if DB/runtime state shows terminal output, cwd, readiness, or human input may be newer than the latest model-visible terminal tool result, the provider request receives a transient freshness hint telling the model to call `terminal.observe` when terminal state matters.
@@ -49,6 +51,7 @@ Focused route-handler coverage for the thread read-watermark route.
 - `POST /api/threads/:threadId/read` upserts the watermark when the seen message is newer
 - stale read-watermark updates return `updated: false` and do not rewrite the row
 - message history serialization preserves intermediate assistant `metadata.assistant_phase: "commentary"`
+- message history serialization includes persisted `reasoning` rows while keeping them display-only
 - create-message rejects invalid explicit model/reasoning selections before duplicate lookup or persistence
 - create-message rejects ds4 `max` reasoning while the effective ds4 context
   window is below the 393,216 token max-thinking requirement
@@ -63,7 +66,9 @@ Agent runtime routes for `/agent/state`, `/agent/stream`, `/cancel`, and `ask_us
 - enriches `/agent/state` with the owning Bud's current `environment` snapshot on idle and active responses
 - enriches `/agent/state` with a best-effort `context_budget` snapshot after authorization, preferring the runtime's active backend decision during a running turn and otherwise using durable reconstruction with the same effective model selection, usable input window, normal-agent tool-schema overhead, and compaction threshold as the agent loop
 - passes through runtime-only `last_error` snapshots so fast non-cancel agent failures can be recovered by `/agent/state` without creating transcript rows
+- passes through `draft_reasoning` snapshots so refreshes can recover visible in-flight provider reasoning before the durable reasoning row is emitted
 - `/agent/stream` may emit additive `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` activity markers from `AgentService`; these events are not transcript rows and omit checkpoint summaries/replacement histories. Successful compaction may include an optional post-compaction `context_budget` snapshot.
+- `/agent/stream` emits `agent.reasoning_start`, `agent.reasoning_delta`, and `agent.reasoning_done` for visible provider reasoning, with `agent.reasoning_done.message` carrying the persisted `role: "reasoning"` row
 - `/agent/stream` failed `final` events carry sanitized `error`, `error_code`, and `retryable` fields rather than raw provider or daemon transport messages
 - accepts `POST /api/threads/:threadId/agent/question-requests/:requestId/responses`
 - validates submitted answers against the persisted question request row
@@ -76,6 +81,7 @@ Focused route-level integration coverage for structured question-response submis
 
 **Current Coverage**:
 - `/agent/state` includes runtime `last_error` after authorization
+- `/agent/state` includes runtime `draft_reasoning` after authorization
 - owned submissions call `AgentService.submitQuestionResponse(...)` and serialize accepted continuation status
 - unauthenticated callers receive `401`
 - signed-in non-owner and cross-thread/missing request submissions receive `404`

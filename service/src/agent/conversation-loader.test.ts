@@ -52,6 +52,15 @@ test("load normalizes persisted tool rows and preserves preferred cwd context", 
                   metadata: { preferred_cwd: "/repo" },
                 },
                 {
+                  role: "reasoning",
+                  content: "I need to inspect the directory listing.",
+                  metadata: {
+                    artifact_kind: "reasoning",
+                    model_visible: false,
+                    llm_call_id: "llm-call-1",
+                  },
+                },
+                {
                   role: "tool",
                   content: JSON.stringify({
                     tool: "terminal.interrupt",
@@ -117,6 +126,13 @@ test("load normalizes persisted tool rows and preserves preferred cwd context", 
     role: "assistant",
     content: [{ type: "text", text: "Done." }],
   });
+  assert.equal(
+    messages.some((message) =>
+      Array.isArray(message.content) &&
+      message.content.some((block) => block.type === "text" && block.text.includes("directory listing")),
+    ),
+    false,
+  );
 });
 
 test("load prefers same-provider ledger output over duplicate assistant product rows", async (t) => {

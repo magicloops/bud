@@ -7,7 +7,9 @@ import {
   finalizeTurnMessages,
   mergeLatestBootstrapState,
   removeDraftAssistantMessageForTurn,
+  removeDraftReasoningMessage,
   reconcileMessagePersistence,
+  upsertDraftReasoningMessage,
   upsertMessage,
 } from './thread-message-state.ts'
 
@@ -179,6 +181,37 @@ test('applyAgentStateOverlay builds pending ask_user_questions rows from agent s
   assert.equal(message?.created_at, '2026-05-19T12:00:00.000Z')
   assert.equal(message?.metadata?.tool, 'ask_user_questions')
   assert.equal(message?.metadata?.request_id, 'qr_test')
+})
+
+test('applyAgentStateOverlay builds draft reasoning rows from agent state', () => {
+  const nextState = buildAgentState({
+    active: true,
+    turn_id: 'turn-reasoning',
+    phase: 'thinking',
+    draft_reasoning: [
+      {
+        client_id: 'reasoning-client',
+        text: 'I should inspect the terminal first.',
+        llm_call_id: 'llm-call-1',
+        index: 0,
+        provider: 'ds4',
+        provider_model: 'deepseek-v4-flash',
+        started_at: '2026-06-05T12:00:00.000Z',
+        updated_at: '2026-06-05T12:00:01.000Z',
+      },
+    ],
+  })
+
+  const [message] = applyAgentStateOverlay([], nextState)
+
+  assert.equal(message?.client_id, 'reasoning-client')
+  assert.equal(message?.role, 'reasoning')
+  assert.equal(message?.display_role, 'Reasoning')
+  assert.equal(message?.content, 'I should inspect the terminal first.')
+  assert.equal(message?.created_at, '2026-06-05T12:00:00.000Z')
+  assert.equal(message?.metadata?.draft, true)
+  assert.equal(message?.metadata?.model_visible, false)
+  assert.equal(message?.metadata?.llm_call_id, 'llm-call-1')
 })
 
 test('buildPendingToolMessageFromToolCall builds pending ask_user_questions rows from live stream events', () => {
@@ -390,6 +423,51 @@ test('finalizeTurnMessages removes pending tool rows and only drops draft assist
     succeededTurnMessages.map((message) => message.client_id),
     ['draft-1', 'assistant-1'],
   )
+})
+
+test('reasoning draft rows reconcile to persisted messages and clear on final', () => {
+  const draftReasoning = buildMessage({
+    client_id: 'reasoning-client',
+    message_id: 'reasoning-client',
+    role: 'reasoning',
+    display_role: 'Reasoning',
+    content: 'thinking...',
+    created_at: '2026-06-05T12:00:00.000Z',
+    metadata: {
+      draft: true,
+      turn_id: 'turn-1',
+      artifact_kind: 'reasoning',
+      model_visible: false,
+    },
+  })
+  const persistedReasoning = buildMessage({
+    client_id: 'reasoning-client',
+    message_id: 'reasoning-message',
+    role: 'reasoning',
+    display_role: 'Reasoning',
+    content: 'I should inspect the terminal first.',
+    created_at: '2026-06-05T12:00:01.000Z',
+    metadata: {
+      artifact_kind: 'reasoning',
+      model_visible: false,
+      turn_id: 'turn-1',
+    },
+  })
+
+  const reconciled = upsertMessage(
+    removeDraftReasoningMessage([draftReasoning], 'reasoning-client'),
+    persistedReasoning,
+  )
+  assert.deepEqual(reconciled.map((message) => message.client_id), ['reasoning-client'])
+  assert.equal(reconciled[0]?.message_id, 'reasoning-message')
+  assert.equal(reconciled[0]?.metadata?.draft, undefined)
+
+  const liveDraft = upsertDraftReasoningMessage([], 'reasoning-live', () => ({
+    ...draftReasoning,
+    client_id: 'reasoning-live',
+    message_id: 'reasoning-live',
+  }))
+  assert.deepEqual(finalizeTurnMessages(liveDraft, 'turn-1', 'succeeded'), [])
 })
 
 test('persisted commentary assistant rows survive draft cleanup and turn finalization', () => {

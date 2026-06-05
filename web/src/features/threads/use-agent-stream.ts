@@ -62,6 +62,30 @@ type AgentMessageEvent = {
   message?: ApiMessage
 }
 
+type AgentReasoningStartEvent = {
+  turn_id: string
+  client_id: string
+  llm_call_id: string
+  index: number
+  provider: string
+  provider_model: string
+  started_at?: string
+}
+
+type AgentReasoningDeltaEvent = {
+  turn_id: string
+  client_id: string
+  delta: string
+}
+
+type AgentReasoningDoneEvent = {
+  turn_id: string
+  client_id: string
+  message_id: string
+  text: string
+  message?: ApiMessage
+}
+
 type AgentFinalEvent = {
   turn_id: string
   status: 'succeeded' | 'failed' | 'canceled'
@@ -108,6 +132,23 @@ type UseAgentStreamArgs = {
     text: string
     message?: ApiMessage
   }) => void
+  onReasoningStart: (event: {
+    turnId: string
+    clientId: string
+    llmCallId: string
+    index: number
+    provider: string
+    providerModel: string
+    startedAt?: string
+  }) => void
+  onReasoningDelta: (event: { turnId: string; clientId: string; delta: string }) => void
+  onReasoningDone: (event: {
+    turnId: string
+    clientId: string
+    messageId: string
+    text: string
+    message?: ApiMessage
+  }) => void
   onCompactionStart?: (event: ApiAgentCompactionStartEvent) => void
   onCompactionDone?: (event: ApiAgentCompactionDoneEvent) => void
   onCompactionFailed?: (event: ApiAgentCompactionFailedEvent) => void
@@ -127,6 +168,9 @@ export function useAgentStream({
   onAssistantMessageDelta,
   onAssistantMessageDone,
   onAssistantMessageEvent,
+  onReasoningStart,
+  onReasoningDelta,
+  onReasoningDone,
   onCompactionStart,
   onCompactionDone,
   onCompactionFailed,
@@ -152,6 +196,9 @@ export function useAgentStream({
     onAssistantMessageDelta,
     onAssistantMessageDone,
     onAssistantMessageEvent,
+    onReasoningStart,
+    onReasoningDelta,
+    onReasoningDone,
     onCompactionStart,
     onCompactionDone,
     onCompactionFailed,
@@ -170,6 +217,9 @@ export function useAgentStream({
       onAssistantMessageDelta,
       onAssistantMessageDone,
       onAssistantMessageEvent,
+      onReasoningStart,
+      onReasoningDelta,
+      onReasoningDone,
       onCompactionStart,
       onCompactionDone,
       onCompactionFailed,
@@ -182,6 +232,9 @@ export function useAgentStream({
     onAssistantMessageDone,
     onAssistantMessageEvent,
     onAssistantMessageStart,
+    onReasoningDelta,
+    onReasoningDone,
+    onReasoningStart,
     onCompactionDone,
     onCompactionFailed,
     onCompactionStart,
@@ -448,6 +501,59 @@ export function useAgentStream({
         })
       } catch (error) {
         console.warn('[agent-sse] failed to parse agent.message', error)
+      }
+    })
+
+    source.addEventListener('agent.reasoning_start', (evt) => {
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      callbacksRef.current.onStatusChange('streaming')
+      try {
+        const data = JSON.parse(evt.data) as AgentReasoningStartEvent
+        callbacksRef.current.onReasoningStart({
+          turnId: data.turn_id,
+          clientId: data.client_id,
+          llmCallId: data.llm_call_id,
+          index: data.index,
+          provider: data.provider,
+          providerModel: data.provider_model,
+          startedAt: data.started_at,
+        })
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse agent.reasoning_start', error)
+      }
+    })
+
+    source.addEventListener('agent.reasoning_delta', (evt) => {
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      callbacksRef.current.onStatusChange('streaming')
+      try {
+        const data = JSON.parse(evt.data) as AgentReasoningDeltaEvent
+        callbacksRef.current.onReasoningDelta({
+          turnId: data.turn_id,
+          clientId: data.client_id,
+          delta: data.delta,
+        })
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse agent.reasoning_delta', error)
+      }
+    })
+
+    source.addEventListener('agent.reasoning_done', (evt) => {
+      lastEventTimeRef.current = Date.now()
+      cursorRef.current = evt.lastEventId || cursorRef.current
+      try {
+        const data = JSON.parse(evt.data) as AgentReasoningDoneEvent
+        callbacksRef.current.onReasoningDone({
+          turnId: data.turn_id,
+          clientId: data.client_id,
+          messageId: data.message_id,
+          text: data.text,
+          message: data.message,
+        })
+      } catch (error) {
+        console.warn('[agent-sse] failed to parse agent.reasoning_done', error)
       }
     })
 

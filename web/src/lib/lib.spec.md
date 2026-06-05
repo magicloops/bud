@@ -76,7 +76,8 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
 | `ApiAgentEnvironment` | Client-safe Bud environment snapshot (`normal` or `bud_offline`) plus terminal, web-view, and user-question tool availability |
 | `ApiCreateMessageResponse` | Message-create response with canonical message fields plus optional `agent` startup metadata such as mode, Bud status, and stream cursor |
-| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, environment, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, `draft_assistant.client_id`, optional `context_budget`, and optional runtime-only `last_error` |
+| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, environment, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, `draft_assistant.client_id`, `draft_reasoning`, optional `context_budget`, and optional runtime-only `last_error` |
+| `ApiDraftReasoning` | Visible in-flight provider reasoning segment from `/agent/state.draft_reasoning`, keyed by `client_id` for reconciliation with persisted `role: "reasoning"` rows |
 | `ApiAgentLastError` | Runtime-only non-cancel agent failure snapshot from `/agent/state` with stable code, sanitized message, retryability, and timestamp |
 | `ApiContextBudget` | Browser-visible context budget snapshot for the current conversation since the latest compaction checkpoint, including hard model window, Bud usable context window, output reserve, usable input window, compaction-threshold usage, authoritative estimate basis, message/tool-schema token split, provenance (`source`, `phase`, `turn_id`, `checked_at`), optional provider usage diagnostics, confidence, and unknown/failure states |
 | `ApiAgentCompactionStartEvent` / `ApiAgentCompactionDoneEvent` / `ApiAgentCompactionFailedEvent` | Agent SSE activity markers for automatic context compaction, including token counts, phase/reason, checkpoint id on success, optional post-compaction `context_budget`, and sanitized failure metadata |
@@ -107,6 +108,7 @@ Tool transcript note:
   terminal `output`/`readiness` fields
 - message-create responses may expose `agent.mode: "bud_offline"` and `agent.stream_cursor` so routes can treat an offline Bud send as a successful assistant turn rather than a failed submit
 - user-question pending tool rows expose normalized `ask_user_questions_request_v1` payloads, and completed rows may expose `ask_user_questions_tool_result_v1` Q/A summaries
+- provider reasoning can arrive as live `agent.reasoning_*` events and persisted `role: "reasoning"` messages; reasoning rows are display-only and should not be treated as assistant final answers or notification previews
 - `/agent/state.last_error` is UI/runtime status only; it is not a transcript row and should be rendered through route-owned error state rather than the timeline
 
 ### `route-auth.ts`

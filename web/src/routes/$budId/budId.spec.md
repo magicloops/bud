@@ -105,7 +105,7 @@ loader: async ({ params }) => {
    - Delegates transcript/message-state ownership to `useThreadMessages(...)` in `web/src/features/threads/`
    - Passes the hook-owned chronological `ApiMessage[]` directly into `ChatTimeline` instead of creating an extra route-local mapped/sorted copy
    - Updates via SSE agent stream
-   - Role-based rendering (user, assistant, tool)
+   - Role-based rendering (user, assistant, reasoning, tool)
    - Consumes the paged `{ messages, page }` API contract and the create-message `{ message }` payload for canonical optimistic-row replacement
    - Prepends older history through `before=<page.before_cursor>` and preserves the visible scroll anchor while doing so
    - Canonical latest-page refetches preserve already-loaded older history instead of replacing the whole local transcript window
@@ -122,7 +122,8 @@ loader: async ({ params }) => {
    - Delegates SSE attach/resume/reconnect/resync ownership to `useAgentStream(...)` in `web/src/features/threads/`
    - Keeps feature hook error callbacks stable so route rerenders do not
      retrigger web-view fetches or agent stream reconnects
-   - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, and `final`
+   - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.reasoning_start`, `agent.reasoning_delta`, `agent.reasoning_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, and `final`
+   - Shows provider reasoning rows live and after refresh through the same `useThreadMessages(...)` reconciliation path as assistant/tool rows
    - Renders pending `ask_user_questions` prompts in the timeline and submits responses to the thread-scoped question-response route
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race
    - Applies `thread.title` patches into the Bud-level thread-summary state so the thread list and workspace top bar update live
@@ -132,6 +133,7 @@ loader: async ({ params }) => {
    - Tracks `/agent/state.last_error` on loader bootstrap, normal state refresh, and stream resync so non-cancel runtime failures render in the composer error slot even if the live failed final event was missed
    - Shows `Compacting context...` while automatic compaction is active, appends a subtle non-transcript timeline marker on completion/failure, applies `agent.compaction_done.context_budget` immediately when present, and refreshes `/agent/state.context_budget` after successful compaction
    - Suppresses the generic timeline activity footer during live assistant text streaming from `agent.message_start` / `agent.message_delta`, then allows it to return after a short delay following `agent.message_done` only when the turn continues
+   - Preserves visible reasoning rows as normal transcript content while leaving thread previews, notifications, and model replay to the backend contracts
 
 4. **Bud-Level Thread State**
    - Parent `/$budId` route now owns mutable `threads` state rather than treating loader data as immutable
@@ -229,6 +231,7 @@ error: string | null
 assistantActivityGate: AssistantActivityGateState
 activeCompaction: ApiAgentCompactionStartEvent | null
 contextCompactionNotices: ChatTimelineNotice[]
+// draft reasoning rows are represented inside messages as synthetic role: "reasoning" rows until persisted
 ```
 
 **Terminal Event Handling**:

@@ -332,6 +332,17 @@ export type ApiAgentLastError = {
   occurred_at: string
 }
 
+export type ApiDraftReasoning = {
+  client_id: string
+  text: string
+  llm_call_id: string
+  index: number
+  provider: string
+  provider_model: string
+  started_at?: string
+  updated_at: string
+}
+
 export type ApiAgentState = {
   active: boolean
   turn_id: string | null
@@ -350,6 +361,7 @@ export type ApiAgentState = {
     text: string
     updated_at: string
   } | null
+  draft_reasoning?: ApiDraftReasoning[]
   updated_at: string
   environment?: ApiAgentEnvironment | null
   context_budget?: ApiContextBudget | null

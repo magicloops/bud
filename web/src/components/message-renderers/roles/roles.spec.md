@@ -4,7 +4,7 @@ Role-based message content renderers for chat messages.
 
 ## Purpose
 
-Provides components for rendering message content based on the sender's role (user, assistant). Uses a registry pattern for easy extension.
+Provides components for rendering message content based on the sender or display-artifact role (user, assistant, reasoning). Uses a registry pattern for easy extension.
 
 ## Files
 
@@ -15,6 +15,7 @@ Registry mapping roles to their renderers:
 ```typescript
 export const roleContentRenderers: Record<string, MessageContentRenderer> = {
   assistant: AssistantContent,
+  reasoning: ReasoningContent,
   user: UserContent,
 }
 ```
@@ -24,6 +25,10 @@ export const roleContentRenderers: Record<string, MessageContentRenderer> = {
 ### `assistant.tsx`
 
 Re-exports `MarkdownContent` as `AssistantContent`. Currently uses same renderer as user messages.
+
+### `reasoning.tsx`
+
+Wraps `MarkdownContent` with muted styling for visible provider reasoning or reasoning-summary transcript rows. Supports streaming/static Markdown through the shared renderer but does not introduce a separate interaction model.
 
 ### `user.tsx`
 

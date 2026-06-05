@@ -14,7 +14,12 @@ import {
   serializeToolExecutionTiming,
 } from "./contracts.js";
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
-import type { AssistantMessagePhase, ModelSelectionSource, ReasoningLevel } from "../llm/index.js";
+import type {
+  AssistantMessagePhase,
+  CanonicalProviderId,
+  ModelSelectionSource,
+  ReasoningLevel,
+} from "../llm/index.js";
 import type { TerminalPathContext } from "../runtime/terminal-session-manager.js";
 import type { TerminalVisibilityMetadata } from "../terminal/freshness.js";
 import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
@@ -387,6 +392,87 @@ export class AgentTranscriptWriter {
     return serializedMessage;
   }
 
+  async recordReasoningSegment(args: {
+    threadId: string;
+    turnId: string;
+    clientId: string;
+    text: string;
+    llmCallId: string;
+    index: number;
+    stepIndex: number;
+    provider: CanonicalProviderId;
+    providerModel: string;
+    startedAt: Date;
+    finishedAt: Date;
+    modelSelection: AgentMessageModelSelection;
+    ownerUserId?: string | null;
+  }): Promise<SerializedAgentMessage> {
+    const {
+      threadId,
+      turnId,
+      clientId,
+      text,
+      llmCallId,
+      index,
+      stepIndex,
+      provider,
+      providerModel,
+      startedAt,
+      finishedAt,
+      modelSelection,
+      ownerUserId,
+    } = args;
+    const [insertedMessage] = await db
+      .insert(messageTable)
+      .values({
+        clientId,
+        threadId,
+        role: "reasoning",
+        displayRole: "Reasoning",
+        content: text,
+        createdByUserId: ownerUserId ?? undefined,
+        metadata: {
+          artifact_kind: "reasoning",
+          model_visible: false,
+          status: "succeeded",
+          turn_id: turnId,
+          llm_call_id: llmCallId,
+          step_index: stepIndex,
+          provider,
+          provider_model: providerModel,
+          reasoning_index: index,
+          reasoning_kind: reasoningKindForProvider(provider),
+          started_at: startedAt.toISOString(),
+          finished_at: finishedAt.toISOString(),
+          ...serializeModelSelectionMetadata(modelSelection),
+        },
+      })
+      .returning({
+        messageId: messageTable.messageId,
+        clientId: messageTable.clientId,
+        role: messageTable.role,
+        displayRole: messageTable.displayRole,
+        content: messageTable.content,
+        metadata: messageTable.metadata,
+        createdAt: messageTable.createdAt,
+      });
+
+    const serializedMessage = this.serializePersistedMessage(insertedMessage);
+    const cursor = this.runtime.emit(threadId, {
+      event: "agent.reasoning_done",
+      data: {
+        turn_id: turnId,
+        client_id: clientId,
+        message_id: serializedMessage.message_id,
+        text,
+        message: serializedMessage,
+      },
+    });
+
+    this.runtime.clearDraftReasoning(threadId, clientId, cursor);
+    return serializedMessage;
+  }
+
   private serializePersistedMessage(message: PersistedAgentMessage): SerializedAgentMessage {
     return {
       message_id: message.messageId,
@@ -448,4 +534,8 @@ function assistantPhaseForSegment(
   segmentKind: "intermediate" | "final",
 ): AssistantMessagePhase {
   return segmentKind === "intermediate" ? "commentary" : "final_answer";
+}
+
+function reasoningKindForProvider(provider: CanonicalProviderId): "summary" | "thinking" {
+  return provider === "anthropic" ? "thinking" : "summary";
 }

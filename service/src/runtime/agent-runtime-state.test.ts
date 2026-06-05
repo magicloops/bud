@@ -12,6 +12,7 @@ test("new snapshots are idle and expose a resumable stream cursor", () => {
   assert.equal(snapshot.environment, null);
   assert.equal(snapshot.context_budget, null);
   assert.equal(snapshot.last_error, null);
+  assert.deepEqual(snapshot.draft_reasoning, []);
   assert.equal(typeof snapshot.stream_cursor, "string");
   assert.ok(snapshot.stream_cursor.length > 0);
 });
@@ -237,6 +238,55 @@ test("runtime snapshots store and update active environment state", () => {
   const updated = runtime.setEnvironment("thread-1", offline);
   assert.deepEqual(updated.environment, offline);
   assert.deepEqual(runtime.getSnapshot("thread-1").environment, offline);
+});
+
+test("runtime snapshots serialize and clear draft reasoning state", () => {
+  const runtime = new AgentRuntimeStateManager();
+  runtime.startTurn("thread-1", "turn-1");
+
+  const startCursor = runtime.emit("thread-1", {
+    event: "agent.reasoning_start",
+    data: {
+      turn_id: "turn-1",
+      client_id: "reasoning-client-1",
+      llm_call_id: "llm-call-1",
+      index: 0,
+      provider: "ds4",
+      provider_model: "deepseek-v4-flash",
+      started_at: "2026-06-05T20:00:01.000Z",
+    },
+  });
+  runtime.setDraftReasoning(
+    "thread-1",
+    {
+      turnId: "turn-1",
+      clientId: "reasoning-client-1",
+      text: "Inspect terminal state.",
+      llmCallId: "llm-call-1",
+      index: 0,
+      provider: "ds4",
+      providerModel: "deepseek-v4-flash",
+      startedAt: new Date("2026-06-05T20:00:01.000Z"),
+    },
+    startCursor,
+  );
+
+  const snapshot = runtime.getSnapshot("thread-1");
+  assert.equal(snapshot.phase, "thinking");
+  assert.equal(snapshot.draft_reasoning.length, 1);
+  assert.deepEqual(snapshot.draft_reasoning[0], {
+    client_id: "reasoning-client-1",
+    text: "Inspect terminal state.",
+    llm_call_id: "llm-call-1",
+    index: 0,
+    provider: "ds4",
+    provider_model: "deepseek-v4-flash",
+    started_at: "2026-06-05T20:00:01.000Z",
+    updated_at: snapshot.draft_reasoning[0]?.updated_at,
+  });
+
+  runtime.clearDraftReasoning("thread-1", "reasoning-client-1");
+  assert.deepEqual(runtime.getSnapshot("thread-1").draft_reasoning, []);
 });
 
 test("runtime snapshots expose pending tool metadata and draft assistant client id", () => {

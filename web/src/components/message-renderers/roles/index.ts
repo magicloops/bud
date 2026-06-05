@@ -1,5 +1,6 @@
 import type { MessageContentRenderer } from '../types'
 import { AssistantContent } from './assistant'
+import { ReasoningContent } from './reasoning'
 import { UserContent } from './user'
 
 /**
@@ -11,5 +12,6 @@ import { UserContent } from './user'
  */
 export const roleContentRenderers: Record<string, MessageContentRenderer> = {
   assistant: AssistantContent,
+  reasoning: ReasoningContent,
   user: UserContent,
 }
