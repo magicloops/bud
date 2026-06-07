@@ -99,7 +99,8 @@ Pure callback-contract constants for first-party iOS OAuth.
 **Responsibilities**:
 - Define the canonical environment-to-callback map for Bud iOS OAuth
 - Define canonical first-party iOS OAuth client ids and deterministic Better Auth row ids
-- Keep local and staging on `chat.bud.app.staging://oauth/callback`
+- Keep local on `chat.bud.app.local://oauth/callback`
+- Keep staging on `chat.bud.app.staging://oauth/callback`
 - Keep production on `chat.bud.app://oauth/callback`
 - Give provisioning scripts and tests one shared source of truth for the native callback URI
 
@@ -108,7 +109,8 @@ Pure callback-contract constants for first-party iOS OAuth.
 Regression coverage for the canonical iOS OAuth callback map.
 
 **Responsibilities**:
-- Assert that local and staging provisioning both use `chat.bud.app.staging://oauth/callback`
+- Assert that local provisioning uses `chat.bud.app.local://oauth/callback`
+- Assert that staging provisioning uses `chat.bud.app.staging://oauth/callback`
 - Assert that production provisioning uses `chat.bud.app://oauth/callback`
 - Assert the canonical local, staging, and production client ids plus row ids
 - Catch accidental drift back to the production callback URI for non-production environments before provisioning scripts are run
@@ -120,7 +122,7 @@ Creates or updates the fixed first-party local iOS OAuth client and prints the e
 **Responsibilities**:
 - Upsert `auth.oauthClient` row `bud-ios-dev-local`
 - Supply the Better Auth table's required internal primary key when creating the row
-- Enforce the expected local redirect URI (`chat.bud.app.staging://oauth/callback`)
+- Enforce the expected local redirect URI (`chat.bud.app.local://oauth/callback`)
 - Mark the client as a public native PKCE client with refresh-token support
 - Print the current local auth bundle derived from `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
 - Warn when the local env is not aligned with either supported local public topology:

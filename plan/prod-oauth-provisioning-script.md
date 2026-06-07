@@ -101,7 +101,7 @@ Update `service/src/scripts/ios-oauth-contract.ts`:
 - include `"production"` in `IosOAuthProvisionEnvironment`
 - remove the need for a separate runtime-only production environment type, or keep aliases only if they still add clarity
 - keep callback URI mapping unchanged:
-  - local: `chat.bud.app.staging://oauth/callback`
+  - local: `chat.bud.app.local://oauth/callback`
   - staging: `chat.bud.app.staging://oauth/callback`
   - production: `chat.bud.app://oauth/callback`
 

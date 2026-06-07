@@ -13,7 +13,7 @@ export const IOS_OAUTH_CLIENT_ROW_IDS: Record<IosOAuthProvisionEnvironment, stri
 };
 
 export const IOS_OAUTH_REDIRECT_URIS: Record<IosOAuthProvisionEnvironment, string> = {
-  local: "chat.bud.app.staging://oauth/callback",
+  local: "chat.bud.app.local://oauth/callback",
   staging: "chat.bud.app.staging://oauth/callback",
   production: "chat.bud.app://oauth/callback",
 };

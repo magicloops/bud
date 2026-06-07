@@ -59,4 +59,4 @@
 - [x] `docs/proto.md` documents reasoning messages and events
 - [x] Service specs updated
 - [x] Web specs updated
-- [ ] Mobile handoff created after web validation
+- [x] Mobile handoff created after web validation

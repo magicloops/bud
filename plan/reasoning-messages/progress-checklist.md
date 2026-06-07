@@ -41,7 +41,7 @@
 - [ ] Validate ds4 Thinking and Fast
 - [ ] Validate refresh and history behavior
 - [ ] Validate provider-ledger replay still works
-- [ ] Create mobile/native handoff
+- [x] Create mobile/native handoff
 
 ## Deferred Follow-Ups
 

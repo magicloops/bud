@@ -7,14 +7,17 @@ import {
   IOS_OAUTH_REDIRECT_URIS,
 } from "./ios-oauth-contract.js";
 
-test("non-production iOS OAuth provisioning uses staging callback and client ids", () => {
-  assert.equal(IOS_OAUTH_REDIRECT_URIS.local, "chat.bud.app.staging://oauth/callback");
-  assert.equal(IOS_OAUTH_REDIRECT_URIS.staging, "chat.bud.app.staging://oauth/callback");
-  assert.equal(getIosOAuthRedirectUri("local"), "chat.bud.app.staging://oauth/callback");
-  assert.equal(getIosOAuthRedirectUri("staging"), "chat.bud.app.staging://oauth/callback");
+test("local iOS OAuth provisioning uses the local callback and client id", () => {
+  assert.equal(IOS_OAUTH_REDIRECT_URIS.local, "chat.bud.app.local://oauth/callback");
+  assert.equal(getIosOAuthRedirectUri("local"), "chat.bud.app.local://oauth/callback");
   assert.equal(IOS_OAUTH_CLIENT_IDS.local, "bud-ios-dev-local");
-  assert.equal(IOS_OAUTH_CLIENT_IDS.staging, "bud-ios-staging");
   assert.equal(IOS_OAUTH_CLIENT_ROW_IDS.local, "oauth_client_bud_ios_dev_local");
+});
+
+test("staging iOS OAuth provisioning uses the staging callback and client id", () => {
+  assert.equal(IOS_OAUTH_REDIRECT_URIS.staging, "chat.bud.app.staging://oauth/callback");
+  assert.equal(getIosOAuthRedirectUri("staging"), "chat.bud.app.staging://oauth/callback");
+  assert.equal(IOS_OAUTH_CLIENT_IDS.staging, "bud-ios-staging");
   assert.equal(IOS_OAUTH_CLIENT_ROW_IDS.staging, "oauth_client_bud_ios_staging");
 });
 
