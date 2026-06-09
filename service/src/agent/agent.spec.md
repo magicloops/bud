@@ -79,7 +79,7 @@ Direct coverage for local model stream-limit, local model idle-timeout, and gene
 Conversation-building ownership extracted from `AgentService`.
 
 **Responsibilities**:
-- seed the canonical system prompt
+- seed the canonical system prompt imported from `system-prompt.ts`
 - load the latest completed context checkpoint and prepend its replacement history after the fresh system prompt
 - filter transcript rows and provider-ledger rows after the checkpoint boundary so compacted history is not replayed twice
 - load persisted thread messages into canonical provider input order
@@ -108,6 +108,19 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
 - the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions, steers multiple needed questions away from markdown lists, and excludes one-off simple freeform text prompts plus secrets
 - persisted reasoning transcript rows are omitted from model-visible reconstruction while provider-native reasoning replay remains sourced from `llm_call_item`
+
+### `default-system-prompt.md`
+
+Markdown source for the canonical Bud Agent system prompt. This file is the only prompt-body source; `system-prompt.ts` reads it at module load time, the package `dev` script watches it explicitly for `tsx watch` restarts, and the package `postbuild` script copies it beside the compiled prompt module in `dist/agent/`.
+
+### `system-prompt.ts`
+
+Single prompt ownership module for the canonical Bud Agent system prompt.
+
+**Responsibilities**:
+- read `default-system-prompt.md` directly
+- normalize CRLF line endings and trim the markdown source to match the historical prompt constant behavior
+- export `AGENT_SYSTEM_PROMPT` for conversation loading and prompt-specific tests
 
 ### `user-question-contracts.ts`
 
@@ -165,7 +178,7 @@ Integration-style repository tests for durable `agent_question_request` acceptan
 Thin agent orchestrator over the extracted conversation/model/tool/transcript ownership units.
 
 The prompt/tool-definition ownership now lives in the extracted modules:
-- `conversation-loader.ts` owns the canonical Bud Agent system prompt used for every turn
+- `default-system-prompt.md` owns the canonical Bud Agent system prompt body used for every turn; `system-prompt.ts` is the single TypeScript module that loads and exports it
 - `tool-definitions.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, `web_view_list`, and `ask_user_questions` JSON Schema definitions passed to providers, the Bud-offline tool-catalog resolver, plus the normal agent-turn tool-schema token estimate
 
 **System Prompt Highlights**:
@@ -764,6 +777,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../terminal/types.js` | Readiness hints types |
 | `../terminal/freshness.js` | Terminal visibility watermark helpers for terminal tool rows |
 | `./conversation-loader.js` | Canonical transcript/context assembly |
+| `./system-prompt.js` | Reads and exports the markdown-authored canonical system prompt |
 | `./context-budget.js` | Automatic compaction budget estimates and thresholds |
 | `./context-budget-state.js` | Shared client-safe budget snapshot and compaction-decision builder |
 | `./context-budget-snapshot.js` | Browser-facing context budget snapshots for `/agent/state` |

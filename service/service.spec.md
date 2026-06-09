@@ -116,8 +116,9 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 
 | Script | Command | Purpose |
 |--------|---------|---------|
-| `dev` | `tsx watch src/server.ts` | Development with hot reload |
+| `dev` | `tsx watch --include src/agent/default-system-prompt.md src/server.ts` | Development with hot reload, including restarts when the markdown-authored agent system prompt changes |
 | `build` | `tsc` | Compile TypeScript |
+| `postbuild` | `node -e "..."` | Copy `src/agent/default-system-prompt.md` to `dist/agent/default-system-prompt.md` so the compiled `system-prompt.js` can load the markdown prompt at runtime |
 | `start` | `node dist/server.js` | Run compiled build |
 | `lint` | `eslint "src/**/*.ts"` | Lint source files |
 | `test` | `node --import tsx --test src/**/*.test.ts` | Run standalone service tests, including extracted agent seam coverage plus route/WebSocket gateway regressions |

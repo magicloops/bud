@@ -6,8 +6,9 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch --include src/agent/default-system-prompt.md src/server.ts",
     "build": "tsc --project tsconfig.json",
+    "postbuild": "node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/agent',{recursive:true}); fs.copyFileSync('src/agent/default-system-prompt.md','dist/agent/default-system-prompt.md')\"",
     "start": "node dist/server.js",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "node --import tsx --test src/**/*.test.ts",
