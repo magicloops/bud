@@ -9,6 +9,7 @@
 **Phase 2**: [phase-2-agent-stream-and-persistence.md](./phase-2-agent-stream-and-persistence.md)
 **Phase 3**: [phase-3-web-rendering-and-history.md](./phase-3-web-rendering-and-history.md)
 **Phase 4**: [phase-4-validation-docs-and-mobile-handoff.md](./phase-4-validation-docs-and-mobile-handoff.md)
+**Phase 5**: [phase-5-message-role-migration-audit.md](./phase-5-message-role-migration-audit.md)
 **Related Design**: [../../design/reasoning-messages.md](../../design/reasoning-messages.md)
 **Related Review**: [../../review/provider-reasoning-visibility-review.md](../../review/provider-reasoning-visibility-review.md)
 
@@ -71,12 +72,14 @@ Acceptance criteria:
 | 2 | [phase-2-agent-stream-and-persistence.md](./phase-2-agent-stream-and-persistence.md) | Agent streams and persists reasoning messages from canonical provider events |
 | 3 | [phase-3-web-rendering-and-history.md](./phase-3-web-rendering-and-history.md) | Web renders live and historical reasoning messages |
 | 4 | [phase-4-validation-docs-and-mobile-handoff.md](./phase-4-validation-docs-and-mobile-handoff.md) | Specs, protocol docs, regression coverage, and mobile handoff are complete |
+| 5 | [phase-5-message-role-migration-audit.md](./phase-5-message-role-migration-audit.md) | Drizzle migration status for the `reasoning` role is audited and documented as SQL-no-op |
 
 ## Impacted Contracts
 
-- DB schema: `message.role` TypeScript enum adds `reasoning`; migration may be
-  SQL-no-op because the column is text, but Drizzle migration workflow still
-  needs to be checked.
+- DB schema: `message.role` TypeScript enum adds `reasoning`; Phase 5
+  confirmed this is a SQL no-op because the physical column is plain
+  PostgreSQL `text`, no enum/check constraint exists, and Drizzle generated no
+  migration.
 - Browser REST: `/messages` may return `role: "reasoning"`.
 - Browser SSE: `/agent/stream` adds `agent.reasoning_start`,
   `agent.reasoning_delta`, and `agent.reasoning_done`.
@@ -164,3 +167,4 @@ After web validation, create a mobile handoff that documents:
 - [ ] Reasoning rows are excluded from model replay and previews
 - [ ] Docs and specs updated
 - [ ] Mobile handoff created after web validation
+- [x] Phase 5 migration audit resolves the checked-in migration question

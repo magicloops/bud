@@ -75,6 +75,16 @@ Finalization phase covering:
 - regression tests
 - mobile/native handoff after web behavior is validated
 
+### `phase-5-message-role-migration-audit.md`
+
+Follow-up migration audit phase covering:
+
+- verification that `message.role` is physically plain text in Drizzle
+  snapshots and live databases
+- `pnpm db:generate` output review for the `reasoning` role vocabulary change
+- checked-in migration creation if Drizzle or live schema constraints require it
+- explicit no-op documentation if no SQL migration is required
+
 ### `progress-checklist.md`
 
 Running implementation checklist for reasoning messages.

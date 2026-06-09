@@ -185,6 +185,14 @@ Placeholder to ensure the directory exists in git.
 - Adds owner/expiry, token-hash, and redeemed-Bud indexes
 - Adds foreign keys to `auth.user` and `bud`
 
+### Reasoning Message Role Audit
+
+No migration follows `0022` for adding `reasoning` to the TypeScript
+`messageRoleValues` tuple. The Phase 5 reasoning-message audit confirmed
+`message.role` is physically PostgreSQL `text` in both the latest Drizzle
+snapshot and the local database, no `message_role` enum or role check
+constraint exists, and `pnpm db:generate` reports no schema changes.
+
 ## Migration Naming
 
 Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. Later files may use explicit semantic names when they are authored to preserve a deliberate rollout.

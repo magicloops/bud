@@ -101,7 +101,7 @@ bud/
 ├── .github/                # GitHub Actions workflows, including daemon release artifact builds
 ├── package.json            # Repo-root developer script shim, including local HTTPS bootstrap and release/installer test commands
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
-├── PR_SUMMARY.md           # Current PR handoff summary for daemon readiness and installer work
+├── PR_SUMMARY.md           # Current PR summary for reasoning messages and production iOS OAuth provisioning work
 ├── RELEASE_FLOW_TESTING_NEXT_STEPS.md # Canary release and get.bud.dev validation runbook
 ├── DAEMON_INSTALLER_FOLLOW_UP_HANDOFF.md # Remaining daemon installer and rollout handoff
 ├── deploy/                 # Checked-in deployment artifacts and release-hosting handoff docs
@@ -861,7 +861,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries, auth/env placeholders, and hosted web-view proxy env placeholders |
 | [deploy/cloudflare/bud-front-door-worker.js](./deploy/cloudflare/bud-front-door-worker.js) | Cloudflare Worker module that forwards service-owned app paths and `*.bud.show` web-view proxy traffic to `bud-service` while preserving forwarded host/proto/port context and the proxy edge secret |
 | [deploy/get-bud-dev/release-hosting.md](./deploy/get-bud-dev/release-hosting.md) | Handoff for publishing CI-generated Bud daemon archives and the stable manifest under `https://get.bud.dev` |
-| [PR_SUMMARY.md](./PR_SUMMARY.md) | Current PR handoff summary for daemon readiness and installer work |
+| [PR_SUMMARY.md](./PR_SUMMARY.md) | Current PR summary for reasoning messages and production iOS OAuth provisioning work |
 | [RELEASE_FLOW_TESTING_NEXT_STEPS.md](./RELEASE_FLOW_TESTING_NEXT_STEPS.md) | Canary release, Cloudflare promotion, rollback, and clean-machine validation runbook |
 | [DAEMON_INSTALLER_FOLLOW_UP_HANDOFF.md](./DAEMON_INSTALLER_FOLLOW_UP_HANDOFF.md) | Follow-up plan for remaining daemon-readiness and installer rollout items |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
@@ -870,4 +870,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-06-05*
+*Last updated: 2026-06-08*

@@ -60,3 +60,13 @@
 - [x] Service specs updated
 - [x] Web specs updated
 - [x] Mobile handoff created after web validation
+
+## Migration Audit
+
+- [x] Latest Drizzle snapshot checked for `message.role` physical type.
+- [x] Database introspection checked for a physical `message_role` enum or role
+  check constraint.
+- [x] `pnpm db:generate` result reviewed.
+- [x] Checked-in migration added if SQL/metadata is generated. Not applicable:
+  no SQL or metadata was generated.
+- [x] SQL-no-op rationale documented if no migration is generated.

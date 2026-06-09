@@ -43,6 +43,18 @@
 - [ ] Validate provider-ledger replay still works
 - [x] Create mobile/native handoff
 
+## Phase 5: Message Role Migration Audit
+
+- [x] Verify latest Drizzle snapshot records `message.role` as plain `text`.
+- [x] Inspect local/staging-like DB for any physical `message_role` enum or
+  role check constraint.
+- [x] Run `pnpm db:generate` from `service/` and record whether SQL/metadata is
+  generated.
+- [x] If generated, check in the migration SQL and metadata. Not applicable:
+  Drizzle generated no SQL or metadata.
+- [x] If not generated, document the reviewed SQL-no-op rationale.
+- [x] Update DB/migration specs and this checklist with the final decision.
+
 ## Deferred Follow-Ups
 
 - [ ] Collapse tool/reasoning/intermediate output between user turns
@@ -51,5 +63,8 @@
 
 ## Notes
 
-- `message.role = "reasoning"` is a TypeScript/Drizzle vocabulary change only; `message.role` is a text column, so no SQL migration is required.
+- Phase 5 confirmed `message.role = "reasoning"` is a TypeScript/Drizzle
+  vocabulary change only. The checked-in snapshot and live database both record
+  `message.role` as plain `text`, no `message_role` enum or role check
+  constraint exists, and `pnpm db:generate` reported no schema changes.
 - Provider-native replay remains in `llm_call_item`; visible reasoning messages intentionally do not backfill `llm_call_item.message_id` in this phase.
