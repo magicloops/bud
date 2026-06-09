@@ -820,6 +820,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/mobile-claim-redirect-handoff.md](./design/mobile-claim-redirect-handoff.md) | Design for returning hosted Bud claims back into the iOS app, covering login-resume parameter preservation, callback validation, and recommended post-claim thread ownership |
 | [design/mobile-agent-stream-attach-semantics.md](./design/mobile-agent-stream-attach-semantics.md) | Design for separating passive thread-open semantics from reconnect replay, adding an explicit current-turn runtime bootstrap surface with opaque resume cursors, making cursorless agent-stream attach live-only, and constraining replay to bounded catch-up with explicit resync |
 | [design/mobile-tool-call-timing-and-compaction.md](./design/mobile-tool-call-timing-and-compaction.md) | Design for keeping grouped mobile tool-summary rows client-side while adding authoritative tool timing to canonical message metadata and optional server-clock timestamps to live tool SSE events |
+| [design/agent-message-work-duration-contract.md](./design/agent-message-work-duration-contract.md) | Design for standardizing per-message work-duration metadata so mobile clients can calculate grouped reasoning/tool/output durations without a turn table |
 | [design/streaming-tool-call-assembly.md](./design/streaming-tool-call-assembly.md) | Draft design for streaming non-authoritative tool-call previews from `AgentModelRunner` to clients while preserving `agent.tool_call` as the final executable tool boundary |
 | [design/mobile-chat-thread-first-backend-contract.md](./design/mobile-chat-thread-first-backend-contract.md) | Design for the first-pass mobile chat backend contract, keeping the existing Bud/thread/message route family while adopting a thread-first mobile list and documenting the required payload/stream cleanup |
 | [design/ask-user-questions-tool-contract.md](./design/ask-user-questions-tool-contract.md) | Draft design for a model-facing `ask_user_questions` tool, including skippable form question types, client response payloads, structured tool-result replay, ownership rules, and human-input notification hooks |
@@ -870,4 +871,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-06-08*
+*Last updated: 2026-06-09*
