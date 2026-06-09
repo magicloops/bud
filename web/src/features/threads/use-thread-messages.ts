@@ -10,7 +10,9 @@ import {
   mergeOlderMessages,
   reconcileMessagePersistence,
   removeDraftAssistantMessageForTurn,
+  removeDraftReasoningMessage,
   upsertDraftAssistantMessage,
+  upsertDraftReasoningMessage,
   upsertMessage,
 } from '@/features/threads/thread-message-state'
 
@@ -47,6 +49,30 @@ type ApplyAssistantDoneArgs = ApplyAssistantDraftArgs & {
 }
 
 type ApplyAssistantMessageArgs = {
+  turnId: string
+  clientId: string
+  messageId: string
+  text: string
+  message?: ApiMessage
+}
+
+type ApplyReasoningStartArgs = {
+  turnId: string
+  clientId: string
+  llmCallId: string
+  index: number
+  provider: string
+  providerModel: string
+  startedAt?: string
+}
+
+type ApplyReasoningDeltaArgs = {
+  turnId: string
+  clientId: string
+  delta: string
+}
+
+type ApplyReasoningDoneArgs = {
   turnId: string
   clientId: string
   messageId: string
@@ -305,6 +331,88 @@ export function useThreadMessages({
     [],
   )
 
+  const applyReasoningStart = useCallback(({
+    turnId,
+    clientId,
+    llmCallId,
+    index,
+    provider,
+    providerModel,
+    startedAt,
+  }: ApplyReasoningStartArgs) => {
+    setMessages((prev) =>
+      upsertDraftReasoningMessage(prev, clientId, (current) => ({
+        message_id: clientId,
+        client_id: clientId,
+        role: 'reasoning',
+        display_role: 'Reasoning',
+        content: current?.content ?? '',
+        created_at: current?.created_at ?? startedAt ?? new Date().toISOString(),
+        metadata: {
+          ...(current?.metadata ?? {}),
+          artifact_kind: 'reasoning',
+          model_visible: false,
+          turn_id: turnId,
+          draft: true,
+          llm_call_id: llmCallId,
+          reasoning_index: index,
+          provider,
+          provider_model: providerModel,
+          ...(startedAt ? { started_at: startedAt } : {}),
+        },
+      })),
+    )
+  }, [])
+
+  const applyReasoningDelta = useCallback(({ turnId, clientId, delta }: ApplyReasoningDeltaArgs) => {
+    setMessages((prev) =>
+      upsertDraftReasoningMessage(prev, clientId, (current) => ({
+        message_id: clientId,
+        client_id: clientId,
+        role: 'reasoning',
+        display_role: 'Reasoning',
+        content: `${current?.content ?? ''}${delta}`,
+        created_at: current?.created_at ?? new Date().toISOString(),
+        metadata: {
+          ...(current?.metadata ?? {}),
+          artifact_kind: 'reasoning',
+          model_visible: false,
+          turn_id: turnId,
+          draft: true,
+        },
+      })),
+    )
+  }, [])
+
+  const applyReasoningDone = useCallback(({
+    clientId,
+    messageId,
+    text,
+    message,
+  }: ApplyReasoningDoneArgs) => {
+    if (message) {
+      setMessages((prev) =>
+        upsertMessage(removeDraftReasoningMessage(prev, clientId), message),
+      )
+      return
+    }
+
+    setMessages((prev) =>
+      upsertMessage(removeDraftReasoningMessage(prev, clientId), {
+        message_id: messageId,
+        client_id: clientId,
+        role: 'reasoning',
+        display_role: 'Reasoning',
+        content: text,
+        created_at: new Date().toISOString(),
+        metadata: {
+          artifact_kind: 'reasoning',
+          model_visible: false,
+        },
+      }),
+    )
+  }, [])
+
   const finalizeTurn = useCallback((turnId: string, status: 'succeeded' | 'failed' | 'canceled') => {
     setMessages((prev) => finalizeTurnMessages(prev, turnId, status))
   }, [])
@@ -326,6 +434,9 @@ export function useThreadMessages({
     applyAssistantMessageDelta,
     applyAssistantMessageDone,
     applyAssistantMessageEvent,
+    applyReasoningStart,
+    applyReasoningDelta,
+    applyReasoningDone,
     finalizeTurn,
   }
 }

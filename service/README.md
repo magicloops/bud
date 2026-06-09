@@ -119,6 +119,14 @@ Recommended deployed values with public origin `https://bud.example.com`:
 - `API_AUDIENCE=https://bud.example.com/api`
 - `OAUTH_TRUSTED_CLIENT_IDS=<published-first-party-client-ids>`
 
+For the current production origin, use:
+
+- `APP_BASE_URL=https://app.bud.dev`
+- `BETTER_AUTH_URL=https://app.bud.dev`
+- `API_AUDIENCE=https://app.bud.dev/api`
+- `BETTER_AUTH_TRUSTED_ORIGINS=https://app.bud.dev`
+- `OAUTH_TRUSTED_CLIENT_IDS=bud-ios`
+
 Public routing contract:
 
 - `/api/*` -> `service`
@@ -173,6 +181,7 @@ Auth and Bud claim testing do not require an LLM provider key, and the service n
 | `pnpm db:seed` | Seed manual enrollment-token data for dev. |
 | `pnpm oauth:provision:ios-local` | Upsert the fixed local iOS OAuth client and print the exact local auth bundle. |
 | `pnpm oauth:provision:ios-staging` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using `.env.staging`. |
+| `pnpm oauth:provision:ios-production` | Upsert the fixed production iOS OAuth client `bud-ios` and print the production auth bundle using `.env.production`. |
 
 Local development for this repo uses `db:push`. Staging uses `db:migrate` against the checked-in migration chain.
 
@@ -190,6 +199,26 @@ Confirm the printed bundle uses:
 - `app_origin: https://localhost:3443`
 - `issuer: https://localhost:3443/api/auth`
 - `audience: https://localhost:3443/api`
+
+`pnpm oauth:provision:ios-production` loads an ignored
+`service/.env.production` file with Node's `--env-file` flag. The production
+file should include the production database URL and:
+
+```bash
+APP_BASE_URL=https://app.bud.dev
+BETTER_AUTH_URL=https://app.bud.dev
+API_AUDIENCE=https://app.bud.dev/api
+BETTER_AUTH_TRUSTED_ORIGINS=https://app.bud.dev
+OAUTH_TRUSTED_CLIENT_IDS=bud-ios
+```
+
+The production script should print:
+
+- `app_origin: https://app.bud.dev`
+- `issuer: https://app.bud.dev/api/auth`
+- `client_id: bud-ios`
+- `redirect_uri: chat.bud.app://oauth/callback`
+- `audience: https://app.bud.dev/api`
 
 ## Local Test Flow
 

@@ -36,7 +36,7 @@ import {
 } from "../llm/index.js";
 import { AgentCancellationRegistry } from "./cancellation-registry.js";
 import { AgentConversationLoader } from "./conversation-loader.js";
-import { AgentModelRunner } from "./model-runner.js";
+import { AgentModelRunner, type StreamedReasoningSegment } from "./model-runner.js";
 import {
 	  buildToolExecutionTiming,
 	  type ExecutedAgentTool,
@@ -492,9 +492,11 @@ export class AgentService {
 	          conversation,
 	          environment,
 	        );
+        let llmCallId = createLlmCallId();
 	        let modelResult: {
 	          response: CanonicalResponse;
 	          assistantClientId: string | null;
+          reasoningSegments: StreamedReasoningSegment[];
 	        };
 	        try {
 	          modelResult = await this.modelRunner.invokeModel(
@@ -510,6 +512,7 @@ export class AgentService {
 	            budId: environment.bud_id,
 	            ownerUserId: ownerUserId ?? null,
 	          },
+	          { llmCallId },
 	        );
 	        } catch (err) {
           if (!isProviderContextWindowError(err)) {
@@ -536,6 +539,7 @@ export class AgentService {
           loadedConversation = retryCompaction.loadedConversation;
           conversation = loadedConversation.messages;
           reconstruction = loadedConversation.reconstruction;
+          llmCallId = createLlmCallId();
 	          modelResult = await this.modelRunner.invokeModel(
 	            threadId,
 	            turnId,
@@ -549,10 +553,14 @@ export class AgentService {
 	              budId: environment.bud_id,
 	              ownerUserId: ownerUserId ?? null,
 	            },
+	            { llmCallId },
 	          );
 	        }
-        const { response, assistantClientId: streamedAssistantClientId } = modelResult;
-        const llmCallId = createLlmCallId();
+        const {
+          response,
+          assistantClientId: streamedAssistantClientId,
+          reasoningSegments,
+        } = modelResult;
         const toolCalls = this.modelRunner.extractToolCalls(response);
         const responseForReplay = response.providerData?.provider === "openai" || providerName === "openai"
           ? {
@@ -601,6 +609,24 @@ export class AgentService {
           ownerUserId,
           reconstruction,
         });
+
+        for (const segment of reasoningSegments) {
+          await this.transcriptWriter.recordReasoningSegment({
+            threadId,
+            turnId,
+            clientId: segment.clientId,
+            text: segment.text,
+            llmCallId: segment.llmCallId,
+            index: segment.index,
+            stepIndex: steps,
+            provider: segment.provider,
+            providerModel: segment.providerModel,
+            startedAt: segment.startedAt,
+            finishedAt: segment.finishedAt,
+            modelSelection,
+            ownerUserId,
+          });
+        }
 
         if (toolCalls.length > 0) {
           conversation.push({

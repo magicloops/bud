@@ -83,6 +83,7 @@ Conversation-building ownership extracted from `AgentService`.
 - load the latest completed context checkpoint and prepend its replacement history after the fresh system prompt
 - filter transcript rows and provider-ledger rows after the checkpoint boundary so compacted history is not replayed twice
 - load persisted thread messages into canonical provider input order
+- skip browser-visible `message.role = "reasoning"` rows so provider reasoning display artifacts are not replayed as normal model-visible messages
 - load same-provider provider-ledger assistant output blocks when a target provider is known
 - derive assistant text phase from provider-ledger payloads or product transcript metadata for OpenAI manual replay
 - gate Anthropic reasoning-bearing provider-ledger replay on the current target model and reasoning config
@@ -106,6 +107,7 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - stored `screen_stable` waits replay as canonical `settled`
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
 - the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions, steers multiple needed questions away from markdown lists, and excludes one-off simple freeform text prompts plus secrets
+- persisted reasoning transcript rows are omitted from model-visible reconstruction while provider-native reasoning replay remains sourced from `llm_call_item`
 
 ### `user-question-contracts.ts`
 
@@ -240,9 +242,11 @@ startUserMessage()
                   ├─► modelRunner.invokeModel()
                   │
                   ├─► emit agent.message_start / delta / done (text responses only)
+                  ├─► emit agent.reasoning_start / delta for visible provider reasoning text
                   ├─► update `/agent/state` cursor + draft snapshot in lockstep
                   ├─► persist visible intermediate assistant text when output also contains tools
                   ├─► persist provider output ledger for text/reasoning/tool-call items
+                  ├─► persist visible reasoning transcript rows after successful provider response
                   │
                   ├─► modelRunner.extractToolCalls()
                   │      │
@@ -265,6 +269,7 @@ startUserMessage()
 - The agent no longer asks the model to wrap final answers in JSON.
 - Provider `invoke()` streams are now the primary path; `AgentService` reconstructs a `CanonicalResponse` from provider text/tool/reasoning events.
 - Draft assistant text is emitted live over SSE via `agent.message_start`, `agent.message_delta`, and `agent.message_done`.
+- Visible provider reasoning text is emitted live over SSE via `agent.reasoning_start` and `agent.reasoning_delta`, tracked in `/agent/state.draft_reasoning`, and reconciled after persistence through `agent.reasoning_done`.
 - Visible assistant text in a response that also contains tool calls is now persisted as an intermediate assistant transcript row before tool execution and emitted as `agent.message`.
 - Final persisted assistant rows are still emitted as `agent.message` once the turn resolves.
 - OpenAI assistant text is replayed with canonical `assistantPhase`: provider-returned phase wins, pre-tool text falls back to `commentary`, and final no-tool text falls back to `final_answer`.
@@ -272,6 +277,7 @@ startUserMessage()
 - Assistant/tool `client_id` values are now allocated before the first live runtime/SSE event that refers to them, and the persisted assistant/tool rows reuse those same values at insert time.
 - Assistant rows are stamped with cached terminal cwd `path_context` when available; terminal tool rows are stamped with `path_context_before` and `path_context_after`.
 - Reasoning blocks are preserved in the provider ledger and then reconstructed for same-provider future calls, so reasoning continuity is no longer only in memory.
+- Sanitized visible reasoning is also persisted as `message.role = "reasoning"` for user display and refresh recovery; these rows are intentionally excluded from model-visible transcript reconstruction, thread previews, attention state, and push notifications.
 - Anthropic thinking and redacted-thinking blocks are replayed provider-natively only when the next Anthropic model/reasoning request is compatible; incompatible same-provider ranges fall back to canonical visible transcript rows with explicit degradation metadata.
 - Multiple provider tool calls are parsed and executed serially in provider output order across terminal and web-view tools.
 - `ask_user_questions` tool calls are normalized and persisted before `agent.tool_call` is emitted; live answers resolve the waiter and continue the same provider tool-call loop, answers submitted after a service restart become a self-contained follow-up user message, and normal follow-up messages close pending prompts as skipped before starting a fresh turn.
@@ -399,6 +405,7 @@ Model invocation ownership extracted from `AgentService`.
   using product-model capabilities before provider-model fallback
 - optionally capture local model-context drift prompt/response snapshots, plus provider-rendered request snapshots when supported and enabled, when `AGENT_CONTEXT_DRIFT_DEBUG=true`
 - consume provider `invoke()` streams and emit draft assistant runtime events
+- consume visible provider reasoning deltas, emit draft reasoning runtime events, and return completed reasoning segments for transcript persistence
 - pass thread/Bud/owner invocation context into environment-scoped providers
   such as Bud-local ds4 while leaving cloud providers free to ignore it
 - reconstruct canonical responses and normalize provider tool-call payloads
@@ -424,6 +431,7 @@ Direct tests for the extracted model runner.
 - malformed user-question tool payloads fail closed before client-visible prompts are emitted
 - empty final responses include bounded canonical/provider response diagnostics on the thrown error
 - injected context-drift recorders receive prompt capture data before provider invocation and response capture data after canonical response reconstruction
+- visible reasoning stream events produce completed reasoning segments and runtime events without exposing provider-only redacted reasoning
 
 ### `model-context-drift-recorder.ts`
 
@@ -492,6 +500,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - add the resolved `model`, `reasoning_effort`, and `model_selection_source` to assistant/tool `message.metadata`
 - add cached cwd path context to assistant rows and before/after path context to terminal tool rows
 - add metadata-only terminal visibility watermarks to terminal tool rows for later freshness decisions
+- persist sanitized visible provider reasoning as `reasoning` transcript rows with `metadata.model_visible = false`
 - emit web-view tool results with a `web_view` runtime payload instead of terminal `output` / `readiness` fields
 - emit user-question tool results with a `user_questions` runtime payload instead of terminal `output` / `readiness` fields
 - emit `agent.tool_result`, `agent.message`, and `final` after durable writes
@@ -504,7 +513,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - Anthropic Opus 4.6/Sonnet 4.6: `low`, `medium`, `high`, `max`
 - Anthropic Opus 4.7: `low`, `medium`, `high`, `xhigh`, `max`
 - Anthropic Haiku 4.5: `none`, `low`, `medium`, `high`
-- ds4 DeepSeek V4 direct local-dev path: `none`
+- ds4 DeepSeek V4 Responses path: `none` (`Fast`) and `low` (`Thinking`); `max` remains hidden unless the configured context window reaches the ds4 max-thinking threshold
 
 Omitted `reasoning_effort` uses the selected model's catalog default, not the global env default.
 
@@ -540,6 +549,7 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 - terminal tool rows can persist metadata-only `terminal_visibility` watermarks without changing replay content
 - pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`
 - completed `ask_user_questions` results persist Q/A payload rows and emit `user_questions` runtime data
+- visible reasoning segments persist as non-model-visible `reasoning` rows and emit `agent.reasoning_done`
 
 ### `context-checkpoint-repository.ts`
 
@@ -687,6 +697,9 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 | `agent.message_start` | `{ turn_id, client_id }` | First visible assistant-text chunk for a turn |
 | `agent.message_delta` | `{ turn_id, client_id, delta }` | Incremental assistant-text append |
 | `agent.message_done` | `{ turn_id, client_id, text }` | Draft assistant text complete, before canonical persistence |
+| `agent.reasoning_start` | `{ turn_id, client_id, llm_call_id, index, provider, provider_model, started_at }` | First visible provider reasoning text for one reasoning segment |
+| `agent.reasoning_delta` | `{ turn_id, client_id, delta }` | Incremental visible reasoning text append |
+| `agent.reasoning_done` | `{ turn_id, client_id, message_id, text, message }` | Reasoning segment persisted as a canonical non-model-visible transcript row |
 | `agent.tool_call` | `{ turn_id, client_id, call_id, name, args, started_at }` | Before executing tool |
 | `agent.tool_result` | `{ turn_id, client_id, call_id, message_id, name, summary, output, output_truncation_reason, started_at, finished_at, duration_ms, ..., message }` | After tool execution, including the persisted canonical tool row |
 | `agent.message` | `{ turn_id, client_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
@@ -703,6 +716,8 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `turn_id` groups all live events for one agent turn
 - `agent.message_start` / `agent.message_delta` / `agent.message_done` describe a client-side draft, not a persisted transcript row
 - `client_id` on `agent.message_start` / `agent.message_delta` / `agent.message_done` matches `/agent/state.draft_assistant.client_id` and the later persisted assistant row
+- `agent.reasoning_start` / `agent.reasoning_delta` describe a client-side reasoning draft; `/agent/state.draft_reasoning[]` carries the same `client_id` for refresh recovery until `agent.reasoning_done` arrives
+- `agent.reasoning_done.message` is the canonical persisted `role: "reasoning"` row and should replace any draft with the same `client_id`
 - `call_id` on `agent.tool_call` / `agent.tool_result` matches the persisted tool row `metadata.call_id`
 - `client_id` on `agent.tool_call` / `agent.tool_result` matches `/agent/state.pending_tool.client_id` and the later persisted tool row
 - `/agent/state.pending_tool.started_at` matches `agent.tool_call.started_at`, so reconnecting clients can show elapsed time for long pending waits
@@ -723,6 +738,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `message.client_id` is the same stable public identity already exposed on the top-level assistant/tool runtime and stream payloads
 - `agent.message` is the canonical persisted assistant row; clients should replace any draft for that `turn_id` when it arrives
 - `agent.message` may represent an intermediate visible text segment before later tool calls; successful final turn status still arrives separately as `final`
+- `reasoning` transcript rows are visible by default but do not update previews, push notifications, attention metadata, context compaction input, or future model-visible conversation loading
 - `agent.compaction_*` events are live activity markers only and do not correspond to persisted transcript rows
 - compaction event payloads expose token counts, phase, reason, checkpoint id on success, optional post-compaction context budget, and sanitized failure metadata; they intentionally exclude raw summaries and replacement history
 - `thread.title` shares the same SSE frame-id cursor space as the agent events, so bounded resume covers title changes without opening a second stream

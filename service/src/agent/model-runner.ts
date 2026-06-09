@@ -42,6 +42,7 @@ type StreamedModelResponse = {
   assistantClientId: string | null;
   provider: CanonicalProviderId;
   providerModel: string;
+  reasoningSegments: StreamedReasoningSegment[];
 };
 
 const MODEL_RESPONSE_TEXT_PREVIEW_CHARS = 4_000;
@@ -56,6 +57,32 @@ type ModelResponseDiagnostic = {
   content: unknown[];
   toolCalls?: unknown[];
   providerData?: unknown;
+};
+
+export type StreamedReasoningSegment = {
+  clientId: string;
+  index: number;
+  text: string;
+  llmCallId: string;
+  provider: CanonicalProviderId;
+  providerModel: string;
+  startedAt: Date;
+  finishedAt: Date;
+  block: Extract<CanonicalReasoningBlock, { type: "reasoning" }>;
+};
+
+type ActiveReasoningDraft = {
+  clientId: string;
+  index: number;
+  text: string;
+  llmCallId: string;
+  provider: CanonicalProviderId;
+  providerModel: string;
+  startedAt: Date;
+};
+
+type ModelInvocationStreamContext = {
+  llmCallId?: string | null;
 };
 
 export class AgentModelResponseError extends Error {
@@ -131,6 +158,7 @@ export class AgentModelRunner {
     signal?: AbortSignal,
     tools: CanonicalTool[] = AGENT_CANONICAL_TOOLS,
     invocationContext?: ProviderInvocationContext,
+    streamContext?: ModelInvocationStreamContext,
   ): Promise<StreamedModelResponse> {
     const { providerModel, reasoning, reasoningLevel } = modelReasoning;
     const last = messages.at(-1);
@@ -175,6 +203,9 @@ export class AgentModelRunner {
     const textBlocks = new Map<number, { text: string; assistantPhase?: AssistantMessagePhase }>();
     const textPhases = new Map<number, AssistantMessagePhase>();
     const reasoningBlocks = new Map<number, CanonicalReasoningBlock>();
+    const reasoningDrafts = new Map<number, ActiveReasoningDraft>();
+    const reasoningSegments = new Map<number, StreamedReasoningSegment>();
+    const reasoningStartedAt = new Map<number, Date>();
     const toolCallsByIndex = new Map<number, CanonicalToolCall>();
     const pendingTextPrefixes = new Map<number, string>();
     const seenTextIndexes = new Set<number>();
@@ -187,6 +218,7 @@ export class AgentModelRunner {
     let hasDraftText = false;
     let textBlockCount = 0;
     let assistantClientId: string | null = null;
+    const liveLlmCallId = streamContext?.llmCallId ?? ulid();
 
     const ensureAssistantClientId = () => {
       assistantClientId ??= generateMessageClientId();
@@ -227,6 +259,83 @@ export class AgentModelRunner {
       this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
     };
 
+    const ensureReasoningDraft = (index: number): ActiveReasoningDraft => {
+      const existing = reasoningDrafts.get(index);
+      if (existing) {
+        return existing;
+      }
+
+      const draft: ActiveReasoningDraft = {
+        clientId: generateMessageClientId(),
+        index,
+        text: "",
+        llmCallId: liveLlmCallId,
+        provider: providerName,
+        providerModel,
+        startedAt: reasoningStartedAt.get(index) ?? new Date(),
+      };
+      reasoningDrafts.set(index, draft);
+
+      const cursor = this.runtime.emit(threadId, {
+        event: "agent.reasoning_start",
+        data: {
+          turn_id: turnId,
+          client_id: draft.clientId,
+          llm_call_id: draft.llmCallId,
+          index,
+          provider: providerName,
+          provider_model: providerModel,
+          started_at: draft.startedAt.toISOString(),
+        },
+      });
+      this.runtime.setDraftReasoning(
+        threadId,
+        {
+          turnId,
+          clientId: draft.clientId,
+          text: draft.text,
+          llmCallId: draft.llmCallId,
+          index,
+          provider: providerName,
+          providerModel,
+          startedAt: draft.startedAt,
+        },
+        cursor,
+      );
+
+      return draft;
+    };
+
+    const emitReasoningDelta = (index: number, delta: string) => {
+      if (!delta) {
+        return;
+      }
+      const draft = ensureReasoningDraft(index);
+      draft.text += delta;
+      const cursor = this.runtime.emit(threadId, {
+        event: "agent.reasoning_delta",
+        data: {
+          turn_id: turnId,
+          client_id: draft.clientId,
+          delta,
+        },
+      });
+      this.runtime.setDraftReasoning(
+        threadId,
+        {
+          turnId,
+          clientId: draft.clientId,
+          text: draft.text,
+          llmCallId: draft.llmCallId,
+          index,
+          provider: providerName,
+          providerModel,
+          startedAt: draft.startedAt,
+        },
+        cursor,
+      );
+    };
+
     for await (const event of provider.invoke(messages, tools, modelConfig, signal, invocationContext)) {
       switch (event.type) {
         case "message_start":
@@ -247,6 +356,8 @@ export class AgentModelRunner {
               seenTextIndexes.add(event.index);
               textBlockCount += 1;
             }
+          } else if (event.content_type === "reasoning") {
+            reasoningStartedAt.set(event.index, reasoningStartedAt.get(event.index) ?? new Date());
           }
           break;
         case "text_delta": {
@@ -276,7 +387,44 @@ export class AgentModelRunner {
             input: event.input,
           });
           break;
+        case "reasoning_start":
+          reasoningStartedAt.set(event.index, reasoningStartedAt.get(event.index) ?? new Date());
+          break;
+        case "reasoning_delta":
+          emitReasoningDelta(event.index, event.delta);
+          break;
         case "reasoning_done":
+          reasoningBlocks.set(event.index, event.block);
+          if (event.block.type === "reasoning" && event.block.text.trim().length > 0) {
+            const draft = ensureReasoningDraft(event.index);
+            const finalText = event.block.text;
+            if (finalText.startsWith(draft.text) && finalText.length > draft.text.length) {
+              emitReasoningDelta(event.index, finalText.slice(draft.text.length));
+            } else {
+              draft.text = finalText;
+              this.runtime.setDraftReasoning(
+                threadId,
+                {
+                  turnId,
+                  clientId: draft.clientId,
+                  text: draft.text,
+                  llmCallId: draft.llmCallId,
+                  index: draft.index,
+                  provider: draft.provider,
+                  providerModel: draft.providerModel,
+                  startedAt: draft.startedAt,
+                },
+                this.runtime.getSnapshot(threadId).stream_cursor,
+              );
+            }
+            reasoningSegments.set(event.index, {
+              ...draft,
+              text: finalText,
+              block: event.block,
+              finishedAt: new Date(),
+            });
+          }
+          break;
         case "reasoning_redacted":
           reasoningBlocks.set(event.index, event.block);
           break;
@@ -362,6 +510,9 @@ export class AgentModelRunner {
       assistantClientId,
       provider: providerName,
       providerModel,
+      reasoningSegments: Array.from(reasoningSegments.entries())
+        .sort(([left], [right]) => left - right)
+        .map(([, segment]) => segment),
     };
   }
 

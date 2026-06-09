@@ -26,6 +26,17 @@ export type AgentDraftAssistant = {
   updated_at: string;
 };
 
+export type AgentDraftReasoning = {
+  client_id: string;
+  text: string;
+  llm_call_id: string;
+  index: number;
+  provider: string;
+  provider_model: string;
+  started_at: string;
+  updated_at: string;
+};
+
 export type AgentRuntimeLastError = {
   turn_id: string;
   code: string;
@@ -42,6 +53,7 @@ export type AgentRuntimeSnapshot = {
   stream_cursor: string;
   pending_tool: AgentPendingTool | null;
   draft_assistant: AgentDraftAssistant | null;
+  draft_reasoning: AgentDraftReasoning[];
   environment: AgentEnvironmentSnapshot | null;
   context_budget: ContextBudgetSnapshot | null;
   last_error: AgentRuntimeLastError | null;
@@ -75,6 +87,17 @@ type InternalSnapshot = {
         updatedAt: Date;
     }
     | null;
+  draftReasoning: Array<{
+    turnId: string;
+    clientId: string;
+    text: string;
+    llmCallId: string;
+    index: number;
+    provider: string;
+    providerModel: string;
+    startedAt: Date;
+    updatedAt: Date;
+  }>;
   environment: AgentEnvironmentSnapshot | null;
   contextBudget: ContextBudgetSnapshot | null;
   lastError: AgentRuntimeLastError | null;
@@ -129,6 +152,7 @@ export class AgentRuntimeStateManager {
         snapshot.canCancel = true;
         snapshot.pendingTool = null;
         snapshot.draftAssistant = null;
+        snapshot.draftReasoning = [];
         snapshot.environment = environment ?? null;
         snapshot.contextBudget = null;
         snapshot.lastError = null;
@@ -212,6 +236,67 @@ export class AgentRuntimeStateManager {
     );
   }
 
+  setDraftReasoning(
+    threadId: string,
+    draft: {
+      turnId: string;
+      clientId: string;
+      text: string;
+      llmCallId: string;
+      index: number;
+      provider: string;
+      providerModel: string;
+      startedAt?: Date;
+    },
+    cursor: string,
+  ): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.phase = "thinking";
+        snapshot.pendingTool = null;
+        const existingIndex = snapshot.draftReasoning.findIndex(
+          (current) => current.clientId === draft.clientId,
+        );
+        const current = existingIndex >= 0 ? snapshot.draftReasoning[existingIndex] : null;
+        const next = {
+          turnId: draft.turnId,
+          clientId: draft.clientId,
+          text: draft.text,
+          llmCallId: draft.llmCallId,
+          index: draft.index,
+          provider: draft.provider,
+          providerModel: draft.providerModel,
+          startedAt: current?.startedAt ?? draft.startedAt ?? new Date(),
+          updatedAt: new Date(),
+        };
+        if (existingIndex >= 0) {
+          snapshot.draftReasoning[existingIndex] = next;
+        } else {
+          snapshot.draftReasoning.push(next);
+        }
+      },
+      cursor,
+    );
+  }
+
+  clearDraftReasoning(
+    threadId: string,
+    clientId: string,
+    cursor?: string,
+  ): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.phase = "thinking";
+        snapshot.draftReasoning = snapshot.draftReasoning.filter(
+          (draft) => draft.clientId !== clientId,
+        );
+      },
+      cursor,
+    );
+  }
+
   advanceCursor(threadId: string, cursor: string): AgentRuntimeSnapshot {
     return this.updateSnapshot(threadId, () => {}, cursor);
   }
@@ -282,6 +367,7 @@ export class AgentRuntimeStateManager {
         snapshot.canCancel = false;
         snapshot.pendingTool = null;
         snapshot.draftAssistant = null;
+        snapshot.draftReasoning = [];
         snapshot.environment = null;
         snapshot.contextBudget = null;
       },
@@ -474,6 +560,7 @@ export class AgentRuntimeStateManager {
       streamCursor: cursor,
       pendingTool: null,
       draftAssistant: null,
+      draftReasoning: [],
       environment: null,
       contextBudget: null,
       lastError: null,
@@ -564,6 +651,16 @@ export class AgentRuntimeStateManager {
             updated_at: snapshot.draftAssistant.updatedAt.toISOString(),
           }
         : null,
+      draft_reasoning: snapshot.draftReasoning.map((draft) => ({
+        client_id: draft.clientId,
+        text: draft.text,
+        llm_call_id: draft.llmCallId,
+        index: draft.index,
+        provider: draft.provider,
+        provider_model: draft.providerModel,
+        started_at: draft.startedAt.toISOString(),
+        updated_at: draft.updatedAt.toISOString(),
+      })),
       environment: snapshot.environment,
       context_budget: snapshot.contextBudget,
       last_error: snapshot.lastError,

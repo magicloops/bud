@@ -110,7 +110,7 @@ Database schema tooling and checked-in migration history managed by Drizzle Kit.
 
 ### `scripts/` → [scripts/scripts.spec.md](./scripts/scripts.spec.md)
 
-Standalone utility scripts for debugging, queries, schema bootstrap, and first-party iOS auth/client provisioning across local and staging environments.
+Standalone utility scripts for debugging, queries, schema bootstrap, and first-party iOS auth/client provisioning across local, staging, and production environments.
 
 ## Package Scripts
 
@@ -137,6 +137,7 @@ Standalone utility scripts for debugging, queries, schema bootstrap, and first-p
 | `smoke:grpc-file` | `cargo build --manifest-path ../bud/Cargo.toml && tsx src/scripts/smoke-grpc-file.ts` | Build Bud and run the real-daemon HTTP/2 file stat/read/range smoke |
 | `oauth:provision:ios-local` | `tsx src/scripts/provision-ios-local-oauth-client.ts` | Upsert the fixed local iOS OAuth client and print the local auth bundle |
 | `oauth:provision:ios-staging` | `node --env-file=.env.staging --import tsx src/scripts/provision-ios-staging-oauth-client.ts` | Upsert the fixed staging iOS OAuth client and print the staging auth bundle using the checked-in staging env file |
+| `oauth:provision:ios-production` | `node --env-file=.env.production --import tsx src/scripts/provision-ios-production-oauth-client.ts` | Upsert the fixed production iOS OAuth client `bud-ios` and print the production auth bundle using an ignored production env file |
 
 For the local mkcert+Caddy HTTPS profile, prefer the repo-root
 `pnpm dev:https:provision-ios` wrapper. It runs `oauth:provision:ios-local`

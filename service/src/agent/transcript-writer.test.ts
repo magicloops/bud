@@ -21,11 +21,17 @@ function createRuntimeRecorder() {
     pendingTool: Record<string, unknown>;
     cursor: string;
   }> = [];
+  const clearedDraftReasoning: Array<{
+    threadId: string;
+    clientId: string;
+    cursor: string | undefined;
+  }> = [];
 
   return {
     events,
     pendingTools,
     pendingUserQuestions,
+    clearedDraftReasoning,
     runtime: {
       emit(threadId: string, event: { event: string; data: Record<string, unknown> }) {
         events.push({ threadId, event: event.event, data: event.data });
@@ -50,6 +56,13 @@ function createRuntimeRecorder() {
       },
       clearDraftAssistant() {
         // noop
+      },
+      clearDraftReasoning(
+        threadId: string,
+        clientId: string,
+        cursor?: string,
+      ) {
+        clearedDraftReasoning.push({ threadId, clientId, cursor });
       },
     },
   };
@@ -450,6 +463,91 @@ test("assistant text segments are persisted before tool calls without finalizing
     model_selection_source: "service_default",
   });
   assert.equal(result.message_id, "message-assistant-1");
+});
+
+test("reasoning segments persist as non-model-visible transcript messages", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const insertedValues: Array<Record<string, unknown>> = [];
+  mock.method(db, "insert", () => ({
+    values(values: Record<string, unknown>) {
+      insertedValues.push(values);
+      return {
+        returning() {
+          return [
+            {
+              messageId: "message-reasoning-1",
+              clientId: values.clientId,
+              role: values.role,
+              displayRole: values.displayRole,
+              content: values.content,
+              metadata: values.metadata,
+              createdAt: new Date("2026-06-05T20:00:05.000Z"),
+            },
+          ];
+        },
+      };
+    },
+  }) as never);
+
+  const { runtime, events, clearedDraftReasoning } = createRuntimeRecorder();
+  const writer = new AgentTranscriptWriter(runtime as never);
+
+  const result = await writer.recordReasoningSegment({
+    threadId: "thread-1",
+    turnId: "turn-1",
+    clientId: "reasoning-client-1",
+    text: "I should inspect the current terminal output.",
+    llmCallId: "llm-call-1",
+    index: 0,
+    stepIndex: 2,
+    provider: "ds4",
+    providerModel: "deepseek-v4-flash",
+    startedAt: new Date("2026-06-05T20:00:01.000Z"),
+    finishedAt: new Date("2026-06-05T20:00:04.000Z"),
+    modelSelection: {
+      model: "ds4-deepseek-v4-flash",
+      reasoningEffort: "low",
+      source: "thread",
+    },
+    ownerUserId: "user-1",
+  });
+
+  assert.equal(insertedValues.length, 1);
+  assert.equal(insertedValues[0]?.role, "reasoning");
+  assert.equal(insertedValues[0]?.displayRole, "Reasoning");
+  assert.equal(insertedValues[0]?.createdByUserId, "user-1");
+  assert.deepEqual(insertedValues[0]?.metadata, {
+    artifact_kind: "reasoning",
+    model_visible: false,
+    status: "succeeded",
+    turn_id: "turn-1",
+    llm_call_id: "llm-call-1",
+    step_index: 2,
+    provider: "ds4",
+    provider_model: "deepseek-v4-flash",
+    reasoning_index: 0,
+    reasoning_kind: "summary",
+    started_at: "2026-06-05T20:00:01.000Z",
+    finished_at: "2026-06-05T20:00:04.000Z",
+    model: "ds4-deepseek-v4-flash",
+    reasoning_effort: "low",
+    model_selection_source: "thread",
+  });
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.event, "agent.reasoning_done");
+  assert.equal(events[0]?.data.text, "I should inspect the current terminal output.");
+  assert.equal((events[0]?.data.message as Record<string, unknown>).role, "reasoning");
+  assert.deepEqual(clearedDraftReasoning, [
+    {
+      threadId: "thread-1",
+      clientId: "reasoning-client-1",
+      cursor: "agent.reasoning_done-cursor",
+    },
+  ]);
+  assert.equal(result.message_id, "message-reasoning-1");
 });
 
 test("final assistant messages persist final_answer assistant phase metadata", async (t) => {

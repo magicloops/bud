@@ -32,6 +32,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`; terminal-tool args include the effective `wait_for` mode and `terminal.send` uses `command`, `raw_text`, or `key`)
 - `pending_tool` may also contain the normalized `ask_user_questions_request_v1` payload while the agent is waiting for a user response
 - `draft_assistant` (`client_id`, `text`, `updated_at`)
+- `draft_reasoning` (array of visible in-flight reasoning segments with `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`)
 - `environment` (client-safe current Bud mode/status and tool availability while a turn is active; route responses refresh current environment for idle and active reads)
 - `context_budget` (latest active context budget decision while a turn is running; cleared on new/final idle transitions)
 - `last_error` (client-safe, in-memory non-cancel agent failure snapshot with `turn_id`, stable `code`, sanitized `message`, `retryable`, and `occurred_at`; cleared when a new turn starts)
@@ -55,6 +56,7 @@ The route-level `context_budget` response prefers this runtime-owned active snap
 - resume misses surface explicit resync instead of silent live-only fallback
 - non-agent thread events such as `thread.title` can advance the same cursor space without mutating the active turn phase, pending tool, or draft assistant snapshot
 - service-owned activity events such as `agent.compaction_start`, `agent.compaction_done`, and `agent.compaction_failed` advance the cursor and keep the in-flight phase in `thinking` so reconnecting clients can resume after those markers
+- `setDraftReasoning(...)` mirrors live `agent.reasoning_*` stream progress into `/agent/state.draft_reasoning`; finalization and failed/canceled turn cleanup clear the draft array
 - `setEnvironment(...)` updates the runtime environment snapshot without emitting a standalone SSE event; `/agent/state` is the authoritative convergence surface for environment
 - `setContextBudget(...)` and `clearContextBudget(...)` update the client-safe budget snapshot without emitting a standalone SSE event
 - `setLastError(...)` and `clearLastError(...)` update the runtime-only failure snapshot without writing transcript rows; `finishTurn(...)` preserves it so `/agent/state` can recover missed fast failure events
@@ -99,6 +101,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - environment snapshots serialize during active turns, can be updated mid-turn, and clear from runtime idle snapshots after finalization
 - runtime failure snapshots serialize as `last_error`, survive failed-turn finalization, and clear when a new turn starts
 - runtime snapshots expose `client_id` on both `pending_tool` and `draft_assistant`
+- runtime snapshots expose draft reasoning segments so reconnecting clients can recover in-flight provider reasoning before the persisted `reasoning` row is emitted
 - runtime snapshots expose `started_at` on `pending_tool` so long-running tool waits remain diagnosable after reconnect
 - runtime snapshots expose effective terminal wait modes on `pending_tool.args.wait_for`, including default settled `terminal.send` waits
 - runtime snapshots expose model-facing `terminal.send` gesture args (`command`, `raw_text`, or `key`) instead of the Bud wire `text`/`submit` fields

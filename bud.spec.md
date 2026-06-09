@@ -68,7 +68,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 |--------|-------------|
 | **Bud** | A registered device running the bud daemon. Has a stable `installation_id`, long-lived `device_secret`, capabilities, status (online/offline), and accent color for UI theming. |
 | **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one active terminal session at a time. |
-| **Message** | A chat message with role (user/assistant/tool/system), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system messages inherit thread ownership. |
+| **Message** | A chat message or visible reasoning artifact with role (user/assistant/tool/system/reasoning), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system/reasoning messages inherit thread ownership; reasoning rows are display-only and excluded from model-visible replay, previews, attention, and push notifications. |
 | **Agent Context Checkpoint** | Durable model-context compaction checkpoint for a thread. Stores summary replacement history plus message/provider-ledger boundaries while leaving the visible transcript intact. |
 | **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps, and cached daemon-reported cwd for file-link resolution. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
@@ -101,7 +101,7 @@ bud/
 ├── .github/                # GitHub Actions workflows, including daemon release artifact builds
 ├── package.json            # Repo-root developer script shim, including local HTTPS bootstrap and release/installer test commands
 ├── render.yaml             # Render Blueprint for the prototype staging web/service/Postgres deployment
-├── PR_SUMMARY.md           # Current PR handoff summary for daemon readiness and installer work
+├── PR_SUMMARY.md           # Current PR summary for reasoning messages and production iOS OAuth provisioning work
 ├── RELEASE_FLOW_TESTING_NEXT_STEPS.md # Canary release and get.bud.dev validation runbook
 ├── DAEMON_INSTALLER_FOLLOW_UP_HANDOFF.md # Remaining daemon installer and rollout handoff
 ├── deploy/                 # Checked-in deployment artifacts and release-hosting handoff docs
@@ -302,11 +302,11 @@ Bud availability is treated as an agent environment. When a thread's Bud is offl
 
 Current service ownership split:
 - `conversation-loader` builds canonical transcript context from persisted rows and latest completed context checkpoint boundaries
-- `model-runner` owns provider resolution, reasoning normalization, draft streaming, and tool-call parsing
+- `model-runner` owns provider resolution, reasoning normalization, draft assistant/reasoning streaming, and tool-call parsing
 - `context-compactor` summarizes old transcript spans into durable checkpoint replacement history before oversized requests fail, or after one normalized provider context-window error
 - `terminal/freshness` derives service-side terminal freshness hints from DB/runtime state without contacting the Bud before provider calls
 - `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
-- `transcript-writer` owns durable assistant/tool writes, terminal visibility metadata, plus runtime emission boundaries
+- `transcript-writer` owns durable assistant/tool/reasoning writes, terminal visibility metadata, plus runtime emission boundaries
 
 ### 3. Terminal Readiness Detection
 
@@ -543,6 +543,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [reference/IOS_TOOL_MESSAGE_HANDLING_BACKEND_RESPONSE.md](./reference/IOS_TOOL_MESSAGE_HANDLING_BACKEND_RESPONSE.md) | Backend response to the iOS tool/message handling review, defining canonical tool identities, row ids, stream ordering, terminal separation, web-view handling, aliases, and risky mobile fallback logic |
 | [TEMP_BACKEND_AGENT_STREAM_RESPONSE.md](./TEMP_BACKEND_AGENT_STREAM_RESPONSE.md) | Temporary backend response to the mobile agent-stream reconnect contract questions, clarifying successful attach lifetime, resume miss behavior, cursor preference, and proposed stream lifecycle logging |
 | [reference/IOS_LLM_MODELS_HANDOFF.md](./reference/IOS_LLM_MODELS_HANDOFF.md) | iOS handoff for the catalog-backed `/api/models` contract, model-specific reasoning controls, and message-send model selection semantics |
+| [reference/IOS_REASONING_MESSAGES_HANDOFF.md](./reference/IOS_REASONING_MESSAGES_HANDOFF.md) | iOS handoff for displaying persisted `role: "reasoning"` transcript rows, `/agent/state.draft_reasoning`, and live `agent.reasoning_*` stream events |
 | [reference/IOS_FILE_VIEWER_HANDOFF.md](./reference/IOS_FILE_VIEWER_HANDOFF.md) | iOS handoff for the user-initiated file viewer contract, covering thread-scoped open, file edge reads, relative path parsing, terminal-cwd-first resolution, UI states, and deferred viewer expansions |
 | [IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md](./IOS_CLIENT_ID_FOLLOW_UP_HANDOFF.md) | Focused follow-up handoff for iOS covering the completed `client_id` rollout, the final Stage B/staging status, and the rule that mobile should key optimistic, runtime, stream, and canonical rows directly by `client_id` from the first stream event |
 | [reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md](./reference/IOS_MOBILE_CLAIM_REDIRECT_HANDOFF.md) | Reference handoff from the mobile team describing the original hosted-claim redirect gap, the requested callback contract, and the backend/web decisions needed for smooth app re-entry after claim approval |
@@ -581,6 +582,12 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/ds4/phase-5-responses-hardening-and-rollout.md](./plan/ds4/phase-5-responses-hardening-and-rollout.md) | Finalization phase covering ds4 Responses compatibility decisions, limits, audit, live validation, and product/deployment handoff |
 | [plan/ds4/progress-checklist.md](./plan/ds4/progress-checklist.md) | Running implementation checklist for the ds4 local LLM rollout |
 | [plan/ds4/validation-checklist.md](./plan/ds4/validation-checklist.md) | Automated and manual validation checklist for direct and Bud-backed ds4 support |
+| [design/reasoning-messages.md](./design/reasoning-messages.md) | Design for showing provider reasoning as persisted browser-visible transcript messages while preserving provider-native replay in `llm_call_item` |
+| [review/provider-reasoning-visibility-review.md](./review/provider-reasoning-visibility-review.md) | Review of current OpenAI, Anthropic, and ds4 reasoning receipt, provider-ledger persistence, replay, and browser visibility gaps |
+| [plan/reasoning-messages/reasoning-messages.spec.md](./plan/reasoning-messages/reasoning-messages.spec.md) | Folder spec for the reasoning-message implementation plan, covering schema boundaries, agent streams, web rendering, validation, and mobile handoff |
+| [plan/reasoning-messages/implementation-spec.md](./plan/reasoning-messages/implementation-spec.md) | Phased implementation plan for adding provider reasoning as persisted `reasoning` timeline messages while excluding them from model context and provider replay |
+| [plan/reasoning-messages/progress-checklist.md](./plan/reasoning-messages/progress-checklist.md) | Running implementation checklist for the reasoning-message rollout |
+| [plan/reasoning-messages/validation-checklist.md](./plan/reasoning-messages/validation-checklist.md) | Manual and automated validation checklist for provider reasoning streams, persistence, UI rendering, replay boundaries, and docs handoff |
 | [plan/openai-phases/openai-phases.spec.md](./plan/openai-phases/openai-phases.spec.md) | Folder spec for preserving OpenAI Responses assistant message `phase` values across Bud's manual replay path while keeping Anthropic behavior unchanged |
 | [plan/openai-phases/implementation-spec.md](./plan/openai-phases/implementation-spec.md) | Parent implementation spec for preserving OpenAI Responses assistant `phase` through canonical types, OpenAI provider round trip, provider-ledger persistence, transcript fallback, and validation |
 | [plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md](./plan/openai-phases/phase-0-sdk-type-baseline-and-fixtures.md) | SDK and fixture-baseline phase covering the OpenAI SDK `6.39.0` update, Responses `phase` type inspection, and provider fixture shapes |
@@ -760,6 +767,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [review/terminal-send-result-flow-review.md](./review/terminal-send-result-flow-review.md) | Review of the current model -> `terminal.send` -> result architecture, recommending a settled-first synchronous default so Bud waits locally for common shell/TUI work, returns latest delta on timeout, and keeps `terminal.observe` as the longer-wait escape hatch until true async callbacks exist |
 | [research/research.spec.md](./research/research.spec.md) | Folder spec for current-state research notes that capture implementation findings before promotion to plan, debug, or design docs |
 | [research/terminal-observation-long-waits.md](./research/terminal-observation-long-waits.md) | Research note on the current send/observe wait path, 30-second timeout defaults, output quiescence semantics, optimistic readiness, and post-dispatch quiescence timing for long-running TUIs |
+| [debug/ds4-websocket-stream-limit-saturation.md](./debug/ds4-websocket-stream-limit-saturation.md) | Debug note reviewing the Bud-local ds4 over WebSocket stream-limit error, including single-turn hidden callers, per-Bud concurrency, WebSocket backlog risks, stream cleanup, timeout gaps, error-code semantics, and proposed fixes |
 | [debug/streamdown-paragraph-animation-lag.md](./debug/streamdown-paragraph-animation-lag.md) | Debug note documenting why Streamdown's default word-level animation can lag behind fast assistant deltas and the follow-up no-stagger `blurIn` animation configuration |
 | [debug/streamdown-code-block-line-collapse.md](./debug/streamdown-code-block-line-collapse.md) | Debug note documenting why Streamdown code blocks can collapse multiple highlighted lines into one visual line when Bud disables code line numbers |
 | [debug/streamdown-code-block-rough-edges.md](./debug/streamdown-code-block-rough-edges.md) | Debug note documenting the scoped CSS fix that gives Streamdown code blocks a slightly rounded visible surface aligned with Mermaid and table rich blocks |
@@ -853,7 +861,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries, auth/env placeholders, and hosted web-view proxy env placeholders |
 | [deploy/cloudflare/bud-front-door-worker.js](./deploy/cloudflare/bud-front-door-worker.js) | Cloudflare Worker module that forwards service-owned app paths and `*.bud.show` web-view proxy traffic to `bud-service` while preserving forwarded host/proto/port context and the proxy edge secret |
 | [deploy/get-bud-dev/release-hosting.md](./deploy/get-bud-dev/release-hosting.md) | Handoff for publishing CI-generated Bud daemon archives and the stable manifest under `https://get.bud.dev` |
-| [PR_SUMMARY.md](./PR_SUMMARY.md) | Current PR handoff summary for daemon readiness and installer work |
+| [PR_SUMMARY.md](./PR_SUMMARY.md) | Current PR summary for reasoning messages and production iOS OAuth provisioning work |
 | [RELEASE_FLOW_TESTING_NEXT_STEPS.md](./RELEASE_FLOW_TESTING_NEXT_STEPS.md) | Canary release, Cloudflare promotion, rollback, and clean-machine validation runbook |
 | [DAEMON_INSTALLER_FOLLOW_UP_HANDOFF.md](./DAEMON_INSTALLER_FOLLOW_UP_HANDOFF.md) | Follow-up plan for remaining daemon-readiness and installer rollout items |
 | [PROGRESS.md](./PROGRESS.md) | Development progress |
@@ -862,4 +870,4 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 
 ---
 
-*Last updated: 2026-06-03*
+*Last updated: 2026-06-08*

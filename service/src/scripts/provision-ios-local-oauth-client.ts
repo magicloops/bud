@@ -1,11 +1,15 @@
-import { getIosOAuthRedirectUri } from "./ios-oauth-contract.js";
+import {
+  getIosOAuthRedirectUri,
+  IOS_OAUTH_CLIENT_IDS,
+  IOS_OAUTH_CLIENT_ROW_IDS,
+} from "./ios-oauth-contract.js";
 import { runIosOAuthProvisioning } from "./provision-ios-oauth-client-shared.js";
 
 async function main() {
   await runIosOAuthProvisioning({
     environment: "local",
-    clientId: "bud-ios-dev-local",
-    clientRowId: "oauth_client_bud_ios_dev_local",
+    clientId: IOS_OAUTH_CLIENT_IDS.local,
+    clientRowId: IOS_OAUTH_CLIENT_ROW_IDS.local,
     clientName: "Bud iOS (dev)",
     redirectUri: getIosOAuthRedirectUri("local"),
     expectedAppOrigin: [

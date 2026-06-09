@@ -4,7 +4,7 @@ Database utility scripts for development and operations.
 
 ## Purpose
 
-Standalone scripts for database management and auth/bootstrap tasks like local schema push, staging migration alignment, development Bud seeding, table inspection, and first-party iOS OAuth-client provisioning.
+Standalone scripts for database management and auth/bootstrap tasks like local schema push, staging migration alignment, development Bud seeding, table inspection, and first-party iOS OAuth-client provisioning across local, staging, and production environments.
 
 ## Files
 
@@ -90,7 +90,7 @@ Shared helper for first-party iOS OAuth-client provisioning scripts.
 - Upsert deterministic first-party iOS client rows in `auth.oauthClient`
 - Build the published auth bundle from the current `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
 - Print environment-specific warnings when the running config does not match the expected public origin; local provisioning accepts both the HTTP quickstart origin and the HTTPS mkcert+Caddy origin
-- Share one bundle/output shape across local and staging provisioning entrypoints
+- Share one bundle/output shape across local, staging, and production provisioning entrypoints
 
 ### `ios-oauth-contract.ts`
 
@@ -98,7 +98,9 @@ Pure callback-contract constants for first-party iOS OAuth.
 
 **Responsibilities**:
 - Define the canonical environment-to-callback map for Bud iOS OAuth
-- Keep local and staging on `chat.bud.app.staging://oauth/callback`
+- Define canonical first-party iOS OAuth client ids and deterministic Better Auth row ids
+- Keep local on `chat.bud.app.local://oauth/callback`
+- Keep staging on `chat.bud.app.staging://oauth/callback`
 - Keep production on `chat.bud.app://oauth/callback`
 - Give provisioning scripts and tests one shared source of truth for the native callback URI
 
@@ -107,8 +109,10 @@ Pure callback-contract constants for first-party iOS OAuth.
 Regression coverage for the canonical iOS OAuth callback map.
 
 **Responsibilities**:
-- Assert that local and staging provisioning both use `chat.bud.app.staging://oauth/callback`
-- Assert that production keeps `chat.bud.app://oauth/callback`
+- Assert that local provisioning uses `chat.bud.app.local://oauth/callback`
+- Assert that staging provisioning uses `chat.bud.app.staging://oauth/callback`
+- Assert that production provisioning uses `chat.bud.app://oauth/callback`
+- Assert the canonical local, staging, and production client ids plus row ids
 - Catch accidental drift back to the production callback URI for non-production environments before provisioning scripts are run
 
 ### `provision-ios-local-oauth-client.ts`
@@ -118,7 +122,7 @@ Creates or updates the fixed first-party local iOS OAuth client and prints the e
 **Responsibilities**:
 - Upsert `auth.oauthClient` row `bud-ios-dev-local`
 - Supply the Better Auth table's required internal primary key when creating the row
-- Enforce the expected local redirect URI (`chat.bud.app.staging://oauth/callback`)
+- Enforce the expected local redirect URI (`chat.bud.app.local://oauth/callback`)
 - Mark the client as a public native PKCE client with refresh-token support
 - Print the current local auth bundle derived from `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
 - Warn when the local env is not aligned with either supported local public topology:
@@ -158,6 +162,25 @@ pnpm oauth:provision:ios-staging
 
 **Execution Contract**:
 - The package script loads `.env.staging` explicitly via Node's `--env-file` flag before importing `tsx`, so the staging bundle is always derived from the checked-in staging env file rather than whichever shell env happens to be active.
+
+### `provision-ios-production-oauth-client.ts`
+
+Creates or updates the fixed first-party production iOS OAuth client and prints the exact production auth bundle to hand to the mobile team.
+
+**Responsibilities**:
+- Upsert `auth.oauthClient` row `bud-ios`
+- Enforce the production redirect URI (`chat.bud.app://oauth/callback`)
+- Mark the client as a public native PKCE client with refresh-token support
+- Print the current production auth bundle derived from `APP_BASE_URL`, `BETTER_AUTH_URL`, and `API_AUDIENCE`
+- Warn when the production env is not aligned with the expected public `https://app.bud.dev` topology
+
+**Usage**:
+```bash
+pnpm oauth:provision:ios-production
+```
+
+**Execution Contract**:
+- The package script loads `.env.production` explicitly via Node's `--env-file` flag before importing `tsx`, so the production bundle is derived from the ignored production env file rather than whichever shell env happens to be active. Do not commit `.env.production`.
 
 ### `smoke-grpc-data-terminal.ts`
 

@@ -279,6 +279,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
   const isUser = message.role === 'user'
   const isTool = message.role === 'tool'
   const isSystem = message.role === 'system'
+  const isReasoning = message.role === 'reasoning'
   const isAssistant = message.role === 'assistant' && !isTool
   const isDraftAssistant = isAssistant && message.metadata?.draft === true
   const payload = isTool ? resolveToolPayload(message) : null
@@ -307,7 +308,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
     : undefined
   const timeLabel = new Date(message.created_at).toLocaleTimeString()
   const backgroundColor = isUser ? 'var(--chat-message)' : undefined
-  const assistantBackground = isAssistant || isTool ? 'var(--chat-message)' : undefined
+  const assistantBackground = isAssistant || isTool || isReasoning ? 'var(--chat-message)' : undefined
   const accentStyles =
     isUser && systemColor
       ? {
@@ -429,7 +430,7 @@ const ChatTimelineMessage = memo(function ChatTimelineMessage({
       className={cn(
         'group/message relative rounded-xl border-3 border-black p-3 text-sm leading-relaxed shadow-[3px_3px_0px_rgba(0,0,0,1)]',
         isUser ? 'text-card-foreground' : 'text-foreground',
-        (isAssistant || isTool) && 'bg-background',
+        (isAssistant || isTool || isReasoning) && 'bg-background',
       )}
       style={{
         backgroundColor: backgroundColor ?? assistantBackground,

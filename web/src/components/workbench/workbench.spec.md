@@ -85,6 +85,7 @@ Message list with auto-scroll and full-height message rendering.
 - Per-message copy/payload state now lives inside memoized message rows, so toggling one message does not force the full timeline to churn through list-wide UI state maps
 - Messages render at their natural height without the former 500px clamp or expand/collapse row controls
 - Role-based avatar colors and styling
+- Reasoning rows render visibly by default with muted Markdown treatment and no assistant file-open actions
 - Tool content renderers for specialized display
 - Assistant draft rows render through the shared Streamdown-backed role renderer in streaming mode without Streamdown text-reveal animation or caret chrome until the canonical persisted assistant row replaces them
 - Pending `ask_user_questions` tool rows render an inline response form and submit through a parent-owned callback
@@ -120,6 +121,7 @@ The existing-thread route also suppresses the generic indicator while assistant 
 |------|--------|------------|
 | User | "U" | accent color |
 | Assistant | "B" | muted |
+| Reasoning | "B" | muted |
 | Tool | tool icon | accent soft |
 
 ### `command-composer.tsx`

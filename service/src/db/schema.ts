@@ -18,7 +18,7 @@ import { sql } from "drizzle-orm";
 
 const authSchema = pgSchema("auth");
 
-const messageRoleValues = ["user", "assistant", "tool", "system"] as const;
+const messageRoleValues = ["user", "assistant", "tool", "system", "reasoning"] as const;
 export const operationStateValues = [
   "offered",
   "accepted",

@@ -346,6 +346,10 @@ export class AgentConversationLoader {
     },
     options: { toolUseFromProviderLedger: boolean },
   ): void {
+    if (row.role === "reasoning") {
+      return;
+    }
+
     if (row.role === "tool") {
       const directive = this.parseStoredToolDirective(row.content);
       if (!directive) {

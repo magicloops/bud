@@ -5,7 +5,7 @@ Modular rendering system for chat message content.
 ## Purpose
 
 Provides a registry-based system for rendering message content based on:
-1. **Role** - Who sent the message (user, assistant)
+1. **Role** - Who sent the message or display artifact (user, assistant, reasoning)
 2. **Tool** - What tool was called (`terminal.send`, `terminal.observe`, etc.)
 
 This allows easy extension by adding new renderer components.
@@ -58,7 +58,7 @@ type MessageContentRenderer = ComponentType<MessageContentRendererProps>
 
 ### `roles/` → [roles/roles.spec.md](./roles/roles.spec.md)
 
-Role-based renderers (user, assistant). Uses Streamdown-backed Markdown with streaming/static modes.
+Role-based renderers (user, assistant, reasoning). Uses Streamdown-backed Markdown with streaming/static modes and muted display treatment for reasoning artifacts.
 
 ### `tools/` → [tools/tools.spec.md](./tools/tools.spec.md)
 
