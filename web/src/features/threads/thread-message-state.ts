@@ -212,10 +212,13 @@ export const buildDraftAssistantMessageFromState = (agentState: ApiAgentState): 
     role: 'assistant',
     display_role: 'Bud Agent',
     content: agentState.draft_assistant.text,
-    created_at: agentState.draft_assistant.updated_at,
+    created_at: agentState.draft_assistant.started_at ?? agentState.draft_assistant.updated_at,
     metadata: {
       turn_id: agentState.turn_id,
       draft: true,
+      ...(agentState.draft_assistant.started_at
+        ? { started_at: agentState.draft_assistant.started_at }
+        : {}),
     },
   }
 }

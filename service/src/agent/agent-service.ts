@@ -39,6 +39,7 @@ import { AgentConversationLoader } from "./conversation-loader.js";
 import { AgentModelRunner, type StreamedReasoningSegment } from "./model-runner.js";
 import {
 	  buildToolExecutionTiming,
+	  type AgentMessageTiming,
 	  type ExecutedAgentTool,
 	  type ExecutedTerminalTool,
 	  type UserQuestionToolCallDirective,
@@ -497,6 +498,7 @@ export class AgentService {
 	          response: CanonicalResponse;
 	          assistantClientId: string | null;
           reasoningSegments: StreamedReasoningSegment[];
+          assistantTiming: AgentMessageTiming | null;
 	        };
 	        try {
 	          modelResult = await this.modelRunner.invokeModel(
@@ -559,7 +561,8 @@ export class AgentService {
         const {
           response,
           assistantClientId: streamedAssistantClientId,
-          reasoningSegments,
+          reasoningSegments = [],
+          assistantTiming = null,
         } = modelResult;
         const toolCalls = this.modelRunner.extractToolCalls(response);
         const responseForReplay = response.providerData?.provider === "openai" || providerName === "openai"
@@ -590,6 +593,7 @@ export class AgentService {
             modelSelection,
             ownerUserId,
             pathContext,
+            timing: assistantTiming,
           });
           assistantMessageId = assistantMessage.message_id;
         }
@@ -839,6 +843,7 @@ export class AgentService {
           ownerUserId,
           llmCallId,
           pathContext,
+          timing: assistantTiming,
         });
 
         this.runtime.finishTurn(threadId);

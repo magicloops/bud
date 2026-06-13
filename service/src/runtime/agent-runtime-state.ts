@@ -23,6 +23,7 @@ export type AgentPendingTool = {
 export type AgentDraftAssistant = {
   client_id: string;
   text: string;
+  started_at: string;
   updated_at: string;
 };
 
@@ -84,6 +85,7 @@ type InternalSnapshot = {
     | {
         clientId: string;
         text: string;
+        startedAt: Date;
         updatedAt: Date;
     }
     | null;
@@ -209,15 +211,20 @@ export class AgentRuntimeStateManager {
     clientId: string,
     text: string,
     cursor: string,
+    startedAt?: Date,
   ): AgentRuntimeSnapshot {
     return this.updateSnapshot(
       threadId,
       (snapshot) => {
+        const currentDraft = snapshot.draftAssistant?.clientId === clientId
+          ? snapshot.draftAssistant
+          : null;
         snapshot.phase = "streaming_message";
         snapshot.pendingTool = null;
         snapshot.draftAssistant = {
           clientId,
           text,
+          startedAt: currentDraft?.startedAt ?? startedAt ?? new Date(),
           updatedAt: new Date(),
         };
       },
@@ -648,6 +655,7 @@ export class AgentRuntimeStateManager {
         ? {
             client_id: snapshot.draftAssistant.clientId,
             text: snapshot.draftAssistant.text,
+            started_at: snapshot.draftAssistant.startedAt.toISOString(),
             updated_at: snapshot.draftAssistant.updatedAt.toISOString(),
           }
         : null,

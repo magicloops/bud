@@ -45,6 +45,7 @@ Pure transcript/message reconciliation helpers shared by `use-thread-messages.ts
 - pending-tool / draft-assistant synthetic-row detection and cleanup
 - draft-reasoning synthetic-row detection, update, reconciliation, and cleanup
 - pending `ask_user_questions` synthetic rows carry the server `started_at` timestamp when available so refresh and live stream rows sort consistently
+- draft assistant synthetic rows carry the server `started_at` timestamp when available so refresh and persisted assistant rows keep stable chronology
 - live tool-call events and `/agent/state` snapshots share the same pending-tool row builder
 - `/agent/state` overlay application
 - `/agent/state.draft_reasoning` overlay application
@@ -277,9 +278,10 @@ Agent SSE ownership for the existing-thread route.
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.reasoning_*`, `agent.compaction_*`, `thread.title`, and `final` events
 - map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
 - pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering
+- pass `agent.message_start.started_at`, `agent.message_done.started_at`, `agent.message_done.finished_at`, `agent.message_done.duration_ms`, and `agent.message_done.duration_source` through the stream parser as additive timing metadata
 - accept `agent.message` for both intermediate assistant text segments and final assistant rows
 - accept `agent.reasoning_done` as the canonical persisted `role: "reasoning"` row for a visible provider reasoning segment
-- tolerate additive tool timing fields such as `started_at`, `finished_at`, and `duration_ms` on tool events
+- tolerate additive timing fields such as `started_at`, `finished_at`, `duration_ms`, and `duration_source` on assistant and tool events
 - pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
 - pass through `ask_user_questions` request args unchanged so the timeline can render the pending form and submit through the thread route
 - pass through visible provider reasoning start/delta/done events to the transcript state hook

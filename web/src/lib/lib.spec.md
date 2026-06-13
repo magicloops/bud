@@ -76,7 +76,7 @@ Shared browser API types plus narrow response normalization helpers.
 | `ApiMessagePage` | Cursor-paged thread transcript window with `{ messages, page }` |
 | `ApiAgentEnvironment` | Client-safe Bud environment snapshot (`normal` or `bud_offline`) plus terminal, web-view, and user-question tool availability |
 | `ApiCreateMessageResponse` | Message-create response with canonical message fields plus optional `agent` startup metadata such as mode, Bud status, and stream cursor |
-| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, environment, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, `draft_assistant.client_id`, `draft_reasoning`, optional `context_budget`, and optional runtime-only `last_error` |
+| `ApiAgentState` | Current in-flight agent snapshot with `stream_cursor`, environment, `pending_tool.client_id`, `pending_tool.started_at`, `pending_tool.args.wait_for` for terminal tools, `waiting_for_user` phase support, `draft_assistant.client_id`, `draft_assistant.started_at`, `draft_reasoning`, optional `context_budget`, and optional runtime-only `last_error` |
 | `ApiDraftReasoning` | Visible in-flight provider reasoning segment from `/agent/state.draft_reasoning`, keyed by `client_id` for reconciliation with persisted `role: "reasoning"` rows |
 | `ApiAgentLastError` | Runtime-only non-cancel agent failure snapshot from `/agent/state` with stable code, sanitized message, retryability, and timestamp |
 | `ApiContextBudget` | Browser-visible context budget snapshot for the current conversation since the latest compaction checkpoint, including hard model window, Bud usable context window, output reserve, usable input window, compaction-threshold usage, authoritative estimate basis, message/tool-schema token split, provenance (`source`, `phase`, `turn_id`, `checked_at`), optional provider usage diagnostics, confidence, and unknown/failure states |
@@ -102,7 +102,7 @@ export function normalizeCapabilities(caps: unknown): {
 Safely extracts the behavior-oriented capability fields the browser actually cares about from the API response. tmux identity/version details are no longer surfaced in the normal browser contract.
 
 Tool transcript note:
-- tool rows still expose generic `metadata: Record<string, unknown>`, and completed canonical tool rows may now include additive timing fields such as `started_at`, `finished_at`, and `duration_ms` inside that metadata object
+- transcript rows still expose generic `metadata: Record<string, unknown>`, and completed canonical tool, reasoning, and assistant work rows may now include additive work metadata such as `turn_id`, `started_at`, `finished_at`, `duration_ms`, and `duration_source` inside that metadata object
 - terminal tool rows and live pending-tool snapshots expose the effective `wait_for` value so clients can detect settled waits without elapsed-time heuristics
 - web-view tool rows may expose a `web_view` runtime payload instead of
   terminal `output`/`readiness` fields

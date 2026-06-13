@@ -5,13 +5,15 @@ import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js
 import { ulid } from "ulid";
 import { eq } from "drizzle-orm";
 import {
+  buildAgentMessageTiming,
   buildEffectiveToolArgs,
   buildToolArgs,
+  type AgentMessageTiming,
   type AgentToolCallDirective,
   type ExecutedAgentTool,
   type ToolExecutionTiming,
   serializeTerminalDelta,
-  serializeToolExecutionTiming,
+  serializeAgentMessageTiming,
 } from "./contracts.js";
 import { buildAssistantPreviewBody, buildNotificationTitle } from "../notifications/index.js";
 import type {
@@ -125,9 +127,10 @@ export class AgentTranscriptWriter {
       pathContextAfter,
       terminalVisibility,
     } = args;
-    const serializedTiming = serializeToolExecutionTiming(timing);
+    const serializedTiming = serializeAgentMessageTiming(timing);
     const persistedMetadata = {
       ...execution.payload,
+      turn_id: turnId,
       ...serializedTiming,
       ...serializeModelSelectionMetadata(modelSelection),
       ...(llmCallId ? { llm_call_id: llmCallId } : {}),
@@ -194,6 +197,7 @@ export class AgentTranscriptWriter {
     ownerUserId?: string | null;
     llmCallId?: string | null;
     pathContext?: TerminalPathContext | null;
+    timing?: AgentMessageTiming | null;
   }): Promise<SerializedAgentMessage> {
     const {
       threadId,
@@ -205,7 +209,9 @@ export class AgentTranscriptWriter {
       ownerUserId,
       llmCallId,
       pathContext,
+      timing,
     } = args;
+    const serializedTiming = serializeAgentMessageTiming(resolveAgentMessageTiming(timing));
     const assistantMessage = await db.transaction(async (tx) => {
       const [insertedMessage] = await tx
         .insert(messageTable)
@@ -221,6 +227,7 @@ export class AgentTranscriptWriter {
             turn_id: turnId,
             segment_kind: "final",
             assistant_phase: "final_answer",
+            ...serializedTiming,
             ...(llmCallId ? { llm_call_id: llmCallId } : {}),
             ...(pathContext ? { path_context: pathContext } : {}),
             attention_kind: "assistant_completed",
@@ -331,6 +338,7 @@ export class AgentTranscriptWriter {
     llmCallId?: string | null;
     followedByToolCall?: boolean;
     pathContext?: TerminalPathContext | null;
+    timing?: AgentMessageTiming | null;
   }): Promise<SerializedAgentMessage> {
     const {
       threadId,
@@ -343,7 +351,9 @@ export class AgentTranscriptWriter {
       llmCallId,
       followedByToolCall,
       pathContext,
+      timing,
     } = args;
+    const serializedTiming = serializeAgentMessageTiming(resolveAgentMessageTiming(timing));
     const [insertedMessage] = await db
       .insert(messageTable)
       .values({
@@ -358,6 +368,7 @@ export class AgentTranscriptWriter {
           turn_id: turnId,
           segment_kind: segmentKind,
           assistant_phase: assistantPhaseForSegment(segmentKind),
+          ...serializedTiming,
           ...(llmCallId ? { llm_call_id: llmCallId } : {}),
           ...(followedByToolCall ? { followed_by_tool_call: true } : {}),
           ...(pathContext ? { path_context: pathContext } : {}),
@@ -422,6 +433,9 @@ export class AgentTranscriptWriter {
       modelSelection,
       ownerUserId,
     } = args;
+    const serializedTiming = serializeAgentMessageTiming(
+      buildAgentMessageTiming(startedAt, finishedAt),
+    );
     const [insertedMessage] = await db
       .insert(messageTable)
       .values({
@@ -442,8 +456,7 @@ export class AgentTranscriptWriter {
           provider_model: providerModel,
           reasoning_index: index,
           reasoning_kind: reasoningKindForProvider(provider),
-          started_at: startedAt.toISOString(),
-          finished_at: finishedAt.toISOString(),
+          ...serializedTiming,
           ...serializeModelSelectionMetadata(modelSelection),
         },
       })
@@ -528,6 +541,15 @@ function serializeModelSelectionMetadata(
     reasoning_effort: selection.reasoningEffort,
     model_selection_source: selection.source,
   };
+}
+
+function resolveAgentMessageTiming(timing?: AgentMessageTiming | null): AgentMessageTiming {
+  if (timing) {
+    return timing;
+  }
+
+  const now = new Date();
+  return buildAgentMessageTiming(now, now);
 }
 
 function assistantPhaseForSegment(

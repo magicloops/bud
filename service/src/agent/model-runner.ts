@@ -22,6 +22,9 @@ import {
 } from "../llm/index.js";
 import type { ProviderInvocationContext } from "../llm/provider.js";
 import {
+  buildAgentMessageTiming,
+  serializeAgentMessageTiming,
+  type AgentMessageTiming,
   normalizeToolKeyInput,
   parseWaitForArg,
   type AgentFinalDirective,
@@ -43,6 +46,7 @@ type StreamedModelResponse = {
   provider: CanonicalProviderId;
   providerModel: string;
   reasoningSegments: StreamedReasoningSegment[];
+  assistantTiming: AgentMessageTiming | null;
 };
 
 const MODEL_RESPONSE_TEXT_PREVIEW_CHARS = 4_000;
@@ -218,6 +222,8 @@ export class AgentModelRunner {
     let hasDraftText = false;
     let textBlockCount = 0;
     let assistantClientId: string | null = null;
+    let assistantStartedAt: Date | null = null;
+    let assistantTiming: AgentMessageTiming | null = null;
     const liveLlmCallId = streamContext?.llmCallId ?? ulid();
 
     const ensureAssistantClientId = () => {
@@ -230,14 +236,16 @@ export class AgentModelRunner {
         return;
       }
       const clientId = ensureAssistantClientId();
+      assistantStartedAt ??= new Date();
       const cursor = this.runtime.emit(threadId, {
         event: "agent.message_start",
         data: {
           turn_id: turnId,
           client_id: clientId,
+          started_at: assistantStartedAt.toISOString(),
         },
       });
-      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
+      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor, assistantStartedAt);
       hasDraftText = true;
     };
 
@@ -256,7 +264,7 @@ export class AgentModelRunner {
           delta,
         },
       });
-      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
+      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor, assistantStartedAt ?? undefined);
     };
 
     const ensureReasoningDraft = (index: number): ActiveReasoningDraft => {
@@ -435,15 +443,20 @@ export class AgentModelRunner {
 
     if (hasDraftText) {
       const clientId = ensureAssistantClientId();
+      const finishedAt = new Date();
+      const timing = buildAgentMessageTiming(assistantStartedAt ?? finishedAt, finishedAt);
+      assistantTiming = timing;
+      const serializedTiming = serializeAgentMessageTiming(timing);
       const cursor = this.runtime.emit(threadId, {
         event: "agent.message_done",
         data: {
           turn_id: turnId,
           client_id: clientId,
           text: draftText,
+          ...serializedTiming,
         },
       });
-      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor);
+      this.runtime.setDraftAssistant(threadId, clientId, draftText, cursor, timing.startedAt);
     }
 
     const orderedIndexes = Array.from(
@@ -513,6 +526,7 @@ export class AgentModelRunner {
       reasoningSegments: Array.from(reasoningSegments.entries())
         .sort(([left], [right]) => left - right)
         .map(([, segment]) => segment),
+      assistantTiming,
     };
   }
 
