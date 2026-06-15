@@ -324,14 +324,22 @@ test("runtime snapshots expose pending tool metadata and draft assistant client 
     data: {
       turn_id: "turn-1",
       client_id: "assistant-client-1",
+      started_at: "2026-04-21T19:00:02.000Z",
     },
   });
-  runtime.setDraftAssistant("thread-1", "assistant-client-1", "Hello", messageCursor);
+  runtime.setDraftAssistant(
+    "thread-1",
+    "assistant-client-1",
+    "Hello",
+    messageCursor,
+    new Date("2026-04-21T19:00:02.000Z"),
+  );
 
   const draftSnapshot = runtime.getSnapshot("thread-1");
   assert.equal(draftSnapshot.pending_tool, null);
   assert.equal(draftSnapshot.draft_assistant?.client_id, "assistant-client-1");
   assert.equal(draftSnapshot.draft_assistant?.text, "Hello");
+  assert.equal(draftSnapshot.draft_assistant?.started_at, "2026-04-21T19:00:02.000Z");
 });
 
 test("runtime snapshots expose waiting_for_user for pending question prompts", () => {

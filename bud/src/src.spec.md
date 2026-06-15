@@ -360,7 +360,7 @@ tmux backend adapter and current concrete backend implementation.
 - configures `pipe-pane`
 - captures panes
 - resizes / kills sessions
-- sends literal text and tmux key names
+- sends literal text with a tmux option terminator so leading-hyphen content is not parsed as flags, and sends tmux key names
 - owns the output watcher implementation that emits `terminal_output`
 - probes tmux availability
 
@@ -479,6 +479,7 @@ High-value local tests now live next to the extracted abstractions:
   - additive delta behavior
 - `terminal/tmux.rs`
   - shell-safe `pipe-pane` command quoting
+  - literal `send-keys` argument construction keeps `--` before text so markdown bullets and other leading-hyphen segments are delivered literally
 
 ## Dependencies
 

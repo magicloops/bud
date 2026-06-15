@@ -129,12 +129,14 @@ test('applyAgentStateOverlay replaces stale synthetic rows with the current pend
       client_id: 'tool-new',
       call_id: 'call-1',
       name: 'terminal.send',
+      started_at: '2026-04-21T10:05:00.000Z',
       args: { input: 'ls\n' },
     },
     draft_assistant: {
       client_id: 'draft-new',
       text: 'working...',
-      updated_at: '2026-04-21T10:05:01.000Z',
+      started_at: '2026-04-21T10:05:01.000Z',
+      updated_at: '2026-04-21T10:05:02.000Z',
     },
   })
 
@@ -146,6 +148,8 @@ test('applyAgentStateOverlay replaces stale synthetic rows with the current pend
   )
   assert.equal(nextMessages[1]?.metadata?.turn_id, 'turn-new')
   assert.equal(nextMessages[2]?.content, 'working...')
+  assert.equal(nextMessages[2]?.created_at, '2026-04-21T10:05:01.000Z')
+  assert.equal(nextMessages[2]?.metadata?.started_at, '2026-04-21T10:05:01.000Z')
 })
 
 test('applyAgentStateOverlay builds pending ask_user_questions rows from agent state', () => {

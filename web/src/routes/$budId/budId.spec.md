@@ -123,6 +123,7 @@ loader: async ({ params }) => {
    - Keeps feature hook error callbacks stable so route rerenders do not
      retrigger web-view fetches or agent stream reconnects
    - Parses `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.reasoning_start`, `agent.reasoning_delta`, `agent.reasoning_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, and `final`
+   - Accepts additive assistant timing fields on `agent.message_start` and `agent.message_done`, including `started_at`, `finished_at`, `duration_ms`, and `duration_source`
    - Shows provider reasoning rows live and after refresh through the same `useThreadMessages(...)` reconciliation path as assistant/tool rows
    - Renders pending `ask_user_questions` prompts in the timeline and submits responses to the thread-scoped question-response route
    - Keeps the stream attached across `final`, so the same thread view remains ready for the next turn without a close/reopen race

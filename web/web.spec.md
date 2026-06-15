@@ -208,6 +208,7 @@ Neobrutalist patterns:
 | `@vitejs/plugin-react` | React Fast Refresh |
 | `@tanstack/router-plugin` | Route generation |
 | `@tailwindcss/vite` | Tailwind integration |
+| `tsx` | TypeScript loader for focused Node test commands |
 
 ---
 

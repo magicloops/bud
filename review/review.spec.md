@@ -54,6 +54,10 @@ Review of the model-to-`terminal.send` result architecture and the settled-first
 
 Focused review of `terminal.send` submit/TUI behavior and the evidence needed to keep send results conservative.
 
+### `terminal-context-prompt-instructions-review.md`
+
+Review of the current model prompt's `context_after` / REPL guidance after the `terminal.send` gesture update. Concludes that the context-awareness intent still holds, but prompt wording should treat inferred context as a hint, align examples with `command` / `raw_text` / `key`, and clarify that cwd is currently carried through preferred-cwd and path-context metadata rather than a terminal tool argument.
+
 ### `message-streaming-and-message-ids-review.md`
 
 Review of the message lifecycle, canonical persistence, live stream IDs, `client_id` rollout, and client reconciliation behavior.

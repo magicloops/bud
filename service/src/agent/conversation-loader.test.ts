@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import { db } from "../db/client.js";
-import { AGENT_SYSTEM_PROMPT, AgentConversationLoader } from "./conversation-loader.js";
+import { AgentConversationLoader } from "./conversation-loader.js";
 import type { AgentContextCheckpoint } from "./context-checkpoint-repository.js";
+import { AGENT_SYSTEM_PROMPT } from "./system-prompt.js";
 
 function createLoader(checkpoint: AgentContextCheckpoint | null = null): AgentConversationLoader {
   return new AgentConversationLoader({

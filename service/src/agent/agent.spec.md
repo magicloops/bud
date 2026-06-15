@@ -48,6 +48,7 @@ Shared agent-facing tool/result contracts.
 - normalize legacy wait/key inputs reused during transcript replay and model-tool parsing
 - keep web-view tool args/result payloads separate from terminal wait/readiness defaults
 - keep user-question request/result payloads separate from terminal and web-view result contracts
+- centralize service wall-clock message timing helpers (`started_at`, `finished_at`, `duration_ms`, `duration_source`) used by tool, reasoning, and assistant metadata
 
 ### `contracts.test.ts`
 
@@ -59,6 +60,7 @@ Direct tests for shared contract helpers.
 - legacy `screen_stable` payloads normalize to canonical `settled`
 - web-view tool args do not gain terminal `wait_for` defaults
 - web-view tool results include HTTP proxy transport plus separate WebSocket proxy capability/transport metadata when available
+- message timing helpers serialize `service_wall_clock` duration metadata while preserving the tool timing compatibility wrapper
 
 ### `failure-message.ts`
 
@@ -79,7 +81,7 @@ Direct coverage for local model stream-limit, local model idle-timeout, and gene
 Conversation-building ownership extracted from `AgentService`.
 
 **Responsibilities**:
-- seed the canonical system prompt
+- seed the canonical system prompt imported from `system-prompt.ts`
 - load the latest completed context checkpoint and prepend its replacement history after the fresh system prompt
 - filter transcript rows and provider-ledger rows after the checkpoint boundary so compacted history is not replayed twice
 - load persisted thread messages into canonical provider input order
@@ -108,6 +110,19 @@ Direct tests for transcript normalization in the extracted conversation loader.
 - the system prompt documents only public `wait_for` modes: `settled`, `changed`, and `none`
 - the system prompt scopes `ask_user_questions` to durable, skippable, structured decisions, steers multiple needed questions away from markdown lists, and excludes one-off simple freeform text prompts plus secrets
 - persisted reasoning transcript rows are omitted from model-visible reconstruction while provider-native reasoning replay remains sourced from `llm_call_item`
+
+### `default-system-prompt.md`
+
+Markdown source for the canonical Bud Agent system prompt. This file is the only prompt-body source; `system-prompt.ts` reads it at module load time, the package `dev` script watches it explicitly for `tsx watch` restarts, and the package `postbuild` script copies it beside the compiled prompt module in `dist/agent/`.
+
+### `system-prompt.ts`
+
+Single prompt ownership module for the canonical Bud Agent system prompt.
+
+**Responsibilities**:
+- read `default-system-prompt.md` directly
+- normalize CRLF line endings and trim the markdown source to match the historical prompt constant behavior
+- export `AGENT_SYSTEM_PROMPT` for conversation loading and prompt-specific tests
 
 ### `user-question-contracts.ts`
 
@@ -165,7 +180,7 @@ Integration-style repository tests for durable `agent_question_request` acceptan
 Thin agent orchestrator over the extracted conversation/model/tool/transcript ownership units.
 
 The prompt/tool-definition ownership now lives in the extracted modules:
-- `conversation-loader.ts` owns the canonical Bud Agent system prompt used for every turn
+- `default-system-prompt.md` owns the canonical Bud Agent system prompt body used for every turn; `system-prompt.ts` is the single TypeScript module that loads and exports it
 - `tool-definitions.ts` owns the canonical `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, `web_view_list`, and `ask_user_questions` JSON Schema definitions passed to providers, the Bud-offline tool-catalog resolver, plus the normal agent-turn tool-schema token estimate
 
 **System Prompt Highlights**:
@@ -496,7 +511,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 - persist assistant phase metadata for intermediate and final assistant rows so OpenAI replay fallback can recover it
 - stamp thread attention metadata for final attention-worthy assistant output
 - enqueue durable push-outbox rows for final assistant output when the owning user has mobile push registrations
-- add authoritative tool timing to canonical tool `message.metadata` while keeping replayed tool `message.content` timing-free
+- add authoritative timing metadata to canonical tool, reasoning, and assistant `message.metadata` while keeping replayed `message.content` timing-free
 - add the resolved `model`, `reasoning_effort`, and `model_selection_source` to assistant/tool `message.metadata`
 - add cached cwd path context to assistant rows and before/after path context to terminal tool rows
 - add metadata-only terminal visibility watermarks to terminal tool rows for later freshness decisions
@@ -542,9 +557,10 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 
 **Current Coverage**:
 - tool timing is emitted on `agent.tool_call` / `agent.tool_result`
+- assistant draft timing is emitted on `agent.message_start` / `agent.message_done`
 - intermediate assistant text segments persist with `segment_kind` / `llm_call_id` metadata and emit `agent.message` without finalizing the turn
 - emitted intermediate assistant `agent.message` payloads include the serialized commentary phase metadata
-- canonical tool `message.metadata` receives timing fields while `message.content` remains the timing-free replay payload
+- canonical tool, reasoning, and assistant rows receive timing fields in `message.metadata` while `message.content` remains the timing-free replay or display payload
 - canonical assistant/tool rows receive cached cwd path context metadata when available
 - terminal tool rows can persist metadata-only `terminal_visibility` watermarks without changing replay content
 - pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`
@@ -694,14 +710,14 @@ Via `AgentRuntimeStateManager`, using `threadId` as the channel:
 
 | Event | Data | When |
 |-------|------|------|
-| `agent.message_start` | `{ turn_id, client_id }` | First visible assistant-text chunk for a turn |
+| `agent.message_start` | `{ turn_id, client_id, started_at }` | First visible assistant-text chunk for a turn |
 | `agent.message_delta` | `{ turn_id, client_id, delta }` | Incremental assistant-text append |
-| `agent.message_done` | `{ turn_id, client_id, text }` | Draft assistant text complete, before canonical persistence |
+| `agent.message_done` | `{ turn_id, client_id, text, started_at, finished_at, duration_ms, duration_source }` | Draft assistant text complete, before canonical persistence |
 | `agent.reasoning_start` | `{ turn_id, client_id, llm_call_id, index, provider, provider_model, started_at }` | First visible provider reasoning text for one reasoning segment |
 | `agent.reasoning_delta` | `{ turn_id, client_id, delta }` | Incremental visible reasoning text append |
 | `agent.reasoning_done` | `{ turn_id, client_id, message_id, text, message }` | Reasoning segment persisted as a canonical non-model-visible transcript row |
 | `agent.tool_call` | `{ turn_id, client_id, call_id, name, args, started_at }` | Before executing tool |
-| `agent.tool_result` | `{ turn_id, client_id, call_id, message_id, name, summary, output, output_truncation_reason, started_at, finished_at, duration_ms, ..., message }` | After tool execution, including the persisted canonical tool row |
+| `agent.tool_result` | `{ turn_id, client_id, call_id, message_id, name, summary, output, output_truncation_reason, started_at, finished_at, duration_ms, duration_source, ..., message }` | After tool execution, including the persisted canonical tool row |
 | `agent.message` | `{ turn_id, client_id, message_id, text, message }` | Canonical persisted assistant row after draft streaming has completed |
 | `agent.compaction_start` | `{ turn_id, trigger, reason, phase, tokens_before, threshold_tokens, context_window_tokens, usable_context_window_tokens, reserved_output_tokens, usable_input_window_tokens, effective_budget_tokens, started_at }` | Automatic context compaction begins |
 | `agent.compaction_done` | start payload plus `{ checkpoint_id, tokens_after, finished_at, context_budget? }` | Completed context checkpoint is persisted; optional context budget is the post-compaction snapshot |
@@ -716,6 +732,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `turn_id` groups all live events for one agent turn
 - `agent.message_start` / `agent.message_delta` / `agent.message_done` describe a client-side draft, not a persisted transcript row
 - `client_id` on `agent.message_start` / `agent.message_delta` / `agent.message_done` matches `/agent/state.draft_assistant.client_id` and the later persisted assistant row
+- `/agent/state.draft_assistant.started_at` matches `agent.message_start.started_at`, so reconnecting clients can calculate active draft duration without local timers
 - `agent.reasoning_start` / `agent.reasoning_delta` describe a client-side reasoning draft; `/agent/state.draft_reasoning[]` carries the same `client_id` for refresh recovery until `agent.reasoning_done` arrives
 - `agent.reasoning_done.message` is the canonical persisted `role: "reasoning"` row and should replace any draft with the same `client_id`
 - `call_id` on `agent.tool_call` / `agent.tool_result` matches the persisted tool row `metadata.call_id`
@@ -729,10 +746,10 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 - `started_at` on `agent.tool_call` is the service-side tool-start timestamp captured immediately before execution begins
 - tool-result payloads now include a compact `summary` plus an explicit `output_truncation_reason` when the raw output was partial
 - terminal-send tool-result payloads include `input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, and `enter_requested` alongside the legacy low-level `submitted` dispatch acknowledgement
-- tool-result payloads now also include authoritative `started_at`, `finished_at`, and `duration_ms` values derived in the service agent loop
+- tool-result payloads now also include authoritative `started_at`, `finished_at`, `duration_ms`, and `duration_source` values derived in the service agent loop
 - web-view tool-result payloads include `web_view` data instead of terminal readiness/output fields
 - user-question tool-result payloads include `user_questions` data with the structured `ask_user_questions_tool_result_v1` result and Q/A summary
-- canonical persisted tool rows expose the same timing fields under `message.metadata`, while `message.content` remains the replay payload and intentionally does not gain timing-only fields
+- canonical persisted tool, reasoning, and assistant rows expose the same work metadata shape under `message.metadata` (`turn_id`, `started_at`, `finished_at`, `duration_ms`, `duration_source`), while `message.content` remains the replay payload or display text and intentionally does not gain timing-only fields
 - canonical persisted terminal tool rows may expose `path_context_before` / `path_context_after` under `message.metadata`; assistant rows may expose `path_context`
 - `message.message_id` lets clients upsert canonical transcript rows without inventing assistant/tool ids locally
 - `message.client_id` is the same stable public identity already exposed on the top-level assistant/tool runtime and stream payloads
@@ -764,6 +781,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 | `../terminal/types.js` | Readiness hints types |
 | `../terminal/freshness.js` | Terminal visibility watermark helpers for terminal tool rows |
 | `./conversation-loader.js` | Canonical transcript/context assembly |
+| `./system-prompt.js` | Reads and exports the markdown-authored canonical system prompt |
 | `./context-budget.js` | Automatic compaction budget estimates and thresholds |
 | `./context-budget-state.js` | Shared client-safe budget snapshot and compaction-decision builder |
 | `./context-budget-snapshot.js` | Browser-facing context budget snapshots for `/agent/state` |

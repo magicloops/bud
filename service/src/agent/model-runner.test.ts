@@ -485,6 +485,16 @@ test("invokeModel emits and returns visible reasoning segments", async (t) => {
   assert.equal(runtime.events[0]?.data.llm_call_id, "llm-call-1");
   assert.equal(runtime.events[1]?.data.delta, "Check terminal state.");
   assert.equal(runtime.draftReasoning.at(-1)?.draft.text, "Check terminal state.");
+  const messageStart = runtime.events.find((event) => event.event === "agent.message_start");
+  const messageDone = runtime.events.find((event) => event.event === "agent.message_done");
+  assert.equal(typeof messageStart?.data.started_at, "string");
+  assert.equal(messageDone?.data.started_at, messageStart?.data.started_at);
+  assert.equal(typeof messageDone?.data.finished_at, "string");
+  assert.equal(typeof messageDone?.data.duration_ms, "number");
+  assert.equal(messageDone?.data.duration_source, "service_wall_clock");
+  assert.ok(result.assistantTiming);
+  assert.equal(result.assistantTiming.startedAt.toISOString(), messageStart?.data.started_at);
+  assert.equal(result.assistantTiming.durationMs, messageDone?.data.duration_ms);
 });
 
 test("invokeModel captures model context drift prompt and response when recorder is provided", async (t) => {

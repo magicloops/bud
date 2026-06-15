@@ -1,10 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildAgentMessageTiming,
   buildEffectiveToolArgs,
   getEffectiveToolWaitFor,
   parseWaitForArg,
+  serializeAgentMessageTiming,
+  serializeToolExecutionTiming,
 } from "./contracts.js";
+
+test("agent message timing serializes service wall-clock duration metadata", () => {
+  const startedAt = new Date("2026-04-21T19:00:01.000Z");
+  const finishedAt = new Date("2026-04-21T19:00:04.250Z");
+  const timing = buildAgentMessageTiming(startedAt, finishedAt);
+
+  assert.deepEqual(timing, {
+    startedAt,
+    finishedAt,
+    durationMs: 3250,
+  });
+  assert.deepEqual(serializeAgentMessageTiming(timing), {
+    started_at: "2026-04-21T19:00:01.000Z",
+    finished_at: "2026-04-21T19:00:04.250Z",
+    duration_ms: 3250,
+    duration_source: "service_wall_clock",
+  });
+  assert.deepEqual(serializeToolExecutionTiming(timing), serializeAgentMessageTiming(timing));
+});
 
 test("parseWaitForArg accepts public modes and legacy compatibility modes", () => {
   assert.equal(parseWaitForArg("none"), "none");

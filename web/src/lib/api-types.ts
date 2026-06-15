@@ -359,6 +359,7 @@ export type ApiAgentState = {
   draft_assistant: {
     client_id: string
     text: string
+    started_at?: string
     updated_at: string
   } | null
   draft_reasoning?: ApiDraftReasoning[]

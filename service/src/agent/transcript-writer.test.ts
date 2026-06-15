@@ -194,9 +194,11 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   assert.equal(insertedValues[0]?.content, JSON.stringify(execution.payload));
   assert.deepEqual(insertedValues[0]?.metadata, {
     ...execution.payload,
+    turn_id: "turn-1",
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
     duration_ms: 3250,
+    duration_source: "service_wall_clock",
     model: "gpt-5.5",
     reasoning_effort: "low",
     model_selection_source: "explicit_request",
@@ -240,14 +242,17 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   assert.equal(events[1]?.data.started_at, "2026-04-21T19:00:01.000Z");
   assert.equal(events[1]?.data.finished_at, "2026-04-21T19:00:04.250Z");
   assert.equal(events[1]?.data.duration_ms, 3250);
+  assert.equal(events[1]?.data.duration_source, "service_wall_clock");
   assert.equal(events[1]?.data.input_dispatched, true);
   assert.equal(events[1]?.data.command_sent, true);
   assert.equal(events[1]?.data.enter_requested, true);
   assert.deepEqual((events[1]?.data.message as Record<string, unknown>).metadata, {
     ...execution.payload,
+    turn_id: "turn-1",
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
     duration_ms: 3250,
+    duration_source: "service_wall_clock",
     model: "gpt-5.5",
     reasoning_effort: "low",
     model_selection_source: "explicit_request",
@@ -259,9 +264,11 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   assert.deepEqual(result.payload, execution.payload);
   assert.deepEqual(result.message.metadata, {
     ...execution.payload,
+    turn_id: "turn-1",
     started_at: "2026-04-21T19:00:01.000Z",
     finished_at: "2026-04-21T19:00:04.250Z",
     duration_ms: 3250,
+    duration_source: "service_wall_clock",
     model: "gpt-5.5",
     reasoning_effort: "low",
     model_selection_source: "explicit_request",
@@ -433,6 +440,11 @@ test("assistant text segments are persisted before tool calls without finalizing
       reasoningEffort: "medium",
       source: "service_default",
     },
+    timing: {
+      startedAt: new Date("2026-04-21T20:00:01.000Z"),
+      finishedAt: new Date("2026-04-21T20:00:05.000Z"),
+      durationMs: 4000,
+    },
   });
 
   assert.equal(insertedValues.length, 1);
@@ -441,6 +453,10 @@ test("assistant text segments are persisted before tool calls without finalizing
     turn_id: "turn-1",
     segment_kind: "intermediate",
     assistant_phase: "commentary",
+    started_at: "2026-04-21T20:00:01.000Z",
+    finished_at: "2026-04-21T20:00:05.000Z",
+    duration_ms: 4000,
+    duration_source: "service_wall_clock",
     llm_call_id: "llm-call-1",
     followed_by_tool_call: true,
     model: "gpt-5.5",
@@ -456,6 +472,10 @@ test("assistant text segments are persisted before tool calls without finalizing
     turn_id: "turn-1",
     segment_kind: "intermediate",
     assistant_phase: "commentary",
+    started_at: "2026-04-21T20:00:01.000Z",
+    finished_at: "2026-04-21T20:00:05.000Z",
+    duration_ms: 4000,
+    duration_source: "service_wall_clock",
     llm_call_id: "llm-call-1",
     followed_by_tool_call: true,
     model: "gpt-5.5",
@@ -532,6 +552,8 @@ test("reasoning segments persist as non-model-visible transcript messages", asyn
     reasoning_kind: "summary",
     started_at: "2026-06-05T20:00:01.000Z",
     finished_at: "2026-06-05T20:00:04.000Z",
+    duration_ms: 3000,
+    duration_source: "service_wall_clock",
     model: "ds4-deepseek-v4-flash",
     reasoning_effort: "low",
     model_selection_source: "thread",
@@ -629,6 +651,11 @@ test("final assistant messages persist final_answer assistant phase metadata", a
       source: "service_default",
     },
     llmCallId: "llm-call-1",
+    timing: {
+      startedAt: new Date("2026-05-22T20:00:01.000Z"),
+      finishedAt: new Date("2026-05-22T20:00:05.000Z"),
+      durationMs: 4000,
+    },
   });
 
   assert.equal(insertedValues.length, 1);
@@ -637,6 +664,10 @@ test("final assistant messages persist final_answer assistant phase metadata", a
     turn_id: "turn-1",
     segment_kind: "final",
     assistant_phase: "final_answer",
+    started_at: "2026-05-22T20:00:01.000Z",
+    finished_at: "2026-05-22T20:00:05.000Z",
+    duration_ms: 4000,
+    duration_source: "service_wall_clock",
     llm_call_id: "llm-call-1",
     attention_kind: "assistant_completed",
     model: "gpt-5.5",

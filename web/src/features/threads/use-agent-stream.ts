@@ -40,6 +40,7 @@ type AgentToolResultEvent = {
 type AgentMessageStartEvent = {
   turn_id: string
   client_id: string
+  started_at?: string
 }
 
 type AgentMessageDeltaEvent = {
@@ -52,6 +53,10 @@ type AgentMessageDoneEvent = {
   turn_id: string
   client_id: string
   text: string
+  started_at?: string
+  finished_at?: string
+  duration_ms?: number
+  duration_source?: string
 }
 
 type AgentMessageEvent = {
@@ -122,9 +127,17 @@ type UseAgentStreamArgs = {
     startedAt?: string
   }) => void
   onToolResultMessage: (message: ApiMessage) => void
-  onAssistantMessageStart: (event: { turnId: string; clientId: string }) => void
+  onAssistantMessageStart: (event: { turnId: string; clientId: string; startedAt?: string }) => void
   onAssistantMessageDelta: (event: { turnId: string; clientId: string; delta: string }) => void
-  onAssistantMessageDone: (event: { turnId: string; clientId: string; text: string }) => void
+  onAssistantMessageDone: (event: {
+    turnId: string
+    clientId: string
+    text: string
+    startedAt?: string
+    finishedAt?: string
+    durationMs?: number
+    durationSource?: string
+  }) => void
   onAssistantMessageEvent: (event: {
     turnId: string
     clientId: string
@@ -450,7 +463,11 @@ export function useAgentStream({
       callbacksRef.current.onStatusChange('streaming')
       try {
         const data = JSON.parse(evt.data) as AgentMessageStartEvent
-        callbacksRef.current.onAssistantMessageStart({ turnId: data.turn_id, clientId: data.client_id })
+        callbacksRef.current.onAssistantMessageStart({
+          turnId: data.turn_id,
+          clientId: data.client_id,
+          startedAt: data.started_at,
+        })
       } catch (error) {
         console.warn('[agent-sse] failed to parse agent.message_start', error)
       }
@@ -481,6 +498,10 @@ export function useAgentStream({
           turnId: data.turn_id,
           clientId: data.client_id,
           text: data.text,
+          startedAt: data.started_at,
+          finishedAt: data.finished_at,
+          durationMs: data.duration_ms,
+          durationSource: data.duration_source,
         })
       } catch (error) {
         console.warn('[agent-sse] failed to parse agent.message_done', error)

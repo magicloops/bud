@@ -206,7 +206,7 @@ impl TmuxBackend {
         }
 
         let status = Command::new("tmux")
-            .args(["send-keys", "-t", session_name, "-l", text])
+            .args(literal_send_keys_args(session_name, text))
             .status()
             .await
             .with_context(|| "failed to dispatch tmux send-keys (literal text)")?;
@@ -461,6 +461,10 @@ fn build_pipe_command(log_path: &Path) -> String {
     format!("cat >> {}", shell_quote_path(log_path))
 }
 
+fn literal_send_keys_args<'a>(session_name: &'a str, text: &'a str) -> [&'a str; 6] {
+    ["send-keys", "-t", session_name, "-l", "--", text]
+}
+
 fn output_chunk_plan(start_offset: u64, end_offset: u64) -> Vec<(u64, usize)> {
     let mut chunks = Vec::new();
     let mut next_offset = start_offset;
@@ -482,7 +486,10 @@ fn shell_quote_path(path: &Path) -> String {
 mod tests {
     use std::path::Path;
 
-    use super::{build_pipe_command, output_chunk_plan, TERMINAL_OUTPUT_CHUNK_MAX_BYTES};
+    use super::{
+        build_pipe_command, literal_send_keys_args, output_chunk_plan,
+        TERMINAL_OUTPUT_CHUNK_MAX_BYTES,
+    };
 
     #[test]
     fn build_pipe_command_quotes_paths_with_spaces() {
@@ -494,6 +501,33 @@ mod tests {
     fn build_pipe_command_escapes_single_quotes() {
         let command = build_pipe_command(Path::new("/tmp/bud's/terminal.log"));
         assert_eq!(command, "cat >> '/tmp/bud'\"'\"'s/terminal.log'");
+    }
+
+    #[test]
+    fn literal_send_keys_args_terminates_options_before_text() {
+        assert_eq!(
+            literal_send_keys_args(
+                "s_1",
+                "- `npm run dev` starts the local development server."
+            ),
+            [
+                "send-keys",
+                "-t",
+                "s_1",
+                "-l",
+                "--",
+                "- `npm run dev` starts the local development server."
+            ]
+        );
+    }
+
+    #[test]
+    fn literal_send_keys_args_preserves_option_shaped_text() {
+        for text in ["hello", "- markdown bullet", "--flag-like", "-t"] {
+            let args = literal_send_keys_args("s_1", text);
+            assert_eq!(args[4], "--");
+            assert_eq!(args[5], text);
+        }
     }
 
     #[test]

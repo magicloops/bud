@@ -191,22 +191,22 @@ Ownership-focused thread submodules:
 - `context_budget` is a best-effort snapshot of conversation usage since the latest context checkpoint, measured against the automatic-compaction threshold when enabled or the usable input window when compaction is disabled. The primary `estimated_input_tokens` includes both canonical message content and normal agent tool-schema overhead, with `message_estimated_tokens` and `tool_schema_tokens` exposing the split. Active turns prefer the runtime's latest backend compaction-decision snapshot; idle turns use durable reconstruction.
 - `pending_tool` now carries `client_id` and `started_at` in addition to `call_id`, `name`, and `args`
 - `phase` may be `waiting_for_user`; in that state `pending_tool.name` can be `ask_user_questions` and `pending_tool.args` is the normalized `ask_user_questions_request_v1` payload with `request_id`
-- `draft_assistant` now carries `client_id` in addition to `text` and `updated_at`
+- `draft_assistant` now carries `client_id` and `started_at` in addition to `text` and `updated_at`
 - `draft_reasoning` carries visible in-flight provider reasoning segments keyed by `client_id`
 - `GET /api/threads/:thread_id/agent/stream` emits `agent.message_start`, `agent.message_delta`, `agent.message_done`, `agent.reasoning_start`, `agent.reasoning_delta`, `agent.reasoning_done`, `agent.tool_call`, `agent.tool_result`, `agent.message`, `agent.compaction_start`, `agent.compaction_done`, `agent.compaction_failed`, `thread.title`, `agent.resync_required`, `final`, and `heartbeat`
 - agent payloads include a per-turn `turn_id`
-- assistant draft events now include top-level `client_id`
+- assistant draft events now include top-level `client_id`; `agent.message_start` includes `started_at`, and `agent.message_done` includes `started_at`, `finished_at`, `duration_ms`, and `duration_source`
 - assistant draft events are client-side only; the persisted assistant row still arrives later as `agent.message`
 - reasoning draft events include top-level `client_id`; the persisted reasoning row arrives later as `agent.reasoning_done.message`
 - tool events expose the real `call_id` plus top-level `client_id`
 - `agent.tool_call` now includes service-side `started_at`
 - `agent.tool_result` exposes a compact `summary` and explicit `output_truncation_reason` alongside the canonical persisted tool row
-- `agent.tool_result` now also exposes `started_at`, `finished_at`, and `duration_ms`
+- `agent.tool_result` now also exposes `started_at`, `finished_at`, `duration_ms`, and `duration_source`
 - web-view tool results expose a `web_view` result payload instead of terminal `output` / `readiness` fields
 - user-question tool results expose a `user_questions` result payload with the completed `ask_user_questions_tool_result_v1` Q/A summary
 - successful `agent.tool_result` / `agent.message` payloads include the persisted canonical transcript row under `message`
 - those embedded canonical assistant/tool rows reuse the same `client_id` already exposed by the earlier runtime and stream payloads
-- embedded canonical tool rows now expose the same timing fields under `message.metadata`, while tool `message.content` remains the replay payload without timing-only fields
+- embedded canonical tool, reasoning, and assistant rows now expose the same work metadata shape under `message.metadata` (`turn_id`, `started_at`, `finished_at`, `duration_ms`, `duration_source`), while `message.content` remains the replay or display payload without timing-only fields
 - terminal tool rows may include `message.metadata.path_context_before` and `message.metadata.path_context_after`; assistant/user rows may include `message.metadata.path_context`
 - `agent.message_done` carries the full draft assistant text just before canonical persistence
 - `agent.message` may now arrive for an intermediate visible assistant text segment before later tool calls; the embedded `message.metadata.segment_kind` distinguishes `intermediate` from `final`

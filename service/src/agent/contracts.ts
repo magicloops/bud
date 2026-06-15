@@ -162,11 +162,15 @@ export type ExecutedUserQuestionTool = {
 
 export type ExecutedAgentTool = ExecutedTerminalTool | ExecutedWebViewTool | ExecutedUserQuestionTool;
 
-export type ToolExecutionTiming = {
+export const AGENT_MESSAGE_DURATION_SOURCE = "service_wall_clock" as const;
+
+export type AgentMessageTiming = {
   startedAt: Date;
   finishedAt: Date;
   durationMs: number;
 };
+
+export type ToolExecutionTiming = AgentMessageTiming;
 
 export type AgentToolErrorCode =
   | "BUD_DISCONNECTED"
@@ -339,15 +343,22 @@ export function serializeTerminalDelta(
   };
 }
 
-export function buildToolExecutionTiming(
+export function buildAgentMessageTiming(
   startedAt: Date,
   finishedAt: Date,
-): ToolExecutionTiming {
+): AgentMessageTiming {
   return {
     startedAt,
     finishedAt,
     durationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
   };
+}
+
+export function buildToolExecutionTiming(
+  startedAt: Date,
+  finishedAt: Date,
+): ToolExecutionTiming {
+  return buildAgentMessageTiming(startedAt, finishedAt);
 }
 
 export function normalizeAgentTransportError(
@@ -420,16 +431,24 @@ export function isBudDisconnectedTransportError(error: unknown): boolean {
   return normalizeAgentTransportError(error)?.code === "BUD_DISCONNECTED";
 }
 
-export function serializeToolExecutionTiming(
-  timing: ToolExecutionTiming,
+export function serializeAgentMessageTiming(
+  timing: AgentMessageTiming,
 ): {
   started_at: string;
   finished_at: string;
   duration_ms: number;
+  duration_source: typeof AGENT_MESSAGE_DURATION_SOURCE;
 } {
   return {
     started_at: timing.startedAt.toISOString(),
     finished_at: timing.finishedAt.toISOString(),
     duration_ms: timing.durationMs,
+    duration_source: AGENT_MESSAGE_DURATION_SOURCE,
   };
+}
+
+export function serializeToolExecutionTiming(
+  timing: ToolExecutionTiming,
+): ReturnType<typeof serializeAgentMessageTiming> {
+  return serializeAgentMessageTiming(timing);
 }

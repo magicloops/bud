@@ -33,7 +33,7 @@ Tmux-backed implementation of `TerminalBackend`.
 - creates detached sessions with configured shell/cwd/env/size
 - configures `pipe-pane` output logging
 - queries `#{pane_pid}` and `#{pane_current_path}`
-- sends literal text and special keys
+- sends literal text with a tmux option terminator so leading-hyphen content is not parsed as flags, and sends special keys
 - captures panes for observe/readiness paths
 
 ### `registry.rs`

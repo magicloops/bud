@@ -647,6 +647,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - When `mode` is `bud_offline`, provider calls use a Bud-specific tool denylist: `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, and `web_view_list` are omitted. Service-level non-Bud tools remain available by default.
 - `context_budget` reports the backend-authoritative model-visible input estimate against the effective auto-compaction budget. For available snapshots, `estimated_input_tokens` is the trigger estimate and equals `message_estimated_tokens + tool_schema_tokens`; normal agent turns include current tool-schema overhead while tool-free compaction-summary requests do not. Budget snapshots also include provenance fields (`source`, `phase`, `turn_id`, `checked_at`) and optional provider usage diagnostics for non-UI calibration.
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
+- `draft_assistant` includes `client_id`, `text`, `started_at`, and `updated_at` while assistant text is streaming
 - `draft_reasoning` is an additive list of in-flight provider reasoning text visible to the browser but not included in future model-visible conversation reconstruction. Each item includes `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`.
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
 - For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
@@ -1620,11 +1621,11 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 `GET /api/threads/:thread_id/agent/stream` may emit:
 
 - `agent.message_start`
-  - `{ "turn_id": "01TURN...", "client_id": "uuidv7" }`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "started_at": "2026-04-21T19:00:01.000Z" }`
 - `agent.message_delta`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "delta": "Cloning " }`
 - `agent.message_done`
-  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository..." }`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "text": "Cloning repository...", "started_at": "2026-04-21T19:00:01.000Z", "finished_at": "2026-04-21T19:00:05.250Z", "duration_ms": 4250, "duration_source": "service_wall_clock" }`
 - `agent.reasoning_start`
   - starts a visible provider reasoning draft row
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "llm_call_id": "01LLM...", "index": 0, "provider": "ds4", "provider_model": "deepseek-v4-flash", "started_at": "2026-06-05T20:00:01.000Z" }`
@@ -1633,7 +1634,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "delta": "I should inspect the terminal state." }`
 - `agent.reasoning_done`
   - replaces the draft reasoning row with a persisted canonical `role: "reasoning"` message
-  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "message_id": "uuid", "text": "I should inspect the terminal state.", "message": { "message_id": "uuid", "client_id": "uuidv7", "role": "reasoning", "display_role": "Reasoning", "content": "I should inspect the terminal state.", "metadata": { "artifact_kind": "reasoning", "model_visible": false, "llm_call_id": "01LLM..." }, "created_at": "2026-06-05T20:00:05.000Z" } }`
+  - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "message_id": "uuid", "text": "I should inspect the terminal state.", "message": { "message_id": "uuid", "client_id": "uuidv7", "role": "reasoning", "display_role": "Reasoning", "content": "I should inspect the terminal state.", "metadata": { "artifact_kind": "reasoning", "model_visible": false, "turn_id": "01TURN...", "llm_call_id": "01LLM...", "started_at": "2026-06-05T20:00:01.000Z", "finished_at": "2026-06-05T20:00:05.000Z", "duration_ms": 4000, "duration_source": "service_wall_clock" }, "created_at": "2026-06-05T20:00:05.000Z" } }`
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
   - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
@@ -1669,7 +1670,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 ```
 
 - `agent.tool_result`
-  - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, and the persisted canonical `message`
+  - includes `turn_id`, `client_id`, `call_id`, compact tool `summary`, optional truncation metadata, authoritative `started_at`, `finished_at`, `duration_ms`, `duration_source`, and the persisted canonical `message`
   - completed `terminal.send` results expose gesture metadata in addition to the low-level `submitted` dispatch acknowledgement: `input_dispatched`, `command_sent`, `raw_text_sent`, `key_sent`, and `enter_requested`. Clients should prefer those fields over interpreting `submitted` as "Enter was pressed."
   - terminal tool messages may carry `message.metadata.path_context_before` and `message.metadata.path_context_after` when the service has cached daemon cwd context
   - terminal transport failures are recorded as structured tool results instead of uncaught agent-loop failures. Known offline cases include `error: "bud_offline"`, `code: "BUD_DISCONNECTED"`, `retryable: true`, and `ok: false`; timed-out waits use `TIMEOUT`, canceled waits use `CANCELED`, and unavailable sessions use `EXEC_FAILED`.
@@ -1685,6 +1686,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
 - `agent.message`
   - includes `turn_id`, `client_id`, `message_id`, `text`, and the persisted canonical assistant `message`
   - may represent an intermediate visible assistant text segment before later tool calls; `message.metadata.segment_kind` is `intermediate` for those rows and `final` for final assistant rows
+  - persisted assistant rows include `message.metadata.started_at`, `finished_at`, `duration_ms`, and `duration_source`
   - assistant and user messages may carry `message.metadata.path_context` with `schema: "terminal_cwd_v1"`; file-open routes use this server-side metadata when creating a file session from a clicked message link
 - `agent.compaction_start`
   - emitted when automatic model-visible context compaction begins; no transcript row is created
@@ -1751,7 +1753,8 @@ Rules:
 - first-party clients should render `ask_user_questions` prompts from either a live `agent.tool_call` or `/agent/state.pending_tool` after refresh, and submit answers through the thread-scoped response route
 - first-party clients should treat `/agent/state.phase: "waiting_for_user"` as paused human input rather than background loading, and may send normal follow-up messages through `/api/threads/:thread_id/messages`
 - normal follow-up messages while `ask_user_questions` is pending are service-owned supersession: the service stores skipped answers for pending prompts, emits a completed tool row when possible, and may emit successful `final` without `message_id` or `text`
-- completed canonical tool rows may carry `started_at`, `finished_at`, and `duration_ms` under `message.metadata`
+- newly created canonical tool, reasoning, and assistant work rows use the same durable metadata shape under `message.metadata`: `turn_id`, `started_at`, `finished_at`, `duration_ms`, and `duration_source`
+- legacy rows may omit some or all of those metadata fields; clients should ignore missing durations rather than inventing estimates
 - tool `message.content` remains the model-replay payload and should not be assumed to mirror timing-only metadata fields
 - compaction events are activity markers only; clients must not render them as persisted assistant, user, tool, or system transcript rows
 - reasoning messages are browser-visible transcript rows only; clients must not treat `role: "reasoning"` rows as assistant text for thread previews, push notifications, or model-visible replay
