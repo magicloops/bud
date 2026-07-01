@@ -303,7 +303,7 @@ startUserMessage()
 - Automatic compaction decisions write the latest client-safe context budget into runtime state and log sanitized budget diagnostics, including skipped decisions, the active estimate basis, threshold, ratio, model, provider, snapshot provenance, and replay-boundary duplicate suppression without logging message contents, checkpoint summaries, or provider request bodies.
 - Failed automatic compaction emits `agent.compaction_failed` with a sanitized error code and retryability flag; raw checkpoint summaries, replacement histories, provider requests, and provider error messages are never exposed on the stream.
 - If a provider returns a normalized context-window error, the agent attempts one forced compaction/retry while the automatic-compaction kill switch is enabled. If compaction cannot recover, the turn fails clearly instead of silently dropping transcript history.
-- Non-cancel agent failures are formatted through `failure-message.ts`, emitted on `final(status: "failed")` with sanitized `error`, `error_code`, and `retryable`, and stored in runtime `/agent/state.last_error`; they are not persisted as transcript rows and are not replayed to future model calls.
+- Non-cancel agent failures are formatted through `failure-message.ts`, emitted on `final(status: "failed")` with sanitized `error`, `error_code`, and `retryable`, and stored in runtime `/agent/state.last_error`; they are not persisted as transcript rows and are not replayed to future model calls. If a user cancel aborts the active controller, later provider errors or late provider responses for that turn resolve as `final(status: "canceled")` instead of failed runtime errors.
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - OpenAI debug response logging emits `llm_response` as a structured canonical response object rather than a pre-stringified JSON blob, so log viewers can pretty-print nested fields without escaped newline formatting.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before terminal session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
@@ -374,6 +374,7 @@ Standalone Node tests for `AgentService` orchestration behavior.
 
 **Current Coverage**:
 - `cancelThread()` aborts the active turn, rejects any pending terminal waits for that thread, and marks pending user-question rows canceled
+- provider failures that arrive after a user cancel emit a canceled final without storing runtime `last_error`
 - final no-tool responses record exactly one provider-ledger `llm_call` row before final assistant persistence
 - automatic compaction emits sanitized runtime start/done/failure events and advances the runtime stream cursor for resume
 
@@ -536,7 +537,7 @@ Thread/message routes now resolve the effective thread selection before starting
 
 **Cancellation**:
 
-`AgentService` now delegates per-thread `AbortController` ownership to `AgentCancellationRegistry`, and explicit cancel also rejects any pending terminal wait through `TerminalSessionManager.rejectPendingRequestsForThread(...)`, rejects pending `ask_user_questions` waiters, and marks durable pending question requests canceled.
+`AgentService` now delegates per-thread `AbortController` ownership to `AgentCancellationRegistry`, and explicit cancel also rejects any pending terminal wait through `TerminalSessionManager.rejectPendingRequestsForThread(...)`, rejects pending `ask_user_questions` waiters, and marks durable pending question requests canceled. Aborted turns are classified as canceled even when the underlying provider reports a generic late failure such as no model response.
 
 Human terminal interrupt is intentionally separate from agent cancel: the terminal route sends `ctrl+c` and rejects the current terminal wait as `interrupted`, allowing the active agent turn to record a tool result and continue.
 

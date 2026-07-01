@@ -132,6 +132,7 @@ Message input form with options.
 - `messageText` / `onMessageChange` - Controlled input
 - `status` - UI state (idle, dispatching, streaming, waiting_for_user)
 - `onSubmit` - Form submission handler
+- optional `onCancelAgentTurn` - Existing-thread cancel action that switches the send button into stop mode while the agent is dispatching or streaming
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
 - optional `disabledReason` - Human-readable reason to disable normal message composition while a structured prompt is pending
@@ -149,6 +150,7 @@ Message input form with options.
 - Reasoning effort dropdown derived from the selected model's `/api/models` metadata, including provider-specific values such as `xhigh`, `max`, and ds4's semantic `Fast`/`Thinking` options
 - Hides the reasoning selector when a model only exposes `none`
 - Circular context-aware submit button with loading state only during message dispatch
+- In existing-thread mode, the circular context-aware submit button becomes a stop control while the agent is dispatching or streaming, calls the route-owned cancel action, and remains enabled even when the textarea is disabled during dispatch
 - The submit button renders context-budget usage as a radial border from 0-100%
   starting at the top and moving clockwise, and exposes the context tooltip on
   hover/focus
@@ -165,9 +167,11 @@ Circular composer submit control for the browser-visible context budget snapshot
 - optional `contextBudget` - `ApiContextBudget` from `/agent/state`
 - `disabled` - caller-owned form disable state
 - `dispatching` - whether to show the loading spinner instead of the send icon
+- optional `stopMode` / `onStop` - switch the control to a non-submit stop button for active agent turns
 
 **Features**:
 - submits the composer form through a native circular `button type="submit"`
+- switches to `button type="button"` with a square stop icon and "Stop response" accessible label in stop mode
 - keeps a compact 40px circular footprint with centered send/loading icons
 - shows visual percentage against the effective compaction budget, not raw
   model-window usage, as a top-origin clockwise radial border around the button

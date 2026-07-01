@@ -132,6 +132,9 @@ loader: async ({ params }) => {
    - Relies on `useAgentStream(...)` bootstrap recovery to close native EventSource stale-cursor loops, refetch `/messages` + `/agent/state`, and reconnect from the refreshed stream cursor
    - Tracks `/agent/state.environment` and message-send `agent.mode` so offline Bud sends remain successful UI submissions while the composer shows Bud-specific tools are unavailable
    - Tracks `/agent/state.last_error` on loader bootstrap, normal state refresh, and stream resync so non-cancel runtime failures render in the composer error slot even if the live failed final event was missed
+   - Passes the route-owned cancel action into the shared composer so the send button becomes a context-budget-aware stop button during dispatching/streaming agent turns
+   - Preserves the local dispatching state if the immediate post-send `/agent/state` refresh races ahead of backend active-turn visibility, so the stop affordance remains available before the first stream token/tool event
+   - Defers Stop clicks made during the dispatching startup gap until `/agent/state` or SSE reports an active turn, avoiding a no-op early cancel request while still honoring the user's cancellation intent
    - Shows `Compacting context...` while automatic compaction is active, appends a subtle non-transcript timeline marker on completion/failure, applies `agent.compaction_done.context_budget` immediately when present, and refreshes `/agent/state.context_budget` after successful compaction
    - Suppresses the generic timeline activity footer during live assistant text streaming from `agent.message_start` / `agent.message_delta`, then allows it to return after a short delay following `agent.message_done` only when the turn continues
    - Preserves visible reasoning rows as normal transcript content while leaving thread previews, notifications, and model replay to the backend contracts

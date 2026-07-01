@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { LoaderCircle, Send } from 'lucide-react'
+import { LoaderCircle, Send, Square } from 'lucide-react'
 import {
   Tooltip,
   TooltipContent,
@@ -16,6 +16,8 @@ type ContextSendButtonProps = {
   contextBudget?: ApiContextBudget | null
   disabled: boolean
   dispatching: boolean
+  stopMode?: boolean
+  onStop?: () => void | Promise<void>
 }
 
 const contextRingColors = {
@@ -27,6 +29,8 @@ export function ContextSendButton({
   contextBudget,
   disabled,
   dispatching,
+  stopMode = false,
+  onStop,
 }: ContextSendButtonProps) {
   const presentation = getContextBudgetMeterPresentation(contextBudget)
   const ringProgress = getContextBudgetRingProgress(presentation)
@@ -34,9 +38,17 @@ export function ContextSendButton({
   const ringStyle: CSSProperties = {
     backgroundImage: `conic-gradient(from 0deg, ${contextRingColors.ring} 0deg ${ringDegrees}deg, ${contextRingColors.track} ${ringDegrees}deg 360deg)`,
   }
-  const ariaLabel = dispatching
+  const ariaLabel = stopMode
+    ? `Stop response. ${presentation.title}`
+    : dispatching
     ? `Sending message. ${presentation.title}`
     : `Send message. ${presentation.title}`
+  const handleClick = () => {
+    if (!stopMode) {
+      return
+    }
+    void onStop?.()
+  }
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -47,9 +59,10 @@ export function ContextSendButton({
             tabIndex={disabled ? 0 : undefined}
           >
             <button
-              type="submit"
+              type={stopMode ? 'button' : 'submit'}
               aria-label={ariaLabel}
               disabled={disabled}
+              onClick={handleClick}
               className="relative flex h-10 w-10 items-center justify-center rounded-full p-[3px] text-black shadow-[3px_3px_0_rgba(0,0,0,1)] outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-black/30 disabled:cursor-not-allowed disabled:opacity-60"
               style={ringStyle}
             >
@@ -57,7 +70,9 @@ export function ContextSendButton({
                 className="flex h-full w-full items-center justify-center rounded-full"
                 style={{ backgroundColor: 'var(--bud-accent-muted)' }}
               >
-                {dispatching ? (
+                {stopMode ? (
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                ) : dispatching ? (
                   <LoaderCircle className="h-4 w-4 animate-spin" />
                 ) : (
                   <Send className="h-4 w-4" />

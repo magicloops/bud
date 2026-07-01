@@ -126,6 +126,8 @@ function ThreadView() {
   const initializedModelSelectionThreadRef = useRef<string | null>(null)
   const persistModelSelectionSeqRef = useRef(0)
   const assistantMessageDoneTimerRef = useRef<number | null>(null)
+  const cancelAgentTurnRequestedRef = useRef(false)
+  const cancelAgentTurnInFlightRef = useRef(false)
   const shouldAbortForUnauthorized = useCallback((response?: Response | null) => {
     return isAuthRedirectPending() || response?.status === 401
   }, [])
@@ -142,6 +144,9 @@ function ThreadView() {
     clearAssistantMessageDoneTimer()
     setAssistantActivityGate(createAssistantActivityGateFromAgentState(agentState))
   }, [clearAssistantMessageDoneTimer])
+  const applyAgentStateError = useCallback((agentState: ApiAgentState) => {
+    setError(getAgentStateRuntimeErrorMessage(agentState))
+  }, [])
   const {
     messages,
     messagePage,
@@ -203,9 +208,9 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(initialAgentState))
     setAgentEnvironment(initialAgentState.environment ?? null)
     setContextBudget(initialAgentState.context_budget ?? null)
-    setError(getAgentStateRuntimeErrorMessage(initialAgentState))
+    applyAgentStateError(initialAgentState)
     resetAssistantActivityGate(initialAgentState)
-  }, [initialAgentState, initialMessagePage, resetAssistantActivityGate])
+  }, [applyAgentStateError, initialAgentState, initialMessagePage, resetAssistantActivityGate])
 
   useEffect(() => {
     setActiveCompaction(null)
@@ -280,10 +285,10 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
-    setError(getAgentStateRuntimeErrorMessage(nextAgentState))
+    applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [applyAgentState, resetAssistantActivityGate])
+  }, [applyAgentState, applyAgentStateError, resetAssistantActivityGate])
 
   const refreshAgentBootstrap = useCallback(async (targetThreadId: string) => {
     const [nextPage, nextAgentState] = await Promise.all([
@@ -298,10 +303,10 @@ function ThreadView() {
     setStatus(getStatusFromAgentState(nextAgentState))
     setAgentEnvironment(nextAgentState.environment ?? null)
     setContextBudget(nextAgentState.context_budget ?? null)
-    setError(getAgentStateRuntimeErrorMessage(nextAgentState))
+    applyAgentStateError(nextAgentState)
     resetAssistantActivityGate(nextAgentState)
     return nextAgentState
-  }, [mergeLatestBootstrap, resetAssistantActivityGate])
+  }, [applyAgentStateError, mergeLatestBootstrap, resetAssistantActivityGate])
 
   const handleThreadTitleUpdate = useCallback((title: string) => {
     upsertThreadSummary({ ...initialThread, title })
@@ -463,7 +468,12 @@ function ThreadView() {
     void refreshAgentState(threadId).catch((error) => {
       console.warn('[context-budget] failed to refresh after final event', error)
     })
-  }, [clearAssistantMessageDoneTimer, finalizeTurn, refreshAgentState, threadId])
+  }, [
+    clearAssistantMessageDoneTimer,
+    finalizeTurn,
+    refreshAgentState,
+    threadId,
+  ])
 
   const appendContextCompactionNotice = useCallback((notice: ChatTimelineNotice) => {
     setContextCompactionNotices((current) => {
@@ -684,8 +694,11 @@ function ThreadView() {
     })
   }, [budId, terminalConnection])
 
-  const cancelAgentTurn = useCallback(async () => {
-    if (!threadId) return
+  const performCancelAgentTurn = useCallback(async () => {
+    if (!threadId || cancelAgentTurnInFlightRef.current) return
+
+    cancelAgentTurnRequestedRef.current = false
+    cancelAgentTurnInFlightRef.current = true
 
     try {
       const resp = await apiFetch(`/api/threads/${threadId}/cancel`, { method: 'POST' })
@@ -705,8 +718,31 @@ function ThreadView() {
       }
       console.error('Failed to cancel agent turn', err)
       setError(err instanceof Error ? err.message : 'Failed to cancel agent')
+    } finally {
+      cancelAgentTurnInFlightRef.current = false
     }
   }, [refreshAgentState, shouldAbortForUnauthorized, threadId])
+
+  const cancelAgentTurn = useCallback(() => {
+    setError(null)
+    if (status === 'dispatching') {
+      cancelAgentTurnRequestedRef.current = true
+      return
+    }
+
+    void performCancelAgentTurn()
+  }, [performCancelAgentTurn, status])
+
+  useEffect(() => {
+    if (
+      !cancelAgentTurnRequestedRef.current ||
+      (status !== 'streaming' && status !== 'waiting_for_user')
+    ) {
+      return
+    }
+
+    void performCancelAgentTurn()
+  }, [performCancelAgentTurn, status])
 
   const handleSubmit = useCallback(async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -723,6 +759,7 @@ function ThreadView() {
     }
 
     setError(null)
+    cancelAgentTurnRequestedRef.current = false
     setStatus('dispatching')
     clearAssistantMessageDoneTimer()
     setAssistantActivityGate((current) =>
@@ -772,7 +809,12 @@ function ThreadView() {
       )
 
       try {
-        await refreshAgentState(threadId)
+        const nextAgentState = await refreshAgentState(threadId)
+        if (!nextAgentState.active) {
+          setStatus('dispatching')
+        } else if (cancelAgentTurnRequestedRef.current) {
+          void performCancelAgentTurn()
+        }
       } catch (error) {
         console.warn('[agent-sse] failed to refresh agent state after send', error)
       }
@@ -782,6 +824,7 @@ function ThreadView() {
       if (isAuthRedirectPending()) {
         return
       }
+      cancelAgentTurnRequestedRef.current = false
       removeMessage(optimisticId)
       setStatus('idle')
       setError(err instanceof Error ? err.message : 'Failed to send message')
@@ -791,6 +834,7 @@ function ThreadView() {
     budId,
     clearAssistantMessageDoneTimer,
     ensureAgentStreamConnected,
+    performCancelAgentTurn,
     reasoningEffort,
     reconcilePersistedUserMessage,
     refreshAgentState,
@@ -885,6 +929,7 @@ function ThreadView() {
           onMessageChange={setMessageText}
           status={status}
           onSubmit={handleSubmit}
+          onCancelAgentTurn={cancelAgentTurn}
           error={error}
           models={models}
           selectedModel={selectedModel}

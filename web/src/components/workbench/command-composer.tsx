@@ -9,6 +9,7 @@ type CommandComposerProps = {
   onMessageChange: (value: string) => void
   status: WorkbenchStatus
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  onCancelAgentTurn?: () => void | Promise<void>
   error: string | null
   models: ModelInfo[]
   selectedModel: string
@@ -25,6 +26,7 @@ export function CommandComposer({
   onMessageChange,
   status,
   onSubmit,
+  onCancelAgentTurn,
   error,
   models,
   selectedModel,
@@ -37,6 +39,7 @@ export function CommandComposer({
 }: CommandComposerProps) {
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
   const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
+  const stopMode = Boolean(onCancelAgentTurn) && (status === 'dispatching' || status === 'streaming')
   const inputDisabled = status === 'dispatching' || Boolean(disabledReason)
   const showBudOfflineNotice = environment?.mode === 'bud_offline'
 
@@ -112,8 +115,10 @@ export function CommandComposer({
         )}
         <ContextSendButton
           contextBudget={contextBudget}
-          disabled={inputDisabled}
+          disabled={stopMode ? false : inputDisabled}
           dispatching={status === 'dispatching'}
+          stopMode={stopMode}
+          onStop={onCancelAgentTurn}
         />
       </div>
     </form>
