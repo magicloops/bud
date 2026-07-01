@@ -462,6 +462,131 @@ test("agent flow stores sanitized runtime error after non-cancel provider failur
   assert.equal(lastErrors[0]?.cursor, "cursor-1");
 });
 
+test("agent flow treats provider failures after user cancel as canceled", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const runtimeEvents: Array<{ event: string; data: Record<string, unknown> }> = [];
+  let finishCount = 0;
+  let lastErrorCount = 0;
+  const runtime = {
+    emit(_threadId: string, event: { event: string; data: Record<string, unknown> }) {
+      runtimeEvents.push(event);
+      return `cursor-${runtimeEvents.length}`;
+    },
+    setLastError() {
+      lastErrorCount += 1;
+    },
+    markThinking() {
+      // noop
+    },
+    setEnvironment() {
+      // noop
+    },
+    finishTurn() {
+      finishCount += 1;
+    },
+  };
+  const service = new AgentService(
+    {} as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+  const environment = stubNormalEnvironment(service);
+
+  mock.method(db, "update", () => ({
+    set() {
+      return {
+        where() {
+          return Promise.resolve(undefined);
+        },
+      };
+    },
+  }) as never);
+
+  Reflect.set(service, "conversationLoader", {
+    async loadWithDiagnostics() {
+      return {
+        messages: [{ role: "user", content: "continue" }],
+        reconstruction: {
+          mode: "canonical_only",
+        },
+      };
+    },
+  });
+  Reflect.set(service, "compactConversationIfNeeded", async () => null);
+  const testController = new AbortController();
+  Reflect.set(service, "modelRunner", {
+    resolveProviderName() {
+      return "openai";
+    },
+    async invokeModel(
+      _threadId: string,
+      _turnId: string,
+      _messages: unknown[],
+      _model: string,
+      _modelReasoning: unknown,
+      signal?: AbortSignal,
+    ) {
+      assert.equal(signal?.aborted, false);
+      testController.abort();
+      throw {
+        code: "MODEL_NO_RESPONSE",
+        message: "model stream ended without a response",
+        retryable: true,
+      };
+    },
+  });
+
+  const runAgentFlow = Reflect.get(service, "runAgentFlow") as (args: {
+    threadId: string;
+    turnId: string;
+    sessionId: string | null;
+    model: string;
+    modelReasoning: {
+      providerModel: string;
+      reasoningLevel: string;
+    };
+    modelSelection: {
+      model: string;
+      reasoningEffort: string;
+      source: string;
+    };
+    environment: AgentEnvironmentSnapshot;
+    ownerUserId?: string | null;
+    controller: AbortController;
+  }) => Promise<void>;
+
+  await runAgentFlow.call(service, {
+    threadId: "017dbb12-3865-44fc-8228-17bc55af2cd5",
+    turnId: "01KQG8FX9YZAR32E4RGWVVA67G",
+    sessionId: "sess_test",
+    model: "gpt-5.5",
+    modelReasoning: {
+      providerModel: "gpt-5.5",
+      reasoningLevel: "low",
+    },
+    modelSelection: {
+      model: "gpt-5.5",
+      reasoningEffort: "low",
+      source: "service_default",
+    },
+    environment,
+    ownerUserId: "user-1",
+    controller: testController,
+  });
+
+  assert.equal(finishCount, 1);
+  assert.equal(lastErrorCount, 0);
+  assert.equal(runtimeEvents.length, 1);
+  assert.equal(runtimeEvents[0]?.event, "final");
+  assert.equal(runtimeEvents[0]?.data.status, "canceled");
+  assert.equal(runtimeEvents[0]?.data.turn_id, "01KQG8FX9YZAR32E4RGWVVA67G");
+});
+
 test("final no-tool response records exactly one LLM call", async (t) => {
   t.after(() => {
     mock.restoreAll();

@@ -517,6 +517,9 @@ export class AgentService {
 	          { llmCallId },
 	        );
 	        } catch (err) {
+          if (controller.signal.aborted) {
+            throw new Error("agent_canceled");
+          }
           if (!isProviderContextWindowError(err)) {
             throw err;
           }
@@ -558,6 +561,9 @@ export class AgentService {
 	            { llmCallId },
 	          );
 	        }
+        if (controller.signal.aborted) {
+          throw new Error("agent_canceled");
+        }
         const {
           response,
           assistantClientId: streamedAssistantClientId,
@@ -859,7 +865,9 @@ export class AgentService {
       throw new Error("agent reached max steps");
     } catch (err) {
       supersededQuestionResponse?.onFailed?.(err);
-      const canceled = err instanceof Error && err.message === "agent_canceled";
+      const canceled =
+        controller.signal.aborted ||
+        (err instanceof Error && err.message === "agent_canceled");
       this.cancellations.clear(threadId);
       this.userQuestions.rejectThread(threadId, new Error(canceled ? "agent_canceled" : "agent_failed"));
       if (canceled) {
