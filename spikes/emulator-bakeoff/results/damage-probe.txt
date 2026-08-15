@@ -1,0 +1,15 @@
+Damage micro-probe: seed screen "hello\r\nworld\r\n$ ", then tiny inputs.
+
+wezterm-term (seqno watermark, non-destructive query):
+  no input at all: changed lines []; quiet=true; cursor seqno 2 vs watermark 2 (cursor moves visible via seqno)
+  print 'abc' at cursor: changed lines [2]; quiet=false; cursor seqno 2 vs watermark 2 (cursor moves visible via seqno)
+  cursor move only (ESC[5;5H): changed lines []; quiet=true; cursor seqno 4 vs watermark 3 (cursor moves visible via seqno)
+  SGR only (ESC[31m): changed lines []; quiet=true; cursor seqno 4 vs watermark 4 (cursor moves visible via seqno)
+  no input again: changed lines []; quiet=true; cursor seqno 4 vs watermark 5 (cursor moves visible via seqno)
+
+alacritty_terminal (damage() + reset_damage(), single consumer):
+  no input at all: damaged: [line 2 cols 2..2]
+  print 'abc' at cursor: damaged: [line 2 cols 2..5]
+  cursor move only (ESC[5;5H): damaged: [line 2 cols 5..5; line 4 cols 4..4]
+  SGR only (ESC[31m): damaged: [line 4 cols 4..4]
+  no input again: damaged: [line 4 cols 4..4]

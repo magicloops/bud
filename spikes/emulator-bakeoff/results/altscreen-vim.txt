@@ -1,0 +1,36 @@
+fixture: altscreen-vim.raw (2099 bytes, fed in 4096-byte chunks)
+grid: 80x24, scrollback config: 10000 lines
+
+== state after full feed ==
+                         wezterm-term                 alacritty_terminal          
+cursor (row, col)        (0, 0)                       (0, 0)                      
+alt-screen active        false                        false                       
+scrollback lines         0                            0                           
+quiet chunks             0/1                          0/1                         
+
+== final grid diff (trailing-space-trimmed) ==
+  IDENTICAL
+
+cursor match: true
+
+== damage log: wezterm-term (seqno/changed-lines model) ==
+  chunk    0: 24 visible lines changed (stable rows [0, 1, 2, 3, 4, 5, 6, 7], ...)
+
+== damage log: alacritty_terminal (LineDamageBounds model) ==
+  chunk    0: full damage (entire viewport)
+
+== OSC 133 observability ==
+wezterm (typed pre-parse via wezterm-escape-parser):
+  (none seen)
+alacritty (second raw vte::Parser + custom Perform):
+  (none seen)
+
+== emulator-specific extras ==
+wezterm-term:
+  semantic zones (native OSC 133 support): 0 zones
+alacritty_terminal:
+  EventListener events (4):
+    CursorBlinkingChange
+    CursorBlinkingChange
+    ResetTitle
+    ResetTitle

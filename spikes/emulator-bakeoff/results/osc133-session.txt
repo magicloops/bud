@@ -1,0 +1,84 @@
+fixture: osc133-session.raw (840 bytes, fed in 4096-byte chunks)
+grid: 80x24, scrollback config: 10000 lines
+
+== state after full feed ==
+                         wezterm-term                 alacritty_terminal          
+cursor (row, col)        (15, 18)                     (15, 18)                    
+alt-screen active        false                        false                       
+scrollback lines         0                            0                           
+quiet chunks             0/1                          0/1                         
+
+== final grid diff (trailing-space-trimmed) ==
+  IDENTICAL
+  row  0 == |user@host:~/proj$ ls -la|
+  row  1 == |total 24|
+  row  2 == |drwxr-xr-x   5 user  staff   160 Aug 14 10:00 .|
+  row  3 == |drwxr-xr-x  12 user  staff   384 Aug 14 09:58 ..|
+  row  4 == |-rw-r--r--   1 user  staff  1204 Aug 14 10:00 Cargo.toml|
+  row  5 == |drwxr-xr-x   3 user  staff    96 Aug 14 10:00 src|
+  row  6 == |-rwxr-xr-x   1 user  staff   512 Aug 14 09:59 run.sh|
+  row  7 == |user@host:~/proj$ cat missing.txt|
+  row  8 == |cat: missing.txt: No such file or directory|
+  row  9 == |user@host:~/proj$ for i in 1 2 3 4 5; do echo "line $i"; done|
+  row 10 == |line 1|
+  row 11 == |line 2|
+  row 12 == |line 3|
+  row 13 == |line 4|
+  row 14 == |line 5|
+  row 15 == |user@host:~/proj$|
+
+cursor match: true
+
+== damage log: wezterm-term (seqno/changed-lines model) ==
+  chunk    0: 16 visible lines changed (stable rows [0, 1, 2, 3, 4, 5, 6, 7], ...)
+
+== damage log: alacritty_terminal (LineDamageBounds model) ==
+  chunk    0: full damage (entire viewport)
+
+== OSC 133 observability ==
+wezterm (typed pre-parse via wezterm-escape-parser):
+  typed FinalTermSemanticPrompt: FreshLineAndStartPrompt { aid: None, cl: None }
+  typed FinalTermSemanticPrompt: MarkEndOfPromptAndStartOfInputUntilNextMarker
+  typed FinalTermSemanticPrompt: MarkEndOfInputAndStartOfOutput { aid: None }
+  typed FinalTermSemanticPrompt: CommandStatus { status: 0, aid: None }
+  typed FinalTermSemanticPrompt: FreshLineAndStartPrompt { aid: None, cl: None }
+  typed FinalTermSemanticPrompt: MarkEndOfPromptAndStartOfInputUntilNextMarker
+  typed FinalTermSemanticPrompt: MarkEndOfInputAndStartOfOutput { aid: None }
+  typed FinalTermSemanticPrompt: CommandStatus { status: 1, aid: None }
+  typed FinalTermSemanticPrompt: FreshLineAndStartPrompt { aid: None, cl: None }
+  typed FinalTermSemanticPrompt: MarkEndOfPromptAndStartOfInputUntilNextMarker
+  typed FinalTermSemanticPrompt: MarkEndOfInputAndStartOfOutput { aid: None }
+  typed FinalTermSemanticPrompt: CommandStatus { status: 0, aid: None }
+  typed FinalTermSemanticPrompt: FreshLineAndStartPrompt { aid: None, cl: None }
+  typed FinalTermSemanticPrompt: MarkEndOfPromptAndStartOfInputUntilNextMarker
+alacritty (second raw vte::Parser + custom Perform):
+  raw OSC 133 params: "A"
+  raw OSC 133 params: "B"
+  raw OSC 133 params: "C"
+  raw OSC 133 params: "D;0"
+  raw OSC 133 params: "A"
+  raw OSC 133 params: "B"
+  raw OSC 133 params: "C"
+  raw OSC 133 params: "D;1"
+  raw OSC 133 params: "A"
+  raw OSC 133 params: "B"
+  raw OSC 133 params: "C"
+  raw OSC 133 params: "D;0"
+  raw OSC 133 params: "A"
+  raw OSC 133 params: "B"
+
+== emulator-specific extras ==
+wezterm-term:
+  semantic zones (native OSC 133 support): 10 zones
+    zone Prompt rows 0..0 cols 0..17
+    zone Input rows 0..0 cols 18..23
+    zone Output rows 1..6 cols 0..51
+    zone Prompt rows 7..7 cols 0..17
+    zone Input rows 7..7 cols 18..32
+    zone Output rows 8..8 cols 0..42
+    zone Prompt rows 9..9 cols 0..17
+    zone Input rows 9..9 cols 18..60
+    zone Output rows 10..14 cols 0..5
+    zone Prompt rows 15..15 cols 0..17
+alacritty_terminal:
+  EventListener events (0):

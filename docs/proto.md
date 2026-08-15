@@ -1610,6 +1610,182 @@ If a human interrupt rejects an older pending send wait, the service records a c
 }
 ```
 
+### 6.7 Proposed Revision: proto `0.3` Terminal Contract (draft — not implemented)
+
+> **Status: PROPOSED.** This section is the contract draft required by
+> [plan/native-terminal-session-manager/phase-0-holder-survival-spike-and-proto-draft.md](../plan/native-terminal-session-manager/phase-0-holder-survival-spike-and-proto-draft.md)
+> (design decisions D15a–b). Nothing in it is served by any current daemon or service build.
+> Phase 2 of that plan implements it, bumps the terminal protocol version to `proto: "0.3"`,
+> and folds this section into §§6.1–6.6 (which it supersedes where they conflict).
+> Sections 6.1–6.6 above remain the active `0.2` contract until then.
+
+Motivation: the `stem` terminal backend produces typed semantic events (OSC 133 command
+lifecycle, mode transitions, damage-quiet settling) and a durable byte-offset-addressed
+output ring. `0.3` carries those facts directly instead of the `0.2` readiness-confidence
+vocabulary, and makes output resume offset-exact end to end.
+
+**Summary of changes vs `0.2`:**
+
+1. `terminal_output` drops `seq`; `byte_offset` is the sole ordering, dedup, and resume
+   coordinate (absolute from session start, never reset on reattach).
+2. `terminal_ensure` gains `resume_from_offset`; the daemon backfills ring-buffered bytes
+   from that offset, or reports a truncation gap.
+3. New `terminal_event` frame carries command lifecycle, mode, and settling facts.
+4. `terminal_ready` and all `readiness`/`confidence`/`hints` payloads are retired.
+   `terminal_send_result` shrinks to a transport ack plus optional awaited terminating event.
+5. `wait_for` modes (`settled`, `changed`, `none`, legacy aliases) are retired from the wire;
+   awaited outcomes are expressed as events. The model-facing tool surface becomes
+   `terminal.run` / `terminal.send` / `terminal.observe`.
+6. The one-entry `keys` compatibility alias on `terminal_send` is removed.
+7. Browser SSE gains `terminal.event`; terminal stream resume uses the client's last
+   *applied* byte offset; `terminal.output` SSE payloads likewise drop `seq`.
+
+#### 6.7.1 `terminal_output` (revised)
+
+```json
+{
+  "proto": "0.3",
+  "type": "terminal_output",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "sess_01H...",
+  "byte_offset": 16384,
+  "data": "base64 payload",
+  "ext": {}
+}
+```
+
+Rules:
+- `byte_offset` is the offset of the **first byte** of `data`, absolute from session start,
+  monotonic per session, and never resets across daemon restarts or reattach
+- chunks remain ≤ 16 KiB and may split UTF-8 code points; reassembly is a consumer concern
+- delivery is at-least-once: the service must treat `(session_id, byte_offset)` as the
+  idempotency key and ignore re-delivered chunks (stats and SSE emission gated on first insert)
+
+#### 6.7.2 `terminal_ensure` (revised) and gap reporting
+
+`terminal_ensure` adds one field:
+
+- `resume_from_offset` (optional, integer): the service's highest durably stored end-offset
+  for the session. The daemon streams ring-buffered output from exactly this offset before
+  live output. Omitted or `0` on first ensure.
+
+If the holder ring has already discarded bytes at `resume_from_offset` (ring wrapped while
+the daemon or service was down), the daemon emits, before any output:
+
+```json
+{
+  "proto": "0.3",
+  "type": "terminal_event",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "sess_01H...",
+  "event": "output_gap",
+  "data": { "from_offset": 16384, "resume_offset": 8471234 },
+  "ext": {}
+}
+```
+
+and resumes streaming at `resume_offset`. The service records the gap; clients render a
+truncation notice rather than silently missing bytes.
+
+#### 6.7.3 `terminal_event` (new, Bud → Service)
+
+```json
+{
+  "proto": "0.3",
+  "type": "terminal_event",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "sess_01H...",
+  "event": "command_finished",
+  "data": {
+    "command_id": "cmd_01H...",
+    "exit_code": 1,
+    "duration_ms": 2311,
+    "output_byte_start": 16384,
+    "output_byte_end": 18101
+  },
+  "ext": {}
+}
+```
+
+Event vocabulary (`data` fields per event):
+
+| `event` | `data` | Emitted when |
+|---|---|---|
+| `prompt_ready` | `{ "cwd"?: string }` | OSC 133 `A` observed (shell back at prompt); `cwd` from OSC 7 when available |
+| `command_started` | `{ "command_id", "output_byte_start" }` | OSC 133 `B`→`C` (or sentinel-issued command dispatched) |
+| `command_finished` | `{ "command_id", "exit_code", "duration_ms", "output_byte_start", "output_byte_end" }` | OSC 133 `D;<exit>` |
+| `mode_changed` | `{ "mode": "shell"\|"tui"\|"repl"\|"unknown", "integration": "osc133"\|"sentinel"\|"none" }` | alt-screen enter/exit, REPL pattern match, integration detection |
+| `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes |
+| `output_gap` | `{ "from_offset", "resume_offset" }` | ring truncation on resume (§6.7.2) |
+| `child_exited` | `{ "exit_code"?: int, "signal"?: string }` | session's root process exited |
+
+Rules:
+- `command_id` is a daemon-minted ULID; the service persists command rows keyed by it and
+  slices transcript output via the byte range
+- events are ordered relative to `terminal_output` frames per session: an event's byte
+  references never point past output the service has not yet been sent
+- unknown `event` values must be ignored (additive evolution)
+- `mode: "unknown"` with heuristic settling is the honest fallback; producers must not
+  fabricate `command_finished` without a marker or sentinel exit code
+
+#### 6.7.4 `terminal_send` / `terminal_send_result` (revised)
+
+`terminal_send` keeps `{ text | key }` dispatch semantics minus `wait_for`, `timeout_ms`,
+and the `keys` alias; a new optional `await` field replaces wait modes:
+
+- `await: "command"` — resolve the request when the dispatched command's
+  `command_finished` (or sentinel equivalent) arrives; service owns the timeout budget
+- `await: "settled"` — resolve on the next `settled` event
+- `await` omitted — resolve on dispatch (transport ack only)
+
+`terminal_send_result` becomes:
+
+```json
+{
+  "proto": "0.3",
+  "type": "terminal_send_result",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "sess_01H...",
+  "request_id": "req_01H...",
+  "dispatched": true,
+  "outcome": { "event": "command_finished", "data": { "command_id": "cmd_01H...", "exit_code": 0, "duration_ms": 412, "output_byte_start": 0, "output_byte_end": 640 } },
+  "error": null,
+  "ext": {}
+}
+```
+
+`outcome` mirrors the terminating `terminal_event` when `await` was requested, `null`
+otherwise. `host_cwd` is dropped in favor of `prompt_ready.cwd` / OSC 7. Screen and delta
+payloads are no longer part of send results; `terminal_observe` (emulator-grid-backed
+`screen` / damage-based `delta` / offset-ranged `history`) is the explicit inspection surface.
+
+#### 6.7.5 Browser SSE (revised §7.2)
+
+- `terminal.output` payloads drop `seq` (offset-only, as §6.7.1)
+- new `terminal.event` SSE event forwarding §6.7.3 frames verbatim (browser-facing field
+  names unchanged)
+- resume: the client supplies its last **applied** byte offset (SSE `Last-Event-ID`, which
+  becomes the stringified offset on this stream); the service replays from durable storage
+  from that offset — clients no longer reset-and-snapshot on reconnect
+- `terminal.ready` is retired with `terminal_ready`
+
+#### 6.7.6 Model-facing tool surface (service-side, for reference)
+
+- `terminal.run { command }` → dispatch in shell mode with `await: "command"` → tool result
+  `{ exit_code, duration_ms, output }` (output sliced by command byte range; on timeout the
+  result reports still-running with `command_id`, never a fabricated failure)
+- `terminal.send { raw_text | key }` → `await: "settled"` in `tui`/`repl` modes
+- `terminal.observe { view }` → unchanged role, grid-backed
+- `wait_for` and readiness-confidence vocabulary disappear from tool schemas and prompts
+
+Open items tracked in the design doc (§7): exactly-once vs idempotent-at-least-once
+backfill commit (leaning idempotent inserts on the existing `(session_id, byte_offset)`
+key), and whether `mode` is surfaced to the model as a tool-result field (leaning yes).
+
 ---
 
 ## 7. Browser SSE Contracts
@@ -1940,6 +2116,14 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 
 ## 12. Changelog
 
+- **Proposed (not yet implemented)**
+  - §6.7 drafts the proto `0.3` terminal contract for the `stem` backend cutover
+    (plan/native-terminal-session-manager): offset-only `terminal_output`,
+    `terminal_ensure.resume_from_offset` with `output_gap` reporting, the
+    `terminal_event` frame (OSC 133 command lifecycle, modes, settling),
+    slimmed `terminal_send_result` with `await`, retirement of
+    `terminal_ready`/readiness-confidence/`wait_for`, and browser
+    `terminal.event` SSE with offset-based resume
 - **Current**
   - WebSocket-capable terminal/control traffic now uses binary `BudEnvelope` typed payload fields instead of typed `frame_json`; active sessions reject legacy JSON after capability negotiation, while `LegacyJsonPayload` decode support remains for fixtures and conformance tests
   - WebSocket-capable core data-plane lifecycle traffic now uses typed protobuf fields for `data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, and `stream_close`

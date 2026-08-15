@@ -1,0 +1,16 @@
+]133;A\[1m[32muser@host[0m:[1m[34m~/proj[0m$ ]133;B\ls -la
+]133;C\total 24
+drwxr-xr-x   5 user  staff   160 Aug 14 10:00 [1m[34m.[0m
+drwxr-xr-x  12 user  staff   384 Aug 14 09:58 [1m[34m..[0m
+-rw-r--r--   1 user  staff  1204 Aug 14 10:00 Cargo.toml
+drwxr-xr-x   3 user  staff    96 Aug 14 10:00 [1m[34msrc[0m
+-rwxr-xr-x   1 user  staff   512 Aug 14 09:59 [1m[32mrun.sh[0m
+]133;D;0]133;A\[1m[32muser@host[0m:[1m[34m~/proj[0m$ ]133;B\cat missing.txt
+]133;C\[31mcat: missing.txt: No such file or directory[0m
+]133;D;1\]133;A\[1m[32muser@host[0m:[1m[34m~/proj[0m$ ]133;B\for i in 1 2 3 4 5; do echo "line $i"; done
+]133;C\[36mline 1[0m
+[36mline 2[0m
+[36mline 3[0m
+[36mline 4[0m
+[36mline 5[0m
+]133;D;0\]133;A\[1m[32muser@host[0m:[1m[34m~/proj[0m$ ]133;B\

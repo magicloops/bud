@@ -1,0 +1,21 @@
+# Standalone spike project — intentionally NOT part of any workspace.
+[package]
+name = "emulator-bakeoff"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+# alacritty_terminal is published on crates.io.
+alacritty_terminal = "0.26"
+# wezterm-term is NOT published on crates.io (index returns 404); it must be
+# consumed as a git dependency on the wezterm repository.
+wezterm-term = { git = "https://github.com/wezterm/wezterm", branch = "main" }
+# Typed escape-sequence parser from the same repo; used to demonstrate the
+# pre-parse OSC 133 observation path (design D6a).
+wezterm-escape-parser = { git = "https://github.com/wezterm/wezterm", branch = "main" }
+
+[profile.release]
+debug = false

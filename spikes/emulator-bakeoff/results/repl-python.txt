@@ -1,0 +1,48 @@
+fixture: repl-python.raw (276 bytes, fed in 4096-byte chunks)
+grid: 80x24, scrollback config: 10000 lines
+
+== state after full feed ==
+                         wezterm-term                 alacritty_terminal          
+cursor (row, col)        (15, 0)                      (15, 0)                     
+alt-screen active        false                        false                       
+scrollback lines         0                            0                           
+quiet chunks             0/1                          0/1                         
+
+== final grid diff (trailing-space-trimmed) ==
+  IDENTICAL
+  row  0 == |>>> 1+1|
+  row  1 == |2|
+  row  2 == |>>> "bud" * 3|
+  row  3 == |'budbudbud'|
+  row  4 == |>>> for i in range(3):|
+  row  5 == |...     print("loop", i)|
+  row  6 == |...|
+  row  7 == |loop 0|
+  row  8 == |loop 1|
+  row  9 == |loop 2|
+  row 10 == |>>> undefined_name|
+  row 11 == |Traceback (most recent call last):|
+  row 12 == |  File "<stdin>", line 1, in <module>|
+  row 13 == |NameError: name 'undefined_name' is not defined|
+  row 14 == |>>> exit()|
+
+cursor match: true
+
+== damage log: wezterm-term (seqno/changed-lines model) ==
+  chunk    0: 15 visible lines changed (stable rows [0, 1, 2, 3, 4, 5, 6, 7], ...)
+
+== damage log: alacritty_terminal (LineDamageBounds model) ==
+  chunk    0: full damage (entire viewport)
+
+== OSC 133 observability ==
+wezterm (typed pre-parse via wezterm-escape-parser):
+  (none seen)
+alacritty (second raw vte::Parser + custom Perform):
+  (none seen)
+
+== emulator-specific extras ==
+wezterm-term:
+  semantic zones (native OSC 133 support): 1 zones
+    zone Output rows 0..14 cols 0..9
+alacritty_terminal:
+  EventListener events (0):

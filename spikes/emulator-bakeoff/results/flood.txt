@@ -1,0 +1,96 @@
+fixture: flood.raw (3888895 bytes, fed in 4096-byte chunks)
+grid: 80x24, scrollback config: 10000 lines
+
+== state after full feed ==
+                         wezterm-term                 alacritty_terminal          
+cursor (row, col)        (23, 0)                      (23, 0)                     
+alt-screen active        false                        false                       
+scrollback lines         10000                        10000                       
+quiet chunks             0/950                        0/950                       
+
+== final grid diff (trailing-space-trimmed) ==
+  IDENTICAL
+  row  0 == |499978|
+  row  1 == |499979|
+  row  2 == |499980|
+  row  3 == |499981|
+  row  4 == |499982|
+  row  5 == |499983|
+  row  6 == |499984|
+  row  7 == |499985|
+  row  8 == |499986|
+  row  9 == |499987|
+  row 10 == |499988|
+  row 11 == |499989|
+  row 12 == |499990|
+  row 13 == |499991|
+  row 14 == |499992|
+  row 15 == |499993|
+  row 16 == |499994|
+  row 17 == |499995|
+  row 18 == |499996|
+  row 19 == |499997|
+  row 20 == |499998|
+  row 21 == |499999|
+  row 22 == |500000|
+
+cursor match: true
+
+== damage log: wezterm-term (seqno/changed-lines model) ==
+  chunk    0: 24 visible lines changed (stable rows [817, 818, 819, 820, 821, 822, 823, 824], ...)
+  chunk    1: 24 visible lines changed (stable rows [1526, 1527, 1528, 1529, 1530, 1531, 1532, 1533], ...)
+  chunk    2: 24 visible lines changed (stable rows [2209, 2210, 2211, 2212, 2213, 2214, 2215, 2216], ...)
+  chunk    3: 24 visible lines changed (stable rows [2892, 2893, 2894, 2895, 2896, 2897, 2898, 2899], ...)
+  chunk    4: 24 visible lines changed (stable rows [3574, 3575, 3576, 3577, 3578, 3579, 3580, 3581], ...)
+  chunk    5: 24 visible lines changed (stable rows [4257, 4258, 4259, 4260, 4261, 4262, 4263, 4264], ...)
+  chunk    6: 24 visible lines changed (stable rows [4940, 4941, 4942, 4943, 4944, 4945, 4946, 4947], ...)
+  chunk    7: 24 visible lines changed (stable rows [5622, 5623, 5624, 5625, 5626, 5627, 5628, 5629], ...)
+  chunk    8: 24 visible lines changed (stable rows [6305, 6306, 6307, 6308, 6309, 6310, 6311, 6312], ...)
+  chunk    9: 24 visible lines changed (stable rows [6988, 6989, 6990, 6991, 6992, 6993, 6994, 6995], ...)
+  chunk   10: 24 visible lines changed (stable rows [7670, 7671, 7672, 7673, 7674, 7675, 7676, 7677], ...)
+  chunk   11: 24 visible lines changed (stable rows [8353, 8354, 8355, 8356, 8357, 8358, 8359, 8360], ...)
+    ... 930 chunks elided ...
+  chunk  942: 24 visible lines changed (stable rows [496681, 496682, 496683, 496684, 496685, 496686, 496687, 496688], ...)
+  chunk  943: 24 visible lines changed (stable rows [497193, 497194, 497195, 497196, 497197, 497198, 497199, 497200], ...)
+  chunk  944: 24 visible lines changed (stable rows [497705, 497706, 497707, 497708, 497709, 497710, 497711, 497712], ...)
+  chunk  945: 24 visible lines changed (stable rows [498217, 498218, 498219, 498220, 498221, 498222, 498223, 498224], ...)
+  chunk  946: 24 visible lines changed (stable rows [498729, 498730, 498731, 498732, 498733, 498734, 498735, 498736], ...)
+  chunk  947: 24 visible lines changed (stable rows [499241, 499242, 499243, 499244, 499245, 499246, 499247, 499248], ...)
+  chunk  948: 24 visible lines changed (stable rows [499753, 499754, 499755, 499756, 499757, 499758, 499759, 499760], ...)
+  chunk  949: 24 visible lines changed (stable rows [499977, 499978, 499979, 499980, 499981, 499982, 499983, 499984], ...)
+
+== damage log: alacritty_terminal (LineDamageBounds model) ==
+  chunk    0: full damage (entire viewport)
+  chunk    1: full damage (entire viewport)
+  chunk    2: full damage (entire viewport)
+  chunk    3: full damage (entire viewport)
+  chunk    4: full damage (entire viewport)
+  chunk    5: full damage (entire viewport)
+  chunk    6: full damage (entire viewport)
+  chunk    7: full damage (entire viewport)
+  chunk    8: full damage (entire viewport)
+  chunk    9: full damage (entire viewport)
+  chunk   10: full damage (entire viewport)
+  chunk   11: full damage (entire viewport)
+    ... 930 chunks elided ...
+  chunk  942: full damage (entire viewport)
+  chunk  943: full damage (entire viewport)
+  chunk  944: full damage (entire viewport)
+  chunk  945: full damage (entire viewport)
+  chunk  946: full damage (entire viewport)
+  chunk  947: full damage (entire viewport)
+  chunk  948: full damage (entire viewport)
+  chunk  949: full damage (entire viewport)
+
+== OSC 133 observability ==
+wezterm (typed pre-parse via wezterm-escape-parser):
+  (none seen)
+alacritty (second raw vte::Parser + custom Perform):
+  (none seen)
+
+== emulator-specific extras ==
+wezterm-term:
+  semantic zones (native OSC 133 support): 1 zones
+    zone Output rows 489977..499999 cols 0..5
+alacritty_terminal:
+  EventListener events (0):

@@ -1,0 +1,64 @@
+fixture: utf8-wide.raw (16444 bytes, fed in 4096-byte chunks)
+grid: 80x24, scrollback config: 10000 lines
+
+== state after full feed ==
+                         wezterm-term                 alacritty_terminal          
+cursor (row, col)        (23, 0)                      (23, 0)                     
+alt-screen active        false                        false                       
+scrollback lines         228                          228                         
+quiet chunks             0/5                          0/5                         
+
+== final grid diff (trailing-space-trimmed) ==
+  IDENTICAL
+  row  0 == |padding padding padding padding padding padding padding padding|
+  row  1 == |padding padding padding padding padding padding padding padding|
+  row  2 == |padding padding padding padding padding padding padding padding|
+  row  3 == |padding padding padding padding padding padding padding padding|
+  row  4 == |padding padding padding padding padding padding padding padding|
+  row  5 == |padding padding padding padding padding padding padding padding|
+  row  6 == |padding padding padding padding padding padding padding padding|
+  row  7 == |padding padding padding padding padding padding padding padding|
+  row  8 == |padding padding padding padding padding padding padding padding|
+  row  9 == |padding padding padding padding padding padding padding padding|
+  row 10 == |padding padding padding padding padding padding padding padding|
+  row 11 == |padding padding padding padding padding padding padding padding|
+  row 12 == |padding padding padding padding padding padding padding padding|
+  row 13 == |padding padding padding padding padding padding padding padding|
+  row 14 == |padding padding padding padding padding padding padding padding|
+  row 15 == |padding padding padding padding padding padding padding padding|
+  row 16 == |padding padding padding padding padding padding padding padding|
+  row 17 == |padding padding padding padding padding padding padding padding|
+  row 18 == |padding padding padding padding padding padding padding padding|
+  row 19 == |padding padding padding padding padding padding padding padding|
+  row 20 == |xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx|
+  row 21 == |😀 <- this emoji straddles byte 16384|
+  row 22 == |end of utf8 fixture|
+
+cursor match: true
+
+== damage log: wezterm-term (seqno/changed-lines model) ==
+  chunk    0: 24 visible lines changed (stable rows [39, 40, 41, 42, 43, 44, 45, 46], ...)
+  chunk    1: 24 visible lines changed (stable rows [101, 102, 103, 104, 105, 106, 107, 108], ...)
+  chunk    2: 24 visible lines changed (stable rows [163, 164, 165, 166, 167, 168, 169, 170], ...)
+  chunk    3: 24 visible lines changed (stable rows [226, 227, 228, 229, 230, 231, 232, 233], ...)
+  chunk    4: 3 visible lines changed (stable rows [249, 250, 251])
+
+== damage log: alacritty_terminal (LineDamageBounds model) ==
+  chunk    0: full damage (entire viewport)
+  chunk    1: full damage (entire viewport)
+  chunk    2: full damage (entire viewport)
+  chunk    3: full damage (entire viewport)
+  chunk    4: full damage (entire viewport)
+
+== OSC 133 observability ==
+wezterm (typed pre-parse via wezterm-escape-parser):
+  (none seen)
+alacritty (second raw vte::Parser + custom Perform):
+  (none seen)
+
+== emulator-specific extras ==
+wezterm-term:
+  semantic zones (native OSC 133 support): 1 zones
+    zone Output rows 0..250 cols 0..18
+alacritty_terminal:
+  EventListener events (0):
