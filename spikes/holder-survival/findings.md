@@ -93,3 +93,12 @@ Config variants exercised by the scripts:
 - 2026-08-15: the script appends run-log rows to end-of-file; the eight macOS rows were
   moved up into the Run log table by hand (a `run-macos.sh` cosmetic quirk, results
   unaffected).
+| 2026-08-15T06:58:07Z | Linux systemd | job-exit | KillMode=control-group | FAIL | holder after oneshot unit finished |
+| 2026-08-15T06:58:10Z | Linux systemd | kill9 | KillMode=control-group | FAIL | holder after daemon kill -9 |
+| 2026-08-15T06:58:17Z | Linux systemd | restart | KillMode=control-group | FAIL | holder respawned (pid 3343339 -> 3343366), survival not proven |
+| 2026-08-15T06:58:26Z | Linux systemd | upgrade | KillMode=control-group | FAIL | holder respawned (pid 3343500 -> 3343566), survival not proven |
+| 2026-08-15T06:58:32Z | Linux systemd | job-exit | KillMode=process | PASS | holder after oneshot unit finished |
+| 2026-08-15T06:58:38Z | Linux systemd | kill9 | KillMode=process | PASS | holder after daemon kill -9 |
+| 2026-08-15T06:58:46Z | Linux systemd | restart | KillMode=process | PASS | reattached, holder pid unchanged (3344006) |
+| 2026-08-15T06:58:54Z | Linux systemd | upgrade | KillMode=process | PASS | reattached across binary replacement, holder pid unchanged (3344146) |
+| 2026-08-15T06:59:02Z | Linux systemd | scope-escape | systemd-run --user --scope | PASS | holder in own scope, daemon KillMode=control-group restart |
