@@ -24,18 +24,13 @@ export type TerminalConnectionState =
   | 'offline'
   | 'disconnected'
 
-export type TerminalReadinessAssessment = {
-  ready: boolean
-  confidence: number
-  trigger: string
-  hints: {
-    looks_like_prompt?: boolean
-    looks_like_confirmation?: boolean
-    looks_like_password?: boolean
-    looks_like_pager?: boolean
-    looks_like_error?: boolean
-    may_still_be_processing?: boolean
-  }
+export type TerminalMode = 'shell' | 'tui' | 'repl' | 'unknown'
+export type TerminalIntegration = 'osc133' | 'sentinel' | 'none'
+
+/** Typed session facts from proto 0.3 `terminal.event` (replaces readiness). */
+export type TerminalSessionFacts = {
+  mode: TerminalMode
+  integration: TerminalIntegration
 }
 
 type TerminalViewMode = 'terminal' | 'web' | 'file'
@@ -65,8 +60,8 @@ export function useTerminalSession({
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
   const [terminalConnection, setTerminalConnection] =
     useState<TerminalConnectionState>('disconnected')
-  const [terminalReadiness, setTerminalReadiness] =
-    useState<TerminalReadinessAssessment | null>(null)
+  const [terminalFacts, setTerminalFacts] =
+    useState<TerminalSessionFacts | null>(null)
   const [terminalOutputTruncated, setTerminalOutputTruncated] = useState(false)
   const [terminalScrolledToTop, setTerminalScrolledToTop] = useState(false)
   const [showDisconnectOverlay, setShowDisconnectOverlay] = useState(false)
@@ -617,7 +612,7 @@ export function useTerminalSession({
     if (threadId !== lastConnectedThreadIdRef.current) {
       resetTerminal()
       setTerminalOutputTruncated(false)
-      setTerminalReadiness(null)
+      setTerminalFacts(null)
       currentSessionIdRef.current = null
       setCurrentSessionId(null)
       lastConnectedThreadIdRef.current = threadId
@@ -775,17 +770,21 @@ export function useTerminalSession({
         lastSseEventTimeRef.current = Date.now()
       }
 
-      const handleReady = (event: MessageEvent) => {
+      const handleTerminalEvent = (event: MessageEvent) => {
         try {
           lastSseEventTimeRef.current = Date.now()
           const payload = JSON.parse(event.data ?? '{}') as {
-            assessment?: TerminalReadinessAssessment
+            event?: string
+            data?: { mode?: TerminalMode; integration?: TerminalIntegration }
           }
-          if (payload.assessment) {
-            setTerminalReadiness(payload.assessment)
+          // Minimal 2.6 adoption: track mode facts; ignore other event kinds
+          // (command lifecycle UI lands with full Phase-3 adoption).
+          if (payload.event === 'mode_changed' && payload.data?.mode) {
+            const { mode, integration } = payload.data
+            setTerminalFacts({ mode, integration: integration ?? 'none' })
           }
         } catch (err) {
-          console.error('Failed to parse terminal.ready SSE', err)
+          console.error('Failed to parse terminal.event SSE', err)
         }
       }
 
@@ -828,7 +827,7 @@ export function useTerminalSession({
         source.removeEventListener('heartbeat', handleHeartbeat)
         source.removeEventListener('terminal.output', handleOutput)
         source.removeEventListener('terminal.status', handleStatus)
-        source.removeEventListener('terminal.ready', handleReady)
+        source.removeEventListener('terminal.event', handleTerminalEvent)
         source.removeEventListener('terminal.bud_offline', handleBudOffline)
         source.removeEventListener('terminal.bud_online', handleBudOnline)
         source.close()
@@ -864,7 +863,7 @@ export function useTerminalSession({
       source.addEventListener('heartbeat', handleHeartbeat)
       source.addEventListener('terminal.output', handleOutput)
       source.addEventListener('terminal.status', handleStatus)
-      source.addEventListener('terminal.ready', handleReady)
+      source.addEventListener('terminal.event', handleTerminalEvent)
       source.addEventListener('terminal.bud_offline', handleBudOffline)
       source.addEventListener('terminal.bud_online', handleBudOnline)
       source.onerror = (err: Event) => {
@@ -976,7 +975,7 @@ export function useTerminalSession({
     terminalHasOutput,
     terminalOutputTruncated,
     terminalPaneRef,
-    terminalReadiness,
+    terminalFacts,
     terminalScrolledToTop,
     terminalState,
   }

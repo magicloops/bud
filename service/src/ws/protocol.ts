@@ -80,13 +80,12 @@ export const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
   info: z
     .object({
       pid: z.number().int().optional(),
-      shell: z.string().optional(),
       cwd: z.string().optional(),
       cols: z.number().int().optional(),
       rows: z.number().int().optional(),
-      output_log_bytes: z.number().int().optional(),
-      started_at: z.string().optional(),
-      last_activity_at: z.string().optional()
+      ring_next_offset: z.number().int().nonnegative().optional(),
+      mode: z.string().optional(),
+      integration: z.string().optional()
     })
     .passthrough()
     .optional()
@@ -95,26 +94,20 @@ export const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
 export const TerminalOutputSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_output"),
   session_id: z.string(),
-  seq: z.number().int().nonnegative(),
   data: z.string(),
   byte_offset: z.number().int().nonnegative()
 });
 
-export const TerminalReadySchema = TerminalEnvelopeSchema.extend({
-  type: z.literal("terminal_ready"),
+export const TerminalEventSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_event"),
   session_id: z.string(),
-  assessment: z.record(z.unknown()),
+  event: z.string(),
+  data: z.record(z.unknown()).default({})
 });
 
-const ReadinessSchema = z.object({
-  ready: z.boolean(),
-  confidence: z.number(),
-  trigger: z.string(),
-  prompt_type: z.string().optional(),
-  hints: z.record(z.boolean()).optional(),
-  quiet_for_ms: z.number().optional(),
-  activity_checks: z.number().optional(),
-  stable_checks: z.number().optional()
+const TerminalEventOutcomeSchema = z.object({
+  event: z.string(),
+  data: z.record(z.unknown()).default({})
 });
 
 export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
@@ -123,31 +116,23 @@ export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   request_id: z.string(),
   view: z.enum(["delta", "screen", "history"]),
   output: z.string(),
-  output_bytes: z.number().int().nonnegative(),
   lines_captured: z.number().int().nonnegative(),
   changed: z.boolean().nullable().optional(),
-  truncated: z.boolean().nullable().optional(),
-  readiness: ReadinessSchema,
-  error: z.string().nullable(),
-  host_cwd: z.string().optional()
+  mode: z.string().optional(),
+  integration: z.string().optional(),
+  alt_screen: z.boolean().optional(),
+  cursor_row: z.number().int().optional(),
+  cursor_col: z.number().int().optional(),
+  error: z.string().nullable()
 });
 
 export const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_send_result"),
   session_id: z.string(),
   request_id: z.string(),
-  submitted: z.boolean(),
-  delta: z
-    .object({
-      changed: z.boolean(),
-      text: z.string(),
-      truncated: z.boolean()
-    })
-    .nullable()
-    .optional(),
-  readiness: ReadinessSchema,
-  error: z.string().nullable(),
-  host_cwd: z.string().optional()
+  dispatched: z.boolean(),
+  outcome: TerminalEventOutcomeSchema.nullable().optional(),
+  error: z.string().nullable()
 });
 
 export const ErrorFrameSchema = EnvelopeSchema.extend({

@@ -6,42 +6,68 @@ Extracted terminal-runtime ownership units used by `runtime/terminal-session-man
 
 Splits the old all-in-one terminal session manager into narrower internal ownership seams:
 - session-record lifecycle
-- pending send/observe request dispatch
-- output persistence and replay
-- readiness / REPL-context state
+- pending send/observe request dispatch (proto 0.3 shapes)
+- offset-addressed output persistence and replay
+- command lifecycle rows minted from `terminal_event` frames
+- daemon-reported runtime facts (mode / integration / cwd)
 - idle monitoring
+
+All wire handling follows the terminal proto `0.3` contract (docs/proto.md §6.7): the
+0.2 readiness/confidence/hints vocabulary, `terminal_ready`, `seq`, and `wait_for`
+are gone from this layer.
 
 ## Files
 
 ### `session-types.ts`
 
-Shared `SessionState` and `TerminalSession` types for the terminal runtime, including the cached daemon-reported `cwd` used by file-viewer path context.
+Shared `SessionState` and `TerminalSession` types for the terminal runtime, including the cached daemon-reported `cwd` used by file-viewer path context and the owner-stamping fields (`createdByUserId`, `tenantId`) inherited by `terminal_command` rows.
 
 ### `session-store.ts`
 
-Database-backed session-record lifecycle, including `ensureSessionRecordForThread(...)` as the single concurrency-safe first-use session boundary. It receives the daemon transport router so session ensure/resume checks do not depend on `ws/gateway` directly. It also persists `terminal_session.cwd` from terminal status and terminal send/observe result metadata.
+Database-backed session-record lifecycle, including `ensureSessionRecordForThread(...)` as the single concurrency-safe first-use session boundary. It receives the daemon transport router so session ensure/resume checks do not depend on `ws/gateway` directly.
+
+Proto 0.3 notes:
+- `ensureSession(sessionId, { resumeFromOffset })` includes `resume_from_offset` on the outbound `terminal_ensure` frame when a positive stored end offset is supplied, so the daemon backfills ring-buffered output from exactly that offset.
+- `updateStatus(...)` consumes the stem-backed `info` shape (`pid`, `cwd`, `cols`, `rows`, `ring_next_offset`, `mode`, `integration`); `output_log_bytes`/`started_at` are retired from the wire and `started_at` is stamped on the first `ready` transition instead.
+- `updateCwd(...)` persists `prompt_ready.cwd` (OSC 7) into `terminal_session.cwd`.
 
 ### `request-dispatcher.ts`
 
 Owns send/observe request orchestration, pending registries, result routing, and cancel/offline/session-close rejection. It receives a daemon send function from the composed transport router instead of importing the WebSocket gateway directly.
 
-Also owns terminal wait timeout policy for request-response send/observe calls:
-- `wait_for: "settled"` resolves to the service-owned one-hour budget before dispatching to Bud.
-- non-settled modes use the existing short default unless a trusted lower-level caller passes an explicit timeout.
-- the model-facing schema advertises only `none`, `changed`, and `settled`; compatibility-only modes such as `shell_ready` can still pass through this lower dispatcher while old payload support remains enabled.
-- local request timeouts use the Bud timeout plus a small grace window so normal results do not orphan before the daemon reply arrives.
-- send and observe pending state tracks output activity while the request is in flight, including latest output offset and output event count.
-- send and observe result handlers persist optional `hostCwd` before resolving pending request promises, so transcript writers can read the latest cached cwd after tool completion.
+Proto 0.3 contract:
+- outbound `terminal_send` carries `{ text?, submit?, key?, await? }` only; `wait_for`, `timeout_ms`, `observe_after_ms`, and the one-entry `keys` alias are gone.
+- `await: "command" | "settled"` requests an awaited outcome; omitted `await` resolves on dispatch (transport ack only).
+- the service owns the timeout budget locally: awaited sends use the one-hour `TERMINAL_AWAITED_SEND_TIMEOUT_MS`, dispatch-only sends and observes use `TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS` (30s), and trusted callers may pass an explicit `timeoutMs`.
+- outbound `terminal_observe` carries `{ view, lines }` only (default view `screen`).
+- `terminal_send_result` resolves to `{ dispatched, outcome }` where `outcome` mirrors the terminating `terminal_event` (or `null`); `terminal_observe_result` resolves to grid-backed `{ view, output, linesCaptured, changed?, mode?, integration?, altScreen?, cursorRow?, cursorCol? }`.
 - human interrupt sends can reject older pending waits as `interrupted` while excluding the new `ctrl+c` send request, avoiding an orphaned interrupt result.
-- rejection/timeout/result logs include request id, wait mode, elapsed timing, output activity, and current readiness trigger/confidence summaries for long settled waits.
+- send and observe pending state still tracks output activity (latest offset, event count) for long-wait diagnostics; rejection/timeout/result logs include request id, await mode, and elapsed timing.
 
 ### `output-store.ts`
 
-Owns terminal output persistence, byte-offset tracking, replay/tail queries, and terminal-output SSE emission.
+Owns terminal output persistence, byte-offset tracking, replay/tail/range queries, and terminal-output SSE emission. Reads and writes go through a small `TerminalOutputPersistence` seam (Drizzle by default, in-memory in tests).
+
+Key behaviors:
+- **Idempotent at-least-once ingest**: `(session_id, byte_offset)` is the idempotency key; inserts use `onConflictDoNothing` and stats bumps plus SSE emission are gated on the row actually inserting, so redelivered frames never double-count or re-emit.
+- **`readRange(sessionId, { startOffset, endOffset?, maxBytes })`**: includes the chunk that *contains* `startOffset` (leading bytes trimmed), paginates internally in bounded batches, and reports explicit `truncated` + `nextOffset` continuation instead of silently capping row counts.
+- **`tailOutput(sessionId, maxBytes)`**: serves the byte budget across as many rows as needed (backward keyset pagination), trimming mid-chunk at the budget boundary; returns `totalBytesStored` from a SUM query.
+- **`getStoredEndOffset(sessionId)`**: max stored end offset, used as `terminal_ensure.resume_from_offset`.
+- **SSE**: `terminal.output` payloads are offset-only (`{ data, byte_offset }`, no `seq`) and carry `id: String(byte_offset + bytes.length)` so the SSE `Last-Event-ID` doubles as the byte-offset resume cursor.
+- soft-cap behavior: chunks past `terminalOutputSoftCapBytes` are dropped (warn) and never emitted, keeping the SSE stream equal to the durable stream.
+
+### `terminal-command-store.ts`
+
+Persists `terminal_command` rows from `terminal_event` `command_started` / `command_finished` frames (daemon-minted `command_id` ULIDs). Owner stamping (`thread_id`, `bud_id`, `created_by_user_id`, `tenant_id`) inherits from the owning terminal session per AGENTS.md §4.6.
+
+- `recordCommandStarted(...)` inserts with `onConflictDoNothing` (idempotent on redelivery).
+- `recordCommandFinished(...)` finalizes `command_finished_at` / `exit_code` / output byte range; tolerates finished-without-started by inserting a complete row (started time derived from `duration_ms` when present).
+- `getCommand(commandId)` backs the manager's `getCommandOutput(...)` internal API.
+- Uses a `TerminalCommandPersistence` seam (Drizzle by default, in-memory in tests).
 
 ### `runtime-state.ts`
 
-Owns latest readiness cache, pending REPL command tracking, inferred shell-vs-REPL context, and stale pending-command cleanup.
+Owns per-session daemon-reported runtime facts: `mode` (`shell|tui|repl|unknown`), `integration` (`osc133|sentinel|none`), and the latest `cwd`. Updated from `mode_changed` / `prompt_ready` terminal events, `terminal_status.info`, and observe results. The 0.2 readiness cache, pending-REPL-command tracking, and known-program heuristics are deleted.
 
 ### `idle-monitor.ts`
 
@@ -49,19 +75,23 @@ Periodic idle-state management wrapper.
 
 ### `request-dispatcher.test.ts`
 
-Direct seam tests for pending observe/send rejection behavior, including cancel/offline/session-close style errors.
-
-Also covers settled timeout policy resolution, one-hour send/observe dispatch payloads, and local grace calculation for settled observes.
-
-Also covers human interrupt send behavior that rejects older pending waits without rejecting the interrupt request itself, plus diagnostic logging for rejected long settled sends.
+Direct seam tests for pending observe/send rejection behavior, 0.3 frame shapes (`await` present, `wait_for`/`timeout_ms` absent), awaited-vs-dispatch timeout budgets, outcome resolution, error rejection, interrupt-excluding-self behavior, and single-gesture validation.
 
 ### `session-store.test.ts`
 
 Direct seam tests for `ensureSessionRecordForThread(...)` create-vs-conflict behavior.
 
+### `output-store.test.ts`
+
+In-memory persistence matrix for the output store: idempotent re-insert (stats + SSE gated on first insert), mid-chunk `since_offset` reads, explicit byte-range slicing across chunks, large-range internal pagination with `truncated`/`nextOffset` continuation, tail budget reads without row caps, and offset-id SSE emission.
+
+### `terminal-command-store.test.ts`
+
+Command ingest matrix: started→finished flow with owner stamping, started redelivery idempotency, finished-without-started complete-row insert, finished redelivery idempotency.
+
 ## Notes
 
-`terminal-session-manager.ts` now acts as a thin composition layer over these helpers rather than directly owning every terminal concern itself.
+`terminal-session-manager.ts` now acts as a thin composition layer over these helpers rather than directly owning every terminal concern itself, and enforces the S-C1 ownership assertion (`session.budId === authenticated budId`) before any of these helpers see an inbound frame.
 
 ---
 

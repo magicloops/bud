@@ -91,6 +91,11 @@ pub struct DoctorArgs {
 
     #[arg(long, default_value_t = false)]
     pub strict: bool,
+
+    /// One-shot cleanup of legacy tmux-era Bud terminal sessions
+    /// (`s_*`-prefixed). Silent no-op when no tmux binary exists.
+    #[arg(long, default_value_t = false)]
+    pub cleanup_tmux: bool,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum)]

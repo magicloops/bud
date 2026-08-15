@@ -16,7 +16,10 @@ async fn term_hold_reexec_spawns_reuses_and_kills_daemonized_holder() {
     let bud_exe = PathBuf::from(env!("CARGO_BIN_EXE_bud"));
     let tmp = tempfile::tempdir().unwrap();
     let registry = Registry::new(tmp.path().join("term")).unwrap();
-    let launcher = HolderLauncher { program: bud_exe, args_prefix: vec!["term-hold".into()] };
+    let launcher = HolderLauncher {
+        program: bud_exe,
+        args_prefix: vec!["term-hold".into()],
+    };
     let spec = SpawnSpec {
         shell: "/bin/sh".into(),
         args: vec![
@@ -30,17 +33,29 @@ async fn term_hold_reexec_spawns_reuses_and_kills_daemonized_holder() {
     };
 
     // Spawn through the real binary; ensure() waits for the socket + Hello.
-    let dir = registry.ensure(SESSION, &launcher, &spec, 256 * 1024).await.unwrap();
-    assert!(registry.session_alive(SESSION).await, "holder should be alive after ensure");
+    let dir = registry
+        .ensure(SESSION, &launcher, &spec, 256 * 1024)
+        .await
+        .unwrap();
+    assert!(
+        registry.session_alive(SESSION).await,
+        "holder should be alive after ensure"
+    );
     let meta1 = registry.meta(SESSION).unwrap();
     assert!(meta1.holder_pid > 0);
     assert!(meta1.child_pid > 0);
 
     // Second ensure must REUSE (reattach), not respawn.
-    let dir2 = registry.ensure(SESSION, &launcher, &spec, 256 * 1024).await.unwrap();
+    let dir2 = registry
+        .ensure(SESSION, &launcher, &spec, 256 * 1024)
+        .await
+        .unwrap();
     assert_eq!(dir, dir2);
     let meta2 = registry.meta(SESSION).unwrap();
-    assert_eq!(meta1.holder_pid, meta2.holder_pid, "ensure respawned instead of reusing");
+    assert_eq!(
+        meta1.holder_pid, meta2.holder_pid,
+        "ensure respawned instead of reusing"
+    );
 
     // The daemonized holder's PTY child is really producing output.
     let mut pushes = HolderClient::subscribe(&dir, 0).await.unwrap();
@@ -64,7 +79,10 @@ async fn term_hold_reexec_spawns_reuses_and_kills_daemonized_holder() {
     while registry.session_alive(SESSION).await && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(!registry.session_alive(SESSION).await, "holder still alive after kill");
+    assert!(
+        !registry.session_alive(SESSION).await,
+        "holder still alive after kill"
+    );
 
     // The socket disappears before the holder process fully exits; gc_stale
     // (correctly) won't touch a dir whose pid is still alive — poll it.

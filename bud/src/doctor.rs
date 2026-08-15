@@ -7,7 +7,6 @@ use tokio::fs;
 
 use crate::claim::api_base_url_from_ws_url;
 use crate::config::{BudArgs, DoctorArgs, DoctorFormat};
-use crate::terminal::probe_tmux;
 use crate::util::{default_shell, new_message_id};
 
 #[derive(Debug, Serialize)]
@@ -46,6 +45,11 @@ impl DoctorReport {
 }
 
 pub async fn run_doctor(args: &BudArgs, doctor_args: &DoctorArgs) -> Result<()> {
+    if doctor_args.cleanup_tmux {
+        cleanup_tmux_sessions();
+        return Ok(());
+    }
+
     let report = build_doctor_report(args).await;
     match doctor_args.format {
         DoctorFormat::Text => print_text_report(&report),
@@ -57,6 +61,44 @@ pub async fn run_doctor(args: &BudArgs, doctor_args: &DoctorArgs) -> Result<()> 
     }
 
     Ok(())
+}
+
+/// One-shot cleanup of tmux-era Bud terminal sessions (`s_*`-prefixed).
+/// Best-effort: silently a no-op when no tmux binary exists; errors from
+/// individual kills are ignored.
+fn cleanup_tmux_sessions() {
+    if !command_available("tmux") {
+        return;
+    }
+    let output = std::process::Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output();
+    let Ok(output) = output else {
+        return;
+    };
+    if !output.status.success() {
+        // No server running or tmux errored: nothing to clean.
+        return;
+    }
+    let mut killed = 0usize;
+    for name in String::from_utf8_lossy(&output.stdout).lines() {
+        let name = name.trim();
+        if !name.starts_with("s_") {
+            continue;
+        }
+        let result = std::process::Command::new("tmux")
+            .args(["kill-session", "-t", name])
+            .output();
+        if matches!(result, Ok(ref out) if out.status.success()) {
+            killed += 1;
+            println!("killed legacy tmux session {name}");
+        }
+    }
+    if killed == 0 {
+        println!("no legacy s_* tmux sessions found");
+    } else {
+        println!("cleaned up {killed} legacy tmux session(s)");
+    }
 }
 
 async fn build_doctor_report(args: &BudArgs) -> DoctorReport {
@@ -71,7 +113,6 @@ async fn build_doctor_report(args: &BudArgs) -> DoctorReport {
     checks.push(check_identity_file(&paths.identity_file).await);
     checks.push(check_directory("terminal_base_dir", &paths.terminal_base_dir).await);
     checks.push(check_shell(default_shell()).await);
-    checks.push(check_tmux(args.terminal_enabled));
     checks.push(check_service_manager());
     DoctorReport::new(checks)
 }
@@ -269,27 +310,6 @@ fn is_executable_file(_metadata: &std::fs::Metadata) -> bool {
     true
 }
 
-fn check_tmux(terminal_enabled: bool) -> DoctorCheck {
-    if probe_tmux() {
-        return check_ok("tmux", "tmux is available".to_string());
-    }
-
-    let remediation = tmux_remediation();
-    if terminal_enabled {
-        check_error(
-            "tmux",
-            "tmux is required for Bud terminal support and was not found".to_string(),
-            remediation,
-        )
-    } else {
-        check_warning(
-            "tmux",
-            "tmux was not found; terminal support is currently disabled".to_string(),
-            remediation,
-        )
-    }
-}
-
 fn check_service_manager() -> DoctorCheck {
     match std::env::consts::OS {
         "macos" => {
@@ -329,44 +349,6 @@ fn check_service_manager() -> DoctorCheck {
             "managed user services are unsupported on this OS".to_string(),
             vec!["Use foreground mode on this platform.".to_string()],
         ),
-    }
-}
-
-fn tmux_remediation() -> Vec<String> {
-    match std::env::consts::OS {
-        "macos" => vec![
-            "Homebrew: brew install tmux".to_string(),
-            "MacPorts: sudo port install tmux".to_string(),
-        ],
-        "linux" => linux_tmux_remediation(),
-        _ => vec!["Install tmux with your OS package manager.".to_string()],
-    }
-}
-
-fn linux_tmux_remediation() -> Vec<String> {
-    let os_release = std::fs::read_to_string("/etc/os-release")
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if os_release.contains("id=ubuntu") || os_release.contains("id=debian") {
-        vec![
-            "Ubuntu/Debian: sudo apt-get update && sudo apt-get install -y tmux ca-certificates"
-                .to_string(),
-        ]
-    } else if os_release.contains("id=fedora")
-        || os_release.contains("id=\"rhel\"")
-        || os_release.contains("id=rhel")
-        || os_release.contains("id=centos")
-    {
-        vec!["Fedora/RHEL: sudo dnf install -y tmux ca-certificates".to_string()]
-    } else if os_release.contains("id=arch") {
-        vec!["Arch: sudo pacman -S tmux".to_string()]
-    } else {
-        vec![
-            "Ubuntu/Debian: sudo apt-get update && sudo apt-get install -y tmux ca-certificates"
-                .to_string(),
-            "Fedora/RHEL: sudo dnf install -y tmux ca-certificates".to_string(),
-            "Arch: sudo pacman -S tmux".to_string(),
-        ]
     }
 }
 
@@ -440,12 +422,6 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-
-    #[test]
-    fn linux_unknown_remediation_includes_supported_package_managers() {
-        let commands = linux_tmux_remediation();
-        assert!(!commands.is_empty());
-    }
 
     #[test]
     fn command_available_rejects_unknown_command() {

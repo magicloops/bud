@@ -6,7 +6,6 @@ import { ulid } from "ulid";
 import { eq } from "drizzle-orm";
 import {
   buildAgentMessageTiming,
-  buildEffectiveToolArgs,
   buildToolArgs,
   type AgentMessageTiming,
   type AgentToolCallDirective,
@@ -71,7 +70,7 @@ export class AgentTranscriptWriter {
     cursor: string;
   } {
     const modelArgs = buildToolArgs(directive);
-    const clientArgs = buildEffectiveToolArgs(directive);
+    const clientArgs = modelArgs;
     const cursor = this.runtime.emit(threadId, {
       event: "agent.tool_call",
       data: {
@@ -512,21 +511,29 @@ function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<
     };
   }
 
+  // Terminal tool result (terminal.run / terminal.send / terminal.observe).
+  // The command's own duration_ms stays inside the persisted tool payload;
+  // top-level duration_ms remains the service tool-execution timing.
   return {
+    kind: execution.result.kind,
+    status: execution.result.status,
+    command_id: execution.result.commandId,
+    exit_code: execution.result.exitCode,
     output: execution.result.output,
     output_bytes: execution.result.outputBytes,
-    readiness: execution.result.readiness,
     truncated: execution.result.truncated,
-    omitted_lines: execution.result.omittedLines,
-    submitted: execution.result.submitted,
-    input_dispatched: execution.result.inputDispatched,
-    command_sent: execution.result.commandSent,
+    dispatched: execution.result.dispatched,
     raw_text_sent: execution.result.rawTextSent,
     key_sent: execution.result.keySent,
-    enter_requested: execution.result.enterRequested,
     delta: serializeTerminalDelta(execution.result.delta),
+    changed: execution.result.changed,
     view: execution.result.view,
-    context_after: execution.result.contextAfter,
+    lines_captured: execution.result.linesCaptured,
+    mode: execution.result.mode,
+    integration: execution.result.integration,
+    alt_screen: execution.result.altScreen,
+    cwd: execution.result.cwd,
+    note: execution.result.note,
     error: execution.result.error,
     code: execution.result.errorCode,
     retryable: execution.result.retryable,

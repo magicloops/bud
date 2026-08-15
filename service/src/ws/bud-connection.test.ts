@@ -520,3 +520,159 @@ function encodeVarint(value: number): Buffer {
   chunks.push(remaining);
   return Buffer.from(chunks);
 }
+
+test("terminal frames from a socket authenticated as a different bud are dropped (S-C1)", async () => {
+  const { TerminalSessionManager } = await import("../runtime/terminal-session-manager.js");
+  const emitted: Array<Record<string, unknown>> = [];
+  const manager = new TerminalSessionManager(
+    createServer().log as never,
+    {
+      emit(_sessionId: string, event: Record<string, unknown>) {
+        emitted.push(event);
+      },
+    } as never,
+  );
+  Reflect.set(manager, "sessionStore", {
+    async getSession(sessionId: string) {
+      return {
+        sessionId,
+        threadId: "thread-1",
+        budId: "b_owner",
+        instanceId: null,
+        state: "active",
+        cols: 200,
+        rows: 50,
+        cwd: null,
+        createdAt: new Date(),
+        startedAt: null,
+        lastActivityAt: null,
+        outputLogBytes: 0,
+        createdByUserId: "user-1",
+        tenantId: null,
+      };
+    },
+    async updateStatus() {
+      throw new Error("updateStatus must not run for cross-bud frames");
+    },
+    async updateCwd() {
+      throw new Error("updateCwd must not run for cross-bud frames");
+    },
+    async markClosed() {
+      throw new Error("markClosed must not run for cross-bud frames");
+    },
+  });
+  let outputIngests = 0;
+  Reflect.set(manager, "outputStore", {
+    async handleTerminalOutput() {
+      outputIngests += 1;
+    },
+  });
+  let resolvedResults = 0;
+  Reflect.set(manager, "requestDispatcher", {
+    async handleSendResult() {
+      resolvedResults += 1;
+    },
+    async handleObserveResult() {
+      resolvedResults += 1;
+    },
+  });
+
+  const socket = createSocket();
+  const connection = new BudConnection(createServer() as never, socket as never, manager);
+  Reflect.set(connection, "state", {
+    kind: "connected",
+    budId: "b_intruder",
+    sessionId: "s_intruder",
+    hello: binaryEnvelopeHello(),
+  });
+
+  const handleRaw = Reflect.get(connection, "handleRaw") as (raw: string) => Promise<void>;
+  const base = { proto: "0.3", id: "msg_t", ts: 1777132800000, ext: {}, session_id: "sess_victim" };
+  await handleRaw.call(
+    connection,
+    JSON.stringify({
+      ...base,
+      type: "terminal_output",
+      data: Buffer.from("stolen").toString("base64"),
+      byte_offset: 0,
+    }),
+  );
+  await handleRaw.call(
+    connection,
+    JSON.stringify({
+      ...base,
+      type: "terminal_event",
+      event: "command_finished",
+      data: { command_id: "cmd_1", exit_code: 0, duration_ms: 1, output_byte_start: 0, output_byte_end: 1 },
+    }),
+  );
+  await handleRaw.call(
+    connection,
+    JSON.stringify({
+      ...base,
+      type: "terminal_send_result",
+      request_id: "send_1",
+      dispatched: true,
+      outcome: null,
+      error: null,
+    }),
+  );
+
+  assert.equal(outputIngests, 0);
+  assert.equal(resolvedResults, 0);
+  assert.equal(emitted.length, 0);
+});
+
+test("terminal frames on an unauthenticated socket are dropped before any session access", async () => {
+  const probe = new Proxy(
+    {},
+    {
+      get(_target, property) {
+        if (property === "then") {
+          return undefined;
+        }
+        return () => {
+          throw new Error(`terminal manager must not be reached pre-hello (${String(property)})`);
+        };
+      },
+    },
+  );
+
+  const socket = createSocket();
+  const connection = new BudConnection(createServer() as never, socket as never, probe as never);
+
+  const handleRaw = Reflect.get(connection, "handleRaw") as (raw: string) => Promise<void>;
+  const base = { proto: "0.3", id: "msg_t", ts: 1777132800000, ext: {}, session_id: "sess_x" };
+  await handleRaw.call(
+    connection,
+    JSON.stringify({ ...base, type: "terminal_output", data: "aGk=", byte_offset: 0 }),
+  );
+  await handleRaw.call(
+    connection,
+    JSON.stringify({ ...base, type: "terminal_event", event: "settled", data: { mode: "tui", quiet_ms: 200 } }),
+  );
+  await handleRaw.call(
+    connection,
+    JSON.stringify({
+      ...base,
+      type: "terminal_send_result",
+      request_id: "send_1",
+      dispatched: true,
+      outcome: null,
+      error: null,
+    }),
+  );
+  await handleRaw.call(
+    connection,
+    JSON.stringify({
+      ...base,
+      type: "terminal_observe_result",
+      request_id: "obs_1",
+      view: "screen",
+      output: "",
+      lines_captured: 0,
+      error: null,
+    }),
+  );
+  await handleRaw.call(connection, JSON.stringify({ ...base, type: "terminal_status", state: "ready" }));
+});

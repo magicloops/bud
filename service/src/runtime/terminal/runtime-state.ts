@@ -1,22 +1,38 @@
 import type { FastifyBaseLogger } from "fastify";
-import { config } from "../../config.js";
-import type { PendingCommand, ReadinessAssessment, TerminalContext } from "../../terminal/types.js";
-import { getProgramInfo } from "../../terminal/known-programs.js";
+import {
+  isTerminalIntegration,
+  isTerminalMode,
+  type TerminalIntegration,
+  type TerminalMode,
+} from "../../terminal/types.js";
 
-const STALE_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
+/**
+ * Daemon-reported runtime facts for a session (proto 0.3): the current mode
+ * and shell-integration level from `mode_changed` events / `terminal_status`
+ * info, and the latest cwd from `prompt_ready` events.
+ */
+export type TerminalRuntimeContext = {
+  mode: TerminalMode;
+  integration: TerminalIntegration | null;
+  cwd: string | null;
+};
+
+const DEFAULT_CONTEXT: TerminalRuntimeContext = {
+  mode: "unknown",
+  integration: null,
+  cwd: null,
+};
 
 export class TerminalRuntimeState {
   private readonly logger: FastifyBaseLogger;
-  private readonly readiness = new Map<string, ReadinessAssessment>();
-  private readonly pendingCommands = new Map<string, PendingCommand | null>();
+  private readonly contexts = new Map<string, TerminalRuntimeContext>();
 
   constructor(logger: FastifyBaseLogger) {
     this.logger = logger;
   }
 
   clearSessionCache(sessionId: string): void {
-    this.readiness.delete(sessionId);
-    this.pendingCommands.delete(sessionId);
+    this.contexts.delete(sessionId);
   }
 
   clearSessionCaches(sessionIds: readonly string[]): void {
@@ -25,99 +41,62 @@ export class TerminalRuntimeState {
     }
   }
 
-  setPendingCommand(sessionId: string, command: PendingCommand): void {
-    this.pendingCommands.set(sessionId, command);
-    this.debug("tracking pending command", {
-      sessionId,
-      command: command.command,
-      source: command.source
-    });
+  getSessionContext(sessionId: string): TerminalRuntimeContext {
+    return this.contexts.get(sessionId) ?? { ...DEFAULT_CONTEXT };
   }
 
-  clearPendingCommand(sessionId: string): void {
-    const pending = this.pendingCommands.get(sessionId);
-    if (!pending) {
+  applyModeChange(sessionId: string, mode: unknown, integration: unknown): void {
+    const context = this.getOrCreate(sessionId);
+    if (isTerminalMode(mode)) {
+      context.mode = mode;
+    }
+    if (isTerminalIntegration(integration)) {
+      context.integration = integration;
+    }
+    this.logger.info(
+      {
+        sessionId,
+        mode: context.mode,
+        integration: context.integration,
+        component: "terminal_runtime_state",
+      },
+      "Terminal mode updated"
+    );
+  }
+
+  applyCwd(sessionId: string, cwd: unknown): void {
+    if (typeof cwd !== "string" || cwd.trim().length === 0) {
       return;
     }
-    this.debug("clearing pending command via context sync", {
-      sessionId,
-      command: pending.command
-    });
-    this.pendingCommands.set(sessionId, null);
+    this.getOrCreate(sessionId).cwd = cwd;
   }
 
-  getLatestReadiness(sessionId: string): ReadinessAssessment | null {
-    return this.readiness.get(sessionId) ?? null;
-  }
-
-  getSessionContext(sessionId: string): TerminalContext {
-    this.cleanupStaleCommand(sessionId);
-    const pending = this.pendingCommands.get(sessionId);
-
-    if (!pending) {
-      return { mode: "shell" };
-    }
-
-    const programInfo = getProgramInfo(pending.command);
-    if (!programInfo) {
-      return {
-        mode: "unknown",
-        pendingCommand: pending
-      };
-    }
-
-    return {
-      mode: "repl",
-      pendingCommand: pending,
-      program: programInfo.name,
-      programDisplayName: programInfo.displayName,
-      interactionStyle: programInfo.interactionStyle,
-      hints: programInfo.hints
-    };
-  }
-
-  storeReadinessAssessment(
+  applyStatusInfo(
     sessionId: string,
-    assessment: ReadinessAssessment,
-  ): ReadinessAssessment {
-    this.readiness.set(sessionId, assessment);
-
-    if (
-      assessment.prompt_type === "shell" &&
-      assessment.confidence >= 0.8 &&
-      assessment.hints?.looks_like_prompt
-    ) {
-      const pending = this.pendingCommands.get(sessionId);
-      if (pending) {
-        const durationMs = Date.now() - pending.sentAt;
-        this.debug("clearing pending command - returned to shell", {
-          sessionId,
-          command: pending.command,
-          durationMs
-        });
-        this.pendingCommands.set(sessionId, null);
-      }
-    }
-
-    return assessment;
-  }
-
-  private cleanupStaleCommand(sessionId: string): void {
-    const pending = this.pendingCommands.get(sessionId);
-    if (pending && Date.now() - pending.sentAt > STALE_COMMAND_TIMEOUT_MS) {
-      this.logger.warn(
-        { sessionId, command: pending.command, component: "terminal_runtime_state" },
-        "Clearing stale pending command"
-      );
-      this.pendingCommands.set(sessionId, null);
-    }
-  }
-
-  private debug(message: string, meta?: Record<string, unknown>) {
-    if (!config.agentDebug) {
+    info: { mode?: unknown; integration?: unknown; cwd?: unknown } | undefined,
+  ): void {
+    if (!info) {
       return;
     }
-    this.logger.info({ ...meta, component: "terminal_runtime_state" }, message);
+    const context = this.getOrCreate(sessionId);
+    if (isTerminalMode(info.mode)) {
+      context.mode = info.mode;
+    }
+    if (isTerminalIntegration(info.integration)) {
+      context.integration = info.integration;
+    }
+    if (typeof info.cwd === "string" && info.cwd.trim().length > 0) {
+      context.cwd = info.cwd;
+    }
+  }
+
+  private getOrCreate(sessionId: string): TerminalRuntimeContext {
+    const existing = this.contexts.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    const created: TerminalRuntimeContext = { ...DEFAULT_CONTEXT };
+    this.contexts.set(sessionId, created);
+    return created;
   }
 }
-

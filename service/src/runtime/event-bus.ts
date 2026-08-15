@@ -138,16 +138,24 @@ class SseEventBus {
 
   /**
    * Attach a callback-style listener for use in manual SSE streams.
-   * Replays buffered events immediately.
+   * Replays buffered events immediately unless `replay: false` is passed
+   * (used by the terminal stream's offset-based resume, which replays output
+   * from durable storage instead of the in-memory buffer).
    */
-  attachCallback(channelId: string, callback: Listener, options?: AttachOptions): () => void {
+  attachCallback(
+    channelId: string,
+    callback: Listener,
+    options?: AttachOptions & { replay?: boolean },
+  ): () => void {
     const listeners = this.listeners.get(channelId) ?? new Set();
     listeners.add(callback);
     this.listeners.set(channelId, listeners);
 
-    const replayState = this.getReplayBuffer(channelId, options);
-    for (const event of replayState.replay) {
-      callback(event);
+    if (options?.replay !== false) {
+      const replayState = this.getReplayBuffer(channelId, options);
+      for (const event of replayState.replay) {
+        callback(event);
+      }
     }
 
     return () => {

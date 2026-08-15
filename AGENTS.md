@@ -9,14 +9,14 @@
 
 Bud is a **device-agent platform** enabling AI-assisted terminal access and command execution across remote machines. The system has three tiers:
 
-- **Bud Daemon** (`/bud`): Rust CLI that connects to the backend via WebSocket and manages tmux-backed terminal sessions.
+- **Bud Daemon** (`/bud`): Rust CLI that connects to the backend via WebSocket and manages persistent PTY terminal sessions via the `stem` crate (detached holder processes).
 - **Service** (`/service`): Node.js/Fastify backend with REST + SSE to the web, WebSocket to buds, and LLM integration via OpenAI Responses API.
 - **Web UI** (`/web`): React + Vite chat interface with real-time terminal streaming via xterm.js.
 
 **Core Concepts**:
 - **Thread-Scoped Sessions**: Each conversation thread owns its terminal session, enabling parallel workstreams without state collision.
-- **Persistent Terminals**: tmux-backed sessions survive network disconnects and maintain state across agent interactions.
-- **Readiness Detection**: The system analyzes terminal output to detect prompts, REPLs, pagers, and processing states.
+- **Persistent Terminals**: `stem` holder-backed sessions survive network disconnects AND daemon restarts, maintaining state across agent interactions.
+- **Terminal Facts**: OSC 133 shell integration yields exact command lifecycle (real exit codes); VT-emulator damage tracking yields TUI settling; sessions carry typed mode/integration facts instead of readiness guesses.
 
 For full architectural details, see [`bud.spec.md`](./bud.spec.md).
 
@@ -101,7 +101,7 @@ grep -rn "SPEC:\(UNKNOWN\|TODO\|VERIFY\)" --include="*.spec.md" bud service web
 
 | Path | Purpose | Language/Frameworks |
 |------|---------|---------------------|
-| `bud/` | Device agent (Rust daemon) | Rust, Tokio, tokio-tungstenite, tmux |
+| `bud/` | Device agent (Rust daemon + `stem` terminal crate) | Rust, Tokio, tokio-tungstenite, alacritty_terminal |
 | `service/` | Backend API + Agent + WS gateway | Node.js, Fastify, Drizzle ORM, PostgreSQL |
 | `web/` | Web UI (chat, terminal streaming) | React 19, Vite, TanStack Router, xterm.js |
 | `docs/` | Protocol and design docs | Markdown |
@@ -179,8 +179,8 @@ Do not add "temporary" global reads for convenience. The prototype-era assumptio
 
 - Every frame includes: `type`, `proto`, `message_id`, `sent_at`, `extensions:{}`
 - `hello` includes `capabilities` object
-- Terminal sessions use `proto: "0.2"` with thread-scoped session IDs
-- Daemon chunks output ≤ **16 KB** with monotonically increasing `seq`
+- Terminal sessions use `proto: "0.3"` with thread-scoped session IDs
+- Daemon chunks output ≤ **16 KB**, addressed by absolute `byte_offset` (monotonic, never resets across daemon restarts; `(session_id, byte_offset)` is the idempotency key)
 
 ### 4.2) Terminal Session Model
 
@@ -190,9 +190,9 @@ Sessions are **thread-scoped** (one terminal per thread):
 pending → creating → ready ↔ active → idle → closed
 ```
 
-- Sessions persist across reconnects (tmux-backed)
-- Session ID format: `bud-{budId}-thread-{threadId}`
-- Output stored in `terminal_session_output` with byte offsets
+- Sessions persist across reconnects AND daemon restarts (`stem` holder processes: detached PTY holders with file-backed output rings)
+- Session IDs are service-owned ULIDs (`sess_<ULID>`)
+- Output stored in `terminal_session_output` with byte offsets; command lifecycle stored in `terminal_command` (ULID ids, exit codes, output byte ranges)
 
 ### 4.3) Agent Tools
 
@@ -200,19 +200,22 @@ The LLM agent has these tools (defined in `service/src/agent/`):
 
 | Tool | Purpose |
 |------|---------|
-| `terminal.send` | Send shell commands, interactive input, confirmations, and keypresses (`submit:true` for Enter, `keys:["C-c"]` for Ctrl+C) |
-| `terminal.observe` | Inspect the rendered terminal screen or delta explicitly |
+| `terminal.run` | Run one shell command deterministically: dispatched with `await:"command"`, resolves on OSC 133 (or sentinel) `command_finished` with a **real exit code**, duration, and byte-exact output. Non-zero exit is a normal result; a long command reports still-running, never a fabricated failure |
+| `terminal.send` | One interactive gesture for TUIs/REPLs: `raw_text` or a semantic `key` (`ctrl+c`, `enter`, `up`, …); waits for damage-quiet settling and returns a grid delta as proof |
+| `terminal.observe` | Inspect the emulator-backed screen (`delta`/`screen`/`history`) explicitly |
 
-**Deprecated**: `shell.run` (legacy single-command execution)
+**Retired**: `shell.run`, `terminal.exec`, and `wait_for` mode selection.
 
-### 4.4) Readiness Detection
+### 4.4) Terminal Facts (replaces readiness detection)
 
-Agent uses readiness confidence to decide actions:
-- `≥0.8`: Ready for input
-- `0.5–0.8`: Observe/wait
-- `<0.5`: Still processing
+The daemon reports typed facts via `terminal_event` — there are no confidence scores. Sessions are classified into modes:
 
-Hints: `looks_like_prompt`, `looks_like_confirmation`, `looks_like_password`, `looks_like_pager`, `may_still_be_processing`
+- `shell` — OSC 133-integrated shell; command lifecycle is exact
+- `tui` — alternate screen active (vim, htop, …); "done" = damage-quiet `settled`
+- `repl` — line-based REPL matched by the prompt registry
+- `unknown` — no signals; heuristic settling only (honest fallback)
+
+`integration` ∈ `osc133` (shell hooks active) | `sentinel` (exit codes via wrapped commands) | `none`. Agents branch on mode and exit codes, not readiness guesses.
 
 ### 4.5) Data Model Invariants
 

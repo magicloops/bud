@@ -156,11 +156,11 @@ Ownership-focused thread submodules:
 | `POST` | `/api/threads/:thread_id/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
 | `POST` | `/api/threads/:thread_id/terminal/ensure` | Ensure the owned terminal is running on bud |
 | `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
-| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE output stream for an owned session |
+| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE stream for an owned session; `Last-Event-ID` (or `last_event_id` query) is the stringified byte offset the client last applied — on resume, stored output replays from that offset before live attach (proto 0.3 §6.7.7), and new `terminal.event` frames are forwarded verbatim |
 | `POST` | `/api/threads/:thread_id/terminal/input` | Send input as the signed-in human user |
 | `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send human Ctrl+C, reject older pending terminal waits as interrupted, and return dispatch metadata |
 | `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |
-| `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`) |
+| `GET` | `/api/threads/:thread_id/terminal/history` | Get owned output history (`bytes`, optional `since_offset`); responses include `start_offset`, `end_offset`, `truncated`, and `next_offset` continuation from the fixed offset-range reads |
 
 **Validation Schemas** (Zod):
 - `CreateThreadSchema` - `bud_id` required, `title` optional, optional `model` / `reasoning_effort` accepted for initial thread preference persistence

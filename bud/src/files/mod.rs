@@ -623,7 +623,7 @@ fn validate_absolute_posix_path(input: &str) -> Result<PathBuf> {
         }
     }
 
-    if output == PathBuf::from("/") {
+    if output == std::path::Path::new("/") {
         bail!("file path must point to a file");
     }
     Ok(output)

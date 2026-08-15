@@ -1,110 +1,121 @@
 import type { ToolContentRendererProps } from '../types'
 
-export function TerminalSendContent({ payload }: ToolContentRendererProps) {
-  const command = typeof payload.command === 'string' ? payload.command : null
-  const rawText = typeof payload.raw_text === 'string' ? payload.raw_text : null
-  const legacyText = typeof payload.text === 'string' ? payload.text : null
-  const legacySubmit = payload.submit === true
-  const key =
-    typeof payload.key === 'string' && payload.key.length > 0
-      ? payload.key
-      : Array.isArray(payload.keys) &&
-          payload.keys.length === 1 &&
-          typeof payload.keys[0] === 'string'
-        ? payload.keys[0]
-        : null
-  const delta = isRecord(payload.delta) ? payload.delta : null
-  const readiness = isRecord(payload.readiness) ? payload.readiness : null
-  const contextAfter = isRecord(payload.context_after) ? payload.context_after : null
-  const deltaChanged = delta?.changed === true
-  const deltaText = typeof delta?.text === 'string' && delta.text.length > 0 ? delta.text : null
-  const deltaTruncated = delta?.truncated === true
-  const readinessReady = readiness?.ready === true
-  const readinessConfidence =
-    typeof readiness?.confidence === 'number' ? readiness.confidence : null
-  const readinessTrigger = typeof readiness?.trigger === 'string' ? readiness.trigger : null
-  const submitted = typeof payload.submitted === 'boolean' ? payload.submitted : null
-  const inputDispatched =
-    typeof payload.input_dispatched === 'boolean'
-      ? payload.input_dispatched
-      : submitted
-  const enterRequested =
-    typeof payload.enter_requested === 'boolean'
-      ? payload.enter_requested
-      : command !== null || legacySubmit
-  const contextMode = typeof contextAfter?.mode === 'string' ? contextAfter.mode : null
-  const contextProgram =
-    typeof contextAfter?.programDisplayName === 'string'
-      ? contextAfter.programDisplayName
-      : typeof contextAfter?.program === 'string'
-        ? contextAfter.program
-        : null
-  const contextSource = typeof contextAfter?.source === 'string' ? contextAfter.source : null
+function modeChip(payload: Record<string, unknown>) {
+  const mode = typeof payload.mode === 'string' ? payload.mode : null
+  const altScreen = payload.alt_screen === true
+  if (!mode) return null
+  return (
+    <span className="rounded-full border border-border bg-background/80 px-2 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+      {mode}
+      {altScreen ? ' · alt-screen' : ''}
+    </span>
+  )
+}
 
-  if (!command && !rawText && !legacyText && !key && !enterRequested) return null
+/** proto 0.3 `terminal.run`: a shell command with a real exit code. */
+export function TerminalRunContent({ payload }: ToolContentRendererProps) {
+  const command = typeof payload.command === 'string' ? payload.command : null
+  const exitCode = typeof payload.exit_code === 'number' ? payload.exit_code : null
+  const durationMs = typeof payload.duration_ms === 'number' ? payload.duration_ms : null
+  const output = typeof payload.output === 'string' && payload.output.length > 0 ? payload.output : null
+  const truncated = payload.truncated === true
+  const stillRunning = payload.status === 'still_running'
+
+  if (!command) return null
+
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        {stillRunning ? (
+          <span className="rounded-full bg-yellow-500/15 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-yellow-700 dark:text-yellow-300">
+            Still running
+          </span>
+        ) : exitCode !== null ? (
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${
+              exitCode === 0
+                ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                : 'bg-red-500/15 text-red-700 dark:text-red-300'
+            }`}
+          >
+            Exit {exitCode}
+          </span>
+        ) : null}
+        {durationMs !== null ? (
+          <span className="rounded-full border border-border bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground">
+            {durationMs >= 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${durationMs}ms`}
+          </span>
+        ) : null}
+        {modeChip(payload)}
+      </div>
+      <div className="text-muted-foreground">Command</div>
+      <div className="font-mono text-foreground whitespace-pre-wrap">{command}</div>
+      {output ? (
+        <div className="mt-1 max-h-64 overflow-y-auto rounded-md bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap">
+          {output}
+        </div>
+      ) : null}
+      {truncated ? (
+        <div className="mt-1 text-muted-foreground">Output truncated (showing the tail).</div>
+      ) : null}
+    </div>
+  )
+}
+
+/** proto 0.3 `terminal.send`: interactive gesture with settled-delta proof. */
+export function TerminalSendContent({ payload }: ToolContentRendererProps) {
+  const rawText = typeof payload.raw_text === 'string' ? payload.raw_text : null
+  const key = typeof payload.key === 'string' && payload.key.length > 0 ? payload.key : null
+  // Legacy 0.2 rows (command / text+submit) keep rendering in old transcripts.
+  const legacyCommand = typeof payload.command === 'string' ? payload.command : null
+  const legacyText = typeof payload.text === 'string' ? payload.text : null
+  const delta = isRecord(payload.delta) ? payload.delta : null
+  const deltaText = typeof delta?.text === 'string' && delta.text.length > 0 ? delta.text : null
+  const changed = payload.changed === true || delta?.changed === true
+  const dispatched =
+    typeof payload.dispatched === 'boolean'
+      ? payload.dispatched
+      : typeof payload.input_dispatched === 'boolean'
+        ? payload.input_dispatched
+        : null
+
+  if (!rawText && !key && !legacyCommand && !legacyText) return null
 
   return (
     <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] leading-relaxed">
       <div className="mb-2 flex flex-wrap gap-2">
-        <span className={deltaBadgeClassName(deltaChanged)}>
-          {deltaChanged ? 'Visible delta' : 'No visible delta'}
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${
+            changed
+              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+              : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+          }`}
+        >
+          {changed ? 'Visible delta' : 'No visible delta'}
         </span>
-        {readinessConfidence !== null ? (
-          <span className="rounded-full border border-border bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground">
-            {readinessReady ? 'Ready' : 'Not ready'} {Math.round(readinessConfidence * 100)}%
-          </span>
-        ) : null}
-        {readinessTrigger ? (
-          <span className="rounded-full border border-border bg-background/80 px-2 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
-            {readinessTrigger}
-          </span>
-        ) : null}
+        {modeChip(payload)}
       </div>
-      {command ? (
-        <>
-          <div className="text-muted-foreground">Command</div>
-          <div className="font-mono text-foreground whitespace-pre-wrap">{command}</div>
-        </>
-      ) : null}
-      {rawText ? (
+      {rawText ?? legacyText ? (
         <>
           <div className="text-muted-foreground">Raw text</div>
-          <div className="font-mono text-foreground whitespace-pre-wrap">{rawText}</div>
+          <div className="font-mono text-foreground whitespace-pre-wrap">{rawText ?? legacyText}</div>
         </>
       ) : null}
-      {!command && !rawText && legacyText ? (
+      {legacyCommand ? (
         <>
-          <div className="text-muted-foreground">
-            {legacySubmit ? 'Legacy command' : 'Legacy raw text'}
-          </div>
-          <div className="font-mono text-foreground whitespace-pre-wrap">{legacyText}</div>
+          <div className="text-muted-foreground">Legacy command</div>
+          <div className="font-mono text-foreground whitespace-pre-wrap">{legacyCommand}</div>
         </>
       ) : null}
-      {key ? (
-        <div className="text-muted-foreground">Key: {key}</div>
-      ) : null}
-      {enterRequested ? <div className="text-muted-foreground">Enter requested</div> : null}
-      {inputDispatched !== null ? (
-        <div className="mt-1 text-muted-foreground">
-          Input dispatched: {inputDispatched ? 'yes' : 'no'}
-        </div>
-      ) : null}
-      {contextMode ? (
-        <div className="mt-1 text-muted-foreground">
-          Context: {contextProgram ? `${contextProgram} (${contextMode})` : contextMode}
-          {contextSource ? `, ${contextSource}` : ''}
-        </div>
+      {key ? <div className="text-muted-foreground">Key: {key}</div> : null}
+      {dispatched !== null ? (
+        <div className="mt-1 text-muted-foreground">Input dispatched: {dispatched ? 'yes' : 'no'}</div>
       ) : null}
       {deltaText ? (
         <div className="mt-1 rounded-md bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">
-          <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/80">
-            Delta
-          </div>
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/80">Delta</div>
           <div className="whitespace-pre-wrap">{deltaText}</div>
         </div>
-      ) : null}
-      {deltaTruncated ? (
-        <div className="mt-1 text-muted-foreground">Delta was truncated.</div>
       ) : null}
     </div>
   )
@@ -113,26 +124,18 @@ export function TerminalSendContent({ payload }: ToolContentRendererProps) {
 export function TerminalObserveContent({ payload }: ToolContentRendererProps) {
   const lines = payload.lines as number | undefined
   const view = (payload.view as string | undefined) ?? 'delta'
-  const waitFor = typeof payload.wait_for === 'string' ? payload.wait_for : null
 
   return (
     <div className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
-      Observed {view}
-      {typeof lines === 'number' ? ` (${lines} lines)` : ''}
-      {waitFor && waitFor !== 'none' ? ` after waiting for ${waitFor}` : ''}
+      <span>
+        Observed {view}
+        {typeof lines === 'number' ? ` (${lines} lines)` : ''}
+      </span>
+      <span className="ml-2 inline-flex">{modeChip(payload)}</span>
     </div>
   )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
-}
-
-function deltaBadgeClassName(changed: boolean): string {
-  const base =
-    'rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide'
-
-  return changed
-    ? `${base} bg-emerald-500/15 text-emerald-700 dark:text-emerald-300`
-    : `${base} bg-amber-500/15 text-amber-700 dark:text-amber-300`
 }

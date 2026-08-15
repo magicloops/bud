@@ -70,7 +70,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one active terminal session at a time. |
 | **Message** | A chat message or visible reasoning artifact with role (user/assistant/tool/system/reasoning), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system/reasoning messages inherit thread ownership; reasoning rows are display-only and excluded from model-visible replay, previews, attention, and push notifications. |
 | **Agent Context Checkpoint** | Durable model-context compaction checkpoint for a thread. Stores summary replacement history plus message/provider-ledger boundaries while leaving the visible transcript intact. |
-| **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps, and cached daemon-reported cwd for file-link resolution. |
+| **Terminal Session** | A thread-scoped `stem` holder session (detached PTY process) providing persistent terminal access with typed mode/integration facts, command lifecycle records, and cached cwd (OSC 7 first) for file-link resolution. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
 
 ### Session States
@@ -86,7 +86,7 @@ pending → creating → ready ↔ active → idle → closed
 | State | Description |
 |-------|-------------|
 | `pending` | Session requested, waiting for daemon |
-| `creating` | Daemon is spawning tmux session |
+| `creating` | Daemon is spawning/attaching the stem holder session |
 | `ready` | Session exists, no recent activity |
 | `active` | Currently receiving input/output |
 | `idle` | No activity for configured timeout |
@@ -347,7 +347,7 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 3. Service calls the selected LLM provider with thread context
 4. Model returns tool_call: terminal.send({ text: "ls -la", submit: true })
 5. Service sends `terminal_send` to the daemon
-6. Daemon submits the input in tmux and returns `terminal_send_result` with readiness, delta, and optional `host_cwd`
+6. Daemon dispatches the gesture to the stem session and returns `terminal_send_result` with `dispatched` plus the awaited `outcome` event (command_finished with exit code, or settled)
 7. Service decides whether follow-up observation is needed, then calls the selected provider with result
 8. Model returns final response
 9. Service stores assistant message, emits SSE events
@@ -477,14 +477,16 @@ Previous design had bud-global sessions, causing:
 
 Thread-scoped sessions provide isolation and predictability.
 
-### Why tmux?
+### Why `stem` (and no longer tmux)?
 
-- Session persistence (survives network disconnects)
-- Scrollback buffer management
-- Window/pane support for future features
-- Well-tested, reliable
+Terminals are provided by the in-repo `stem` crate ([bud/stem/stem.spec.md](./bud/stem/stem.spec.md)) — a native PTY session manager that replaced tmux in the Phase-2 cutover ([design/native-terminal-session-manager.md](./design/native-terminal-session-manager.md)):
 
-The daemon now keeps tmux behind an internal backend adapter so future PTY or mosh-like backends can reuse the same higher-level terminal runtime and readiness logic. The normal Bud↔service↔browser contract is now backend-neutral above that adapter, with only a temporary one-entry `keys` compatibility alias left in place during rollout.
+- **Persistence** across network disconnects AND daemon restarts/upgrades via detached per-session holder processes (double-fork/setsid; survival validated on launchd and systemd — `spikes/holder-survival/`)
+- **Exact command lifecycle**: OSC 133 shell integration (zsh/bash shims, fish native) with a sentinel fallback — real exit codes as events, no readiness scraping
+- **Efficient TUI handling**: client-side VT emulation (`alacritty_terminal`) with damage-quiet settling instead of capture-hash polling
+- **Single-binary install**: the holder is `bud term-hold` (re-exec); no external tmux dependency, preflight, or user-config leakage
+
+tmux was retired because its shell-out integration required pervasive workarounds (subprocess-per-operation, pipe-pane log tailing, send-keys escaping, sleep-guarded races) while providing no command semantics; see the review and design docs for the full accounting.
 
 ### Why Provider APIs?
 

@@ -18,7 +18,7 @@ test("file open request and frame include terminal context when available", () =
       path_context: {
         schema: "terminal_cwd_v1",
         source: "terminal_runtime_cache",
-        reported_by: "tmux_pane_current_path",
+        reported_by: "prompt_ready_osc7",
         terminal_session_id: "bud-bud-1-thread-11111111-1111-4111-8111-111111111111",
         host_cwd: "/Users/adam/bud/service",
         captured_at: "2026-05-05T19:30:00.000Z",

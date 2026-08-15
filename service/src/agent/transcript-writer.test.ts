@@ -101,41 +101,42 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   const execution: ExecutedTerminalTool = {
     directive: {
       type: "tool_call",
-      tool: "terminal.send",
+      tool: "terminal.run",
       command: "pwd",
       callId: "call-1",
     },
-    args: { command: "pwd", wait_for: "settled" },
-    summary: 'Send command "pwd" and press Enter',
+    args: { command: "pwd" },
+    summary: 'Ran "pwd" (exit 0 in 42ms)',
     outputTruncationReason: null,
     result: {
-      kind: "interaction_ack",
-      readiness: { ready: true, confidence: 0.9, trigger: "settled" },
-      submitted: true,
-      inputDispatched: true,
-      commandSent: true,
-      rawTextSent: false,
-      keySent: null,
-      enterRequested: true,
-      delta: { changed: true, text: "/repo", truncated: false },
-      contextAfter: { mode: "shell", source: "observed" },
+      kind: "command",
+      status: "completed",
+      commandId: "cmd_01",
+      exitCode: 0,
+      durationMs: 42,
+      output: "/repo\n",
+      outputBytes: 6,
+      truncated: false,
+      mode: "shell",
+      integration: "osc133",
+      cwd: "/repo",
     },
     payload: {
-      tool: "terminal.send",
+      tool: "terminal.run",
       call_id: "call-1",
       command: "pwd",
-      wait_for: "settled",
-      summary: 'Send command "pwd" and press Enter',
-      kind: "interaction_ack",
-      readiness: { ready: true, confidence: 0.9, trigger: "settled" },
-      submitted: true,
-      input_dispatched: true,
-      command_sent: true,
-      raw_text_sent: false,
-      key_sent: null,
-      enter_requested: true,
-      delta: { changed: true, text: "/repo", truncated: false },
-      context_after: { mode: "shell", source: "observed" },
+      summary: 'Ran "pwd" (exit 0 in 42ms)',
+      kind: "command",
+      status: "completed",
+      command_id: "cmd_01",
+      exit_code: 0,
+      duration_ms: 42,
+      output: "/repo\n",
+      output_bytes: 6,
+      truncated: false,
+      mode: "shell",
+      integration: "osc133",
+      cwd: "/repo",
     },
   };
   const startedAt = new Date("2026-04-21T19:00:01.000Z");
@@ -143,7 +144,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   const pathContextBefore = {
     schema: "terminal_cwd_v1",
     source: "terminal_runtime_cache",
-    reported_by: "tmux_pane_current_path",
+    reported_by: "prompt_ready_osc7",
     terminal_session_id: "sess_test",
     host_cwd: "/Users/adam/bud",
     captured_at: "2026-04-21T19:00:00.000Z",
@@ -158,7 +159,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
     session_id: "sess_test",
     observed_output_log_bytes: 128,
     observed_cwd: "/Users/adam/bud/service",
-    observed_readiness_version: "ready|0.90|settled|shell|looks_like_prompt",
+    observed_readiness_version: null,
     observed_at: "2026-04-21T19:00:04.250Z",
     source: "terminal_send",
   } as const;
@@ -209,10 +210,7 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
 
   assert.equal(events.length, 2);
   assert.deepEqual(emittedToolCall.modelArgs, { command: "pwd" });
-  assert.deepEqual(emittedToolCall.clientArgs, {
-    command: "pwd",
-    wait_for: "settled",
-  });
+  assert.deepEqual(emittedToolCall.clientArgs, { command: "pwd" });
   assert.deepEqual(events[0], {
     threadId: "thread-1",
     event: "agent.tool_call",
@@ -220,8 +218,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       turn_id: "turn-1",
       client_id: "tool-client-1",
       call_id: "call-1",
-      name: "terminal.send",
-      args: { command: "pwd", wait_for: "settled" },
+      name: "terminal.run",
+      args: { command: "pwd" },
       started_at: "2026-04-21T19:00:01.000Z",
     },
   });
@@ -231,8 +229,8 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
       pendingTool: {
         client_id: "tool-client-1",
         call_id: "call-1",
-        name: "terminal.send",
-        args: { command: "pwd", wait_for: "settled" },
+        name: "terminal.run",
+        args: { command: "pwd" },
         started_at: "2026-04-21T19:00:01.000Z",
       },
       cursor: "agent.tool_call-cursor",
@@ -243,9 +241,9 @@ test("tool timing is emitted on the stream and persisted only in metadata", asyn
   assert.equal(events[1]?.data.finished_at, "2026-04-21T19:00:04.250Z");
   assert.equal(events[1]?.data.duration_ms, 3250);
   assert.equal(events[1]?.data.duration_source, "service_wall_clock");
-  assert.equal(events[1]?.data.input_dispatched, true);
-  assert.equal(events[1]?.data.command_sent, true);
-  assert.equal(events[1]?.data.enter_requested, true);
+  assert.equal(events[1]?.data.exit_code, 0);
+  assert.equal(events[1]?.data.output, "/repo\n");
+  assert.equal(events[1]?.data.mode, "shell");
   assert.deepEqual((events[1]?.data.message as Record<string, unknown>).metadata, {
     ...execution.payload,
     turn_id: "turn-1",

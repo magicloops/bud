@@ -26,6 +26,9 @@ message BudEnvelope {
   TransportKind transport_kind = 12;
   map<string, string> extensions = 13;
 
+  // 130 carried TerminalReady in terminal proto 0.2; retired by the 0.3 cutover.
+  reserved 130;
+
   oneof payload {
     LegacyJsonPayload legacy_json = 100;
     BudError error = 101;
@@ -45,7 +48,7 @@ message BudEnvelope {
     TerminalObserve terminal_observe = 127;
     TerminalObserveResult terminal_observe_result = 128;
     TerminalOutput terminal_output = 129;
-    TerminalReady terminal_ready = 130;
+    TerminalEvent terminal_event = 131;
     ReconnectReport reconnect_report = 150;
     ReconciliationDecision reconciliation_decision = 151;
     DataAttach data_attach = 170;
@@ -189,6 +192,9 @@ message HeartbeatAck {
 message TerminalEnsure {
   string session_id = 1;
   TerminalEnsureConfig config = 2;
+  // Highest durably stored end offset; the daemon backfills ring-buffered
+  // output from exactly this offset (terminal proto 0.3, docs/proto.md §6.7.2).
+  uint64 resume_from_offset = 3;
   bytes frame_json = 99;
 }
 
@@ -210,7 +216,8 @@ message TerminalStatus {
 message TerminalInput {
   string session_id = 1;
   bytes data = 2;
-  AwaitReady await_ready = 3;
+  // 3 carried AwaitReady in terminal proto 0.2; readiness machinery retired in 0.3.
+  reserved 3;
   bytes frame_json = 99;
 }
 
@@ -227,36 +234,29 @@ message TerminalClose {
   bytes frame_json = 99;
 }
 
-message AwaitReady {
-  bool enabled = 1;
-  uint64 quiescence_ms = 2;
-  uint64 max_wait_ms = 3;
-  bool activity_based = 4;
-  uint64 activity_interval_ms = 5;
-  uint32 activity_stable_count = 6;
-  uint64 activity_initial_delay_ms = 7;
-}
-
 message TerminalSend {
   string session_id = 1;
   string request_id = 2;
   string text = 3;
   bool submit = 4;
   string key = 5;
-  uint64 observe_after_ms = 6;
-  string wait_for = 7;
-  uint64 timeout_ms = 8;
+  // 6-8 carried observe_after_ms / wait_for / timeout_ms in terminal proto 0.2.
+  reserved 6, 7, 8;
+  // "command" | "settled"; empty = resolve on dispatch (transport ack only).
+  string await = 9;
   bytes frame_json = 99;
 }
 
 message TerminalSendResult {
   string session_id = 1;
   string request_id = 2;
-  bool submitted = 3;
-  bytes delta_json = 4;
-  bytes readiness_json = 5;
+  // 3-5, 7 carried submitted / delta_json / readiness_json / host_cwd in terminal proto 0.2.
+  reserved 3, 4, 5, 7;
   string error = 6;
-  string host_cwd = 7;
+  bool dispatched = 8;
+  // JSON-encoded terminating terminal_event {"event": ..., "data": {...}} when
+  // an await mode was requested; absent otherwise.
+  bytes outcome_json = 9;
   bytes frame_json = 99;
 }
 
@@ -265,8 +265,8 @@ message TerminalObserve {
   string request_id = 2;
   string view = 3;
   int32 lines = 4;
-  string wait_for = 5;
-  uint64 timeout_ms = 6;
+  // 5-6 carried wait_for / timeout_ms in terminal proto 0.2.
+  reserved 5, 6;
   bytes frame_json = 99;
 }
 
@@ -275,27 +275,36 @@ message TerminalObserveResult {
   string request_id = 2;
   string view = 3;
   bytes output = 4;
-  uint64 output_bytes = 5;
+  // 5, 8, 9, 11 carried output_bytes / truncated / readiness_json / host_cwd in terminal proto 0.2.
+  reserved 5, 8, 9, 11;
   uint64 lines_captured = 6;
   bool changed = 7;
-  bool truncated = 8;
-  bytes readiness_json = 9;
   string error = 10;
-  string host_cwd = 11;
+  string mode = 12;
+  string integration = 13;
+  bool alt_screen = 14;
+  uint32 cursor_row = 15;
+  uint32 cursor_col = 16;
   bytes frame_json = 99;
 }
 
 message TerminalOutput {
   string session_id = 1;
-  uint64 seq = 2;
+  // 2 carried seq in terminal proto 0.2; byte_offset is the sole coordinate in 0.3.
+  reserved 2;
   bytes data = 3;
   uint64 byte_offset = 4;
   bytes frame_json = 99;
 }
 
-message TerminalReady {
+// Terminal proto 0.3 semantic event stream (docs/proto.md §6.7.3):
+// prompt_ready, command_started, command_finished, mode_changed, settled,
+// output_gap, child_exited. Unknown events must be ignored by consumers.
+message TerminalEvent {
   string session_id = 1;
-  bytes assessment_json = 2;
+  string event = 2;
+  // JSON-encoded event data object (per-event shape).
+  bytes data_json = 3;
   bytes frame_json = 99;
 }
 

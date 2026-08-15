@@ -128,6 +128,7 @@ pub fn encode_typed_json_envelope(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_json_frame_envelope(
     message_id: &str,
     sent_at: &str,
@@ -392,83 +393,11 @@ fn encode_field_level_payload(frame_type: &str, frame: &Value) -> Result<Option<
         "heartbeat" | "heartbeat_ack" => {
             write_optional_string(&mut out, 1, string_value(frame, "session_id"));
         }
-        "terminal_ensure" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_message(
-                &mut out,
-                2,
-                encode_terminal_ensure_config(frame.get("config"))?,
-            );
-        }
-        "terminal_status" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_string(&mut out, 2, string_value(frame, "state"));
-            write_optional_json_bytes(&mut out, 3, frame.get("info"))?;
-        }
-        "terminal_input" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_base64_bytes(&mut out, 2, string_value(frame, "data"))?;
-            write_optional_message(&mut out, 3, encode_await_ready(frame.get("await_ready"))?);
-        }
-        "terminal_resize" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_u32(&mut out, 2, u64_value(frame, "cols"));
-            write_optional_u32(&mut out, 3, u64_value(frame, "rows"));
-        }
-        "terminal_close" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_string(&mut out, 2, string_value(frame, "reason"));
-        }
-        "terminal_send" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_string(&mut out, 2, string_value(frame, "request_id"));
-            write_optional_string(&mut out, 3, string_value(frame, "text"));
-            write_optional_bool(&mut out, 4, bool_value(frame, "submit"));
-            write_optional_string(&mut out, 5, string_value(frame, "key"));
-            write_optional_u64(&mut out, 6, u64_value(frame, "observe_after_ms"));
-            write_optional_string(&mut out, 7, string_value(frame, "wait_for"));
-            write_optional_u64(&mut out, 8, u64_value(frame, "timeout_ms"));
-        }
-        "terminal_send_result" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_string(&mut out, 2, string_value(frame, "request_id"));
-            write_optional_bool(&mut out, 3, bool_value(frame, "submitted"));
-            write_optional_json_bytes(&mut out, 4, frame.get("delta"))?;
-            write_optional_json_bytes(&mut out, 5, frame.get("readiness"))?;
-            write_optional_nullable_string(&mut out, 6, frame.get("error"));
-            write_optional_string(&mut out, 7, string_value(frame, "host_cwd"));
-        }
-        "terminal_observe" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_string(&mut out, 2, string_value(frame, "request_id"));
-            write_optional_string(&mut out, 3, string_value(frame, "view"));
-            write_optional_i32(&mut out, 4, i64_value(frame, "lines"));
-            write_optional_string(&mut out, 5, string_value(frame, "wait_for"));
-            write_optional_u64(&mut out, 6, u64_value(frame, "timeout_ms"));
-        }
-        "terminal_observe_result" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_string(&mut out, 2, string_value(frame, "request_id"));
-            write_optional_string(&mut out, 3, string_value(frame, "view"));
-            write_optional_base64_bytes(&mut out, 4, string_value(frame, "output"))?;
-            write_optional_u64(&mut out, 5, u64_value(frame, "output_bytes"));
-            write_optional_u64(&mut out, 6, u64_value(frame, "lines_captured"));
-            write_optional_bool(&mut out, 7, bool_value(frame, "changed"));
-            write_optional_bool(&mut out, 8, bool_value(frame, "truncated"));
-            write_optional_json_bytes(&mut out, 9, frame.get("readiness"))?;
-            write_optional_nullable_string(&mut out, 10, frame.get("error"));
-            write_optional_string(&mut out, 11, string_value(frame, "host_cwd"));
-        }
-        "terminal_output" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_u64(&mut out, 2, u64_value(frame, "seq"));
-            write_optional_base64_bytes(&mut out, 3, string_value(frame, "data"))?;
-            write_optional_u64(&mut out, 4, u64_value(frame, "byte_offset"));
-        }
-        "terminal_ready" => {
-            write_optional_string(&mut out, 1, string_value(frame, "session_id"));
-            write_optional_json_bytes(&mut out, 2, frame.get("assessment"))?;
-        }
+        // Proto 0.3 terminal frames are carried as frame_json inside their
+        // typed payload messages (or the legacy_json payload for types
+        // without a oneof slot, e.g. `terminal_event`). Field-level protobuf
+        // encoding for terminal frames retired with the 0.2 contract; the
+        // matching decode branches below remain as inbound tolerance only.
         "reconnect_report" => {
             write_optional_string(&mut out, 1, string_value(frame, "bud_id"));
             write_optional_string(&mut out, 2, string_value(frame, "device_session_id"));
@@ -630,27 +559,11 @@ fn decode_field_level_payload(
                         "config".to_string(),
                         decode_terminal_ensure_config(reader.read_bytes_for_wire_type(wire_type)?)?,
                     );
-                } else {
-                    reader.skip(wire_type)?;
-                }
-            }
-            "terminal_status" => {
-                if field_number == 1 {
-                    insert_string(
-                        &mut frame,
-                        "session_id",
-                        reader.read_string_for_wire_type(wire_type)?,
-                    );
-                } else if field_number == 2 {
-                    insert_string(
-                        &mut frame,
-                        "state",
-                        reader.read_string_for_wire_type(wire_type)?,
-                    );
                 } else if field_number == 3 {
-                    frame.insert(
-                        "info".to_string(),
-                        serde_json::from_slice(reader.read_bytes_for_wire_type(wire_type)?)?,
+                    insert_u64(
+                        &mut frame,
+                        "resume_from_offset",
+                        reader.read_varint_for_wire_type(wire_type)?,
                     );
                 } else {
                     reader.skip(wire_type)?;
@@ -669,12 +582,8 @@ fn decode_field_level_payload(
                         "data",
                         BASE64_STANDARD.encode(reader.read_bytes_for_wire_type(wire_type)?),
                     );
-                } else if field_number == 3 {
-                    frame.insert(
-                        "await_ready".to_string(),
-                        decode_await_ready(reader.read_bytes_for_wire_type(wire_type)?)?,
-                    );
                 } else {
+                    // Field 3 was the retired 0.2 `await_ready` message.
                     reader.skip(wire_type)?;
                 }
             }
@@ -721,62 +630,8 @@ fn decode_field_level_payload(
             "terminal_send" => {
                 read_terminal_send_field(&mut frame, &mut reader, field_number, wire_type)?
             }
-            "terminal_send_result" => {
-                read_terminal_send_result_field(&mut frame, &mut reader, field_number, wire_type)?
-            }
             "terminal_observe" => {
                 read_terminal_observe_field(&mut frame, &mut reader, field_number, wire_type)?
-            }
-            "terminal_observe_result" => read_terminal_observe_result_field(
-                &mut frame,
-                &mut reader,
-                field_number,
-                wire_type,
-            )?,
-            "terminal_output" => {
-                if field_number == 1 {
-                    insert_string(
-                        &mut frame,
-                        "session_id",
-                        reader.read_string_for_wire_type(wire_type)?,
-                    );
-                } else if field_number == 2 {
-                    insert_u64(
-                        &mut frame,
-                        "seq",
-                        reader.read_varint_for_wire_type(wire_type)?,
-                    );
-                } else if field_number == 3 {
-                    insert_string(
-                        &mut frame,
-                        "data",
-                        BASE64_STANDARD.encode(reader.read_bytes_for_wire_type(wire_type)?),
-                    );
-                } else if field_number == 4 {
-                    insert_u64(
-                        &mut frame,
-                        "byte_offset",
-                        reader.read_varint_for_wire_type(wire_type)?,
-                    );
-                } else {
-                    reader.skip(wire_type)?;
-                }
-            }
-            "terminal_ready" => {
-                if field_number == 1 {
-                    insert_string(
-                        &mut frame,
-                        "session_id",
-                        reader.read_string_for_wire_type(wire_type)?,
-                    );
-                } else if field_number == 2 {
-                    frame.insert(
-                        "assessment".to_string(),
-                        serde_json::from_slice(reader.read_bytes_for_wire_type(wire_type)?)?,
-                    );
-                } else {
-                    reader.skip(wire_type)?;
-                }
             }
             "reconnect_report" => {
                 read_reconnect_report_field(&mut frame, &mut reader, field_number, wire_type)?
@@ -834,26 +689,7 @@ fn decode_field_level_payload(
         }
     }
 
-    if (frame_type == "terminal_send_result" || frame_type == "terminal_observe_result")
-        && !frame.contains_key("error")
-    {
-        frame.insert("error".to_string(), Value::Null);
-    }
-
     Ok(Value::Object(frame))
-}
-
-fn encode_terminal_ensure_config(value: Option<&Value>) -> Result<Option<Vec<u8>>> {
-    let Some(value) = value.filter(|value| value.is_object()) else {
-        return Ok(None);
-    };
-    let mut out = Vec::new();
-    write_optional_string(&mut out, 1, string_value(value, "shell"));
-    write_optional_string(&mut out, 2, string_value(value, "cwd"));
-    write_string_map(&mut out, 3, string_map_value(value.get("env"))?);
-    write_optional_u32(&mut out, 4, u64_value(value, "cols"));
-    write_optional_u32(&mut out, 5, u64_value(value, "rows"));
-    Ok(Some(out))
 }
 
 fn decode_terminal_ensure_config(bytes: &[u8]) -> Result<Value> {
@@ -891,68 +727,6 @@ fn decode_terminal_ensure_config(bytes: &[u8]) -> Result<Value> {
         }
     }
     Ok(Value::Object(config))
-}
-
-fn encode_await_ready(value: Option<&Value>) -> Result<Option<Vec<u8>>> {
-    let Some(value) = value.filter(|value| value.is_object()) else {
-        return Ok(None);
-    };
-    let mut out = Vec::new();
-    write_optional_bool(&mut out, 1, bool_value(value, "enabled"));
-    write_optional_u64(&mut out, 2, u64_value(value, "quiescence_ms"));
-    write_optional_u64(&mut out, 3, u64_value(value, "max_wait_ms"));
-    write_optional_bool(&mut out, 4, bool_value(value, "activity_based"));
-    write_optional_u64(&mut out, 5, u64_value(value, "activity_interval_ms"));
-    write_optional_u32(&mut out, 6, u64_value(value, "activity_stable_count"));
-    write_optional_u64(&mut out, 7, u64_value(value, "activity_initial_delay_ms"));
-    Ok(Some(out))
-}
-
-fn decode_await_ready(bytes: &[u8]) -> Result<Value> {
-    let mut reader = ProtoReader::new(bytes);
-    let mut await_ready = Map::new();
-    while !reader.done() {
-        let (field_number, wire_type) = reader.read_tag()?;
-        match field_number {
-            1 => insert_bool(
-                &mut await_ready,
-                "enabled",
-                reader.read_varint_for_wire_type(wire_type)? != 0,
-            ),
-            2 => insert_u64(
-                &mut await_ready,
-                "quiescence_ms",
-                reader.read_varint_for_wire_type(wire_type)?,
-            ),
-            3 => insert_u64(
-                &mut await_ready,
-                "max_wait_ms",
-                reader.read_varint_for_wire_type(wire_type)?,
-            ),
-            4 => insert_bool(
-                &mut await_ready,
-                "activity_based",
-                reader.read_varint_for_wire_type(wire_type)? != 0,
-            ),
-            5 => insert_u64(
-                &mut await_ready,
-                "activity_interval_ms",
-                reader.read_varint_for_wire_type(wire_type)?,
-            ),
-            6 => insert_u64(
-                &mut await_ready,
-                "activity_stable_count",
-                reader.read_varint_for_wire_type(wire_type)?,
-            ),
-            7 => insert_u64(
-                &mut await_ready,
-                "activity_initial_delay_ms",
-                reader.read_varint_for_wire_type(wire_type)?,
-            ),
-            _ => reader.skip(wire_type)?,
-        }
-    }
-    Ok(Value::Object(await_ready))
 }
 
 fn encode_operation_status(value: &Value) -> Result<Vec<u8>> {
@@ -1234,66 +1008,9 @@ fn read_terminal_send_field(
             reader.read_varint_for_wire_type(wire_type)? != 0,
         ),
         5 => insert_string(frame, "key", reader.read_string_for_wire_type(wire_type)?),
-        6 => insert_u64(
-            frame,
-            "observe_after_ms",
-            reader.read_varint_for_wire_type(wire_type)?,
-        ),
-        7 => insert_string(
-            frame,
-            "wait_for",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
-        8 => insert_u64(
-            frame,
-            "timeout_ms",
-            reader.read_varint_for_wire_type(wire_type)?,
-        ),
-        _ => reader.skip(wire_type)?,
-    }
-    Ok(())
-}
-
-fn read_terminal_send_result_field(
-    frame: &mut Map<String, Value>,
-    reader: &mut ProtoReader<'_>,
-    field_number: u32,
-    wire_type: u8,
-) -> Result<()> {
-    match field_number {
-        1 => insert_string(
-            frame,
-            "session_id",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
-        2 => insert_string(
-            frame,
-            "request_id",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
-        3 => insert_bool(
-            frame,
-            "submitted",
-            reader.read_varint_for_wire_type(wire_type)? != 0,
-        ),
-        4 => {
-            frame.insert(
-                "delta".to_string(),
-                serde_json::from_slice(reader.read_bytes_for_wire_type(wire_type)?)?,
-            );
-        }
-        5 => {
-            frame.insert(
-                "readiness".to_string(),
-                serde_json::from_slice(reader.read_bytes_for_wire_type(wire_type)?)?,
-            );
-        }
-        6 => insert_string(frame, "error", reader.read_string_for_wire_type(wire_type)?),
-        7 => insert_string(
-            frame,
-            "host_cwd",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
+        // Fields 6-8 were the retired 0.2 wait vocabulary
+        // (observe_after_ms / wait_for / timeout_ms): skipped.
+        9 => insert_string(frame, "await", reader.read_string_for_wire_type(wire_type)?),
         _ => reader.skip(wire_type)?,
     }
     Ok(())
@@ -1322,76 +1039,8 @@ fn read_terminal_observe_field(
             "lines",
             decode_i32_varint(reader.read_varint_for_wire_type(wire_type)?),
         ),
-        5 => insert_string(
-            frame,
-            "wait_for",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
-        6 => insert_u64(
-            frame,
-            "timeout_ms",
-            reader.read_varint_for_wire_type(wire_type)?,
-        ),
-        _ => reader.skip(wire_type)?,
-    }
-    Ok(())
-}
-
-fn read_terminal_observe_result_field(
-    frame: &mut Map<String, Value>,
-    reader: &mut ProtoReader<'_>,
-    field_number: u32,
-    wire_type: u8,
-) -> Result<()> {
-    match field_number {
-        1 => insert_string(
-            frame,
-            "session_id",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
-        2 => insert_string(
-            frame,
-            "request_id",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
-        3 => insert_string(frame, "view", reader.read_string_for_wire_type(wire_type)?),
-        4 => insert_string(
-            frame,
-            "output",
-            BASE64_STANDARD.encode(reader.read_bytes_for_wire_type(wire_type)?),
-        ),
-        5 => insert_u64(
-            frame,
-            "output_bytes",
-            reader.read_varint_for_wire_type(wire_type)?,
-        ),
-        6 => insert_u64(
-            frame,
-            "lines_captured",
-            reader.read_varint_for_wire_type(wire_type)?,
-        ),
-        7 => insert_bool(
-            frame,
-            "changed",
-            reader.read_varint_for_wire_type(wire_type)? != 0,
-        ),
-        8 => insert_bool(
-            frame,
-            "truncated",
-            reader.read_varint_for_wire_type(wire_type)? != 0,
-        ),
-        9 => {
-            frame.insert(
-                "readiness".to_string(),
-                serde_json::from_slice(reader.read_bytes_for_wire_type(wire_type)?)?,
-            );
-        }
-        10 => insert_string(frame, "error", reader.read_string_for_wire_type(wire_type)?),
-        11 => insert_string(
-            frame,
-            "host_cwd",
-            reader.read_string_for_wire_type(wire_type)?,
-        ),
+        // Fields 5-6 were the retired 0.2 wait vocabulary
+        // (wait_for / timeout_ms): skipped.
         _ => reader.skip(wire_type)?,
     }
     Ok(())
@@ -1637,17 +1286,15 @@ fn is_field_level_frame_type(frame_type: &str) -> bool {
             | "hello_proof"
             | "heartbeat"
             | "heartbeat_ack"
+            // Inbound (service->daemon) terminal frames only: decode
+            // tolerance for field-level payloads. Outbound terminal frames
+            // always travel as frame_json / legacy_json under proto 0.3.
             | "terminal_ensure"
-            | "terminal_status"
             | "terminal_input"
             | "terminal_resize"
             | "terminal_close"
             | "terminal_send"
-            | "terminal_send_result"
             | "terminal_observe"
-            | "terminal_observe_result"
-            | "terminal_output"
-            | "terminal_ready"
             | "reconnect_report"
             | "reconciliation_decision"
             | "data_attach"
@@ -1688,10 +1335,6 @@ fn bool_value(value: &Value, field: &str) -> Option<bool> {
 
 fn u64_value(value: &Value, field: &str) -> Option<u64> {
     value.get(field).and_then(Value::as_u64)
-}
-
-fn i64_value(value: &Value, field: &str) -> Option<i64> {
-    value.get(field).and_then(Value::as_i64)
 }
 
 fn string_array_value<'a>(value: &'a Value, field: &str) -> Vec<&'a str> {
@@ -1907,7 +1550,8 @@ fn payload_field_for_frame_type(frame_type: &str) -> Option<u32> {
         "terminal_observe" => 127,
         "terminal_observe_result" => 128,
         "terminal_output" => 129,
-        "terminal_ready" => 130,
+        // 130 (terminal_ready) retired with proto 0.3; terminal_event has no
+        // oneof slot and travels via the legacy_json payload.
         "reconnect_report" => 150,
         "reconciliation_decision" => 151,
         "data_attach" => 170,
@@ -1950,7 +1594,6 @@ fn frame_type_for_payload_field(field_number: u32) -> Option<&'static str> {
         127 => "terminal_observe",
         128 => "terminal_observe_result",
         129 => "terminal_output",
-        130 => "terminal_ready",
         150 => "reconnect_report",
         151 => "reconciliation_decision",
         170 => "data_attach",
@@ -1976,7 +1619,7 @@ fn frame_type_for_payload_field(field_number: u32) -> Option<&'static str> {
 
 fn proto_for_frame_type(frame_type: &str) -> &'static str {
     if frame_type.starts_with("terminal_") {
-        "0.2"
+        "0.3"
     } else {
         "0.1"
     }
@@ -2036,12 +1679,6 @@ fn write_optional_string(out: &mut Vec<u8>, field_number: u32, value: Option<&st
     }
 }
 
-fn write_optional_nullable_string(out: &mut Vec<u8>, field_number: u32, value: Option<&Value>) {
-    if let Some(value) = value.and_then(Value::as_str) {
-        write_string(out, field_number, value);
-    }
-}
-
 fn write_optional_bool(out: &mut Vec<u8>, field_number: u32, value: Option<bool>) {
     if let Some(value) = value {
         write_varint_field(out, field_number, if value { 1 } else { 0 });
@@ -2058,18 +1695,6 @@ fn write_optional_u64(out: &mut Vec<u8>, field_number: u32, value: Option<u64>) 
     if let Some(value) = value {
         write_varint_field(out, field_number, value);
     }
-}
-
-fn write_optional_i32(out: &mut Vec<u8>, field_number: u32, value: Option<i64>) {
-    if let Some(value) =
-        value.filter(|value| *value >= i32::MIN as i64 && *value <= i32::MAX as i64)
-    {
-        write_varint_field(out, field_number, encode_i32_varint(value as i32));
-    }
-}
-
-fn encode_i32_varint(value: i32) -> u64 {
-    (value as i64) as u64
 }
 
 fn decode_i32_varint(value: u64) -> i32 {
@@ -2246,12 +1871,13 @@ mod tests {
     #[test]
     fn encodes_and_decodes_legacy_json_frame() {
         let frame = json!({
-            "proto": "0.2",
+            "proto": "0.3",
             "type": "terminal_ensure",
             "id": "msg_test",
             "ts": 1777132800000_u64,
             "ext": {},
-            "session_id": "sess_test"
+            "session_id": "sess_test",
+            "resume_from_offset": 16384_u64
         });
 
         let bytes = encode_legacy_json_frame(&frame).expect("encode frame");
@@ -2262,33 +1888,110 @@ mod tests {
     }
 
     #[test]
-    fn encodes_known_frames_with_typed_payload_field() {
+    fn terminal_frames_encode_as_frame_json_under_typed_payload() {
+        // Proto 0.3: terminal frames keep their typed oneof slot but always
+        // carry frame_json (field-level encoding retired with 0.2).
+        let frames = vec![
+            (
+                json!({
+                    "proto": "0.3",
+                    "type": "terminal_ensure",
+                    "id": "msg_test",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "session_id": "sess_test",
+                    "resume_from_offset": 42_u64
+                }),
+                120,
+            ),
+            (
+                json!({
+                    "proto": "0.3",
+                    "type": "terminal_send_result",
+                    "id": "msg_send_result",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "session_id": "sess_test",
+                    "request_id": "req_test",
+                    "dispatched": true,
+                    "outcome": {
+                        "event": "command_finished",
+                        "data": {
+                            "command_id": "cmd_01H",
+                            "exit_code": 0,
+                            "duration_ms": 412,
+                            "output_byte_start": 0,
+                            "output_byte_end": 640
+                        }
+                    },
+                    "error": null
+                }),
+                126,
+            ),
+            (
+                json!({
+                    "proto": "0.3",
+                    "type": "terminal_output",
+                    "id": "msg_output",
+                    "ts": 1777132800000_u64,
+                    "ext": {},
+                    "session_id": "sess_test",
+                    "byte_offset": 16384_u64,
+                    "data": "aGVsbG8="
+                }),
+                129,
+            ),
+        ];
+
+        for (frame, payload_field) in frames {
+            let bytes = encode_legacy_json_frame(&frame).expect("encode frame");
+            assert_eq!(top_level_payload_fields(&bytes), vec![payload_field]);
+            assert!(nested_payload_contains_field(
+                &bytes,
+                payload_field,
+                TYPED_FRAME_JSON_FIELD
+            ));
+
+            let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
+            let decoded_value: Value = serde_json::from_str(&decoded).expect("decode json");
+            assert_eq!(decoded_value, frame);
+        }
+    }
+
+    #[test]
+    fn terminal_event_travels_via_legacy_json_payload() {
+        // terminal_event has no oneof slot in bud.proto; it must use the
+        // self-describing legacy_json payload (field 100).
         let frame = json!({
-            "proto": "0.2",
-            "type": "terminal_ensure",
-            "id": "msg_test",
+            "proto": "0.3",
+            "type": "terminal_event",
+            "id": "msg_event",
             "ts": 1777132800000_u64,
             "ext": {},
-            "session_id": "sess_test"
+            "session_id": "sess_test",
+            "event": "prompt_ready",
+            "data": { "cwd": "/Users/adam/bud" }
         });
 
         let bytes = encode_legacy_json_frame(&frame).expect("encode frame");
-        assert_eq!(top_level_payload_fields(&bytes), vec![120]);
-        assert!(!nested_payload_contains_field(
-            &bytes,
-            120,
-            TYPED_FRAME_JSON_FIELD
-        ));
+        assert_eq!(top_level_payload_fields(&bytes), vec![100]);
 
-        let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
-        let decoded_value: Value = serde_json::from_str(&decoded).expect("decode json");
-        assert_eq!(decoded_value, frame);
+        let decoded = decode_legacy_json_envelope(&bytes).expect("decode frame");
+        assert_eq!(
+            decoded.payload.frame_type.as_deref(),
+            Some("terminal_event")
+        );
+        assert_eq!(decoded.payload.proto.as_deref(), Some("0.3"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&decoded.payload.json).expect("json"),
+            frame
+        );
     }
 
     #[test]
     fn keeps_typed_json_envelope_helper_on_frame_json_for_grpc_adapter() {
         let frame = json!({
-            "proto": "0.2",
+            "proto": "0.3",
             "type": "terminal_ensure",
             "id": "msg_test",
             "ts": 1777132800000_u64,
@@ -2302,7 +2005,7 @@ mod tests {
             TrafficClass::Interactive,
             EnvelopeTransportKind::H2Grpc,
             Some("terminal_ensure"),
-            Some("0.2"),
+            Some("0.3"),
             serde_json::to_vec(&frame).expect("frame json").as_slice(),
         )
         .expect("encode frame");
@@ -2319,71 +2022,81 @@ mod tests {
         assert_eq!(decoded_value, frame);
     }
 
-    #[test]
-    fn encodes_terminal_result_with_field_level_payload() {
-        let frame = json!({
-            "proto": "0.2",
-            "type": "terminal_send_result",
-            "id": "msg_terminal_send_result",
-            "ts": 1777132800000_u64,
-            "ext": {},
-            "session_id": "sess_test",
-            "request_id": "req_test",
-            "submitted": true,
-            "delta": {
-                "changed": true,
-                "text": "hello",
-                "truncated": false
-            },
-            "readiness": {
-                "ready": true,
-                "confidence": 0.94,
-                "trigger": "prompt"
-            },
-            "error": null,
-            "host_cwd": "/Users/adam/bud"
-        });
-
-        let bytes = encode_legacy_json_frame(&frame).expect("encode frame");
-        assert_eq!(top_level_payload_fields(&bytes), vec![126]);
-        assert!(!nested_payload_contains_field(
-            &bytes,
-            126,
-            TYPED_FRAME_JSON_FIELD
-        ));
-
-        let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
-        let decoded_value: Value = serde_json::from_str(&decoded).expect("decode json");
-        assert_eq!(decoded_value, frame);
+    fn typed_envelope_with_payload(payload_field: u32, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_uint32(&mut out, 1, BUD_ENVELOPE_VERSION);
+        write_string(&mut out, 2, "msg_field_level");
+        write_string(&mut out, 10, "2026-08-15T16:00:00.000Z");
+        write_enum(&mut out, 11, TrafficClass::Interactive as u64);
+        write_enum(&mut out, 12, EnvelopeTransportKind::WebSocket as u64);
+        write_bytes(&mut out, payload_field, payload);
+        out
     }
 
     #[test]
-    fn terminal_observe_negative_lines_round_trips_field_level_payload() {
-        let frame = json!({
-            "proto": "0.2",
-            "type": "terminal_observe",
-            "id": "msg_terminal_observe",
-            "ts": 1777132800000_u64,
-            "ext": {},
-            "session_id": "sess_test",
-            "request_id": "req_test",
-            "view": "delta",
-            "lines": -50,
-            "wait_for": "none",
-            "timeout_ms": 1000
-        });
-
-        let bytes = encode_legacy_json_frame(&frame).expect("encode frame");
-        assert_eq!(top_level_payload_fields(&bytes), vec![127]);
-        assert!(!nested_payload_contains_field(
-            &bytes,
-            127,
-            TYPED_FRAME_JSON_FIELD
-        ));
+    fn decodes_inbound_field_level_terminal_send_with_await() {
+        // Inbound decode tolerance: a service encoder may still use
+        // field-level payloads; new 0.3 fields live at the next free numbers
+        // (terminal_send.await = 9, terminal_ensure.resume_from_offset = 3).
+        let mut payload = Vec::new();
+        write_string(&mut payload, 1, "sess_test");
+        write_string(&mut payload, 2, "req_test");
+        write_string(&mut payload, 3, "git status");
+        write_varint_field(&mut payload, 4, 1); // submit = true
+        write_string(&mut payload, 9, "command"); // await
+        let bytes = typed_envelope_with_payload(125, &payload);
 
         let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
-        let decoded_value: Value = serde_json::from_str(&decoded).expect("decode json");
-        assert_eq!(decoded_value, frame);
+        let frame: Value = serde_json::from_str(&decoded).expect("json");
+        assert_eq!(
+            frame.get("type").and_then(Value::as_str),
+            Some("terminal_send")
+        );
+        assert_eq!(frame.get("proto").and_then(Value::as_str), Some("0.3"));
+        assert_eq!(
+            frame.get("text").and_then(Value::as_str),
+            Some("git status")
+        );
+        assert_eq!(frame.get("submit").and_then(Value::as_bool), Some(true));
+        assert_eq!(frame.get("await").and_then(Value::as_str), Some("command"));
+    }
+
+    #[test]
+    fn decodes_inbound_field_level_terminal_ensure_resume_offset() {
+        let mut payload = Vec::new();
+        write_string(&mut payload, 1, "sess_test");
+        write_varint_field(&mut payload, 3, 16384); // resume_from_offset
+        let bytes = typed_envelope_with_payload(120, &payload);
+
+        let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
+        let frame: Value = serde_json::from_str(&decoded).expect("json");
+        assert_eq!(
+            frame.get("type").and_then(Value::as_str),
+            Some("terminal_ensure")
+        );
+        assert_eq!(
+            frame.get("resume_from_offset").and_then(Value::as_u64),
+            Some(16384)
+        );
+    }
+
+    #[test]
+    fn decodes_inbound_field_level_terminal_observe_lines() {
+        let mut payload = Vec::new();
+        write_string(&mut payload, 1, "sess_test");
+        write_string(&mut payload, 2, "req_test");
+        write_string(&mut payload, 3, "history");
+        write_varint_field(&mut payload, 4, 500);
+        let bytes = typed_envelope_with_payload(127, &payload);
+
+        let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
+        let frame: Value = serde_json::from_str(&decoded).expect("json");
+        assert_eq!(
+            frame.get("type").and_then(Value::as_str),
+            Some("terminal_observe")
+        );
+        assert_eq!(frame.get("view").and_then(Value::as_str), Some("history"));
+        assert_eq!(frame.get("lines").and_then(Value::as_i64), Some(500));
     }
 
     #[test]
@@ -2625,7 +2338,7 @@ mod tests {
             TrafficClass::Interactive,
             EnvelopeTransportKind::WebSocket,
             Some("terminal_ensure"),
-            Some("0.2"),
+            Some("0.3"),
             frame_json.as_bytes(),
         )
         .expect("encode fixture");

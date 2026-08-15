@@ -3,6 +3,168 @@ import { TERMINAL_PROTO_VERSION } from "../config.js";
 export const TERMINAL_STATES = ["none", "creating", "ready", "active", "idle", "closed"] as const;
 export type TerminalState = (typeof TERMINAL_STATES)[number];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Proto 0.3 terminal vocabulary (docs/proto.md §6.7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TerminalMode = "shell" | "tui" | "repl" | "unknown";
+export type TerminalIntegration = "osc133" | "sentinel" | "none";
+export type TerminalObservationView = "delta" | "screen" | "history";
+
+/**
+ * Await modes for `terminal_send` (proto 0.3). Replaces the retired 0.2
+ * `wait_for` vocabulary. Omitted = resolve on dispatch (transport ack only).
+ */
+export type TerminalSendAwait = "command" | "settled";
+
+export const TERMINAL_EVENT_NAMES = [
+  "prompt_ready",
+  "command_started",
+  "command_finished",
+  "mode_changed",
+  "settled",
+  "output_gap",
+  "child_exited",
+] as const;
+export type TerminalEventName = (typeof TERMINAL_EVENT_NAMES)[number];
+
+/**
+ * A terminating event mirrored inside `terminal_send_result.outcome` when the
+ * send carried an `await` mode, and the payload shape of `terminal_event`
+ * frames. Unknown `event` values must be tolerated (additive evolution).
+ */
+export interface TerminalEventOutcome {
+  event: string;
+  data: Record<string, unknown>;
+}
+
+export interface TerminalEnvelope {
+  type: string;
+  proto: typeof TERMINAL_PROTO_VERSION;
+  id: string;
+  ts: number;
+  ext?: Record<string, unknown>;
+}
+
+export interface TerminalEnsureMessage extends TerminalEnvelope {
+  type: "terminal_ensure";
+  session_id: string;
+  config?: {
+    shell?: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    cols?: number;
+    rows?: number;
+  };
+  /**
+   * Highest durably stored end offset for the session; the daemon backfills
+   * ring-buffered output from exactly this offset before live output.
+   */
+  resume_from_offset?: number;
+}
+
+export interface TerminalInputMessage extends TerminalEnvelope {
+  type: "terminal_input";
+  session_id: string;
+  data: string; // base64
+}
+
+export interface TerminalResizeMessage extends TerminalEnvelope {
+  type: "terminal_resize";
+  session_id: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalCloseMessage extends TerminalEnvelope {
+  type: "terminal_close";
+  session_id: string;
+  reason: string;
+}
+
+export interface TerminalStatusMessage extends TerminalEnvelope {
+  type: "terminal_status";
+  session_id: string;
+  state: TerminalState | "none";
+  info?: {
+    pid?: number;
+    cwd?: string;
+    cols?: number;
+    rows?: number;
+    ring_next_offset?: number;
+    mode?: TerminalMode;
+    integration?: TerminalIntegration;
+  };
+}
+
+export interface TerminalOutputMessage extends TerminalEnvelope {
+  type: "terminal_output";
+  session_id: string;
+  data: string; // base64
+  /** Offset of the first byte of `data`, absolute from session start. */
+  byte_offset: number;
+}
+
+export interface TerminalEventMessage extends TerminalEnvelope {
+  type: "terminal_event";
+  session_id: string;
+  event: string;
+  data: Record<string, unknown>;
+}
+
+export interface TerminalSendMessage extends TerminalEnvelope {
+  type: "terminal_send";
+  session_id: string;
+  request_id: string;
+  text?: string;
+  submit?: boolean;
+  key?: string;
+  await?: TerminalSendAwait;
+}
+
+export interface TerminalSendResultMessage extends TerminalEnvelope {
+  type: "terminal_send_result";
+  session_id: string;
+  request_id: string;
+  dispatched: boolean;
+  outcome: TerminalEventOutcome | null;
+  error: string | null;
+}
+
+export interface TerminalObserveMessage extends TerminalEnvelope {
+  type: "terminal_observe";
+  session_id: string;
+  request_id: string;
+  view?: TerminalObservationView;
+  lines?: number;
+}
+
+export interface TerminalObserveResultMessage extends TerminalEnvelope {
+  type: "terminal_observe_result";
+  session_id: string;
+  request_id: string;
+  view: TerminalObservationView;
+  output: string; // base64 text payload
+  lines_captured: number;
+  changed?: boolean | null;
+  mode?: TerminalMode;
+  integration?: TerminalIntegration;
+  alt_screen?: boolean;
+  cursor_row?: number;
+  cursor_col?: number;
+  error: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy 0.2 vocabulary (retired)
+//
+// These types no longer appear anywhere on the Bud↔Service wire, in the
+// terminal runtime, or in the agent tool layer (the Phase 2.5 agent-tools
+// rework removed the last src/agent/** uses). Only freshness.ts still accepts
+// a readiness-shaped record in its watermark helpers; delete these together
+// with that cleanup.
+// ─────────────────────────────────────────────────────────────────────────────
+
 export type TerminalPromptType =
   | "shell"
   | "python"
@@ -22,91 +184,8 @@ export type TerminalReadyTrigger =
   | "activity_stable"
   | "changed"
   | "settled";
-export type TerminalWaitFor =
-  | "none"
-  | "shell_ready"
-  | "changed"
-  | "settled";
-export type TerminalObservationView = "delta" | "screen" | "history";
 
-export interface TerminalDelta {
-  changed: boolean;
-  text: string;
-  truncated: boolean;
-}
-
-export interface TerminalDeltaMessage {
-  changed: boolean;
-  text: string;
-  truncated: boolean;
-}
-
-export interface TerminalEnvelope {
-  type: string;
-  proto: typeof TERMINAL_PROTO_VERSION;
-  id: string;
-  ts: number;
-  ext?: Record<string, unknown>;
-}
-
-export interface TerminalEnsureMessage extends TerminalEnvelope {
-  type: "terminal_ensure";
-  config?: {
-    shell?: string;
-    cwd?: string;
-    env?: Record<string, string>;
-    cols?: number;
-    rows?: number;
-  };
-}
-
-export interface TerminalInputMessage extends TerminalEnvelope {
-  type: "terminal_input";
-  data: string; // base64
-  await_ready: {
-    enabled: boolean;
-    quiescence_ms?: number;
-    max_wait_ms?: number;
-    // Activity-based detection for TUI/REPL apps (e.g., Claude Code)
-    activity_based?: boolean;
-    activity_interval_ms?: number;      // Default: 5000ms between checks
-    activity_stable_count?: number;     // Default: 2 consecutive stable checks
-    activity_initial_delay_ms?: number; // Default: 2000ms before first check
-  };
-}
-
-export interface TerminalResizeMessage extends TerminalEnvelope {
-  type: "terminal_resize";
-  cols: number;
-  rows: number;
-}
-
-export interface TerminalCloseMessage extends TerminalEnvelope {
-  type: "terminal_close";
-  reason: string;
-}
-
-export interface TerminalStatusMessage extends TerminalEnvelope {
-  type: "terminal_status";
-  state: TerminalState | "none";
-  info?: {
-    pid?: number;
-    shell?: string;
-    cwd?: string;
-    cols?: number;
-    rows?: number;
-    output_log_bytes?: number;
-    started_at?: string;
-    last_activity_at?: string;
-  };
-}
-
-export interface TerminalOutputMessage extends TerminalEnvelope {
-  type: "terminal_output";
-  seq: number;
-  data: string; // base64
-  byte_offset: number;
-}
+export type TerminalWaitFor = "none" | "shell_ready" | "changed" | "settled";
 
 export interface ReadinessHints {
   looks_like_prompt: boolean;
@@ -124,84 +203,20 @@ export interface ReadinessAssessment {
   prompt_type?: TerminalPromptType;
   hints: ReadinessHints;
   quiet_for_ms?: number;
-  // Activity-based detection metrics (when trigger is "activity_stable" or "timeout")
-  activity_checks?: number;  // Total capture-pane comparisons performed
-  stable_checks?: number;    // Consecutive stable (unchanged) comparisons
+  activity_checks?: number;
+  stable_checks?: number;
 }
 
-export interface TerminalReadyMessage extends TerminalEnvelope {
-  type: "terminal_ready";
-  assessment: ReadinessAssessment;
+export interface TerminalDelta {
+  changed: boolean;
+  text: string;
+  truncated: boolean;
 }
 
-export interface TerminalSendMessage extends TerminalEnvelope {
-  type: "terminal_send";
-  session_id: string;
-  request_id: string;
-  text?: string;
-  submit?: boolean;
-  key?: string;
-  // Compatibility alias for older callers during rollout.
-  keys?: string[];
-  observe_after_ms?: number;
-  wait_for?: TerminalWaitFor;
-  timeout_ms?: number;
-}
-
-export interface TerminalSendResultMessage extends TerminalEnvelope {
-  type: "terminal_send_result";
-  session_id: string;
-  request_id: string;
-  submitted: boolean;
-  delta?: TerminalDeltaMessage | null;
-  readiness: ReadinessAssessment;
-  error: string | null;
-  host_cwd?: string;
-}
-
-export interface TerminalObserveMessage extends TerminalEnvelope {
-  type: "terminal_observe";
-  session_id: string;
-  request_id: string;
-  view?: TerminalObservationView;
-  lines?: number;
-  wait_for?: TerminalWaitFor;
-  timeout_ms?: number;
-}
-
-export interface TerminalObserveResultMessage extends TerminalEnvelope {
-  type: "terminal_observe_result";
-  session_id: string;
-  request_id: string;
-  view: TerminalObservationView;
-  output: string; // base64
-  output_bytes: number;
-  lines_captured: number;
-  changed?: boolean | null;
-  truncated?: boolean | null;
-  readiness: ReadinessAssessment;
-  error: string | null;
-  host_cwd?: string;
-}
-
-// Command stack tracking types
-
-export interface PendingCommand {
-  input: string; // Raw input sent, e.g., "claude" or "claude\n"
-  command: string; // Parsed command name, e.g., "claude"
-  sentAt: number; // Timestamp when sent
-  source: "agent" | "user" | "system"; // Who sent this command
-}
-
-export type TerminalContextMode = "shell" | "repl" | "unknown";
-
-export interface TerminalContext {
-  mode: TerminalContextMode;
-  pendingCommand?: PendingCommand;
-  program?: string;
-  programDisplayName?: string;
-  interactionStyle?: string;
-  hints?: string[];
+export interface TerminalDeltaMessage {
+  changed: boolean;
+  text: string;
+  truncated: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -282,4 +297,12 @@ export function normalizeTerminalSendKeyName(value: string): string {
     default:
       return lower;
   }
+}
+
+export function isTerminalMode(value: unknown): value is TerminalMode {
+  return value === "shell" || value === "tui" || value === "repl" || value === "unknown";
+}
+
+export function isTerminalIntegration(value: unknown): value is TerminalIntegration {
+  return value === "osc133" || value === "sentinel" || value === "none";
 }

@@ -162,6 +162,13 @@
       "when": 1780111521231,
       "tag": "0022_bored_rocket_racer",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786786562758,
+      "tag": "0023_superb_alex_wilder",
+      "breakpoints": true
     }
   ]
 }

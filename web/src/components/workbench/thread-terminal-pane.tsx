@@ -9,18 +9,9 @@ type ThreadTerminalPaneProps = {
   terminalHasOutput: boolean
   terminalOutputTruncated: boolean
   terminalPaneRef: RefObject<HTMLDivElement | null>
-  terminalReadiness: {
-    ready: boolean
-    confidence: number
-    trigger: string
-    hints: {
-      looks_like_prompt?: boolean
-      looks_like_confirmation?: boolean
-      looks_like_password?: boolean
-      looks_like_pager?: boolean
-      looks_like_error?: boolean
-      may_still_be_processing?: boolean
-    }
+  terminalFacts: {
+    mode: 'shell' | 'tui' | 'repl' | 'unknown'
+    integration: 'osc133' | 'sentinel' | 'none'
   } | null
   terminalScrolledToTop: boolean
   terminalState: string
@@ -39,7 +30,7 @@ export function ThreadTerminalPane({
   terminalHasOutput,
   terminalOutputTruncated,
   terminalPaneRef,
-  terminalReadiness,
+  terminalFacts,
   terminalScrolledToTop,
   terminalState,
   viewMode,
@@ -105,48 +96,31 @@ export function ThreadTerminalPane({
                 {terminalConnectionLabel ?? `Terminal: ${terminalState}`}
               </span>
             </div>
-            {terminalReadiness &&
-              terminalConnection === 'connected' &&
-              (status === 'streaming' || status === 'dispatching') && (
-                <div className="flex items-center gap-2 border-l border-border/50 pl-3">
-                  <span
-                    className={`h-2 w-2 rounded-full ${
-                      terminalReadiness.ready
-                        ? 'bg-green-400'
-                        : terminalReadiness.confidence > 0.5
-                          ? 'bg-yellow-400'
-                          : 'animate-pulse bg-orange-400'
-                    }`}
-                  />
-                  <span className="font-mono text-muted-foreground">
-                    {terminalReadiness.ready
-                      ? 'Ready'
-                      : terminalReadiness.confidence > 0.5
-                        ? 'Waiting...'
-                        : 'Processing...'}
-                  </span>
-                  {terminalReadiness.hints.looks_like_password && (
-                    <span className="text-yellow-400" title="Password prompt detected">
-                      🔐
-                    </span>
-                  )}
-                  {terminalReadiness.hints.looks_like_confirmation && (
-                    <span className="text-blue-400" title="Confirmation prompt (y/n)">
-                      ❓
-                    </span>
-                  )}
-                  {terminalReadiness.hints.looks_like_pager && (
-                    <span className="text-cyan-400" title="In pager (press q to exit)">
-                      📄
-                    </span>
-                  )}
-                  {terminalReadiness.hints.looks_like_error && (
-                    <span className="text-red-400" title="Error detected">
-                      ⚠️
-                    </span>
-                  )}
-                </div>
-              )}
+            {terminalFacts && terminalConnection === 'connected' && (
+              <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    terminalFacts.mode === 'shell'
+                      ? 'bg-green-400'
+                      : terminalFacts.mode === 'tui'
+                        ? 'bg-blue-400'
+                        : terminalFacts.mode === 'repl'
+                          ? 'bg-cyan-400'
+                          : 'bg-zinc-400'
+                  }`}
+                  title={
+                    terminalFacts.integration === 'osc133'
+                      ? 'Shell integration active (exact command results)'
+                      : terminalFacts.integration === 'sentinel'
+                        ? 'Sentinel integration (wrapped commands)'
+                        : 'No shell integration'
+                  }
+                />
+                <span className="font-mono uppercase tracking-wide text-muted-foreground">
+                  {terminalFacts.mode}
+                </span>
+              </div>
+            )}
             {error && <span className="text-destructive">{error}</span>}
           </div>
           <div className="flex items-center gap-2">

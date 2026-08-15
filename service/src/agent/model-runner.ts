@@ -26,7 +26,6 @@ import {
   serializeAgentMessageTiming,
   type AgentMessageTiming,
   normalizeToolKeyInput,
-  parseWaitForArg,
   type AgentFinalDirective,
   type AgentToolCallDirective,
 } from "./contracts.js";
@@ -579,17 +578,22 @@ export class AgentModelRunner {
     const args = toolCall.input;
 
     switch (toolCall.name) {
+      case "terminal_run":
+        if (typeof args.command !== "string") {
+          return null;
+        }
+        return {
+          type: "tool_call",
+          tool: "terminal.run",
+          command: args.command,
+          callId: toolCall.id,
+        };
       case "terminal_send":
         return {
           type: "tool_call",
           tool: "terminal.send",
-          command: typeof args.command === "string" ? args.command : undefined,
           rawText: typeof args.raw_text === "string" ? args.raw_text : undefined,
           key: normalizeToolKeyInput(args.key, args.keys),
-          observeAfterMs:
-            typeof args.observe_after_ms === "number" ? args.observe_after_ms : undefined,
-          waitFor: parseWaitForArg(args.wait_for),
-          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
           callId: toolCall.id,
         };
       case "terminal_observe":
@@ -601,8 +605,6 @@ export class AgentModelRunner {
             args.view === "delta" || args.view === "screen" || args.view === "history"
               ? args.view
               : undefined,
-          waitFor: parseWaitForArg(args.wait_for),
-          timeoutMs: typeof args.timeout_ms === "number" ? args.timeout_ms : undefined,
           callId: toolCall.id,
         };
       case "web_view_open":

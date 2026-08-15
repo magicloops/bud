@@ -597,7 +597,7 @@ function ThreadView() {
     terminalHasOutput,
     terminalOutputTruncated,
     terminalPaneRef,
-    terminalReadiness,
+    terminalFacts,
     terminalScrolledToTop,
     terminalState,
   } = useTerminalSession({
@@ -885,7 +885,7 @@ function ThreadView() {
             terminalHasOutput={terminalHasOutput}
             terminalOutputTruncated={terminalOutputTruncated}
             terminalPaneRef={terminalPaneRef}
-            terminalReadiness={terminalReadiness}
+            terminalFacts={terminalFacts}
             terminalScrolledToTop={terminalScrolledToTop}
             terminalState={terminalState}
             viewMode={viewMode === 'web' ? 'web' : 'terminal'}

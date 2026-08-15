@@ -1,78 +1,123 @@
 # terminal
 
-Daemon-side tmux terminal runtime.
+Daemon terminal runtime on `stem` (Bud's native terminal session manager).
 
 ## Purpose
 
-Owns thread terminal sessions on the Bud host. The module creates or reattaches tmux sessions, pipes output to the service, dispatches interactive input, captures screen/readiness state, reports pane cwd on request-response terminal results, and exposes narrow backend utilities needed by adjacent daemon adapters.
+Owns thread terminal sessions on the Bud host and implements the proto `0.3`
+terminal contract (docs/proto.md §6.7). Sessions are persistent detached
+holder processes (spawned by re-exec'ing the daemon binary as
+`bud term-hold` through `stem::registry`); the daemon attaches with
+`stem::Session`, which provides VT emulation, offset-exact ring replay, and
+typed semantic events (OSC 133 command lifecycle, OSC 7 cwd, mode
+classification, damage-quiet settling). The tmux backend, `TerminalBackend`
+trait, capture hashing/deltas, and readiness-confidence machinery were
+deleted in the Phase 2 cutover.
 
 ## Files
 
 ### `mod.rs`
 
-Composition root for the terminal runtime.
+Module composition; re-exports `TerminalConfig` and `TerminalManager`.
 
-- owns shared `TerminalState` with active handles and delivered-capture cache
-- exposes `TerminalManager<TmuxBackend>::new(...)`
-- carries the daemon-resolved default cwd used when an ensure request omits `config.cwd`
-- stores the active outbound sender for terminal status/output frames
-- clears active watchers on transport disconnect
-- exposes `fresh_pane_cwd_for_session(session_id)` for file-serving path resolution without creating or mutating a terminal session
+### `manager.rs`
 
-### `backend.rs`
+`TerminalManager`: session lifecycle plus all `terminal_*` request handlers.
 
-Backend trait used by the terminal manager and tests.
+- `handle_ensure`: registry ensure (spawn or reuse holder, ring cap 8 MiB) →
+  shim preparation → `Session::attach` with the service-supplied
+  `resume_from_offset` (offset-exact backfill) → event pump spawn → proto 0.3
+  `terminal_status` `ready` with `{pid, cwd, cols, rows, ring_next_offset,
+  mode, integration}`. Re-ensure of a live session = reattach (drop the old
+  attachment, attach fresh with the new resume offset).
+- `handle_send`: single gesture `{text?, submit?, key?, await?}`. Dispatch is
+  serialized per session (tokio `Mutex<stem::Session>`); `submit` sends the
+  literal text then a real Enter keypress (bracketed-paste safe). Awaited
+  outcomes (`await: "command" | "settled"`) resolve off the pump's broadcast
+  channel *after* the session lock is released, so slow commands never block
+  other sessions/heartbeats (review finding D-H1). A daemon-internal 4h
+  safety cap returns `error: "TIMEOUT"`; the service owns real timeout policy.
+- Sentinel fallback (design D6c): submitted `await:"command"` text with no
+  genuine OSC 133 evidence gets `; printf '\033]133;D;%s\a' "$?"` appended
+  and `mark_sentinel_integration()`. The wrap decision keys off live `A`/`C`
+  marker evidence (`genuine_osc133`), not the integration fact — reattach
+  replay of earlier sentinel `D`s can mislabel a session `osc133`.
+- `handle_observe`: emulator-grid-backed views — `screen` (full grid),
+  `delta` (grid-diff v1: rows differing from the last observe/send snapshot),
+  `history` (last N scrollback lines, default 200, cap 2000) — plus
+  `mode`/`integration`/`alt_screen`/cursor facts.
+- `handle_input`: raw browser keyboard bytes written verbatim to the PTY.
+- `handle_resize` / `handle_close`: stem resize (+ status with new geometry)
+  and holder kill (+ status `closed`, best-effort registry GC).
+- Integration detection window: no OSC 133 marker within 5s of attach →
+  `mark_no_integration()` and a daemon-emitted `mode_changed` (stem swallows
+  the ModeChange from its own override methods).
+- `clear_sender` drops attachments (pump/detect tasks aborted); holders
+  survive and the service re-ensures with its committed offset on reconnect.
+  Send/observe/input/resize can also re-attach to a surviving holder without
+  spawning (resume from the current ring end).
 
-- abstracts tmux session naming, creation, resizing, capture, input, pid/cwd lookup, and output watcher spawning
+### `session_task.rs`
 
-### `tmux.rs`
+Per-session event pump: `stem::Event` → proto 0.3 wire frames.
 
-Tmux-backed implementation of `TerminalBackend`.
+- `Output` → ≤16 KiB offset-addressed `terminal_output` chunks (no `seq`)
+- `PromptReady`/`CommandStarted`/`CommandFinished` → `terminal_event`s with
+  daemon-minted `cmd_<ULID>` ids; `duration_ms` from the started→finished
+  interval, omitted for finish-without-start (sentinel-only)
+- `ModeChanged`/`Settled`/`OutputGap` → matching `terminal_event`s
+- `CwdChanged` → folded into `prompt_ready.cwd` and status info (no frame)
+- `ChildExited` → `terminal_event child_exited` (+ signal name) followed by
+  `terminal_status` `closed`
+- feeds the internal broadcast channel (`PumpEvent`) that send-awaits
+  correlate against, and keeps `SessionFacts` (mode, integration, marker
+  evidence, ring offset, geometry, delta baseline) current
 
-- maps service terminal session ids to bounded tmux session names
-- creates detached sessions with configured shell/cwd/env/size
-- configures `pipe-pane` output logging
-- queries `#{pane_pid}` and `#{pane_current_path}`
-- sends literal text with a tmux option terminator so leading-hyphen content is not parsed as flags, and sends special keys
-- captures panes for observe/readiness paths
+### `repl_registry.rs`
 
-### `registry.rs`
+`BudReplRegistry`: the injected `stem::modes::ReplMatcher` (product policy).
+Conservative prompt registry — python (`>>> `/`... `), irb, psql
+(single-token `=#`/`=>`), mysql/MariaDB, sqlite, gdb/lldb/pdb. Plain `> `
+and `% ` deliberately unmatched.
 
-Terminal session lifecycle and ensure/close/resize helpers.
+### `shims.rs`
 
-- derives missing session cwd values from `TerminalConfig.default_cwd` instead of a hard-coded home-directory fallback
-
-### `interaction.rs`
-
-Terminal send/input handling, output waits, and request-response result construction. Successful `terminal_send_result` frames include optional `host_cwd` from `#{pane_current_path}` so the service can stamp later message metadata.
-
-### `observe.rs`
-
-Explicit observe request handling and screen/history capture. Successful `terminal_observe_result` frames include optional `host_cwd` from `#{pane_current_path}` so observe-only tool steps can also refresh service cwd context.
-
-### `readiness.rs`
-
-Prompt/readiness classification, quiescence waits, and settled/changed observe support.
-
-### `delta.rs`
-
-Screen delta helpers for concise terminal observations.
-
-### `test_support.rs`
-
-Fake backend and helpers for terminal unit tests.
+Shell-integration shims (design D6b): zsh `ZDOTDIR` shim (sources the user's
+real zshrc, then precmd/preexec OSC 133 A/C/D-with-`$?` + OSC 7 emitters),
+bash `--rcfile` shim (sources `~/.bashrc`, then `PROMPT_COMMAND` +
+DEBUG-trap emitters, bash-preexec technique), fish passthrough (native
+≥3.6), everything else or `BUD_NO_SHELL_INTEGRATION=1` unshimmed. Shim files
+are written under `<session dir>/shim/` at ensure.
 
 ## Dependencies
 
-- [../app.rs](../app.rs) - dispatches terminal protocol frames and asks for fresh pane cwd before file opens with terminal context
-- [../files/files.spec.md](../files/files.spec.md) - consumes fresh pane cwd metadata for cwd-first file resolution
-- [../transport.rs](../transport.rs) - outbound terminal status/output frame delivery
-- [../protocol.rs](../protocol.rs) - terminal frame definitions
+- [`stem`](../../stem/stem.spec.md) — registry/holder lifecycle, `Session`,
+  events, key encoding
+- [../protocol.rs](../protocol.rs) — 0.3 frame types and outbound builders
+- [../transport.rs](../transport.rs) — outbound frame delivery
+- [../app.rs](../app.rs) — spawns the handlers per frame (never inline) and
+  asks for the session cwd before file opens with terminal context
+
+## Tests
+
+- unit: pump event mapping (chunking/ULIDs/durations/child-exit), grid-diff
+  delta, REPL registry, shim generation, env defaults, sentinel trailer shape
+- integration (`tests/terminal_stem.rs`, real holders via
+  `CARGO_BIN_EXE_bud term-hold`): ensure→ready, sentinel `terminal.run` exit
+  codes 0/1 on `/bin/sh`, observe/resize, close kills holder, offset-exact
+  reattach (no dup/no gap), two-session non-blocking concurrency (D-H1), and
+  zsh/bash shim marker flows (skipped when the shell is absent)
 
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- The terminal runtime still has sparse folder-level unit coverage around tmux cwd reporting during foreground TUIs, pagers, nested shells, and REPLs; see the improve-file-cwd plan for the smoke matrix.
+- The zsh shim does not replay the user's `.zshenv` from a custom original
+  `ZDOTDIR` (only `.zshrc`); acceptable approximation until reported.
+- Overlapping sentinel-wrapped commands on one session are inherently
+  ambiguous to correlate; the service serializes terminal tool calls today.
+- stem API gaps tracked for a follow-up: `Session` does not expose
+  `integration()` or ring stats, and `mark_no_integration()` /
+  `mark_sentinel_integration()` swallow their ModeChange (daemon re-emits).
 
 ---
 

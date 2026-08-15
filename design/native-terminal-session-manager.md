@@ -253,9 +253,9 @@ From the contracts (via D15): the readiness-confidence/hints vocabulary and its 
 
 ## 7. Open questions
 
-1. Ring cap default (8 MiB?) and whether it's per-session config from the service.
-2. Does the agent contract expose mode (`shell/tui/repl`) to the model as a hint? (Likely yes — cheap and high-value — but it's an agent-prompt decision.)
-3. Holder TTL after child exit with no client attached (proposed 24h) — product call.
-4. Crate name. `stem` is proposed; needs a conflict check on crates.io if ever published.
-5. D15a proto rev: does the service commit consumed offsets transactionally with `terminal_session_output` writes (exactly-once backfill), or tolerate at-least-once with offset-keyed idempotent inserts? (The store's PK on `(session_id, byte_offset)` suggests the latter is nearly free.)
-6. Phase 2 is large — decide whether service-side adoption lands in the same change set as the daemon cutover or trails by one PR behind the drafted proto rev (two-sided lockstep vs. brief contract-only gap).
+1. Ring cap default: **RESOLVED (Phase 1)** — 8 MiB (`stem::ring::DEFAULT_RING_CAP`); per-session service config deferred until a need appears.
+2. Expose mode to the model: **RESOLVED (Phase 2) — yes.** `terminal_observe_result` and tool results carry `mode`/`integration`; the agent prompt describes the mode model instead of confidence thresholds.
+3. Holder TTL after child exit with no client attached (proposed 24h) — still a product call; Phase-2 daemon passes 24h.
+4. Crate name. `stem` is proposed; needs a conflict check on crates.io if ever published (only relevant to D1 extraction, Phase 4).
+5. Offset commit semantics: **RESOLVED (Phase 2) — at-least-once with idempotent inserts** on the existing `(session_id, byte_offset)` PK (`onConflictDoNothing`; stats/SSE gated on actual insert). Exactly-once transactional offset tracking rejected as needless coupling.
+6. Lockstep vs trailing PR: **RESOLVED (Phase 2) — lockstep.** Daemon and service land together on the `stem` branch against the drafted proto §6.7; clients follow in Phase 3.

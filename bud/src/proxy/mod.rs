@@ -533,7 +533,7 @@ impl ProxyManager {
                     };
                     match message {
                         Ok(Message::Text(text)) => {
-                            if text.as_bytes().len() > max_message_bytes {
+                            if text.len() > max_message_bytes {
                                 send_proxy_ws_error(&sender, &frame.ws_session_id, "LOCAL_WS_MESSAGE_TOO_LARGE", "local WebSocket text message exceeded max_message_bytes", false)?;
                                 return Ok(());
                             }
@@ -1018,7 +1018,7 @@ fn proxy_ws_event_message(
 ) -> Result<Message> {
     match message_type {
         "text" => {
-            if data.as_bytes().len() > max_message_bytes {
+            if data.len() > max_message_bytes {
                 bail!("proxied WebSocket text message exceeds max_message_bytes");
             }
             Ok(Message::Text(data.to_string()))

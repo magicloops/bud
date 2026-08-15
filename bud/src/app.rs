@@ -44,7 +44,7 @@ use crate::protocol::{
 };
 use crate::proxy::ProxyManager;
 use crate::run::RunExecutor;
-use crate::terminal::{probe_tmux, TerminalConfig, TerminalManager};
+use crate::terminal::{TerminalConfig, TerminalManager};
 use crate::transport::{send_transport_frame, send_transport_message, TransportSender};
 use crate::util::{compute_hmac, default_shell, new_message_id, now_millis};
 
@@ -109,7 +109,6 @@ impl BudApp {
         let default_cwd = resolved_paths.default_cwd.clone();
         let default_cwd_text = default_cwd.to_string_lossy().into_owned();
         let default_shell = default_shell().to_string();
-        let tmux_available = probe_tmux();
         let debug_enabled = args.debug;
         let proxy_http_client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -117,14 +116,15 @@ impl BudApp {
             .unwrap_or_else(|_| Client::new());
         let local_llm_http_client = proxy_http_client.clone();
         let local_llm_manager = LocalLlmManager::new(&args, local_llm_http_client);
+        let launcher_program = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("bud"));
         let terminal_config = TerminalConfig {
             enabled: args.terminal_enabled,
-            base_log_dir: resolved_paths.terminal_base_dir.clone(),
+            term_base_dir: resolved_paths.terminal_base_dir.join("term"),
             default_cwd: default_cwd_text.clone(),
             cols: args.terminal_cols,
             rows: args.terminal_rows,
             shell: default_shell.clone(),
-            tmux_available,
+            launcher_program,
             debug_enabled,
         };
         Self {
@@ -628,9 +628,6 @@ impl BudApp {
 
         self.run_executor.set_sender(sender.clone()).await;
         self.terminal_manager.set_sender(sender.clone()).await;
-        if self.terminal_manager.config.enabled && !self.terminal_manager.config.tmux_available {
-            info!("terminal enabled but tmux unavailable; terminal sessions will fail");
-        }
         if let Err(err) = self.send_reconnect_report(&sender, &meta).await {
             self.shutdown_grpc_session(sender, writer_handle, data_attachment)
                 .await;
@@ -905,9 +902,6 @@ impl BudApp {
 
         self.run_executor.set_sender(sender.clone()).await;
         self.terminal_manager.set_sender(sender.clone()).await;
-        if self.terminal_manager.config.enabled && !self.terminal_manager.config.tmux_available {
-            info!("terminal enabled but tmux unavailable; terminal sessions will fail");
-        }
         if let Err(err) = self.send_reconnect_report(&sender, &meta).await {
             self.shutdown_websocket_session(sender, writer_handle, "reconnect_report_send_failed")
                 .await;
@@ -1031,6 +1025,11 @@ impl BudApp {
                 let frame: RunFrame = serde_json::from_str(text)?;
                 self.handle_run_frame(frame).await?;
             }
+            // Terminal handlers are spawned, never awaited inline (review
+            // finding D-H1): `terminal_send` with `await: "command"` can run
+            // for a long time and must not block heartbeats, credits, or
+            // other sessions. Per-session ordering is enforced inside the
+            // manager (per-session mutex + LocalSet spawn order).
             "terminal_ensure" => {
                 let frame: TerminalEnsureFrame = serde_json::from_str(text)?;
                 info!(
@@ -1038,27 +1037,57 @@ impl BudApp {
                     session_id = %frame.session_id,
                     "terminal_ensure received"
                 );
-                self.terminal_manager.handle_ensure(frame).await?;
+                let manager = self.terminal_manager.clone();
+                task::spawn_local(async move {
+                    if let Err(err) = manager.handle_ensure(frame).await {
+                        warn!(error = %err, "terminal_ensure handling failed");
+                    }
+                });
             }
             "terminal_input" => {
                 let frame: TerminalInputFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_input(frame).await?;
+                let manager = self.terminal_manager.clone();
+                task::spawn_local(async move {
+                    if let Err(err) = manager.handle_input(frame).await {
+                        warn!(error = %err, "terminal_input handling failed");
+                    }
+                });
             }
             "terminal_resize" => {
                 let frame: TerminalResizeFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_resize(frame).await?;
+                let manager = self.terminal_manager.clone();
+                task::spawn_local(async move {
+                    if let Err(err) = manager.handle_resize(frame).await {
+                        warn!(error = %err, "terminal_resize handling failed");
+                    }
+                });
             }
             "terminal_close" => {
                 let frame: TerminalCloseFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_close(frame).await?;
+                let manager = self.terminal_manager.clone();
+                task::spawn_local(async move {
+                    if let Err(err) = manager.handle_close(frame).await {
+                        warn!(error = %err, "terminal_close handling failed");
+                    }
+                });
             }
             "terminal_send" => {
                 let frame: TerminalSendFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_send(frame).await?;
+                let manager = self.terminal_manager.clone();
+                task::spawn_local(async move {
+                    if let Err(err) = manager.handle_send(frame).await {
+                        warn!(error = %err, "terminal_send handling failed");
+                    }
+                });
             }
             "terminal_observe" => {
                 let frame: TerminalObserveFrame = serde_json::from_str(text)?;
-                self.terminal_manager.handle_observe(frame).await?;
+                let manager = self.terminal_manager.clone();
+                task::spawn_local(async move {
+                    if let Err(err) = manager.handle_observe(frame).await {
+                        warn!(error = %err, "terminal_observe handling failed");
+                    }
+                });
             }
             "proxy_open" => {
                 let frame: ProxyOpenFrame = serde_json::from_str(text)?;
@@ -1408,8 +1437,9 @@ impl BudApp {
     }
 
     fn device_capabilities(&self, transport_mode: HelloTransportMode) -> Value {
-        let terminal_available =
-            self.args.terminal_enabled && self.terminal_manager.config.tmux_available;
+        // Terminal support is native (stem, single binary): available
+        // whenever it is enabled.
+        let terminal_available = self.args.terminal_enabled;
         let websocket_mode = matches!(transport_mode, HelloTransportMode::WebSocket);
         let grpc_data_mode = matches!(transport_mode, HelloTransportMode::GrpcControl)
             && self.args.grpc_data_url.is_some();

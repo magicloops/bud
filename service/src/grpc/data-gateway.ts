@@ -473,8 +473,7 @@ class GrpcDataConnection {
 
     this.tracker.framesReceived += 1;
     this.tracker.bytesReceived += decodedBytes;
-    await this.terminalSessionManager.handleTerminalOutput(result.data.session_id, {
-      seq: result.data.seq,
+    await this.terminalSessionManager.handleTerminalOutput(this.tracker.budId, result.data.session_id, {
       data: result.data.data,
       byte_offset: result.data.byte_offset,
     });

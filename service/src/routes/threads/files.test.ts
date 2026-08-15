@@ -192,7 +192,7 @@ test("thread file-open route creates a viewer-scoped file session", async (t) =>
                     path_context: {
                       schema: "terminal_cwd_v1",
                       source: "terminal_runtime_cache",
-                      reported_by: "tmux_pane_current_path",
+                      reported_by: "prompt_ready_osc7",
                       terminal_session_id: "sess_test",
                       host_cwd: "/Users/adam/bud/service",
                       captured_at: "2026-05-01T20:00:00.000Z",
@@ -271,7 +271,7 @@ test("thread file-open route creates a viewer-scoped file session", async (t) =>
   assert.deepEqual((capturedSession.displayMetadata as Record<string, unknown>).path_context, {
     schema: "terminal_cwd_v1",
     source: "terminal_runtime_cache",
-    reported_by: "tmux_pane_current_path",
+    reported_by: "prompt_ready_osc7",
     terminal_session_id: "sess_test",
     host_cwd: "/Users/adam/bud/service",
     captured_at: "2026-05-01T20:00:00.000Z",

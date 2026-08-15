@@ -932,20 +932,9 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
         result: {
           kind: "observation",
           output: "screen",
-          readiness: {
-            ready: true,
-            confidence: 1,
-            trigger: "prompt_detected",
-            hints: {
-              looks_like_prompt: true,
-              looks_like_confirmation: false,
-              looks_like_password: false,
-              looks_like_pager: false,
-              looks_like_error: false,
-              may_still_be_processing: false,
-            },
-          },
           view: "screen",
+          mode: "shell",
+          integration: "osc133",
         },
         payload: {
           tool: "terminal.observe",

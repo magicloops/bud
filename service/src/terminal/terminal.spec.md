@@ -1,10 +1,10 @@
 # terminal
 
-Terminal-related type definitions and REPL program registry.
+Terminal-related type definitions plus legacy context-sync/freshness helpers.
 
 ## Purpose
 
-Provides TypeScript types for terminal protocol messages and a registry of known interactive programs for context-aware agent behavior.
+Provides TypeScript types for the terminal proto `0.3` wire contract (docs/proto.md §6.7) and service-side helpers that read cached terminal state. The 0.2 REPL program registry (`known-programs.ts`) was deleted in the stem cutover: mode facts now come from the daemon (`mode_changed` events / status info) instead of service-side command inference.
 
 ## Files
 
@@ -13,249 +13,61 @@ Provides TypeScript types for terminal protocol messages and a registry of known
 Internal terminal freshness and model-visible watermark helper.
 
 **Responsibilities**:
-- derive a compact readiness version from readiness facts shown to the model
+- derive a compact readiness version from readiness-shaped facts (accepts loose `Record<string, unknown>` input; since the Phase 2.5 agent-tool rework the agent always passes `null`, so new watermarks carry `observed_readiness_version: null` and compare on output bytes + cwd)
 - build `message.metadata.terminal_visibility` for `terminal.send` and `terminal.observe` tool result rows
 - load the latest model-visible terminal watermark from terminal tool message metadata
 - load the latest human-origin terminal input timestamp from `terminal_session_input_log`
-- compare current session output bytes, cwd, readiness, and human input against the latest watermark
+- compare current session output bytes, cwd, and readiness-version against the latest watermark
 - define transient freshness instruction text for future append-only prompt work; the normal agent loop currently does not inject these notes into provider context
 
-Freshness never contacts the Bud daemon. It reads service-owned DB/runtime state for diagnostics and future prompt work while the model can call `terminal.observe` when terminal state matters.
+Freshness never contacts the Bud daemon. It reads service-owned DB/runtime state.
 
 ### `freshness.test.ts`
 
 Focused tests for terminal freshness decisions and terminal visibility metadata parsing.
 
-**Current Coverage**:
-- unknown watermarks with existing terminal state produce a freshness hint
-- `terminal.send` visibility can clear the dirty hint even when no new output bytes were shown
-- cwd-only changes participate in the same watermark path
-- human terminal input after the last model-visible terminal result uses the stronger hint
-- visibility metadata is parsed only from tool message metadata
-
 ### `types.ts`
 
-Type definitions for the terminal protocol (v0.2).
+Type definitions for the terminal protocol (proto `0.3`).
 
-**State Types**:
-
-```typescript
-export const TERMINAL_STATES = ["none", "creating", "ready", "active", "idle", "closed"] as const;
-export type TerminalState = (typeof TERMINAL_STATES)[number];
-```
-
-**Prompt Detection Types**:
+**Proto 0.3 vocabulary**:
 
 ```typescript
-export type TerminalPromptType =
-  | "shell" | "python" | "node" | "ruby"
-  | "confirmation" | "password" | "pager"
-  | "database" | "unknown";
-
-export type TerminalReadyTrigger =
-  | "prompt_detected" | "quiescence" | "timeout" | "error" | "activity_stable"
-  | "changed" | "settled";
-
-export type TerminalWaitFor =
-  | "none" | "shell_ready" | "changed" | "settled";
+export type TerminalMode = "shell" | "tui" | "repl" | "unknown";
+export type TerminalIntegration = "osc133" | "sentinel" | "none";
+export type TerminalObservationView = "delta" | "screen" | "history";
+export type TerminalSendAwait = "command" | "settled"; // omitted = dispatch-only ack
+export interface TerminalEventOutcome { event: string; data: Record<string, unknown>; }
 ```
 
-`shell_ready` is compatibility-only below the model schema during the rollout. The model-facing agent tools advertise only `none`, `changed`, and `settled`; legacy `screen_stable` payloads are normalized to `settled` before replay/dispatch where supported.
+`TERMINAL_EVENT_NAMES` lists the known `terminal_event` vocabulary (`prompt_ready`, `command_started`, `command_finished`, `mode_changed`, `settled`, `output_gap`, `child_exited`); unknown event values must be tolerated (additive evolution). `isTerminalMode(...)` / `isTerminalIntegration(...)` are shared guards used by the gateways and runtime state.
 
-**Message Types**:
+**Message Types (0.3)**:
 
 | Type | Direction | Purpose |
 |------|-----------|---------|
 | `TerminalEnvelope` | Base | Common fields: `type`, `proto`, `id`, `ts`, `ext` |
-| `TerminalEnsureMessage` | → Bud | Create/verify tmux session |
-| `TerminalInputMessage` | → Bud | Send input with await_ready options |
+| `TerminalEnsureMessage` | → Bud | Create/verify the stem session; carries `resume_from_offset` (highest durably stored end offset) so the daemon backfills ring output |
+| `TerminalInputMessage` | → Bud | Raw browser input: `{ session_id, data }` (base64); the 0.2 `await_ready` readiness options are retired |
 | `TerminalResizeMessage` | → Bud | Resize terminal |
 | `TerminalCloseMessage` | → Bud | Close session |
-| `TerminalStatusMessage` | ← Bud | Session state report |
-| `TerminalOutputMessage` | ← Bud | Output chunk with byte offset |
-| `TerminalReadyMessage` | ← Bud | Readiness assessment |
-| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | Primary send-first terminal input with settled-by-default output quiescence, additive delta evidence, and optional daemon-reported cwd |
-| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit delta/screen/history observation with optional daemon-reported cwd |
-| `TerminalDelta` / `TerminalDeltaMessage` | Internal / Wire | Minimal additive delta payload for send/observe |
+| `TerminalStatusMessage` | ← Bud | Session state report; `info` carries `pid`, `cwd`, `cols`, `rows`, `ring_next_offset`, `mode`, `integration` (`output_log_bytes` retired) |
+| `TerminalOutputMessage` | ← Bud | Output chunk: `{ session_id, data, byte_offset }` — `byte_offset` is the sole ordering/dedup/resume coordinate (no `seq`) |
+| `TerminalEventMessage` | ← Bud | Semantic event stream: `{ session_id, event, data }` |
+| `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | One structured gesture (`text` + optional `submit`, or one semantic `key`) with optional `await`; result carries `dispatched`, mirrored `outcome` event or `null`, and `error` |
+| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit grid-backed delta/screen/history observation; result carries text, `lines_captured`, `changed`, plus `mode` / `integration` / `alt_screen` / cursor facts |
 
-`TerminalStatusMessage.info` now carries backend-neutral runtime facts such as `pid`, `cwd`, `cols`, `rows`, and `output_log_bytes`; tmux session identity is no longer part of the normal service/browser contract.
+Retired from the wire in 0.3: `terminal_ready`, readiness/confidence/hints payloads, `wait_for` / `timeout_ms` / `observe_after_ms`, the one-entry `keys` alias, `host_cwd` (replaced by `prompt_ready.cwd`), `output_bytes` / `truncated` on observe results, and `seq` on output frames.
 
-`TerminalSendResultMessage.host_cwd` and `TerminalObserveResultMessage.host_cwd` are optional result-time cwd reports from the daemon; the runtime caches them on `terminal_session.cwd` for message-time file path resolution.
+**Legacy 0.2 types** (the Phase 2.5 agent-tool rework removed every `src/agent/**` use; nothing on the wire, in the terminal runtime, or in the agent tool layer uses them anymore): `ReadinessHints`, `ReadinessAssessment`, `TerminalReadyTrigger`, `TerminalPromptType`, `TerminalWaitFor`, `TerminalDelta`, `TerminalDeltaMessage`. The only remaining reference is `freshness.ts` accepting a readiness-shaped record in its watermark helpers (the agent now always passes `null`); these types can be deleted alongside a small freshness cleanup.
 
-**Readiness Types**:
-
-```typescript
-export interface ReadinessHints {
-  looks_like_prompt: boolean;
-  looks_like_confirmation: boolean;
-  looks_like_password: boolean;
-  looks_like_pager: boolean;
-  looks_like_error: boolean;
-  may_still_be_processing: boolean;
-}
-
-export interface ReadinessAssessment {
-  ready: boolean;
-  confidence: number;        // 0.0 - 1.0
-  trigger: TerminalReadyTrigger;
-  prompt_type?: TerminalPromptType;
-  hints: ReadinessHints;
-  quiet_for_ms?: number;
-  activity_checks?: number;  // For activity-based detection
-  stable_checks?: number;
-}
-```
-
-**Terminal Request/Response Types**:
-
-export interface TerminalSendMessage extends TerminalEnvelope {
-  type: "terminal_send";
-  session_id: string;
-  request_id: string;
-  text?: string;
-  submit?: boolean;
-  key?: string;
-  keys?: string[];  // compatibility alias during rollout
-  observe_after_ms?: number;
-  wait_for?: TerminalWaitFor;
-  timeout_ms?: number;
-}
-
-export interface TerminalSendResultMessage extends TerminalEnvelope {
-  type: "terminal_send_result";
-  session_id: string;
-  request_id: string;
-  submitted: boolean;
-  delta?: TerminalDeltaMessage | null;
-  readiness: ReadinessAssessment;
-  error: string | null;
-  host_cwd?: string;
-}
-
-export interface TerminalObserveMessage extends TerminalEnvelope {
-  type: "terminal_observe";
-  session_id: string;
-  request_id: string;
-  view?: "delta" | "screen" | "history";
-  lines?: number;
-  wait_for?: TerminalWaitFor;
-  timeout_ms?: number;
-}
-```
-
-**Command Tracking Types**:
-
-```typescript
-export interface PendingCommand {
-  input: string;      // Raw input, e.g., "claude\n"
-  command: string;    // Parsed name, e.g., "claude"
-  sentAt: number;
-  source: "agent" | "user" | "system";
-}
-
-export type TerminalContextMode = "shell" | "repl" | "unknown";
-
-export interface TerminalContext {
-  mode: TerminalContextMode;
-  pendingCommand?: PendingCommand;
-  program?: string;
-  programDisplayName?: string;
-  interactionStyle?: string;
-  hints?: string[];
-}
-```
-
-**Await Ready Options** (in TerminalInputMessage):
-
-```typescript
-await_ready: {
-  enabled: boolean;
-  quiescence_ms?: number;     // Default: 1500ms
-  max_wait_ms?: number;       // Default: 30000ms
-  activity_based?: boolean;   // Use capture-pane comparison
-  activity_interval_ms?: number;      // Default: 5000ms
-  activity_stable_count?: number;     // Default: 2
-  activity_initial_delay_ms?: number; // Default: 2000ms
-}
-```
-
-**Phase 6/7 Interactive Wait Notes**:
-- `terminal.send` now defaults to `wait_for: "settled"` and the service resolves settled waits to a one-hour timeout budget before sending `timeout_ms` to Bud
-- settled waits are now driven by `pipe-pane` output quiescence, not repeated `capture-pane` polling
-- Bud starts settled `terminal.send` quiescence/readiness sampling after dispatch plus a short guard delay; the model-facing delta still compares the pre-send capture to the final capture, so command echo remains visible when it is part of the rendered change
-- settled quiescence is evidence-based: prompt/confirmation/password/pager evidence can be high-confidence ready, but weak settled captures do not become high-confidence ready solely because output is quiet
-- `terminal.send` still supports the older fast path, but only when `wait_for: "none"` is requested explicitly
-- `terminal.send` is now the primary tool for both shell commands and interactive input
-- `terminal.send` is now a single-gesture contract: either `text` with optional `submit`, or one semantic `key`
-- `terminal.send.key` uses backend-neutral key names such as `ctrl+c`, `enter`, and `escape`
-- `terminal.send.keys` remains a one-entry compatibility alias during rollout
-- agent-facing explicit waits are now `changed` and `settled`
-- model-facing wait modes are now limited to `none`, `changed`, and `settled`; `shell_ready` remains an internal compatibility mode until production-launch cleanup
-- `terminal.send` and `terminal.observe` still share the same delta engine, but only `changed` stays on the immediate-start screen wait engine
-- `terminal.observe(wait_for: "settled")` receives the same one-hour settled timeout budget as default `terminal.send`
-- `terminal.observe(wait_for: "settled")` shares the same conservative settled-readiness semantics for weak captures
-- model-facing agent tool schemas no longer advertise `timeout_ms`; `timeout_ms` remains on the wire so the service can pass the effective product policy to Bud and tolerate older payloads
-- human interrupt controls call the service terminal interrupt route, which sends `TerminalSendMessage.key = "ctrl+c"` with a fast `wait_for: "none"` interrupt send and rejects older pending terminal waits as `interrupted`
-- `submitted` means Bud dispatched the requested gesture to the current terminal backend
-- `delta.changed` is the main signal for whether the foreground program visibly reacted right away
-- default `terminal.observe` now uses `view: "delta"` and only returns full current screen/history when explicitly requested
-- low-level `terminal_input` readiness can still surface `activity_stable`, but that is no longer the primary agent-facing wait mode
-- browser/server Ctrl+C escape hatches should route through `TerminalSendMessage.key = "ctrl+c"` rather than a dedicated interrupt message
-
-### `known-programs.ts`
-
-Registry of interactive programs the agent might encounter.
-
-**ProgramInfo Type**:
-
-```typescript
-export interface ProgramInfo {
-  name: string;
-  displayName: string;
-  interactionStyle: InteractionStyle;
-  exitCommands: string[];
-  hints: string[];
-}
-
-export type InteractionStyle = "natural_language" | "code" | "sql" | "commands";
-```
-
-**Registered Programs**:
-
-| Program | Display Name | Style | Example Hints |
-|---------|--------------|-------|---------------|
-| `claude` | Claude Code | natural_language | "Use natural language requests, not shell commands" |
-| `python` | Python REPL | code | "Send Python code, not shell commands" |
-| `python3` | Python 3 REPL | code | Same as python |
-| `ipython` | IPython | code | "Magic commands start with %" |
-| `node` | Node.js REPL | code | "Send JavaScript code" |
-| `deno` | Deno REPL | code | "Send TypeScript/JavaScript code" |
-| `irb` | Ruby IRB | code | "Send Ruby code" |
-| `psql` | PostgreSQL | sql | "Meta-commands start with backslash" |
-| `mysql` | MySQL | sql | "Commands ending with semicolon" |
-| `sqlite3` | SQLite | sql | "Dot-commands for meta operations" |
-| `redis` | Redis CLI | commands | "Commands are case-insensitive" |
-| `mongosh` | MongoDB Shell | code | "Use db.collection.find()" |
-| `ghci` | GHCi (Haskell) | code | "Commands start with colon" |
-| `erl` | Erlang Shell | code | "Expressions end with period" |
-| `iex` | Elixir IEx | code | "Exit with Ctrl+C twice" |
-| `scala` | Scala REPL | code | "Commands start with colon" |
-| `lua` | Lua REPL | code | "Use print() for output" |
-| `R` | R Console | code | "Use print() or expression" |
-| `julia` | Julia REPL | code | "Package mode with ]" |
-
-**Helper Functions**:
-
-```typescript
-export function isKnownReplProgram(command: string): boolean;
-export function getProgramInfo(command: string): ProgramInfo | undefined;
-```
+**Other exports**: `TERMINAL_STATES` / `TerminalState`, `TerminalStateSnapshot` and `StateChangeDetails` (context-sync), and `normalizeTerminalSendKeyName(...)` for backend-neutral key names (`ctrl+c`, `enter`, `escape`, ...).
 
 ### `context-sync-service.ts`
 
 Legacy terminal context synchronization service.
 
-**Purpose**: Maintains legacy terminal state snapshots and can summarize observed state changes. Normal `POST /messages` sends no longer call `checkAndSync(...)`, run a Bud `terminal_observe` preflight, or inject terminal freshness notes; the agent can call `terminal.observe` explicitly when terminal state matters. `refreshSnapshot(...)` remains useful after state-changing terminal tools to keep snapshot state and pending-command cleanup aligned.
+**Purpose**: Maintains legacy terminal state snapshots and can summarize observed state changes. Normal `POST /messages` sends do not call `checkAndSync(...)`; the agent can call `terminal.observe` explicitly when terminal state matters. As of the Phase 2.5 agent-tool rework, the agent loop no longer calls `refreshSnapshot(...)` either — daemon `mode_changed` / observe-result facts are the mode source for the model — so this service has no remaining runtime callers (server.ts still constructs it and passes it to `AgentService`, which ignores it).
 
 **Key Method**:
 ```typescript
@@ -263,50 +75,18 @@ async checkAndSync(sessionId: string, threadId: string, ownerUserId?: string | n
 ```
 
 **Workflow**:
-1. Capture current terminal state (last 30 lines via `capturePane`)
+1. Capture current terminal state (last 30 lines via `capturePane`, a history-view observe)
 2. Compute SHA256 hash of screen content
 3. Detect mode heuristically (shell/repl/tui/unknown)
 4. Compare to last snapshot stored in `terminalSessionTable.stateSnapshot`
-5. If mode or prompt changed:
-   - Generate human-readable summary using Haiku
-   - Insert system message into thread
+5. If mode or prompt changed: generate a summary (Haiku, deterministic fallback) and insert a `role: "system"` context message stamped with the owning user's `created_by_user_id` and a UUIDv7 `client_id`
 6. Update snapshot in database
 
-**Mode Detection Heuristics**:
-| Pattern | Detected Mode |
-|---------|---------------|
-| Bare `>` without Claude UI markers | repl (Node.js REPL) |
-| Line ends with `$`, `#`, `%`, `❯`, `➜`, `>` | shell |
-| Line starts with `>>>`, `...`, `In [N]:` | repl (Python/IPython) |
-| Screen contains box drawing chars (`╭╰`) + "Claude" | tui (Claude Code) |
-| Screen has vim-style line numbers | tui |
+The 0.2-era pending-command clearing hooks were removed along with the runtime's pending-command tracking; daemon `mode_changed` events are now the mode source of truth for the terminal runtime. Phase 2.5 evaluated this service as required by the earlier TODO: daemon mode facts are now surfaced to the model directly and the agent loop's `refreshSnapshot(...)` call was removed, leaving `checkAndSync(...)` and `refreshSnapshot(...)` with zero runtime callers. <!-- SPEC:TODO Delete context-sync-service.ts, its tests, the server.ts wiring, and the TerminalStateSnapshot/StateChangeDetails types once the terminal-folder owner confirms nothing else will adopt the snapshot heuristics. -->
 
-The Node.js REPL check runs before the generic shell `>` matcher so plain `>` prompts are not misclassified as shell.
+### `context-sync-service.test.ts`
 
-**Integration Points**:
-- Clears `pendingCommands` when shell detected so inferred send-context stays aligned after REPL exit
-- `refreshSnapshot(...)` now also clears `pendingCommands` when the captured state already looks like shell, so inferred context is less likely to outlive an observed REPL exit
-- `checkAndSync(...)` is not part of the normal user-message send path; it is retained for legacy/debug flows only
-- Uses `claude-haiku-4-5` for fast, cheap LLM summaries
-- Falls back to deterministic local summaries when no provider is available or summary generation fails
-- Injects messages with `role: "system"` (transformed in provider layer for Anthropic)
-- Stamps injected system messages with the owning user's `created_by_user_id`
-- Stamps injected system messages with a generated UUIDv7 `message.client_id` so context-sync rows share the same public-identity model as user/assistant/tool messages
-
-## Usage
-
-The agent service uses these types for:
-1. Sending correctly-typed terminal messages to buds
-2. Understanding readiness assessments from buds
-3. Detecting when agent enters a REPL and adjusting guidance
-
-Example context usage:
-```typescript
-const context = await terminalSessionManager.getContext(sessionId);
-if (context.mode === "repl" && context.program === "claude") {
-  // Agent is inside Claude Code - use natural language
-}
-```
+Mode-detection heuristic tests.
 
 ## Dependencies
 

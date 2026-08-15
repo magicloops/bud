@@ -13,4 +13,6 @@ export interface TerminalSession {
   startedAt: Date | null;
   lastActivityAt: Date | null;
   outputLogBytes: number;
+  createdByUserId?: string | null;
+  tenantId?: string | null;
 }

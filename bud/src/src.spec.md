@@ -1,6 +1,6 @@
 # src
 
-Source code for the Bud device daemon. The daemon is now split into focused modules so the service-facing runtime contract, terminal orchestration, tmux adapter, device-auth bootstrap, and legacy run executor can evolve independently.
+Source code for the Bud device daemon. The daemon is split into focused modules so the service-facing runtime contract, the stem-backed terminal runtime, device-auth bootstrap, and the legacy run executor can evolve independently.
 
 ## Files
 
@@ -37,9 +37,9 @@ CLI and environment configuration.
 Local diagnostic command implementation.
 
 - evaluates the effective config and path resolution used by the daemon runtime
-- checks OS/architecture support, base-dir and terminal artifact writability, identity file permissions, service URL parsing, production TLS trust when applicable, shell availability, tmux availability, and user-service manager hints
+- checks OS/architecture support, base-dir and terminal artifact writability, identity file permissions, service URL parsing, production TLS trust when applicable, shell availability, and user-service manager hints (terminal support is native via `stem`; no external multiplexer preflight remains)
 - prints human-readable output by default and JSON when `bud doctor --format json` is requested
-- emits OS-specific tmux remediation without running package-manager commands automatically
+- `bud doctor --cleanup-tmux` is a one-shot best-effort kill of legacy tmux-era `s_*` sessions; it is a silent no-op when no tmux binary exists
 
 ### `app.rs`
 
@@ -56,7 +56,7 @@ Top-level daemon orchestrator.
 - handshake and challenge-response auth
 - live reconnect report emission after handshake using the local journal
 - heartbeat scheduling
-- routing inbound server frames to the run or terminal subsystems
+- routing inbound server frames to the run or terminal subsystems; terminal frames are **spawned per request** (`task::spawn_local`), never awaited inline in the dispatch loop, so long `await: "command"` sends cannot block heartbeats/credits (review finding D-H1); per-session ordering lives inside the terminal manager
 - transport shutdown cleanup that clears run/terminal senders, aborts stale
   WebSocket writer tasks, and cancels proxy/file stream work before reconnect
 - routing Phase 4 `proxy_open` requests and same-stream request body data to
@@ -64,7 +64,7 @@ Top-level daemon orchestrator.
 - routing Phase 5 `proxy_ws_open` / `proxy_ws_message` / `proxy_ws_close` / `proxy_ws_error` requests to the localhost WebSocket proxy adapter
 - routing Phase 4.4 `file_open` requests to the workspace file adapter
 - routing Phase 7 `file_resolve` requests to the workspace file adapter for metadata-only absolute POSIX preflight
-- skips the fresh tmux pane cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
+- skips the fresh terminal-session cwd query for `file_open` frames that already carry a message-time `host_cwd` resolution hint
 - resolved base-dir/local defaults for identity, installation id, terminal state, legacy run cwd, and file workspace root
 - routing WebSocket-received `stream_data`, `stream_credit`, `stream_reset`,
   and `stream_close` frames to the file/proxy/local-LLM managers where supported
@@ -85,9 +85,13 @@ Top-level daemon orchestrator.
 
 Bud <-> service frame definitions and protocol validation.
 
-- defines `Envelope`, handshake frames, `RunFrame`, and all `terminal_*` inbound frames
-- `TerminalSendFrame` now treats `key` as the canonical single-gesture non-text input field while still deserializing the old plural `keys` alias for rollout compatibility
-- `FileOpenFrame` accepts an optional `resolution_hint` so service-created file sessions can prefer message-time cwd without a click-time tmux query
+- defines `Envelope`, handshake frames, `RunFrame`, and all `terminal_*` inbound frames per the proto `0.3` terminal contract (docs/proto.md §6.7)
+- `TerminalEnsureFrame` carries optional `resume_from_offset` for offset-exact output backfill
+- `TerminalSendFrame` is the single-gesture surface `{ text?, submit?, key?, await? }`; `await` is a typed enum (`command` | `settled`), and the retired `wait_for`/`timeout_ms`/plural-`keys` vocabulary no longer deserializes
+- `TerminalObserveFrame` keeps `view: screen|delta|history` plus optional `lines`; wait vocabulary removed
+- `TerminalInputFrame` is raw base64 keyboard bytes only (`await_ready` retired with readiness)
+- owns the outbound 0.3 frame builders used by the terminal runtime: `terminal_output_frame` (offset-addressed, no `seq`), `terminal_event_frame` (§6.7.3 vocabulary), `terminal_status_frame` (stem-backed info), `terminal_send_result_frame` (`dispatched`/`outcome`/`error`), and `terminal_observe_result_frame` (grid-backed `TerminalObservation`)
+- `FileOpenFrame` accepts an optional `resolution_hint` so service-created file sessions can prefer message-time cwd without a click-time terminal query
 - `FileResolveFrame` carries metadata-only absolute POSIX file preflight requests before service-side file-session creation
 - `ProxyWebSocketOpenFrame`, `ProxyWebSocketMessageFrame`, `ProxyWebSocketCloseFrame`, and `ProxyWebSocketErrorFrame` carry the Phase 5 message-oriented WebSocket proxy contract
 - `ProxyOpenFrame` carries optional `request_body_bytes` for bounded
@@ -97,21 +101,22 @@ Bud <-> service frame definitions and protocol validation.
   `POST /v1/responses`
 - HTTP proxy open results may include out-of-band `set_cookies` arrays emitted
   by the local target and filtered by the service before browser delivery
-- keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.2"`
+- keeps `PROTO_VERSION = "0.1"` and `TERMINAL_PROTO_VERSION = "0.3"`
 - exposes `validate_inbound_envelope_proto(...)` so the app layer rejects mismatched inbound protocol versions before dispatch
 
 ### `proto_wire.rs`
 
 Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 
-- encodes active terminal/control frame bodies under typed protobuf oneof payload tags with direct protobuf fields
-- carries optional `host_cwd` fields on typed `terminal_send_result` and `terminal_observe_result` payloads
-- preserves signed optional `terminal_observe.lines` values, including negative tail semantics, through typed protobuf encode/decode
+- proto `0.3` terminal frames are carried as `frame_json` inside their typed payload messages; field-level protobuf encoding for terminal frames retired with the `0.2` contract
+- `terminal_event` has no oneof slot in `bud.proto` and travels via the self-describing `legacy_json` payload (field 100); `terminal_ready` (slot 130) is retired
+- keeps inbound decode tolerance for field-level terminal payloads a service encoder may still emit: retired 0.2 wait/readiness fields are skipped, new 0.3 fields decode at the next free numbers (`terminal_ensure.resume_from_offset = 3`, `terminal_send.await = 9`)
+- stamps `proto: "0.3"` when reconstructing terminal frames from field-level payloads
 - encodes core stream lifecycle frames under typed payload tags with direct protobuf fields so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
 - maps the `local_llm_http` stream family in the protobuf/json stream-type
   vocabulary so local LLM bytes can use the same generic stream lifecycle frames
 - maps Phase 5 `proxy_ws_*` frame types to typed protobuf payload tags with transitional `frame_json`
-- keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures and pre-cutover fixture coverage
+- keeps legacy `LegacyJsonPayload` encode/decode helpers for conformance fixtures
 - decodes protobuf envelopes back to JSON text before handing off to existing frame handlers
 - shares conformance fixture coverage with the service through `proto/fixtures/legacy-terminal-ensure.json`
 - tolerates unknown protobuf fields while validating the envelope version and required compatibility payload
@@ -274,105 +279,19 @@ Legacy queued command executor retained as reference functionality.
 - owns shell spawn, stdout/stderr chunking, and `run_finished`
 - remains intentionally isolated from the terminal runtime so future non-terminal capabilities still have a reference path
 
-### `terminal/mod.rs`
+### `terminal/` → [terminal/terminal.spec.md](./terminal/terminal.spec.md)
 
-Terminal runtime composition root.
+Terminal runtime rebuilt on `stem` (Phase 2 cutover). Implements the proto
+`0.3` terminal contract end to end:
 
-- defines shared terminal runtime types (`TerminalConfig`, `TerminalManager`, session/capture state)
-- makes `TerminalManager` generic over a `TerminalBackend`, with `TmuxBackend` as the default concrete backend
-- carries the daemon-resolved default cwd used when `terminal_ensure.config.cwd` is absent
-- owns terminal-wide constants, including the post-dispatch guard used before settled send quiescence sampling, and the public `probe_tmux()` helper
+- `terminal/mod.rs` — module composition; re-exports `TerminalConfig` / `TerminalManager`
+- `terminal/manager.rs` — session lifecycle over `stem::registry` (holders re-exec `bud term-hold`; base dir `<terminal-base-dir>/term`, 0700) and all `terminal_*` handlers: ensure with `resume_from_offset` backfill, single-gesture send with `await: command|settled` outcomes and the sentinel exit-code fallback (design D6c), grid-backed observe (`screen`/`delta`/`history`), raw input, resize, close; per-session mutex serializes gestures while awaits resolve off-lock (review finding D-H1)
+- `terminal/session_task.rs` — event pump mapping `stem::Event`s onto `terminal_output` (≤16 KiB offset-addressed chunks, no `seq`), `terminal_event` (§6.7.3 vocabulary with daemon-minted `cmd_<ULID>` ids and measured `duration_ms`), and `terminal_status` frames; feeds the broadcast channel awaits correlate against
+- `terminal/repl_registry.rs` — conservative REPL prompt registry (product policy) injected into stem's `ModeMachine`
+- `terminal/shims.rs` — shell-integration shims (design D6b): zsh `ZDOTDIR`, bash `--rcfile`, fish/other passthrough, `BUD_NO_SHELL_INTEGRATION=1` opt-out
 
-### `terminal/backend.rs`
-
-Backend abstraction for the terminal runtime.
-
-- defines `TerminalBackend`
-- describes the backend facts/operations the runtime needs:
-  - session naming and log paths
-  - session lifecycle control
-  - low-level text/key dispatch
-  - pane capture
-  - output watcher spawning
-
-This is the main seam that lets the runtime stay backend-neutral above tmux.
-
-### `terminal/registry.rs`
-
-Session registry and lifecycle ownership.
-
-- terminal session registry and sender lifecycle
-- `terminal_ensure`, `terminal_resize`, and `terminal_close`
-- delivered-capture storage
-- status payload assembly
-- terminal session env defaults (`COLORTERM=truecolor`, `COLORFGBG=15;0`)
-- session cwd fallback comes from `TerminalConfig.default_cwd` instead of a hard-coded home-directory string
-- session creation/reattach orchestration over the backend trait
-
-### `terminal/interaction.rs`
-
-Interactive send/input runtime.
-
-- `terminal_input`
-- `terminal_send`
-- settled `terminal_send` now sleeps a short post-dispatch guard before taking the output-quiescence offset/timestamp baseline
-- low-level CRLF-aware input splitting
-- single-gesture structured submission: either `text` with optional `submit`, or one semantic `key`
-- compatibility normalization for legacy one-entry `keys`
-- send error payload assembly
-
-### `terminal/observe.rs`
-
-Explicit observation runtime.
-
-- `terminal_observe`
-- delta/screen/history view handling
-- delivered-capture baseline reuse
-- rejects compatibility-only `shell_ready` for default delta observations while allowing supported lower-level wait paths to remain available during rollout
-- observe error payload assembly
-
-### `terminal/readiness.rs`
-
-Readiness and wait-policy ownership above the backend layer.
-
-- `ReadinessDetector`
-- `ActivityDetector`
-- output-quiescence waits
-- screen wait loops
-- readiness assessment generation, including evidence-based settled quiescence assessment that does not treat quiet bytes alone as high-confidence readiness
-- capture helpers shared by send/observe
-
-### `terminal/delta.rs`
-
-Additive delta ownership.
-
-- capture hashing/summarization
-- additive delta extraction
-- low-signal separator stripping
-- JSON delta payload assembly
-
-### `terminal/tmux.rs`
-
-tmux backend adapter and current concrete backend implementation.
-
-- implements `TerminalBackend` for `TmuxBackend`
-- creates/reattaches sessions
-- configures `pipe-pane`
-- captures panes
-- resizes / kills sessions
-- sends literal text with a tmux option terminator so leading-hyphen content is not parsed as flags, and sends tmux key names
-- owns the output watcher implementation that emits `terminal_output`
-- probes tmux availability
-
-The backend still intentionally accepts tmux-style key aliases for compatibility, but the normal service-facing contract above it is now backend-neutral.
-
-### `terminal/test_support.rs`
-
-Test-only terminal harness compiled under `#[cfg(test)]`.
-
-- provides a fake backend that implements `TerminalBackend`
-- exposes helpers for installing test sessions and receiving emitted WebSocket frames
-- supports abstraction-level tests for send/observe logic without requiring real tmux
+The former tmux adapter, `TerminalBackend` trait, capture/delta heuristics,
+readiness detectors, and fake backend were deleted with the `0.2` contract.
 
 ## Architecture
 
@@ -397,31 +316,25 @@ app.rs::BudApp
   |
   +--> terminal/mod.rs
          |
-         +--> terminal/backend.rs
-         +--> terminal/registry.rs
-         +--> terminal/interaction.rs
-         +--> terminal/observe.rs
-         +--> terminal/readiness.rs
-         +--> terminal/delta.rs
-         +--> terminal/tmux.rs
+         +--> terminal/manager.rs
+         +--> terminal/session_task.rs
+         +--> terminal/repl_registry.rs
+         +--> terminal/shims.rs
+         |
+         v
+       stem (workspace member crate: registry -> `bud term-hold` holders,
+             Session events, emulator, key encoding)
 ```
 
 ## Terminal Runtime Responsibilities
 
-### Above the backend boundary
-
-- maintain session handles and delivered-capture state
-- interpret inbound `terminal_*` frames
-- decide wait strategy (`none`, `changed`, `settled`, with compatibility-only `shell_ready` where implemented)
-- build readiness assessments and additive delta payloads
-- expose the current backend-neutral service contract while keeping compatibility shims localized
-
-### tmux-specific backend adapter
-
-- translate terminal actions into tmux commands
-- manage `pipe-pane` log capture
-- capture pane contents
-- report tmux availability
+- maintain per-session stem attachments (holder ensure, attach/replay,
+  event pump, detection window) and interpret inbound `terminal_*` frames
+- translate stem facts (OSC 133 lifecycle, modes, settling, output offsets)
+  onto the proto `0.3` wire vocabulary — no readiness/confidence guessing
+- own product policy layered above stem: REPL prompt registry, shell
+  integration shims, sentinel exit-code fallback, history caps, grid-diff
+  delta baselines
 
 ## Tests
 
@@ -434,12 +347,15 @@ High-value local tests now live next to the extracted abstractions:
 - `app.rs`
   - WebSocket session shutdown does not wait for stale cloned transport senders
 - `protocol.rs`
-  - inbound protocol validation
+  - inbound protocol validation (0.3 terminal frames; 0.2 refused)
+  - deserialization coverage for every inbound 0.3 terminal frame (resume offset, await modes, retired-vocabulary rejection)
+  - shape tests for every outbound 0.3 builder (output/event/status/send-result/observe-result, retired-field absence)
 - `proto_wire.rs`
   - protobuf compatibility envelope fixture encode/decode
-  - signed `terminal_observe.lines` regression coverage for negative line counts
+  - terminal frames round-trip as `frame_json` under typed payload slots; `terminal_event` via `legacy_json`
+  - inbound field-level decode tolerance (`terminal_send.await`, `terminal_ensure.resume_from_offset`, `terminal_observe.lines`)
 - `doctor.rs`
-  - remediation text helpers, production TLS skip/probe behavior, and command/path quoting helpers
+  - production TLS skip/probe behavior and command/path quoting helpers
 - `proxy/mod.rs`
   - localhost proxy-open policy validation
   - transport-disconnect cleanup resets waiting HTTP proxy streams and closes active WebSocket proxy sessions
@@ -456,30 +372,16 @@ High-value local tests now live next to the extracted abstractions:
   - gRPC data-channel terminal-output routing and control fallback
 - `journal.rs`
   - journal round-trip and corrupt/missing tolerance
-- `terminal/registry.rs`
-  - env defaults/overrides
-  - terminal session default cwd fallback
-  - terminal-status info merge behavior
-- `terminal/interaction.rs`
-  - ctrl-key normalization
-  - CRLF low-level input splitting
-  - fake-backend `terminal_send` flow
-  - result payloads include daemon-observed pane cwd when available
-  - settled send echo preservation, prompt readiness, weak-capture conservatism, and timeout delta behavior
-- `terminal/observe.rs`
-  - fake-backend `terminal_observe` delta flow
-  - result payloads include daemon-observed pane cwd when available
-  - settled observe weak-capture readiness conservatism
-  - unsupported `terminal_observe(view:"delta", wait_for:"shell_ready")` validation
-- `terminal/readiness.rs`
-  - wait-mode parsing
-  - readiness assessment overrides
-  - evidence-based settled quiescence readiness
-- `terminal/delta.rs`
-  - additive delta behavior
-- `terminal/tmux.rs`
-  - shell-safe `pipe-pane` command quoting
-  - literal `send-keys` argument construction keeps `--` before text so markdown bullets and other leading-hyphen segments are delivered literally
+- `terminal/manager.rs`
+  - grid-diff delta semantics, session env defaults/overrides, sentinel trailer shape
+- `terminal/session_task.rs`
+  - output chunking with preserved offsets, command ULID/duration minting, finish-without-start omission, child-exit → closed status, event vocabulary mapping
+- `terminal/repl_registry.rs`
+  - REPL prompt matches and conservative non-matches
+- `terminal/shims.rs`
+  - zsh/bash shim file generation; fish/unknown passthrough
+- `tests/terminal_stem.rs` (integration, real `bud term-hold` holders)
+  - ensure→ready status, sentinel exit codes 0/1 on `/bin/sh`, observe/resize, close-kills-holder, offset-exact reattach without duplicates or gaps, two-session non-blocking concurrency (D-H1), zsh/bash shim OSC 133 marker flows
 
 ## Dependencies
 
@@ -487,6 +389,7 @@ External crates (from `Cargo.toml`):
 
 | Crate | Purpose |
 |-------|---------|
+| `stem` (workspace member) | Native terminal session manager: holder registry/spawn, `Session` attach/events, emulator, key encoding |
 | `tokio` | Async runtime with process, fs, sync features |
 | `tokio-tungstenite` | WebSocket client, configured with native Rustls roots so local mkcert CAs trusted by the OS work for HTTPS parity dev |
 | `tonic` / `tonic-prost` / `prost` | gRPC control/data clients and generated protobuf message support |
@@ -507,8 +410,7 @@ External crates (from `Cargo.toml`):
 ## TODOs / Technical Debt
 
 <!-- SPEC:TODO -->
-- Readiness and status are now centralized above the backend layer, but the terminal runtime still contains multiple internal assessment paths (`shell_ready`, `changed`, `settled`, legacy activity-based waits) that should continue converging on shared readiness primitives as more backends arrive.
-- Key translation still retains tmux-oriented notation compatibility in the interaction layer; once the rollout shim is no longer needed, that normalization should move fully behind the backend boundary.
+- stem API gaps worked around in the terminal runtime (tracked for a stem follow-up): `Session` exposes neither `integration()` nor ring stats (the manager opens an extra `HolderClient` for `stat`), and `mark_no_integration()` / `mark_sentinel_integration()` swallow their resulting ModeChange (the daemon re-emits `mode_changed` itself).
 - The legacy queued `run` path is intentionally retained as reference functionality, not as the primary runtime model, so ownership is deliberately light until a future capability expansion needs it.
 - Device-auth bootstrap still depends on outbound HTTPS from the daemon; there is no offline/local fallback beyond presenting the claim URL and QR code.
 

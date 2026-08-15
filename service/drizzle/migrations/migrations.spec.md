@@ -185,6 +185,13 @@ Placeholder to ensure the directory exists in git.
 - Adds owner/expiry, token-hash, and redeemed-Bud indexes
 - Adds foreign keys to `auth.user` and `bud`
 
+### `0023_superb_alex_wilder.sql`
+
+**Terminal proto 0.3 cutover (stem terminal command lifecycle)**:
+- Creates `terminal_command`: daemon-minted `command_id` ULID PK, `terminal_session_id` FK (cascade), `thread_id`, `bud_id`, owner stamps (`created_by_user_id`, nullable `tenant_id`), `command_started_at`, nullable `command_finished_at` / `exit_code`, and bigint `output_byte_start` / `output_byte_end` for slicing transcript output from `terminal_session_output`
+- Adds session/started, thread/started, and bud indexes
+- Drops the retired `terminal_session_output.seq` column and `terminal_session_output_seq_idx` (proto 0.3 makes `byte_offset` the sole ordering/dedup/resume coordinate; dropping `seq` is destructive by design for this pre-release cutover)
+
 ### Reasoning Message Role Audit
 
 No migration follows `0022` for adding `reasoning` to the TypeScript
@@ -203,7 +210,7 @@ Earlier files follow Drizzle Kit's `{sequence}_{adjective}_{noun}.sql` pattern. 
 
 Drizzle Kit metadata tracking migration state. Contains:
 - `_journal.json` - Migration history
-- Snapshot files for each migration (`0000` through `0022` currently)
+- Snapshot files for each migration (`0000` through `0023` currently)
 
 `meta/` is operationally important, not disposable. `drizzle-kit generate` uses the latest snapshot chain as its diff baseline; if `_journal.json` entries exist without matching `*_snapshot.json` files, future migration generation can drift into bogus rename prompts instead of clean SQL diffs.
 
@@ -287,6 +294,9 @@ v21: automatic context compaction checkpoints
  │
  ▼
 v22: device install claims
+ │
+ ▼
+v23: terminal proto 0.3 command lifecycle (+ drop terminal_session_output.seq)
 ```
 
 ---

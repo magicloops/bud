@@ -109,13 +109,15 @@ Thread-scoped file viewer route for `POST /api/threads/:threadId/files/open`.
 
 ### `terminal.ts`
 
-Thread-scoped terminal routes for session create/ensure/read, SSE attach, human input/interrupt/resize, and history reads.
+Thread-scoped terminal routes for session create/ensure/read, SSE attach, human input/interrupt/resize, and history reads (terminal proto 0.3).
 
-The interrupt route sends a human Ctrl+C through the terminal runtime and rejects older pending terminal waits as `interrupted`, so a long settled agent tool can return a conservative tool result instead of remaining pending for the full settled timeout.
+- The stream route treats `Last-Event-ID` as the stringified byte offset the client last applied: a numeric cursor triggers durable output replay from that offset (via `readOutputRange`, internally paginated) before attaching live, with offset-based dedupe between replayed and live `terminal.output` events. Non-numeric/absent cursors fall back to the in-memory buffer replay. Output SSE events carry offset ids; `terminal.event` and other non-output events carry no id.
+- The history route serves `since_offset` reads through `readOutputRange(...)` (covering-chunk trim, explicit `truncated`/`next_offset`) and tail reads through the byte-budget `tailOutput(...)`.
+- The interrupt route sends a human Ctrl+C as a dispatch-only `terminal_send` (no `wait_for`/`await` field) and rejects older pending terminal waits as `interrupted`, so a long awaited agent tool can return a conservative tool result instead of remaining pending for the full awaited budget. The HTTP response keeps the `submitted` field name (mapped from the runtime's `dispatched`).
 
 ### `terminal.test.ts`
 
-Focused route-handler coverage for the terminal interrupt route.
+Focused route-handler coverage for the terminal interrupt route and the offset-resume SSE stream (durable replay from `Last-Event-ID`, overlap dedupe against live events, verbatim `terminal.event` forwarding).
 
 **Current Coverage**:
 - owned terminal interrupt returns dispatch metadata from the terminal manager

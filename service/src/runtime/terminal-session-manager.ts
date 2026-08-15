@@ -13,14 +13,9 @@ import type {
   DaemonTransportStatus,
 } from "../transport/daemon-router.js";
 import { daemonTransportRouter } from "../transport/composite-daemon-router.js";
-import type { PendingCommand, ReadinessAssessment } from "../terminal/types.js";
-import { isKnownReplProgram } from "../terminal/known-programs.js";
 import { TerminalEventBus } from "./event-bus.js";
 import { TerminalIdleMonitor } from "./terminal/idle-monitor.js";
-import {
-  summarizeContextForLog,
-  summarizeObservedOutput,
-} from "./terminal/logging.js";
+import { summarizeObservedOutput } from "./terminal/logging.js";
 import {
   TerminalRequestDispatcher,
   type ObserveOptions,
@@ -30,8 +25,16 @@ import {
   type SendResult,
   type SendResultPayload,
 } from "./terminal/request-dispatcher.js";
-import { TerminalOutputStore } from "./terminal/output-store.js";
-import { TerminalRuntimeState } from "./terminal/runtime-state.js";
+import {
+  TerminalOutputStore,
+  type OutputRangeReadResult,
+  type OutputTailReadResult,
+} from "./terminal/output-store.js";
+import {
+  TerminalCommandStore,
+  type TerminalCommandRecord,
+} from "./terminal/terminal-command-store.js";
+import { TerminalRuntimeState, type TerminalRuntimeContext } from "./terminal/runtime-state.js";
 import { TerminalSessionStore } from "./terminal/session-store.js";
 import type { SessionState, TerminalSession } from "./terminal/session-types.js";
 
@@ -39,36 +42,48 @@ type TerminalStatusPayload = {
   state: string;
   info?: {
     pid?: number;
-    shell?: string;
     cwd?: string;
     cols?: number;
     rows?: number;
-    output_log_bytes?: number;
-    started_at?: string;
-    last_activity_at?: string;
+    ring_next_offset?: number;
+    mode?: string;
+    integration?: string;
   };
 };
 
 type TerminalOutputPayload = {
-  seq: number;
   data: string;
   byte_offset: number;
 };
 
-type TerminalReadyPayload = {
-  assessment: ReadinessAssessment;
+type TerminalEventPayload = {
+  event: string;
+  data: Record<string, unknown>;
+  ts: number;
 };
 
 export type TerminalPathContext = {
   schema: "terminal_cwd_v1";
   source: "terminal_runtime_cache";
-  reported_by: "tmux_pane_current_path";
+  reported_by: "prompt_ready_osc7";
   terminal_session_id: string;
   host_cwd: string;
   captured_at: string;
 };
 
+export type TerminalCommandOutput = {
+  command: TerminalCommandRecord;
+  /** Lossy UTF-8 decode of the command's output byte range. */
+  output: string;
+  /** Number of bytes represented by `output` (before UTF-8 decoding). */
+  outputBytes: number;
+  /** True when the caller's maxBytes cap trimmed the range (head-trimmed; tail kept). */
+  truncated: boolean;
+};
+
 export type { SessionState, TerminalSession } from "./terminal/session-types.js";
+export type { TerminalRuntimeContext } from "./terminal/runtime-state.js";
+export type { TerminalCommandRecord } from "./terminal/terminal-command-store.js";
 export type {
   ObserveOptions,
   ObserveResult,
@@ -82,6 +97,7 @@ export class TerminalSessionManager {
   private readonly sessionStore: TerminalSessionStore;
   private readonly runtimeState: TerminalRuntimeState;
   private readonly outputStore: TerminalOutputStore;
+  private readonly commandStore: TerminalCommandStore;
   private readonly requestDispatcher: TerminalRequestDispatcher;
   private readonly idleMonitor: TerminalIdleMonitor;
   private readonly daemonTransport: DaemonTransportRouter;
@@ -97,25 +113,12 @@ export class TerminalSessionManager {
     this.sessionStore = new TerminalSessionStore(logger, daemonTransport);
     this.runtimeState = new TerminalRuntimeState(logger);
     this.outputStore = new TerminalOutputStore(logger, events);
+    this.commandStore = new TerminalCommandStore(logger);
     this.requestDispatcher = new TerminalRequestDispatcher({
       logger,
       getSession: (sessionId) => this.sessionStore.getSession(sessionId),
-      getSessionContext: (sessionId) => this.runtimeState.getSessionContext(sessionId),
-      getLatestReadiness: (sessionId) => this.runtimeState.getLatestReadiness(sessionId),
       getLastOffset: (sessionId) => this.outputStore.getLastOffset(sessionId),
-      storeReadinessAssessment: (sessionId, assessment) => {
-        this.runtimeState.storeReadinessAssessment(sessionId, assessment);
-      },
-      storeHostCwd: (sessionId, hostCwd) => this.sessionStore.updateCwd(sessionId, hostCwd),
-      emitReadyEvent: (sessionId, assessment) => {
-        this.events.emit(sessionId, {
-          event: "terminal.ready",
-          data: { assessment },
-          id: ulid()
-        });
-      },
       sendFrameToBud: (budId, payload) => this.daemonTransport.sendFrameToBud(budId, payload),
-      summarizeContextForLog,
       summarizeObservedOutput,
     });
     this.idleMonitor = new TerminalIdleMonitor({
@@ -177,7 +180,10 @@ export class TerminalSessionManager {
   }
 
   async ensureSession(sessionId: string): Promise<{ ok: boolean; resumed: boolean; created?: boolean; error?: string }> {
-    return this.sessionStore.ensureSession(sessionId);
+    // resume_from_offset = highest durably stored end offset; the daemon
+    // backfills ring-buffered output from exactly this offset (§6.7.2).
+    const resumeFromOffset = await this.outputStore.getStoredEndOffset(sessionId);
+    return this.sessionStore.ensureSession(sessionId, { resumeFromOffset });
   }
 
   async closeSession(sessionId: string, reason = "requested"): Promise<void> {
@@ -197,18 +203,7 @@ export class TerminalSessionManager {
     };
     this.daemonTransport.sendFrameToBud(session.budId, payload);
 
-    await this.sessionStore.markClosed(sessionId);
-    this.runtimeState.clearSessionCache(sessionId);
-    this.outputStore.clearSessionCache(sessionId);
-    this.requestDispatcher.rejectPendingRequestsForSession(sessionId, "session_closed");
-
-    this.events.emit(sessionId, {
-      event: "terminal.status",
-      data: { state: "closed", reason },
-      id: ulid()
-    });
-
-    this.logger.info({ sessionId, reason }, "Session closed");
+    await this.markSessionClosedLocally(sessionId, reason);
   }
 
   async sendInput(
@@ -221,24 +216,7 @@ export class TerminalSessionManager {
       return { ok: false, error: "session_not_found" };
     }
 
-    const inputStr = data.toString("utf-8");
     const source = options.source ?? "agent";
-
-    if (this.runtimeState.getSessionContext(sessionId).mode === "shell" && inputStr.includes("\n")) {
-      const command = this.parseCommandFromInput(inputStr);
-      if (command && isKnownReplProgram(command)) {
-        this.runtimeState.setPendingCommand(sessionId, {
-          input: inputStr,
-          command,
-          sentAt: Date.now(),
-          source
-        });
-      }
-    }
-
-    const context = this.runtimeState.getSessionContext(sessionId);
-    const useActivityBased = context.mode === "repl";
-
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_input",
@@ -246,29 +224,8 @@ export class TerminalSessionManager {
       ts: Date.now(),
       ext: {},
       session_id: sessionId,
-      data: data.toString("base64"),
-      await_ready: {
-        enabled: true,
-        activity_based: useActivityBased,
-        ...(useActivityBased
-          ? {
-              activity_interval_ms: 5000,
-              activity_stable_count: 2,
-              activity_initial_delay_ms: 2000,
-              max_wait_ms: 60000
-            }
-          : {
-              max_wait_ms: 30000
-            })
-      }
+      data: data.toString("base64")
     };
-
-    this.debug("sendInput with readiness config", {
-      sessionId,
-      mode: context.mode,
-      program: context.program,
-      useActivityBased
-    });
 
     const sent = this.daemonTransport.sendFrameToBud(session.budId, payload);
     if (!sent) {
@@ -318,23 +275,27 @@ export class TerminalSessionManager {
     return { ok: true };
   }
 
-  async handleTerminalStatus(sessionId: string, payload: TerminalStatusPayload): Promise<void> {
+  async handleTerminalStatus(budId: string, sessionId: string, payload: TerminalStatusPayload): Promise<void> {
+    const session = await this.resolveOwnedSession(budId, sessionId, "terminal_status");
+    if (!session) {
+      return;
+    }
+
     await this.sessionStore.updateStatus(sessionId, payload);
+    this.runtimeState.applyStatusInfo(sessionId, payload.info);
     this.debug("terminal_status processed", { sessionId, state: payload.state });
     this.events.emit(sessionId, {
       event: "terminal.status",
       data: {
         state: payload.state,
         info: payload.info ?? {}
-      },
-      id: ulid()
+      }
     });
   }
 
-  async handleTerminalOutput(sessionId: string, payload: TerminalOutputPayload): Promise<void> {
-    const session = await this.sessionStore.getSession(sessionId);
+  async handleTerminalOutput(budId: string, sessionId: string, payload: TerminalOutputPayload): Promise<void> {
+    const session = await this.resolveOwnedSession(budId, sessionId, "terminal_output");
     if (!session) {
-      this.logger.warn({ sessionId }, "terminal_output for unknown session");
       return;
     }
 
@@ -350,24 +311,106 @@ export class TerminalSessionManager {
     });
   }
 
-  async handleTerminalReady(sessionId: string, payload: TerminalReadyPayload): Promise<void> {
-    this.runtimeState.storeReadinessAssessment(sessionId, payload.assessment);
+  async handleTerminalEvent(budId: string, sessionId: string, payload: TerminalEventPayload): Promise<void> {
+    const session = await this.resolveOwnedSession(budId, sessionId, "terminal_event");
+    if (!session) {
+      return;
+    }
+
+    const data = payload.data ?? {};
+    switch (payload.event) {
+      case "prompt_ready": {
+        if (typeof data.cwd === "string" && data.cwd.trim().length > 0) {
+          this.runtimeState.applyCwd(sessionId, data.cwd);
+          try {
+            await this.sessionStore.updateCwd(sessionId, data.cwd);
+          } catch (err) {
+            this.logger.warn({ err, sessionId }, "Failed to persist prompt_ready cwd");
+          }
+        }
+        break;
+      }
+      case "mode_changed":
+        this.runtimeState.applyModeChange(sessionId, data.mode, data.integration);
+        break;
+      case "command_started":
+        if (typeof data.command_id === "string") {
+          await this.commandStore.recordCommandStarted(session, {
+            commandId: data.command_id,
+            outputByteStart: asNonNegativeInteger(data.output_byte_start) ?? 0,
+            ts: payload.ts
+          });
+        }
+        break;
+      case "command_finished":
+        if (typeof data.command_id === "string") {
+          await this.commandStore.recordCommandFinished(session, {
+            commandId: data.command_id,
+            exitCode: asInteger(data.exit_code),
+            durationMs: asNonNegativeInteger(data.duration_ms),
+            outputByteStart: asNonNegativeInteger(data.output_byte_start),
+            outputByteEnd: asNonNegativeInteger(data.output_byte_end),
+            ts: payload.ts
+          });
+        }
+        break;
+      case "output_gap":
+        this.logger.warn(
+          {
+            sessionId,
+            fromOffset: data.from_offset ?? null,
+            resumeOffset: data.resume_offset ?? null,
+            component: "terminal_session_manager"
+          },
+          "Terminal output gap reported (daemon ring truncated)"
+        );
+        break;
+      case "settled":
+        break;
+      case "child_exited":
+        // Session lifecycle: the root process exited, so the session is over.
+        await this.markSessionClosedLocally(sessionId, "child_exited");
+        break;
+      default:
+        // Unknown terminal_event values are ignored (additive evolution) but
+        // still forwarded to the browser stream below.
+        break;
+    }
+
+    // Forward every terminal_event to the thread's terminal SSE verbatim
+    // (§6.7.7). Non-output events carry no SSE id so Last-Event-ID stays an
+    // output byte offset.
     this.events.emit(sessionId, {
-      event: "terminal.ready",
-      data: { assessment: payload.assessment },
-      id: ulid()
+      event: "terminal.event",
+      data: {
+        session_id: sessionId,
+        event: payload.event,
+        data,
+        ts: payload.ts
+      }
     });
   }
 
-  async handleObserveResult(sessionId: string, payload: ObserveResponsePayload): Promise<void> {
+  async handleObserveResult(budId: string, sessionId: string, payload: ObserveResponsePayload): Promise<void> {
+    const session = await this.resolveOwnedSession(budId, sessionId, "terminal_observe_result");
+    if (!session) {
+      return;
+    }
+    if (payload.mode || payload.integration) {
+      this.runtimeState.applyModeChange(sessionId, payload.mode, payload.integration);
+    }
     await this.requestDispatcher.handleObserveResult(sessionId, payload);
   }
 
-  async handleSendResult(sessionId: string, payload: SendResultPayload): Promise<void> {
+  async handleSendResult(budId: string, sessionId: string, payload: SendResultPayload): Promise<void> {
+    const session = await this.resolveOwnedSession(budId, sessionId, "terminal_send_result");
+    if (!session) {
+      return;
+    }
     await this.requestDispatcher.handleSendResult(sessionId, payload);
   }
 
-  getSessionContext(sessionId: string): ReturnType<TerminalRuntimeState["getSessionContext"]> {
+  getSessionContext(sessionId: string): TerminalRuntimeContext {
     return this.runtimeState.getSessionContext(sessionId);
   }
 
@@ -375,16 +418,55 @@ export class TerminalSessionManager {
     return this.outputStore.getLastOffset(sessionId);
   }
 
-  getLatestReadiness(sessionId: string): ReadinessAssessment | null {
-    return this.runtimeState.getLatestReadiness(sessionId);
+  async tailOutput(sessionId: string, maxBytes: number): Promise<OutputTailReadResult> {
+    return this.outputStore.tailOutput(sessionId, maxBytes);
   }
 
-  async tailOutput(
+  async readOutputRange(
     sessionId: string,
-    maxBytes: number,
-    options?: { sinceOffset?: number }
-  ): Promise<{ data: Buffer; totalBytes: number }> {
-    return this.outputStore.tailOutput(sessionId, maxBytes, options);
+    options: { startOffset: number; endOffset?: number; maxBytes: number },
+  ): Promise<OutputRangeReadResult> {
+    return this.outputStore.readRange(sessionId, options);
+  }
+
+  async getStoredOutputBytes(sessionId: string): Promise<number> {
+    return this.outputStore.getStoredOutputBytes(sessionId);
+  }
+
+  /**
+   * Internal API for the agent tool layer (terminal.run): fetch a persisted
+   * command row and slice its output text from the durable output store by
+   * byte range. UTF-8 decoding is lossy at slice edges; `maxBytes` caps the
+   * returned slice, keeping the TAIL of the range (the most recent output).
+   */
+  async getCommandOutput(
+    commandId: string,
+    options: { maxBytes?: number } = {},
+  ): Promise<TerminalCommandOutput | null> {
+    const command = await this.commandStore.getCommand(commandId);
+    if (!command) {
+      return null;
+    }
+
+    const maxBytes = Math.max(1, Math.floor(options.maxBytes ?? 64 * 1024));
+    const rangeEnd =
+      command.outputByteEnd ?? (await this.outputStore.getStoredEndOffset(command.terminalSessionId));
+    const rangeStart = Math.min(command.outputByteStart, rangeEnd);
+    const cappedStart = Math.max(rangeStart, rangeEnd - maxBytes);
+    const truncatedByCap = cappedStart > rangeStart;
+
+    const read = await this.outputStore.readRange(command.terminalSessionId, {
+      startOffset: cappedStart,
+      endOffset: rangeEnd,
+      maxBytes
+    });
+
+    return {
+      command,
+      output: read.data.toString("utf-8"),
+      outputBytes: read.data.length,
+      truncated: truncatedByCap || read.truncated
+    };
   }
 
   async observeTerminal(
@@ -404,7 +486,6 @@ export class TerminalSessionManager {
       sessionId,
       {
         lines: options.startLine ?? -50,
-        waitFor: "none",
         view: "history"
       },
       timeoutMs
@@ -426,7 +507,7 @@ export class TerminalSessionManager {
   async interruptThreadTerminal(threadId: string): Promise<{
     ok: boolean;
     sessionId?: string;
-    submitted?: boolean;
+    dispatched?: boolean;
     rejectedPendingRequests?: number;
     error?: string;
   }> {
@@ -440,7 +521,7 @@ export class TerminalSessionManager {
     try {
       const result = await this.requestDispatcher.sendInteraction(
         session.sessionId,
-        { key: "ctrl+c", waitFor: "none" },
+        { key: "ctrl+c" },
         {
           rejectPendingRequestsWith: "interrupted",
           onPendingRequestsRejected: (count) => {
@@ -453,7 +534,7 @@ export class TerminalSessionManager {
         {
           threadId,
           sessionId: session.sessionId,
-          submitted: result.submitted,
+          dispatched: result.dispatched,
           rejectedPendingRequests,
           component: "terminal_session_manager",
         },
@@ -463,7 +544,7 @@ export class TerminalSessionManager {
       return {
         ok: true,
         sessionId: session.sessionId,
-        submitted: result.submitted,
+        dispatched: result.dispatched,
         rejectedPendingRequests,
       };
     } catch (err) {
@@ -485,10 +566,6 @@ export class TerminalSessionManager {
         error,
       };
     }
-  }
-
-  setPendingCommand(sessionId: string, command: PendingCommand): void {
-    this.runtimeState.setPendingCommand(sessionId, command);
   }
 
   async fetchStatus(sessionId: string): Promise<{
@@ -625,8 +702,7 @@ export class TerminalSessionManager {
     for (const sessionId of sessionIds) {
       this.events.emit(sessionId, {
         event: "terminal.bud_offline",
-        data: { bud_id: budId, reason: "disconnected" },
-        id: ulid()
+        data: { bud_id: budId, reason: "disconnected" }
       });
     }
 
@@ -641,8 +717,7 @@ export class TerminalSessionManager {
     for (const sessionId of sessionIds) {
       this.events.emit(sessionId, {
         event: "terminal.bud_online",
-        data: { bud_id: budId },
-        id: ulid()
+        data: { bud_id: budId }
       });
     }
 
@@ -650,10 +725,6 @@ export class TerminalSessionManager {
       { budId, sessionCount: sessionIds.length, component: "terminal_session_manager" },
       "Emitted bud_online events for sessions"
     );
-  }
-
-  clearPendingCommand(sessionId: string): void {
-    this.runtimeState.clearPendingCommand(sessionId);
   }
 
   async rejectPendingRequestsForThread(threadId: string, errorMessage: string): Promise<number> {
@@ -669,17 +740,53 @@ export class TerminalSessionManager {
     return this.requestDispatcher.rejectPendingRequestsForSessions(sessionIds, errorMessage);
   }
 
-  private parseCommandFromInput(input: string): string | null {
-    const trimmed = input.replace(/[\r\n]+$/, "").trim();
-    if (!trimmed) {
+  /**
+   * S-C1 ownership guard: every inbound terminal frame handler resolves the
+   * session and asserts it belongs to the authenticated daemon connection
+   * before any write, emit, or pending-request resolution. Mismatches are
+   * logged and the frame is dropped.
+   */
+  private async resolveOwnedSession(
+    budId: string,
+    sessionId: string,
+    frameType: string,
+  ): Promise<TerminalSession | null> {
+    const session = await this.sessionStore.getSession(sessionId);
+    if (!session) {
+      this.logger.warn(
+        { sessionId, budId, frameType, component: "terminal_session_manager" },
+        "Dropping terminal frame for unknown session"
+      );
       return null;
     }
-    const firstWord = trimmed.split(/\s+/)[0];
-    if (!firstWord) {
+    if (session.budId !== budId) {
+      this.logger.warn(
+        {
+          sessionId,
+          frameBudId: budId,
+          sessionBudId: session.budId,
+          frameType,
+          component: "terminal_session_manager"
+        },
+        "Dropping terminal frame from bud that does not own the session"
+      );
       return null;
     }
-    const basename = firstWord.split("/").pop() || firstWord;
-    return basename.replace(/^\.\//, "");
+    return session;
+  }
+
+  private async markSessionClosedLocally(sessionId: string, reason: string): Promise<void> {
+    await this.sessionStore.markClosed(sessionId);
+    this.runtimeState.clearSessionCache(sessionId);
+    this.outputStore.clearSessionCache(sessionId);
+    this.requestDispatcher.rejectPendingRequestsForSession(sessionId, "session_closed");
+
+    this.events.emit(sessionId, {
+      event: "terminal.status",
+      data: { state: "closed", reason }
+    });
+
+    this.logger.info({ sessionId, reason }, "Session closed");
   }
 
   private async recordInput(
@@ -723,9 +830,18 @@ function buildTerminalPathContext(session: TerminalSession): TerminalPathContext
   return {
     schema: "terminal_cwd_v1",
     source: "terminal_runtime_cache",
-    reported_by: "tmux_pane_current_path",
+    reported_by: "prompt_ready_osc7",
     terminal_session_id: session.sessionId,
     host_cwd: session.cwd ?? "",
     captured_at: (session.lastActivityAt ?? session.startedAt ?? session.createdAt).toISOString(),
   };
+}
+
+function asInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
+}
+
+function asNonNegativeInteger(value: unknown): number | null {
+  const parsed = asInteger(value);
+  return parsed !== null && parsed >= 0 ? parsed : null;
 }
