@@ -457,6 +457,7 @@ Detailed specifications for each subproject:
 | Project | Spec File | Description | Status |
 |---------|-----------|-------------|--------|
 | `/bud` | [bud/bud.spec.md](./bud/bud.spec.md) | Rust device daemon | ✅ Complete |
+| `/bud/stem` | [bud/stem/stem.spec.md](./bud/stem/stem.spec.md) | Native terminal session manager (tmux replacement, workspace member crate) | ✅ Phase 1 complete (not yet wired into the daemon) |
 | `/service` | [service/service.spec.md](./service/service.spec.md) | Node.js backend | ✅ Complete |
 | `/web` | [web/web.spec.md](./web/web.spec.md) | React frontend | ✅ Complete |
 | `/spikes` | [spikes/spikes.spec.md](./spikes/spikes.spec.md) | Isolated validation harnesses | ✅ Active |

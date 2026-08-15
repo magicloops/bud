@@ -84,7 +84,10 @@ Sub-decisions:
 
 **3a. Detachment.** Holder must survive the daemon's exit *and* the service manager's teardown of the daemon. `setsid()` + double-fork (or `Command` with `pre_exec` setsid), stdio to a per-session log. **Known risk:** launchd may kill spawned children with the job unless the daemon's plist sets `AbandonProcessGroup=true`; systemd user services kill the cgroup unless `KillMode=process` is set. **The installer/service templates in `plan/daemon-readiness` must change in lockstep with this design** — this is the single most likely place for the design to get dirty, and needs a spike before anything else is built (see §6 Phase 0).
 
-> **SPIKE RESULT — macOS (2026-08-15, `spikes/holder-survival/findings.md`): GO, 8/8 PASS.** The double-fork + `setsid` detached holder survived natural job exit, daemon `kill -9`, `launchctl kickstart -k`, and a binary-replace upgrade — with reattach proven (holder pid unchanged) — under **both** `AbandonProcessGroup=true` and `false`. The plist directive is not load-bearing on macOS; the daemonization mechanics alone suffice. Keep `AbandonProcessGroup=true` in templates as defense-in-depth. **Linux systemd matrix still pending** — the D2(d) fallback trigger now rests solely on the Linux result.
+> **SPIKE RESULT (2026-08-15, `spikes/holder-survival/findings.md`): GO on both platforms — the D2(d) fallback is not needed.**
+> **macOS: 8/8 PASS.** The double-fork + `setsid` detached holder survived natural job exit, daemon `kill -9`, `launchctl kickstart -k`, and a binary-replace upgrade — reattach proven (holder pid unchanged) — under **both** `AbandonProcessGroup` variants; the plist directive is not load-bearing (ship `=true` as defense-in-depth anyway).
+> **Linux (Ubuntu): `KillMode=process` passes 4/4** (incl. proven reattach on restart/upgrade); the distro-default `KillMode=control-group` fails everything — cgroup cleanup reaps detached processes, and on restart/upgrade it silently respawned a fresh holder, which the harness's pid-unchanged assertion correctly flagged. The `systemd-run --user --scope` escape passed even under a hostile `control-group` unit.
+> **Binding recipe:** the Linux daemon unit **must** set `KillMode=process` (load-bearing; Phase 3 adds a doctor check that the installed unit carries it), macOS ships `AbandonProcessGroup=true`; holder self-placement into a transient scope is the validated Linux hardening option for `stem::holder` (plain detach remains the non-systemd fallback).
 
 **3b. Discovery/registry.** `~/.bud/term/<session_id>/` containing `holder.sock` (UDS, dir mode 0700), `meta.json` (holder pid, binary version, IPC protocol version, created_at, shell, initial cwd), and `ring.log` if D8 chooses file-backed. `session_exists` = socket connect + version handshake succeeds; stale dirs (dead pid) are garbage-collected on daemon start. This registry replaces both `has-session` and the currently-vestigial journal for terminal state.
 
@@ -99,6 +102,8 @@ Sub-decisions:
 **Options:** `portable-pty` (wezterm project) vs. raw `nix`/`rustix` `openpty` + fork.
 
 **Recommendation: `portable-pty`.** Maintained, handles the fiddly parts (controlling terminal, `TIOCSWINSZ`, process group), and keeps a future ConPTY door open. The `nix` crate is already a dependency if we prefer zero new deps, but hand-rolling PTY setup is where subtle bugs live. Holder-side only — this dependency never touches the daemon's hot path.
+
+> **AMENDED (2026-08-15, Phase 1):** implemented with `nix::pty::openpty` + fork/exec instead. Rationale: the holder must daemonize (double-fork + `setsid`) *before any threads exist*, which `portable-pty`'s abstractions don't model, and the exact raw-fd mechanics (TIOCSCTTY, stdio dup2, controlling-terminal setup) were already validated by the survival spike on both platforms — adapting proven code beat adopting an abstraction we'd immediately fight. `portable-pty` remains the noted door for a future ConPTY backend (D12); nothing else in the design depended on this choice.
 
 ### D5. VT emulator
 
@@ -230,7 +235,7 @@ From the contracts (via D15): the readiness-confidence/hints vocabulary and its 
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Holder survival under launchd/systemd is fiddly (process-group kills) | **High — gates the whole design** | Phase-0 spike on both platforms before any other work; fallback is D2(d) control-mode-on-tmux. *Update 2026-08-15: macOS passed 8/8 (see D3a); risk now confined to the pending Linux systemd matrix* |
+| Holder survival under launchd/systemd is fiddly (process-group kills) | ~~High — gates the whole design~~ **RETIRED 2026-08-15** | Spike passed on both platforms (see D3a): macOS 8/8 unconditionally; Linux 4/4 with the now-mandatory `KillMode=process` unit directive (+ validated scope-escape hardening). Residual risk shifts to keeping that directive present in installed units — covered by the Phase 3 doctor check |
 | Emulator fidelity gaps vs. tmux's battle-tested parser (obscure TUIs) | Medium | Fixture corpus + side-by-side capture diffing during bake; wezterm-term is itself battle-tested |
 | Shell-integration shim breaks exotic user shell setups | Medium | Detection + graceful fallback to `Unknown` mode; opt-out env var |
 | Version-skew bug between new daemon and old holder | Medium | Dumb-holder principle; versioned additive IPC; skew test in CI (build holder at N-1, daemon at N) |

@@ -38,8 +38,7 @@ workspace (`[workspace]` table in `Cargo.toml` seals it off).
 
 ## TODOs / Technical Debt
 
-<!-- SPEC:TODO -->
-- Survival matrix not yet executed: `run-macos.sh` (human operator, GUI session) and `run-linux.sh` (untested on Linux) still need real runs; logout/reboot rows are manual. Results go to `findings.md`, recipe/no-go to design D3a.
+- ~~Survival matrix not yet executed~~ Resolved 2026-08-15: both matrices ran (macOS 8/8 PASS; Ubuntu 4/4 PASS with `KillMode=process`, plus scope-escape PASS). Verdict GO; recipe recorded in `findings.md` and design D3a. Remaining (documentation-only, no SPEC:TODO warranted): manual logout/login and reboot rows.
 
 ---
 

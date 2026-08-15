@@ -35,7 +35,18 @@ mkcert+Caddy HTTPS parity profile at
 
 ### `Cargo.toml`
 
-Rust package manifest for the daemon crate and its runtime dependencies.
+Rust package manifest for the daemon crate and its runtime dependencies. Also the
+**Cargo workspace root** (members: `stem/`) since the Phase-1 `stem` work; the `bud`
+package depends on `stem` and forwards the hidden `bud term-hold` argv to
+`stem::holder::main` before clap/tokio initialize (single-binary holder plan).
+
+### `stem/` (workspace member crate)
+
+Bud's native terminal session manager — the tmux replacement (persistent PTY
+sessions via detached holder processes, VT emulation, OSC 133 semantic events).
+See [stem/stem.spec.md](./stem/stem.spec.md); not yet wired into the daemon
+runtime (that is the Phase-2 cutover in
+`plan/native-terminal-session-manager/`).
 
 ### `build.rs`
 

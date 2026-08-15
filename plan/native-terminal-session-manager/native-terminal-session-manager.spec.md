@@ -16,8 +16,8 @@ Phased implementation plan for replacing tmux with `stem`, a Bud-shipped PTY ses
 
 ## Status
 
-- [ ] Phase 0 — **in progress (2026-08-14)**: 0.2 emulator bake-off ✅ complete (decision: `alacritty_terminal` — see design D5 and `spikes/emulator-bakeoff/findings.md`); 0.3 proto `0.3` draft ✅ merged as `docs/proto.md` §6.7 (proposed); 0.1 survival harness ✅ built and smoke-tested (`spikes/holder-survival/`); **macOS matrix ✅ GO (2026-08-15, 8/8 PASS — kill -9, kickstart, upgrade all survived with reattach, both `AbandonProcessGroup` variants)**; Linux systemd matrix awaits a manual operator run (`run-linux.sh`) — go/no-go pends Linux only
-- [ ] Phase 1 — blocked on Phase 0 go/no-go
-- [ ] Phase 2 — blocked on Phase 1
+- [x] Phase 0 — **COMPLETE, verdict GO (2026-08-15)**: 0.1 survival matrix ✅ macOS 8/8 PASS (both `AbandonProcessGroup` variants) and Ubuntu/systemd 4/4 PASS with **`KillMode=process`** (mandatory unit directive; `control-group` fails; `systemd-run --scope` escape validated as hardening) — see `spikes/holder-survival/findings.md` for the binding supervision recipe; 0.2 emulator bake-off ✅ (decision: `alacritty_terminal`, design D5); 0.3 proto `0.3` draft ✅ (`docs/proto.md` §6.7, proposed). Optional logout/reboot rows remain documentation-only. D2(d) tmux-control-mode fallback not needed.
+- [x] Phase 1 — **COMPLETE (2026-08-15)**: `bud/` converted to a Cargo workspace with the `stem` member crate; all modules implemented (dumb holder + ring + versioned IPC; alacritty-confined emu with cursor-filtered damage; chunk-safe OSC 133/OSC 7/alt-screen scanner; D7 mode machine; mode-aware keys; composed `Session` with replay/backfill-suppression/DamageQuiet). 87 stem tests + the true single-binary re-exec test (`bud term-hold` daemonized spawn/reuse/kill via `bud/tests/term_hold.rs`) + full bud suite (96) all green; clippy/fmt clean; `examples/repl.rs` manual smoke tool works. D4 amended (nix openpty over portable-pty, spike-proven mechanics). Deferred with SPEC:TODO in `bud/stem/stem.spec.md`: cross-binary IPC version-skew CI job (no Rust CI lane exists yet).
+- [ ] Phase 2 — **unblocked** (daemon + service cutover)
 - [ ] Phase 3 — blocked on Phase 2
 - [ ] Phase 4 — optional, unscheduled
