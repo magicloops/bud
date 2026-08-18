@@ -1767,10 +1767,13 @@ slot — both travel via the `legacy_json` payload.
   combiners stay attached; trailing default-styled blanks are trimmed (client
   clears the rest of the row). The run object is additive (future keys:
   hyperlinks, underline styles).
-- **Deltas** are relative to the previously emitted frame. Cadence: while
-  watched and dirty, the daemon emits every 50 ms tick — a row overwritten
-  many times between ticks ships once, and slow consumers skip intermediate
-  states by construction. `full: true` means `dirty_rows` covers every row
+- **Deltas** are relative to the previously emitted frame. Cadence:
+  event-driven — the daemon emits when session activity produces damage,
+  after a ~8 ms coalescing beat (a burst of PTY chunks becomes one frame)
+  and floored by a ~16 ms minimum inter-frame gap (~60 fps cap; a row
+  overwritten many times inside the window ships once, and slow consumers
+  skip intermediate states by construction). An idle poll (~100 ms) covers
+  predict-gate flips that paint nothing. `full: true` means `dirty_rows` covers every row
   (watch start, resize, viewport scroll, alt-screen toggle). Cursor-only
   changes emit a frame with empty `dirty_rows`.
 - **`generation`** is monotonic per daemon session attachment starting at 1.
@@ -1807,7 +1810,8 @@ fields; all are optional for compatibility with pre-phase-3 peers.
     exclusion, not `ECHO && ICANON`: readline/zle shells sit at the prompt
     in raw mode with kernel echo off and echo app-side — exactly what
     predictions model. A gate flip with no accompanying damage forces a
-    frame (a password prompt closes the gate within ~one tick). The
+    frame on the idle poll (a password prompt closes the gate within
+    ~100 ms). The
     termios facts come from the v2 holder IPC op `QueryTermios` (holder
     PROTO_VERSION 2); surviving v1 holders answer nothing and the gate
     stays closed.

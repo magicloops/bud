@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   GRID_DEFAULT_BG,
   GRID_DEFAULT_FG,
@@ -45,6 +45,14 @@ function runStyle(run: GridRun): React.CSSProperties {
     bg = swap
   }
   return {
+    // Inline boxes only paint their font box, leaving the line-height
+    // leading unpainted — with app background colors (vim themes) that
+    // showed as dark gaps between lines. Cell-height inline-blocks paint
+    // the full cell rect, like a real terminal.
+    display: 'inline-block',
+    height: LINE_HEIGHT_PX,
+    lineHeight: `${LINE_HEIGHT_PX}px`,
+    verticalAlign: 'top',
     color: fg,
     ...(bg !== undefined ? { backgroundColor: bg } : {}),
     ...((attrs & 1) !== 0 ? { fontWeight: 700 } : {}),
@@ -60,7 +68,10 @@ function runStyle(run: GridRun): React.CSSProperties {
   }
 }
 
-function GridRow({ runs }: { runs: GridRun[] }) {
+// Memoized on the runs array identity: delta frames replace only dirty rows'
+// arrays, so unchanged rows skip re-rendering entirely (matters at the ~60fps
+// full-frame cadence of TUI scrolling).
+const GridRow = memo(function GridRow({ runs }: { runs: GridRun[] }) {
   return (
     <div style={{ height: LINE_HEIGHT_PX, whiteSpace: 'pre' }}>
       {runs.map((run, index) => (
@@ -70,7 +81,7 @@ function GridRow({ runs }: { runs: GridRun[] }) {
       ))}
     </div>
   )
-}
+})
 
 export function ThreadTerminalGridPane({
   state,

@@ -113,8 +113,10 @@ viewers exist.
 }
 ```
 
-Cadence: while watched and dirty, emit every **50 ms**; always emit on
-`Settled`/`PromptReady` (so the final state after quiet is never 50 ms stale).
+Cadence (revised during vim latency tuning): **event-driven** — the pump
+wakes the watch loop on session activity; ~8 ms coalescing turns a chunk
+burst into one frame; a ~16 ms minimum inter-frame gap caps the rate near
+60 fps; a ~100 ms idle poll covers predict-gate flips that paint nothing.
 Slow-consumer behavior is skip-ahead by construction: frames are deltas from
 *last emitted*, never a queue of intermediate states.
 

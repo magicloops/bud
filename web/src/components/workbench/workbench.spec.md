@@ -334,6 +334,10 @@ PTY — last resize wins, and a reconnect re-arms the assertion to cover daemon
 respawns at the stale spawn hint). Keyboard/paste capture via
 `lib/terminal-input` translation into `onInput`, bottom-pinned scrolling with
 scrollback above the live grid, and a `ch`-positioned cursor overlay.
+Run spans render as cell-height inline-blocks so app background colors
+paint the full cell rect (inline font-boxes left dark gaps between lines
+under vim themes); rows are memoized on run-array identity so delta frames
+re-render only dirty rows.
 Renders the predictive-echo ghost tail (dotted underline, dimmed) after the
 authoritative cursor, with the cursor block sitting after the ghost.
 Known v1 limitation: wide-glyph cursor positioning assumes CJK glyphs render

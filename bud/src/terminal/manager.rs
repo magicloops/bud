@@ -69,10 +69,18 @@ const FIRST_PROMPT_GRACE: Duration = Duration::from_secs(3);
 const SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
 /// Sentinel exit-code trailer (design D6c). Sent as literal shell input.
 const SENTINEL_TRAILER: &str = r#"; printf '\033]133;D;%s\a' "$?""#;
-/// Grid-sync coalescing tick while a session is watched (§6.8.2): dirty state
-/// ships at most every tick; deltas are relative to the last taken frame, so
-/// a slow consumer naturally skips intermediate states.
-const GRID_TICK: Duration = Duration::from_millis(50);
+/// Grid-sync emission pacing (§6.8.2): event-driven, not a fixed tick. The
+/// pump wakes the watch loop on session activity; a short coalescing beat
+/// turns a burst of PTY chunks into one frame; a minimum inter-frame gap caps
+/// the rate near 60 fps (deltas are relative to the last taken frame, so a
+/// slow consumer naturally skips intermediate states); an idle poll covers
+/// predict-gate flips that paint nothing (stty toggles around password
+/// prompts).
+const GRID_COALESCE: Duration = Duration::from_millis(8);
+const GRID_MIN_INTERVAL: Duration = Duration::from_millis(16);
+const GRID_IDLE_POLL: Duration = Duration::from_millis(100);
+/// Ceiling on termios re-query age (predict-gate input; local UDS roundtrip).
+const GRID_TERMIOS_REFRESH: Duration = Duration::from_millis(100);
 
 const DEFAULT_TERMINAL_COLORTERM: &str = "truecolor";
 const DEFAULT_TERMINAL_COLORFGBG: &str = "15;0";
@@ -330,6 +338,7 @@ impl TerminalManager {
 
         let shared = Arc::new(SessionShared {
             session_id: session_id.to_string(),
+            grid_dirty: tokio::sync::Notify::new(),
             facts: std::sync::Mutex::new(SessionFacts {
                 mode: session.mode(),
                 integration: Integration::None,
@@ -1039,23 +1048,34 @@ async fn await_outcome(
 async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: OutboundSender) {
     let mut force_full = true;
     // Last SHIPPED predict_ok: a gate flip with no natural frame forces one
-    // (a password prompt must close the gate within ~one tick even though
+    // (a password prompt must close the gate promptly even though
     // `stty -echo` itself paints nothing).
     let mut last_predict_ok: Option<bool> = None;
+    // Termios cache (predict-gate input), refreshed at most every
+    // GRID_TERMIOS_REFRESH so a 60 fps scroll doesn't add an IPC roundtrip
+    // per frame.
+    let mut termios: Option<stem::client::TermiosFacts> = None;
+    let mut termios_at: Option<tokio::time::Instant> = None;
+    let mut last_emit = tokio::time::Instant::now() - GRID_MIN_INTERVAL;
     loop {
         let Some(entry) = entry.upgrade() else { return };
         if entry.shared.facts.lock().unwrap().closed {
             return;
         }
-        // Lock scope: termios poll + frame take + alt fact under one hold;
+        // Lock scope: termios refresh + frame take + alt fact under one hold;
         // serialization and send happen unlocked. The termios query is a
         // local UDS roundtrip (None for surviving pre-v2 holders → gate
         // stays closed, predictions off).
-        let (frame, termios, alt_screen) = {
+        let (frame, alt_screen) = {
             let mut session = entry.session.lock().await;
-            let termios = session.query_termios().await.ok().flatten();
-            let frame = session.take_grid_frame(force_full);
-            (frame, termios, session.alt_screen_active())
+            if termios_at.is_none_or(|at| at.elapsed() >= GRID_TERMIOS_REFRESH) {
+                termios = session.query_termios().await.ok().flatten();
+                termios_at = Some(tokio::time::Instant::now());
+            }
+            (
+                session.take_grid_frame(force_full),
+                session.alt_screen_active(),
+            )
         };
         force_full = false;
         let (mode, open_command, applied_input_seq) = {
@@ -1087,7 +1107,6 @@ async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: 
         } else {
             frame
         };
-        drop(entry);
         if let Some(frame) = frame {
             let mut fields = grid_frame_fields(&frame);
             fields.insert("predict_ok".into(), Value::Bool(predict_ok));
@@ -1100,8 +1119,23 @@ async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: 
                 return;
             }
             last_predict_ok = Some(predict_ok);
+            last_emit = tokio::time::Instant::now();
         }
-        tokio::time::sleep(GRID_TICK).await;
+        // Pace the next iteration: wake on pump activity (a permit stored
+        // while we were emitting counts — no lost updates), or the idle poll
+        // for damage-less gate flips; then a coalescing beat so a burst of
+        // chunks becomes one frame, floored by the minimum inter-frame gap.
+        tokio::select! {
+            _ = entry.shared.grid_dirty.notified() => {
+                tokio::time::sleep(GRID_COALESCE).await;
+            }
+            _ = tokio::time::sleep(GRID_IDLE_POLL) => {}
+        }
+        drop(entry);
+        let since_emit = last_emit.elapsed();
+        if since_emit < GRID_MIN_INTERVAL {
+            tokio::time::sleep(GRID_MIN_INTERVAL - since_emit).await;
+        }
     }
 }
 

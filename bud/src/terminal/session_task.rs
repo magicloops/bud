@@ -59,6 +59,10 @@ pub(crate) struct SessionFacts {
 pub(crate) struct SessionShared {
     pub session_id: String,
     pub facts: std::sync::Mutex<SessionFacts>,
+    /// Woken by the pump on every session event so the grid watch loop can
+    /// emit frames event-driven (§6.8.2) instead of polling a fixed tick.
+    /// `notify_one` stores a permit, so a wake between waits is never lost.
+    pub grid_dirty: tokio::sync::Notify,
 }
 
 /// Internal events used to resolve `terminal_send` awaits.
@@ -158,6 +162,7 @@ pub(crate) async fn run_pump(
     let session_id = shared.session_id.clone();
 
     while let Some(event) = events.recv().await {
+        shared.grid_dirty.notify_one();
         let frames = match event {
             Event::Output { offset, bytes } => {
                 {
@@ -389,6 +394,7 @@ mod tests {
     fn shared() -> Arc<SessionShared> {
         Arc::new(SessionShared {
             session_id: "sess_test".into(),
+            grid_dirty: tokio::sync::Notify::new(),
             facts: std::sync::Mutex::new(SessionFacts {
                 mode: Mode::Unknown,
                 integration: Integration::None,

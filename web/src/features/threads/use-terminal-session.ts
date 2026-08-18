@@ -584,6 +584,7 @@ export function useTerminalSession({
         }
       }
 
+      const bufferWasEmpty = terminalInputBufferRef.current.length === 0
       terminalInputBufferRef.current += text
       if (terminalInputFlushTimerRef.current) {
         clearTimeout(terminalInputFlushTimerRef.current)
@@ -595,10 +596,15 @@ export function useTerminalSession({
         return
       }
 
+      // Grid mode flushes leading-edge: the first keystroke after an idle
+      // buffer posts on the next task instead of waiting out the 20ms batch
+      // window — that window was a visible chunk of vim's keypress latency.
+      // Same-tick bursts (paste expansion, key translation) still batch.
+      const delay = terminalRenderer === 'grid' && bufferWasEmpty ? 0 : 20
       terminalInputFlushTimerRef.current = setTimeout(() => {
         terminalInputFlushTimerRef.current = null
         void flushTerminalInput()
-      }, 20)
+      }, delay)
     },
     [flushTerminalInput, setPrediction, terminalRenderer, threadId],
   )
