@@ -1,8 +1,9 @@
 # Design: Terminal Grid Sync + Predictive Echo (the "right way" for live terminal UX)
 
-Status: **scoping draft** — motivates and bounds the successor to raw-byte-stream
-live rendering in clients. No implementation scheduled yet; candidate for the
-plan/native-terminal-session-manager Phase 4 slot or its own plan.
+Status: **accepted — implementation planned** (2026-08-18). Owning plan:
+[plan/terminal-grid-sync/](../plan/terminal-grid-sync/terminal-grid-sync.spec.md)
+(phases 0–3; open questions §6 resolved there). Originally the
+plan/native-terminal-session-manager Phase 4 slot.
 
 Related: [design/native-terminal-session-manager.md](./native-terminal-session-manager.md)
 (D5 emulator, D8 output model, D15 contracts),

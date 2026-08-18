@@ -1,0 +1,37 @@
+# terminal-grid-sync.spec.md
+
+Implementation plan for **terminal grid sync + predictive echo** — replacing
+raw-byte-stream live rendering with server-authoritative grid deltas, then
+building mosh-style predictive echo on that substrate. Picked up from the
+Phase 4 slot of
+[plan/native-terminal-session-manager](../native-terminal-session-manager/phase-4-deferred-follow-ups.md);
+design authority:
+[design/terminal-grid-sync-and-predictive-echo.md](../../design/terminal-grid-sync-and-predictive-echo.md).
+
+## Files
+
+| File | Purpose | Status |
+|---|---|---|
+| [implementation-spec.md](./implementation-spec.md) | Shared contracts: run/cell encoding, `GridFrame`, `terminal_grid`/`terminal_grid_watch` wire frames, SSE `terminal.grid`, generation + cadence semantics, rollout flags | authored |
+| [phase-0-stem-grid-deltas.md](./phase-0-stem-grid-deltas.md) | stem: styled-row export (`row_runs`), damage accumulation, `Session::take_grid_frame` + parity harness | **complete** (2026-08-18) — plus exact scroll accounting at history saturation via top-row identity tracking (a plan-time unknown: naive `history_size` deltas undercount to 0 once saturated) |
+| [phase-1-wire-and-service-forwarding.md](./phase-1-wire-and-service-forwarding.md) | Daemon tick/emit + watch handling; service watch refcount + SSE forwarding; proto docs | **complete** (2026-08-18) — grid frames ride the `legacy_json` envelope payload (no BudEnvelope table change); `terminal.grid` SSE is live-only (`emit buffer:false` so grid traffic never evicts output events from the replay buffer); watch re-arms on every `ready` status while viewers exist |
+| [phase-2-web-grid-renderer.md](./phase-2-web-grid-renderer.md) | DOM-row grid renderer behind a per-user flag; snapshot bootstrap; validation pass | **complete + browser-validated** (2026-08-18) — 19/19 automated headless-Chromium scenarios against the real stack ([browser-validation.md](./browser-validation.md)): prompt/echo/colors/scrollback/nvim/reload/resize/floods/interrupt/byte-path regression. Four bugs found and fixed by the run (stale-presence replay loop, second-viewer seeding, missing geometry re-assert, multi-viewer size tug-of-war). Remaining human-only: rendering feel, IME, wide-glyph fonts, codex-style TUIs |
+| [phase-3-predictive-echo.md](./phase-3-predictive-echo.md) | Termios fact (IPC v2), input sequencing, client prediction + reconciliation | not started |
+| [browser-validation.md](./browser-validation.md) | Automated headless-Chromium validation of phase 2 against the real stack: setup, 19 scenarios, the four bugs it found (all fixed) | complete (2026-08-18) |
+| [harness/grid-e2e.mjs](./harness/grid-e2e.mjs) | The playwright-core harness itself (prereqs in its header + browser-validation.md) | reference |
+
+## Design-doc open questions resolved by this plan
+
+1. Attr fidelity floor → the `SgrState` set (6 attrs, named/indexed/truecolor); run object additive for later (hyperlinks etc.).
+2. Selection/copy → DOM-row renderer with native browser selection in v1; canvas deferred until profiling demands it.
+3. Scrollback → emu-line pushes over the delta channel + snapshot line-history bootstrap (confirms the design's lean).
+4. Flag placement → per-user `localStorage` toggle + `?renderer=` override; byte-stream/xterm.js remains default until validation passes.
+
+## Non-goals (unchanged from design §4)
+
+Byte-stream storage/offset-resume untouched; no multi-viewer sharing; xterm.js
+not removed on day one; mobile adopts later (frames are additive).
+
+---
+
+*Referenced by: [../../design/terminal-grid-sync-and-predictive-echo.md](../../design/terminal-grid-sync-and-predictive-echo.md)*

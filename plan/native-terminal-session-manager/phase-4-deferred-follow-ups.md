@@ -4,6 +4,11 @@ Explicitly **not** required to ship the tmux replacement. Each item stands alone
 
 Design refs: D13 (attach), D15e (scope), D1 (extraction).
 
+> **Picked up 2026-08-18**: grid sync + predictive echo (the
+> [design doc's](../../design/terminal-grid-sync-and-predictive-echo.md)
+> candidate for this slot) is now its own plan —
+> [plan/terminal-grid-sync/](../terminal-grid-sync/terminal-grid-sync.spec.md).
+
 ## 4.1 `bud term attach <session>` — human escape hatch
 
 Replaces the undocumented `tmux attach` operator hatch lost at cutover. CLI speaks the holder IPC directly: raw-mode TTY, `Subscribe` from ring tail, `Write` passthrough, resize propagation. Sub-decision deferred from design D13: read-only `bud term peek` first vs. full read-write attach (recommend peek first — zero risk of fighting the agent for input). Estimated ~1–2 days on the existing protocol.
