@@ -1821,6 +1821,27 @@ fields; all are optional for compatibility with pre-phase-3 peers.
   tentative style after the authoritative cursor and are never written into
   grid state.
 
+#### 6.8.4 Mouse + cursor-key facts (additive)
+
+`terminal_grid` frames carry the application's input-mode DECSET facts so
+grid clients can encode input correctly (all optional; older daemons omit
+them, and mode toggles force a frame even when they damage no cells):
+
+- `mouse: { report, sgr, alt_scroll }` — `report` is the highest enabled
+  reporting level (`none` | `click` (1000) | `drag` (1002) | `motion`
+  (1003)); `sgr` = extended coordinates (1006); `alt_scroll` = the
+  alternate-scroll convention (1007, default-on like real terminals).
+- `app_cursor: bool` — DECCKM: cursor keys must be sent as SS3 (`ESC O x`)
+  instead of CSI. Pagers in smkx (`less`) ignore CSI arrows entirely.
+
+Client behavior: mouse events are encoded (SGR preferred; legacy X10 with
+coordinates clamped to the UTF-8-safe range) only while `report != none`,
+with Shift bypassing to native browser selection (terminal convention).
+Wheel: `report != none` → SGR wheel buttons 64/65 at the hovered cell;
+otherwise in the alt screen with `alt_scroll` → arrow keys (SS3 when
+`app_cursor`); otherwise the primary screen scrolls local scrollback
+natively.
+
 ---
 
 ## 7. Browser SSE Contracts

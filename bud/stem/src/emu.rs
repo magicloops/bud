@@ -405,6 +405,26 @@ impl Emu {
         self.term.mode().contains(TermMode::ALT_SCREEN)
     }
 
+    /// Mouse-reporting modes the application enabled via DECSET (grid-sync
+    /// mouse support: clients encode mouse events only when the app asked).
+    pub fn mouse_modes(&self) -> MouseModes {
+        let mode = self.term.mode();
+        let report = if mode.contains(TermMode::MOUSE_MOTION) {
+            MouseReport::Motion
+        } else if mode.contains(TermMode::MOUSE_DRAG) {
+            MouseReport::Drag
+        } else if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+            MouseReport::Click
+        } else {
+            MouseReport::None
+        };
+        MouseModes {
+            report,
+            sgr: mode.contains(TermMode::SGR_MOUSE),
+            alt_scroll: mode.contains(TermMode::ALTERNATE_SCROLL),
+        }
+    }
+
     /// Terminal modes input encoding must honor (see [`crate::keys`]).
     pub fn key_modes(&self) -> KeyModes {
         let mode = self.term.mode();
@@ -475,6 +495,27 @@ impl Emu {
 
 fn is_cursor_cell(line: usize, col: usize, cursor: Point) -> bool {
     cursor.line.0 >= 0 && cursor.line.0 as usize == line && cursor.column.0 == col
+}
+
+/// Highest mouse-reporting level enabled: DECSET 1000 (clicks) < 1002
+/// (clicks + drag motion) < 1003 (all motion).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MouseReport {
+    #[default]
+    None,
+    Click,
+    Drag,
+    Motion,
+}
+
+/// Application-enabled mouse modes (DECSET), for grid-sync clients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MouseModes {
+    pub report: MouseReport,
+    /// SGR extended coordinate encoding (DECSET 1006).
+    pub sgr: bool,
+    /// Alternate-scroll (DECSET 1007): wheel → arrow keys in the alt screen.
+    pub alt_scroll: bool,
 }
 
 /// Input-relevant terminal modes, queried from the emulator at write time.

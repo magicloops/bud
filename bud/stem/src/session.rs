@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::client::{HolderClient, HolderPush};
-use crate::emu::{CursorPos, Emu, FeedReport, StyledRun};
+use crate::emu::{CursorPos, Emu, FeedReport, MouseModes, StyledRun};
 use crate::error::{Result, StemError};
 use crate::events::{Event, Mode};
 use crate::ipc::HolderMsg;
@@ -53,6 +53,13 @@ pub struct GridFrame {
     pub rows: u16,
     pub alt_screen: bool,
     pub cursor: CursorPos,
+    /// Application-enabled mouse modes (DECSET facts; clients encode mouse
+    /// events only when the app asked, and fall back to arrow keys for
+    /// alt-screen wheel otherwise).
+    pub mouse: MouseModes,
+    /// DECCKM application cursor mode: arrow keys must be sent as SS3
+    /// (`ESC O A`) instead of CSI — pagers like `less` ignore CSI arrows.
+    pub app_cursor: bool,
     pub dirty_rows: Vec<GridRow>,
     /// Lines pushed into scrollback history since the last take, oldest
     /// first (empty while the alt screen is active — it has no history).
@@ -72,6 +79,7 @@ struct GridTracker {
     scrollback_dropped: u64,
     generation: u64,
     last_cursor: Option<CursorPos>,
+    last_mouse: Option<(MouseModes, bool)>,
 }
 
 impl GridTracker {
@@ -84,6 +92,7 @@ impl GridTracker {
             scrollback_dropped: 0,
             generation: 0,
             last_cursor: None,
+            last_mouse: None,
         }
     }
 
@@ -440,13 +449,19 @@ fn process_chunk(
 /// against a locally constructed [`Inner`].
 fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFrame> {
     let cursor = inner.emu.cursor();
+    let mouse = inner.emu.mouse_modes();
+    let app_cursor = inner.emu.key_modes().application_cursor;
     let full = force_full || inner.grid.full_pending;
     let cursor_moved = inner.grid.last_cursor != Some(cursor);
+    // Mode toggles (mouse DECSETs, DECCKM) usually damage no cells; they are
+    // frame-worthy on their own so clients never encode against stale modes.
+    let mouse_changed = inner.grid.last_mouse != Some((mouse, app_cursor));
     if !full
         && inner.grid.dirty_rows.is_empty()
         && inner.grid.scrollback_push.is_empty()
         && inner.grid.scrollback_dropped == 0
         && !cursor_moved
+        && !mouse_changed
     {
         return None;
     }
@@ -477,6 +492,7 @@ fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFram
     grid.dirty_rows.clear();
     grid.full_pending = false;
     grid.last_cursor = Some(cursor);
+    grid.last_mouse = Some((mouse, app_cursor));
     Some(GridFrame {
         generation: grid.generation,
         full,
@@ -484,6 +500,8 @@ fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFram
         rows,
         alt_screen: inner.emu.alt_screen_active(),
         cursor,
+        mouse,
+        app_cursor,
         dirty_rows,
         scrollback_push: grid.scrollback_push.drain(..).collect(),
         scrollback_dropped: std::mem::take(&mut grid.scrollback_dropped),
@@ -719,6 +737,42 @@ mod grid_tests {
         let forced = take_grid_frame_inner(&mut inner, true).expect("forced full");
         assert!(forced.full);
         assert_eq!(forced.generation, 3);
+    }
+
+    #[test]
+    fn mouse_mode_toggles_emit_frames() {
+        use crate::emu::MouseReport;
+        let mut inner = test_inner(80, 4, 100);
+        let mut off = 0;
+        take_grid_frame_inner(&mut inner, false).unwrap(); // seed full
+
+        // DECSET 1000+1006 damages no cells but must ship (clients would
+        // otherwise encode mouse events against stale modes).
+        feed(&mut inner, &mut off, b"\x1b[?1000h\x1b[?1006h");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("mouse-on frame");
+        assert_eq!(frame.mouse.report, MouseReport::Click);
+        assert!(frame.mouse.sgr);
+        // alacritty (like real terminals) defaults alternate-scroll ON.
+        assert!(frame.mouse.alt_scroll);
+        assert!(take_grid_frame_inner(&mut inner, false).is_none());
+
+        feed(&mut inner, &mut off, b"\x1b[?1002h\x1b[?1007l");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("drag frame");
+        assert_eq!(frame.mouse.report, MouseReport::Drag);
+        assert!(!frame.mouse.alt_scroll);
+
+        feed(&mut inner, &mut off, b"\x1b[?1003h");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("motion frame");
+        assert_eq!(frame.mouse.report, MouseReport::Motion);
+
+        feed(
+            &mut inner,
+            &mut off,
+            b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1007l",
+        );
+        let frame = take_grid_frame_inner(&mut inner, false).expect("mouse-off frame");
+        assert_eq!(frame.mouse.report, MouseReport::None);
+        assert!(!frame.mouse.sgr);
     }
 
     #[test]

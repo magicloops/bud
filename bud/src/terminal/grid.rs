@@ -9,7 +9,7 @@
 
 use serde_json::{json, Map, Number, Value};
 
-use stem::emu::{CellColor, StyledRun};
+use stem::emu::{CellColor, MouseReport, StyledRun};
 use stem::session::GridFrame;
 
 fn color_value(color: CellColor) -> Value {
@@ -58,6 +58,20 @@ pub(crate) fn grid_frame_fields(frame: &GridFrame) -> Map<String, Value> {
             "visible": frame.cursor.visible,
         }),
     );
+    fields.insert(
+        "mouse".into(),
+        json!({
+            "report": match frame.mouse.report {
+                MouseReport::None => "none",
+                MouseReport::Click => "click",
+                MouseReport::Drag => "drag",
+                MouseReport::Motion => "motion",
+            },
+            "sgr": frame.mouse.sgr,
+            "alt_scroll": frame.mouse.alt_scroll,
+        }),
+    );
+    fields.insert("app_cursor".into(), Value::Bool(frame.app_cursor));
     fields.insert(
         "dirty_rows".into(),
         Value::Array(
@@ -109,6 +123,12 @@ mod tests {
                 col: 9,
                 visible: true,
             },
+            mouse: stem::emu::MouseModes {
+                report: MouseReport::Drag,
+                sgr: true,
+                alt_scroll: false,
+            },
+            app_cursor: true,
             dirty_rows: vec![GridRow {
                 row: 3,
                 runs: vec![
@@ -139,6 +159,11 @@ mod tests {
         assert_eq!(fields["generation"], 7);
         assert_eq!(fields["full"], false);
         assert_eq!(fields["cursor"]["col"], 9);
+        assert_eq!(
+            fields["mouse"],
+            json!({ "report": "drag", "sgr": true, "alt_scroll": false })
+        );
+        assert_eq!(fields["app_cursor"], true);
         let runs = &fields["dirty_rows"][0]["runs"];
         // Default style omits every style key.
         assert_eq!(runs[0], json!({ "t": "plain " }));
