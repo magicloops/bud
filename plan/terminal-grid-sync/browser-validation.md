@@ -87,6 +87,18 @@ concurrent session-record create recovery stopped matching pg 23505 after
 Drizzle started wrapping errors (`DrizzleQueryError.cause`), turning the
 benign create race (StrictMode double-connect, multi-viewer) into 500s.
 
+## Cursor-shape + IME addendum (same day)
+
+32/32 after DECSCUSR facts and the IME rework: synthetic composition commits
+CJK text, CDP `Input.insertText` (the emoji-picker path) commits through the
+hidden textarea's input event, and nvim's insert-mode beam renders (block
+7.8px → beam ≤3px, restored on Escape). The hidden textarea also anchors
+IME candidate windows at the cursor. Real-IME behavior (candidate window
+interaction, reconversion) still deserves one human pass with an actual
+CJK input source. Also: the Playwright browser cache updated underneath the
+harness mid-day (1228 → 1234) — the harness now resolves the newest cached
+build dynamically.
+
 ## What this run does NOT cover
 
 Subjective rendering feel/perf on a physical display, IME composition, wide-

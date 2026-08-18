@@ -30,7 +30,14 @@ const THREAD_ID = (await threadResp.json()).thread_id
 console.log('thread', THREAD_ID)
 const BASE = 'http://localhost:5173'
 
-const EXECUTABLE = `${homedir()}/Library/Caches/ms-playwright/chromium-1228/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`
+// Resolve whatever Chromium build the Playwright cache currently holds.
+import { readdirSync } from 'node:fs'
+const pwCache = `${homedir()}/Library/Caches/ms-playwright`
+const chromiumDir = readdirSync(pwCache)
+  .filter((d) => /^chromium-\d+$/.test(d))
+  .sort()
+  .pop()
+const EXECUTABLE = `${pwCache}/${chromiumDir}/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`
 
 const results = []
 let failures = 0
@@ -412,6 +419,58 @@ try {
       `avgShift=${avgShift}B avgFull=${avgFull}B`,
     )
   }
+
+
+  // ---- 15. Cursor shape (DECSCUSR) + IME/insertText (§6.8.6) --------------
+  const shapePage = await context.newPage()
+  await shapePage.goto(`${BASE}/${BUD_ID}/${THREAD_ID}?renderer=grid`, { waitUntil: 'domcontentloaded' })
+  await shapePage.waitForSelector(PANE, { timeout: 20000 })
+  const shapeText = () => shapePage.locator(PANE).innerText()
+  await waitFor(async () => /[%$#]/.test(await shapeText()), 'prompt on shape page', 25000)
+  await shapePage.locator(PANE).click()
+  await shapePage.keyboard.press('Control+u')
+
+  // IME commit path: a synthetic composition delivers CJK text.
+  await shapePage.keyboard.type('echo ', { delay: 10 })
+  await shapePage.evaluate(() => {
+    const ime = document.querySelector('[data-testid="terminal-ime"]')
+    ime.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+    ime.dispatchEvent(new CompositionEvent('compositionend', { data: '漢字テスト', bubbles: true }))
+  })
+  await waitFor(async () => (await shapeText()).includes('漢字テスト'), 'composed CJK echoed', 10000)
+  record('IME composition text reaches the terminal', true)
+
+  // Non-keyboard insertion (emoji picker path): CDP insertText → input event.
+  const shapeCdp = await context.newCDPSession(shapePage)
+  await shapeCdp.send('Input.insertText', { text: '🙂ok' })
+  await waitFor(async () => (await shapeText()).includes('🙂ok'), 'inserted text echoed', 10000)
+  record('non-keyboard text insertion reaches the terminal', true)
+  await shapePage.keyboard.press('Control+u')
+
+  // DECSCUSR: nvim switches to a beam in insert mode.
+  const cursorEl = shapePage.locator('[data-testid="terminal-cursor"]')
+  await shapePage.keyboard.type('vim -u NONE', { delay: 10 })
+  await shapePage.keyboard.press('Enter')
+  await waitFor(async () => /~[\s\S]*~[\s\S]*~/.test(await shapeText()) || /N?VIM/.test(await shapeText()), 'nvim open', 20000)
+  await new Promise((r) => setTimeout(r, 600))
+  const blockWidth = (await cursorEl.boundingBox())?.width ?? 0
+  await shapePage.keyboard.type('i', { delay: 10 })
+  await waitFor(async () => {
+    const box = await cursorEl.boundingBox()
+    return box !== null && box.width <= 3
+  }, 'beam cursor in insert mode', 10000)
+  record('DECSCUSR beam renders in nvim insert mode', blockWidth > 4, `normal=${blockWidth}px`)
+  await shapePage.keyboard.press('Escape')
+  await waitFor(async () => {
+    const box = await cursorEl.boundingBox()
+    return box !== null && box.width > 4
+  }, 'block cursor restored', 10000)
+  record('cursor returns to block on leaving insert mode', true)
+  await shapePage.keyboard.type(':q!', { delay: 15 })
+  await shapePage.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 400))
+  await shapePage.screenshot({ path: `${SHOTS}/15-cursor-ime.png` })
+  await shapePage.close()
 
   const fatal = consoleErrors.filter(
     (e) => !e.includes('favicon') && !e.includes('404') && !e.includes('WebSocket'),

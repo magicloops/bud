@@ -21,6 +21,7 @@ design authority:
 | [harness/grid-e2e.mjs](./harness/grid-e2e.mjs) | The playwright-core harness itself (prereqs in its header + browser-validation.md) | reference |
 | — mouse/wheel (post-phase-3) | SGR/X10 mouse encoding gated on frame DECSET facts, wheel → mouse events or alternate-scroll arrows, DECCKM-aware cursor keys | **complete + browser-validated** (2026-08-18, 26/26) |
 | — scroll-hint delta (§6.8.5, WAN readiness) | Take-time row-identity shift detection → `row_shift` + revealed-rows-only frames; full-frame fallback on any ambiguity | **complete + browser-validated** (2026-08-18, 28/28 — measured 50 shifts : 1 full at ~441B vs ~2331B/frame on a sparse screen) |
+| — cursor shape + IME (§6.8.6) | DECSCUSR shape/blink on frames (vim beam/underline); hidden-textarea focus target for IME composition, dead keys, emoji-picker insertions | **complete + browser-validated** (2026-08-18, 32/32) |
 
 ## Design-doc open questions resolved by this plan
 
