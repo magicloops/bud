@@ -71,7 +71,7 @@ Generic SSE event bus with buffering for replay.
 - `AgentEventBus` - Legacy generic agent bus export retained for compatibility/tests; production agent-thread streaming now uses `agent-runtime-state.ts`
 
 **Key Features**:
-- **Buffering**: Stores up to 1000 events per channel for replay
+- **Buffering**: Stores up to 1000 events per channel for replay; `emit(..., { buffer: false })` delivers live-only (used for `terminal.grid` frames, whose state is reconstructible via watch re-arm and which would otherwise evict output events from the shared buffer)
 - **Cursor-aware replay on attach**: New listeners receive buffered events, or only the events after a provided `last_event_id` / `Last-Event-ID` cursor when available
 - **Replay miss fallback**: If a resume cursor is not present in the in-memory buffer, the attach falls back to live-only delivery and relies on canonical history for recovery
 - **Immediate stream priming**: Any attach with zero replayable events emits a heartbeat frame so `fastify-sse-v2` opens the stream before the route returns
@@ -173,6 +173,9 @@ Thread-scoped terminal session composition root.
 | `getStoredOutputBytes(sessionId)` | Total durably stored output bytes |
 | `getCommandOutput(commandId, { maxBytes? })` | Internal API for agent tools: `terminal_command` row plus lossy-UTF-8 output slice by byte range (tail-kept when capped) |
 | `getLatestCommandForSession(sessionId)` | Most recent `terminal_command` row for a session (started_at order, command_id tie-break); lets still-running `terminal.run` reports carry the dispatched command_id |
+| `handleTerminalGrid(budId, sessionId, payload)` | Grid-sync (§6.8): ownership-checked live forward of `terminal_grid` frames to SSE `terminal.grid`, unbuffered, through the per-session ingest queue (generation order preserved); no storage |
+| `addGridViewer(sessionId)` / `removeGridViewer(sessionId)` / `hasGridViewers(sessionId)` | Grid viewer refcount: EVERY join re-arms `terminal_grid_watch enabled:true` (a newcomer to an already-watched session needs the fresh full frame — browser-E2E finding), 1→0 sends `enabled:false`; every `ready` status also re-arms while viewers exist (daemon watch state dies with its attachment) |
+| `emitBudOfflineForSessions` / `emitBudOnlineForSessions` | Presence events emit `buffer:false` — replayed stale presence transitions caused spurious reconnects (an infinite loop for live-only grid connections; browser-E2E finding) |
 | `handleTerminalStatus(budId, sessionId, payload)` | Bud reports session state (ownership-asserted) |
 | `handleTerminalOutput(budId, sessionId, payload)` | Idempotently store and broadcast offset-addressed output (ownership-asserted) |
 | `handleTerminalEvent(budId, sessionId, payload)` | Route proto 0.3 semantic events, persist command rows, forward `terminal.event` SSE verbatim (ownership-asserted) |

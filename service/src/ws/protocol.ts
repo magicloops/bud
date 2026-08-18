@@ -105,6 +105,32 @@ export const TerminalEventSchema = TerminalEnvelopeSchema.extend({
   data: z.record(z.unknown()).default({})
 });
 
+// Grid-sync delta frame (proto §6.8.2). The service forwards these live to
+// SSE without interpreting cell contents, so runs stay loosely typed; the
+// structural fields are validated for ownership routing and client sanity.
+export const TerminalGridSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_grid"),
+  session_id: z.string(),
+  generation: z.number().int().nonnegative(),
+  full: z.boolean(),
+  cols: z.number().int().positive(),
+  rows: z.number().int().positive(),
+  alt_screen: z.boolean(),
+  cursor: z.object({
+    row: z.number().int().nonnegative(),
+    col: z.number().int().nonnegative(),
+    visible: z.boolean()
+  }),
+  dirty_rows: z.array(
+    z.object({
+      row: z.number().int().nonnegative(),
+      runs: z.array(z.record(z.unknown()))
+    })
+  ),
+  scrollback_push: z.array(z.array(z.record(z.unknown()))).default([]),
+  scrollback_dropped: z.number().int().nonnegative().default(0)
+});
+
 const TerminalEventOutcomeSchema = z.object({
   event: z.string(),
   data: z.record(z.unknown()).default({})

@@ -23,14 +23,22 @@ class SseEventBus {
     this.bufferLimit = bufferLimit;
   }
 
-  emit(channelId: string, event: SseEvent): void {
-    if (!this.buffers.has(channelId)) {
-      this.buffers.set(channelId, []);
-    }
-    const buffer = this.buffers.get(channelId)!;
-    buffer.push(event);
-    if (buffer.length > this.bufferLimit) {
-      buffer.shift();
+  /**
+   * `buffer: false` delivers to live listeners only — used for events whose
+   * state is reconstructible on reconnect (terminal.grid frames re-arm with a
+   * fresh full frame). Buffering those would both replay stale state and
+   * evict output events from the shared replay buffer.
+   */
+  emit(channelId: string, event: SseEvent, options: { buffer?: boolean } = {}): void {
+    if (options.buffer !== false) {
+      if (!this.buffers.has(channelId)) {
+        this.buffers.set(channelId, []);
+      }
+      const buffer = this.buffers.get(channelId)!;
+      buffer.push(event);
+      if (buffer.length > this.bufferLimit) {
+        buffer.shift();
+      }
     }
 
     const listeners = this.listeners.get(channelId);

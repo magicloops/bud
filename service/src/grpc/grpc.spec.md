@@ -19,7 +19,7 @@ Opt-in grpc-js server for daemon control streams.
 - authenticates daemon `hello` / `hello_proof` traffic with the device-secret challenge flow and the dev-only `DEV_BUD_TOKEN_BYPASS` token path
 - registers durable `device_session` and `transport_session` rows with `transport_kind = "h2_grpc"`
 - registers durable/session trackers before sending `hello_ack`, so post-auth frames cannot arrive before the service can route them
-- handles heartbeat, reconnect reconciliation, and terminal proto 0.3 frames (`terminal_status`, `terminal_output`, `terminal_event`, `terminal_send_result`, `terminal_observe_result` including the optional `ring_next_offset` watermark); `terminal_ready` and readiness payloads are gone
+- handles heartbeat, reconnect reconciliation, and terminal proto 0.3 frames (`terminal_status`, `terminal_output`, `terminal_event`, `terminal_grid` (§6.8), `terminal_send_result`, `terminal_observe_result` including the optional `ring_next_offset` watermark); `terminal_ready` and readiness payloads are gone
 - every terminal handler runs only after authentication and passes the connection's `budId` so the terminal manager can assert session ownership before any write/emit/resolve (review finding S-C1)
 - handles daemon `proxy_open_result`, `file_open_result`, `file_resolve_result`, and `local_llm_open_result` frames and delivers them to the proxy/file/local-LLM runtime bridges
 - records Bud online/offline transitions through the same terminal manager side effects used by WebSocket

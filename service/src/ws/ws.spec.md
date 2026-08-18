@@ -33,7 +33,7 @@ Owns:
 - durable `device_session` / `transport_session` registration for authenticated daemon connections
 - daemon reconnect-report handling and reconciliation-decision replies
 - heartbeat handling
-- terminal frame parsing and routing
+- terminal frame parsing and routing (incl. `terminal_grid` grid-sync frames → `TerminalSessionManager.handleTerminalGrid`)
 - WebSocket data-plane carrier registration when `bud_envelope.stream_frames` is advertised
 - Bud-local LLM capability inspection; healthy ds4 Responses capability adds
   `local_llm_http` to the negotiated WebSocket data-plane stream families

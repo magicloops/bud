@@ -43,6 +43,7 @@ import {
   ReconnectReportSchema,
   TerminalEnvelopeSchema,
   TerminalEventSchema,
+  TerminalGridSchema,
   TerminalObserveResultSchema,
   TerminalOutputSchema,
   TerminalSendResultSchema,
@@ -195,6 +196,9 @@ export class BudConnection {
       case "terminal_event":
         await this.handleTerminalEvent(parsed);
         break;
+      case "terminal_grid":
+        await this.handleTerminalGrid(parsed);
+        break;
       case "terminal_observe_result":
         await this.handleTerminalObserveResult(parsed);
         break;
@@ -306,6 +310,20 @@ export class BudConnection {
       data: result.data.data,
       ts: result.data.ts,
     });
+  }
+
+  private async handleTerminalGrid(raw: unknown) {
+    if (!config.terminalEnabled || this.state.kind !== "connected") {
+      return;
+    }
+    const result = TerminalGridSchema.safeParse(raw);
+    if (!result.success) {
+      logGatewayDebug({ error: result.error.message }, "Invalid terminal_grid frame");
+      return;
+    }
+
+    const { proto: _proto, type: _type, id: _id, ts: _ts, ext: _ext, session_id, ...grid } = result.data;
+    await this.terminalSessionManager.handleTerminalGrid(this.state.budId, session_id, grid);
   }
 
   private async handleTerminalObserveResult(raw: unknown) {

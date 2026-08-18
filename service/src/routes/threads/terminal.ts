@@ -29,6 +29,10 @@ const TerminalSnapshotQuerySchema = z.object({
 const TerminalStreamResumeQuerySchema = z.object({
   last_event_id: z.string().min(1).optional(),
   from_offset: z.string().min(1).optional(),
+  // `grid=1` opts this SSE connection into grid-sync (proto §6.8): the
+  // connection is registered as a grid viewer for its lifetime, which arms
+  // daemon-side `terminal_grid` emission (refcounted across connections).
+  grid: z.string().optional(),
 });
 
 export async function registerThreadTerminalRoutes(
@@ -226,7 +230,20 @@ export async function registerThreadTerminalRoutes(
       }
     }, heartbeatMs);
 
-    if (resumeOffset === null) {
+    const gridViewer = query.grid === "1";
+    if (gridViewer) {
+      // Grid connections attach live-only: their state rebuilds from the
+      // watch re-arm's full frame, buffered output is ignored for rendering,
+      // and replayed stale status/presence noise would only mislead them.
+      reply.sse({ event: "heartbeat", data: JSON.stringify({ ts: Date.now(), grid: true }) });
+      detach = terminalEvents.attachCallback(
+        session.sessionId,
+        (evt) => {
+          reply.sse({ event: evt.event, data: JSON.stringify(evt.data), id: evt.id });
+        },
+        { replay: false },
+      );
+    } else if (resumeOffset === null) {
       detach = terminalEvents.attach(session.sessionId, reply, { lastEventId });
     } else {
       let forwardedEnd = resumeOffset;
@@ -299,9 +316,18 @@ export async function registerThreadTerminalRoutes(
       }
     }
 
+    // Grid viewer registration AFTER the listener is attached, so the
+    // watch-enable's immediate full frame is never missed.
+    if (gridViewer) {
+      void terminalSessionManager.addGridViewer(session.sessionId);
+    }
+
     reply.raw.on("close", () => {
       clearInterval(heartbeatInterval);
       detach();
+      if (gridViewer) {
+        void terminalSessionManager.removeGridViewer(session.sessionId);
+      }
     });
   });
 

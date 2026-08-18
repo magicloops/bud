@@ -62,6 +62,9 @@ type TerminalEventPayload = {
   ts: number;
 };
 
+/** `terminal_grid` frame minus its envelope/session_id (forwarded verbatim). */
+type TerminalGridPayload = Record<string, unknown>;
+
 export type TerminalPathContext = {
   schema: "terminal_cwd_v1";
   source: "terminal_runtime_cache";
@@ -114,6 +117,17 @@ export class TerminalSessionManager {
    * event byte references never outrun emitted output (proto §6.4 rule).
    */
   private readonly sessionIngestQueues = new Map<string, Promise<void>>();
+
+  /**
+   * Grid-sync viewer refcounts per session (proto §6.8). Grid frames cost
+   * WAN bandwidth, so the daemon only emits them while watched: the first
+   * viewer sends `terminal_grid_watch enabled:true`, the last one leaving
+   * sends `enabled:false`. Watch state dies with the daemon's attachment, so
+   * every `ready` status while viewers exist re-arms it (idempotent; the
+   * re-arm's fresh full frame is exactly what a client needs after an
+   * ensure/resize anyway).
+   */
+  private readonly gridViewerCounts = new Map<string, number>();
 
   constructor(
     logger: FastifyBaseLogger,
@@ -324,6 +338,83 @@ export class TerminalSessionManager {
         info: payload.info ?? {}
       }
     });
+
+    // A fresh daemon attachment (ensure/reconnect/resize) reports `ready` and
+    // has no watch state — re-arm while grid viewers exist.
+    if (payload.state === "ready" && this.hasGridViewers(sessionId)) {
+      await this.sendGridWatch(sessionId, true);
+    }
+  }
+
+  async handleTerminalGrid(budId: string, sessionId: string, payload: TerminalGridPayload): Promise<void> {
+    return this.enqueueSessionIngest(sessionId, () => this.handleTerminalGridInner(budId, sessionId, payload));
+  }
+
+  private async handleTerminalGridInner(budId: string, sessionId: string, payload: TerminalGridPayload): Promise<void> {
+    const session = await this.resolveOwnedSession(budId, sessionId, "terminal_grid");
+    if (!session) {
+      return;
+    }
+    // Live-only forwarding, no storage: grid state is reconstructible (any
+    // reconnecting grid viewer re-arms the watch and receives a full frame),
+    // and buffering these would evict output events from the replay buffer.
+    this.events.emit(
+      sessionId,
+      {
+        event: "terminal.grid",
+        data: { session_id: sessionId, ...payload }
+      },
+      { buffer: false }
+    );
+  }
+
+  hasGridViewers(sessionId: string): boolean {
+    return (this.gridViewerCounts.get(sessionId) ?? 0) > 0;
+  }
+
+  async addGridViewer(sessionId: string): Promise<void> {
+    const next = (this.gridViewerCounts.get(sessionId) ?? 0) + 1;
+    this.gridViewerCounts.set(sessionId, next);
+    // EVERY viewer join re-arms (not just 0→1): a viewer joining an
+    // already-watched session has no state, and the daemon cannot target one
+    // SSE connection — the re-arm's fresh full frame seeds the newcomer and
+    // is an idempotent no-op for existing viewers (found live in the browser
+    // E2E: a second concurrent viewer could never seed and reconnect-looped).
+    await this.sendGridWatch(sessionId, true);
+  }
+
+  async removeGridViewer(sessionId: string): Promise<void> {
+    const current = this.gridViewerCounts.get(sessionId) ?? 0;
+    if (current <= 1) {
+      this.gridViewerCounts.delete(sessionId);
+      if (current === 1) {
+        await this.sendGridWatch(sessionId, false);
+      }
+      return;
+    }
+    this.gridViewerCounts.set(sessionId, current - 1);
+  }
+
+  private async sendGridWatch(sessionId: string, enabled: boolean): Promise<boolean> {
+    const session = await this.sessionStore.getSession(sessionId);
+    if (!session) {
+      return false;
+    }
+    const payload = {
+      proto: TERMINAL_PROTO_VERSION,
+      type: "terminal_grid_watch",
+      id: `msg_${ulid()}`,
+      ts: Date.now(),
+      ext: {},
+      session_id: sessionId,
+      enabled
+    };
+    const sent = this.daemonTransport.sendFrameToBud(session.budId, payload);
+    if (!sent && enabled) {
+      // Bud offline: the eventual reconnect's `ready` status re-arms.
+      this.debug("terminal_grid_watch not delivered (bud offline)", { sessionId });
+    }
+    return sent;
   }
 
   async handleTerminalOutput(budId: string, sessionId: string, payload: TerminalOutputPayload): Promise<void> {
@@ -742,10 +833,18 @@ export class TerminalSessionManager {
   async emitBudOfflineForSessions(budId: string): Promise<void> {
     const sessionIds = await this.sessionStore.listSessionIdsForBud(budId, { activeOnly: true });
     for (const sessionId of sessionIds) {
-      this.events.emit(sessionId, {
-        event: "terminal.bud_offline",
-        data: { bud_id: budId, reason: "disconnected" }
-      });
+      // Presence transitions are live signals, never history: a replayed
+      // stale offline/online pair makes clients treat an old transition as
+      // fresh and reconnect — which loops forever on connections that never
+      // resume by offset (found live in the grid-renderer browser E2E).
+      this.events.emit(
+        sessionId,
+        {
+          event: "terminal.bud_offline",
+          data: { bud_id: budId, reason: "disconnected" }
+        },
+        { buffer: false }
+      );
     }
 
     this.logger.info(
@@ -757,10 +856,15 @@ export class TerminalSessionManager {
   async emitBudOnlineForSessions(budId: string): Promise<void> {
     const sessionIds = await this.sessionStore.listSessionIdsForBud(budId, { activeOnly: true });
     for (const sessionId of sessionIds) {
-      this.events.emit(sessionId, {
-        event: "terminal.bud_online",
-        data: { bud_id: budId }
-      });
+      // Live-only, like bud_offline above (never replay stale presence).
+      this.events.emit(
+        sessionId,
+        {
+          event: "terminal.bud_online",
+          data: { bud_id: budId }
+        },
+        { buffer: false }
+      );
     }
 
     this.logger.info(

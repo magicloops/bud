@@ -41,6 +41,7 @@ import {
   ReconnectReportSchema,
   TerminalEnvelopeSchema,
   TerminalEventSchema,
+  TerminalGridSchema,
   TerminalObserveResultSchema,
   TerminalOutputSchema,
   TerminalSendResultSchema,
@@ -263,6 +264,9 @@ class GrpcControlConnection {
         break;
       case "terminal_event":
         await this.handleTerminalEvent(frame);
+        break;
+      case "terminal_grid":
+        await this.handleTerminalGrid(frame);
         break;
       case "terminal_observe_result":
         await this.handleTerminalObserveResult(frame);
@@ -675,6 +679,22 @@ class GrpcControlConnection {
       data: result.data.data,
       ts: result.data.ts,
     });
+  }
+
+  private async handleTerminalGrid(raw: unknown): Promise<void> {
+    if (!config.terminalEnabled || this.state.kind !== "connected") {
+      return;
+    }
+    const result = TerminalGridSchema.safeParse(raw);
+    if (!result.success) {
+      this.logger.warn(
+        { error: result.error.message, component: "grpc_control_gateway" },
+        "Invalid terminal_grid frame",
+      );
+      return;
+    }
+    const { proto: _proto, type: _type, id: _id, ts: _ts, ext: _ext, session_id, ...grid } = result.data;
+    await this.terminalSessionManager.handleTerminalGrid(this.state.budId, session_id, grid);
   }
 
   private async handleTerminalObserveResult(raw: unknown): Promise<void> {

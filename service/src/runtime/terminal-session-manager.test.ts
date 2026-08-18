@@ -348,6 +348,105 @@ test("ensureSession forwards the stored end offset as resume_from_offset", async
   ]);
 });
 
+function createGridHarness(session: TerminalSession | null = createSession()) {
+  const emitted: Array<{ event: EmittedEvent; options?: { buffer?: boolean } }> = [];
+  const sentFrames: Array<Record<string, unknown>> = [];
+  const manager = new TerminalSessionManager(
+    createLogger() as never,
+    {
+      emit(_sessionId: string, event: EmittedEvent, options?: { buffer?: boolean }) {
+        emitted.push({ event, options });
+      },
+    } as never,
+    {
+      sendFrameToBud(_budId: string, payload: Record<string, unknown>) {
+        sentFrames.push(payload);
+        return true;
+      },
+      isBudOnline() {
+        return true;
+      },
+      getTransportStatus() {
+        return { online: true } as never;
+      },
+    } as never,
+  );
+  stubSessionStore(manager, session);
+  return { manager, emitted, sentFrames };
+}
+
+test("terminal_grid frames forward to SSE unbuffered with ownership enforced", async () => {
+  const { manager, emitted } = createGridHarness();
+
+  await manager.handleTerminalGrid("bud-1", "sess_test", {
+    generation: 3,
+    full: false,
+    cols: 120,
+    rows: 40,
+    alt_screen: false,
+    cursor: { row: 1, col: 2, visible: true },
+    dirty_rows: [{ row: 1, runs: [{ t: "hello" }] }],
+    scrollback_push: [],
+    scrollback_dropped: 0,
+  });
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0]?.event.event, "terminal.grid");
+  assert.equal(emitted[0]?.event.data.generation, 3);
+  assert.equal(emitted[0]?.event.data.session_id, "sess_test");
+  assert.deepEqual(emitted[0]?.options, { buffer: false }, "grid frames must not enter the replay buffer");
+
+  // A non-owning bud's grid frames are dropped.
+  await manager.handleTerminalGrid("bud-intruder", "sess_test", { generation: 4 });
+  assert.equal(emitted.length, 1);
+});
+
+test("grid viewer refcount sends watch enable on first viewer and disable on last", async () => {
+  const { manager, sentFrames } = createGridHarness();
+
+  await manager.addGridViewer("sess_test");
+  await manager.addGridViewer("sess_test");
+  // Every join re-arms: a viewer joining an already-watched session needs a
+  // fresh full frame (the daemon cannot target one SSE connection).
+  assert.equal(sentFrames.length, 2);
+  assert.equal(sentFrames[0]?.type, "terminal_grid_watch");
+  assert.equal(sentFrames[0]?.enabled, true);
+  assert.equal(sentFrames[0]?.session_id, "sess_test");
+  assert.equal(sentFrames[1]?.enabled, true);
+  assert.equal(manager.hasGridViewers("sess_test"), true);
+
+  await manager.removeGridViewer("sess_test");
+  assert.equal(sentFrames.length, 2, "1 viewer remains — no disable yet");
+
+  await manager.removeGridViewer("sess_test");
+  assert.equal(sentFrames.length, 3);
+  assert.equal(sentFrames[2]?.enabled, false);
+  assert.equal(manager.hasGridViewers("sess_test"), false);
+
+  // Underflow is inert.
+  await manager.removeGridViewer("sess_test");
+  assert.equal(sentFrames.length, 3);
+});
+
+test("ready status re-arms the grid watch while viewers exist", async () => {
+  const { manager, sentFrames } = createGridHarness();
+
+  await manager.handleTerminalStatus("bud-1", "sess_test", { state: "ready" });
+  assert.equal(sentFrames.length, 0, "no viewers — no watch traffic");
+
+  await manager.addGridViewer("sess_test");
+  assert.equal(sentFrames.length, 1);
+
+  // A daemon re-ensure/reconnect reports ready again: watch state died with
+  // the old attachment, so the service re-arms.
+  await manager.handleTerminalStatus("bud-1", "sess_test", { state: "ready" });
+  assert.equal(sentFrames.length, 2);
+  assert.equal(sentFrames[1]?.enabled, true);
+
+  await manager.handleTerminalStatus("bud-1", "sess_test", { state: "closed" });
+  assert.equal(sentFrames.length, 2, "non-ready statuses do not re-arm");
+});
+
 test("terminal_output SSE emission stays in byte order when an earlier frame's async work finishes later", async () => {
   const events: EmittedEvent[] = [];
   const manager = createManager(events);
