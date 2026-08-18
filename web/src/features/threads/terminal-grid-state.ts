@@ -20,6 +20,16 @@ export type GridRun = {
 
 export type GridCursor = { row: number; col: number; visible: boolean }
 
+export type GridMouseReport = 'none' | 'click' | 'drag' | 'motion'
+
+export type GridMouseModes = {
+  report: GridMouseReport
+  /** SGR extended coordinate encoding (DECSET 1006). */
+  sgr: boolean
+  /** Alternate-scroll (DECSET 1007): wheel → arrows in the alt screen. */
+  altScroll: boolean
+}
+
 export type TerminalGridFrame = {
   generation: number
   full: boolean
@@ -34,6 +44,10 @@ export type TerminalGridFrame = {
   predict_ok?: boolean
   /** §6.8.3: highest client input_seq the daemon has written to the PTY. */
   applied_input_seq?: number
+  /** §6.8.4: mouse-reporting facts (absent on older daemons). */
+  mouse?: { report: GridMouseReport; sgr: boolean; alt_scroll: boolean }
+  /** §6.8.4: DECCKM — arrows must be SS3 (`ESC O x`) when set. */
+  app_cursor?: boolean
 }
 
 export type TerminalGridState = {
@@ -54,6 +68,10 @@ export type TerminalGridState = {
   predictOk: boolean
   /** Highest server-acked input_seq seen (survives frames that omit it). */
   appliedInputSeq: number | null
+  /** Mouse-reporting facts from the latest frame (§6.8.4). */
+  mouse: GridMouseModes
+  /** DECCKM application cursor mode from the latest frame. */
+  appCursor: boolean
 }
 
 export const GRID_SCROLLBACK_CAP = 5000
@@ -71,6 +89,10 @@ export function emptyGridState(): TerminalGridState {
     scrollbackDropped: 0,
     predictOk: false,
     appliedInputSeq: null,
+    // altScroll defaults ON (real-terminal default): wheel → arrows in the
+    // alt screen even against daemons that predate the mouse facts.
+    mouse: { report: 'none', sgr: false, altScroll: true },
+    appCursor: false,
   }
 }
 
@@ -138,6 +160,10 @@ export function applyGridFrame(
         frame.applied_input_seq !== undefined
           ? Math.max(frame.applied_input_seq, state.appliedInputSeq ?? 0)
           : state.appliedInputSeq,
+      mouse: frame.mouse
+        ? { report: frame.mouse.report, sgr: frame.mouse.sgr, altScroll: frame.mouse.alt_scroll }
+        : state.mouse,
+      appCursor: frame.app_cursor ?? state.appCursor,
     },
     discontinuity: false,
   }

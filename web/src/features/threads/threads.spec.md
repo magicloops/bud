@@ -398,6 +398,13 @@ unflushed tail, every input flush assigns a client seq, frames'
 (control keys, Enter, gate closure, failed posts, reconnects) clears all
 ghosts. Node-tested in `terminal-prediction.test.ts`.
 
+### `terminal-mouse.ts`
+
+Mouse event encoding for the grid renderer (§6.8.4): SGR (preferred) and
+legacy X10 (coordinates clamped to the UTF-8-safe range), modifier bits,
+wheel buttons, the alternate-scroll arrow fallback, and the DECCKM SS3
+rewrite for cursor keys. Pure; node-tested in `terminal-mouse.test.ts`.
+
 ### `terminal-command-state.ts`
 
 Pure reducer for the terminal pane's command lifecycle chip, driven by typed

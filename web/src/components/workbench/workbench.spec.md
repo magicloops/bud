@@ -338,6 +338,11 @@ Run spans render as cell-height inline-blocks so app background colors
 paint the full cell rect (inline font-boxes left dark gaps between lines
 under vim themes); rows are memoized on run-array identity so delta frames
 re-render only dirty rows.
+Mouse support (§6.8.4): press/release/drag/motion/wheel encoded via
+`terminal-mouse.ts` only while the app enabled reporting (Shift bypasses to
+native selection; contextmenu suppressed while reporting); wheel falls back
+to alternate-scroll arrows in the alt screen and native scrollback scrolling
+on the primary screen; cursor-key bytes are rewritten to SS3 under DECCKM.
 Renders the predictive-echo ghost tail (dotted underline, dimmed) after the
 authoritative cursor, with the cursor block sitting after the ghost.
 Known v1 limitation: wide-glyph cursor positioning assumes CJK glyphs render

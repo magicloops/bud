@@ -12,6 +12,13 @@ import {
   logUnsupportedTerminalKeydown,
   translateTerminalKeydown,
 } from '@/lib/terminal-input'
+import {
+  applyAppCursorKeys,
+  encodeTerminalMouseEvent,
+  encodeWheelFallbackArrows,
+  wheelDeltaToLines,
+  type TerminalMouseButton,
+} from '@/features/threads/terminal-mouse'
 
 /**
  * Grid-sync renderer (plan/terminal-grid-sync phase 2): draws exactly the
@@ -92,7 +99,18 @@ export function ThreadTerminalGridPane({
 }: ThreadTerminalGridPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const gridBlockRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLSpanElement | null>(null)
+  // Latest props for native listeners (wheel must be non-passive; window
+  // mouseup outlives renders).
+  const stateRef = useRef(state)
+  const connectedRef = useRef(connected)
+  const onInputRef = useRef(onInput)
+  stateRef.current = state
+  connectedRef.current = connected
+  onInputRef.current = onInput
+  const pressedButtonRef = useRef<TerminalMouseButton | null>(null)
+  const lastMoveCellRef = useRef<{ col: number; row: number } | null>(null)
   const platformRef = useRef(detectTerminalInputPlatform())
   const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null)
   const pinnedToBottomRef = useRef(true)
@@ -186,6 +204,205 @@ export function ThreadTerminalGridPane({
     }
   }, [state])
 
+  /** 0-based cell under a pointer position, in live-grid coordinates. */
+  const cellFromPoint = useCallback((clientX: number, clientY: number) => {
+    const block = gridBlockRef.current
+    const measure = measureRef.current
+    const st = stateRef.current
+    if (!block || !measure || st.cols === 0 || st.rows === 0) {
+      return null
+    }
+    const cellWidth = measure.getBoundingClientRect().width / 10
+    if (cellWidth <= 0) {
+      return null
+    }
+    const rect = block.getBoundingClientRect()
+    const col = Math.min(st.cols - 1, Math.max(0, Math.floor((clientX - rect.left) / cellWidth)))
+    const row = Math.min(
+      st.rows - 1,
+      Math.max(0, Math.floor((clientY - rect.top) / LINE_HEIGHT_PX)),
+    )
+    return { col, row }
+  }, [])
+
+  const sendMouse = useCallback(
+    (bytes: string | null, flushImmediately = true) => {
+      if (bytes) {
+        onInputRef.current(bytes, { flushImmediately })
+      }
+    },
+    [],
+  )
+
+  // Mouse reporting (§6.8.4): events are encoded only while the app asked
+  // for them; Shift bypasses to native browser selection (terminal
+  // convention). Wheel in the alt screen without mouse reporting falls back
+  // to arrow keys (alternate-scroll); wheel on the primary screen scrolls
+  // local scrollback natively.
+  const handleMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const st = stateRef.current
+      if (!connectedRef.current || st.mouse.report === 'none' || event.shiftKey) {
+        return
+      }
+      const button: TerminalMouseButton | null =
+        event.button === 0 ? 'left' : event.button === 1 ? 'middle' : event.button === 2 ? 'right' : null
+      const cell = cellFromPoint(event.clientX, event.clientY)
+      if (!button || !cell) {
+        return
+      }
+      // preventDefault suppresses native selection AND focus — refocus.
+      event.preventDefault()
+      containerRef.current?.focus()
+      pressedButtonRef.current = button
+      lastMoveCellRef.current = cell
+      sendMouse(
+        encodeTerminalMouseEvent({
+          kind: 'press',
+          button,
+          col: cell.col,
+          row: cell.row,
+          shift: false,
+          alt: event.altKey,
+          ctrl: event.ctrlKey,
+          sgr: st.mouse.sgr,
+        }),
+      )
+    },
+    [cellFromPoint, sendMouse],
+  )
+
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const st = stateRef.current
+      if (!connectedRef.current) {
+        return
+      }
+      const pressed = pressedButtonRef.current
+      const wantsMove =
+        st.mouse.report === 'motion' || (st.mouse.report === 'drag' && pressed !== null)
+      if (!wantsMove) {
+        return
+      }
+      const cell = cellFromPoint(event.clientX, event.clientY)
+      if (!cell) {
+        return
+      }
+      const last = lastMoveCellRef.current
+      if (last && last.col === cell.col && last.row === cell.row) {
+        return
+      }
+      lastMoveCellRef.current = cell
+      sendMouse(
+        encodeTerminalMouseEvent({
+          kind: 'move',
+          button: pressed ?? 'none',
+          col: cell.col,
+          row: cell.row,
+          alt: event.altKey,
+          ctrl: event.ctrlKey,
+          sgr: st.mouse.sgr,
+        }),
+        false,
+      )
+    },
+    [cellFromPoint, sendMouse],
+  )
+
+  const handleContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (connectedRef.current && stateRef.current.mouse.report !== 'none' && !event.shiftKey) {
+      event.preventDefault()
+    }
+  }, [])
+
+  // Release can happen outside the pane — listen on the window.
+  useEffect(() => {
+    const handleMouseUp = (event: MouseEvent) => {
+      const pressed = pressedButtonRef.current
+      if (!pressed) {
+        return
+      }
+      pressedButtonRef.current = null
+      const st = stateRef.current
+      if (st.mouse.report === 'none') {
+        return
+      }
+      const cell = cellFromPoint(event.clientX, event.clientY) ?? lastMoveCellRef.current
+      if (!cell) {
+        return
+      }
+      const bytes = encodeTerminalMouseEvent({
+        kind: 'release',
+        button: pressed,
+        col: cell.col,
+        row: cell.row,
+        sgr: st.mouse.sgr,
+      })
+      if (bytes) {
+        onInputRef.current(bytes, { flushImmediately: true })
+      }
+    }
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => window.removeEventListener('mouseup', handleMouseUp)
+  }, [cellFromPoint])
+
+  // Wheel needs a non-passive native listener (React wheel handlers cannot
+  // reliably preventDefault).
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (!scroller) {
+      return
+    }
+    const handleWheel = (event: WheelEvent) => {
+      const st = stateRef.current
+      if (!connectedRef.current) {
+        return
+      }
+      const lines =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? Math.round(event.deltaY) || (event.deltaY > 0 ? 1 : -1)
+          : wheelDeltaToLines(event.deltaY, LINE_HEIGHT_PX)
+      if (lines === 0) {
+        return
+      }
+      if (st.mouse.report !== 'none' && !event.shiftKey) {
+        event.preventDefault()
+        const cell = cellFromPoint(event.clientX, event.clientY)
+        if (!cell) {
+          return
+        }
+        const kind = lines > 0 ? 'wheel-down' : 'wheel-up'
+        const count = Math.min(8, Math.abs(lines))
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          out +=
+            encodeTerminalMouseEvent({
+              kind,
+              button: 'none',
+              col: cell.col,
+              row: cell.row,
+              sgr: st.mouse.sgr,
+            }) ?? ''
+        }
+        if (out) {
+          onInputRef.current(out, { flushImmediately: true })
+        }
+        return
+      }
+      if (st.altScreen && st.mouse.altScroll) {
+        // No local scrollback in the alt screen: wheel becomes arrow keys.
+        event.preventDefault()
+        const arrows = encodeWheelFallbackArrows(lines, st.appCursor)
+        if (arrows) {
+          onInputRef.current(arrows, { flushImmediately: true })
+        }
+      }
+      // Primary screen: native scrollback scrolling.
+    }
+    scroller.addEventListener('wheel', handleWheel, { passive: false })
+    return () => scroller.removeEventListener('wheel', handleWheel)
+  }, [cellFromPoint])
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const selection = window.getSelection()
@@ -198,7 +415,11 @@ export function ThreadTerminalGridPane({
       if (intent.kind === 'text' || intent.kind === 'bytes') {
         event.preventDefault()
         event.stopPropagation()
-        onInput(intent.text, {
+        const text =
+          intent.kind === 'bytes'
+            ? applyAppCursorKeys(intent.text, stateRef.current.appCursor)
+            : intent.text
+        onInput(text, {
           flushImmediately: intent.kind === 'bytes' && intent.text === '\x03',
         })
         return
@@ -263,6 +484,9 @@ export function ThreadTerminalGridPane({
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onContextMenu={handleContextMenu}
       className="h-full w-full overflow-hidden outline-none"
       style={{
         fontFamily: FONT_STACK,
@@ -285,7 +509,7 @@ export function ThreadTerminalGridPane({
         <div className="flex min-h-full flex-col justify-end">
           {!state.altScreen &&
             state.scrollback.map((runs, index) => <GridRow key={`sb-${index}`} runs={runs} />)}
-          <div style={{ position: 'relative' }}>
+          <div ref={gridBlockRef} style={{ position: 'relative' }}>
             {state.grid.map((runs, index) => (
               <GridRow key={`row-${index}`} runs={runs} />
             ))}
