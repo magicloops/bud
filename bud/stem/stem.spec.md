@@ -30,11 +30,11 @@ upgrades with every release.
 | `holder.rs` | holder | Daemonization + PTY pump ⇄ ring ⇄ IPC server; blocking std + threads (no tokio pre-fork); post-exit TTL |
 | `registry.rs` | daemon | `<base>/<session_id>/` discovery, holder spawn via re-exec launcher, stale GC, session-id path-safety |
 | `client.rs` | daemon | Async `HolderClient` (control ops) + `subscribe()` push channel (`HolderPush`) |
-| `emu.rs` | daemon | `alacritty_terminal` 0.26 confinement (D5): grid/scrollback/cursor/alt-screen, cursor-filtered `meaningful_damage`, `KeyModes`, `screen_ansi()` (SGR-run + cursor serialization for snapshot fidelity, roundtrip-tested) |
+| `emu.rs` | daemon | `alacritty_terminal` 0.26 confinement (D5): grid/scrollback/cursor/alt-screen, cursor-filtered `meaningful_damage`, `KeyModes`, styled-run export (`StyledRun`/`CellColor`, `row_runs`/`recent_history_runs`) with `screen_ansi()` serialized FROM the same runs (no drift possible; roundtrip-tested), exact scroll-push accounting via top-row identity tracking (correct even at history-cap saturation, honest `scroll_history_lost` otherwise) |
 | `semantic.rs` | daemon | Chunk-boundary-safe raw-stream scanner: OSC 133 A/B/C/D+exit, OSC 7 cwd, alt-screen DECSET/DECRST — emulator-agnostic (D6a) |
 | `modes.rs` | daemon | `ModeMachine` (Shell/Tui/Repl/Unknown, D7) with injected `ReplMatcher` (REPL prompt policy stays in the daemon) |
 | `keys.rs` | daemon | Backend-neutral key names → mode-aware escape sequences; bracketed-paste text encoding (D9) |
-| `session.rs` | daemon | Public `Session`: attach = connect → ring replay through fresh emu/scanner → subscribe; composes everything into `Event`s incl. DamageQuiet `Settled` |
+| `session.rs` | daemon | Public `Session`: attach = connect → ring replay through fresh emu/scanner → subscribe; composes everything into `Event`s incl. DamageQuiet `Settled`. Grid-sync substrate: `GridTracker` accumulates dirty rows/scrollback pushes per feed; `take_grid_frame()` drains them into a `GridFrame` (pull API — caller owns cadence; first frame full; cursor-only frames; capped pending pushes with counted drops). Parity harness: fixture corpus → frames → reducer == `screen_lines()` |
 | `introspect.rs` | daemon | cwd/foreground-process fallback (libproc / procfs); OSC 7 preferred |
 
 `tests/` — integration suites plus `tests/fixtures/` (corpus copied from
@@ -63,6 +63,11 @@ integration suites for the process layer (real in-process holders), stream layer
 settling), plus the true single-binary re-exec test (`bud/tests/term_hold.rs`:
 daemonized `bud term-hold` spawn/reuse/kill through `Registry`). `examples/repl.rs`
 is the manual smoke tool. clippy/fmt clean.
+
+Grid-sync Phase 0 complete (2026-08-18,
+[plan/terminal-grid-sync/phase-0-stem-grid-deltas.md](../../plan/terminal-grid-sync/phase-0-stem-grid-deltas.md)):
+styled-run export, exact scroll accounting, `Session::take_grid_frame` — 8 grid
+unit tests incl. the corpus parity harness.
 
 <!-- SPEC:TODO -->
 - IPC version-skew CI job (holder built at previous tag vs HEAD client) awaits a CI

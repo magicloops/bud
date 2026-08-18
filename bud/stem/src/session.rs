@@ -20,12 +20,96 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::client::{HolderClient, HolderPush};
-use crate::emu::Emu;
+use crate::emu::{CursorPos, Emu, FeedReport, StyledRun};
 use crate::error::{Result, StemError};
 use crate::events::{Event, Mode};
 use crate::ipc::HolderMsg;
 use crate::modes::ModeMachine;
 use crate::semantic::{ScanKind, Scanner};
+
+/// Pending scrollback-push buffer cap between grid-frame takes (grid-sync
+/// plan §3): a flood between takes ships at most this many history lines;
+/// overflow is counted, never silent.
+const SCROLLBACK_PENDING_CAP: usize = 1024;
+
+/// One viewport row of a [`GridFrame`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridRow {
+    pub row: u16,
+    pub runs: Vec<StyledRun>,
+}
+
+/// What changed on screen since the previous take — the unit the daemon
+/// serializes as a proto `terminal_grid` frame (grid-sync plan §3–4).
+/// Produced by [`Session::take_grid_frame`]; deltas are always relative to
+/// the previously TAKEN frame, so coalescing is inherent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridFrame {
+    /// Monotonic per attachment, starting at 1.
+    pub generation: u64,
+    /// `dirty_rows` covers every row (attach, resize, scroll, alt toggle).
+    pub full: bool,
+    pub cols: u16,
+    pub rows: u16,
+    pub alt_screen: bool,
+    pub cursor: CursorPos,
+    pub dirty_rows: Vec<GridRow>,
+    /// Lines pushed into scrollback history since the last take, oldest
+    /// first (empty while the alt screen is active — it has no history).
+    pub scrollback_push: Vec<Vec<StyledRun>>,
+    /// Best-effort count of scrollback lines lost since the last take
+    /// (pending-buffer overflow or scroll-tracking loss). Any nonzero value
+    /// means the consumer's accumulated scrollback has a seam.
+    pub scrollback_dropped: u64,
+}
+
+/// Accumulates grid damage between [`Session::take_grid_frame`] calls.
+#[derive(Debug)]
+struct GridTracker {
+    dirty_rows: std::collections::BTreeSet<u16>,
+    full_pending: bool,
+    scrollback_push: std::collections::VecDeque<Vec<StyledRun>>,
+    scrollback_dropped: u64,
+    generation: u64,
+    last_cursor: Option<CursorPos>,
+}
+
+impl GridTracker {
+    fn new() -> Self {
+        Self {
+            dirty_rows: std::collections::BTreeSet::new(),
+            // First frame a consumer takes is always full.
+            full_pending: true,
+            scrollback_push: std::collections::VecDeque::new(),
+            scrollback_dropped: 0,
+            generation: 0,
+            last_cursor: None,
+        }
+    }
+
+    fn observe_feed(&mut self, report: &FeedReport, emu: &Emu) {
+        if report.scrolled_lines > 0 {
+            let lines = emu.recent_history_runs(report.scrolled_lines);
+            self.scrollback_dropped += (report.scrolled_lines - lines.len()) as u64;
+            for line in lines {
+                if self.scrollback_push.len() == SCROLLBACK_PENDING_CAP {
+                    self.scrollback_push.pop_front();
+                    self.scrollback_dropped += 1;
+                }
+                self.scrollback_push.push_back(line);
+            }
+        }
+        if report.scroll_history_lost {
+            self.scrollback_dropped += 1;
+        }
+        if report.full_repaint || report.alt_screen_changed {
+            self.full_pending = true;
+            self.dirty_rows.clear();
+        } else if !self.full_pending {
+            self.dirty_rows.extend(report.damaged_rows.iter().copied());
+        }
+    }
+}
 
 pub struct SessionConfig {
     pub session_dir: PathBuf,
@@ -51,6 +135,8 @@ struct Inner {
     last_region_start: u64,
     /// Meaningful damage seen since the last `Settled` emission.
     settled_pending: bool,
+    /// Grid-sync damage accumulation between `take_grid_frame` calls.
+    grid: GridTracker,
 }
 
 pub struct Session {
@@ -74,6 +160,7 @@ impl Session {
             open_command: None,
             last_region_start: stat.ring_oldest_offset,
             settled_pending: false,
+            grid: GridTracker::new(),
         }));
 
         // Events channel: replay worst case is ring_cap / 128KiB Output events
@@ -165,8 +252,25 @@ impl Session {
 
     pub async fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.client.resize(cols, rows).await?;
-        self.inner.lock().unwrap().emu.resize(cols, rows);
+        let mut inner = self.inner.lock().unwrap();
+        let before = inner.emu.size();
+        inner.emu.resize(cols, rows);
+        if inner.emu.size() != before {
+            // The whole grid reflowed: the next frame must be full.
+            inner.grid.full_pending = true;
+            inner.grid.dirty_rows.clear();
+        }
         Ok(())
+    }
+
+    /// Drain accumulated grid damage into a [`GridFrame`] (grid-sync plan
+    /// §3). Pull API: the caller owns the cadence, so coalescing is free — a
+    /// row overwritten 100× between takes ships once. `force_full` yields a
+    /// complete frame regardless of accumulated state (watch start, resync).
+    /// `None` when nothing changed (not even the cursor) and full wasn't
+    /// forced.
+    pub fn take_grid_frame(&self, force_full: bool) -> Option<GridFrame> {
+        take_grid_frame_inner(&mut self.inner.lock().unwrap(), force_full)
     }
 
     pub fn screen_lines(&self) -> Vec<String> {
@@ -229,13 +333,16 @@ impl Session {
 /// Process one output chunk through scanner/emu/modes; push derived events.
 /// Returns true if the chunk produced meaningful damage (for quiet timing).
 /// `emit_from`: only events at offsets ≥ this are pushed (replay suppression);
-/// pass 0 during live operation.
+/// pass 0 during live operation. `track_grid`: accumulate grid-sync damage
+/// (false during replay — the first post-attach frame is full anyway, and
+/// replayed scrollback must not be re-pushed).
 fn process_chunk(
     inner: &mut Inner,
     offset: u64,
     bytes: &[u8],
     emit_from: u64,
     emit_mode_changes: bool,
+    track_grid: bool,
     out: &mut Vec<Event>,
 ) -> bool {
     let chunk_end = offset + bytes.len() as u64;
@@ -250,6 +357,9 @@ fn process_chunk(
 
     let scan_events = inner.scanner.scan(offset, bytes);
     let report = inner.emu.feed(bytes);
+    if track_grid {
+        inner.grid.observe_feed(&report, &inner.emu);
+    }
 
     for ev in scan_events {
         let emit = ev.at_offset >= emit_from;
@@ -319,6 +429,60 @@ fn process_chunk(
     report.meaningful_damage || report.full_repaint
 }
 
+/// See [`Session::take_grid_frame`]. Free function so unit tests can drive it
+/// against a locally constructed [`Inner`].
+fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFrame> {
+    let cursor = inner.emu.cursor();
+    let full = force_full || inner.grid.full_pending;
+    let cursor_moved = inner.grid.last_cursor != Some(cursor);
+    if !full
+        && inner.grid.dirty_rows.is_empty()
+        && inner.grid.scrollback_push.is_empty()
+        && inner.grid.scrollback_dropped == 0
+        && !cursor_moved
+    {
+        return None;
+    }
+
+    let (cols, rows) = inner.emu.size();
+    let dirty: Vec<u16> = if full {
+        (0..rows).collect()
+    } else {
+        // Stale rows beyond a shrink are dropped (a resize sets full anyway).
+        inner
+            .grid
+            .dirty_rows
+            .iter()
+            .copied()
+            .filter(|&row| row < rows)
+            .collect()
+    };
+    let dirty_rows = dirty
+        .into_iter()
+        .map(|row| GridRow {
+            row,
+            runs: inner.emu.row_runs(row),
+        })
+        .collect();
+
+    let grid = &mut inner.grid;
+    grid.generation += 1;
+    grid.dirty_rows.clear();
+    grid.full_pending = false;
+    grid.last_cursor = Some(cursor);
+    Some(GridFrame {
+        generation: grid.generation,
+        full,
+        cols,
+        rows,
+        alt_screen: inner.emu.alt_screen_active(),
+        cursor,
+        dirty_rows,
+        scrollback_push: grid.scrollback_push.drain(..).collect(),
+        scrollback_dropped: std::mem::take(&mut grid.scrollback_dropped),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn event_loop(
     inner: Arc<Mutex<Inner>>,
@@ -352,6 +516,7 @@ async fn event_loop(
                         start,
                         &bytes,
                         resume_from,
+                        false,
                         false,
                         &mut replay_events,
                     );
@@ -423,7 +588,7 @@ async fn event_loop(
                         let mut out = Vec::new();
                         let damaged = {
                             let mut guard = inner.lock().unwrap();
-                            process_chunk(&mut guard, offset, &bytes, 0, true, &mut out)
+                            process_chunk(&mut guard, offset, &bytes, 0, true, true, &mut out)
                         };
                         if damaged {
                             inner.lock().unwrap().settled_pending = true;
@@ -486,6 +651,220 @@ async fn event_loop(
                 for ev in out {
                     if tx.send(ev).await.is_err() { return; }
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::*;
+    use crate::modes::NoRepl;
+
+    fn test_inner(cols: u16, rows: u16, scrollback: usize) -> Inner {
+        Inner {
+            emu: Emu::new(cols, rows, scrollback).unwrap(),
+            scanner: Scanner::new(),
+            modes: ModeMachine::new(Box::new(NoRepl)),
+            last_cwd: None,
+            next_command_index: 0,
+            open_command: None,
+            last_region_start: 0,
+            settled_pending: false,
+            grid: GridTracker::new(),
+        }
+    }
+
+    /// Feed bytes through the live-path processing (grid tracking on).
+    fn feed(inner: &mut Inner, offset: &mut u64, bytes: &[u8]) {
+        let mut out = Vec::new();
+        process_chunk(inner, *offset, bytes, 0, true, true, &mut out);
+        *offset += bytes.len() as u64;
+    }
+
+    fn row_text(row: &GridRow) -> String {
+        row.runs.iter().map(|r| r.text.as_str()).collect()
+    }
+
+    #[test]
+    fn first_frame_is_full_then_deltas_then_none() {
+        let mut inner = test_inner(80, 5, 100);
+        let mut off = 0;
+        feed(&mut inner, &mut off, b"hello");
+
+        let frame = take_grid_frame_inner(&mut inner, false).expect("first frame");
+        assert!(frame.full);
+        assert_eq!(frame.generation, 1);
+        assert_eq!(frame.dirty_rows.len(), 5);
+        assert_eq!(row_text(&frame.dirty_rows[0]), "hello");
+
+        // One row touched → one dirty row.
+        feed(&mut inner, &mut off, b"!");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("delta frame");
+        assert!(!frame.full);
+        assert_eq!(frame.generation, 2);
+        assert_eq!(frame.dirty_rows.len(), 1);
+        assert_eq!(frame.dirty_rows[0].row, 0);
+        assert_eq!(row_text(&frame.dirty_rows[0]), "hello!");
+
+        // Nothing changed → no frame; force_full still yields one.
+        assert!(take_grid_frame_inner(&mut inner, false).is_none());
+        let forced = take_grid_frame_inner(&mut inner, true).expect("forced full");
+        assert!(forced.full);
+        assert_eq!(forced.generation, 3);
+    }
+
+    #[test]
+    fn cursor_only_movement_emits_a_frame() {
+        let mut inner = test_inner(80, 5, 100);
+        let mut off = 0;
+        feed(&mut inner, &mut off, b"hello");
+        take_grid_frame_inner(&mut inner, false).unwrap();
+
+        // Pure cursor reposition: no damage, but clients render the cursor.
+        feed(&mut inner, &mut off, b"\x1b[3;7H");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("cursor frame");
+        assert!(!frame.full);
+        assert!(frame.dirty_rows.is_empty());
+        assert_eq!((frame.cursor.row, frame.cursor.col), (2, 6));
+        assert!(take_grid_frame_inner(&mut inner, false).is_none());
+    }
+
+    #[test]
+    fn scroll_yields_full_frame_with_scrollback_pushes() {
+        let mut inner = test_inner(80, 3, 100);
+        let mut off = 0;
+        feed(&mut inner, &mut off, b"one\r\ntwo\r\nthree");
+        take_grid_frame_inner(&mut inner, false).unwrap();
+
+        feed(&mut inner, &mut off, b"\r\nfour\r\nfive");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("scroll frame");
+        assert!(frame.full, "viewport scroll forces a full frame");
+        let pushed: Vec<String> = frame
+            .scrollback_push
+            .iter()
+            .map(|line| line.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        assert_eq!(pushed, vec!["one".to_string(), "two".to_string()]);
+        assert_eq!(frame.scrollback_dropped, 0);
+    }
+
+    #[test]
+    fn alt_screen_toggle_forces_full_and_pushes_nothing() {
+        let mut inner = test_inner(80, 4, 100);
+        let mut off = 0;
+        feed(&mut inner, &mut off, b"shell line");
+        take_grid_frame_inner(&mut inner, false).unwrap();
+
+        feed(
+            &mut inner,
+            &mut off,
+            b"\x1b[?1049hvim!\r\n1\r\n2\r\n3\r\n4\r\n5",
+        );
+        let frame = take_grid_frame_inner(&mut inner, false).expect("alt frame");
+        assert!(frame.full);
+        assert!(frame.alt_screen);
+        assert!(
+            frame.scrollback_push.is_empty(),
+            "alt screen has no history"
+        );
+
+        feed(&mut inner, &mut off, b"\x1b[?1049l");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("primary frame");
+        assert!(frame.full);
+        assert!(!frame.alt_screen);
+        assert_eq!(row_text(&frame.dirty_rows[0]), "shell line");
+    }
+
+    #[test]
+    fn pending_scrollback_overflow_is_counted_not_silent() {
+        let mut inner = test_inner(10, 2, 4000);
+        let mut off = 0;
+        take_grid_frame_inner(&mut inner, false).unwrap();
+        // Scroll far past the pending cap in many feeds without a take.
+        for i in 0..(SCROLLBACK_PENDING_CAP + 100) {
+            feed(&mut inner, &mut off, format!("{i}\r\n").as_bytes());
+        }
+        let frame = take_grid_frame_inner(&mut inner, false).expect("flood frame");
+        assert_eq!(frame.scrollback_push.len(), SCROLLBACK_PENDING_CAP);
+        assert!(frame.scrollback_dropped > 0);
+        // Oldest retained push is contiguous with the drop point.
+        let newest: String = frame.scrollback_push.last().unwrap()[0].text.clone();
+        assert_eq!(
+            newest.parse::<usize>().unwrap(),
+            SCROLLBACK_PENDING_CAP + 98
+        );
+        // Next take is clean again.
+        assert!(take_grid_frame_inner(&mut inner, false).is_none());
+    }
+
+    /// The drift regression net: feed the bake-off fixture corpus in
+    /// deterministic pseudo-random chunks, take frames at arbitrary points,
+    /// apply them in a minimal text reducer, and require the reduced grid to
+    /// match `screen_lines()` after every take.
+    #[test]
+    fn parity_frames_reproduce_screen_lines_across_fixture_corpus() {
+        let fixtures = [
+            "osc133-session.raw",
+            "altscreen-vim.raw",
+            "repl-python.raw",
+            "scroll-regions.raw",
+            "utf8-wide.raw",
+            "flood.raw",
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let mut rng: u64 = 0x5eed_cafe_f00d_0001;
+        let mut next = move |bound: usize| -> usize {
+            // xorshift64* — deterministic across runs/platforms.
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            (rng as usize) % bound
+        };
+
+        for fixture in fixtures {
+            let bytes = std::fs::read(dir.join(fixture)).unwrap();
+            let mut inner = test_inner(80, 24, 200);
+            let mut reduced: Vec<String> = Vec::new();
+            let mut off = 0u64;
+            let mut pos = 0usize;
+            let mut chunks = 0usize;
+            let mut last_generation = 0u64;
+            while pos < bytes.len() {
+                let len = (1 + next(257)).min(bytes.len() - pos);
+                feed(&mut inner, &mut off, &bytes[pos..pos + len]);
+                pos += len;
+                chunks += 1;
+                if !chunks.is_multiple_of(5) && pos < bytes.len() {
+                    continue;
+                }
+                let Some(frame) = take_grid_frame_inner(&mut inner, false) else {
+                    continue;
+                };
+                assert_eq!(frame.generation, last_generation + 1, "{fixture}: gen gap");
+                last_generation = frame.generation;
+                reduced.resize(frame.rows as usize, String::new());
+                if frame.full {
+                    for row in &mut reduced {
+                        row.clear();
+                    }
+                }
+                for row in &frame.dirty_rows {
+                    reduced[row.row as usize] = row_text(row);
+                }
+                let screen = inner.emu.screen_lines();
+                for (i, expected) in screen.iter().enumerate() {
+                    assert_eq!(
+                        reduced[i].trim_end(),
+                        expected.as_str(),
+                        "{fixture}: row {i} diverged at byte {pos}",
+                    );
+                }
+                let cursor = inner.emu.cursor();
+                assert_eq!(
+                    (frame.cursor.row, frame.cursor.col),
+                    (cursor.row, cursor.col)
+                );
             }
         }
     }

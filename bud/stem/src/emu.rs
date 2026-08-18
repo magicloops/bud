@@ -37,6 +37,38 @@ pub struct CursorPos {
     pub visible: bool,
 }
 
+/// Cell color, alacritty-independent (grid-sync plan §2). Named ANSI colors
+/// collapse into palette indices 0–15; defaults are represented by `None` on
+/// the run, never as a color value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellColor {
+    /// 256-color palette index (0–15 = the classic named colors).
+    Indexed(u8),
+    Rgb(u8, u8, u8),
+}
+
+/// Attribute bitfield values for [`StyledRun::attrs`] (grid-sync plan §2).
+pub mod cell_attrs {
+    pub const BOLD: u8 = 1;
+    pub const DIM: u8 = 2;
+    pub const ITALIC: u8 = 4;
+    pub const UNDERLINE: u8 = 8;
+    pub const INVERSE: u8 = 16;
+    pub const STRIKEOUT: u8 = 32;
+}
+
+/// A maximal run of consecutive cells sharing one presentation — the unit of
+/// the grid-sync wire encoding. Wide chars appear once (spacer cells are
+/// skipped); zero-width combiners stay attached to their base char.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyledRun {
+    pub text: String,
+    pub fg: Option<CellColor>,
+    pub bg: Option<CellColor>,
+    /// Bitfield per [`cell_attrs`].
+    pub attrs: u8,
+}
+
 /// What one `feed()` call changed — the inputs to DamageQuiet and delta logic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedReport {
@@ -49,8 +81,18 @@ pub struct FeedReport {
     pub full_repaint: bool,
     /// Alt-screen state after this feed differs from before it.
     pub alt_screen_changed: bool,
-    /// Lines pushed into scrollback by this feed.
+    /// Lines pushed into primary-screen scrollback history by this feed —
+    /// exact even when alacritty's history is saturated at its cap (where
+    /// `history_size()` deltas read 0 while the grid still rotates): the top
+    /// viewport row's identity (cell-buffer address + content hash) is
+    /// tracked across the feed, and its displacement into history is the
+    /// rotation count.
     pub scrolled_lines: usize,
+    /// Scroll accounting lost track this feed (identity not found after a
+    /// saturated rotation — e.g. a single feed scrolled beyond the whole
+    /// history cap). `scrolled_lines` is then a lower bound; consumers
+    /// maintaining scrollback continuity should record a gap.
+    pub scroll_history_lost: bool,
 }
 
 /// alacritty requires an event listener; stem derives everything it needs from
@@ -66,6 +108,23 @@ pub struct Emu {
     processor: Processor,
     cols: u16,
     rows: u16,
+    scrollback_cap: usize,
+    /// Primary-screen history size at the end of the last feed (frozen while
+    /// the alt screen is active — the alt grid has no history).
+    primary_hist_watermark: usize,
+    /// Identity (cell-buffer address, see [`Self::row_addr`]) of the primary
+    /// screen's top viewport row at the end of the last feed.
+    primary_top_id: Option<usize>,
+    /// A resize happened while the alt screen was active: primary history was
+    /// reflowed while unmeasurable; the next primary feed reports
+    /// `scroll_history_lost` and re-anchors.
+    pending_scroll_loss: bool,
+}
+
+enum RowLocation {
+    Viewport,
+    History(usize),
+    Gone,
 }
 
 impl Emu {
@@ -83,6 +142,10 @@ impl Emu {
             processor: Processor::new(),
             cols,
             rows,
+            scrollback_cap: scrollback_lines,
+            primary_hist_watermark: 0,
+            primary_top_id: None,
+            pending_scroll_loss: false,
         })
     }
 
@@ -90,7 +153,6 @@ impl Emu {
     pub fn feed(&mut self, bytes: &[u8]) -> FeedReport {
         let alt_before = self.term.mode().contains(TermMode::ALT_SCREEN);
         let cursor_before = self.term.grid().cursor.point;
-        let history_before = self.term.grid().history_size();
         // Snapshot the cursor row for the same-line cursor-travel artifact
         // check (see module docs); one short row clone per feed.
         let cursor_row_before: Vec<Cell> = {
@@ -104,7 +166,38 @@ impl Emu {
 
         let alt_after = self.term.mode().contains(TermMode::ALT_SCREEN);
         let cursor_after = self.term.grid().cursor.point;
-        let history_after = self.term.grid().history_size();
+
+        // Scroll accounting: exact primary-history push count. `history_size`
+        // deltas alone undercount to 0 once history saturates at its cap (the
+        // grid keeps rotating; only the size stops growing), so at saturation
+        // the previous top row is located by identity to measure the true
+        // rotation. Frozen while the alt screen is active — the alt grid has
+        // no history, and the primary grid is untouched underneath it, so an
+        // alt period simply defers measurement to the exit feed.
+        let mut scrolled_lines = 0usize;
+        let mut scroll_history_lost = false;
+        if !alt_after {
+            let hist_after = self.term.grid().history_size();
+            if self.pending_scroll_loss {
+                // A resize under the alt screen reflowed primary history while
+                // the watermark was unreadable; continuity is gone.
+                self.pending_scroll_loss = false;
+                scroll_history_lost = true;
+            } else {
+                scrolled_lines = hist_after.saturating_sub(self.primary_hist_watermark);
+                if self.scrollback_cap > 0 && hist_after == self.scrollback_cap {
+                    if let Some(addr) = self.primary_top_id {
+                        match self.locate_row(addr, hist_after) {
+                            RowLocation::History(k) => scrolled_lines = k,
+                            RowLocation::Viewport => {}
+                            RowLocation::Gone => scroll_history_lost = true,
+                        }
+                    }
+                }
+            }
+            self.primary_hist_watermark = hist_after;
+            self.primary_top_id = Some(self.row_addr(Line(0)));
+        }
 
         // Collect damage bounds first: the Partial iterator borrows the term,
         // and the artifact filter below needs to read the grid.
@@ -154,8 +247,31 @@ impl Emu {
             damaged_rows,
             full_repaint,
             alt_screen_changed: alt_before != alt_after,
-            scrolled_lines: history_after.saturating_sub(history_before),
+            scrolled_lines,
+            scroll_history_lost,
         }
+    }
+
+    /// Address of viewport/history row `line`'s cell buffer — a stable row
+    /// identity: Storage rotations and `Vec<Row>` reallocations move `Row`
+    /// structs, not their heap cell allocations, and rows are never freed
+    /// outside resize (which explicitly re-anchors tracking).
+    fn row_addr(&self, line: Line) -> usize {
+        &self.term.grid()[line][Column(0)] as *const Cell as usize
+    }
+
+    fn locate_row(&self, addr: usize, history: usize) -> RowLocation {
+        for r in 0..self.rows as i32 {
+            if self.row_addr(Line(r)) == addr {
+                return RowLocation::Viewport;
+            }
+        }
+        for k in 1..=history {
+            if self.row_addr(Line(-(k as i32))) == addr {
+                return RowLocation::History(k);
+            }
+        }
+        RowLocation::Gone
     }
 
     /// Visible screen as text lines (trailing whitespace trimmed per line).
@@ -173,41 +289,97 @@ impl Emu {
     /// `screen_lines` loses presentation, which is glaring when reloading
     /// into a colorful TUI.
     pub fn screen_ansi(&self) -> String {
-        let grid = self.term.grid();
         let mut out = String::with_capacity((self.cols as usize + 8) * self.rows as usize);
-        let mut sgr = SgrState::default();
+        // Emitted-style state persists across rows; escape sequences are
+        // emitted only when a run's presentation differs from it.
+        let mut current: Option<(Option<CellColor>, Option<CellColor>, u8)> = None;
         for line in 0..self.rows as i32 {
             if line > 0 {
                 out.push_str("\r\n");
             }
-            let row = &grid[Line(line)];
-            // Trim trailing cells that are blank AND default-styled.
-            let mut last = 0usize;
-            for col in 0..self.cols as usize {
-                let cell = &row[Column(col)];
-                if cell.c != ' ' || !cell_is_default_style(cell) || cell.zerowidth().is_some() {
-                    last = col + 1;
+            for run in self.line_runs(Line(line)) {
+                let style = (run.fg, run.bg, run.attrs);
+                if current != Some(style) {
+                    push_sgr(&mut out, run.fg, run.bg, run.attrs);
+                    current = Some(style);
                 }
-            }
-            for col in 0..last {
-                let cell = &row[Column(col)];
-                if cell
-                    .flags
-                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
-                {
-                    continue;
-                }
-                sgr.apply(cell, &mut out);
-                out.push(cell.c);
-                if let Some(zerowidth) = cell.zerowidth() {
-                    out.extend(zerowidth.iter());
-                }
+                out.push_str(&run.text);
             }
         }
         out.push_str("\x1b[0m");
         let cursor = self.cursor();
         out.push_str(&format!("\x1b[{};{}H", cursor.row + 1, cursor.col + 1));
         out
+    }
+
+    /// Viewport row `row` as styled runs (grid-sync plan §2). Out-of-range
+    /// rows yield no runs.
+    pub fn row_runs(&self, row: u16) -> Vec<StyledRun> {
+        if row >= self.rows {
+            return Vec::new();
+        }
+        self.line_runs(Line(row as i32))
+    }
+
+    /// The `n` most recently scrolled-off history lines, oldest first, as
+    /// styled runs (scrollback capture for grid sync).
+    pub fn recent_history_runs(&self, n: usize) -> Vec<Vec<StyledRun>> {
+        let take = n.min(self.term.grid().history_size());
+        (1..=take)
+            .rev()
+            .map(|i| self.line_runs(Line(-(i as i32))))
+            .collect()
+    }
+
+    /// One grid row as maximal same-presentation runs: wide-char spacers
+    /// skipped, zero-width combiners kept, trailing default-styled blanks
+    /// trimmed — the single source of truth `screen_ansi` also serializes
+    /// from (drift between the two is impossible by construction).
+    fn line_runs(&self, line: Line) -> Vec<StyledRun> {
+        let row = &self.term.grid()[line];
+        // Trim trailing cells that are blank AND default-styled.
+        let mut last = 0usize;
+        for col in 0..self.cols as usize {
+            let cell = &row[Column(col)];
+            if cell.c != ' ' || !cell_is_default_style(cell) || cell.zerowidth().is_some() {
+                last = col + 1;
+            }
+        }
+        let mut runs: Vec<StyledRun> = Vec::new();
+        for col in 0..last {
+            let cell = &row[Column(col)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            let fg = convert_color(cell.fg);
+            let bg = convert_color(cell.bg);
+            let attrs = attr_bits(cell.flags);
+            match runs.last_mut() {
+                Some(run) if run.fg == fg && run.bg == bg && run.attrs == attrs => {
+                    run.text.push(cell.c);
+                    if let Some(zerowidth) = cell.zerowidth() {
+                        run.text.extend(zerowidth.iter());
+                    }
+                }
+                _ => {
+                    let mut text = String::new();
+                    text.push(cell.c);
+                    if let Some(zerowidth) = cell.zerowidth() {
+                        text.extend(zerowidth.iter());
+                    }
+                    runs.push(StyledRun {
+                        text,
+                        fg,
+                        bg,
+                        attrs,
+                    });
+                }
+            }
+        }
+        runs
     }
 
     /// Up to `n` most recent scrollback lines (oldest first), text only.
@@ -253,6 +425,16 @@ impl Emu {
         self.rows = rows;
         self.term
             .resize(TermSize::new(cols as usize, rows as usize));
+        // Reflow rewrites history and reallocates rows: re-anchor scroll
+        // tracking. Under the alt screen the primary grid is unreadable, so
+        // mark the continuity loss for the next primary feed instead.
+        if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            self.primary_top_id = None;
+            self.pending_scroll_loss = true;
+        } else {
+            self.primary_hist_watermark = self.term.grid().history_size();
+            self.primary_top_id = Some(self.row_addr(Line(0)));
+        }
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -306,25 +488,6 @@ pub struct KeyModes {
     pub bracketed_paste: bool,
 }
 
-/// Tracks the emitted SGR state while serializing a grid row-by-row, emitting
-/// escape sequences only when a cell's presentation differs from the current
-/// state.
-struct SgrState {
-    fg: Option<AnsiColor>,
-    bg: Option<AnsiColor>,
-    flags: Flags,
-}
-
-impl Default for SgrState {
-    fn default() -> Self {
-        Self {
-            fg: None,
-            bg: None,
-            flags: Flags::empty(),
-        }
-    }
-}
-
 fn cell_is_default_style(cell: &Cell) -> bool {
     matches!(cell.fg, AnsiColor::Named(NamedColor::Foreground))
         && matches!(cell.bg, AnsiColor::Named(NamedColor::Background))
@@ -338,51 +501,10 @@ fn cell_is_default_style(cell: &Cell) -> bool {
         )
 }
 
-impl SgrState {
-    fn apply(&mut self, cell: &Cell, out: &mut String) {
-        let style_flags = Flags::BOLD
-            | Flags::DIM
-            | Flags::ITALIC
-            | Flags::UNDERLINE
-            | Flags::INVERSE
-            | Flags::STRIKEOUT;
-        let cell_flags = cell.flags & style_flags;
-        let fg_changed = self.fg != Some(cell.fg);
-        let bg_changed = self.bg != Some(cell.bg);
-        let flags_changed = self.flags != cell_flags;
-        if !fg_changed && !bg_changed && !flags_changed {
-            return;
-        }
-        // Reset then re-emit the full state: simple and always correct
-        // (flag removal has no single-code equivalent for every combo).
-        out.push_str("\x1b[0m");
-        if cell_flags.contains(Flags::BOLD) {
-            out.push_str("\x1b[1m");
-        }
-        if cell_flags.contains(Flags::DIM) {
-            out.push_str("\x1b[2m");
-        }
-        if cell_flags.contains(Flags::ITALIC) {
-            out.push_str("\x1b[3m");
-        }
-        if cell_flags.contains(Flags::UNDERLINE) {
-            out.push_str("\x1b[4m");
-        }
-        if cell_flags.contains(Flags::INVERSE) {
-            out.push_str("\x1b[7m");
-        }
-        if cell_flags.contains(Flags::STRIKEOUT) {
-            out.push_str("\x1b[9m");
-        }
-        push_color(out, cell.fg, true);
-        push_color(out, cell.bg, false);
-        self.fg = Some(cell.fg);
-        self.bg = Some(cell.bg);
-        self.flags = cell_flags;
-    }
-}
-
-fn push_color(out: &mut String, color: AnsiColor, foreground: bool) {
+/// alacritty color → stem [`CellColor`]. Named ANSI colors collapse into
+/// palette indices 0–15; Foreground/Background defaults (and render-time
+/// named variants apps cannot set via SGR) map to `None` = default.
+fn convert_color(color: AnsiColor) -> Option<CellColor> {
     match color {
         AnsiColor::Named(named) => {
             let code: Option<u8> = match named {
@@ -402,31 +524,91 @@ fn push_color(out: &mut String, color: AnsiColor, foreground: bool) {
                 NamedColor::BrightMagenta => Some(13),
                 NamedColor::BrightCyan => Some(14),
                 NamedColor::BrightWhite => Some(15),
-                // Foreground/Background defaults: SGR 0 already restored them.
                 _ => None,
             };
-            if let Some(code) = code {
-                let base = if code < 8 {
-                    if foreground {
-                        30 + code
-                    } else {
-                        40 + code
-                    }
-                } else if foreground {
-                    90 + (code - 8)
-                } else {
-                    100 + (code - 8)
-                };
-                out.push_str(&format!("\x1b[{base}m"));
-            }
+            code.map(CellColor::Indexed)
         }
-        AnsiColor::Indexed(index) => {
+        AnsiColor::Indexed(index) => Some(CellColor::Indexed(index)),
+        AnsiColor::Spec(rgb) => Some(CellColor::Rgb(rgb.r, rgb.g, rgb.b)),
+    }
+}
+
+fn attr_bits(flags: Flags) -> u8 {
+    let mut attrs = 0u8;
+    if flags.contains(Flags::BOLD) {
+        attrs |= cell_attrs::BOLD;
+    }
+    if flags.contains(Flags::DIM) {
+        attrs |= cell_attrs::DIM;
+    }
+    if flags.contains(Flags::ITALIC) {
+        attrs |= cell_attrs::ITALIC;
+    }
+    if flags.contains(Flags::UNDERLINE) {
+        attrs |= cell_attrs::UNDERLINE;
+    }
+    if flags.contains(Flags::INVERSE) {
+        attrs |= cell_attrs::INVERSE;
+    }
+    if flags.contains(Flags::STRIKEOUT) {
+        attrs |= cell_attrs::STRIKEOUT;
+    }
+    attrs
+}
+
+/// Emit the full SGR state for a run: reset then re-emit — simple and always
+/// correct (attr removal has no single-code equivalent for every combo).
+fn push_sgr(out: &mut String, fg: Option<CellColor>, bg: Option<CellColor>, attrs: u8) {
+    out.push_str("\x1b[0m");
+    if attrs & cell_attrs::BOLD != 0 {
+        out.push_str("\x1b[1m");
+    }
+    if attrs & cell_attrs::DIM != 0 {
+        out.push_str("\x1b[2m");
+    }
+    if attrs & cell_attrs::ITALIC != 0 {
+        out.push_str("\x1b[3m");
+    }
+    if attrs & cell_attrs::UNDERLINE != 0 {
+        out.push_str("\x1b[4m");
+    }
+    if attrs & cell_attrs::INVERSE != 0 {
+        out.push_str("\x1b[7m");
+    }
+    if attrs & cell_attrs::STRIKEOUT != 0 {
+        out.push_str("\x1b[9m");
+    }
+    if let Some(fg) = fg {
+        push_color(out, fg, true);
+    }
+    if let Some(bg) = bg {
+        push_color(out, bg, false);
+    }
+}
+
+fn push_color(out: &mut String, color: CellColor, foreground: bool) {
+    match color {
+        CellColor::Indexed(code) if code < 16 => {
+            let base = if code < 8 {
+                if foreground {
+                    30 + code
+                } else {
+                    40 + code
+                }
+            } else if foreground {
+                90 + (code - 8)
+            } else {
+                100 + (code - 8)
+            };
+            out.push_str(&format!("\x1b[{base}m"));
+        }
+        CellColor::Indexed(index) => {
             let sel = if foreground { 38 } else { 48 };
             out.push_str(&format!("\x1b[{sel};5;{index}m"));
         }
-        AnsiColor::Spec(rgb) => {
+        CellColor::Rgb(r, g, b) => {
             let sel = if foreground { 38 } else { 48 };
-            out.push_str(&format!("\x1b[{sel};2;{};{};{}m", rgb.r, rgb.g, rgb.b));
+            out.push_str(&format!("\x1b[{sel};2;{r};{g};{b}m"));
         }
     }
 }
@@ -562,6 +744,119 @@ mod tests {
         emu.feed(b"\r\nafter");
         assert_eq!(emu.screen_lines()[1], "after");
     }
+    #[test]
+    fn row_runs_group_by_presentation() {
+        let mut emu = Emu::new(40, 4, 100).unwrap();
+        emu.feed(b"\x1b[31mred\x1b[0m plain \x1b[1;38;5;42mfancy\x1b[0m");
+        let runs = emu.row_runs(0);
+        assert_eq!(
+            runs,
+            vec![
+                StyledRun {
+                    text: "red".into(),
+                    fg: Some(CellColor::Indexed(1)),
+                    bg: None,
+                    attrs: 0,
+                },
+                StyledRun {
+                    text: " plain ".into(),
+                    fg: None,
+                    bg: None,
+                    attrs: 0,
+                },
+                StyledRun {
+                    text: "fancy".into(),
+                    fg: Some(CellColor::Indexed(42)),
+                    bg: None,
+                    attrs: cell_attrs::BOLD,
+                },
+            ]
+        );
+        // Untouched rows and out-of-range rows are empty.
+        assert!(emu.row_runs(1).is_empty());
+        assert!(emu.row_runs(99).is_empty());
+    }
+
+    #[test]
+    fn row_runs_keep_styled_trailing_blanks_and_wide_chars() {
+        let mut emu = Emu::new(40, 4, 100).unwrap();
+        // bg-colored trailing spaces are content; default trailing blanks are not.
+        emu.feed("A\x1b[44m  \x1b[0m   \r\n日本\x1b[0m".as_bytes());
+        let runs = emu.row_runs(0);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].text, "A");
+        assert_eq!(runs[1].text, "  ");
+        assert_eq!(runs[1].bg, Some(CellColor::Indexed(4)));
+        // Wide chars appear once (spacer cells skipped).
+        assert_eq!(emu.row_runs(1)[0].text, "日本");
+    }
+
+    #[test]
+    fn row_runs_and_screen_ansi_agree() {
+        // screen_ansi is serialized FROM line_runs; feeding it to a fresh emu
+        // must reproduce identical runs (the no-drift contract).
+        let mut a = Emu::new(30, 5, 100).unwrap();
+        a.feed(b"\x1b[31;44mred-on-blue\x1b[0m mid \x1b[7;9minv\x1b[0m\r\n\x1b[38;2;1;2;3mrgb");
+        let mut b = Emu::new(30, 5, 100).unwrap();
+        b.feed(a.screen_ansi().as_bytes());
+        for row in 0..5 {
+            assert_eq!(a.row_runs(row), b.row_runs(row), "row {row}");
+        }
+    }
+
+    #[test]
+    fn recent_history_runs_are_oldest_first() {
+        let mut emu = Emu::new(80, 3, 100).unwrap();
+        emu.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+        let texts: Vec<String> = emu
+            .recent_history_runs(2)
+            .into_iter()
+            .map(|runs| runs.into_iter().map(|r| r.text).collect())
+            .collect();
+        assert_eq!(texts, vec!["one".to_string(), "two".to_string()]);
+    }
+
+    #[test]
+    fn scrolled_lines_stay_exact_at_history_saturation() {
+        // History cap 4: once saturated, history_size() deltas read 0 while
+        // the grid still rotates — the row-identity tracker must keep the
+        // count exact (grid-sync scrollback capture depends on it).
+        let mut emu = Emu::new(80, 3, 4).unwrap();
+        let report = emu.feed(b"a\r\nb\r\nc\r\nd\r\ne");
+        assert_eq!(report.scrolled_lines, 2); // a, b pushed
+        assert!(!report.scroll_history_lost);
+
+        let report = emu.feed(b"\r\nf\r\ng"); // c, d pushed → history full (4)
+        assert_eq!(report.scrolled_lines, 2);
+
+        // Saturated: every further scroll must still report exactly.
+        let report = emu.feed(b"\r\nh");
+        assert_eq!(report.scrolled_lines, 1, "saturated single scroll");
+        assert!(!report.scroll_history_lost);
+        let report = emu.feed(b"\r\ni\r\nj\r\nk");
+        assert_eq!(report.scrolled_lines, 3, "saturated multi scroll");
+        assert!(!report.scroll_history_lost);
+
+        // Scrolling past the entire retained history in one feed loses the
+        // anchor row — reported honestly instead of guessed.
+        let report = emu.feed(b"\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8");
+        assert!(report.scroll_history_lost);
+    }
+
+    #[test]
+    fn alt_screen_defers_scroll_accounting_to_exit() {
+        let mut emu = Emu::new(80, 3, 100).unwrap();
+        emu.feed(b"one\r\ntwo\r\nthree");
+        // Enter alt, scroll wildly inside it: no primary history pushes.
+        let report = emu.feed(b"\x1b[?1049h1\r\n2\r\n3\r\n4\r\n5");
+        assert_eq!(report.scrolled_lines, 0);
+        // Exit alt and scroll in the same chunk: pushes counted on exit.
+        let report = emu.feed(b"\x1b[?1049l\r\nfour\r\nfive");
+        assert_eq!(report.scrolled_lines, 2);
+        assert!(!report.scroll_history_lost);
+        assert_eq!(emu.scrollback_lines(10), vec!["one", "two"]);
+    }
+
     #[test]
     fn screen_ansi_roundtrips_colors_and_cursor() {
         let mut a = Emu::new(30, 5, 100).unwrap();

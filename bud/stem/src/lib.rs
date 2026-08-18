@@ -40,4 +40,4 @@ pub mod session;
 
 pub use error::StemError;
 pub use events::Event;
-pub use session::Session;
+pub use session::{GridFrame, GridRow, Session};
