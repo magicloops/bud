@@ -163,6 +163,74 @@ test("terminal.run service timeout reports still-running, never a fabricated fai
   assert.match(execution.summary, /still running/);
 });
 
+test("terminal.run still-running report carries the dispatched command_id from the command store", async () => {
+  const lookups: string[] = [];
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      throw new Error("send_timeout");
+    },
+    async getLatestCommandForSession(sessionId: string) {
+      lookups.push(sessionId);
+      return {
+        commandId: "cmd_running",
+        terminalSessionId: sessionId,
+        commandStartedAt: new Date("2026-08-17T10:00:00.000Z"),
+        commandFinishedAt: null,
+        exitCode: null,
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.run",
+    command: "sleep 999999",
+    callId: "call_run_timeout_cmd_id",
+  });
+
+  assert.deepEqual(lookups, ["sess_test"]);
+  assert.equal(execution.result.status, "still_running");
+  assert.equal(execution.result.commandId, "cmd_running");
+  assert.equal(execution.payload.command_id, "cmd_running");
+  assert.match(String(execution.payload.note), /terminal\.observe/);
+});
+
+test("terminal.run still-running report keeps command_id null when the latest command already finished", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      throw new Error("send_timeout");
+    },
+    async getLatestCommandForSession(sessionId: string) {
+      // The started event for the timed-out run was lost; the newest persisted
+      // command is an older, finished one — reporting it would mislabel it.
+      return {
+        commandId: "cmd_previous",
+        terminalSessionId: sessionId,
+        commandStartedAt: new Date("2026-08-17T09:00:00.000Z"),
+        commandFinishedAt: new Date("2026-08-17T09:00:05.000Z"),
+        exitCode: 0,
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.run",
+    command: "sleep 999999",
+    callId: "call_run_timeout_stale_cmd",
+  });
+
+  assert.equal(execution.result.status, "still_running");
+  assert.equal(execution.result.commandId, null);
+  assert.equal(execution.payload.command_id, null);
+});
+
 test("terminal.run tail-kept truncation is surfaced with a truncation reason", async () => {
   const terminalSessionManager = {
     getSessionContext() {

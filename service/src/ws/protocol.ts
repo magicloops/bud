@@ -123,6 +123,9 @@ export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   alt_screen: z.boolean().optional(),
   cursor_row: z.number().int().optional(),
   cursor_col: z.number().int().optional(),
+  // Stream watermark the daemon's emulator reflects at observe time: the next
+  // output byte offset a stream resume from this observation should use.
+  ring_next_offset: z.number().int().nonnegative().optional(),
   error: z.string().nullable()
 });
 

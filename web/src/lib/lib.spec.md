@@ -181,10 +181,24 @@ line/column extraction, and unsafe/false-positive rejection.
 
 ### `terminal-data.ts`
 
-Terminal-history/output decode helper.
+Terminal-history/output decode helpers.
 
 **Exports**:
-- `decodeTerminalData(data)` - base64 → binary → UTF-8 text
+- `createTerminalStreamDecoder()` - stateful UTF-8 decoder for streamed
+  `terminal.output` chunks. Uses one `TextDecoder` in `{stream: true}` mode per
+  SSE connection so a multi-byte code point split across chunk boundaries
+  (service chunks output at ≤16 KiB byte boundaries) decodes correctly. Reports
+  raw decoded byte length per chunk for offset tracking. Callers must `reset()`
+  on `term.reset()` and when a new SSE connection opens.
+- `decodeTerminalData(data)` - one-shot base64 → binary → UTF-8 text for
+  self-contained payloads (byte-tail history fallback only; never for streamed
+  chunks)
+
+### `terminal-data.test.ts`
+
+Node-runner coverage for one-shot decode, split-code-point reassembly across
+streamed chunks, byte-length reporting for withheld partial code points, reset
+semantics, and invalid-base64 tolerance.
 
 ### `terminal-input.ts`
 

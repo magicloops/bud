@@ -44,6 +44,21 @@ class InMemoryCommandPersistence implements TerminalCommandPersistence {
     const row = this.rows.get(commandId);
     return row ? { ...row } : null;
   }
+
+  async getLatestCommandForSession(sessionId: string): Promise<TerminalCommandRecord | null> {
+    const candidates = [...this.rows.values()].filter(
+      (row) => row.terminalSessionId === sessionId,
+    );
+    candidates.sort((a, b) => {
+      const byStartedAt = b.commandStartedAt.getTime() - a.commandStartedAt.getTime();
+      if (byStartedAt !== 0) {
+        return byStartedAt;
+      }
+      return b.commandId.localeCompare(a.commandId);
+    });
+    const latest = candidates[0];
+    return latest ? { ...latest } : null;
+  }
 }
 
 function createLogger() {
@@ -183,4 +198,35 @@ test("command_finished redelivery is idempotent", async () => {
   assert.equal(row?.exitCode, 0);
   assert.equal(row?.outputByteEnd, 64);
   assert.equal(persistence.rows.size, 1);
+});
+
+test("getLatestCommandForSession returns the most recent command by started_at", async () => {
+  const persistence = new InMemoryCommandPersistence();
+  const store = new TerminalCommandStore(createLogger(), persistence);
+  const session = createSession();
+
+  await store.recordCommandStarted(session, {
+    commandId: "cmd_old",
+    outputByteStart: 0,
+    ts: 1_700_000_000_000,
+  });
+  await store.recordCommandFinished(session, {
+    commandId: "cmd_old",
+    exitCode: 0,
+    durationMs: 50,
+    outputByteStart: 0,
+    outputByteEnd: 10,
+    ts: 1_700_000_000_050,
+  });
+  await store.recordCommandStarted(session, {
+    commandId: "cmd_new",
+    outputByteStart: 10,
+    ts: 1_700_000_100_000,
+  });
+
+  const latest = await store.getLatestCommandForSession("sess_test");
+  assert.equal(latest?.commandId, "cmd_new");
+  assert.equal(latest?.commandFinishedAt, null);
+
+  assert.equal(await store.getLatestCommandForSession("sess_other"), null);
 });

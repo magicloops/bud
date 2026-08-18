@@ -318,6 +318,14 @@ Terminal presentation component for the existing-thread workspace.
 - renders the terminal pane wrapper, optional injected web-view pane,
   disconnect overlays, truncated-history badge, terminal status bar, and
   terminal options menu
+- renders typed `terminal.event` status chips in the header: the mode chip
+  (`shell`/`tui`/`repl`), a command lifecycle chip (pulsing "running" dot from
+  `command_started`, then green `exit 0` / red `exit N` from
+  `command_finished`, persisting until the next command), and an "input
+  queued" chip while typed input is buffered during a disconnect — no
+  heuristic activity inference
+- the truncated-history badge only appears on the byte-tail history fallback
+  path; the emulator-scrollback snapshot path never sets it
 - renders the terminal status/menu bar as a compact 2rem top header above the xterm host for visual testing
 - bottom-anchors the injected xterm element inside its measured host so whole-row fit remainder pixels collect above the terminal screen instead of below it
 - remains mounted underneath file-viewer and web-view overlays in the

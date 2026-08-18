@@ -185,7 +185,12 @@ export type TerminalReadyTrigger =
   | "changed"
   | "settled";
 
-export type TerminalWaitFor = "none" | "shell_ready" | "changed" | "settled";
+// ---------------------------------------------------------------------------
+// LEGACY (proto 0.2) — retired vocabulary kept ONLY so `freshness.ts` can keep
+// parsing readiness metadata persisted on old transcript rows. Nothing may
+// produce these shapes; do not add new consumers. Safe to delete once legacy
+// transcript metadata no longer needs to render.
+// ---------------------------------------------------------------------------
 
 export interface ReadinessHints {
   looks_like_prompt: boolean;
@@ -217,34 +222,6 @@ export interface TerminalDeltaMessage {
   changed: boolean;
   text: string;
   truncated: boolean;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Context Sync Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Snapshot of terminal state for context sync comparison.
- * Stored in terminalSessionTable.stateSnapshot.
- */
-export interface TerminalStateSnapshot {
-  screenHash: string;
-  lastLine: string;
-  detectedMode: "shell" | "repl" | "tui" | "unknown";
-  detectedProgram: string | null;
-  capturedAt: Date;
-}
-
-/**
- * Details about a detected state change for LLM summarization.
- */
-export interface StateChangeDetails {
-  previousMode: string;
-  previousProgram: string | null;
-  previousLastLine: string;
-  currentCapture: string;
-  currentLastLine: string;
-  currentModeHint: string;
 }
 
 export function normalizeTerminalSendKeyName(value: string): string {

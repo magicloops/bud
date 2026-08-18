@@ -210,7 +210,6 @@ When the current agent environment is `bud_offline`, provider calls use a Bud-sp
 **Constructor dependencies**:
 - `TerminalSessionManager` (thread-scoped stem-backed terminal sessions)
 - `AgentRuntimeStateManager` (authoritative `/agent/state` snapshots plus bounded agent-stream resume)
-- optional `ContextSyncService` (accepted for wiring compatibility only; the Phase 2.5 rework removed its post-tool snapshot refresh from the agent loop)
 - logger and debug flags
 
 **Internal collaborators**:
@@ -303,14 +302,14 @@ startUserMessage()
 - Empty final responses now fail with a structured diagnostic error that includes the canonical response and any provider completion payload attached by the LLM adapter, so normal agent failure logs show the model result without requiring the OpenAI debug flag.
 - OpenAI debug response logging emits `llm_response` as a structured canonical response object rather than a pre-stringified JSON blob, so log viewers can pretty-print nested fields without escaped newline formatting.
 - `startUserMessage()` now allocates the turn id and seeds `/agent/state` before terminal session ensure returns, so clients can bootstrap with a resumable cursor even before the first visible event; turn startup, explicit question responses, follow-up supersession, and cancel use a short per-thread transition guard for state handoffs.
-- If the resolved environment is `bud_offline`, startup skips context sync, path context, and terminal ensure, then runs the provider with a request-time offline instruction plus the Bud-specific tool denylist. The user message still succeeds so the assistant can explain recovery or ask follow-up questions without terminal/web-view tools.
+- If the resolved environment is `bud_offline`, startup skips path context and terminal ensure, then runs the provider with a request-time offline instruction plus the Bud-specific tool denylist. The user message still succeeds so the assistant can explain recovery or ask follow-up questions without terminal/web-view tools.
 - Active turns refresh the Bud environment before provider calls and before Bud-specific tool dispatch, allowing a reconnect during a turn to restore normal tool availability on a later step.
 - Normal online provider calls do not inject terminal freshness notes because toggling a transient top-of-context system message disrupts prompt-cache reuse for local providers such as ds4. The agent can still call `terminal.observe` explicitly when current terminal output or cwd matters.
 - Terminal tool rows still persist `message.metadata.terminal_visibility` watermarks (output-byte watermark, cwd, timestamp, session id, source) so a future append-only freshness prompt can be reintroduced without losing visibility state; the readiness-version component is always `null` under proto 0.3.
-- The 0.2-era post-tool `ContextSyncService.refreshSnapshot(...)` call was removed from the agent loop: mode facts now come from the daemon through the terminal runtime, so no extra observe round-trip happens after each state-changing tool. The constructor still accepts the service instance for wiring compatibility but ignores it.
+- The 0.2-era post-tool `ContextSyncService.refreshSnapshot(...)` call was removed from the agent loop: mode facts now come from the daemon through the terminal runtime, so no extra observe round-trip happens after each state-changing tool. The dead `ContextSyncService` module itself was deleted in Phase 3; the constructor no longer accepts it.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.run` is the deterministic command path: dispatch with `await: "command"`, await the daemon's `command_finished`, then slice the command's output from the durable store by byte range (`TerminalSessionManager.getCommandOutput`, 64 KiB tail-keeping cap). A failing command (non-zero exit) is a NORMAL tool result carrying `exit_code`; only transport/session problems become structured errors.
-- If the one-hour awaited-send budget expires without an outcome, `terminal.run` returns a still-running report (`status: "still_running"` plus observe guidance) — never a fabricated failure. The report currently cannot include `command_id` (see TODOs).
+- If the one-hour awaited-send budget expires without an outcome, `terminal.run` returns a still-running report (`status: "still_running"` plus observe guidance) — never a fabricated failure. Still-running (and interrupted) reports recover the dispatched `command_id` via `TerminalSessionManager.getLatestCommandForSession(sessionId)`, but only while that latest command row is unfinished — a finished latest row means the run's `command_started` event was lost and `command_id` stays `null` rather than mislabeling an older command.
 - `terminal.send` is one gesture at a time (`raw_text` or `key`), dispatched with `await: "settled"`, followed by an explicit `view: "delta"` observation so the result is send-plus-proof (`dispatched`, `delta { changed, text }`, `mode`, `integration`, `alt_screen`). If the settle wait times out, the result reports the program as still active with a best-effort screen capture.
 - historical persisted `terminal.send` rows with `command` or `text`/`submit` replay as `terminal_run`, and `terminal.interrupt` rows replay as `terminal_send` with `key: "ctrl+c"`, so old transcripts round-trip into the current provider/tool vocabulary.
 - `terminal.observe` defaults to `view: "delta"` at the tool layer (the runtime default is `screen`) and exposes `view: "screen"` / `view: "history"` for broader context; results carry `mode` / `integration` / `alt_screen`.
@@ -469,6 +468,7 @@ Direct tests for the extracted terminal tool executor.
 - `terminal.run` happy path: `await: "command"` dispatch, exit 0, output slice, cwd/mode facts
 - failing commands (exit 1) are normal tool results without error codes
 - service-timeout runs report `status: "still_running"` with observe guidance, never an error
+- still-running reports recover the dispatched `command_id` from the session's latest unfinished command row, and keep `command_id: null` when the latest row already finished (lost `command_started`)
 - tail-kept output truncation surfaces `truncated` plus `output_truncation_reason: "service_backfill_limit"`
 - non-command outcomes (`settled`) map to structured `EXEC_FAILED`
 - `terminal.send` settled+delta flow for raw text and key gestures, including delta proof and mode facts
@@ -793,9 +793,6 @@ From `../config.js`:
 - `config.agentContextDriftDebug` - Enable local-only model context drift artifact capture under `.bud-debug/`
 
 ## TODOs / Technical Debt
-
-<!-- SPEC:TODO -->
-- `terminal.run` still-running reports cannot include `command_id`: the daemon's `command_started` event is consumed inside the terminal runtime and `TerminalSessionManager` exposes no session-scoped command lookup (only `getCommandOutput(commandId)`). Needs a small runtime API (e.g. `getLatestCommandForSession(sessionId)`) owned by the service-core side; until then timed-out runs return `command_id: null` plus observe guidance.
 
 <!-- SPEC:TODO -->
 - Consider: Move tool definitions to a shared location if multiple agents need them

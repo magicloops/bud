@@ -1,5 +1,10 @@
 # Validation Checklist: Daemon Production Binary Readiness
 
+> **Supersession note (2026-08):** tmux rows below are obsolete after the stem
+> cutover — Bud has no tmux dependency. Terminal install validation now lives
+> in [plan/native-terminal-session-manager/validation-checklist.md](../native-terminal-session-manager/validation-checklist.md)
+> §B (tmux-less install, doctor checks, supervision directives).
+
 ## Automated Gates
 
 - [x] `cargo test --manifest-path bud/Cargo.toml`

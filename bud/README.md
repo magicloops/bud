@@ -64,7 +64,9 @@ cargo run -- doctor
 cargo run -- --terminal-enabled doctor --format json
 ```
 
-When terminal support is enabled and `tmux` is missing, `bud doctor` prints OS-specific install commands. With production config it also attempts a bounded TLS trust check for `api.bud.dev`. Bud does not install tmux automatically.
+With terminal support enabled, `bud doctor` also verifies the terminal session registry (`<terminal base dir>/term`, mode 700), runs a holder smoke check (spawns a real detached `bud term-hold` holder, probes its socket, kills it, and verifies cleanup), and — when Bud is installed as a launchd/systemd user service — warns if the service definition is missing the supervision directives terminal sessions need to survive daemon restarts (`AbandonProcessGroup=true` on macOS, `KillMode=process` on Linux; see `spikes/holder-survival/findings.md`). With production config it also attempts a bounded TLS trust check for `api.bud.dev`.
+
+Machines upgraded from the old tmux-backed builds can clean up orphaned legacy `s_*` tmux sessions with a one-shot `bud doctor --cleanup-tmux`; it is a silent no-op everywhere else.
 
 ## Local Run
 
@@ -163,7 +165,7 @@ With that layout:
 
 - device credentials are stored at `$SCRIPT_DIR/.bud/identity.json`
 - the stable installation identity is stored at `$SCRIPT_DIR/.bud/installation-id`
-- terminal logs are stored under `$SCRIPT_DIR/.bud/sessions/`
+- terminal session state (holder sockets, output rings, logs) is stored under `$SCRIPT_DIR/.bud/term/`
 
 ### Example `make-bud-instance.sh`
 
@@ -247,4 +249,4 @@ The gRPC path currently reuses the existing `hello` / `hello_challenge` / `hello
 ## Notes
 
 - For phone/LAN testing, replace `localhost` in `BUD_SERVER_URL` with a reachable host.
-- `tmux` must be installed if terminal features are enabled.
+- Terminal sessions are self-contained: the daemon spawns detached PTY holder processes by re-executing itself as `bud term-hold` (the in-repo `stem` crate). No tmux or other external terminal multiplexer is required.

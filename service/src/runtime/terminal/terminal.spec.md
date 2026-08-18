@@ -41,7 +41,7 @@ Proto 0.3 contract:
 - `await: "command" | "settled"` requests an awaited outcome; omitted `await` resolves on dispatch (transport ack only).
 - the service owns the timeout budget locally: awaited sends use the one-hour `TERMINAL_AWAITED_SEND_TIMEOUT_MS`, dispatch-only sends and observes use `TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS` (30s), and trusted callers may pass an explicit `timeoutMs`.
 - outbound `terminal_observe` carries `{ view, lines }` only (default view `screen`).
-- `terminal_send_result` resolves to `{ dispatched, outcome }` where `outcome` mirrors the terminating `terminal_event` (or `null`); `terminal_observe_result` resolves to grid-backed `{ view, output, linesCaptured, changed?, mode?, integration?, altScreen?, cursorRow?, cursorCol? }`.
+- `terminal_send_result` resolves to `{ dispatched, outcome }` where `outcome` mirrors the terminating `terminal_event` (or `null`); `terminal_observe_result` resolves to grid-backed `{ view, output, linesCaptured, changed?, mode?, integration?, altScreen?, cursorRow?, cursorCol?, ringNextOffset? }` — `ringNextOffset` is the stream watermark the daemon's emulator reflected at observe time, used by the snapshot route as the stream-resume cursor.
 - human interrupt sends can reject older pending waits as `interrupted` while excluding the new `ctrl+c` send request, avoiding an orphaned interrupt result.
 - send and observe pending state still tracks output activity (latest offset, event count) for long-wait diagnostics; rejection/timeout/result logs include request id, await mode, and elapsed timing.
 
@@ -55,7 +55,7 @@ Key behaviors:
 - **`tailOutput(sessionId, maxBytes)`**: serves the byte budget across as many rows as needed (backward keyset pagination), trimming mid-chunk at the budget boundary; returns `totalBytesStored` from a SUM query.
 - **`getStoredEndOffset(sessionId)`**: max stored end offset, used as `terminal_ensure.resume_from_offset`.
 - **SSE**: `terminal.output` payloads are offset-only (`{ data, byte_offset }`, no `seq`) and carry `id: String(byte_offset + bytes.length)` so the SSE `Last-Event-ID` doubles as the byte-offset resume cursor.
-- soft-cap behavior: chunks past `terminalOutputSoftCapBytes` are dropped (warn) and never emitted, keeping the SSE stream equal to the durable stream.
+- **retention cap** (`terminalOutputSoftCapBytes`, default 100 MiB): new output is ALWAYS stored and emitted; the oldest stored chunks are pruned past the cap (the durable store is a service-side ring mirroring the daemon ring). It is NOT a lifetime cap — a lifetime cap permanently muted long-lived sessions (§A validation finding).
 
 ### `terminal-command-store.ts`
 
@@ -64,6 +64,7 @@ Persists `terminal_command` rows from `terminal_event` `command_started` / `comm
 - `recordCommandStarted(...)` inserts with `onConflictDoNothing` (idempotent on redelivery).
 - `recordCommandFinished(...)` finalizes `command_finished_at` / `exit_code` / output byte range; tolerates finished-without-started by inserting a complete row (started time derived from `duration_ms` when present).
 - `getCommand(commandId)` backs the manager's `getCommandOutput(...)` internal API.
+- `getLatestCommandForSession(sessionId)` returns the session's most recent command row (by `command_started_at`, `command_id` ULID tie-break); the manager exposes it so a timed-out/interrupted `terminal.run` can report the command_id it dispatched.
 - Uses a `TerminalCommandPersistence` seam (Drizzle by default, in-memory in tests).
 
 ### `runtime-state.ts`
@@ -76,7 +77,7 @@ Periodic idle-state management wrapper.
 
 ### `request-dispatcher.test.ts`
 
-Direct seam tests for pending observe/send rejection behavior, 0.3 frame shapes (`await` present, `wait_for`/`timeout_ms` absent), awaited-vs-dispatch timeout budgets, outcome resolution, error rejection, interrupt-excluding-self behavior, and single-gesture validation.
+Direct seam tests for pending observe/send rejection behavior, 0.3 frame shapes (`await` present, `wait_for`/`timeout_ms` absent), awaited-vs-dispatch timeout budgets, outcome resolution, `ringNextOffset` watermark passthrough (present and omitted), error rejection, interrupt-excluding-self behavior, and single-gesture validation.
 
 ### `session-store.test.ts`
 
@@ -88,7 +89,7 @@ In-memory persistence matrix for the output store: idempotent re-insert (stats +
 
 ### `terminal-command-store.test.ts`
 
-Command ingest matrix: started→finished flow with owner stamping, started redelivery idempotency, finished-without-started complete-row insert, finished redelivery idempotency.
+Command ingest matrix: started→finished flow with owner stamping, started redelivery idempotency, finished-without-started complete-row insert, finished redelivery idempotency, latest-command-for-session lookup ordering.
 
 ## Notes
 

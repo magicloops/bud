@@ -71,7 +71,7 @@ Minimum checks:
 - identity/config files have acceptable permissions
 - service URL parses and maps to an HTTP claim/bootstrap origin
 - TLS trust can validate `api.bud.dev` when network is available
-- `tmux -V` is present when terminal support is expected
+- `tmux -V` is present when terminal support is expected *(superseded by the stem cutover — replaced by terminal-registry, holder-smoke, and supervision-directive checks; see [plan/native-terminal-session-manager](../native-terminal-session-manager/phase-3-web-mobile-and-install-cleanup.md))*
 - shell path exists and is executable
 - terminal artifact directory is writable
 - service manager support is detectable, but service installation remains Phase 4
@@ -82,6 +82,12 @@ Output modes:
 - machine-readable output, preferably JSON, for installer use
 
 ### Tmux remediation text
+
+> **Superseded (stem cutover):** Bud no longer depends on tmux; this
+> remediation text was removed from doctor/startup. The only surviving tmux
+> surface is the one-shot `bud doctor --cleanup-tmux` for orphaned legacy
+> `s_*` sessions. See
+> [plan/native-terminal-session-manager](../native-terminal-session-manager/implementation-spec.md).
 
 Doctor/startup must print concrete remediation when tmux is missing:
 

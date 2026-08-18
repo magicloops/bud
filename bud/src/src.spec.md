@@ -38,6 +38,9 @@ Local diagnostic command implementation.
 
 - evaluates the effective config and path resolution used by the daemon runtime
 - checks OS/architecture support, base-dir and terminal artifact writability, identity file permissions, service URL parsing, production TLS trust when applicable, shell availability, and user-service manager hints (terminal support is native via `stem`; no external multiplexer preflight remains)
+- checks the stem terminal registry (`<terminal base dir>/term`): exists or is created via `stem::registry::Registry` (mode 0700), is a directory, is writable, and warns with a `chmod 700` remediation on permission drift
+- runs a holder smoke check when terminal support is enabled: spawns a real detached holder via the daemon's own executable (`bud term-hold` through `stem::registry::Registry::ensure`, the production spawn path) against a short throwaway temp dir, verifies socket + Hello, kills it, and verifies registry GC; time-boxed (8s overall) with an error and remediation on failure
+- probes installed supervision directives best-effort: warns when a `*bud*.plist` under `~/Library/LaunchAgents` lacks `AbandonProcessGroup=true` (macOS defense-in-depth) or a `*bud*.service` under the systemd user config dir lacks `KillMode=process` (load-bearing on Linux — sessions do not survive daemon restarts without it; see `spikes/holder-survival/findings.md`); "not service-managed" is informational, never a failure
 - prints human-readable output by default and JSON when `bud doctor --format json` is requested
 - `bud doctor --cleanup-tmux` is a one-shot best-effort kill of legacy tmux-era `s_*` sessions; it is a silent no-op when no tmux binary exists
 
@@ -356,6 +359,9 @@ High-value local tests now live next to the extracted abstractions:
   - inbound field-level decode tolerance (`terminal_send.await`, `terminal_ensure.resume_from_offset`, `terminal_observe.lines`)
 - `doctor.rs`
   - production TLS skip/probe behavior and command/path quoting helpers
+  - terminal-registry check paths (create-with-0700, mode-drift warning, non-directory rejection) and the 0700 mode rule
+  - holder-smoke skip when terminal support is disabled
+  - supervision-directive parsing (launchd `AbandonProcessGroup`, systemd `KillMode`) and bud-named service-file discovery
 - `proxy/mod.rs`
   - localhost proxy-open policy validation
   - transport-disconnect cleanup resets waiting HTTP proxy streams and closes active WebSocket proxy sessions
@@ -380,8 +386,11 @@ High-value local tests now live next to the extracted abstractions:
   - REPL prompt matches and conservative non-matches
 - `terminal/shims.rs`
   - zsh/bash shim file generation; fish/unknown passthrough
+- `tests/term_hold.rs` (integration, single-binary re-exec: daemonized `bud term-hold` spawn/reuse/kill through `stem::registry`)
 - `tests/terminal_stem.rs` (integration, real `bud term-hold` holders)
   - ensure→ready status, sentinel exit codes 0/1 on `/bin/sh`, observe/resize, close-kills-holder, offset-exact reattach without duplicates or gaps, two-session non-blocking concurrency (D-H1), zsh/bash shim OSC 133 marker flows
+- `tests/doctor.rs` (integration, real binary via `CARGO_BIN_EXE_bud`)
+  - `bud doctor --format json` on a fresh base dir reports `terminal_registry`, `holder_smoke` (real `bud term-hold` spawn/probe/kill), and `supervision_directives` ok; registry created at `<base>/term` with mode 0700
 
 ## Dependencies
 

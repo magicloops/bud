@@ -593,8 +593,10 @@ function ThreadView() {
     focusTerminal,
     sendTerminalCtrlC,
     showDisconnectOverlay,
+    terminalCommand,
     terminalConnection,
     terminalHasOutput,
+    terminalInputQueued,
     terminalOutputTruncated,
     terminalPaneRef,
     terminalFacts,
@@ -881,8 +883,10 @@ function ThreadView() {
           <ThreadTerminalPane
             error={error}
             status={status}
+            terminalCommand={terminalCommand}
             terminalConnection={terminalConnection}
             terminalHasOutput={terminalHasOutput}
+            terminalInputQueued={terminalInputQueued}
             terminalOutputTruncated={terminalOutputTruncated}
             terminalPaneRef={terminalPaneRef}
             terminalFacts={terminalFacts}

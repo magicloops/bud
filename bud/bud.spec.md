@@ -182,7 +182,7 @@ cargo run -- doctor
 cargo run -- --terminal-enabled doctor --format json
 ```
 
-`bud doctor` checks the effective base directory, identity file permissions, service URL derivation, production TLS trust when applicable, shell path, terminal artifact directory, and user-service manager availability. `bud doctor --cleanup-tmux` is a one-shot best-effort cleanup of legacy tmux-era `s_*` sessions (silent no-op without a tmux binary).
+`bud doctor` checks the effective base directory, identity file permissions, service URL derivation, production TLS trust when applicable, shell path, terminal artifact directory, and user-service manager availability. It also verifies the stem terminal registry (`<terminal base dir>/term`, mode 700), runs a real holder spawn/probe/kill smoke through `bud term-hold` when terminal support is enabled, and warns when an installed launchd plist / systemd user unit is missing the holder-survival supervision directives (`AbandonProcessGroup=true` / `KillMode=process`, per `spikes/holder-survival/findings.md`). `bud doctor --cleanup-tmux` is a one-shot best-effort cleanup of legacy tmux-era `s_*` sessions (silent no-op without a tmux binary).
 
 ## CLI Options
 

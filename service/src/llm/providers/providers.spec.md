@@ -135,7 +135,7 @@ Anthropic provider using the Messages API (~730 lines).
 | Redacted reasoning | `{ type: "redacted_thinking", ... }` content block |
 
 **Mid-Conversation System Messages**:
-Context sync injects system messages between user messages to inform the agent about terminal state changes. Since Anthropic doesn't support mid-conversation system messages, these are transformed to user messages with a `[System Note]` prefix. The transformation logic checks if a system message appears after any non-system message.
+Historical transcripts may contain `role: "system"` context messages between user messages (injected by the deleted 0.2-era context sync). Since Anthropic doesn't support mid-conversation system messages, these are transformed to user messages with a `[System Note]` prefix. The transformation logic checks if a system message appears after any non-system message.
 
 **Thinking Budget Calculation**:
 | Reasoning Effort | Budget Tokens |

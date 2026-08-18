@@ -260,7 +260,10 @@ async fn mid_command_shell_settles_for_inline_tuis() {
     wait_for_holder(&dir).await;
 
     let (mut session, mut rx) = Session::attach(config(&dir, 0)).await.unwrap();
-    expect_event(&mut rx, "prompt", |e| matches!(e, Event::PromptReady { .. })).await;
+    expect_event(&mut rx, "prompt", |e| {
+        matches!(e, Event::PromptReady { .. })
+    })
+    .await;
 
     session
         .write_text("printf inline-tui-drawing; sleep 300\n")
@@ -275,7 +278,13 @@ async fn mid_command_shell_settles_for_inline_tuis() {
     })
     .await;
     assert!(
-        matches!(settled, Event::Settled { mode: Mode::Shell, .. }),
+        matches!(
+            settled,
+            Event::Settled {
+                mode: Mode::Shell,
+                ..
+            }
+        ),
         "inline TUI stays Shell mode but must settle: {settled:?}"
     );
 

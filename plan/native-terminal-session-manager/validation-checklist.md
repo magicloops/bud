@@ -54,7 +54,12 @@ Manual end-to-end verification. §A runs before the Phase 2 branch merges; §A +
 > case the window was 99.8% vim/codex bytes with 320 bytes / 0 newlines after
 > the last alt-screen exit, so "3 lines of history" was the correct render of
 > those bytes. Bytes ≠ lines. The "Earlier output truncated" banner remains
-> honest. Resolution deferred to Phase 3 / grid-sync: serve line-oriented
+> honest. **INTERIM RESOLUTION LANDED (Phase 3):** the browser now bootstraps
+> from `GET /terminal/snapshot` — emulator scrollback lines + screen text,
+> resuming the stream from the snapshot's `ring_next_offset` — so TUI-heavy
+> sessions show real line history (colors on scrollback arrive with grid-sync).
+> The byte-tail path remains only as the bud-offline fallback. Full resolution
+> stays with grid-sync: serve line-oriented
 > scrollback from stem's emulator (which tracks scrollback lines across TUI
 > sessions) instead of raw byte tails —
 > `design/terminal-grid-sync-and-predictive-echo.md` §3.2/open-q 3. A window

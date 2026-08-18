@@ -327,6 +327,39 @@ test("observe result resolves with grid-backed mode facts", async () => {
   assert.equal(result.cursorCol, 11);
 });
 
+test("observe result threads the ring_next_offset stream watermark through", async () => {
+  const sentFrames: Record<string, unknown>[] = [];
+  const dispatcher = createDispatcher(createSession(), sentFrames);
+
+  const observePromise = dispatcher.observeTerminal("sess_test", { view: "screen" });
+
+  await waitForPendingRegistration();
+  await dispatcher.handleObserveResult("sess_test", {
+    requestId: sentFrames[0]?.request_id as string,
+    view: "screen",
+    output: Buffer.from("screen text", "utf-8").toString("base64"),
+    linesCaptured: 10,
+    ringNextOffset: 4096,
+    error: null,
+  });
+
+  const result = await observePromise;
+  assert.equal(result.ringNextOffset, 4096);
+
+  // Omitted watermark stays omitted (older daemons).
+  const secondPromise = dispatcher.observeTerminal("sess_test", { view: "history", lines: 100 });
+  await waitForPendingRegistration();
+  await dispatcher.handleObserveResult("sess_test", {
+    requestId: sentFrames[1]?.request_id as string,
+    view: "history",
+    output: Buffer.from("history text", "utf-8").toString("base64"),
+    linesCaptured: 100,
+    error: null,
+  });
+  const secondResult = await secondPromise;
+  assert.equal(secondResult.ringNextOffset, undefined);
+});
+
 test("settled send rejection logs wait state and output activity", async () => {
   const sentFrames: Record<string, unknown>[] = [];
   const logEntries: LogEntry[] = [];

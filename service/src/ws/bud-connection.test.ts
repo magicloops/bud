@@ -623,6 +623,102 @@ test("terminal frames from a socket authenticated as a different bud are dropped
   assert.equal(emitted.length, 0);
 });
 
+test("terminal_observe_result frames thread ring_next_offset through to the dispatcher", async () => {
+  const { TerminalSessionManager } = await import("../runtime/terminal-session-manager.js");
+  const manager = new TerminalSessionManager(
+    createServer().log as never,
+    {
+      emit() {
+        // noop
+      },
+    } as never,
+  );
+  Reflect.set(manager, "sessionStore", {
+    async getSession(sessionId: string) {
+      return {
+        sessionId,
+        threadId: "thread-1",
+        budId: "b_owner",
+        instanceId: null,
+        state: "active",
+        cols: 200,
+        rows: 50,
+        cwd: null,
+        createdAt: new Date(),
+        startedAt: null,
+        lastActivityAt: null,
+        outputLogBytes: 0,
+        createdByUserId: "user-1",
+        tenantId: null,
+      };
+    },
+  });
+  const observePayloads: Array<Record<string, unknown>> = [];
+  Reflect.set(manager, "requestDispatcher", {
+    async handleObserveResult(_sessionId: string, payload: Record<string, unknown>) {
+      observePayloads.push(payload);
+    },
+  });
+
+  const socket = createSocket();
+  const connection = new BudConnection(createServer() as never, socket as never, manager);
+  Reflect.set(connection, "state", {
+    kind: "connected",
+    budId: "b_owner",
+    sessionId: "s_owner",
+    hello: binaryEnvelopeHello(),
+  });
+
+  const handleRaw = Reflect.get(connection, "handleRaw") as (raw: string) => Promise<void>;
+  await handleRaw.call(
+    connection,
+    JSON.stringify({
+      proto: "0.3",
+      id: "msg_obs",
+      ts: 1777132800000,
+      ext: {},
+      type: "terminal_observe_result",
+      session_id: "sess_owner",
+      request_id: "obs_1",
+      view: "screen",
+      output: Buffer.from("hello", "utf-8").toString("base64"),
+      lines_captured: 5,
+      changed: true,
+      mode: "shell",
+      integration: "osc133",
+      alt_screen: false,
+      ring_next_offset: 84213,
+      error: null,
+    }),
+  );
+
+  assert.equal(observePayloads.length, 1);
+  assert.equal(observePayloads[0]?.requestId, "obs_1");
+  assert.equal(observePayloads[0]?.ringNextOffset, 84213);
+
+  // ring_next_offset stays optional: older daemons omitting it still parse.
+  await handleRaw.call(
+    connection,
+    JSON.stringify({
+      proto: "0.3",
+      id: "msg_obs2",
+      ts: 1777132800001,
+      ext: {},
+      type: "terminal_observe_result",
+      session_id: "sess_owner",
+      request_id: "obs_2",
+      view: "screen",
+      output: Buffer.from("hello", "utf-8").toString("base64"),
+      lines_captured: 5,
+      error: null,
+    }),
+  );
+
+  assert.equal(observePayloads.length, 2);
+  assert.equal(observePayloads[1]?.requestId, "obs_2");
+  assert.equal("ringNextOffset" in (observePayloads[1] ?? {}), false);
+});
+
 test("terminal frames on an unauthenticated socket are dropped before any session access", async () => {
   const probe = new Proxy(
     {},

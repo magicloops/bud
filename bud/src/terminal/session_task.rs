@@ -302,10 +302,7 @@ pub(crate) async fn run_pump(
     let announced = shared.facts.lock().unwrap().closed;
     if !announced {
         shared.facts.lock().unwrap().closed = true;
-        let _ = send_transport_frame(
-            &sender,
-            terminal_status_frame(&session_id, "closed", None),
-        );
+        let _ = send_transport_frame(&sender, terminal_status_frame(&session_id, "closed", None));
         debug!(session_id = %session_id, "terminal pump ended without child_exited; session closed");
     }
 

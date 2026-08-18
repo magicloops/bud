@@ -48,7 +48,8 @@ Covers:
 - checksum mismatch failure before install
 - malformed manifest and missing target failure before install
 - artifact download failure without replacing an existing binary
-- missing-tmux remediation surfacing through `bud doctor`
+- host-dependency remediation (for example a failed holder smoke check)
+  surfacing through `bud doctor` without failing the install
 - existing identity claim-overwrite refusal
 - unsupported host rejection before download
 

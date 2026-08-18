@@ -81,6 +81,12 @@ export type ObserveResult = {
   altScreen?: boolean;
   cursorRow?: number;
   cursorCol?: number;
+  /**
+   * Stream watermark the daemon's emulator reflected when this observation was
+   * taken (the next output byte offset). Lets snapshot consumers resume the
+   * terminal SSE stream from exactly this offset without duplication.
+   */
+  ringNextOffset?: number;
 };
 
 export type ObserveResponsePayload = {
@@ -94,6 +100,7 @@ export type ObserveResponsePayload = {
   altScreen?: boolean;
   cursorRow?: number;
   cursorCol?: number;
+  ringNextOffset?: number;
   error: string | null;
 };
 
@@ -500,6 +507,7 @@ export class TerminalRequestDispatcher {
       ...(typeof payload.altScreen === "boolean" ? { altScreen: payload.altScreen } : {}),
       ...(typeof payload.cursorRow === "number" ? { cursorRow: payload.cursorRow } : {}),
       ...(typeof payload.cursorCol === "number" ? { cursorCol: payload.cursorCol } : {}),
+      ...(typeof payload.ringNextOffset === "number" ? { ringNextOffset: payload.ringNextOffset } : {}),
     });
   }
 

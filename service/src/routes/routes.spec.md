@@ -118,7 +118,7 @@ Ownership-focused thread submodules:
 - message history/create
 - read-watermark updates for unread-attention state
 - agent state/stream/cancel
-- terminal create/ensure/input/history/stream
+- terminal create/ensure/input/history/snapshot/stream
 - user-clicked file viewer session creation
 
 **Thread Endpoints**:
@@ -156,7 +156,8 @@ Ownership-focused thread submodules:
 | `POST` | `/api/threads/:thread_id/terminal` | Create/get the active owned terminal session (DB only); creates a fresh session if prior ones are closed |
 | `POST` | `/api/threads/:thread_id/terminal/ensure` | Ensure the owned terminal is running on bud |
 | `GET` | `/api/threads/:thread_id/terminal` | Get owned session info |
-| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE stream for an owned session; `Last-Event-ID` (or `last_event_id` query) is the stringified byte offset the client last applied — on resume, stored output replays from that offset before live attach (proto 0.3 §6.7.7), and new `terminal.event` frames are forwarded verbatim |
+| `GET` | `/api/threads/:thread_id/terminal/snapshot` | Line-oriented snapshot for initial render: emulator `history` + `screen` observes → `{ session_id, mode, integration, alt_screen, history_text, screen_text, cols, rows, ring_next_offset }`; `lines` query (default 1000, cap 2000); `404 no_terminal_session` / `503 bud_offline` / `502 observe_failed` |
+| `GET` | `/api/threads/:thread_id/terminal/stream` | SSE stream for an owned session; `Last-Event-ID` (or `last_event_id` query, or `from_offset` query which wins on first connects) is the stringified byte offset the client last applied — on resume, stored output replays from that offset before live attach (proto 0.3 §6.7.7), and new `terminal.event` frames are forwarded verbatim |
 | `POST` | `/api/threads/:thread_id/terminal/input` | Send input as the signed-in human user |
 | `POST` | `/api/threads/:thread_id/terminal/interrupt` | Send human Ctrl+C, reject older pending terminal waits as interrupted, and return dispatch metadata |
 | `POST` | `/api/threads/:thread_id/terminal/resize` | Resize an owned terminal |

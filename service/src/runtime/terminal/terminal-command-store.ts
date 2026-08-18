@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { terminalCommandTable } from "../../db/schema.js";
 import type { TerminalSession } from "./session-types.js";
@@ -53,6 +53,8 @@ export interface TerminalCommandPersistence {
     },
   ): Promise<boolean>;
   getCommand(commandId: string): Promise<TerminalCommandRecord | null>;
+  /** Most recent command row for a session by started_at (command_id ULID tie-break). */
+  getLatestCommandForSession(sessionId: string): Promise<TerminalCommandRecord | null>;
 }
 
 class DrizzleTerminalCommandPersistence implements TerminalCommandPersistence {
@@ -103,23 +105,37 @@ class DrizzleTerminalCommandPersistence implements TerminalCommandPersistence {
     const row = await db.query.terminalCommandTable.findFirst({
       where: eq(terminalCommandTable.commandId, commandId)
     });
-    if (!row) {
-      return null;
-    }
-    return {
-      commandId: row.commandId,
-      terminalSessionId: row.terminalSessionId,
-      threadId: row.threadId,
-      budId: row.budId,
-      createdByUserId: row.createdByUserId,
-      tenantId: row.tenantId,
-      commandStartedAt: row.commandStartedAt,
-      commandFinishedAt: row.commandFinishedAt,
-      exitCode: row.exitCode,
-      outputByteStart: row.outputByteStart,
-      outputByteEnd: row.outputByteEnd
-    };
+    return row ? mapCommandRow(row) : null;
   }
+
+  async getLatestCommandForSession(sessionId: string): Promise<TerminalCommandRecord | null> {
+    const row = await db.query.terminalCommandTable.findFirst({
+      where: eq(terminalCommandTable.terminalSessionId, sessionId),
+      orderBy: [
+        desc(terminalCommandTable.commandStartedAt),
+        // ULIDs are lexicographically time-ordered — deterministic tie-break
+        // when two commands share a started_at timestamp.
+        desc(terminalCommandTable.commandId)
+      ]
+    });
+    return row ? mapCommandRow(row) : null;
+  }
+}
+
+function mapCommandRow(row: typeof terminalCommandTable.$inferSelect): TerminalCommandRecord {
+  return {
+    commandId: row.commandId,
+    terminalSessionId: row.terminalSessionId,
+    threadId: row.threadId,
+    budId: row.budId,
+    createdByUserId: row.createdByUserId,
+    tenantId: row.tenantId,
+    commandStartedAt: row.commandStartedAt,
+    commandFinishedAt: row.commandFinishedAt,
+    exitCode: row.exitCode,
+    outputByteStart: row.outputByteStart,
+    outputByteEnd: row.outputByteEnd
+  };
 }
 
 /**
@@ -211,5 +227,15 @@ export class TerminalCommandStore {
 
   async getCommand(commandId: string): Promise<TerminalCommandRecord | null> {
     return this.persistence.getCommand(commandId);
+  }
+
+  /**
+   * Most recent command row for a session, ordered by started_at (command_id
+   * ULID tie-break). Lets a timed-out `terminal.run` report the command_id of
+   * the command it dispatched (its `command_started` event was consumed by the
+   * ingest path while the send was still pending).
+   */
+  async getLatestCommandForSession(sessionId: string): Promise<TerminalCommandRecord | null> {
+    return this.persistence.getLatestCommandForSession(sessionId);
   }
 }

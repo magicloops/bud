@@ -1,15 +1,35 @@
 import { Buffer } from "node:buffer";
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import type { TerminalEventBus } from "../../runtime/event-bus.js";
 import type { TerminalSessionManager } from "../../runtime/terminal-session-manager.js";
 import {
-  StreamResumeQuerySchema,
   TerminalInputBodySchema,
   TerminalResizeBodySchema,
   ThreadParamsSchema,
   readLastEventId,
   requireAuthorizedThreadAccess,
 } from "./shared.js";
+
+const SNAPSHOT_DEFAULT_LINES = 1000;
+const SNAPSHOT_MAX_LINES = 2000;
+
+const TerminalSnapshotQuerySchema = z.object({
+  lines: z.coerce.number().int().positive().optional(),
+});
+
+// Terminal stream resume cursors: `from_offset` is the query-param alternative
+// to the SSE `Last-Event-ID` header (browsers cannot set the header on the
+// first EventSource connect). Both are the byte offset the client last
+// applied. When BOTH are present the HIGHER numeric cursor wins: a native
+// EventSource auto-reconnect reuses the original URL (with a now-stale
+// `from_offset`) while also sending a fresher `Last-Event-ID` — letting the
+// stale query param win would replay already-rendered output on every
+// auto-reconnect.
+const TerminalStreamResumeQuerySchema = z.object({
+  last_event_id: z.string().min(1).optional(),
+  from_offset: z.string().min(1).optional(),
+});
 
 export async function registerThreadTerminalRoutes(
   server: FastifyInstance,
@@ -94,9 +114,78 @@ export async function registerThreadTerminalRoutes(
     };
   });
 
+  // Line-oriented terminal snapshot served from the daemon emulator's grid
+  // (Phase 3 §3.1): scrollback history plus the rendered screen, with the
+  // stream watermark to resume the SSE stream from. Replaces the byte-tail
+  // history replay for initial render (raw byte tails render ~no lines after
+  // TUI-heavy sessions).
+  server.get("/api/threads/:threadId/terminal/snapshot", async (request, reply) => {
+    const params = ThreadParamsSchema.parse(request.params);
+    const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
+    if (!access) {
+      return;
+    }
+
+    const query = TerminalSnapshotQuerySchema.safeParse(request.query ?? {});
+    const lines = Math.min(query.success ? query.data.lines ?? SNAPSHOT_DEFAULT_LINES : SNAPSHOT_DEFAULT_LINES, SNAPSHOT_MAX_LINES);
+
+    const session = await terminalSessionManager.getSessionForThread(params.threadId);
+    if (!session) {
+      return reply.code(404).send({ error: "no_terminal_session" });
+    }
+
+    if (!terminalSessionManager.isBudOnline(session.budId)) {
+      return reply.code(503).send({ error: "bud_offline" });
+    }
+
+    // Two observes on the same session: history (scrollback text) first, then
+    // screen (rendered grid). ring_next_offset is taken from the SCREEN
+    // observe — the later watermark — so a client that resumes the stream
+    // from it sees no duplicated output. Accepted race: a line that scrolls
+    // off between the two observes appears in neither history_text nor
+    // screen_text and is lost from the snapshot only (the durable output
+    // stream still has its bytes).
+    let history: Awaited<ReturnType<TerminalSessionManager["observeTerminal"]>>;
+    let screen: Awaited<ReturnType<TerminalSessionManager["observeTerminal"]>>;
+    try {
+      history = await terminalSessionManager.observeTerminal(session.sessionId, {
+        view: "history",
+        lines,
+      });
+      screen = await terminalSessionManager.observeTerminal(session.sessionId, {
+        view: "screen",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "observe_failed";
+      if (message === "bud_offline") {
+        return reply.code(503).send({ error: "bud_offline" });
+      }
+      request.log.warn(
+        { err, sessionId: session.sessionId, component: "terminal_snapshot" },
+        "Terminal snapshot observe failed",
+      );
+      return reply.code(502).send({ error: "observe_failed" });
+    }
+
+    const context = terminalSessionManager.getSessionContext(session.sessionId);
+    return {
+      session_id: session.sessionId,
+      mode: screen.mode ?? context.mode,
+      integration: screen.integration ?? context.integration,
+      alt_screen: screen.altScreen ?? false,
+      history_text: history.output,
+      screen_text: screen.output,
+      cols: session.cols,
+      rows: session.rows,
+      // Older daemons may omit ring_next_offset on observe results; fall back
+      // to the service's durable stream watermark so resume stays possible.
+      ring_next_offset: screen.ringNextOffset ?? terminalSessionManager.getLastOffset(session.sessionId),
+    };
+  });
+
   server.get("/api/threads/:threadId/terminal/stream", async (request, reply) => {
     const params = ThreadParamsSchema.parse(request.params);
-    const query = StreamResumeQuerySchema.parse(request.query ?? {});
+    const query = TerminalStreamResumeQuerySchema.parse(request.query ?? {});
     const access = await requireAuthorizedThreadAccess(request, reply, params.threadId);
     if (!access) {
       return;
@@ -113,7 +202,14 @@ export async function registerThreadTerminalRoutes(
     // carry `id: String(byte_offset + bytes.length)`; non-output events carry
     // no SSE id so the browser cursor always remains an output offset. On
     // resume we replay stored output from that offset before attaching live.
-    const lastEventId = readLastEventId(request, query.last_event_id);
+    // `?from_offset=<n>` carries the same cursor via the query string for
+    // first connects (e.g. resuming from a snapshot's ring_next_offset) where
+    // the browser cannot set the Last-Event-ID header. Highest cursor wins
+    // (see the schema comment above).
+    const lastEventId = maxResumeCursor(
+      query.from_offset ?? null,
+      readLastEventId(request, query.last_event_id)
+    );
     const resumeOffset = parseOffsetEventId(lastEventId);
 
     let detach: () => void;
@@ -332,6 +428,16 @@ export async function registerThreadTerminalRoutes(
       data_base64: tail.data.toString("base64")
     };
   });
+}
+
+/** Highest numeric cursor wins; a lone non-numeric value passes through. */
+function maxResumeCursor(a: string | null, b: string | null): string | null {
+  const na = a !== null && /^\d+$/.test(a) ? Number(a) : null;
+  const nb = b !== null && /^\d+$/.test(b) ? Number(b) : null;
+  if (na === null && nb === null) return a ?? b;
+  if (na === null) return String(nb);
+  if (nb === null) return String(na);
+  return String(Math.max(na, nb));
 }
 
 function parseOffsetEventId(value: string | null): number | null {

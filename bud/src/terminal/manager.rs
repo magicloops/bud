@@ -340,7 +340,9 @@ impl TerminalManager {
                 // Holder gone (or session torn down): drop OUR map entry so
                 // later gestures re-ensure instead of writing to a dead
                 // socket. ptr_eq guards against removing a newer attachment.
-                manager.remove_entry_if_current(&pump_session_id, &pump_shared).await;
+                manager
+                    .remove_entry_if_current(&pump_session_id, &pump_shared)
+                    .await;
             }
         });
 
@@ -727,6 +729,7 @@ impl TerminalManager {
             alt_screen,
             cursor_row: cursor.row,
             cursor_col: cursor.col,
+            ring_next_offset: entry.shared.facts.lock().unwrap().ring_next_offset,
         };
         send_transport_frame(
             &sender,

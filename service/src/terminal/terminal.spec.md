@@ -1,10 +1,10 @@
 # terminal
 
-Terminal-related type definitions plus legacy context-sync/freshness helpers.
+Terminal-related type definitions plus the freshness helper.
 
 ## Purpose
 
-Provides TypeScript types for the terminal proto `0.3` wire contract (docs/proto.md §6.7) and service-side helpers that read cached terminal state. The 0.2 REPL program registry (`known-programs.ts`) was deleted in the stem cutover: mode facts now come from the daemon (`mode_changed` events / status info) instead of service-side command inference.
+Provides TypeScript types for the terminal proto `0.3` wire contract (docs/proto.md §6.7) and service-side helpers that read cached terminal state. The 0.2 REPL program registry (`known-programs.ts`) was deleted in the stem cutover: mode facts now come from the daemon (`mode_changed` events / status info) instead of service-side command inference. The legacy `ContextSyncService` (0.2-era snapshot heuristics with zero runtime callers) was deleted in Phase 3 along with its `TerminalStateSnapshot` / `StateChangeDetails` types and its `server.ts` wiring; the `terminal_session.state_snapshot` DB column remains in the schema (dropping it is a separate migration decision).
 
 ## Files
 
@@ -61,43 +61,14 @@ Retired from the wire in 0.3: `terminal_ready`, readiness/confidence/hints paylo
 
 **Legacy 0.2 types** (the Phase 2.5 agent-tool rework removed every `src/agent/**` use; nothing on the wire, in the terminal runtime, or in the agent tool layer uses them anymore): `ReadinessHints`, `ReadinessAssessment`, `TerminalReadyTrigger`, `TerminalPromptType`, `TerminalWaitFor`, `TerminalDelta`, `TerminalDeltaMessage`. The only remaining reference is `freshness.ts` accepting a readiness-shaped record in its watermark helpers (the agent now always passes `null`); these types can be deleted alongside a small freshness cleanup.
 
-**Other exports**: `TERMINAL_STATES` / `TerminalState`, `TerminalStateSnapshot` and `StateChangeDetails` (context-sync), and `normalizeTerminalSendKeyName(...)` for backend-neutral key names (`ctrl+c`, `enter`, `escape`, ...).
-
-### `context-sync-service.ts`
-
-Legacy terminal context synchronization service.
-
-**Purpose**: Maintains legacy terminal state snapshots and can summarize observed state changes. Normal `POST /messages` sends do not call `checkAndSync(...)`; the agent can call `terminal.observe` explicitly when terminal state matters. As of the Phase 2.5 agent-tool rework, the agent loop no longer calls `refreshSnapshot(...)` either — daemon `mode_changed` / observe-result facts are the mode source for the model — so this service has no remaining runtime callers (server.ts still constructs it and passes it to `AgentService`, which ignores it).
-
-**Key Method**:
-```typescript
-async checkAndSync(sessionId: string, threadId: string, ownerUserId?: string | null): Promise<string | null>
-```
-
-**Workflow**:
-1. Capture current terminal state (last 30 lines via `capturePane`, a history-view observe)
-2. Compute SHA256 hash of screen content
-3. Detect mode heuristically (shell/repl/tui/unknown)
-4. Compare to last snapshot stored in `terminalSessionTable.stateSnapshot`
-5. If mode or prompt changed: generate a summary (Haiku, deterministic fallback) and insert a `role: "system"` context message stamped with the owning user's `created_by_user_id` and a UUIDv7 `client_id`
-6. Update snapshot in database
-
-The 0.2-era pending-command clearing hooks were removed along with the runtime's pending-command tracking; daemon `mode_changed` events are now the mode source of truth for the terminal runtime. Phase 2.5 evaluated this service as required by the earlier TODO: daemon mode facts are now surfaced to the model directly and the agent loop's `refreshSnapshot(...)` call was removed, leaving `checkAndSync(...)` and `refreshSnapshot(...)` with zero runtime callers. <!-- SPEC:TODO Delete context-sync-service.ts, its tests, the server.ts wiring, and the TerminalStateSnapshot/StateChangeDetails types once the terminal-folder owner confirms nothing else will adopt the snapshot heuristics. -->
-
-### `context-sync-service.test.ts`
-
-Mode-detection heuristic tests.
+**Other exports**: `TERMINAL_STATES` / `TerminalState` and `normalizeTerminalSendKeyName(...)` for backend-neutral key names (`ctrl+c`, `enter`, `escape`, ...).
 
 ## Dependencies
 
 | Import | Purpose |
 |--------|---------|
-| `../config.js` | `TERMINAL_PROTO_VERSION` constant |
-| `../db/client.js` | Database access (context-sync-service) |
-| `../db/message-client-id.js` | UUIDv7 generation for injected system-message `client_id` values |
-| `../db/schema.js` | Table schemas (context-sync-service and freshness helper) |
-| `../llm/index.js` | LLM provider registry (context-sync-service) |
-| `../runtime/terminal-session-manager.js` | capturePane access (context-sync-service) |
+| `../db/client.js` | Database access (freshness helper) |
+| `../db/schema.js` | Table schemas (freshness helper) |
 
 ---
 

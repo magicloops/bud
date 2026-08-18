@@ -12,6 +12,17 @@
 **Phase 5**: [phase-5-web-install-surface-and-docs.md](./phase-5-web-install-surface-and-docs.md)
 **Phase 6**: [phase-6-validation-rollout-and-follow-ups.md](./phase-6-validation-rollout-and-follow-ups.md)
 
+> **Supersession note (2026-08):** every tmux dependency/preflight/remediation
+> requirement in this plan was superseded by the `stem` cutover
+> ([plan/native-terminal-session-manager](../native-terminal-session-manager/implementation-spec.md)):
+> Bud is single-binary, terminal sessions run in detached `bud term-hold`
+> holders, and `bud doctor` checks the terminal registry, a holder spawn smoke,
+> and service supervision directives instead of tmux. Service templates MUST
+> carry the survival directives (`AbandonProcessGroup=true` on launchd,
+> `KillMode=process` on systemd) per
+> [spikes/holder-survival/findings.md](../../spikes/holder-survival/findings.md) —
+> see the annotated Phase 4 sections. tmux mentions below are historical.
+
 ---
 
 ## Context

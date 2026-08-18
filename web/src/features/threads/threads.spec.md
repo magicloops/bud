@@ -305,18 +305,85 @@ Pure reconnect/heartbeat timing helpers shared by the agent and terminal stream 
 
 **Responsibilities**:
 - reconnect backoff calculation
-- development vs production heartbeat/check interval policy
-- stale-heartbeat and stale-terminal-status threshold decisions
+- development vs production heartbeat/check interval policy, derived from the
+  service SSE heartbeat cadence (5s prod / 1s dev, see
+  `service/src/routes/threads/*.ts`) times a watchdog multiplier that must stay
+  ≥ 2.5× so one late heartbeat never triggers a false reconnect
+- the former `shouldTreatTerminalStatusAsStale` 5s status-staleness heuristic
+  equaled the production heartbeat interval exactly and caused spurious
+  terminal reconnects; it was deleted. Stream reconnects are driven only by
+  EventSource errors and the missed-heartbeat watchdog. The agent stream's
+  effective values are unchanged (prod 15s timeout / 5s check, dev 3s / 1s)
 
 **Exports**:
+- `THREAD_STREAM_HEARTBEAT_INTERVAL_MS` / `THREAD_STREAM_DEV_HEARTBEAT_INTERVAL_MS`
+- `THREAD_STREAM_HEARTBEAT_TIMEOUT_MULTIPLIER`
 - `getThreadStreamReconnectDelay(...)`
 - `getThreadStreamHeartbeatConfig(...)`
 - `hasMissedThreadStreamHeartbeat(...)`
-- `shouldTreatTerminalStatusAsStale(...)`
 
 ### `thread-stream-timing.test.ts`
 
-Node-runner coverage for reconnect delay and heartbeat/staleness thresholds used by both live stream hooks.
+Node-runner coverage for reconnect delay, heartbeat-cadence-derived watchdog
+thresholds (including the ≥ 2.5× invariant and agent-stream value stability),
+and the missed-heartbeat boundary.
+
+### `terminal-resume.ts`
+
+Pure helpers for offset-based terminal stream resume and snapshot planning.
+
+**Responsibilities**:
+- decide snapshot vs resume per (re)connect: full snapshot only on initial
+  mount (no applied offset), an `output_gap` terminal.event, or a bud
+  offline→online transition; otherwise resume with `?from_offset=` and no
+  `term.reset()`
+- resolve each `terminal.output` event's end offset from the SSE event id
+  (server-stamped `byte_offset + decoded length`), falling back to
+  `byte_offset + decodedByteLength` when the id is absent/non-numeric
+- keep the applied offset monotonic across replayed/duplicate events
+- build the terminal stream path with the resume cursor
+- compose snapshot text (emulator scrollback lines above the visible screen)
+
+**Exports**:
+- `planTerminalConnect(...)`
+- `resolveOutputEndOffset(...)`
+- `advanceAppliedOffset(...)`
+- `buildTerminalStreamPath(...)`
+- `buildTerminalSnapshotText(...)`
+
+### `terminal-resume.test.ts`
+
+Node-runner coverage for connect planning, event-id/byte-offset end-offset
+resolution, monotonic cursor advancement, stream-path construction, and
+snapshot text composition.
+
+### `terminal-input-queue.ts`
+
+Pure queue policy for terminal input typed while the terminal is disconnected.
+
+**Responsibilities**:
+- queue input chunks in order up to `TERMINAL_INPUT_QUEUE_MAX_BYTES` (8 KiB)
+- drop the oldest queued chunks beyond the cap (trimming a single oversized
+  chunk to its tail on a UTF-8 code point boundary) and report dropped bytes
+- drain the queue as one ordered payload for flush-on-reconnect
+
+### `terminal-input-queue.test.ts`
+
+Node-runner coverage for ordered accumulation, drop-oldest overflow, oversized
+single-chunk tail trimming, and UTF-8 boundary safety.
+
+### `terminal-command-state.ts`
+
+Pure reducer for the terminal pane's command lifecycle chip, driven by typed
+`terminal.event` payloads (no heuristic activity inference): `command_started`
+→ running, `command_finished` → exit code (persists until the next command),
+`child_exited` → cleared, all other events pass through unchanged.
+
+### `terminal-command-state.test.ts`
+
+Node-runner coverage for command lifecycle transitions, exit-code handling,
+chip persistence/supersession, child-exit clearing, and malformed-payload
+tolerance.
 
 ### `use-terminal-session.ts`
 
@@ -326,14 +393,41 @@ Terminal session/xterm ownership for the existing-thread route.
 - initialize and dispose the xterm instance plus `FitAddon`
 - translate browser keyboard/paste events into explicit terminal input bytes
 - batch terminal input and post resize/input mutations to thread-scoped terminal endpoints
-- create or reuse the terminal session record, attach to terminal SSE, and reconnect on stale/closed streams
-- recover terminal state through `terminal/ensure` plus terminal history replay after reconnects
-- expose narrow terminal UI state such as connection status, readiness assessment, truncation, and disconnect overlay visibility
+- queue typed input while disconnected (bounded drop-oldest policy via
+  `terminal-input-queue.ts`), flush it in order on reconnect, and surface an
+  `terminalInputQueued` state instead of silently discarding keystrokes
+- create or reuse the terminal session record, then establish the view per the
+  `terminal-resume.ts` plan: on initial mount / `output_gap` / bud
+  offline→online, fetch `GET /terminal/snapshot?lines=1000` (emulator
+  scrollback + visible screen), `term.reset()`, render it, and open the SSE
+  stream at `?from_offset=<ring_next_offset>`
+- on routine reconnects, resume the SSE stream from the highest applied output
+  end-offset (tracked via `terminal.output` SSE event ids) with no
+  `term.reset()` and no snapshot — the server replays the missed range on one
+  ordered stream
+- fall back to the legacy byte-tail history replay
+  (`/terminal/history?bytes=131072`, with its truncation banner) only when the
+  snapshot endpoint is unavailable; the snapshot path clears the banner
+- decode streamed `terminal.output` chunks through one persistent streaming
+  `TextDecoder` per SSE connection (`createTerminalStreamDecoder`), reset on
+  `term.reset()` and on each new connection, fixing UTF-8 chunk-boundary
+  corruption
+- recover the daemon-side PTY through `terminal/ensure` (idempotent, no
+  history replay of its own)
+- reconnect only on EventSource errors and the missed-heartbeat watchdog (the
+  5s status-staleness heuristic is gone)
+- reduce typed `terminal.event` payloads into session facts (`mode_changed`)
+  and the command lifecycle chip (`command_started` / `command_finished` /
+  `child_exited`); `output_gap` forces a re-snapshot reconnect
+- expose narrow terminal UI state such as connection status, session facts,
+  command chip, queued-input flag, truncation, and disconnect overlay
+  visibility
 
 **Exports**:
 - `useTerminalSession(...)`
 - `TerminalConnectionState`
-- `TerminalReadinessAssessment`
+- `TerminalSessionFacts` / `TerminalMode` / `TerminalIntegration`
+- `TerminalCommandChip` (re-export)
 
 **Route contract**:
 - the route still owns terminal-specific presentation such as the overlays, status bar, and terminal menu wiring

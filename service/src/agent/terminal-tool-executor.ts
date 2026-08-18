@@ -213,7 +213,7 @@ export class TerminalToolExecutor {
         return {
           kind: "command",
           status: "still_running",
-          commandId: null,
+          commandId: await this.resolveLatestRunningCommandId(sessionId),
           error: "interrupted",
           note: INTERRUPTED_RUN_NOTE,
           ...this.sessionContextFacts(sessionId),
@@ -315,18 +315,39 @@ export class TerminalToolExecutor {
     return result;
   }
 
-  private buildStillRunningResult(sessionId: string): TerminalCallResult {
-    // Frozen-API gap: the command_started event (which carries command_id) is
-    // consumed inside the terminal runtime and there is no session-scoped
-    // command lookup on TerminalSessionManager, so a timed-out run cannot
-    // report its command_id yet.
+  private async buildStillRunningResult(sessionId: string): Promise<TerminalCallResult> {
     return {
       kind: "command",
       status: "still_running",
-      commandId: null,
+      commandId: await this.resolveLatestRunningCommandId(sessionId),
       note: STILL_RUNNING_NOTE,
       ...this.sessionContextFacts(sessionId),
     };
+  }
+
+  /**
+   * The command_started event (which carries command_id) is consumed by the
+   * terminal runtime ingest path while the awaited send is still pending, so a
+   * timed-out/interrupted run recovers its command_id from the persisted
+   * command rows: the session's most recent command, but only while it is
+   * still unfinished — a finished latest command means the started event for
+   * this run was lost, and reporting that command_id would mislabel an older
+   * command.
+   */
+  private async resolveLatestRunningCommandId(sessionId: string): Promise<string | null> {
+    try {
+      const latest = await this.terminalSessionManager.getLatestCommandForSession(sessionId);
+      if (latest && latest.commandFinishedAt === null) {
+        return latest.commandId;
+      }
+      return null;
+    } catch (err) {
+      this.logger.warn(
+        { err, sessionId, component: "agent" },
+        "Failed to resolve latest running command for still-running report",
+      );
+      return null;
+    }
   }
 
   private async executeSend(

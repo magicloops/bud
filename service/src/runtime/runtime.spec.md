@@ -165,14 +165,14 @@ Thread-scoped terminal session composition root.
 | `sendInput(sessionId, data, options)` | Forward raw browser input (`terminal_input { session_id, data }`) with user audit metadata |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
 | `closeSession(sessionId, reason)` | Close session |
-| `observeTerminal(sessionId, { view, lines })` | Explicit grid-backed delta/screen/history observation request-response |
-| `capturePane(sessionId, options)` | Compatibility wrapper used by context sync (history view) |
+| `observeTerminal(sessionId, { view, lines })` | Explicit grid-backed delta/screen/history observation request-response (results may carry the `ringNextOffset` stream watermark) |
 | `sendInteraction(sessionId, { text?, submit?, key?, await? }, options)` | Request-response gesture dispatch; resolves `{ dispatched, outcome }` |
 | `interruptThreadTerminal(threadId)` | Send `ctrl+c` as a dispatch-only terminal send, reject older pending waits as `interrupted`, and return dispatch metadata for human interrupt controls |
 | `tailOutput(sessionId, maxBytes)` | Most recent stored output (byte-budget paginated) |
 | `readOutputRange(sessionId, { startOffset, endOffset?, maxBytes })` | Offset-exact range read with covering-chunk trim and explicit truncation/continuation |
 | `getStoredOutputBytes(sessionId)` | Total durably stored output bytes |
 | `getCommandOutput(commandId, { maxBytes? })` | Internal API for agent tools: `terminal_command` row plus lossy-UTF-8 output slice by byte range (tail-kept when capped) |
+| `getLatestCommandForSession(sessionId)` | Most recent `terminal_command` row for a session (started_at order, command_id tie-break); lets still-running `terminal.run` reports carry the dispatched command_id |
 | `handleTerminalStatus(budId, sessionId, payload)` | Bud reports session state (ownership-asserted) |
 | `handleTerminalOutput(budId, sessionId, payload)` | Idempotently store and broadcast offset-addressed output (ownership-asserted) |
 | `handleTerminalEvent(budId, sessionId, payload)` | Route proto 0.3 semantic events, persist command rows, forward `terminal.event` SSE verbatim (ownership-asserted) |

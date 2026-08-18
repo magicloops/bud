@@ -93,7 +93,7 @@ Drizzle schema definitions. Defines all tables:
 | `terminalSessionInputLogTable` | Input audit log | `sessionId`, `source`, `userId`, `createdAt` |
 | `terminalCommandTable` | Command lifecycle rows minted from proto 0.3 `terminal_event` frames (`command_started`/`command_finished`); daemon-minted ULID PK; output sliced from `terminal_session_output` by byte range; owner stamping inherited from the owning terminal session (AGENTS.md §4.6) | `commandId`, `terminalSessionId` (FK cascade), `threadId`, `budId`, `createdByUserId`, `tenantId`, `commandStartedAt`, `commandFinishedAt`, `exitCode`, `outputByteStart`, `outputByteEnd` |
 
-**stateSnapshot Column** (JSONB): Stores last known terminal state for context sync:
+**stateSnapshot Column** (JSONB): Legacy — populated by the deleted 0.2-era `ContextSyncService`; nothing writes or reads it anymore (dropping the column is a separate migration decision). Historical shape:
 ```typescript
 {
   screenHash: string;      // SHA256 hash of capture (first 16 chars)

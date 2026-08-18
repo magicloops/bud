@@ -517,27 +517,21 @@ export class TerminalSessionManager {
     };
   }
 
+  /**
+   * Most recent `terminal_command` row for a session (by started_at, command_id
+   * tie-break). Used by the agent tool layer so a still-running `terminal.run`
+   * can report the actual command_id it dispatched.
+   */
+  async getLatestCommandForSession(sessionId: string): Promise<TerminalCommandRecord | null> {
+    return this.commandStore.getLatestCommandForSession(sessionId);
+  }
+
   async observeTerminal(
     sessionId: string,
     options: ObserveOptions = {},
     timeoutMs = 30000
   ): Promise<ObserveResult> {
     return this.requestDispatcher.observeTerminal(sessionId, options, timeoutMs);
-  }
-
-  async capturePane(
-    sessionId: string,
-    options: { startLine?: number; endLine?: number; escapeSequences?: boolean; joinLines?: boolean } = {},
-    timeoutMs = 5000
-  ): Promise<ObserveResult> {
-    return this.observeTerminal(
-      sessionId,
-      {
-        lines: options.startLine ?? -50,
-        view: "history"
-      },
-      timeoutMs
-    );
   }
 
   async sendInteraction(

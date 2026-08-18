@@ -12,7 +12,6 @@ import type {
   TerminalSessionManager,
 } from "../runtime/terminal-session-manager.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
-import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import {
   buildTerminalVisibilityMetadata,
   type TerminalVisibilityMetadata,
@@ -108,10 +107,6 @@ export class AgentService {
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
     openaiDebugEnabled: boolean,
-    // Accepted for wiring compatibility only. The 0.2-era post-tool context
-    // snapshot refresh was retired in the Phase 2.5 agent-tool rework: mode
-    // facts now come from the daemon via the terminal runtime.
-    _contextSyncService?: ContextSyncService,
   ) {
     this.terminalSessionManager = terminalSessionManager;
     this.runtime = runtime;

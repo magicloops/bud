@@ -394,6 +394,11 @@ pub struct TerminalObservation {
     pub alt_screen: bool,
     pub cursor_row: u16,
     pub cursor_col: u16,
+    /// Output-stream offset the emulator state reflects (pump progress at
+    /// observe time). Lets clients pair a grid snapshot with offset-exact
+    /// stream resume: subscribe from this offset and nothing in the snapshot
+    /// is replayed, nothing after it is missed.
+    pub ring_next_offset: u64,
 }
 
 /// `terminal_observe_result` (§6.7.5).
@@ -417,6 +422,10 @@ pub fn terminal_observe_result_frame(
         frame.insert("mode".into(), Value::String(observation.mode));
         frame.insert("integration".into(), Value::String(observation.integration));
         frame.insert("alt_screen".into(), Value::Bool(observation.alt_screen));
+        frame.insert(
+            "ring_next_offset".into(),
+            Value::Number(Number::from(observation.ring_next_offset)),
+        );
         frame.insert(
             "cursor_row".into(),
             Value::Number(Number::from(observation.cursor_row)),
@@ -750,6 +759,7 @@ mod tests {
                 alt_screen: true,
                 cursor_row: 3,
                 cursor_col: 11,
+                ring_next_offset: 84213,
             }),
             None,
         );

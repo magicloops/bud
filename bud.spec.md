@@ -10,7 +10,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 - **Persistent Terminal Sessions**: Unlike ephemeral shell commands, Bud maintains stateful terminal sessions where environment variables, working directories, and running processes persist across interactions.
 - **Thread-Scoped Sessions**: Each conversation thread owns its terminal session, enabling parallel workstreams without state collision.
-- **Context-Aware Agent**: The LLM understands terminal state (prompt detection, REPL detection, pager detection) and adapts its behavior accordingly.
+- **Context-Aware Agent**: The LLM receives typed terminal facts (command lifecycle with real exit codes, shell/TUI/REPL mode, integration state) from the daemon's `stem` runtime and adapts its behavior accordingly.
 
 ---
 
@@ -24,12 +24,12 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 │                 │         │                                     │         │                 │
 └────────┬────────┘         └──────────────────┬──────────────────┘         └─────────────────┘
          │                                     │
-         │ Terminal backend                    │ SQL
+         │ stem terminal runtime               │ SQL
          ▼                                     ▼
 ┌─────────────────┐                  ┌─────────────────┐         ┌─────────────────┐
-│                 │                  │                 │         │                 │
-│  Local Shell    │                  │   PostgreSQL    │         │ Provider APIs   │
-│   (bash/zsh)    │                  │   (Drizzle)     │         │ HTTP APIs       │
+│  PTY holders    │                  │                 │         │                 │
+│ (bud term-hold  │                  │   PostgreSQL    │         │ Provider APIs   │
+│  + local shell) │                  │   (Drizzle)     │         │ HTTP APIs       │
 │                 │                  │                 │         │                 │
 └─────────────────┘                  └─────────────────┘         └─────────────────┘
 ```
@@ -121,14 +121,12 @@ bud/
 │   │   ├── journal.rs      # Local daemon reconciliation journal foundation
 │   │   ├── terminal/
 │   │   │   ├── mod.rs      # Shared terminal runtime types
-│   │   │   ├── backend.rs  # Terminal backend trait
-│   │   │   ├── registry.rs # Session/status lifecycle
-│   │   │   ├── interaction.rs
-│   │   │   ├── observe.rs
-│   │   │   ├── readiness.rs
-│   │   │   ├── delta.rs
-│   │   │   └── tmux.rs     # tmux backend adapter
-│   │   └── ...             # Config, protocol, identity, claim, utilities
+│   │   │   ├── manager.rs  # stem-backed session manager (spawn/attach holders)
+│   │   │   ├── session_task.rs # Per-session stem event pump → wire frames
+│   │   │   ├── repl_registry.rs
+│   │   │   └── shims.rs    # OSC 133 shell-integration shims
+│   │   └── ...             # Config, protocol, identity, claim, doctor, utilities
+│   ├── stem/               # Native PTY session manager crate (holders, VT emulator, registry)
 │   └── Cargo.toml
 │
 ├── proto/                  # Shared daemon-service protobuf schema and fixtures
@@ -293,7 +291,8 @@ User Message
 ```
 
 **Available Tools**:
-- `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and one semantic key gesture at a time (for example `key:"ctrl+c"`)
+- `terminal.run` - Run one shell command and await its `command_finished` event; the result carries the real exit code, duration, and command-sliced output
+- `terminal.send` - Interactive input tool for raw text or one semantic key gesture at a time (for example `key:"ctrl+c"`), awaiting settled output plus a delta observation
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
 - `web_view.open` / `web_view.close` / `web_view.list` - Product-level tools for owned local web previews through Bud proxy transports
 - `ask_user_questions` - Structured user prompts that let the agent pause and resume with explicit human input
@@ -308,32 +307,22 @@ Current service ownership split:
 - `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
 - `transcript-writer` owns durable assistant/tool/reasoning writes, terminal visibility metadata, plus runtime emission boundaries
 
-### 3. Terminal Readiness Detection
+### 3. Terminal Event Model
 
-The system analyzes terminal output to determine state:
+The daemon's `stem` runtime reports typed facts instead of readiness heuristics (the old `looks_like_*`/confidence vocabulary is retired; see `docs/proto.md` §6):
 
-| Hint | Meaning |
-|------|---------|
-| `looks_like_prompt` | Shell/REPL prompt detected, safe to send commands |
-| `looks_like_confirmation` | Waiting for y/n response |
-| `looks_like_password` | Password prompt (input won't echo) |
-| `looks_like_pager` | In less/more (send 'q' to exit) |
-| `may_still_be_processing` | Command likely still running |
+| `terminal_event` | Meaning |
+|------------------|---------|
+| `prompt_ready` | Shell back at prompt (OSC 133 `A`), safe to send commands |
+| `command_started` / `command_finished` | Command lifecycle with real exit codes and output byte ranges |
+| `mode_changed` | Session mode transitions: `shell` / `tui` / `repl` / `unknown`, plus integration state (`osc133` / `sentinel` / `none`) |
+| `settled` | Damage-quiet threshold reached in non-prompt modes (honest "output has stopped changing") |
+| `output_gap` | Ring truncation on resume — a gap is reported, never silently skipped |
+| `child_exited` | Session root process exited |
 
-### 4. REPL Context Detection
+### 4. Mode Detection (TUI/REPL)
 
-When inside interactive programs (Python, Node, psql, Claude Code), the agent receives context:
-
-```json
-{
-  "context_after": {
-    "mode": "repl",
-    "program": "python",
-    "programDisplayName": "Python REPL",
-    "hints": ["Send Python code, not shell commands"]
-  }
-}
-```
+Alt-screen tracking and REPL pattern matching (Python, Node, psql, and similar interactive programs) drive `mode_changed` events, so the agent knows whether it is typing into a shell, a full-screen TUI, or a REPL, and tool results carry `mode`/`integration` facts rather than prompt-guessing hints.
 
 ---
 
@@ -345,8 +334,8 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 1. Web UI POST /api/threads/:id/messages { content: "list files" }
 2. Service creates message record, starts agent loop
 3. Service calls the selected LLM provider with thread context
-4. Model returns tool_call: terminal.send({ text: "ls -la", submit: true })
-5. Service sends `terminal_send` to the daemon
+4. Model returns tool_call: terminal.run({ command: "ls -la" })
+5. Service sends `terminal_send` (await: "command") to the daemon
 6. Daemon dispatches the gesture to the stem session and returns `terminal_send_result` with `dispatched` plus the awaited `outcome` event (command_finished with exit code, or settled)
 7. Service decides whether follow-up observation is needed, then calls the selected provider with result
 8. Model returns final response
@@ -457,7 +446,7 @@ Detailed specifications for each subproject:
 | Project | Spec File | Description | Status |
 |---------|-----------|-------------|--------|
 | `/bud` | [bud/bud.spec.md](./bud/bud.spec.md) | Rust device daemon | ✅ Complete |
-| `/bud/stem` | [bud/stem/stem.spec.md](./bud/stem/stem.spec.md) | Native terminal session manager (tmux replacement, workspace member crate) | ✅ Phase 1 complete (not yet wired into the daemon) |
+| `/bud/stem` | [bud/stem/stem.spec.md](./bud/stem/stem.spec.md) | Native terminal session manager (tmux replacement, workspace member crate) | ✅ Cutover complete (daemon terminal runtime) |
 | `/service` | [service/service.spec.md](./service/service.spec.md) | Node.js backend | ✅ Complete |
 | `/web` | [web/web.spec.md](./web/web.spec.md) | React frontend | ✅ Complete |
 | `/spikes` | [spikes/spikes.spec.md](./spikes/spikes.spec.md) | Isolated validation harnesses | ✅ Active |
@@ -861,6 +850,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/message-client-id-and-stable-message-identity.md](./design/message-client-id-and-stable-message-identity.md) | Design for adding a UUIDv7 `client_id` to messages as a stable public/UI identity while retaining `message_id` as the persisted row identifier, and threading that new identity through `/messages`, `/agent/state`, and agent SSE payloads |
 | [design/thread-title-generation-and-streaming.md](./design/thread-title-generation-and-streaming.md) | Design for generating a short thread title from the first user message, persisting it onto `thread.title`, and streaming title updates over the existing thread agent stream |
 | [design/mobile-thread-title-stream-handoff.md](./design/mobile-thread-title-stream-handoff.md) | Mobile handoff for the new streamed thread-title update contract, covering the `thread.title` event, client reducer expectations, and recovery rules |
+| [design/mobile-terminal-events-handoff.md](./design/mobile-terminal-events-handoff.md) | Mobile handoff for the proto `0.3` terminal surface after the stem cutover: terminal SSE event catalog (`terminal.output`/`terminal.event`/status/online-offline), offset-based resume rules (`from_offset`, `Last-Event-ID`), the snapshot-then-resume render flow, interrupt/history routes, browser-facing terminal tool arg shapes, and a §B validation section |
 | [design/agent-sse-stale-cursor-recovery.md](./design/agent-sse-stale-cursor-recovery.md) | Design for fixing stale agent-SSE cursor retry loops after service restart or frontend HMR by adding client-owned bootstrap recovery when native EventSource retries reuse an invalid `after` cursor |
 | [design/thread-message-timeline-ux-refresh.md](./design/thread-message-timeline-ux-refresh.md) | Draft design for the next-pass thread message UX work across web and iOS, covering latest-window pagination, bottom-follow scroll behavior, compact tool activity, and the backend changes required for true assistant text streaming |
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |

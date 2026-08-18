@@ -5,8 +5,13 @@ import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 type ThreadTerminalPaneProps = {
   error: string | null
   status: WorkbenchStatus
+  terminalCommand:
+    | { status: 'running'; commandId: string | null }
+    | { status: 'finished'; commandId: string | null; exitCode: number | null }
+    | null
   terminalConnection: 'connected' | 'reconnecting' | 'offline' | 'disconnected'
   terminalHasOutput: boolean
+  terminalInputQueued: boolean
   terminalOutputTruncated: boolean
   terminalPaneRef: RefObject<HTMLDivElement | null>
   terminalFacts: {
@@ -26,8 +31,10 @@ type ThreadTerminalPaneProps = {
 export function ThreadTerminalPane({
   error,
   status,
+  terminalCommand,
   terminalConnection,
   terminalHasOutput,
+  terminalInputQueued,
   terminalOutputTruncated,
   terminalPaneRef,
   terminalFacts,
@@ -95,6 +102,14 @@ export function ThreadTerminalPane({
               <span className="font-mono font-semibold uppercase tracking-wide">
                 {terminalConnectionLabel ?? `Terminal: ${terminalState}`}
               </span>
+              {terminalInputQueued && (
+                <span
+                  className="rounded border border-yellow-600/50 bg-yellow-900/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-yellow-400"
+                  title="Typed input is queued and will be sent when the terminal reconnects"
+                >
+                  input queued
+                </span>
+              )}
             </div>
             {terminalFacts && terminalConnection === 'connected' && (
               <div className="flex items-center gap-2 border-l border-border/50 pl-3">
@@ -119,6 +134,43 @@ export function ThreadTerminalPane({
                 <span className="font-mono uppercase tracking-wide text-muted-foreground">
                   {terminalFacts.mode}
                 </span>
+              </div>
+            )}
+            {terminalCommand && terminalConnection === 'connected' && (
+              <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                {terminalCommand.status === 'running' ? (
+                  <>
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-yellow-400" />
+                    <span className="font-mono uppercase tracking-wide text-muted-foreground">
+                      running
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        terminalCommand.exitCode === null
+                          ? 'bg-zinc-400'
+                          : terminalCommand.exitCode === 0
+                            ? 'bg-green-500'
+                            : 'bg-red-500'
+                      }`}
+                    />
+                    <span
+                      className={`font-mono uppercase tracking-wide ${
+                        terminalCommand.exitCode === null
+                          ? 'text-muted-foreground'
+                          : terminalCommand.exitCode === 0
+                            ? 'text-green-400'
+                            : 'text-red-400'
+                      }`}
+                    >
+                      {terminalCommand.exitCode === null
+                        ? 'done'
+                        : `exit ${terminalCommand.exitCode}`}
+                    </span>
+                  </>
+                )}
               </div>
             )}
             {error && <span className="text-destructive">{error}</span>}

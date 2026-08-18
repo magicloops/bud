@@ -674,7 +674,8 @@ Rejected file opens and resolves use the same frame-family shape with
 - URL: `GET /api/threads/:thread_id/terminal/stream`
 - Authorized, thread-scoped SSE stream
 - Carries live terminal output/status/typed terminal events plus Bud online/offline notices for the owning thread
-- Reconnect resume: `Last-Event-ID` (a byte offset — see §7.2/§7.3) replays durably stored output from that offset before live forwarding; bulk historical backfill also remains available via `GET /api/threads/:thread_id/terminal/history`
+- Reconnect resume: the cursor is a byte offset (see §7.2/§7.3), supplied via `?from_offset=<n>` on first connects (browsers cannot set the header then) or `Last-Event-ID` on reconnects; when both are present the HIGHER cursor wins (native EventSource reconnects reuse the URL's stale query param while sending a fresher header). The server replays durably stored output from the cursor before live forwarding on one ordered stream
+- Snapshot bootstrap: `GET /api/threads/:thread_id/terminal/snapshot?lines=<n>` returns `{ session_id, mode, integration, alt_screen, history_text, screen_text, cols, rows, ring_next_offset }` — emulator-backed scrollback lines + visible grid; render it, then open the stream with `from_offset=ring_next_offset` for a duplication-free, gap-free handoff. Bulk byte-range backfill remains available via `GET /api/threads/:thread_id/terminal/history`
 
 ### 3.4.1 Terminal Interrupt
 
@@ -1663,10 +1664,15 @@ service-side read from `terminal_session_output` by offset range.
   "alt_screen": true,
   "cursor_row": 3,
   "cursor_col": 11,
+  "ring_next_offset": 84213,
   "error": null,
   "ext": {}
 }
 ```
+
+`ring_next_offset` is the output-stream offset the emulator state reflects at
+observe time: a client can render an observation as a snapshot and resume the
+output stream from exactly that offset — no duplication, no gap.
 
 `delta` is a grid-diff: the lines that changed since the previous observe/send
 snapshot for the session (`changed: false` with empty output when nothing

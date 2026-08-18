@@ -94,7 +94,7 @@ Browser/Client                 Service                      Bud Daemon
 | `TerminalStatusSchema` | Terminal state changes |
 | `TerminalOutputSchema` | Offset-only terminal output chunks (`data`, `byte_offset`; proto 0.3 dropped `seq`) |
 | `TerminalEventSchema` | Proto 0.3 semantic event frames (`event`, `data`); unknown event values are tolerated |
-| `TerminalObserveResultSchema` | Grid-backed observe results (`view`, `output`, `lines_captured`, `changed`, `mode`, `integration`, `alt_screen`, cursor position) |
+| `TerminalObserveResultSchema` | Grid-backed observe results (`view`, `output`, `lines_captured`, `changed`, `mode`, `integration`, `alt_screen`, cursor position, optional `ring_next_offset` stream watermark) |
 | `TerminalSendResultSchema` | Transport acks plus optional awaited terminating event (`dispatched`, `outcome`, `error`) |
 | `ReconnectReportSchema` | Daemon journal summary used after reconnect for operation/stream reconciliation |
 
@@ -154,6 +154,7 @@ Direct regression coverage for the extracted Bud connection runtime.
 - negotiated binary-envelope sessions reject legacy JSON text frames
 - unknown protobuf payload fields fail with a typed `UNSUPPORTED_PAYLOAD` error frame
 - WebSocket `stream_data` frames dispatch through the shared data-plane runtime, and back-to-back data/close frames are not reordered by activity heartbeat writes
+- `terminal_observe_result` frames thread the optional `ring_next_offset` watermark through to the dispatcher payload (`ringNextOffset`), and omit it when the daemon does
 
 **Exported Functions**:
 
@@ -221,7 +222,7 @@ The gateway also rejects `hello` frames that do not advertise `bud_envelope.vers
 | `terminal_status` | `terminalSessionManager.handleTerminalStatus(budId, ...)` |
 | `terminal_output` | `terminalSessionManager.handleTerminalOutput(budId, ...)` (offset-only) |
 | `terminal_event` | `terminalSessionManager.handleTerminalEvent(budId, ...)` — command lifecycle / mode / settling facts |
-| `terminal_observe_result` | `terminalSessionManager.handleObserveResult(budId, ...)` with grid mode facts |
+| `terminal_observe_result` | `terminalSessionManager.handleObserveResult(budId, ...)` with grid mode facts and the optional `ring_next_offset` watermark |
 | `terminal_send_result` | `terminalSessionManager.handleSendResult(budId, ...)` resolving `{ dispatched, outcome }` |
 
 All terminal handlers run only for authenticated (`connected`) sockets and pass the authenticated `budId`; the terminal manager asserts `session.budId === budId` before any write/emit/resolve and drops mismatched frames with a warning (review finding S-C1).

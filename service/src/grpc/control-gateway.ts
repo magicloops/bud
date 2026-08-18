@@ -700,6 +700,9 @@ class GrpcControlConnection {
       ...(typeof result.data.alt_screen === "boolean" ? { altScreen: result.data.alt_screen } : {}),
       ...(typeof result.data.cursor_row === "number" ? { cursorRow: result.data.cursor_row } : {}),
       ...(typeof result.data.cursor_col === "number" ? { cursorCol: result.data.cursor_col } : {}),
+      ...(typeof result.data.ring_next_offset === "number"
+        ? { ringNextOffset: result.data.ring_next_offset }
+        : {}),
       error: result.data.error,
     });
   }
