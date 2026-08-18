@@ -106,6 +106,20 @@ pub fn spawn(spec: &SpawnSpec) -> Result<PtyChild> {
 
 /// TIOCSWINSZ on the master; then SIGWINCH the child.
 pub fn resize(master: &OwnedFd, child_pid: i32, cols: u16, rows: u16) -> Result<()> {
+    // No-op resizes must be completely silent: shells reprint their prompt on
+    // SIGWINCH (zsh's PROMPT_SP reprint leaves visible `%` artifacts), so a
+    // same-size "resize" must neither set the winsize nor signal the child.
+    let mut current = Winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let get_rc = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCGWINSZ as _, &mut current) };
+    if get_rc == 0 && current.ws_col == cols && current.ws_row == rows {
+        return Ok(());
+    }
+
     let ws = Winsize {
         ws_row: rows,
         ws_col: cols,

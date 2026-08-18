@@ -241,7 +241,7 @@ test("terminal.send dispatches await settled and returns the post-send delta", a
       assert.equal(sessionId, "sess_test");
       assert.deepEqual(interaction, {
         text: "print(1 + 1)",
-        submit: false,
+        submit: true,
         await: "settled",
       });
       return {

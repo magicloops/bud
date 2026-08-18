@@ -201,7 +201,7 @@ The LLM agent has these tools (defined in `service/src/agent/`):
 | Tool | Purpose |
 |------|---------|
 | `terminal.run` | Run one shell command deterministically: dispatched with `await:"command"`, resolves on OSC 133 (or sentinel) `command_finished` with a **real exit code**, duration, and byte-exact output. Non-zero exit is a normal result; a long command reports still-running, never a fabricated failure |
-| `terminal.send` | One interactive gesture for TUIs/REPLs: `raw_text` or a semantic `key` (`ctrl+c`, `enter`, `up`, …); waits for damage-quiet settling and returns a grid delta as proof |
+| `terminal.send` | One interactive gesture for TUIs/REPLs: `raw_text` (presses Enter by default; `submit:false` to compose) or a semantic `key` (`ctrl+c`, `enter`, `up`, …); waits for damage-quiet settling and returns a grid delta as proof |
 | `terminal.observe` | Inspect the emulator-backed screen (`delta`/`screen`/`history`) explicitly |
 
 **Retired**: `shell.run`, `terminal.exec`, and `wait_for` mode selection.

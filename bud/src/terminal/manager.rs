@@ -20,7 +20,7 @@ use base64::Engine;
 use serde_json::{json, Map, Number, Value};
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use stem::client::HolderClient;
 use stem::events::Integration;
@@ -55,6 +55,12 @@ const INTEGRATION_DETECT_WINDOW: Duration = Duration::from_secs(5);
 /// Daemon-internal safety cap on awaited sends. The service owns real timeout
 /// policy; this only prevents leaked waiters.
 const AWAIT_SAFETY_CAP: Duration = Duration::from_secs(4 * 60 * 60);
+/// Fresh-session grace: how long a command-await will wait for the shell's
+/// FIRST prompt before falling back to the visible sentinel trailer. Only
+/// applies when a shim was installed and no marker has arrived yet (the shell
+/// is still sourcing rc files) — without it, the first agent command of every
+/// fresh session on an integrated shell echoed the wrapper.
+const FIRST_PROMPT_GRACE: Duration = Duration::from_secs(3);
 /// Sentinel exit-code trailer (design D6c). Sent as literal shell input.
 const SENTINEL_TRAILER: &str = r#"; printf '\033]133;D;%s\a' "$?""#;
 
@@ -85,6 +91,10 @@ pub struct TerminalManager {
 struct State {
     sender: Option<OutboundSender>,
     sessions: HashMap<String, Arc<SessionEntry>>,
+    /// Per-session attach serialization (see `attach_lock`): ensure and the
+    /// lazy reattach paths race otherwise, and a displaced entry's pump keeps
+    /// forwarding — every output frame then arrives twice at the service.
+    attach_locks: HashMap<String, Arc<tokio::sync::Mutex<()>>>,
 }
 
 struct SessionEntry {
@@ -116,6 +126,7 @@ impl TerminalManager {
             inner: Arc::new(Mutex::new(State {
                 sender: None,
                 sessions: HashMap::new(),
+                attach_locks: HashMap::new(),
             })),
             config,
         }
@@ -144,6 +155,21 @@ impl TerminalManager {
         self.inner.lock().await.sessions.get(session_id).cloned()
     }
 
+    /// Remove the session entry IF it is still the one owning `shared`
+    /// (a re-ensure may have replaced it). Called when a pump ends.
+    async fn remove_entry_if_current(&self, session_id: &str, shared: &Arc<SessionShared>) {
+        let mut inner = self.inner.lock().await;
+        let current = inner
+            .sessions
+            .get(session_id)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.shared, shared));
+        if current {
+            if let Some(entry) = inner.sessions.remove(session_id) {
+                entry.abort_tasks();
+            }
+        }
+    }
+
     /// Best-effort cwd for the file adapter (no session creation).
     pub async fn fresh_pane_cwd_for_session(&self, session_id: &str) -> Option<String> {
         let entry = self.entry(session_id).await?;
@@ -166,6 +192,11 @@ impl TerminalManager {
             .ok_or_else(|| anyhow!("no transport sender available"))?;
         let session_id = frame.session_id.clone();
 
+        // Serialize against the lazy reattach paths (entry_or_attach) so two
+        // attachments can never coexist for one session.
+        let lock = self.attach_lock(&session_id).await;
+        let _attach_guard = lock.lock().await;
+
         // Re-ensure of a live session = reattach semantics: drop the old
         // attachment and attach fresh with the new resume offset.
         if let Some(existing) = self.inner.lock().await.sessions.remove(&session_id) {
@@ -179,11 +210,7 @@ impl TerminalManager {
         {
             Ok(entry) => {
                 let info = self.entry_status_info(&entry).await;
-                self.inner
-                    .lock()
-                    .await
-                    .sessions
-                    .insert(session_id.clone(), entry);
+                self.install_entry(&session_id, &entry).await;
                 send_transport_frame(
                     &sender,
                     terminal_status_frame(&session_id, "ready", Some(info)),
@@ -266,6 +293,11 @@ impl TerminalManager {
         resume_from_offset: u64,
         sender: &OutboundSender,
     ) -> Result<Arc<SessionEntry>> {
+        let integration_expected = dir
+            .join("shim")
+            .read_dir()
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
         let (session, events) = Session::attach(SessionConfig {
             session_dir: dir.to_path_buf(),
             quiet_ms: QUIET_MS,
@@ -285,6 +317,7 @@ impl TerminalManager {
                 mode: session.mode(),
                 integration: Integration::None,
                 marker_seen: false,
+                integration_expected,
                 genuine_osc133: false,
                 ring_next_offset: stat.ring_next_offset,
                 cols: stat.cols,
@@ -296,12 +329,20 @@ impl TerminalManager {
         });
 
         let (pump_tx, _) = broadcast::channel(256);
-        let pump = tokio::spawn(run_pump(
-            events,
-            sender.clone(),
-            Arc::clone(&shared),
-            pump_tx.clone(),
-        ));
+        let pump = tokio::spawn({
+            let manager = self.clone();
+            let pump_shared = Arc::clone(&shared);
+            let pump_session_id = session_id.to_string();
+            let pump_sender = sender.clone();
+            let pump_tx = pump_tx.clone();
+            async move {
+                run_pump(events, pump_sender, Arc::clone(&pump_shared), pump_tx).await;
+                // Holder gone (or session torn down): drop OUR map entry so
+                // later gestures re-ensure instead of writing to a dead
+                // socket. ptr_eq guards against removing a newer attachment.
+                manager.remove_entry_if_current(&pump_session_id, &pump_shared).await;
+            }
+        });
 
         let entry = Arc::new(SessionEntry {
             shared,
@@ -326,7 +367,43 @@ impl TerminalManager {
 
     /// Live entry, or a fresh attachment to a surviving holder (daemon
     /// restart / reconnect path). Never spawns a new holder.
+    /// Serializes ALL attach/replace operations for one session. Attaching is
+    /// slow (connect + stat + ring replay), so a plain check-then-insert lets
+    /// concurrent callers each spawn a pump; the displaced pump was never
+    /// aborted and duplicated every output frame (found live, 2026-08-17 §A).
+    async fn attach_lock(&self, session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut inner = self.inner.lock().await;
+        Arc::clone(
+            inner
+                .attach_locks
+                .entry(session_id.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
+    }
+
+    /// Insert an entry, aborting any displaced one (defense in depth — under
+    /// the attach lock a displacement should only happen on ensure's
+    /// deliberate replace, which aborts explicitly before attaching).
+    async fn install_entry(&self, session_id: &str, entry: &Arc<SessionEntry>) {
+        if let Some(old) = self
+            .inner
+            .lock()
+            .await
+            .sessions
+            .insert(session_id.to_string(), Arc::clone(entry))
+        {
+            old.abort_tasks();
+        }
+    }
+
     async fn entry_or_attach(&self, session_id: &str) -> Result<Option<Arc<SessionEntry>>> {
+        if let Some(entry) = self.entry(session_id).await {
+            return Ok(Some(entry));
+        }
+        let lock = self.attach_lock(session_id).await;
+        let _attach_guard = lock.lock().await;
+        // Re-check under the lock: another caller may have attached while we
+        // waited.
         if let Some(entry) = self.entry(session_id).await {
             return Ok(Some(entry));
         }
@@ -345,11 +422,7 @@ impl TerminalManager {
         let entry = self
             .attach(session_id, &dir, stat.ring_next_offset, &sender)
             .await?;
-        self.inner
-            .lock()
-            .await
-            .sessions
-            .insert(session_id.to_string(), Arc::clone(&entry));
+        self.install_entry(session_id, &entry).await;
         Ok(Some(entry))
     }
 
@@ -418,6 +491,30 @@ impl TerminalManager {
                 return self.send_result_error(&sender, &frame, "session_not_found");
             }
         };
+
+        // Fresh-session grace: a command-await that arrives before the shell's
+        // first prompt would get sentinel-wrapped even on integrated shells.
+        // When integration is expected but no marker has been seen, wait
+        // briefly for the first prompt before deciding (bounded; does not
+        // hold the session lock).
+        if submit && frame.r#await == Some(TerminalSendAwait::Command) {
+            let needs_grace = {
+                let facts = entry.shared.facts.lock().unwrap();
+                facts.integration_expected && !facts.marker_seen && !facts.closed
+            };
+            if needs_grace {
+                let mut grace_rx = entry.pump_tx.subscribe();
+                let _ = tokio::time::timeout(FIRST_PROMPT_GRACE, async {
+                    loop {
+                        match grace_rx.recv().await {
+                            Ok(PumpEvent::PromptReady) | Ok(PumpEvent::Closed) | Err(_) => break,
+                            Ok(_) => continue,
+                        }
+                    }
+                })
+                .await;
+            }
+        }
 
         // Subscribe BEFORE dispatch so the awaited outcome cannot be missed.
         let waiter = frame.r#await.map(|_| entry.pump_tx.subscribe());
@@ -500,9 +597,13 @@ impl TerminalManager {
             _ => AwaitResult::Outcome(Value::Null),
         };
 
-        // The completed gesture becomes the new grid-diff delta baseline.
-        self.snapshot_screen_baseline(&entry).await;
-
+        // NOTE: the delta baseline is deliberately NOT refreshed here. The
+        // observe view owns the baseline (§6.6a delta = changes since the
+        // previous OBSERVE): the service's send-plus-proof flow observes
+        // `delta` right after this send resolves, and resetting the baseline
+        // post-gesture made that proof structurally empty — the agent saw
+        // "no visible change" for input that visibly echoed (found live,
+        // 2026-08-17 §A validation, python REPL).
         let payload = match result {
             AwaitResult::Outcome(Value::Null) => {
                 terminal_send_result_frame(&frame.session_id, &frame.request_id, true, None, None)
@@ -548,14 +649,6 @@ impl TerminalManager {
                 Some(error),
             ),
         )
-    }
-
-    async fn snapshot_screen_baseline(&self, entry: &Arc<SessionEntry>) {
-        let screen = {
-            let session = entry.session.lock().await;
-            session.screen_lines()
-        };
-        entry.shared.facts.lock().unwrap().last_observed_screen = Some(screen);
     }
 
     // ------------------------------------------------------------------
@@ -690,7 +783,10 @@ impl TerminalManager {
             return Ok(());
         }
         let Some(entry) = self.entry_or_attach(&frame.session_id).await? else {
-            warn!(
+            // Normal in the window between daemon (re)start and terminal_ensure:
+            // the service forwards resizes based on its DB session row, and the
+            // upcoming ensure carries current dimensions anyway.
+            debug!(
                 message_id = %frame.envelope.id,
                 session_id = %frame.session_id,
                 "terminal_resize dropped; no session"
@@ -789,6 +885,7 @@ async fn await_outcome(
                     return AwaitResult::Outcome(json!({ "event": "settled", "data": data }));
                 }
             }
+            Ok(PumpEvent::PromptReady) => continue,
             Ok(PumpEvent::Closed) => return AwaitResult::Closed,
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => return AwaitResult::Closed,

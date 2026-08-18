@@ -14,6 +14,7 @@ Clients consume the event contract properly, the resume story works end to end i
 - Persistent streaming `TextDecoder` per connection (`{stream: true}`), reset only on genuine resets — fixes the UTF-8 chunk-boundary corruption.
 - Staleness/reconnect policy driven by heartbeats + `terminal.event` instead of the 5s-equals-heartbeat threshold; derive thresholds from one shared constant with the service.
 - Stop silently dropping typed input while disconnected: queue with a visible pending state, or surface the drop.
+- **Line-oriented history replay** (accepted §A limitation): raw byte-tail replay renders ~no visible lines after TUI-heavy sessions (alt-screen bytes produce no scrollback). Replace the 128 KiB byte-tail snapshot with line-oriented scrollback served from stem's emulator — interim via `terminal_observe view:history` (text-only), properly via the grid-sync scrollback channel (`design/terminal-grid-sync-and-predictive-echo.md`).
 
 ### 3.2 Web: event-driven terminal/agent status UI
 

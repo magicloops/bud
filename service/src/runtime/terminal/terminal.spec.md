@@ -28,6 +28,7 @@ Database-backed session-record lifecycle, including `ensureSessionRecordForThrea
 
 Proto 0.3 notes:
 - `ensureSession(sessionId, { resumeFromOffset })` includes `resume_from_offset` on the outbound `terminal_ensure` frame when a positive stored end offset is supplied, so the daemon backfills ring-buffered output from exactly that offset.
+- **Geometry ownership**: the stored `cols`/`rows` on the session row are a last-known CACHE, sent on `terminal_ensure` only as a spawn-time hint (continuity for sessions ensured with no viewer attached). They are never authoritative — the live renderer (browser xterm) owns geometry and re-asserts its dimensions whenever `terminal.status` reports ready/active, and the daemon never resizes a surviving PTY from ensure config. Do not promote this row back to a source of truth.
 - `updateStatus(...)` consumes the stem-backed `info` shape (`pid`, `cwd`, `cols`, `rows`, `ring_next_offset`, `mode`, `integration`); `output_log_bytes`/`started_at` are retired from the wire and `started_at` is stamped on the first `ready` transition instead.
 - `updateCwd(...)` persists `prompt_ready.cwd` (OSC 7) into `terminal_session.cwd`.
 

@@ -29,7 +29,11 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   `resume_from_offset` (offset-exact backfill) → event pump spawn → proto 0.3
   `terminal_status` `ready` with `{pid, cwd, cols, rows, ring_next_offset,
   mode, integration}`. Re-ensure of a live session = reattach (drop the old
-  attachment, attach fresh with the new resume offset).
+  attachment, attach fresh with the new resume offset). **Geometry invariant:**
+  ensure `config.cols/rows` are a spawn-time hint only (used in the
+  `SpawnSpec` for a fresh holder) — a surviving holder's PTY keeps its actual
+  kernel winsize on reattach and is never resized from ensure config; only
+  explicit `terminal_resize` changes a live PTY. The renderer owns geometry.
 - `handle_send`: single gesture `{text?, submit?, key?, await?}`. Dispatch is
   serialized per session (tokio `Mutex<stem::Session>`); `submit` sends the
   literal text then a real Enter keypress (bracketed-paste safe). Awaited

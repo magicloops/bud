@@ -32,7 +32,12 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
         raw_text: {
           type: "string",
           description:
-            "Literal text to type without pressing Enter. Follow with key \"enter\" when the program should submit it.",
+            "Literal text to type. Presses Enter afterward by default; set submit to false to type without submitting (e.g. composing text in an editor buffer).",
+        },
+        submit: {
+          type: "boolean",
+          description:
+            "Whether to press Enter after raw_text (default true). Ignored for key gestures.",
         },
         key: {
           type: "string",

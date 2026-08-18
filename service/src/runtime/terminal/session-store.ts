@@ -177,6 +177,11 @@ export class TerminalSessionStore {
         // proto 0.3 status info no longer carries started_at; stamp it on the
         // first ready transition.
         startedAt: payload.state === "ready" ? sql`COALESCE(started_at, now())` : undefined,
+        // A daemon-announced closure must stamp closedAt: session lookups
+        // filter on closedAt IS NULL, so leaving it unset pinned threads to a
+        // dead session forever (ensure kept returning session_closed instead
+        // of provisioning a fresh one — live §A holder-crash finding).
+        closedAt: payload.state === "closed" ? sql`COALESCE(closed_at, now())` : undefined,
         lastActivityAt: now
       })
       .where(eq(terminalSessionTable.sessionId, sessionId));

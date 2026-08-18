@@ -447,7 +447,14 @@ async fn event_loop(
                         });
                     }
                     let mode = guard.modes.mode();
-                    if mode != Mode::Shell {
+                    // Settled fires outside Shell mode, and ALSO in Shell mode
+                    // while a command is mid-flight (open C without D): inline
+                    // TUIs that never enter the alternate screen (codex,
+                    // ratatui inline viewports) keep the session classified
+                    // Shell, yet interactive callers still need a settle
+                    // signal. At-prompt Shell stays silent — prompt_ready is
+                    // its signal.
+                    if mode != Mode::Shell || guard.open_command.is_some() {
                         out.push(Event::Settled { mode, quiet_ms });
                     }
                 }

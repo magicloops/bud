@@ -46,6 +46,12 @@ export interface TerminalOutputPersistence {
   ): Promise<StoredOutputChunk[]>;
   /** max(byte_offset + length(data)) for the session; 0 when no output is stored. */
   getStoredEndOffset(sessionId: string): Promise<number>;
+  /**
+   * Delete oldest chunks (whole rows, ascending byte_offset) until at least
+   * `minBytesToRemove` bytes are gone (or the session is empty). Returns the
+   * bytes actually removed.
+   */
+  pruneOldestChunks(sessionId: string, minBytesToRemove: number): Promise<number>;
 }
 
 class DrizzleTerminalOutputPersistence implements TerminalOutputPersistence {
@@ -155,6 +161,47 @@ class DrizzleTerminalOutputPersistence implements TerminalOutputPersistence {
     return rows.map((row) => ({ byteOffset: row.byteOffset, data: Buffer.from(row.data) }));
   }
 
+  async pruneOldestChunks(sessionId: string, minBytesToRemove: number): Promise<number> {
+    let removed = 0;
+    while (removed < minBytesToRemove) {
+      const rows = await db
+        .select({
+          byteOffset: terminalSessionOutputTable.byteOffset,
+          len: sql<number>`octet_length(${terminalSessionOutputTable.data})`
+        })
+        .from(terminalSessionOutputTable)
+        .where(eq(terminalSessionOutputTable.sessionId, sessionId))
+        .orderBy(asc(terminalSessionOutputTable.byteOffset))
+        .limit(512);
+      if (rows.length === 0) {
+        break;
+      }
+      let cutoff: number | null = null;
+      for (const row of rows) {
+        removed += Number(row.len);
+        cutoff = row.byteOffset;
+        if (removed >= minBytesToRemove) {
+          break;
+        }
+      }
+      if (cutoff === null) {
+        break;
+      }
+      await db
+        .delete(terminalSessionOutputTable)
+        .where(
+          and(
+            eq(terminalSessionOutputTable.sessionId, sessionId),
+            lte(terminalSessionOutputTable.byteOffset, cutoff)
+          )
+        );
+      if (removed < minBytesToRemove && rows.length < 512) {
+        break;
+      }
+    }
+    return removed;
+  }
+
   async getStoredEndOffset(sessionId: string): Promise<number> {
     const [row] = await db
       .select({
@@ -190,6 +237,8 @@ export class TerminalOutputStore {
   private readonly events: TerminalEventBus;
   private readonly persistence: TerminalOutputPersistence;
   private readonly lastOffsets = new Map<string, number>();
+  /** Retained (post-pruning) stored bytes per session, lazily seeded from SQL. */
+  private readonly retainedBytes = new Map<string, number>();
 
   constructor(
     logger: FastifyBaseLogger,
@@ -371,7 +420,6 @@ export class TerminalOutputStore {
     sessionId: string,
     payload: { data: string; byte_offset: number },
     options: {
-      getStoredOutputBytes?: (sessionId: string) => Promise<number | null>;
       onOutputObserved?: (details: {
         sessionId: string;
         requestOffset: number;
@@ -397,25 +445,7 @@ export class TerminalOutputStore {
       return;
     }
 
-    const currentLogBytes =
-      (await (options.getStoredOutputBytes?.(sessionId) ?? this.persistence.getStoredOutputBytes(sessionId))) ?? 0;
-    const remaining = Math.max(config.terminalOutputSoftCapBytes - currentLogBytes, 0);
-    const toStore = remaining >= buffer.length ? buffer : buffer.subarray(0, remaining);
-
-    if (toStore.length === 0) {
-      this.logger.warn(
-        {
-          sessionId,
-          byteOffset: payload.byte_offset,
-          droppedBytes: buffer.length,
-          component: "terminal_output_store"
-        },
-        "terminal output dropped at soft cap"
-      );
-      return;
-    }
-
-    const inserted = await this.persistence.insertChunk(sessionId, payload.byte_offset, toStore);
+    const inserted = await this.persistence.insertChunk(sessionId, payload.byte_offset, buffer);
     if (!inserted) {
       this.logger.info(
         {
@@ -432,22 +462,39 @@ export class TerminalOutputStore {
     const now = new Date();
     await this.persistence.bumpOutputStats(sessionId, {
       totalDelta: buffer.length,
-      storedDelta: toStore.length,
+      storedDelta: buffer.length,
       at: now
     });
 
-    if (toStore.length < buffer.length) {
-      this.logger.warn(
-        {
-          sessionId,
-          byteOffset: payload.byte_offset,
-          stored: toStore.length,
-          dropped: buffer.length - toStore.length,
-          component: "terminal_output_store"
-        },
-        "terminal output truncated at soft cap"
+    // RETENTION cap, not a lifetime cap: new output is always stored and
+    // emitted; the oldest stored chunks are pruned past the cap, making the
+    // durable store a service-side ring that mirrors the daemon's ring
+    // semantics. (A lifetime cap permanently muted a session once total
+    // output ever crossed it — found live in Phase 2 §A validation when a
+    // 12.5 GB flood bricked the session's display.)
+    let retained =
+      (this.retainedBytes.get(sessionId) ??
+        (await this.persistence.getStoredOutputBytes(sessionId)) ??
+        0) + buffer.length;
+    if (retained > config.terminalOutputSoftCapBytes) {
+      const removed = await this.persistence.pruneOldestChunks(
+        sessionId,
+        retained - config.terminalOutputSoftCapBytes
       );
+      retained -= removed;
+      if (removed > 0) {
+        this.logger.info(
+          {
+            sessionId,
+            removedBytes: removed,
+            retainedBytes: retained,
+            component: "terminal_output_store"
+          },
+          "terminal output retention pruned"
+        );
+      }
     }
+    this.retainedBytes.set(sessionId, retained);
 
     // Offset-only SSE payload (proto 0.3 §6.7.7). The event id is the
     // stringified end offset of the stored bytes so SSE Last-Event-ID doubles
@@ -455,10 +502,10 @@ export class TerminalOutputStore {
     this.events.emit(sessionId, {
       event: "terminal.output",
       data: {
-        data: toStore.toString("base64"),
+        data: buffer.toString("base64"),
         byte_offset: payload.byte_offset
       },
-      id: String(payload.byte_offset + toStore.length)
+      id: String(payload.byte_offset + buffer.length)
     });
   }
 }

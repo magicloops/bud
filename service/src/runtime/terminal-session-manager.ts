@@ -102,6 +102,19 @@ export class TerminalSessionManager {
   private readonly idleMonitor: TerminalIdleMonitor;
   private readonly daemonTransport: DaemonTransportRouter;
 
+  /**
+   * Per-session ingest serialization. Gateways dispatch daemon frames
+   * concurrently (`void handleIncoming` per socket message), so without this
+   * queue, back-to-back terminal_output frames can finish their async DB work
+   * out of order and emit SSE out of BYTE order — the browser then renders a
+   * byte-perfect stored stream in the wrong order (live-only corruption found
+   * in the 2026-08-17 §A validation run: zsh PROMPT_SP `%` artifacts).
+   * Storage is offset-keyed and order-insensitive; SSE emission is not.
+   * terminal_event frames are chained behind outputs on the same session so
+   * event byte references never outrun emitted output (proto §6.4 rule).
+   */
+  private readonly sessionIngestQueues = new Map<string, Promise<void>>();
+
   constructor(
     logger: FastifyBaseLogger,
     events: TerminalEventBus,
@@ -275,7 +288,27 @@ export class TerminalSessionManager {
     return { ok: true };
   }
 
+  private enqueueSessionIngest<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    const prev = this.sessionIngestQueues.get(sessionId) ?? Promise.resolve();
+    const run = prev.then(work, work);
+    const tail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.sessionIngestQueues.set(sessionId, tail);
+    void tail.then(() => {
+      if (this.sessionIngestQueues.get(sessionId) === tail) {
+        this.sessionIngestQueues.delete(sessionId);
+      }
+    });
+    return run;
+  }
+
   async handleTerminalStatus(budId: string, sessionId: string, payload: TerminalStatusPayload): Promise<void> {
+    return this.enqueueSessionIngest(sessionId, () => this.handleTerminalStatusInner(budId, sessionId, payload));
+  }
+
+  private async handleTerminalStatusInner(budId: string, sessionId: string, payload: TerminalStatusPayload): Promise<void> {
     const session = await this.resolveOwnedSession(budId, sessionId, "terminal_status");
     if (!session) {
       return;
@@ -294,13 +327,16 @@ export class TerminalSessionManager {
   }
 
   async handleTerminalOutput(budId: string, sessionId: string, payload: TerminalOutputPayload): Promise<void> {
+    return this.enqueueSessionIngest(sessionId, () => this.handleTerminalOutputInner(budId, sessionId, payload));
+  }
+
+  private async handleTerminalOutputInner(budId: string, sessionId: string, payload: TerminalOutputPayload): Promise<void> {
     const session = await this.resolveOwnedSession(budId, sessionId, "terminal_output");
     if (!session) {
       return;
     }
 
     await this.outputStore.handleTerminalOutput(sessionId, payload, {
-      getStoredOutputBytes: async () => session.outputLogBytes ?? 0,
       onOutputObserved: ({ sessionId: currentSessionId, requestOffset, endOffset, outputBytes }) => {
         this.requestDispatcher.noteOutputObserved(currentSessionId, {
           requestOffset,
@@ -312,6 +348,10 @@ export class TerminalSessionManager {
   }
 
   async handleTerminalEvent(budId: string, sessionId: string, payload: TerminalEventPayload): Promise<void> {
+    return this.enqueueSessionIngest(sessionId, () => this.handleTerminalEventInner(budId, sessionId, payload));
+  }
+
+  private async handleTerminalEventInner(budId: string, sessionId: string, payload: TerminalEventPayload): Promise<void> {
     const session = await this.resolveOwnedSession(budId, sessionId, "terminal_event");
     if (!session) {
       return;
@@ -392,6 +432,10 @@ export class TerminalSessionManager {
   }
 
   async handleObserveResult(budId: string, sessionId: string, payload: ObserveResponsePayload): Promise<void> {
+    return this.enqueueSessionIngest(sessionId, () => this.handleObserveResultInner(budId, sessionId, payload));
+  }
+
+  private async handleObserveResultInner(budId: string, sessionId: string, payload: ObserveResponsePayload): Promise<void> {
     const session = await this.resolveOwnedSession(budId, sessionId, "terminal_observe_result");
     if (!session) {
       return;
@@ -403,6 +447,10 @@ export class TerminalSessionManager {
   }
 
   async handleSendResult(budId: string, sessionId: string, payload: SendResultPayload): Promise<void> {
+    return this.enqueueSessionIngest(sessionId, () => this.handleSendResultInner(budId, sessionId, payload));
+  }
+
+  private async handleSendResultInner(budId: string, sessionId: string, payload: SendResultPayload): Promise<void> {
     const session = await this.resolveOwnedSession(budId, sessionId, "terminal_send_result");
     if (!session) {
       return;

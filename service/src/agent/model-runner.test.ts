@@ -281,7 +281,7 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.ok(runProperties.command);
   assert.deepEqual(runTool.parameters.required, ["command"]);
   assert.deepEqual(Object.keys(runProperties), ["command"]);
-  assert.deepEqual(Object.keys(sendProperties).sort(), ["key", "raw_text"]);
+  assert.deepEqual(Object.keys(sendProperties).sort(), ["key", "raw_text", "submit"]);
   assert.deepEqual(Object.keys(observeProperties).sort(), ["lines", "view"]);
   assert.deepEqual(
     (observeProperties.view as { enum?: unknown }).enum,

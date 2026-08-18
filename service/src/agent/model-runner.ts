@@ -593,6 +593,7 @@ export class AgentModelRunner {
           type: "tool_call",
           tool: "terminal.send",
           rawText: typeof args.raw_text === "string" ? args.raw_text : undefined,
+          ...(typeof args.submit === "boolean" ? { submit: args.submit } : {}),
           key: normalizeToolKeyInput(args.key, args.keys),
           callId: toolCall.id,
         };

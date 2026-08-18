@@ -58,9 +58,11 @@ pub enum Event {
         integration: Integration,
     },
 
-    /// Damage-quiet threshold reached (only emitted in Tui/Repl/Unknown modes;
-    /// Shell mode uses command lifecycle instead). `quiet_ms` is the configured
-    /// threshold that elapsed, not a measurement.
+    /// Damage-quiet threshold reached. Emitted in Tui/Repl/Unknown modes, and
+    /// in Shell mode while a command is mid-flight (inline TUIs that never
+    /// enter the alternate screen); an at-prompt shell stays silent —
+    /// `PromptReady` is its signal. `quiet_ms` is the configured threshold
+    /// that elapsed, not a measurement.
     Settled { mode: Mode, quiet_ms: u64 },
 
     /// Current working directory changed (OSC 7, or introspection refresh).

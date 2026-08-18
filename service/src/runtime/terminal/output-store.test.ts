@@ -29,6 +29,19 @@ class InMemoryOutputPersistence implements TerminalOutputPersistence {
       .map(([byteOffset, data]) => ({ byteOffset, data }));
   }
 
+  async pruneOldestChunks(sessionId: string, minBytesToRemove: number): Promise<number> {
+    const chunks = this.sessionChunks(sessionId);
+    let removed = 0;
+    for (const { byteOffset, data } of this.sorted(sessionId)) {
+      if (removed >= minBytesToRemove) {
+        break;
+      }
+      chunks.delete(byteOffset);
+      removed += data.length;
+    }
+    return removed;
+  }
+
   async insertChunk(sessionId: string, byteOffset: number, data: Buffer): Promise<boolean> {
     const chunks = this.sessionChunks(sessionId);
     if (chunks.has(byteOffset)) {
@@ -235,4 +248,35 @@ test("readRange returns an empty result and no truncation for offsets past the s
   assert.equal(read.data.length, 0);
   assert.equal(read.truncated, false);
   assert.equal(read.nextOffset, null);
+});
+
+test("retention cap prunes oldest chunks but never mutes new output", async () => {
+  const { config } = await import("../../config.js");
+  const originalCap = config.terminalOutputSoftCapBytes;
+  (config as { terminalOutputSoftCapBytes: number }).terminalOutputSoftCapBytes = 30;
+  try {
+    const events: EmittedEvent[] = [];
+    const { store, persistence } = createStore(events);
+
+    // 5 chunks x 10 bytes = 50 bytes against a 30-byte cap.
+    let offset = 0;
+    for (let i = 0; i < 5; i++) {
+      await ingest(store, "sess_cap", offset, `chunk-${i}--`.slice(0, 10));
+      offset += 10;
+    }
+
+    // EVERY chunk was emitted to SSE (the old lifetime cap silently muted
+    // sessions once total output crossed it — the bricked-display regression).
+    const outputEvents = events.filter((e) => e.event === "terminal.output");
+    assert.equal(outputEvents.length, 5, "post-cap output must still emit");
+
+    // Retention holds: oldest rows pruned, newest retained, total <= cap.
+    const retained = await persistence.getStoredOutputBytes("sess_cap");
+    assert.ok(retained <= 30, `retained ${retained} exceeds cap`);
+    const tail = await store.tailOutput("sess_cap", 1000);
+    assert.ok(tail.data.toString("utf8").includes("chunk-4"), "newest chunk retained");
+    assert.ok(!tail.data.toString("utf8").includes("chunk-0"), "oldest chunk pruned");
+  } finally {
+    (config as { terminalOutputSoftCapBytes: number }).terminalOutputSoftCapBytes = originalCap;
+  }
 });

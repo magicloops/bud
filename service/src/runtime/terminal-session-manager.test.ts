@@ -347,3 +347,37 @@ test("ensureSession forwards the stored end offset as resume_from_offset", async
     { sessionId: "sess_test", options: { resumeFromOffset: 84213 } },
   ]);
 });
+
+test("terminal_output SSE emission stays in byte order when an earlier frame's async work finishes later", async () => {
+  const events: EmittedEvent[] = [];
+  const manager = createManager(events);
+  stubSessionStore(manager, createSession());
+  Reflect.set(manager, "outputStore", {
+    async handleTerminalOutput(
+      _sessionId: string,
+      payload: { byte_offset?: number },
+    ) {
+      const offset = payload.byte_offset ?? 0;
+      // Simulate DB latency variance: the FIRST frame resolves slower.
+      await new Promise((resolve) => setTimeout(resolve, offset === 0 ? 30 : 1));
+      events.push({ event: "terminal.output", data: { byte_offset: offset } });
+    },
+  });
+
+  // Gateways dispatch frames concurrently (`void handleIncoming`) — model that
+  // by NOT awaiting the first call before issuing the second.
+  const first = manager.handleTerminalOutput("bud-1", "sess_test", {
+    byte_offset: 0,
+    data: "QUFB",
+  } as never);
+  const second = manager.handleTerminalOutput("bud-1", "sess_test", {
+    byte_offset: 3,
+    data: "QkJC",
+  } as never);
+  await Promise.all([first, second]);
+
+  const offsets = events
+    .filter((e) => e.event === "terminal.output")
+    .map((e) => e.data.byte_offset);
+  assert.deepEqual(offsets, [0, 3], "live SSE must emit in byte order, not completion order");
+});

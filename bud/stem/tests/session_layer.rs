@@ -251,6 +251,38 @@ async fn reattach_replays_backfill_and_suppresses_seen_history() {
 }
 
 #[tokio::test]
+async fn mid_command_shell_settles_for_inline_tuis() {
+    // A command that draws and then stays interactive WITHOUT entering the
+    // alternate screen (codex-style inline TUI): mode remains Shell, but
+    // damage-quiet must still emit Settled while the command is open —
+    // interactive callers await it. Regression for the codex hang.
+    let (_tmp, dir) = start_holder(OSC133_LOOP, 256 * 1024);
+    wait_for_holder(&dir).await;
+
+    let (mut session, mut rx) = Session::attach(config(&dir, 0)).await.unwrap();
+    expect_event(&mut rx, "prompt", |e| matches!(e, Event::PromptReady { .. })).await;
+
+    session
+        .write_text("printf inline-tui-drawing; sleep 300\n")
+        .await
+        .unwrap();
+    expect_event(&mut rx, "command started", |e| {
+        matches!(e, Event::CommandStarted { .. })
+    })
+    .await;
+    let settled = expect_event(&mut rx, "mid-command settled", |e| {
+        matches!(e, Event::Settled { .. })
+    })
+    .await;
+    assert!(
+        matches!(settled, Event::Settled { mode: Mode::Shell, .. }),
+        "inline TUI stays Shell mode but must settle: {settled:?}"
+    );
+
+    session.kill().await.unwrap();
+}
+
+#[tokio::test]
 async fn unintegrated_output_settles_in_unknown_mode() {
     let (_tmp, dir) = start_holder("printf 'plain-output-no-markers'; sleep 300", 64 * 1024);
     wait_for_holder(&dir).await;

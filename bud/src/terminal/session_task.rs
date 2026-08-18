@@ -30,6 +30,9 @@ pub(crate) struct SessionFacts {
     /// Any real OSC 133 evidence observed (prompt/command markers or an
     /// Osc133 mode upgrade). Sentinel `D` trailers do not count.
     pub marker_seen: bool,
+    /// A shell-integration shim was installed for this session, so genuine
+    /// OSC 133 markers are expected once the shell finishes starting up.
+    pub integration_expected: bool,
     /// Genuine OSC 133 `A`/`C` markers observed by THIS attachment
     /// (`prompt_ready` / `command_started`). A sentinel trailer can only
     /// produce bare `D` markers, and a reattach replay can mislabel those as
@@ -66,6 +69,8 @@ pub(crate) enum PumpEvent {
     Settled {
         data: Value,
     },
+    /// OSC 133 `A` observed (used by the fresh-session sentinel grace wait).
+    PromptReady,
     /// The session's root process exited or the event stream ended.
     Closed,
 }
@@ -148,6 +153,7 @@ pub(crate) async fn run_pump(
                     facts.marker_seen = true;
                     facts.genuine_osc133 = true;
                 }
+                let _ = pump_tx.send(PumpEvent::PromptReady);
                 let mut data = Map::new();
                 if let Some(cwd) = cwd {
                     data.insert("cwd".into(), Value::String(cwd));
@@ -288,6 +294,21 @@ pub(crate) async fn run_pump(
         }
     }
 
+    // Event stream ended without a graceful ChildExited: the holder died
+    // (e.g. SIGKILL) or its connection dropped. Announce the closure —
+    // without this the service kept the session "ready" and every subsequent
+    // gesture hit the dead socket with Broken pipe (found live, 2026-08-17 §A
+    // holder-crash scenario).
+    let announced = shared.facts.lock().unwrap().closed;
+    if !announced {
+        shared.facts.lock().unwrap().closed = true;
+        let _ = send_transport_frame(
+            &sender,
+            terminal_status_frame(&session_id, "closed", None),
+        );
+        debug!(session_id = %session_id, "terminal pump ended without child_exited; session closed");
+    }
+
     let _ = pump_tx.send(PumpEvent::Closed);
 }
 
@@ -305,6 +326,7 @@ mod tests {
                 mode: Mode::Unknown,
                 integration: Integration::None,
                 marker_seen: false,
+                integration_expected: false,
                 genuine_osc133: false,
                 ring_next_offset: 0,
                 cols: 80,
@@ -327,6 +349,11 @@ mod tests {
             event_tx.send(event).await.unwrap();
         }
         drop(event_tx);
+        // These tests end the stream by dropping the channel; pre-mark closed
+        // so the pump's end-of-stream closure announcement (tested separately
+        // in `stream_end_without_child_exit_announces_closed`) stays out of
+        // the per-event frame assertions.
+        shared.facts.lock().unwrap().closed = true;
         run_pump(event_rx, sender, Arc::clone(&shared), pump_tx).await;
 
         let mut frames = Vec::new();
@@ -336,6 +363,31 @@ mod tests {
             }
         }
         (frames, shared)
+    }
+
+    #[tokio::test]
+    async fn stream_end_without_child_exit_announces_closed() {
+        // Holder SIGKILL: the event channel just closes with no ChildExited.
+        // The pump must announce the closure or the service keeps routing
+        // gestures at a dead socket (live §A holder-crash finding).
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+        let sender = TransportSender::websocket(tx, false);
+        let (event_tx, event_rx) = mpsc::channel(64);
+        let (pump_tx, _keep) = broadcast::channel(64);
+        let shared = shared();
+        drop(event_tx);
+        run_pump(event_rx, sender, Arc::clone(&shared), pump_tx).await;
+
+        let mut frames = Vec::new();
+        while let Ok(message) = rx.try_recv() {
+            if let Message::Text(text) = message {
+                frames.push(serde_json::from_str::<Value>(&text).unwrap());
+            }
+        }
+        assert_eq!(frames.len(), 1, "exactly one closure frame: {frames:?}");
+        assert_eq!(frames[0]["type"], "terminal_status");
+        assert_eq!(frames[0]["state"], "closed");
+        assert!(shared.facts.lock().unwrap().closed);
     }
 
     #[tokio::test]

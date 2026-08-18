@@ -20,6 +20,8 @@ type SessionResolver = (threadId: string) => Promise<TerminalSession>;
 type TerminalSendGesture = {
   kind: "raw_text" | "key";
   rawText?: string;
+  /** raw_text only: press Enter after the text (default true). */
+  submit?: boolean;
   key?: string;
 };
 
@@ -138,6 +140,7 @@ export class TerminalToolExecutor {
           ...base,
           dispatched: result.dispatched === true,
           ...(result.rawTextSent !== undefined ? { raw_text_sent: result.rawTextSent } : {}),
+          ...(result.submitted !== undefined ? { submitted: result.submitted } : {}),
           ...(result.keySent !== undefined ? { key_sent: result.keySent } : {}),
           delta: serializeTerminalDelta(result.delta),
           ...(result.changed !== undefined ? { changed: result.changed } : {}),
@@ -354,7 +357,11 @@ export class TerminalToolExecutor {
     let sendResult: Awaited<ReturnType<TerminalSessionManager["sendInteraction"]>>;
     try {
       sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
-        ...(gesture.kind === "raw_text" ? { text: gesture.rawText, submit: false } : {}),
+        // raw_text submits by default (REPLs, prompts, chat TUIs); explicit
+        // submit:false supports composing without a trailing Enter.
+        ...(gesture.kind === "raw_text"
+          ? { text: gesture.rawText, submit: gesture.submit ?? true }
+          : {}),
         ...(gesture.kind === "key" ? { key: gesture.key } : {}),
         await: "settled",
       });
@@ -518,9 +525,12 @@ export class TerminalToolExecutor {
   private gestureSentFacts(
     gesture: TerminalSendGesture,
     dispatched: boolean,
-  ): Pick<TerminalCallResult, "rawTextSent" | "keySent"> {
+  ): Pick<TerminalCallResult, "rawTextSent" | "keySent" | "submitted"> {
     return {
       rawTextSent: dispatched && gesture.kind === "raw_text",
+      ...(gesture.kind === "raw_text"
+        ? { submitted: dispatched && (gesture.submit ?? true) }
+        : {}),
       keySent: dispatched && gesture.kind === "key" ? gesture.key ?? null : null,
     };
   }
@@ -600,7 +610,11 @@ export class TerminalToolExecutor {
       }
       return {
         ok: true,
-        gesture: { kind: "raw_text", rawText: directive.rawText },
+        gesture: {
+          kind: "raw_text",
+          rawText: directive.rawText,
+          submit: directive.submit ?? true,
+        },
       };
     }
 

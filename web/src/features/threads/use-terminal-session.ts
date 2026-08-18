@@ -86,6 +86,10 @@ export function useTerminalSession({
   const viewModeRef = useRef<TerminalViewMode>(viewMode)
   const terminalPlatformRef = useRef(detectTerminalInputPlatform())
   const lastSentDimensionsRef = useRef<{ cols: number; rows: number } | null>(null)
+  // One dimension re-assert per SSE connection (on first ready/active status):
+  // re-asserting on EVERY status event caused a SIGWINCH storm that made zsh
+  // reprint its prompt with visible PROMPT_SP `%` artifacts.
+  const dimensionsAssertedRef = useRef(false)
 
   const setConnectionState = useCallback((nextState: TerminalConnectionState) => {
     terminalConnectionRef.current = nextState
@@ -159,6 +163,7 @@ export function useTerminalSession({
     let term: Terminal | null = null
     let fitAddon: FitAddon | null = null
     let handleResize: (() => void) | null = null
+    let resizeObserver: ResizeObserver | null = null
     let scrollListener: { dispose: () => void } | null = null
     let pasteTarget: HTMLDivElement | HTMLTextAreaElement | null = null
     let handlePaste: EventListener | null = null
@@ -244,6 +249,21 @@ export function useTerminalSession({
       handleResize = () => fitTerminal()
       window.addEventListener('resize', handleResize)
 
+      // Window-resize alone misses pane-level layout changes (side panels,
+      // scrollbars, zoom), letting xterm's grid drift from the PTY size —
+      // live output rendered during that mismatch paints permanent artifacts
+      // (e.g. zsh PROMPT_SP `%` marks). Observe the container itself so both
+      // ends continuously converge; fitTerminal dedupes no-op dimensions.
+      let resizeRaf: number | null = null
+      resizeObserver = new ResizeObserver(() => {
+        if (resizeRaf !== null) return
+        resizeRaf = requestAnimationFrame(() => {
+          resizeRaf = null
+          fitTerminal()
+        })
+      })
+      resizeObserver.observe(container)
+
       term.attachCustomKeyEventHandler((event) => {
         if (event.type !== 'keydown') {
           return true
@@ -262,6 +282,11 @@ export function useTerminalSession({
         })
 
         if (intent.kind === 'text' || intent.kind === 'bytes') {
+          // Returning false only stops xterm's own handling — the browser's
+          // default action still runs unless prevented (Tab would move focus
+          // out of the terminal to the next focusable element).
+          event.preventDefault()
+          event.stopPropagation()
           sendTerminalInputRef.current(intent.text, {
             flushImmediately: intent.kind === 'bytes' && intent.text === '\x03',
           })
@@ -319,6 +344,7 @@ export function useTerminalSession({
       if (handleResize) {
         window.removeEventListener('resize', handleResize)
       }
+      resizeObserver?.disconnect()
       scrollListener?.dispose()
       if (pasteTarget && handlePaste) {
         pasteTarget.removeEventListener('paste', handlePaste)
@@ -716,6 +742,7 @@ export function useTerminalSession({
       const terminalStream = createAuthEventSource(`/api/threads/${threadId}/terminal/stream`)
       const source = terminalStream.source
       terminalEventSourceRef.current = source
+      dimensionsAssertedRef.current = false
 
       let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null
 
@@ -760,6 +787,21 @@ export function useTerminalSession({
             }
 
             setTerminalState(payload.state)
+
+            if (
+              (payload.state === 'ready' || payload.state === 'active') &&
+              !dimensionsAssertedRef.current
+            ) {
+              // The daemon may have (re)ensured the PTY with stale stored
+              // dimensions, and any resize sent before the session existed was
+              // dropped — re-assert the browser's current dimensions so
+              // full-screen programs draw at the size we actually render.
+              // Once per connection: repeating it on every status event floods
+              // the shell with SIGWINCH prompt reprints.
+              dimensionsAssertedRef.current = true
+              lastSentDimensionsRef.current = null
+              fitTerminal()
+            }
           }
         } catch (err) {
           console.error('Failed to parse terminal.status SSE', err)

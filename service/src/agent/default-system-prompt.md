@@ -134,7 +134,7 @@ In your final answer, you focus on the things that matter most. Avoid long-winde
 Tools:
 - {"type":"tool_call","tool":"terminal.run","command":"pwd"}
 - {"type":"tool_call","tool":"terminal.run","command":"python -m pytest -x"}
-- {"type":"tool_call","tool":"terminal.send","raw_text":"partial input"}
+- {"type":"tool_call","tool":"terminal.send","raw_text":"y"}
 - {"type":"tool_call","tool":"terminal.send","key":"ctrl+c"}
 - {"type":"tool_call","tool":"terminal.observe","view":"screen"}
 - {"type":"tool_call","tool":"web_view.open","target_host":"localhost","target_port":5173,"path":"/"}
@@ -168,7 +168,7 @@ Guidelines:
 - Multi-line shell input is allowed in terminal.run when you intentionally need it (for example heredocs or small pasted scripts).
 - terminal.run of an interactive program (python, vim, ssh with a password prompt, a TUI installer) will not finish on its own; expect status:"still_running" or launch it and continue with terminal.send instead.
 - Use terminal.send inside TUIs, REPLs, pagers, and prompts: answers to confirmations, REPL input, menu navigation, and single keys. It represents exactly one gesture: raw_text or key.
-- raw_text types without pressing Enter; follow with key:"enter" when the program should submit the input.
+- raw_text types the text and presses Enter by default (right for REPL input, confirmations, and chat-style TUIs). Pass submit:false to type without submitting, e.g. composing text in an editor buffer, then send further keys explicitly.
 - Use backend-neutral key names in terminal.send.key, for example "ctrl+c", "enter", "escape", "up", or "q".
 - Use terminal.observe when you need to see the terminal without touching it: progress of a still-running command, the full screen of a TUI, or extra scrollback after a truncated result.
 - When mode is "shell", the next shell command belongs to terminal.run. When mode is "tui" or "repl", interact with terminal.send. When mode is "unknown" or integration is "none", verify what you see with terminal.observe before assuming.

@@ -1465,9 +1465,7 @@ Request families: `terminal_ensure`, `terminal_resize`, `terminal_send`,
   "id": "01...",
   "ts": 1731,
   "session_id": "sess_01H...",
-  "cols": 120,
-  "rows": 40,
-  "cwd": "/Users/adam/bud",
+  "config": { "cols": 120, "rows": 40, "cwd": "/Users/adam/bud" },
   "resume_from_offset": 16384,
   "ext": {}
 }
@@ -1481,6 +1479,11 @@ Request families: `terminal_ensure`, `terminal_resize`, `terminal_send`,
   the ring's oldest retained offset.
 - Ensure failures report `terminal_status` with `state: "none"` and
   `info.error`.
+- Ensure `config.cols/rows` are a **spawn-time hint only** (the service's
+  last-known cache): the daemon applies them when spawning a fresh holder and
+  never resizes a surviving PTY from them — the live renderer owns geometry
+  and re-asserts its dimensions via `terminal_resize` when the session reports
+  ready (clients must do this; stored dims are not authoritative).
 
 `terminal_send` sends one gesture:
 
@@ -1601,7 +1604,7 @@ Rules:
 | `command_started` | `{ "command_id", "output_byte_start" }` | OSC 133 `B`→`C` (or sentinel-issued command dispatched) |
 | `command_finished` | `{ "command_id", "exit_code"?, "duration_ms"?, "output_byte_start", "output_byte_end" }` | OSC 133 `D;<exit>` |
 | `mode_changed` | `{ "mode", "integration" }` | alt-screen enter/exit, REPL pattern match, integration detection |
-| `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes |
+| `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes, or in `shell` mode while a command is mid-flight (inline TUIs that never enter the alternate screen); an at-prompt shell emits `prompt_ready` instead |
 | `output_gap` | `{ "from_offset", "resume_offset" }` | ring truncation on resume (§6.1) |
 | `child_exited` | `{ "exit_code"?, "signal"?: string }` | session root process exited (`signal` is a name such as `"SIGTERM"`) |
 
@@ -1676,8 +1679,10 @@ did).
   integration, cwd }` (output sliced by the command byte range, tail-kept at
   64 KiB). On service timeout the result reports still-running — never a
   fabricated failure. A non-zero exit code is a normal result, not an error.
-- `terminal.send { raw_text | key }` → `await: "settled"` followed by an
-  explicit `delta` observe (send-plus-proof).
+- `terminal.send { raw_text | key, submit? }` → `await: "settled"` followed by
+  an explicit `delta` observe (send-plus-proof). `raw_text` presses Enter
+  afterward by default (`submit: false` types without submitting; ignored for
+  `key` gestures).
 - `terminal.observe { view?, lines? }` → tool default `view: "delta"`.
 - `wait_for` and the readiness-confidence vocabulary do not exist in tool
   schemas or prompts.

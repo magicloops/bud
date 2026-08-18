@@ -21,6 +21,7 @@ export type AgentToolCallDirective =
       type: "tool_call";
       tool: "terminal.send";
       rawText?: string;
+      submit?: boolean;
       key?: string;
       callId: string;
     }
@@ -113,6 +114,8 @@ export type TerminalCallResult = {
   // terminal.send
   dispatched?: boolean;
   rawTextSent?: boolean;
+  /** raw_text gestures: whether Enter was pressed after the text (default true). */
+  submitted?: boolean;
   keySent?: string | null;
   delta?: TerminalDeltaSnapshot | null;
   // terminal.observe
@@ -279,6 +282,7 @@ export function buildToolArgs(
     case "terminal.send":
       return {
         ...(typeof directive.rawText === "string" ? { raw_text: directive.rawText } : {}),
+        ...(typeof directive.submit === "boolean" ? { submit: directive.submit } : {}),
         ...(directive.key ? { key: directive.key } : {}),
       };
     case "terminal.observe":

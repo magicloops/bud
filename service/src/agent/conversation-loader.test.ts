@@ -997,3 +997,38 @@ test("loadWithDiagnostics falls back when Anthropic thinking replay is incompati
     sameProviderIncompatibleOutputItemCount: 3,
   });
 });
+
+test("repairOrphanedToolCalls injects interrupted results for calls without outputs", async () => {
+  const { repairOrphanedToolCalls } = await import("./conversation-loader.js");
+  const messages = [
+    { role: "user" as const, content: [{ type: "text" as const, text: "run it" }] },
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "tool_use" as const, id: "call_ok", name: "terminal_run", input: { command: "true" } },
+      ],
+    },
+    {
+      role: "user" as const,
+      content: [{ type: "tool_result" as const, tool_use_id: "call_ok", content: "{}" }],
+    },
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "tool_use" as const, id: "call_orphan", name: "terminal_send", input: { key: "enter" } },
+      ],
+    },
+    { role: "user" as const, content: [{ type: "text" as const, text: "try again" }] },
+  ];
+
+  const repaired = repairOrphanedToolCalls(messages as never);
+  assert.equal(repaired.injectedResults, 1);
+  // Synthetic result lands immediately after the orphaned assistant message.
+  const injected = repaired.messages[4] as { role: string; content: Array<Record<string, unknown>> };
+  assert.equal(injected.role, "user");
+  assert.equal(injected.content[0].type, "tool_result");
+  assert.equal(injected.content[0].tool_use_id, "call_orphan");
+  assert.match(String(injected.content[0].content), /interrupted/);
+  // The matched pair is untouched and message count grew by exactly one.
+  assert.equal(repaired.messages.length, messages.length + 1);
+});
