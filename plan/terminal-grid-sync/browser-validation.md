@@ -75,6 +75,18 @@ were CSI-hardcoded, but smkx apps set DECCKM and only accept SS3 arrows —
 accordingly. (The bytes/xterm path has the same latent CSI-only arrow bug
 in its custom key handler — noted, not fixed here.)
 
+## Scroll-hint addendum (same day)
+
+28/28 with the §6.8.5 scroll-hint delta: paced scrolling shipped 50 shift
+frames against 1 full (441B vs 2331B average on a sparse screen; dense
+content widens the gap). A first, too-fast version of the measurement
+scenario was itself instructive: a 400-line burst lands in one take and
+legitimately IS a full frame — shifts are for incremental scrolling.
+The run also surfaced and fixed an unrelated pre-existing bug: the
+concurrent session-record create recovery stopped matching pg 23505 after
+Drizzle started wrapping errors (`DrizzleQueryError.cause`), turning the
+benign create race (StrictMode double-connect, multi-viewer) into 500s.
+
 ## What this run does NOT cover
 
 Subjective rendering feel/perf on a physical display, IME composition, wide-

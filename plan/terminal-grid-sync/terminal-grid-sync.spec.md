@@ -20,6 +20,7 @@ design authority:
 | [browser-validation.md](./browser-validation.md) | Automated headless-Chromium validation of phase 2 against the real stack: setup, 19 scenarios, the four bugs it found (all fixed) | complete (2026-08-18) |
 | [harness/grid-e2e.mjs](./harness/grid-e2e.mjs) | The playwright-core harness itself (prereqs in its header + browser-validation.md) | reference |
 | — mouse/wheel (post-phase-3) | SGR/X10 mouse encoding gated on frame DECSET facts, wheel → mouse events or alternate-scroll arrows, DECCKM-aware cursor keys | **complete + browser-validated** (2026-08-18, 26/26) |
+| — scroll-hint delta (§6.8.5, WAN readiness) | Take-time row-identity shift detection → `row_shift` + revealed-rows-only frames; full-frame fallback on any ambiguity | **complete + browser-validated** (2026-08-18, 28/28 — measured 50 shifts : 1 full at ~441B vs ~2331B/frame on a sparse screen) |
 
 ## Design-doc open questions resolved by this plan
 

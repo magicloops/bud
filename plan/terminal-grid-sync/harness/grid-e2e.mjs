@@ -341,6 +341,78 @@ try {
   await mousePage.screenshot({ path: `${SHOTS}/14-mouse.png` })
   await mousePage.close()
 
+
+  // ---- 14. Scroll-hint delta bandwidth (§6.8.5) ---------------------------
+  // Capture raw grid frames over SSE while a scroll burst runs; shifts must
+  // dominate fulls and carry far fewer bytes.
+  {
+    const controller = new AbortController()
+    const stats = { full: 0, shift: 0, delta: 0, fullBytes: 0, shiftBytes: 0 }
+    const capture = (async () => {
+      const resp = await fetch(
+        `http://localhost:3000/api/threads/${THREAD_ID}/terminal/stream?grid=1`,
+        {
+          headers: { Cookie: `better-auth.session_token=${encodeURIComponent(COOKIE_VALUE)}` },
+          signal: controller.signal,
+        },
+      )
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const chunk = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          if (!chunk.includes('event: terminal.grid')) continue
+          const dataLine = chunk.split('\n').find((l) => l.startsWith('data: '))
+          if (!dataLine) continue
+          const bytes = dataLine.length - 6
+          try {
+            const payload = JSON.parse(dataLine.slice(6))
+            if (payload.full) {
+              stats.full += 1
+              stats.fullBytes += bytes
+            } else if (payload.row_shift) {
+              stats.shift += 1
+              stats.shiftBytes += bytes
+            } else {
+              stats.delta += 1
+            }
+          } catch {
+            /* partial frame */
+          }
+        }
+      }
+    })().catch(() => {})
+    await new Promise((r) => setTimeout(r, 800))
+    await page.locator(PANE).click()
+    await page.keyboard.press('Control+u')
+    // Paced one-line scrolls: a single giant burst legitimately replaces the
+    // whole screen (a true full); shifts are for incremental scrolling.
+    await page.keyboard.type('for i in $(seq 1 50); do echo tick_$i; sleep 0.06; done', { delay: 5 })
+    await page.keyboard.press('Enter')
+    await waitFor(async () => (await paneText()).includes('tick_50'), 'scroll burst done', 30000)
+    await new Promise((r) => setTimeout(r, 500))
+    controller.abort()
+    await capture
+    const avgShift = stats.shift ? Math.round(stats.shiftBytes / stats.shift) : 0
+    const avgFull = stats.full ? Math.round(stats.fullBytes / stats.full) : 0
+    record(
+      'scroll bursts ship as shift deltas, not fulls',
+      stats.shift >= 3 && stats.shift > stats.full,
+      `shift=${stats.shift} full=${stats.full} delta=${stats.delta} avgShiftBytes=${avgShift} avgFullBytes=${avgFull}`,
+    )
+    record(
+      'shift frames are much smaller than fulls',
+      avgShift === 0 || avgFull === 0 || avgShift * 2 < avgFull,
+      `avgShift=${avgShift}B avgFull=${avgFull}B`,
+    )
+  }
+
   const fatal = consoleErrors.filter(
     (e) => !e.includes('favicon') && !e.includes('404') && !e.includes('WebSocket'),
   )
