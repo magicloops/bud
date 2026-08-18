@@ -46,6 +46,14 @@ import {
   resolveTerminalRendererMode,
   type TerminalRendererMode,
 } from '@/features/threads/terminal-renderer'
+import {
+  ackApplied,
+  assignFlushSeq,
+  emptyPredictionState,
+  predictKeystroke,
+  predictionGhostText,
+  type TerminalPredictionState,
+} from '@/features/threads/terminal-prediction'
 import type { Terminal } from 'xterm'
 import type { FitAddon } from 'xterm-addon-fit'
 
@@ -102,6 +110,11 @@ export function useTerminalSession({
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
   const [terminalGridState, setTerminalGridState] = useState<TerminalGridState>(emptyGridState)
   const terminalGridStateRef = useRef<TerminalGridState>(terminalGridState)
+  // Predictive echo (grid mode, §6.8.3): ghost tail of locally-typed input,
+  // retired by frames whose applied_input_seq covers each flush.
+  const [terminalPredictionGhost, setTerminalPredictionGhost] = useState('')
+  const predictionRef = useRef<TerminalPredictionState>(emptyPredictionState)
+  const inputSeqCounterRef = useRef(0)
   const [terminalConnection, setTerminalConnection] =
     useState<TerminalConnectionState>('disconnected')
   const [terminalFacts, setTerminalFacts] =
@@ -158,20 +171,41 @@ export function useTerminalSession({
     viewModeRef.current = viewMode
   }, [viewMode])
 
-  const applyGridFrameToState = useCallback((frame: TerminalGridFrame): boolean => {
-    const { state, discontinuity } = applyGridFrame(terminalGridStateRef.current, frame)
-    if (discontinuity) {
-      return false
-    }
-    terminalGridStateRef.current = state
-    setTerminalGridState(state)
-    return true
+  const setPrediction = useCallback((next: TerminalPredictionState) => {
+    predictionRef.current = next
+    setTerminalPredictionGhost(predictionGhostText(next))
   }, [])
+
+  const applyGridFrameToState = useCallback(
+    (frame: TerminalGridFrame): boolean => {
+      const { state, discontinuity } = applyGridFrame(terminalGridStateRef.current, frame)
+      if (discontinuity) {
+        return false
+      }
+      terminalGridStateRef.current = state
+      setTerminalGridState(state)
+      // Prediction reconciliation: acked chunks retire (their echo is
+      // authoritative now); a closed gate drops every ghost.
+      if (!state.predictOk) {
+        if (predictionRef.current !== emptyPredictionState) {
+          setPrediction(emptyPredictionState)
+        }
+      } else if (state.appliedInputSeq !== null) {
+        const next = ackApplied(predictionRef.current, state.appliedInputSeq)
+        if (next !== predictionRef.current) {
+          setPrediction(next)
+        }
+      }
+      return true
+    },
+    [setPrediction],
+  )
 
   const resetGridState = useCallback(() => {
     terminalGridStateRef.current = emptyGridState()
     setTerminalGridState(terminalGridStateRef.current)
-  }, [])
+    setPrediction(emptyPredictionState)
+  }, [setPrediction])
 
   const fitTerminal = useCallback(() => {
     if (terminalRenderer === 'grid') {
@@ -462,6 +496,8 @@ export function useTerminalSession({
     }
 
     if (terminalConnectionRef.current !== 'connected') {
+      // Queued input has no live grid to reconcile against — drop ghosts.
+      setPrediction(emptyPredictionState)
       if (pending) {
         const { state, droppedBytes } = enqueueTerminalInput(
           inputQueueRef.current,
@@ -492,17 +528,28 @@ export function useTerminalSession({
       return
     }
 
+    // Grid mode: every flush carries a seq; pending ghost text becomes a
+    // seq-tracked chunk that a frame's applied_input_seq retires (§6.8.3).
+    let seq: number | null = null
+    if (terminalRenderer === 'grid') {
+      inputSeqCounterRef.current += 1
+      seq = inputSeqCounterRef.current
+      setPrediction(assignFlushSeq(predictionRef.current, seq))
+    }
+
     try {
       const resp = await apiFetch(`/api/threads/${threadId}/terminal/input`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input }),
+        body: JSON.stringify({ input, ...(seq !== null ? { seq } : {}) }),
       })
       if (shouldAbortForUnauthorized(resp)) {
         return
       }
       if (!resp.ok) {
         console.warn('[terminal] input request failed', { status: resp.status })
+        // The flush never reached the PTY: its ghosts would linger unacked.
+        setPrediction(emptyPredictionState)
         if (resp.status >= 500 || resp.status === 0) {
           setConnectionState('reconnecting')
         }
@@ -512,15 +559,29 @@ export function useTerminalSession({
         return
       }
       console.error('Failed to send terminal input', err)
+      setPrediction(emptyPredictionState)
       setConnectionState('reconnecting')
       onError(err instanceof Error ? err.message : 'Failed to send input')
     }
-  }, [onError, setConnectionState, shouldAbortForUnauthorized, threadId])
+  }, [onError, setConnectionState, setPrediction, shouldAbortForUnauthorized, terminalRenderer, threadId])
 
   const sendTerminalInput = useCallback<QueueTerminalInput>(
     (text, options = {}) => {
       if (!threadId || text.length === 0) {
         return
+      }
+
+      // Predictive echo: printables ghost immediately at the cursor while
+      // the gate is open; anything unpredictable conservatively clears.
+      if (terminalRenderer === 'grid') {
+        if (
+          terminalGridStateRef.current.predictOk &&
+          terminalConnectionRef.current === 'connected'
+        ) {
+          setPrediction(predictKeystroke(predictionRef.current, text).state)
+        } else if (predictionRef.current !== emptyPredictionState) {
+          setPrediction(emptyPredictionState)
+        }
       }
 
       terminalInputBufferRef.current += text
@@ -539,7 +600,7 @@ export function useTerminalSession({
         void flushTerminalInput()
       }, 20)
     },
-    [flushTerminalInput, threadId],
+    [flushTerminalInput, setPrediction, terminalRenderer, threadId],
   )
 
   useEffect(() => {
@@ -1396,6 +1457,7 @@ export function useTerminalSession({
     terminalCommand,
     terminalConnection,
     terminalGridState,
+    terminalPredictionGhost,
     terminalHasOutput,
     terminalInputQueued,
     terminalOutputTruncated,

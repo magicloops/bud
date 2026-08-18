@@ -334,6 +334,8 @@ PTY — last resize wins, and a reconnect re-arms the assertion to cover daemon
 respawns at the stale spawn hint). Keyboard/paste capture via
 `lib/terminal-input` translation into `onInput`, bottom-pinned scrolling with
 scrollback above the live grid, and a `ch`-positioned cursor overlay.
+Renders the predictive-echo ghost tail (dotted underline, dimmed) after the
+authoritative cursor, with the cursor block sitting after the ghost.
 Known v1 limitation: wide-glyph cursor positioning assumes CJK glyphs render
 at exactly 2ch. Validated by the automated browser E2E
 (plan/terminal-grid-sync/browser-validation.md).

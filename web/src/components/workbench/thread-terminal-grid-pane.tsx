@@ -24,6 +24,8 @@ import {
 type ThreadTerminalGridPaneProps = {
   state: TerminalGridState
   connected: boolean
+  /** Predictive-echo ghost tail rendered after the authoritative cursor. */
+  predictionGhost?: string
   onInput: (text: string, options?: { flushImmediately?: boolean }) => void
   onResize: (cols: number, rows: number) => void
 }
@@ -73,6 +75,7 @@ function GridRow({ runs }: { runs: GridRun[] }) {
 export function ThreadTerminalGridPane({
   state,
   connected,
+  predictionGhost = '',
   onInput,
   onResize,
 }: ThreadTerminalGridPaneProps) {
@@ -211,15 +214,33 @@ export function ThreadTerminalGridPane({
   )
 
   const cursorVisible = connected && state.seeded && state.cursor.visible
+  // The ghost occupies cells after the cursor; the cursor block sits after
+  // the ghost (that's where it will land once the echo is confirmed).
+  const ghost = state.predictOk ? predictionGhost : ''
+  const ghostCells = Array.from(ghost).length
   const cursorStyle = useMemo<React.CSSProperties>(
     () => ({
       position: 'absolute',
-      left: `${state.cursor.col}ch`,
+      left: `calc(${state.cursor.col}ch + ${ghostCells}ch)`,
       top: state.cursor.row * LINE_HEIGHT_PX,
       width: '1ch',
       height: LINE_HEIGHT_PX,
       backgroundColor: '#ffffff',
       opacity: 0.65,
+      pointerEvents: 'none',
+    }),
+    [state.cursor.col, state.cursor.row, ghostCells],
+  )
+  const ghostStyle = useMemo<React.CSSProperties>(
+    () => ({
+      position: 'absolute',
+      left: `${state.cursor.col}ch`,
+      top: state.cursor.row * LINE_HEIGHT_PX,
+      height: LINE_HEIGHT_PX,
+      whiteSpace: 'pre',
+      color: GRID_DEFAULT_FG,
+      opacity: 0.55,
+      textDecoration: 'underline dotted',
       pointerEvents: 'none',
     }),
     [state.cursor.col, state.cursor.row],
@@ -257,6 +278,11 @@ export function ThreadTerminalGridPane({
             {state.grid.map((runs, index) => (
               <GridRow key={`row-${index}`} runs={runs} />
             ))}
+            {ghost.length > 0 && (
+              <span data-testid="terminal-prediction" style={ghostStyle}>
+                {ghost}
+              </span>
+            )}
             {cursorVisible && <div style={cursorStyle} />}
           </div>
         </div>

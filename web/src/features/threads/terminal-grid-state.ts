@@ -30,6 +30,10 @@ export type TerminalGridFrame = {
   dirty_rows: Array<{ row: number; runs: GridRun[] }>
   scrollback_push: GridRun[][]
   scrollback_dropped: number
+  /** §6.8.3: predictive-echo gate (absent on pre-phase-3 daemons = off). */
+  predict_ok?: boolean
+  /** §6.8.3: highest client input_seq the daemon has written to the PTY. */
+  applied_input_seq?: number
 }
 
 export type TerminalGridState = {
@@ -46,6 +50,10 @@ export type TerminalGridState = {
   scrollback: GridRun[][]
   /** Cumulative count of known scrollback seams/losses. */
   scrollbackDropped: number
+  /** Predictive-echo gate from the latest frame (§6.8.3). */
+  predictOk: boolean
+  /** Highest server-acked input_seq seen (survives frames that omit it). */
+  appliedInputSeq: number | null
 }
 
 export const GRID_SCROLLBACK_CAP = 5000
@@ -61,6 +69,8 @@ export function emptyGridState(): TerminalGridState {
     grid: [],
     scrollback: [],
     scrollbackDropped: 0,
+    predictOk: false,
+    appliedInputSeq: null,
   }
 }
 
@@ -123,6 +133,11 @@ export function applyGridFrame(
       grid,
       scrollback,
       scrollbackDropped,
+      predictOk: frame.predict_ok ?? false,
+      appliedInputSeq:
+        frame.applied_input_seq !== undefined
+          ? Math.max(frame.applied_input_seq, state.appliedInputSeq ?? 0)
+          : state.appliedInputSeq,
     },
     discontinuity: false,
   }

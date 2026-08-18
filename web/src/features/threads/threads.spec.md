@@ -389,6 +389,15 @@ Terminal renderer selection: `?renderer=` URL override →
 `localStorage["bud.terminal.renderer"]` → `bytes` default. Resolved once per
 mount.
 
+### `terminal-prediction.ts`
+
+Predictive local echo engine (grid-sync phase 3, §6.8.3): pure ghost-tail
+state — printable bursts accumulate as pending ghost text, backspace edits the
+unflushed tail, every input flush assigns a client seq, frames'
+`applied_input_seq` retire covered chunks, and anything unpredictable
+(control keys, Enter, gate closure, failed posts, reconnects) clears all
+ghosts. Node-tested in `terminal-prediction.test.ts`.
+
 ### `terminal-command-state.ts`
 
 Pure reducer for the terminal pane's command lifecycle chip, driven by typed
@@ -446,6 +455,10 @@ Terminal session/xterm ownership for the existing-thread route.
   `terminal-grid-state.ts` (discontinuity ⇒ reconnect; the watch re-arm
   ships a fresh full frame), the snapshot seeds scrollback only, and
   `terminal.output` counts only as stream liveness
+- predictive echo (§6.8.3): keystrokes ghost via `terminal-prediction.ts`
+  while the latest frame's `predict_ok` gate is open; flushes carry `seq` on
+  the input POST; frame `applied_input_seq` retires chunks; the hook exposes
+  `terminalPredictionGhost` for the grid pane
 
 **Exports**:
 - `useTerminalSession(...)` (returns `terminalRenderer`, `terminalGridState`,

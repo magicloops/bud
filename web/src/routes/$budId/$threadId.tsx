@@ -599,6 +599,7 @@ function ThreadView() {
     terminalCommand,
     terminalConnection,
     terminalGridState,
+    terminalPredictionGhost,
     terminalHasOutput,
     terminalInputQueued,
     terminalOutputTruncated,
@@ -903,6 +904,7 @@ function ThreadView() {
                 <ThreadTerminalGridPane
                   state={terminalGridState}
                   connected={terminalConnection === 'connected'}
+                  predictionGhost={terminalPredictionGhost}
                   onInput={sendTerminalInput}
                   onResize={sendTerminalResize}
                 />
