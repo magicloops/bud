@@ -128,7 +128,10 @@ export const TerminalGridSchema = TerminalEnvelopeSchema.extend({
     })
   ),
   scrollback_push: z.array(z.array(z.record(z.unknown()))).default([]),
-  scrollback_dropped: z.number().int().nonnegative().default(0)
+  scrollback_dropped: z.number().int().nonnegative().default(0),
+  // Predictive echo (§6.8.3) — optional: absent on pre-phase-3 daemons.
+  predict_ok: z.boolean().optional(),
+  applied_input_seq: z.number().int().nonnegative().optional()
 });
 
 const TerminalEventOutcomeSchema = z.object({

@@ -352,7 +352,7 @@ export async function registerThreadTerminalRoutes(
     const result = await terminalSessionManager.sendInput(
       session.sessionId,
       Buffer.from(body.data.input, "utf-8"),
-      { source: "user", userId: viewer.userId }
+      { source: "user", userId: viewer.userId, inputSeq: body.data.seq }
     );
 
     if (!result.ok) {

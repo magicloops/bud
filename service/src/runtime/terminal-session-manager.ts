@@ -236,7 +236,7 @@ export class TerminalSessionManager {
   async sendInput(
     sessionId: string,
     data: Buffer,
-    options: { source?: "agent" | "user" | "system"; userId?: string } = {}
+    options: { source?: "agent" | "user" | "system"; userId?: string; inputSeq?: number } = {}
   ): Promise<{ ok: boolean; error?: string }> {
     const session = await this.sessionStore.getSession(sessionId);
     if (!session) {
@@ -251,7 +251,9 @@ export class TerminalSessionManager {
       ts: Date.now(),
       ext: {},
       session_id: sessionId,
-      data: data.toString("base64")
+      data: data.toString("base64"),
+      // Predictive-echo sequencing (§6.8.3): pass-through, no storage.
+      ...(options.inputSeq !== undefined ? { input_seq: options.inputSeq } : {})
     };
 
     const sent = this.daemonTransport.sendFrameToBud(session.budId, payload);

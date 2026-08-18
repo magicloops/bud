@@ -618,6 +618,8 @@ function encodeFieldLevelPayload(frameType: string, frame: Record<string, unknow
     case "terminal_input":
       writeOptionalString(chunks, 1, stringField(frame, "session_id"));
       writeOptionalBase64Bytes(chunks, 2, stringField(frame, "data"));
+      // field 3 reserved (retired 0.2 await_ready); 4 = input_seq (§6.8.3)
+      writeOptionalUint64(chunks, 4, numberField(frame, "input_seq"));
       break;
     case "terminal_resize":
       writeOptionalString(chunks, 1, stringField(frame, "session_id"));
@@ -788,6 +790,7 @@ function decodeFieldLevelPayload(
       case "terminal_input":
         if (fieldNumber === 1) frame.session_id = reader.readStringForWireType(wireType);
         else if (fieldNumber === 2) frame.data = Buffer.from(reader.readBytesForWireType(wireType)).toString("base64");
+        else if (fieldNumber === 4) frame.input_seq = readSafeUint64(reader, wireType, "terminal_input.input_seq");
         else reader.skip(wireType);
         break;
       case "terminal_resize":
