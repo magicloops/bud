@@ -126,6 +126,9 @@ export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   // Stream watermark the daemon's emulator reflects at observe time: the next
   // output byte offset a stream resume from this observation should use.
   ring_next_offset: z.number().int().nonnegative().optional(),
+  // view "screen" only: the grid serialized as ANSI (SGR runs + cursor
+  // position), base64 — replaying it reproduces colors/styles/cursor.
+  output_ansi: z.string().optional(),
   error: z.string().nullable()
 });
 

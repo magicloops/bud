@@ -101,6 +101,58 @@ SSE works for grid deltas initially. The QUIC/WebTransport design
 grid-sync's skip-ahead semantics are what make lossy transport *useful*
 (mosh's datagram insight). Don't couple the two initially.
 
+### 3.5 Revisit under grid-sync: single adaptive terminal tool
+
+Recorded from the 2026-08-17 codex incident debate: the two-tool model-facing
+surface (`terminal.run` = declared command intent, `terminal.send` = declared
+interactive intent) exists because *the same bytes are legitimate under both
+interpretations with opposite correctness* when a program is foreground —
+state and content cannot disambiguate; only declared intent can, and declared
+intent is what lets the system REFUSE (side-effect-free) instead of guess
+(typing into an unknown interactive program is not un-doable). The current
+mitigation set: daemon busy guard (`command_in_flight` when a command is open),
+`open_command` surfaced in every tool result, ~2-minute still-running budget.
+Under grid-sync the client/system models the foreground program much more
+richly; at that point a single `terminal.input` with an `expect:
+"command"|"interactive"` parameter (equivalent information, different syntax)
+or a safe adaptive default for the unambiguous states becomes worth
+re-evaluating. Do not collapse the tools before that state model exists.
+
+*Convergence update (2026-08-18):* the completion machinery beneath the two
+tools has already effectively unified — command-awaits resolve on
+`command_finished` OR `interactive_started`; settled-awaits resolve on
+`settled` OR `prompt_ready`; `terminal.run` results are a tagged status union
+(`completed|still_running|terminal_busy|interactive`). The residual
+difference is exactly ONE intent bit (which transitions count as completion,
+and whether an open-command state refuses) plus the result promise
+(exit-code+output vs delta). That bit is irreducible: same bytes with a
+command open mean opposite correct actions. The successor design is therefore
+`terminal.input` with a REQUIRED `expect` — never an inferred one — and the
+choice vs two tools is purely model-ergonomics (bash-tool post-training
+priors currently favor the split). Live-testing note: the model has misused
+the split several times, each time recoverably BECAUSE intent was declared —
+evidence for keeping the bit, neutral on the syntax carrying it.
+
+*Substitutability correction (2026-08-18):* "the split is nearly free" was
+wrong — the split's cost is borne by the MODEL (tool choice is a failure
+surface), and it taxes smaller models hardest, which matters because Bud
+first-class-supports local ds4 models. The mitigation shipped instead of a
+merge: the tools are now SUBSTITUTABLE outside the one ambiguous state —
+run-on-interactive returns `status:"interactive"` in ~1s; send-of-a-command
+at a prompt resolves via `command_finished` and carries the real exit code.
+Wrong tool choice degrades to a slightly different result emphasis, never an
+error, except the busy-state refusal that no design removes. If small-model
+telemetry still shows tool-choice churn after this, that is the trigger to
+trial the single `terminal.input {expect}` surface ahead of grid-sync.
+
+*DECIDED (2026-08-18):* keep the two-tool surface for now (owner call, after
+full review of the single-tool auto-await design and its two regressions:
+losing the busy refusal — silent text-into-foreground-agents — and losing
+sentinel exit codes on unintegrated shells). The small-model telemetry
+tripwire above is the standing revisit condition; the auto-await machinery
+(C-marker detection window, outcome union, open_command facts) is already
+built and nothing blocks flipping later.
+
 ## 4. What this is NOT
 
 - Not a replacement for `terminal_output` byte storage, command byte ranges,

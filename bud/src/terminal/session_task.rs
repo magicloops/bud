@@ -33,6 +33,11 @@ pub(crate) struct SessionFacts {
     /// A shell-integration shim was installed for this session, so genuine
     /// OSC 133 markers are expected once the shell finishes starting up.
     pub integration_expected: bool,
+    /// The currently open command (`command_started` without a finish):
+    /// (wire ULID, started-at). THE discriminating fact between an idle shell
+    /// prompt and an inline TUI running under a shell (both report
+    /// mode=shell) — `terminal.run` is refused while one is open.
+    pub open_command: Option<(String, std::time::Instant)>,
     /// Genuine OSC 133 `A`/`C` markers observed by THIS attachment
     /// (`prompt_ready` / `command_started`). A sentinel trailer can only
     /// produce bare `D` markers, and a reattach replay can mislabel those as
@@ -69,10 +74,36 @@ pub(crate) enum PumpEvent {
     Settled {
         data: Value,
     },
-    /// OSC 133 `A` observed (used by the fresh-session sentinel grace wait).
-    PromptReady,
+    /// OSC 133 `A` observed. Used by the fresh-session sentinel grace wait,
+    /// and resolves `await:"settled"` sends: returning to a shell prompt is
+    /// maximal settlement (an idle prompt never emits `settled` by design, so
+    /// a send that carries a program back to the prompt — e.g. `/quit` in an
+    /// inline TUI — would otherwise ride the full timeout budget).
+    PromptReady {
+        data: Value,
+    },
+    /// Strong evidence the OPEN command launched an interactive program
+    /// (alt-screen entry or a mid-command bracketed-paste enable). Resolves
+    /// command-awaits early with an `interactive_started` outcome instead of
+    /// letting them ride the timeout budget.
+    InteractiveStarted {
+        data: Value,
+    },
     /// The session's root process exited or the event stream ended.
     Closed,
+}
+
+/// Emit the `interactive_started` fact: pump broadcast (resolves command
+/// awaits early) + the wire event.
+fn interactive_started(
+    session_id: &str,
+    pump_tx: &broadcast::Sender<PumpEvent>,
+    command_id: &str,
+    signal: &str,
+) -> Value {
+    let data = json!({ "command_id": command_id, "signal": signal });
+    let _ = pump_tx.send(PumpEvent::InteractiveStarted { data: data.clone() });
+    terminal_event_frame(session_id, "interactive_started", data)
 }
 
 pub(crate) fn mode_str(mode: Mode) -> &'static str {
@@ -152,17 +183,17 @@ pub(crate) async fn run_pump(
                     let mut facts = shared.facts.lock().unwrap();
                     facts.marker_seen = true;
                     facts.genuine_osc133 = true;
+                    // Back at a prompt heals a lost `D` marker: no command can
+                    // still be open when the shell is prompting.
+                    facts.open_command = None;
                 }
-                let _ = pump_tx.send(PumpEvent::PromptReady);
                 let mut data = Map::new();
                 if let Some(cwd) = cwd {
                     data.insert("cwd".into(), Value::String(cwd));
                 }
-                vec![terminal_event_frame(
-                    &session_id,
-                    "prompt_ready",
-                    Value::Object(data),
-                )]
+                let data = Value::Object(data);
+                let _ = pump_tx.send(PumpEvent::PromptReady { data: data.clone() });
+                vec![terminal_event_frame(&session_id, "prompt_ready", data)]
             }
             Event::CommandStarted {
                 command_index,
@@ -174,6 +205,7 @@ pub(crate) async fn run_pump(
                     let mut facts = shared.facts.lock().unwrap();
                     facts.marker_seen = true;
                     facts.genuine_osc133 = true;
+                    facts.open_command = Some((command_id.clone(), Instant::now()));
                 }
                 let _ = pump_tx.send(PumpEvent::CommandStarted {
                     command_id: command_id.clone(),
@@ -221,6 +253,7 @@ pub(crate) async fn run_pump(
                     "output_byte_end".into(),
                     Value::Number(Number::from(output_byte_end)),
                 );
+                shared.facts.lock().unwrap().open_command = None;
                 let data = Value::Object(data);
                 let _ = pump_tx.send(PumpEvent::CommandFinished {
                     command_id,
@@ -230,22 +263,36 @@ pub(crate) async fn run_pump(
                 vec![terminal_event_frame(&session_id, "command_finished", data)]
             }
             Event::ModeChanged { mode, integration } => {
-                {
+                let open = {
                     let mut facts = shared.facts.lock().unwrap();
                     facts.mode = mode;
                     facts.integration = integration;
                     if integration == Integration::Osc133 {
                         facts.marker_seen = true;
                     }
-                }
-                vec![terminal_event_frame(
+                    facts.open_command.clone()
+                };
+                let mut frames = vec![terminal_event_frame(
                     &session_id,
                     "mode_changed",
                     json!({
                         "mode": mode_str(mode),
                         "integration": integration_str(integration),
                     }),
-                )]
+                )];
+                // Alt-screen entry while a command is open: the command
+                // launched a full-screen interactive program (vim, htop).
+                if mode == Mode::Tui {
+                    if let Some((command_id, _)) = open {
+                        frames.push(interactive_started(
+                            &session_id,
+                            &pump_tx,
+                            &command_id,
+                            "alt_screen",
+                        ));
+                    }
+                }
+                frames
             }
             Event::Settled { mode, quiet_ms } => {
                 let data = json!({ "mode": mode_str(mode), "quiet_ms": quiet_ms });
@@ -277,6 +324,26 @@ pub(crate) async fn run_pump(
                     terminal_event_frame(&session_id, "child_exited", Value::Object(data)),
                     terminal_status_frame(&session_id, "closed", None),
                 ]
+            }
+            Event::BracketedPasteChanged { enabled } => {
+                // Shells keep ?2004 OFF while a foreground command runs, so a
+                // mid-command ENABLE means the child itself is interactive
+                // (inline chat TUIs like codex).
+                let open = shared.facts.lock().unwrap().open_command.clone();
+                if enabled {
+                    if let Some((command_id, _)) = open {
+                        vec![interactive_started(
+                            &session_id,
+                            &pump_tx,
+                            &command_id,
+                            "bracketed_paste",
+                        )]
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
             }
             Event::Resized { cols, rows } => {
                 let mut facts = shared.facts.lock().unwrap();
@@ -324,6 +391,7 @@ mod tests {
                 integration: Integration::None,
                 marker_seen: false,
                 integration_expected: false,
+                open_command: None,
                 genuine_osc133: false,
                 ring_next_offset: 0,
                 cols: 80,

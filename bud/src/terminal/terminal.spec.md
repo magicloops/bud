@@ -35,10 +35,16 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   kernel winsize on reattach and is never resized from ensure config; only
   explicit `terminal_resize` changes a live PTY. The renderer owns geometry.
 - `handle_send`: single gesture `{text?, submit?, key?, await?}`. Dispatch is
-  serialized per session (tokio `Mutex<stem::Session>`); `submit` sends the
-  literal text then a real Enter keypress (bracketed-paste safe). Awaited
+  serialized per session (tokio `Mutex<stem::Session>`); text goes out as an
+  explicit bracketed paste when the app enabled `?2004` (`Session::paste_text`
+  — chat TUIs like codex classify unbracketed burst input as a paste and
+  swallow the submit), and `submit` follows with a 75ms beat + a real Enter
+  keypress (the beat defeats app-side input heuristics; ordering is already
+  guaranteed by the single writer). Awaited
   outcomes (`await: "command" | "settled"`) resolve off the pump's broadcast
-  channel *after* the session lock is released, so slow commands never block
+  channel — settled-awaits ALSO resolve on `prompt_ready` (returning to a
+  shell prompt is maximal settlement; an idle prompt never emits `settled`,
+  so exits from interactive programs would otherwise ride the timeout) — *after* the session lock is released, so slow commands never block
   other sessions/heartbeats (review finding D-H1). A daemon-internal 4h
   safety cap returns `error: "TIMEOUT"`; the service owns real timeout policy.
 - Sentinel fallback (design D6c): submitted `await:"command"` text with no
@@ -111,6 +117,26 @@ are written under `<session dir>/shim/` at ensure.
   codes 0/1 on `/bin/sh`, observe/resize, close kills holder, offset-exact
   reattach (no dup/no gap), two-session non-blocking concurrency (D-H1), and
   zsh/bash shim marker flows (skipped when the shell is absent)
+
+
+## Busy guard (declared-intent enforcement)
+
+`terminal_send` with `text`+`submit`+`await:"command"` is REFUSED with
+`error: "command_in_flight"` (dispatched:false, nothing typed) while the
+session has an OPEN command — `command_started` without a finish, tracked in
+`SessionFacts.open_command` from OSC 133 C/D markers and healed by `A`
+(prompt implies nothing is open). This is the codex-incident fix: an inline
+TUI keeps mode=shell, and typing a "command" would feed the foreground
+program while the await could only resolve when it exits. Integration test:
+`run_refused_while_a_command_is_open` (also proves the guarded text never
+reaches the PTY).
+
+<!-- SPEC:TODO -->
+- bash 3.2 shim: after SIGINT of a foreground child, the test environment
+  observed a settled event but NO `D`/`A` markers on the next prompt (zsh
+  interrupt was validated live). Verify bash-preexec's PROMPT_COMMAND runs
+  post-SIGINT under the `--rcfile` shim and emits markers; until then the
+  busy guard on bash relies on the `A`-heal from the NEXT prompt cycle.
 
 ## TODOs / Technical Debt
 

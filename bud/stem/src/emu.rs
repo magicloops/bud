@@ -26,6 +26,7 @@ use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
+use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 
 use crate::error::Result;
 
@@ -164,6 +165,51 @@ impl Emu {
             .collect()
     }
 
+    /// Visible screen serialized as ANSI: SGR color/attribute runs per cell
+    /// plus a final cursor-position sequence, so a fresh terminal that writes
+    /// this string reproduces the grid faithfully (colors, styles, cursor).
+    /// Rows are separated by CRLF; trailing default-styled blank cells are
+    /// trimmed per row. Used by the client snapshot bootstrap — plain
+    /// `screen_lines` loses presentation, which is glaring when reloading
+    /// into a colorful TUI.
+    pub fn screen_ansi(&self) -> String {
+        let grid = self.term.grid();
+        let mut out = String::with_capacity((self.cols as usize + 8) * self.rows as usize);
+        let mut sgr = SgrState::default();
+        for line in 0..self.rows as i32 {
+            if line > 0 {
+                out.push_str("\r\n");
+            }
+            let row = &grid[Line(line)];
+            // Trim trailing cells that are blank AND default-styled.
+            let mut last = 0usize;
+            for col in 0..self.cols as usize {
+                let cell = &row[Column(col)];
+                if cell.c != ' ' || !cell_is_default_style(cell) || cell.zerowidth().is_some() {
+                    last = col + 1;
+                }
+            }
+            for col in 0..last {
+                let cell = &row[Column(col)];
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                sgr.apply(cell, &mut out);
+                out.push(cell.c);
+                if let Some(zerowidth) = cell.zerowidth() {
+                    out.extend(zerowidth.iter());
+                }
+            }
+        }
+        out.push_str("\x1b[0m");
+        let cursor = self.cursor();
+        out.push_str(&format!("\x1b[{};{}H", cursor.row + 1, cursor.col + 1));
+        out
+    }
+
     /// Up to `n` most recent scrollback lines (oldest first), text only.
     pub fn scrollback_lines(&self, n: usize) -> Vec<String> {
         let take = n.min(self.term.grid().history_size());
@@ -258,6 +304,131 @@ pub struct KeyModes {
     pub application_keypad: bool,
     /// Application enabled bracketed paste (`?2004h`).
     pub bracketed_paste: bool,
+}
+
+/// Tracks the emitted SGR state while serializing a grid row-by-row, emitting
+/// escape sequences only when a cell's presentation differs from the current
+/// state.
+struct SgrState {
+    fg: Option<AnsiColor>,
+    bg: Option<AnsiColor>,
+    flags: Flags,
+}
+
+impl Default for SgrState {
+    fn default() -> Self {
+        Self {
+            fg: None,
+            bg: None,
+            flags: Flags::empty(),
+        }
+    }
+}
+
+fn cell_is_default_style(cell: &Cell) -> bool {
+    matches!(cell.fg, AnsiColor::Named(NamedColor::Foreground))
+        && matches!(cell.bg, AnsiColor::Named(NamedColor::Background))
+        && !cell.flags.intersects(
+            Flags::BOLD
+                | Flags::DIM
+                | Flags::ITALIC
+                | Flags::UNDERLINE
+                | Flags::INVERSE
+                | Flags::STRIKEOUT,
+        )
+}
+
+impl SgrState {
+    fn apply(&mut self, cell: &Cell, out: &mut String) {
+        let style_flags = Flags::BOLD
+            | Flags::DIM
+            | Flags::ITALIC
+            | Flags::UNDERLINE
+            | Flags::INVERSE
+            | Flags::STRIKEOUT;
+        let cell_flags = cell.flags & style_flags;
+        let fg_changed = self.fg != Some(cell.fg);
+        let bg_changed = self.bg != Some(cell.bg);
+        let flags_changed = self.flags != cell_flags;
+        if !fg_changed && !bg_changed && !flags_changed {
+            return;
+        }
+        // Reset then re-emit the full state: simple and always correct
+        // (flag removal has no single-code equivalent for every combo).
+        out.push_str("\x1b[0m");
+        if cell_flags.contains(Flags::BOLD) {
+            out.push_str("\x1b[1m");
+        }
+        if cell_flags.contains(Flags::DIM) {
+            out.push_str("\x1b[2m");
+        }
+        if cell_flags.contains(Flags::ITALIC) {
+            out.push_str("\x1b[3m");
+        }
+        if cell_flags.contains(Flags::UNDERLINE) {
+            out.push_str("\x1b[4m");
+        }
+        if cell_flags.contains(Flags::INVERSE) {
+            out.push_str("\x1b[7m");
+        }
+        if cell_flags.contains(Flags::STRIKEOUT) {
+            out.push_str("\x1b[9m");
+        }
+        push_color(out, cell.fg, true);
+        push_color(out, cell.bg, false);
+        self.fg = Some(cell.fg);
+        self.bg = Some(cell.bg);
+        self.flags = cell_flags;
+    }
+}
+
+fn push_color(out: &mut String, color: AnsiColor, foreground: bool) {
+    match color {
+        AnsiColor::Named(named) => {
+            let code: Option<u8> = match named {
+                NamedColor::Black => Some(0),
+                NamedColor::Red => Some(1),
+                NamedColor::Green => Some(2),
+                NamedColor::Yellow => Some(3),
+                NamedColor::Blue => Some(4),
+                NamedColor::Magenta => Some(5),
+                NamedColor::Cyan => Some(6),
+                NamedColor::White => Some(7),
+                NamedColor::BrightBlack => Some(8),
+                NamedColor::BrightRed => Some(9),
+                NamedColor::BrightGreen => Some(10),
+                NamedColor::BrightYellow => Some(11),
+                NamedColor::BrightBlue => Some(12),
+                NamedColor::BrightMagenta => Some(13),
+                NamedColor::BrightCyan => Some(14),
+                NamedColor::BrightWhite => Some(15),
+                // Foreground/Background defaults: SGR 0 already restored them.
+                _ => None,
+            };
+            if let Some(code) = code {
+                let base = if code < 8 {
+                    if foreground {
+                        30 + code
+                    } else {
+                        40 + code
+                    }
+                } else if foreground {
+                    90 + (code - 8)
+                } else {
+                    100 + (code - 8)
+                };
+                out.push_str(&format!("\x1b[{base}m"));
+            }
+        }
+        AnsiColor::Indexed(index) => {
+            let sel = if foreground { 38 } else { 48 };
+            out.push_str(&format!("\x1b[{sel};5;{index}m"));
+        }
+        AnsiColor::Spec(rgb) => {
+            let sel = if foreground { 38 } else { 48 };
+            out.push_str(&format!("\x1b[{sel};2;{};{};{}m", rgb.r, rgb.g, rgb.b));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -390,5 +561,24 @@ mod tests {
         assert_eq!(emu.screen_lines()[0], "before resize");
         emu.feed(b"\r\nafter");
         assert_eq!(emu.screen_lines()[1], "after");
+    }
+    #[test]
+    fn screen_ansi_roundtrips_colors_and_cursor() {
+        let mut a = Emu::new(30, 5, 100).unwrap();
+        a.feed(b"\x1b[31mred\x1b[0m plain \x1b[1;38;5;42mfancy\x1b[0m\r\nline2\x1b[3;7H");
+        let ansi = a.screen_ansi();
+        // Colors and styles survive serialization...
+        assert!(ansi.contains("\x1b[31m"), "named red missing: {ansi:?}");
+        assert!(
+            ansi.contains("\x1b[38;5;42m"),
+            "indexed color missing: {ansi:?}"
+        );
+        assert!(ansi.contains("\x1b[1m"), "bold missing: {ansi:?}");
+        // ...and feeding it to a FRESH emulator reproduces grid + cursor.
+        let mut b = Emu::new(30, 5, 100).unwrap();
+        b.feed(ansi.as_bytes());
+        assert_eq!(a.screen_lines(), b.screen_lines());
+        let (ca, cb) = (a.cursor(), b.cursor());
+        assert_eq!((ca.row, ca.col), (cb.row, cb.col));
     }
 }

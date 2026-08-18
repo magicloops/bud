@@ -39,7 +39,7 @@ Owns send/observe request orchestration, pending registries, result routing, and
 Proto 0.3 contract:
 - outbound `terminal_send` carries `{ text?, submit?, key?, await? }` only; `wait_for`, `timeout_ms`, `observe_after_ms`, and the one-entry `keys` alias are gone.
 - `await: "command" | "settled"` requests an awaited outcome; omitted `await` resolves on dispatch (transport ack only).
-- the service owns the timeout budget locally: awaited sends use the one-hour `TERMINAL_AWAITED_SEND_TIMEOUT_MS`, dispatch-only sends and observes use `TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS` (30s), and trusted callers may pass an explicit `timeoutMs`.
+- the service owns the timeout budget locally: awaited sends use the two-minute `TERMINAL_AWAITED_SEND_TIMEOUT_MS` (long-running commands surface as actionable still-running results instead of silently pending turns), dispatch-only sends and observes use `TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS` (30s), and trusted callers may pass an explicit `timeoutMs`.
 - outbound `terminal_observe` carries `{ view, lines }` only (default view `screen`).
 - `terminal_send_result` resolves to `{ dispatched, outcome }` where `outcome` mirrors the terminating `terminal_event` (or `null`); `terminal_observe_result` resolves to grid-backed `{ view, output, linesCaptured, changed?, mode?, integration?, altScreen?, cursorRow?, cursorCol?, ringNextOffset? }` — `ringNextOffset` is the stream watermark the daemon's emulator reflected at observe time, used by the snapshot route as the stream-resume cursor.
 - human interrupt sends can reject older pending waits as `interrupted` while excluding the new `ctrl+c` send request, avoiding an orphaned interrupt result.

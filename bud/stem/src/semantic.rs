@@ -45,6 +45,10 @@ pub enum ScanKind {
     AltScreenEnter,
     /// DECRST ?1049l / ?47l / ?1047l.
     AltScreenLeave,
+    /// DECSET/DECRST ?2004 — the application toggled bracketed paste. A
+    /// mid-command ENABLE is a crisp "the child is interactive" signal
+    /// (shells disable ?2004 while a foreground command runs).
+    BracketedPasteSet { enabled: bool },
 }
 
 pub struct Scanner {
@@ -141,16 +145,23 @@ impl vte::Perform for ScanPerform {
         if ignore || intermediates.len() != 1 || intermediates[0] != b'?' {
             return;
         }
-        let kind = match action {
-            'h' => ScanKind::AltScreenEnter,
-            'l' => ScanKind::AltScreenLeave,
+        let enabled = match action {
+            'h' => true,
+            'l' => false,
             _ => return,
+        };
+        let kind = if enabled {
+            ScanKind::AltScreenEnter
+        } else {
+            ScanKind::AltScreenLeave
         };
         // Dispatch fires on the final byte → after-terminator = pos + 1.
         let at = self.pos + 1;
         for param in params.iter() {
-            if matches!(param.first().copied(), Some(47 | 1047 | 1049)) {
-                self.push(at, kind.clone());
+            match param.first().copied() {
+                Some(47 | 1047 | 1049) => self.push(at, kind.clone()),
+                Some(2004) => self.push(at, ScanKind::BracketedPasteSet { enabled }),
+                _ => {}
             }
         }
     }
@@ -336,13 +347,26 @@ mod tests {
         let events = scan_all(b"\x1b[?1049;2004h");
         assert_eq!(
             events,
+            vec![
+                ScanEvent {
+                    at_offset: 13,
+                    kind: ScanKind::AltScreenEnter
+                },
+                ScanEvent {
+                    at_offset: 13,
+                    kind: ScanKind::BracketedPasteSet { enabled: true }
+                },
+            ]
+        );
+        // Bracketed paste toggles are reported on their own (mid-command
+        // enable = interactivity signal); other private modes stay silent.
+        assert_eq!(
+            scan_all(b"\x1b[?2004h\x1b[?1h\x1b[?25l"),
             vec![ScanEvent {
-                at_offset: 13,
-                kind: ScanKind::AltScreenEnter
+                at_offset: 8,
+                kind: ScanKind::BracketedPasteSet { enabled: true }
             }]
         );
-        // Non-alt-screen private modes alone: nothing.
-        assert!(scan_all(b"\x1b[?2004h\x1b[?1h\x1b[?25l").is_empty());
         // Non-private CSI with the same numbers: nothing.
         assert!(scan_all(b"\x1b[1049h").is_empty());
     }

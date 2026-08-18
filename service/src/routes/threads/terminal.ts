@@ -175,6 +175,10 @@ export async function registerThreadTerminalRoutes(
       alt_screen: screen.altScreen ?? false,
       history_text: history.output,
       screen_text: screen.output,
+      // ANSI-serialized screen (SGR runs + cursor position) when the daemon
+      // provides it: rendering this instead of screen_text preserves
+      // colors/styles/cursor — reloading into a colorful TUI looks right.
+      ...(screen.outputAnsi !== undefined ? { screen_ansi: screen.outputAnsi } : {}),
       cols: session.cols,
       rows: session.rows,
       // Older daemons may omit ring_next_offset on observe results; fall back

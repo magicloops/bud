@@ -2,6 +2,18 @@
 
 Agent orchestration layer for AI-assisted terminal interactions using the LLM provider abstraction.
 
+## Terminal busy guard and open-command facts
+
+`terminal.run` is refused while the session has an open command (started,
+unfinished): the executor pre-checks `getLatestCommandForSession` and returns
+`status: "terminal_busy"` with guidance (send/observe/ctrl+c) WITHOUT
+dispatching; the daemon enforces the same rule authoritatively
+(`command_in_flight`, mapped to the same result). Every terminal tool result
+carries `open_command` (`{command_id, running_ms}` | null) — the fact that
+distinguishes an idle prompt from an inline TUI (both report mode "shell").
+The awaited-send budget is 2 minutes: long commands surface as still-running
+results (with recovered `command_id`) instead of silently pending turns.
+
 ## Purpose
 
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:

@@ -399,6 +399,11 @@ pub struct TerminalObservation {
     /// stream resume: subscribe from this offset and nothing in the snapshot
     /// is replayed, nothing after it is missed.
     pub ring_next_offset: u64,
+    /// `view: "screen"` only: the grid serialized as ANSI (SGR runs + final
+    /// cursor position), base64. Rendering this reproduces colors/styles/
+    /// cursor faithfully — the plain `output` text loses presentation, which
+    /// is glaring when a client bootstraps into a colorful TUI.
+    pub output_ansi_base64: Option<String>,
 }
 
 /// `terminal_observe_result` (§6.7.5).
@@ -426,6 +431,9 @@ pub fn terminal_observe_result_frame(
             "ring_next_offset".into(),
             Value::Number(Number::from(observation.ring_next_offset)),
         );
+        if let Some(output_ansi) = observation.output_ansi_base64 {
+            frame.insert("output_ansi".into(), Value::String(output_ansi));
+        }
         frame.insert(
             "cursor_row".into(),
             Value::Number(Number::from(observation.cursor_row)),
@@ -760,6 +768,7 @@ mod tests {
                 cursor_row: 3,
                 cursor_col: 11,
                 ring_next_offset: 84213,
+                output_ansi_base64: Some("XGUxYlszMW0=".into()),
             }),
             None,
         );

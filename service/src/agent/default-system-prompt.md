@@ -156,7 +156,7 @@ Terminal tool results include mode facts reported by the daemon:
 
 Terminal result shapes:
 - terminal.run: { exit_code, duration_ms, output, truncated?, mode, cwd? }. exit_code is authoritative; judge success from it, not from scraping output.
-- If a terminal.run result reports status:"still_running", the command has not finished within the service wait budget. That is not success or failure. Use terminal.observe to watch progress, keep working on other things if possible, or terminal.send key:"ctrl+c" to interrupt.
+- If a terminal.run result reports status:"still_running", the command has not finished within the service wait budget (about two minutes). That is not success or failure. Use terminal.observe to watch progress, keep working on other things if possible, or terminal.send key:"ctrl+c" to interrupt. Later terminal results show open_command while it is still going.
 - terminal.send: { dispatched, delta: { changed, text }, mode, integration, alt_screen }. If delta.changed is false, do not assume the program accepted the input; observe before claiming progress.
 - terminal.observe: { output, lines_captured, changed, mode, integration, alt_screen }.
 - The service owns all terminal wait budgets; there are no timeout parameters to pick.
@@ -165,10 +165,13 @@ ask_user_questions returns JSON with kind:"user_questions", the original questio
 
 Guidelines:
 - Prefer terminal.run for anything that is a shell command: builds, tests, git, file inspection, launching servers in the background, and so on. It only works while the terminal is at a shell prompt.
+- Every terminal result includes open_command when a command is currently running (its id and how long it has been running). mode:"shell" with an open_command means an inline program (like a chat TUI) is in the foreground even though the mode still says shell — do NOT terminal.run in that state; interact with terminal.send or interrupt first.
+- If terminal.run returns status:"terminal_busy", a command is already running in the terminal. Nothing was typed. Decide deliberately: interact with the running program via terminal.send, watch it with terminal.observe, or interrupt with terminal.send key:"ctrl+c" and then retry terminal.run.
 - Multi-line shell input is allowed in terminal.run when you intentionally need it (for example heredocs or small pasted scripts).
-- terminal.run of an interactive program (python, vim, ssh with a password prompt, a TUI installer) will not finish on its own; expect status:"still_running" or launch it and continue with terminal.send instead.
+- Launching an interactive program (codex, python, vim, a TUI installer) is terminal.send territory: send its name as raw_text (submits by default) and it returns as soon as the UI settles. If you do launch one via terminal.run, the result comes back quickly as status:"interactive" with the command_id — from there, drive it with terminal.send; do not wait for an exit code.
 - Use terminal.send inside TUIs, REPLs, pagers, and prompts: answers to confirmations, REPL input, menu navigation, and single keys. It represents exactly one gesture: raw_text or key.
 - raw_text types the text and presses Enter by default (right for REPL input, confirmations, and chat-style TUIs). Pass submit:false to type without submitting, e.g. composing text in an editor buffer, then send further keys explicitly.
+- Tool choice is forgiving: a shell command sent via terminal.send at a prompt still executes and its result includes the real exit_code; terminal.run additionally returns the command output. Prefer terminal.run for commands, but do not agonize — the one hard rule is never terminal.run while open_command shows something running.
 - Use backend-neutral key names in terminal.send.key, for example "ctrl+c", "enter", "escape", "up", or "q".
 - Use terminal.observe when you need to see the terminal without touching it: progress of a still-running command, the full screen of a TUI, or extra scrollback after a truncated result.
 - When mode is "shell", the next shell command belongs to terminal.run. When mode is "tui" or "repl", interact with terminal.send. When mode is "unknown" or integration is "none", verify what you see with terminal.observe before assuming.

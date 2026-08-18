@@ -133,6 +133,20 @@ impl Session {
         self.client.write(&bytes).await
     }
 
+    /// Write literal text as an explicit PASTE when the application has
+    /// bracketed paste enabled (single-line included). Programmatic text IS a
+    /// paste: chat TUIs (codex) use burst/paste heuristics, and unbracketed
+    /// burst text can be misclassified, swallowing a following Enter's
+    /// submit semantics. Falls back to plain write when the app never enabled
+    /// bracketed paste.
+    pub async fn paste_text(&mut self, text: &str) -> Result<()> {
+        let bytes = {
+            let inner = self.inner.lock().unwrap();
+            crate::keys::encode_paste(text, inner.emu.key_modes(), true)
+        };
+        self.client.write(&bytes).await
+    }
+
     /// Send one named key (`enter`, `ctrl+c`, `up`, …), honoring terminal modes.
     pub async fn send_key(&mut self, key_name: &str) -> Result<()> {
         let key = crate::keys::parse_key_name(key_name)
@@ -157,6 +171,12 @@ impl Session {
 
     pub fn screen_lines(&self) -> Vec<String> {
         self.inner.lock().unwrap().emu.screen_lines()
+    }
+
+    /// Visible screen as ANSI (SGR runs + final cursor position) — see
+    /// [`crate::emu::Emu::screen_ansi`].
+    pub fn screen_ansi(&self) -> String {
+        self.inner.lock().unwrap().emu.screen_ansi()
     }
 
     pub fn scrollback_lines(&self, n: usize) -> Vec<String> {
@@ -288,6 +308,11 @@ fn process_chunk(
                 }
             }
             ScanKind::AltScreenEnter | ScanKind::AltScreenLeave => {}
+            ScanKind::BracketedPasteSet { enabled } => {
+                if emit {
+                    out.push(Event::BracketedPasteChanged { enabled });
+                }
+            }
         }
     }
 

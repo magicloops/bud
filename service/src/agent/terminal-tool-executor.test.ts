@@ -165,15 +165,22 @@ test("terminal.run service timeout reports still-running, never a fabricated fai
 
 test("terminal.run still-running report carries the dispatched command_id from the command store", async () => {
   const lookups: string[] = [];
+  let dispatched = false;
   const terminalSessionManager = {
     getSessionContext() {
       return { mode: "shell", integration: "osc133", cwd: "/repo" };
     },
     async sendInteraction() {
+      dispatched = true;
       throw new Error("send_timeout");
     },
     async getLatestCommandForSession(sessionId: string) {
       lookups.push(sessionId);
+      // Real ordering: the pre-dispatch busy check sees NO open command (the
+      // row only exists once the dispatched command's started event lands).
+      if (!dispatched) {
+        return null;
+      }
       return {
         commandId: "cmd_running",
         terminalSessionId: sessionId,
@@ -191,7 +198,8 @@ test("terminal.run still-running report carries the dispatched command_id from t
     callId: "call_run_timeout_cmd_id",
   });
 
-  assert.deepEqual(lookups, ["sess_test"]);
+  // Pre-check + still-running command_id recovery + openCommand fact.
+  assert.equal(lookups.length >= 2, true);
   assert.equal(execution.result.status, "still_running");
   assert.equal(execution.result.commandId, "cmd_running");
   assert.equal(execution.payload.command_id, "cmd_running");
@@ -660,4 +668,162 @@ test("bud disconnect during terminal.send returns a retryable structured result"
     execution.summary,
     "The Bud disconnected before terminal input could be confirmed.",
   );
+});
+
+test("terminal.run is refused with terminal_busy while a command is open (pre-check, nothing dispatched)", async () => {
+  let dispatched = false;
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      dispatched = true;
+      return { dispatched: true, outcome: null };
+    },
+    async getLatestCommandForSession(sessionId: string) {
+      // An inline TUI (codex) launched earlier: open command, mode still shell.
+      return {
+        commandId: "cmd_codex",
+        terminalSessionId: sessionId,
+        commandStartedAt: new Date(Date.now() - 90_000),
+        commandFinishedAt: null,
+        exitCode: null,
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.run",
+    command: "ls -t debug/*.md | head -5",
+    callId: "call_busy_guard",
+  });
+
+  assert.equal(dispatched, false, "guarded run must never touch the PTY");
+  assert.equal(execution.result.status, "terminal_busy");
+  assert.equal(execution.result.commandId, "cmd_codex");
+  const openCommand = execution.payload.open_command as { command_id: string; running_ms: number };
+  assert.equal(openCommand.command_id, "cmd_codex");
+  assert.equal(openCommand.running_ms >= 90_000, true);
+  assert.match(String(execution.payload.note), /terminal\.send/);
+  assert.match(String(execution.payload.note), /ctrl\+c/);
+});
+
+test("daemon command_in_flight errors map to the same terminal_busy result (backstop)", async () => {
+  let calls = 0;
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      throw new Error("command_in_flight");
+    },
+    async getLatestCommandForSession(sessionId: string) {
+      calls += 1;
+      // Pre-check races: the service store has not seen the started event yet,
+      // but the daemon's authoritative facts refuse the dispatch.
+      if (calls === 1) {
+        return null;
+      }
+      return {
+        commandId: "cmd_late",
+        terminalSessionId: sessionId,
+        commandStartedAt: new Date(Date.now() - 5_000),
+        commandFinishedAt: null,
+        exitCode: null,
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.run",
+    command: "echo hi",
+    callId: "call_busy_backstop",
+  });
+
+  assert.equal(execution.result.status, "terminal_busy");
+  assert.equal(execution.result.commandId, "cmd_late");
+});
+
+test("terminal.run resolving with interactive_started becomes a normal 'interactive' result", async () => {
+  let dispatchedInteractive = false;
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      dispatchedInteractive = true;
+      return {
+        dispatched: true,
+        outcome: {
+          event: "interactive_started",
+          data: { command_id: "cmd_codex", signal: "bracketed_paste" },
+        },
+      };
+    },
+    async getLatestCommandForSession(sessionId: string) {
+      // Real ordering: the open command row only exists post-dispatch.
+      if (!dispatchedInteractive) {
+        return null;
+      }
+      return {
+        commandId: "cmd_codex",
+        terminalSessionId: sessionId,
+        commandStartedAt: new Date(Date.now() - 500),
+        commandFinishedAt: null,
+        exitCode: null,
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.run",
+    command: "codex",
+    callId: "call_interactive",
+  });
+
+  assert.equal(execution.result.status, "interactive");
+  assert.equal(execution.result.commandId, "cmd_codex");
+  assert.equal(execution.result.error, undefined);
+  assert.match(String(execution.payload.note), /terminal\.send/);
+  const openCommand = execution.payload.open_command as { command_id: string };
+  assert.equal(openCommand.command_id, "cmd_codex");
+});
+
+test("terminal.send of a shell command at a prompt carries the real exit code (substitutability)", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async sendInteraction() {
+      // Settled-awaits accept command_finished: typing a command via
+      // terminal.send still produces run-quality facts.
+      return {
+        dispatched: true,
+        outcome: {
+          event: "command_finished",
+          data: { command_id: "cmd_send_ls", exit_code: 1, duration_ms: 40 },
+        },
+      };
+    },
+    async observeTerminal() {
+      return { view: "delta", output: "ls: nope", linesCaptured: 1, changed: true };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    rawText: "ls /missing",
+    callId: "call_send_command",
+  });
+
+  assert.equal(execution.result.interactionExitCode, 1);
+  assert.equal(execution.payload.exit_code, 1);
+  assert.equal(execution.result.dispatched, true);
 });

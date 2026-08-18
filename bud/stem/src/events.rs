@@ -80,6 +80,12 @@ pub enum Event {
         signal: Option<i32>,
     },
 
+    /// The application toggled bracketed paste (DECSET/DECRST ?2004). A
+    /// mid-command enable is a crisp interactivity signal: shells keep ?2004
+    /// off while a foreground command runs, so an enable means the CHILD is
+    /// an interactive program.
+    BracketedPasteChanged { enabled: bool },
+
     /// PTY was resized (echo of a resize request, or holder-side observation).
     Resized { cols: u16, rows: u16 },
 }

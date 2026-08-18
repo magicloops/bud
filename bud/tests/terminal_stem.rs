@@ -710,3 +710,287 @@ async fn zsh_shim_emits_osc133_markers() {
 async fn bash_shim_emits_osc133_markers() {
     shell_integration_markers_flow("/bin/bash", "sess-bash").await;
 }
+
+#[tokio::test]
+async fn run_refused_while_a_command_is_open() {
+    // The codex incident (§A follow-up): an inline TUI keeps the session in
+    // mode=shell with an OPEN command (started, no finish). A terminal.run
+    // (text+submit+await:command) must be refused — typing would feed the
+    // foreground program and the await could only resolve when it exits.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present on this machine");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-busy-guard";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |frame| {
+        is_type(frame, "terminal_event")
+            && frame.get("event").and_then(Value::as_str) == Some("prompt_ready")
+    })
+    .await;
+
+    // Open a command WITHOUT awaiting (mirrors a human launching an inline
+    // TUI through the browser input path). Short sleep: the guard must
+    // refuse DURING it and naturally unblock after it finishes.
+    manager
+        .handle_send(send_frame(session_id, "req-long", "sleep 2", None))
+        .await
+        .unwrap();
+    wait_frame(
+        &mut rx,
+        Duration::from_secs(15),
+        "command started",
+        |frame| {
+            is_type(frame, "terminal_event")
+                && frame.get("event").and_then(Value::as_str) == Some("command_started")
+        },
+    )
+    .await;
+
+    // A run-style send must now be refused with the typed error, without
+    // typing anything into the PTY.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-guarded",
+            "echo should-not-run",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(10), "guard result", |frame| {
+        is_type(frame, "terminal_send_result")
+            && frame.get("request_id").and_then(Value::as_str) == Some("req-guarded")
+    })
+    .await;
+    assert_eq!(
+        result.get("error").and_then(Value::as_str),
+        Some("command_in_flight"),
+        "expected the busy guard: {result:?}"
+    );
+    assert_eq!(
+        result.get("dispatched").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    // The sleep finishes on its own; the guard clears and runs work again.
+    wait_frame(
+        &mut rx,
+        Duration::from_secs(15),
+        "open command finished",
+        |frame| {
+            is_type(frame, "terminal_event")
+                && frame.get("event").and_then(Value::as_str) == Some("command_finished")
+        },
+    )
+    .await;
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-after",
+            "true",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    let after = wait_frame(
+        &mut rx,
+        Duration::from_secs(15),
+        "post-finish run",
+        |frame| {
+            is_type(frame, "terminal_send_result")
+                && frame.get("request_id").and_then(Value::as_str) == Some("req-after")
+        },
+    )
+    .await;
+    assert!(after.get("error").is_none() || after["error"].is_null());
+    // The guarded text never reached the PTY.
+    let recent = collect_frames(&mut rx, Duration::from_millis(600)).await;
+    for frame in &recent {
+        if is_type(frame, "terminal_output") {
+            assert!(
+                !decoded_output(frame).contains("should-not-run"),
+                "guarded text leaked into the PTY"
+            );
+        }
+    }
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn settled_await_resolves_on_prompt_return() {
+    // A send that carries the terminal back to a shell prompt (e.g. `/quit`
+    // exiting an inline TUI) must resolve its settled-await on prompt_ready —
+    // an idle prompt never emits `settled` by design, so this transition
+    // previously rode the full service timeout budget.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present on this machine");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-settle-prompt";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |frame| {
+        is_type(frame, "terminal_event")
+            && frame.get("event").and_then(Value::as_str) == Some("prompt_ready")
+    })
+    .await;
+
+    // A settled-await whose gesture ends back at the prompt.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-settle",
+            "true",
+            Some(TerminalSendAwait::Settled),
+        ))
+        .await
+        .unwrap();
+    let result = wait_frame(
+        &mut rx,
+        Duration::from_secs(10),
+        "settled result",
+        |frame| {
+            is_type(frame, "terminal_send_result")
+                && frame.get("request_id").and_then(Value::as_str) == Some("req-settle")
+        },
+    )
+    .await;
+    let outcome = result.get("outcome").cloned().unwrap_or(Value::Null);
+    let outcome_event = outcome.get("event").and_then(Value::as_str);
+    // A shell command sent via settled-await resolves on its completion (the
+    // richest transition — send/run substitutability for weaker models);
+    // prompt_ready/settled remain valid for gestures with no command
+    // lifecycle.
+    assert!(
+        matches!(
+            outcome_event,
+            Some("command_finished") | Some("prompt_ready") | Some("settled")
+        ),
+        "settled await must resolve promptly at the prompt: {result:?}"
+    );
+    if outcome_event == Some("command_finished") {
+        assert_eq!(
+            outcome
+                .get("data")
+                .and_then(|d| d.get("exit_code"))
+                .and_then(Value::as_i64),
+            Some(0),
+            "exit code must ride along: {result:?}"
+        );
+    }
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn command_await_resolves_early_when_command_turns_interactive() {
+    // `terminal.run codex`: the command never finishes on its own. A
+    // mid-command bracketed-paste enable (or alt-screen entry) is crisp
+    // evidence the child is interactive — the command-await must resolve
+    // with `interactive_started` instead of riding the timeout budget.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present on this machine");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-interactive";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |frame| {
+        is_type(frame, "terminal_event")
+            && frame.get("event").and_then(Value::as_str) == Some("prompt_ready")
+    })
+    .await;
+
+    // An inline-TUI stand-in: enables bracketed paste, then sits interactive.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-tui-launch",
+            "printf '\\033[?2004h'; sleep 300",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    let result = wait_frame(
+        &mut rx,
+        Duration::from_secs(10),
+        "interactive result",
+        |frame| {
+            is_type(frame, "terminal_send_result")
+                && frame.get("request_id").and_then(Value::as_str) == Some("req-tui-launch")
+        },
+    )
+    .await;
+    let outcome = result.get("outcome").cloned().unwrap_or(Value::Null);
+    assert_eq!(
+        outcome.get("event").and_then(Value::as_str),
+        Some("interactive_started"),
+        "expected early interactive resolution: {result:?}"
+    );
+    assert_eq!(
+        outcome
+            .get("data")
+            .and_then(|d| d.get("signal"))
+            .and_then(Value::as_str),
+        Some("bracketed_paste")
+    );
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}

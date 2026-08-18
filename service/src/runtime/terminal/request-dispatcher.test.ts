@@ -340,11 +340,14 @@ test("observe result threads the ring_next_offset stream watermark through", asy
     output: Buffer.from("screen text", "utf-8").toString("base64"),
     linesCaptured: 10,
     ringNextOffset: 4096,
+    outputAnsi: Buffer.from("\u001b[31mred\u001b[0m\u001b[2;3H", "utf-8").toString("base64"),
     error: null,
   });
 
   const result = await observePromise;
   assert.equal(result.ringNextOffset, 4096);
+  // ANSI screen decodes from base64 like output (colors + cursor survive).
+  assert.equal(result.outputAnsi, "\u001b[31mred\u001b[0m\u001b[2;3H");
 
   // Omitted watermark stays omitted (older daemons).
   const secondPromise = dispatcher.observeTerminal("sess_test", { view: "history", lines: 100 });

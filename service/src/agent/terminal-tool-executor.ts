@@ -35,6 +35,17 @@ type TerminalSendGestureResolution =
       error: string;
     };
 
+const TERMINAL_BUSY_NOTE =
+  "A command is already running in this terminal (see open_command), so a shell command cannot " +
+  "execute — the foreground program would receive the text as input instead. Use terminal.send to " +
+  "interact with the running program, terminal.observe to inspect the screen, or terminal.send with " +
+  'key "ctrl+c" to interrupt it, then retry terminal.run.';
+
+const INTERACTIVE_STARTED_NOTE =
+  "The command launched an interactive program (it will not finish on its own). Drive it with " +
+  "terminal.send (raw_text submits by default), inspect it with terminal.observe, and exit it " +
+  '(its own quit command, or terminal.send key "ctrl+c") before running further shell commands.';
+
 const STILL_RUNNING_NOTE =
   "The command has not finished within the service wait budget and is still running in the terminal. " +
   "Do not treat this as success or failure. Use terminal.observe to check progress, or terminal.send " +
@@ -108,6 +119,16 @@ export class TerminalToolExecutor {
       ...(result.mode !== undefined ? { mode: result.mode } : {}),
       ...(result.integration !== undefined ? { integration: result.integration } : {}),
       ...(result.altScreen !== undefined ? { alt_screen: result.altScreen } : {}),
+      ...(result.openCommand !== undefined
+        ? {
+            open_command: result.openCommand
+              ? {
+                  command_id: result.openCommand.commandId,
+                  running_ms: result.openCommand.runningMs,
+                }
+              : null,
+          }
+        : {}),
       ...(result.cwd ? { cwd: result.cwd } : {}),
       ...(result.note ? { note: result.note } : {}),
       ...(result.error !== undefined
@@ -140,6 +161,9 @@ export class TerminalToolExecutor {
           ...base,
           dispatched: result.dispatched === true,
           ...(result.rawTextSent !== undefined ? { raw_text_sent: result.rawTextSent } : {}),
+          ...(result.interactionExitCode !== undefined
+            ? { exit_code: result.interactionExitCode }
+            : {}),
           ...(result.submitted !== undefined ? { submitted: result.submitted } : {}),
           ...(result.keySent !== undefined ? { key_sent: result.keySent } : {}),
           delta: serializeTerminalDelta(result.delta),
@@ -201,6 +225,16 @@ export class TerminalToolExecutor {
 
     this.debug("terminal.run", { sessionId, command: directive.command });
 
+    // Declared-intent guard (service half; the daemon enforces the same rule
+    // authoritatively with `command_in_flight`): terminal.run promises shell
+    // execution at a prompt. While a command is open, typing would feed the
+    // foreground program (e.g. an inline TUI like codex) — refuse with
+    // guidance instead of dispatching.
+    const openCommand = await this.resolveOpenCommand(sessionId);
+    if (openCommand) {
+      return this.buildTerminalBusyResult(sessionId, openCommand);
+    }
+
     let sendResult: Awaited<ReturnType<TerminalSessionManager["sendInteraction"]>>;
     try {
       sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
@@ -225,6 +259,13 @@ export class TerminalToolExecutor {
         // report, never a fabricated failure (docs/proto.md §6.7.8).
         return this.buildStillRunningResult(sessionId);
       }
+      if (err instanceof Error && err.message.includes("command_in_flight")) {
+        // Daemon-side authoritative busy guard (races the pre-check).
+        return this.buildTerminalBusyResult(
+          sessionId,
+          await this.resolveOpenCommand(sessionId)
+        );
+      }
       const transportError = this.normalizeTerminalTransportError(directive, err);
       if (transportError) {
         return this.buildTransportFailureResult(directive, transportError);
@@ -244,6 +285,20 @@ export class TerminalToolExecutor {
     }
 
     const outcome = sendResult.outcome;
+    if (outcome && outcome.event === "interactive_started") {
+      // The daemon detected (alt-screen entry / mid-command bracketed-paste
+      // enable) that the command launched an interactive program and resolved
+      // the await early — a normal, actionable result, not a failure.
+      const data = (outcome.data ?? {}) as { command_id?: string; signal?: string };
+      return {
+        kind: "command",
+        status: "interactive",
+        commandId: typeof data.command_id === "string" ? data.command_id : null,
+        note: INTERACTIVE_STARTED_NOTE,
+        ...this.sessionContextFacts(sessionId),
+        openCommand: await this.resolveOpenCommand(sessionId),
+      };
+    }
     if (!outcome || outcome.event !== "command_finished") {
       // Defensive: await:"command" should terminate with command_finished.
       // Anything else means the daemon could not track the command lifecycle.
@@ -315,6 +370,38 @@ export class TerminalToolExecutor {
     return result;
   }
 
+  /** The session's open command (started, unfinished), or null. */
+  private async resolveOpenCommand(
+    sessionId: string
+  ): Promise<{ commandId: string; runningMs: number } | null> {
+    try {
+      const latest = await this.terminalSessionManager.getLatestCommandForSession(sessionId);
+      if (latest && latest.commandFinishedAt === null) {
+        return {
+          commandId: latest.commandId,
+          runningMs: Math.max(0, Date.now() - latest.commandStartedAt.getTime()),
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async buildTerminalBusyResult(
+    sessionId: string,
+    openCommand: { commandId: string; runningMs: number } | null
+  ): Promise<TerminalCallResult> {
+    return {
+      kind: "command",
+      status: "terminal_busy",
+      commandId: openCommand?.commandId ?? null,
+      note: TERMINAL_BUSY_NOTE,
+      ...this.sessionContextFacts(sessionId),
+      openCommand,
+    };
+  }
+
   private async buildStillRunningResult(sessionId: string): Promise<TerminalCallResult> {
     return {
       kind: "command",
@@ -322,6 +409,7 @@ export class TerminalToolExecutor {
       commandId: await this.resolveLatestRunningCommandId(sessionId),
       note: STILL_RUNNING_NOTE,
       ...this.sessionContextFacts(sessionId),
+      openCommand: await this.resolveOpenCommand(sessionId),
     };
   }
 
@@ -407,6 +495,20 @@ export class TerminalToolExecutor {
       throw err;
     }
 
+    // A settled-await that resolved via command_finished carries the real
+    // exit code (a shell command typed through terminal.send at a prompt) —
+    // surface it so the wrong-tool path still yields run-quality facts.
+    const interactionOutcome = sendResult.outcome as
+      | { event?: string; data?: { exit_code?: number } }
+      | null
+      | undefined;
+    const interactionExitCode =
+      interactionOutcome?.event === "command_finished"
+        ? (typeof interactionOutcome.data?.exit_code === "number"
+            ? interactionOutcome.data.exit_code
+            : null)
+        : undefined;
+
     // Send-plus-proof: after the settled outcome, capture the screen delta so
     // the model sees what the input actually changed.
     let delta: TerminalCallResult["delta"] = null;
@@ -437,11 +539,13 @@ export class TerminalToolExecutor {
       kind: "interaction_ack",
       dispatched: sendResult.dispatched,
       ...this.gestureSentFacts(gesture, sendResult.dispatched),
+      ...(interactionExitCode !== undefined ? { interactionExitCode } : {}),
       delta,
       ...(delta ? { changed: delta.changed } : {}),
       ...(note ? { note } : {}),
       ...this.sessionContextFacts(sessionId),
       ...observeFacts,
+      openCommand: await this.resolveOpenCommand(sessionId),
     };
   }
 
@@ -527,6 +631,7 @@ export class TerminalToolExecutor {
       ...(capture.mode !== undefined ? { mode: capture.mode } : {}),
       ...(capture.integration !== undefined ? { integration: capture.integration } : {}),
       ...(capture.altScreen !== undefined ? { altScreen: capture.altScreen } : {}),
+      openCommand: await this.resolveOpenCommand(sessionId),
     };
   }
 

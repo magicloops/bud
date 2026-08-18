@@ -49,7 +49,11 @@ type SendDebugState = {
  * proto 0.3 removed `timeout_ms` from the wire, so the local pending-request
  * timer is the only budget.
  */
-export const TERMINAL_AWAITED_SEND_TIMEOUT_MS = 60 * 60 * 1000;
+// Awaited-send budget: long enough for ordinary commands, short enough that a
+// genuinely long-running command surfaces as an actionable still-running
+// result (with command_id + observe guidance) instead of a silently pending
+// agent turn — the §A codex incident hung a turn for the old one-hour budget.
+export const TERMINAL_AWAITED_SEND_TIMEOUT_MS = 2 * 60 * 1000;
 export const TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS = 30 * 1000;
 
 export function resolveTerminalSendTimeout(
@@ -87,6 +91,7 @@ export type ObserveResult = {
    * terminal SSE stream from exactly this offset without duplication.
    */
   ringNextOffset?: number;
+  outputAnsi?: string;
 };
 
 export type ObserveResponsePayload = {
@@ -101,6 +106,7 @@ export type ObserveResponsePayload = {
   cursorRow?: number;
   cursorCol?: number;
   ringNextOffset?: number;
+  outputAnsi?: string;
   error: string | null;
 };
 
@@ -508,6 +514,9 @@ export class TerminalRequestDispatcher {
       ...(typeof payload.cursorRow === "number" ? { cursorRow: payload.cursorRow } : {}),
       ...(typeof payload.cursorCol === "number" ? { cursorCol: payload.cursorCol } : {}),
       ...(typeof payload.ringNextOffset === "number" ? { ringNextOffset: payload.ringNextOffset } : {}),
+      ...(typeof payload.outputAnsi === "string"
+        ? { outputAnsi: Buffer.from(payload.outputAnsi, "base64").toString("utf-8") }
+        : {}),
     });
   }
 

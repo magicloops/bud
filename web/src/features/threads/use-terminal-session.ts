@@ -607,6 +607,7 @@ export function useTerminalSession({
         alt_screen?: boolean
         history_text?: string
         screen_text?: string
+        screen_ansi?: string
         cols?: number
         rows?: number
         ring_next_offset?: number
@@ -630,6 +631,7 @@ export function useTerminalSession({
       const text = buildTerminalSnapshotText(
         body.history_text ?? '',
         body.screen_text ?? '',
+        body.screen_ansi,
       )
       if (text) {
         term.write(text)

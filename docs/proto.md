@@ -675,7 +675,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - Authorized, thread-scoped SSE stream
 - Carries live terminal output/status/typed terminal events plus Bud online/offline notices for the owning thread
 - Reconnect resume: the cursor is a byte offset (see §7.2/§7.3), supplied via `?from_offset=<n>` on first connects (browsers cannot set the header then) or `Last-Event-ID` on reconnects; when both are present the HIGHER cursor wins (native EventSource reconnects reuse the URL's stale query param while sending a fresher header). The server replays durably stored output from the cursor before live forwarding on one ordered stream
-- Snapshot bootstrap: `GET /api/threads/:thread_id/terminal/snapshot?lines=<n>` returns `{ session_id, mode, integration, alt_screen, history_text, screen_text, cols, rows, ring_next_offset }` — emulator-backed scrollback lines + visible grid; render it, then open the stream with `from_offset=ring_next_offset` for a duplication-free, gap-free handoff. Bulk byte-range backfill remains available via `GET /api/threads/:thread_id/terminal/history`
+- Snapshot bootstrap: `GET /api/threads/:thread_id/terminal/snapshot?lines=<n>` returns `{ session_id, mode, integration, alt_screen, history_text, screen_text, screen_ansi?, cols, rows, ring_next_offset }` (prefer `screen_ansi` — ANSI-serialized grid with colors and cursor) — emulator-backed scrollback lines + visible grid; render it, then open the stream with `from_offset=ring_next_offset` for a duplication-free, gap-free handoff. Bulk byte-range backfill remains available via `GET /api/threads/:thread_id/terminal/history`
 
 ### 3.4.1 Terminal Interrupt
 
@@ -1506,18 +1506,34 @@ Request families: `terminal_ensure`, `terminal_resize`, `terminal_send`,
 Rules:
 - exactly one of `text` (with optional `submit`) or one semantic `key`
   (backend-neutral names: `ctrl+c`, `enter`, `escape`, `up`, `shift+tab`, …)
-- `submit: true` dispatches the literal text followed by a real Enter
-  *keypress* (not an appended newline — under bracketed paste a trailing
-  newline would be inserted, not executed)
-- `await` ∈ `"command"` (resolve on that command's `command_finished`,
-  including via the sentinel fallback below) | `"settled"` (resolve on the next
-  damage-quiet `settled` event) | absent (resolve on dispatch). The service
+- `submit: true` dispatches the text as an explicit bracketed paste when the
+  application has enabled `?2004` (programmatic text IS a paste — chat TUIs
+  use burst/paste heuristics that can otherwise swallow the submit), then a
+  short beat, then a real Enter *keypress* (not an appended newline — under
+  bracketed paste a trailing newline would be inserted, not executed)
+- `await` ∈ `"command"` (resolve on that command's `command_finished` —
+  including via the sentinel fallback below — or EARLY with an
+  `interactive_started` outcome when the command demonstrably launched an
+  interactive program, so `terminal.run codex` returns in ~1s instead of
+  riding the timeout) | `"settled"` (resolve on the next
+  damage-quiet `settled` event, on `prompt_ready` — returning to a shell
+  prompt is maximal settlement, covering gestures that exit an interactive
+  program — or on `command_finished` when the gesture completed a shell
+  command, carrying its exit code: send/run substitutability for weaker
+  models) | absent (resolve on dispatch). The service
   owns timeout policy; the daemon holds a 4h internal safety cap that resolves
   with `error: "TIMEOUT"`.
 - **Sentinel fallback**: when the session shows no live OSC 133 integration and
   the gesture is `text`+`submit`+`await:"command"`, the daemon appends an
   invisible exit-code trailer (`; printf '\033]133;D;%s\a' "$?"`) so
   `command_finished` still carries a real exit code.
+- **Busy guard**: `text`+`submit`+`await:"command"` while a command is already
+  OPEN (a `command_started` with no finish — e.g. an inline TUI running under
+  the shell) is refused with `terminal_send_result` `error:
+  "command_in_flight"` and `dispatched: false`; nothing is typed into the PTY.
+  Declared command intent is the only signal that distinguishes "run this at a
+  prompt" from "type this into the foreground program", so the daemon refuses
+  rather than guesses.
 
 `terminal_observe` = `{ session_id, request_id, view, lines? }` with
 `view ∈ "screen" | "delta" | "history"` (wire default `screen`; the
@@ -1607,6 +1623,7 @@ Rules:
 | `mode_changed` | `{ "mode", "integration" }` | alt-screen enter/exit, REPL pattern match, integration detection |
 | `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes, or in `shell` mode while a command is mid-flight (inline TUIs that never enter the alternate screen); an at-prompt shell emits `prompt_ready` instead |
 | `output_gap` | `{ "from_offset", "resume_offset" }` | ring truncation on resume (§6.1) |
+| `interactive_started` | `{ "command_id", "signal": "alt_screen"\|"bracketed_paste" }` | the OPEN command launched an interactive program (alt-screen entry, or a mid-command bracketed-paste enable — shells keep `?2004` off while a command runs, so an enable is the child speaking) |
 | `child_exited` | `{ "exit_code"?, "signal"?: string }` | session root process exited (`signal` is a name such as `"SIGTERM"`) |
 
 Rules:
@@ -1674,6 +1691,13 @@ service-side read from `terminal_session_output` by offset range.
 observe time: a client can render an observation as a snapshot and resume the
 output stream from exactly that offset — no duplication, no gap.
 
+`view: "screen"` results also carry `output_ansi` (base64): the grid
+serialized as ANSI — SGR color/style runs plus a final cursor-position
+sequence — so replaying it reproduces presentation, not just text. The
+snapshot endpoint surfaces it as `screen_ansi`; clients should prefer it over
+`screen_text` when present (plain text made reloading into a colorful TUI
+look broken).
+
 `delta` is a grid-diff: the lines that changed since the previous observe/send
 snapshot for the session (`changed: false` with empty output when nothing
 did).
@@ -1683,8 +1707,13 @@ did).
 - `terminal.run { command }` → send with `await: "command"` → tool result
   `{ exit_code, duration_ms, command_id, output, truncated?, mode,
   integration, cwd }` (output sliced by the command byte range, tail-kept at
-  64 KiB). On service timeout the result reports still-running — never a
-  fabricated failure. A non-zero exit code is a normal result, not an error.
+  64 KiB). On service timeout (~2 minutes) the result reports still-running —
+  never a fabricated failure. A non-zero exit code is a normal result, not an
+  error. While a command is already open the result is `status:
+  "terminal_busy"` with guidance (nothing is typed). Every terminal tool
+  result carries `open_command` (`{command_id, running_ms}` or null) — the
+  fact that distinguishes an idle prompt from an inline TUI running under a
+  shell, since both report `mode: "shell"`.
 - `terminal.send { raw_text | key, submit? }` → `await: "settled"` followed by
   an explicit `delta` observe (send-plus-proof). `raw_text` presses Enter
   afterward by default (`submit: false` types without submitting; ignored for

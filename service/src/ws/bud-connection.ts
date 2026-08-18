@@ -332,6 +332,7 @@ export class BudConnection {
       ...(typeof result.data.ring_next_offset === "number"
         ? { ringNextOffset: result.data.ring_next_offset }
         : {}),
+      ...(typeof result.data.output_ansi === "string" ? { outputAnsi: result.data.output_ansi } : {}),
       error: result.data.error,
     });
   }

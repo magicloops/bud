@@ -96,12 +96,19 @@ export const buildTerminalStreamPath = (
 export const buildTerminalSnapshotText = (
   historyText: string,
   screenText: string,
+  screenAnsi?: string,
 ): string => {
+  // Prefer the ANSI-serialized screen when the daemon provides it: it carries
+  // SGR colors/styles and a final cursor-position sequence, so reloading into
+  // a colorful TUI (codex, vim) reproduces presentation, not just content.
+  // It already uses explicit CRLF row separators and must be appended after
+  // a newline so it starts at column 0 of a fresh row.
+  const screen = screenAnsi || screenText
   if (!historyText) {
-    return screenText
+    return screen
   }
-  if (!screenText) {
+  if (!screen) {
     return historyText
   }
-  return `${historyText}\n${screenText}`
+  return `${historyText}\n${screen}`
 }

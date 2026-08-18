@@ -86,7 +86,17 @@ fn scanner_is_chunk_boundary_safe_on_osc133_session() {
 #[test]
 fn scanner_altscreen_vim_enter_and_leave() {
     let data = fixture("altscreen-vim.raw");
-    let events = scan_whole(&data);
+    // Recorded vim also toggles ?2004 (bracketed paste) — reported separately
+    // as interactivity signals; this test asserts the alt-screen facts only.
+    let events: Vec<_> = scan_whole(&data)
+        .into_iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                stem::semantic::ScanKind::AltScreenEnter | stem::semantic::ScanKind::AltScreenLeave
+            )
+        })
+        .collect();
     // Recorded vim sets many private modes; only ?1049h/?1049l are
     // alt-screen facts. ?1049h is the very first sequence (bytes 0..8).
     assert_eq!(

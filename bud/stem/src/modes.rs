@@ -137,6 +137,9 @@ impl ModeMachine {
                     self.repl_miss_streak = 0;
                 }
             }
+            // Bracketed-paste toggles are an interactivity signal for the
+            // session layer, not a mode transition.
+            ScanKind::BracketedPasteSet { .. } => {}
             ScanKind::AltScreenLeave => {
                 if self.mode == Mode::Tui {
                     if self.integration == Integration::Osc133 {

@@ -79,6 +79,49 @@ Manual end-to-end verification. §A runs before the Phase 2 branch merges; §A +
 > §6.4 rule that event byte references never outrun emitted output), with an
 > ordering regression test that models the concurrent-dispatch race.
 
+> **Post-§A follow-up (2026-08-18, the codex incident):** with codex open in
+> the shell, the agent (blind to the foreground program — mode reads `shell`
+> for inline TUIs) sent a `terminal.run`, which typed the command into codex's
+> chat input and hung the await on the old one-hour budget. Fixes: (1) daemon
+> busy guard — run-style sends are refused with `command_in_flight` while a
+> command is open (open-command tracked in session facts from C/D/A markers;
+> integration-tested incl. proof the guarded text never reaches the PTY);
+> (2) `open_command {command_id, running_ms}` surfaced on every terminal tool
+> result + prompt guidance (THE discriminating fact between idle prompt and
+> inline TUI); (3) awaited-send budget cut to 2 minutes → actionable
+> still-running results instead of pending turns; service maps the daemon
+> error to a `terminal_busy` tool result with send/observe/^C guidance.
+> Design note recorded in the grid-sync doc: single-adaptive-tool designs
+> cannot refuse (same bytes, opposite correctness) — revisit only with
+> grid-sync's richer state. Known gap flagged: bash 3.2's shim did not emit
+> `D`/`A` after SIGINT in the test env (zsh interrupt validated live) — see
+> bud terminal spec TODO.
+
+> **Snapshot fidelity fix (2026-08-18):** reloading the page mid-codex showed
+> a colorless screen with a misplaced cursor — the snapshot's `screen_text`
+> is a plain-text grid walk. Fixed end to end: `stem::emu::screen_ansi()`
+> serializes the grid as SGR runs + a final cursor-position sequence
+> (roundtrip-tested: feeding it to a fresh emulator reproduces grid + cursor),
+> carried as `terminal_observe_result.output_ansi` → snapshot `screen_ansi` →
+> browser prefers it over plain text. History lines stay plain until
+> grid-sync. Known edge: the trailing cursor CUP is viewport-relative, so a
+> snapshot shorter than the viewport can offset the cursor slightly.
+
+> **Interactive-launch follow-ups (2026-08-18):** three more agent-UX gaps
+> found driving codex live, all fixed with regression tests: (1) submit into
+> chat TUIs — burst text+Enter was classified as a paste by codex's input
+> heuristics; programmatic text now goes out as an explicit bracketed paste
+> (when the app enabled ?2004) with a 75ms beat before the Enter keypress;
+> (2) `terminal.send` exiting an interactive program rode the settle budget —
+> settled-awaits now also resolve on `prompt_ready` (returning to a prompt is
+> maximal settlement); (3) `terminal.run codex` waited 2 minutes for an exit
+> code that could never come — the daemon now resolves command-awaits early
+> with `interactive_started` on crisp interactivity signals (alt-screen
+> entry / mid-command bracketed-paste enable; 0.6s in the regression test),
+> mapped to a normal `status:"interactive"` tool result with drive-it-with-
+> terminal.send guidance. Also: reload-fidelity fixed via ANSI screen
+> serialization (`screen_ansi`, roundtrip-tested).
+
 **Sessions & lifecycle**
 - [ ] Fresh thread → session created without tmux installed on the machine; `terminal_status` reaches `ready`
 - [x] Two threads on one bud run commands concurrently; a long `terminal.run` (e.g. `sleep 20 && echo done`) in thread A does not delay sends, observes, or heartbeats for thread B — *2026-08-17 live: `terminal_command` rows show A's 20.03s command with five 10–20ms thread-B commands completing entirely inside its window; browser stayed responsive throughout*

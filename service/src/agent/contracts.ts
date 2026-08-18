@@ -103,7 +103,7 @@ export type TerminalDeltaSnapshot = {
 export type TerminalCallResult = {
   kind: "command" | "interaction_ack" | "observation";
   // terminal.run
-  status?: "completed" | "still_running";
+  status?: "completed" | "still_running" | "terminal_busy" | "interactive";
   commandId?: string | null;
   exitCode?: number | null;
   durationMs?: number | null;
@@ -113,6 +113,10 @@ export type TerminalCallResult = {
   truncated?: boolean;
   // terminal.send
   dispatched?: boolean;
+  /** interaction_ack: when the gesture completed a shell command (settled
+   * awaits accept command_finished), its real exit code rides along — the
+   * send/run substitutability path for models that pick send at a prompt. */
+  interactionExitCode?: number | null;
   rawTextSent?: boolean;
   /** raw_text gestures: whether Enter was pressed after the text (default true). */
   submitted?: boolean;
@@ -122,6 +126,10 @@ export type TerminalCallResult = {
   view?: TerminalObservationView;
   linesCaptured?: number;
   changed?: boolean;
+  /** The session's OPEN command (started, unfinished) — THE discriminating
+   * fact between an idle shell prompt and an inline TUI running under a
+   * shell (both report mode "shell"). null/absent = no command running. */
+  openCommand?: { commandId: string; runningMs: number } | null;
   // Daemon-observed terminal context facts
   mode?: TerminalMode;
   integration?: TerminalIntegration | null;

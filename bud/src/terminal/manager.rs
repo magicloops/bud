@@ -61,6 +61,11 @@ const AWAIT_SAFETY_CAP: Duration = Duration::from_secs(4 * 60 * 60);
 /// is still sourcing rc files) — without it, the first agent command of every
 /// fresh session on an integrated shell echoed the wrapper.
 const FIRST_PROMPT_GRACE: Duration = Duration::from_secs(3);
+/// Beat between pasted text and the submitting Enter keypress: lets TUI
+/// input heuristics (paste detection, debouncing) classify the Enter as a
+/// deliberate keystroke rather than part of the text burst. NOT an ordering
+/// hack — the single writer already guarantees order.
+const SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
 /// Sentinel exit-code trailer (design D6c). Sent as literal shell input.
 const SENTINEL_TRAILER: &str = r#"; printf '\033]133;D;%s\a' "$?""#;
 
@@ -318,6 +323,7 @@ impl TerminalManager {
                 integration: Integration::None,
                 marker_seen: false,
                 integration_expected,
+                open_command: None,
                 genuine_osc133: false,
                 ring_next_offset: stat.ring_next_offset,
                 cols: stat.cols,
@@ -494,6 +500,24 @@ impl TerminalManager {
             }
         };
 
+        // Declared-intent guard: `terminal.run` (text+submit+await:command)
+        // promises "execute a shell command at a prompt". While a command is
+        // already OPEN (started, unfinished — e.g. an inline TUI like codex),
+        // typing into the PTY would feed the foreground program instead, and
+        // the await could only resolve when that program exits. Refuse loudly;
+        // the service turns this into actionable guidance (send/observe/^C).
+        if submit && frame.r#await == Some(TerminalSendAwait::Command) {
+            let open = entry.shared.facts.lock().unwrap().open_command.clone();
+            if let Some((command_id, _since)) = open {
+                debug!(
+                    session_id = %frame.session_id,
+                    open_command = %command_id,
+                    "terminal_send refused: command_in_flight"
+                );
+                return self.send_result_error(&sender, &frame, "command_in_flight");
+            }
+        }
+
         // Fresh-session grace: a command-await that arrives before the shell's
         // first prompt would get sentinel-wrapped even on integrated shells.
         // When integration is expected but no marker has been seen, wait
@@ -509,7 +533,9 @@ impl TerminalManager {
                 let _ = tokio::time::timeout(FIRST_PROMPT_GRACE, async {
                     loop {
                         match grace_rx.recv().await {
-                            Ok(PumpEvent::PromptReady) | Ok(PumpEvent::Closed) | Err(_) => break,
+                            Ok(PumpEvent::PromptReady { .. }) | Ok(PumpEvent::Closed) | Err(_) => {
+                                break
+                            }
                             Ok(_) => continue,
                         }
                     }
@@ -559,16 +585,21 @@ impl TerminalManager {
                         );
                     }
                 }
-                // Submit = literal text then a real Enter keypress. (Appending
-                // "\n" to the text would be swallowed by bracketed paste when
-                // the shell has it enabled — pasted newlines are inserted, not
-                // executed.)
+                // Programmatic text is delivered as an explicit bracketed
+                // paste when the app enabled ?2004 (chat TUIs like codex use
+                // burst/paste heuristics; unbracketed burst text can eat the
+                // following Enter). Submit = paste, a short beat, then a real
+                // Enter keypress — the delay makes Enter read as a distinct
+                // action to app-side input heuristics; ordering itself is
+                // already guaranteed by the single writer. (Appending "\n"
+                // to the text would be swallowed by bracketed paste.)
                 let mut write = if payload.is_empty() {
                     Ok(())
                 } else {
-                    session.write_text(&payload).await
+                    session.paste_text(&payload).await
                 };
                 if write.is_ok() && submit {
+                    tokio::time::sleep(SUBMIT_ENTER_DELAY).await;
                     write = session.send_key("enter").await;
                 }
                 write
@@ -685,16 +716,20 @@ impl TerminalManager {
             .unwrap_or(HISTORY_DEFAULT_LINES)
             .clamp(1, HISTORY_MAX_LINES);
 
-        let (screen, history, cursor, alt_screen, mode) = {
+        let (screen, history, screen_ansi, cursor, alt_screen, mode) = {
             let session = entry.session.lock().await;
             let history = if view == "history" {
                 session.scrollback_lines(history_lines)
             } else {
                 Vec::new()
             };
+            // ANSI serialization only for screen views (snapshot bootstrap
+            // fidelity: colors/styles/cursor survive; plain text does not).
+            let screen_ansi = (view == "screen").then(|| session.screen_ansi());
             (
                 session.screen_lines(),
                 history,
+                screen_ansi,
                 session.cursor(),
                 session.alt_screen_active(),
                 session.mode(),
@@ -730,6 +765,7 @@ impl TerminalManager {
             cursor_row: cursor.row,
             cursor_col: cursor.col,
             ring_next_offset: entry.shared.facts.lock().unwrap().ring_next_offset,
+            output_ansi_base64: screen_ansi.map(|ansi| BASE64_STANDARD.encode(ansi.as_bytes())),
         };
         send_transport_frame(
             &sender,
@@ -882,13 +918,44 @@ async fn await_outcome(
                         "data": data,
                     }));
                 }
+                // Settled-awaits ALSO accept a command completion: it is the
+                // richest possible transition. This makes the send/run tools
+                // substitutable at a shell prompt — a model that types a
+                // command via terminal.send still gets the real exit code
+                // (matters most for smaller models fumbling tool choice).
+                if kind == TerminalSendAwait::Settled {
+                    return AwaitResult::Outcome(json!({
+                        "event": "command_finished",
+                        "data": data,
+                    }));
+                }
             }
             Ok(PumpEvent::Settled { data }) => {
                 if kind == TerminalSendAwait::Settled {
                     return AwaitResult::Outcome(json!({ "event": "settled", "data": data }));
                 }
             }
-            Ok(PumpEvent::PromptReady) => continue,
+            Ok(PumpEvent::InteractiveStarted { data }) => {
+                if kind == TerminalSendAwait::Command {
+                    return AwaitResult::Outcome(json!({
+                        "event": "interactive_started",
+                        "data": data,
+                    }));
+                }
+            }
+            Ok(PumpEvent::PromptReady { data }) => {
+                // Returning to a shell prompt is maximal settlement: resolve
+                // settled-awaits so a send that exits an interactive program
+                // (e.g. `/quit` in an inline TUI) completes on the prompt's
+                // arrival instead of riding the timeout budget (an idle
+                // prompt never emits `settled` by design).
+                if kind == TerminalSendAwait::Settled {
+                    return AwaitResult::Outcome(json!({
+                        "event": "prompt_ready",
+                        "data": data,
+                    }));
+                }
+            }
             Ok(PumpEvent::Closed) => return AwaitResult::Closed,
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => return AwaitResult::Closed,

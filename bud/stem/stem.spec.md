@@ -30,7 +30,7 @@ upgrades with every release.
 | `holder.rs` | holder | Daemonization + PTY pump ⇄ ring ⇄ IPC server; blocking std + threads (no tokio pre-fork); post-exit TTL |
 | `registry.rs` | daemon | `<base>/<session_id>/` discovery, holder spawn via re-exec launcher, stale GC, session-id path-safety |
 | `client.rs` | daemon | Async `HolderClient` (control ops) + `subscribe()` push channel (`HolderPush`) |
-| `emu.rs` | daemon | `alacritty_terminal` 0.26 confinement (D5): grid/scrollback/cursor/alt-screen, cursor-filtered `meaningful_damage`, `KeyModes` |
+| `emu.rs` | daemon | `alacritty_terminal` 0.26 confinement (D5): grid/scrollback/cursor/alt-screen, cursor-filtered `meaningful_damage`, `KeyModes`, `screen_ansi()` (SGR-run + cursor serialization for snapshot fidelity, roundtrip-tested) |
 | `semantic.rs` | daemon | Chunk-boundary-safe raw-stream scanner: OSC 133 A/B/C/D+exit, OSC 7 cwd, alt-screen DECSET/DECRST — emulator-agnostic (D6a) |
 | `modes.rs` | daemon | `ModeMachine` (Shell/Tui/Repl/Unknown, D7) with injected `ReplMatcher` (REPL prompt policy stays in the daemon) |
 | `keys.rs` | daemon | Backend-neutral key names → mode-aware escape sequences; bracketed-paste text encoding (D9) |
