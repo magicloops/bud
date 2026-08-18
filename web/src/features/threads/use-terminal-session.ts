@@ -35,6 +35,17 @@ import {
   reduceTerminalCommandChip,
   type TerminalCommandChip,
 } from '@/features/threads/terminal-command-state'
+import {
+  applyGridFrame,
+  emptyGridState,
+  seedGridScrollback,
+  type TerminalGridFrame,
+  type TerminalGridState,
+} from '@/features/threads/terminal-grid-state'
+import {
+  resolveTerminalRendererMode,
+  type TerminalRendererMode,
+} from '@/features/threads/terminal-renderer'
 import type { Terminal } from 'xterm'
 import type { FitAddon } from 'xterm-addon-fit'
 
@@ -80,8 +91,17 @@ export function useTerminalSession({
   shouldAbortForUnauthorized,
   updateBudStatus,
 }: UseTerminalSessionArgs) {
+  // Resolved once per mount; switching renderers reconnects the terminal.
+  const [terminalRenderer] = useState<TerminalRendererMode>(() =>
+    resolveTerminalRendererMode(
+      typeof window !== 'undefined' ? window.location.search : '',
+      typeof window !== 'undefined' ? window.localStorage : null,
+    ),
+  )
   const [terminalState, setTerminalState] = useState<string>('idle')
   const [terminalHasOutput, setTerminalHasOutput] = useState(false)
+  const [terminalGridState, setTerminalGridState] = useState<TerminalGridState>(emptyGridState)
+  const terminalGridStateRef = useRef<TerminalGridState>(terminalGridState)
   const [terminalConnection, setTerminalConnection] =
     useState<TerminalConnectionState>('disconnected')
   const [terminalFacts, setTerminalFacts] =
@@ -138,7 +158,28 @@ export function useTerminalSession({
     viewModeRef.current = viewMode
   }, [viewMode])
 
+  const applyGridFrameToState = useCallback((frame: TerminalGridFrame): boolean => {
+    const { state, discontinuity } = applyGridFrame(terminalGridStateRef.current, frame)
+    if (discontinuity) {
+      return false
+    }
+    terminalGridStateRef.current = state
+    setTerminalGridState(state)
+    return true
+  }, [])
+
+  const resetGridState = useCallback(() => {
+    terminalGridStateRef.current = emptyGridState()
+    setTerminalGridState(terminalGridStateRef.current)
+  }, [])
+
   const fitTerminal = useCallback(() => {
+    if (terminalRenderer === 'grid') {
+      // The grid pane owns geometry: it measures its cell box and calls
+      // sendTerminalResize directly (§6.8 — frames always match a size the
+      // server rendered, so xterm-style fitting has no equivalent here).
+      return
+    }
     if (!terminalReadyRef.current) {
       return
     }
@@ -162,7 +203,7 @@ export function useTerminalSession({
     } catch (err) {
       console.warn('Failed to fit terminal', err)
     }
-  }, [])
+  }, [terminalRenderer])
 
   const focusTerminal = useCallback(() => {
     terminalRef.current?.focus()
@@ -174,6 +215,7 @@ export function useTerminalSession({
       term.reset()
     }
     streamDecoderRef.current.reset()
+    resetGridState()
 
     setTerminalHasOutput(false)
     setTerminalScrolledToTop(false)
@@ -186,9 +228,14 @@ export function useTerminalSession({
       current.focus()
       fitTerminal()
     })
-  }, [fitTerminal])
+  }, [fitTerminal, resetGridState])
 
   useEffect(() => {
+    if (terminalRenderer === 'grid') {
+      // Grid mode renders through ThreadTerminalGridPane; xterm is never
+      // instantiated (input capture and resize live in the grid pane).
+      return
+    }
     if (!terminalPaneRef.current || terminalRef.current) {
       return
     }
@@ -395,7 +442,7 @@ export function useTerminalSession({
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [fitTerminal])
+  }, [fitTerminal, terminalRenderer])
 
   useEffect(() => {
     fitTerminal()
@@ -620,6 +667,23 @@ export function useTerminalSession({
         return false
       }
 
+      if (terminalRenderer === 'grid') {
+        // Grid mode: the snapshot seeds scrollback only — the live viewport
+        // arrives as the watch re-arm's `full` grid frame, and byte offsets
+        // play no rendering role.
+        terminalGridStateRef.current = seedGridScrollback(
+          terminalGridStateRef.current,
+          body.history_text ?? '',
+        )
+        setTerminalGridState(terminalGridStateRef.current)
+        snapshotRequiredRef.current = false
+        setTerminalOutputTruncated(false)
+        if (body.mode) {
+          setTerminalFacts({ mode: body.mode, integration: body.integration ?? 'none' })
+        }
+        return true
+      }
+
       const term = terminalRef.current
       if (!term) {
         return false
@@ -655,7 +719,7 @@ export function useTerminalSession({
 
       return true
     },
-    [fitTerminal, shouldAbortForUnauthorized],
+    [fitTerminal, shouldAbortForUnauthorized, terminalRenderer],
   )
 
   /**
@@ -960,7 +1024,13 @@ export function useTerminalSession({
       }
 
       const terminalStream = createAuthEventSource(
-        buildTerminalStreamPath(threadId, appliedOffsetRef.current),
+        buildTerminalStreamPath(
+          threadId,
+          // Grid mode never resumes by byte offset — recovery is a fresh
+          // full frame from the watch re-arm, not an output replay.
+          terminalRenderer === 'grid' ? null : appliedOffsetRef.current,
+          { grid: terminalRenderer === 'grid' },
+        ),
       )
       const source = terminalStream.source
       terminalEventSourceRef.current = source
@@ -974,6 +1044,11 @@ export function useTerminalSession({
       const handleOutput = (event: MessageEvent) => {
         try {
           lastSseEventTimeRef.current = Date.now()
+          if (terminalRenderer === 'grid') {
+            // Rendering comes from grid frames; output frames only count as
+            // stream liveness here.
+            return
+          }
           const raw = event.data ?? ''
           const payload = JSON.parse(raw) as { data?: string; byte_offset?: number }
           if (!payload.data) {
@@ -1039,6 +1114,33 @@ export function useTerminalSession({
 
       const handleHeartbeat = () => {
         lastSseEventTimeRef.current = Date.now()
+      }
+
+      const handleGridFrame = (event: MessageEvent) => {
+        try {
+          lastSseEventTimeRef.current = Date.now()
+          const payload = JSON.parse(event.data ?? '{}') as TerminalGridFrame
+          if (typeof payload.generation !== 'number' || !Array.isArray(payload.dirty_rows)) {
+            return
+          }
+          if (!applyGridFrameToState(payload)) {
+            // Generation gap or size mismatch: this grid is untrustworthy.
+            // Reconnecting re-registers the viewer; the watch re-arm ships a
+            // fresh full frame (§6.8.2 recovery rule).
+            console.warn('[terminal] grid discontinuity — reconnecting', {
+              threadId,
+              generation: payload.generation,
+            })
+            snapshotRequiredRef.current = true
+            scheduleReconnect('grid_discontinuity')
+            return
+          }
+          if (payload.dirty_rows.length > 0 || payload.scrollback_push.length > 0) {
+            setTerminalHasOutput(true)
+          }
+        } catch (err) {
+          console.error('Failed to parse terminal.grid SSE', err)
+        }
       }
 
       const handleTerminalEvent = (event: MessageEvent) => {
@@ -1122,6 +1224,7 @@ export function useTerminalSession({
         }
         source.removeEventListener('heartbeat', handleHeartbeat)
         source.removeEventListener('terminal.output', handleOutput)
+        source.removeEventListener('terminal.grid', handleGridFrame)
         source.removeEventListener('terminal.status', handleStatus)
         source.removeEventListener('terminal.event', handleTerminalEvent)
         source.removeEventListener('terminal.bud_offline', handleBudOffline)
@@ -1163,6 +1266,7 @@ export function useTerminalSession({
 
       source.addEventListener('heartbeat', handleHeartbeat)
       source.addEventListener('terminal.output', handleOutput)
+      source.addEventListener('terminal.grid', handleGridFrame)
       source.addEventListener('terminal.status', handleStatus)
       source.addEventListener('terminal.event', handleTerminalEvent)
       source.addEventListener('terminal.bud_offline', handleBudOffline)
@@ -1191,6 +1295,7 @@ export function useTerminalSession({
       closeSource()
     }
   }, [
+    applyGridFrameToState,
     applyHistoryFallback,
     applyTerminalSnapshot,
     budId,
@@ -1200,6 +1305,7 @@ export function useTerminalSession({
     resetTerminal,
     setConnectionState,
     shouldAbortForUnauthorized,
+    terminalRenderer,
     threadId,
     updateBudStatus,
   ])
@@ -1284,14 +1390,18 @@ export function useTerminalSession({
     currentSessionId,
     focusTerminal,
     sendTerminalCtrlC,
+    sendTerminalInput,
+    sendTerminalResize,
     showDisconnectOverlay,
     terminalCommand,
     terminalConnection,
+    terminalGridState,
     terminalHasOutput,
     terminalInputQueued,
     terminalOutputTruncated,
     terminalPaneRef,
     terminalFacts,
+    terminalRenderer,
     terminalScrolledToTop,
     terminalState,
   }

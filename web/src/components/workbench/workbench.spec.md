@@ -317,7 +317,26 @@ Terminal presentation component for the existing-thread workspace.
 **Purpose**:
 - renders the terminal pane wrapper, optional injected web-view pane,
   disconnect overlays, truncated-history badge, terminal status bar, and
-  terminal options menu
+  terminal options menu (incl. the renderer toggle: bytes/xterm ↔ grid beta,
+  persisted to localStorage + reload)
+- when `terminalRenderer` is `grid`, renders the injected `gridPane` in place
+  of the xterm container
+
+### `thread-terminal-grid-pane.tsx`
+
+Grid-sync renderer (plan/terminal-grid-sync phase 2): draws
+`TerminalGridState` as DOM rows of styled run spans — no VT parsing, native
+selection/copy. Owns geometry: measures its cell box, calls `onResize`, and
+re-asserts the measured size against mismatched frames **until the stream
+converges on it once** (the mount-time resize races session creation and
+404s; converge-once prevents two differently-sized viewers fighting over the
+PTY — last resize wins, and a reconnect re-arms the assertion to cover daemon
+respawns at the stale spawn hint). Keyboard/paste capture via
+`lib/terminal-input` translation into `onInput`, bottom-pinned scrolling with
+scrollback above the live grid, and a `ch`-positioned cursor overlay.
+Known v1 limitation: wide-glyph cursor positioning assumes CJK glyphs render
+at exactly 2ch. Validated by the automated browser E2E
+(plan/terminal-grid-sync/browser-validation.md).
 - renders typed `terminal.event` status chips in the header: the mode chip
   (`shell`/`tui`/`repl`), a command lifecycle chip (pulsing "running" dot from
   `command_started`, then green `exit 0` / red `exit N` from

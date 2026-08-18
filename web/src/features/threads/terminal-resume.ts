@@ -83,9 +83,19 @@ export const advanceAppliedOffset = (
 export const buildTerminalStreamPath = (
   threadId: string,
   fromOffset: number | null,
+  options: { grid?: boolean } = {},
 ): string => {
   const base = `/api/threads/${threadId}/terminal/stream`
-  return fromOffset === null ? base : `${base}?from_offset=${fromOffset}`
+  const params = new URLSearchParams()
+  if (fromOffset !== null) {
+    params.set('from_offset', String(fromOffset))
+  }
+  if (options.grid) {
+    // Registers this SSE connection as a grid-sync viewer (proto §6.8).
+    params.set('grid', '1')
+  }
+  const query = params.toString()
+  return query ? `${base}?${query}` : base
 }
 
 /**

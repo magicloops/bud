@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode, type RefObject } from 'react'
 import { MoreVertical, Square } from 'lucide-react'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
+import { TERMINAL_RENDERER_STORAGE_KEY } from '@/features/threads/terminal-renderer'
 
 type ThreadTerminalPaneProps = {
   error: string | null
@@ -20,6 +21,10 @@ type ThreadTerminalPaneProps = {
   } | null
   terminalScrolledToTop: boolean
   terminalState: string
+  /** Active renderer: `bytes` = xterm over the raw stream, `grid` = grid sync. */
+  terminalRenderer?: 'bytes' | 'grid'
+  /** Rendered instead of the xterm container when `terminalRenderer` is `grid`. */
+  gridPane?: ReactNode
   viewMode: 'terminal' | 'web'
   webViewPane?: ReactNode
   showDisconnectOverlay: boolean
@@ -40,6 +45,8 @@ export function ThreadTerminalPane({
   terminalFacts,
   terminalScrolledToTop,
   terminalState,
+  terminalRenderer = 'bytes',
+  gridPane = null,
   viewMode,
   webViewPane = null,
   showDisconnectOverlay,
@@ -223,6 +230,33 @@ export function ThreadTerminalPane({
                       <span className="font-mono text-xs text-muted-foreground">Ctrl+C</span>
                       <span>Interrupt</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          window.localStorage.setItem(
+                            TERMINAL_RENDERER_STORAGE_KEY,
+                            terminalRenderer === 'grid' ? 'bytes' : 'grid',
+                          )
+                        } catch {
+                          // Storage unavailable — the toggle just won't stick.
+                        }
+                        // Renderer choice is resolved once per mount; a reload
+                        // reconnects the terminal under the new renderer.
+                        window.location.reload()
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition hover:bg-muted"
+                      title="Switch the live terminal renderer (reloads the page)"
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {terminalRenderer === 'grid' ? 'grid' : 'bytes'}
+                      </span>
+                      <span>
+                        {terminalRenderer === 'grid'
+                          ? 'Use classic renderer'
+                          : 'Use grid renderer (beta)'}
+                      </span>
+                    </button>
                   </div>
                 </>
               )}
@@ -231,12 +265,21 @@ export function ThreadTerminalPane({
         </div>
       )}
       <div className={`relative min-h-0 flex-1 overflow-hidden ${viewMode === 'web' ? 'invisible' : ''}`}>
-        <div
-          ref={terminalPaneRef}
-          className={`flex h-full w-full flex-col justify-end overflow-hidden font-mono text-sm transition-opacity duration-300 [&>.xterm]:w-full [&>.xterm]:shrink-0 ${showDisconnectOverlay ? 'opacity-40' : 'opacity-100'}`}
-          style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
-          onClick={onFocusTerminal}
-        />
+        {terminalRenderer === 'grid' ? (
+          <div
+            className={`h-full w-full transition-opacity duration-300 ${showDisconnectOverlay ? 'opacity-40' : 'opacity-100'}`}
+            style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
+          >
+            {gridPane}
+          </div>
+        ) : (
+          <div
+            ref={terminalPaneRef}
+            className={`flex h-full w-full flex-col justify-end overflow-hidden font-mono text-sm transition-opacity duration-300 [&>.xterm]:w-full [&>.xterm]:shrink-0 ${showDisconnectOverlay ? 'opacity-40' : 'opacity-100'}`}
+            style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
+            onClick={onFocusTerminal}
+          />
+        )}
         {showDisconnectOverlay && viewMode === 'terminal' && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             {terminalState === 'bud_offline' ? (

@@ -372,6 +372,23 @@ Pure queue policy for terminal input typed while the terminal is disconnected.
 Node-runner coverage for ordered accumulation, drop-oldest overflow, oversized
 single-chunk tail trimming, and UTF-8 boundary safety.
 
+### `terminal-grid-state.ts`
+
+Grid-sync client reducer (plan/terminal-grid-sync phase 2): applies
+`terminal.grid` frames (proto §6.8.2) — full seeds, contiguous deltas patch
+rows, generation gaps/size mismatches return a `discontinuity` signal, full
+frames recover from anything (recording a scrollback seam across missed
+generations). Accumulates scrollback pushes (capped 5000, drops counted),
+seeds scrollback from snapshot `history_text`, and resolves run colors
+(named/256/truecolor) to CSS. Pure; node-tested in
+`terminal-grid-state.test.ts`.
+
+### `terminal-renderer.ts`
+
+Terminal renderer selection: `?renderer=` URL override →
+`localStorage["bud.terminal.renderer"]` → `bytes` default. Resolved once per
+mount.
+
 ### `terminal-command-state.ts`
 
 Pure reducer for the terminal pane's command lifecycle chip, driven by typed
@@ -422,9 +439,17 @@ Terminal session/xterm ownership for the existing-thread route.
 - expose narrow terminal UI state such as connection status, session facts,
   command chip, queued-input flag, truncation, and disconnect overlay
   visibility
+- renderer selection (grid-sync phase 2): `terminal-renderer.ts` resolves
+  `bytes` (default, xterm) vs `grid` once per mount. In grid mode xterm is
+  never instantiated; the SSE stream connects with `?grid=1` and no
+  `from_offset`, `terminal.grid` frames reduce through
+  `terminal-grid-state.ts` (discontinuity ⇒ reconnect; the watch re-arm
+  ships a fresh full frame), the snapshot seeds scrollback only, and
+  `terminal.output` counts only as stream liveness
 
 **Exports**:
-- `useTerminalSession(...)`
+- `useTerminalSession(...)` (returns `terminalRenderer`, `terminalGridState`,
+  `sendTerminalInput`, `sendTerminalResize` for the grid pane)
 - `TerminalConnectionState`
 - `TerminalSessionFacts` / `TerminalMode` / `TerminalIntegration`
 - `TerminalCommandChip` (re-export)
