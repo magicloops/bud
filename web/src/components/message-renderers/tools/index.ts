@@ -1,6 +1,7 @@
 import type { ToolContentRenderer } from '../types'
 import {
   TerminalObserveContent,
+  TerminalRunContent,
   TerminalSendContent,
 } from './terminal-run'
 import { AskUserQuestionsContent } from './ask-user-questions'
@@ -13,6 +14,7 @@ import { AskUserQuestionsContent } from './ask-user-questions'
  * 2. Import and add it to this registry
  */
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
+  'terminal.run': TerminalRunContent,
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
   ask_user_questions: AskUserQuestionsContent,

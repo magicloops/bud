@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import type { ReasoningLevel } from "./llm/model-catalog.js";
 
 export const PROTO_VERSION = "0.1";
-export const TERMINAL_PROTO_VERSION = "0.2";
+export const TERMINAL_PROTO_VERSION = "0.3";
 
 const defaultDatabaseUrl = "postgres://postgres:postgres@localhost:5432/bud";
 const toNumber = (value: string | undefined, fallback: number) => {

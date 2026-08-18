@@ -14,7 +14,6 @@ Start with [AGENTS.md](./AGENTS.md) for repo rules and [bud.spec.md](./bud.spec.
 - `pnpm`
 - Rust stable toolchain
 - PostgreSQL
-- `tmux` on any machine running the Bud daemon
 - Optional for the local HTTPS profile: `mkcert`, `caddy`, and local wildcard
   DNS for `*.bud-show.test`
 

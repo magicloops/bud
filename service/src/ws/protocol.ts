@@ -80,13 +80,12 @@ export const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
   info: z
     .object({
       pid: z.number().int().optional(),
-      shell: z.string().optional(),
       cwd: z.string().optional(),
       cols: z.number().int().optional(),
       rows: z.number().int().optional(),
-      output_log_bytes: z.number().int().optional(),
-      started_at: z.string().optional(),
-      last_activity_at: z.string().optional()
+      ring_next_offset: z.number().int().nonnegative().optional(),
+      mode: z.string().optional(),
+      integration: z.string().optional()
     })
     .passthrough()
     .optional()
@@ -95,26 +94,64 @@ export const TerminalStatusSchema = TerminalEnvelopeSchema.extend({
 export const TerminalOutputSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_output"),
   session_id: z.string(),
-  seq: z.number().int().nonnegative(),
   data: z.string(),
   byte_offset: z.number().int().nonnegative()
 });
 
-export const TerminalReadySchema = TerminalEnvelopeSchema.extend({
-  type: z.literal("terminal_ready"),
+export const TerminalEventSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_event"),
   session_id: z.string(),
-  assessment: z.record(z.unknown()),
+  event: z.string(),
+  data: z.record(z.unknown()).default({})
 });
 
-const ReadinessSchema = z.object({
-  ready: z.boolean(),
-  confidence: z.number(),
-  trigger: z.string(),
-  prompt_type: z.string().optional(),
-  hints: z.record(z.boolean()).optional(),
-  quiet_for_ms: z.number().optional(),
-  activity_checks: z.number().optional(),
-  stable_checks: z.number().optional()
+// Grid-sync delta frame (proto §6.8.2). The service forwards these live to
+// SSE without interpreting cell contents, so runs stay loosely typed; the
+// structural fields are validated for ownership routing and client sanity.
+export const TerminalGridSchema = TerminalEnvelopeSchema.extend({
+  type: z.literal("terminal_grid"),
+  session_id: z.string(),
+  generation: z.number().int().nonnegative(),
+  full: z.boolean(),
+  cols: z.number().int().positive(),
+  rows: z.number().int().positive(),
+  alt_screen: z.boolean(),
+  cursor: z.object({
+    row: z.number().int().nonnegative(),
+    col: z.number().int().nonnegative(),
+    visible: z.boolean(),
+    // DECSCUSR facts (§6.8.6) — optional on older daemons.
+    shape: z.enum(["block", "underline", "beam"]).optional(),
+    blink: z.boolean().optional()
+  }),
+  dirty_rows: z.array(
+    z.object({
+      row: z.number().int().nonnegative(),
+      runs: z.array(z.record(z.unknown()))
+    })
+  ),
+  scrollback_push: z.array(z.array(z.record(z.unknown()))).default([]),
+  scrollback_dropped: z.number().int().nonnegative().default(0),
+  // Predictive echo (§6.8.3) — optional: absent on pre-phase-3 daemons.
+  predict_ok: z.boolean().optional(),
+  applied_input_seq: z.number().int().nonnegative().optional(),
+  // Scroll-hint delta (§6.8.5) — shift-then-patch; omitted when zero.
+  row_shift: z.number().int().optional(),
+  // DECCKM application-cursor fact (§6.8.4) — optional on older daemons.
+  app_cursor: z.boolean().optional(),
+  // Mouse-reporting facts (§6.8.4) — optional: absent on older daemons.
+  mouse: z
+    .object({
+      report: z.enum(["none", "click", "drag", "motion"]),
+      sgr: z.boolean(),
+      alt_scroll: z.boolean()
+    })
+    .optional()
+});
+
+const TerminalEventOutcomeSchema = z.object({
+  event: z.string(),
+  data: z.record(z.unknown()).default({})
 });
 
 export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
@@ -123,31 +160,29 @@ export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   request_id: z.string(),
   view: z.enum(["delta", "screen", "history"]),
   output: z.string(),
-  output_bytes: z.number().int().nonnegative(),
   lines_captured: z.number().int().nonnegative(),
   changed: z.boolean().nullable().optional(),
-  truncated: z.boolean().nullable().optional(),
-  readiness: ReadinessSchema,
-  error: z.string().nullable(),
-  host_cwd: z.string().optional()
+  mode: z.string().optional(),
+  integration: z.string().optional(),
+  alt_screen: z.boolean().optional(),
+  cursor_row: z.number().int().optional(),
+  cursor_col: z.number().int().optional(),
+  // Stream watermark the daemon's emulator reflects at observe time: the next
+  // output byte offset a stream resume from this observation should use.
+  ring_next_offset: z.number().int().nonnegative().optional(),
+  // view "screen" only: the grid serialized as ANSI (SGR runs + cursor
+  // position), base64 — replaying it reproduces colors/styles/cursor.
+  output_ansi: z.string().optional(),
+  error: z.string().nullable()
 });
 
 export const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
   type: z.literal("terminal_send_result"),
   session_id: z.string(),
   request_id: z.string(),
-  submitted: z.boolean(),
-  delta: z
-    .object({
-      changed: z.boolean(),
-      text: z.string(),
-      truncated: z.boolean()
-    })
-    .nullable()
-    .optional(),
-  readiness: ReadinessSchema,
-  error: z.string().nullable(),
-  host_cwd: z.string().optional()
+  dispatched: z.boolean(),
+  outcome: TerminalEventOutcomeSchema.nullable().optional(),
+  error: z.string().nullable()
 });
 
 export const ErrorFrameSchema = EnvelopeSchema.extend({

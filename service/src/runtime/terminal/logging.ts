@@ -1,17 +1,5 @@
 import { createHash } from "node:crypto";
-import type { TerminalContext } from "../../terminal/types.js";
 import { config } from "../../config.js";
-
-export function summarizeContextForLog(context: TerminalContext): Record<string, unknown> {
-  return {
-    mode: context.mode,
-    program: context.program ?? null,
-    programDisplayName: context.programDisplayName ?? null,
-    interactionStyle: context.interactionStyle ?? null,
-    pendingCommand: context.pendingCommand?.command ?? null,
-    pendingSource: context.pendingCommand?.source ?? null
-  };
-}
 
 export function summarizeObservedOutput(output: string): Record<string, unknown> {
   const lines = output.length === 0 ? [] : output.split(/\r?\n/);
@@ -46,4 +34,3 @@ export function truncateForLog(value: string, maxLength = 160): string {
   }
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
-

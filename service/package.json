@@ -11,7 +11,7 @@
     "postbuild": "node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/agent',{recursive:true}); fs.copyFileSync('src/agent/default-system-prompt.md','dist/agent/default-system-prompt.md')\"",
     "start": "node dist/server.js",
     "lint": "eslint \"src/**/*.ts\"",
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test $(find src -name '*.test.ts')",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:migrate:staging": "DOTENV_CONFIG_PATH=.env.staging drizzle-kit migrate",

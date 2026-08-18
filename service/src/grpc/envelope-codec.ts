@@ -44,7 +44,7 @@ const TYPED_PAYLOAD_FIELD_BY_FRAME_TYPE: Record<string, string> = {
   terminal_observe: "terminalObserve",
   terminal_observe_result: "terminalObserveResult",
   terminal_output: "terminalOutput",
-  terminal_ready: "terminalReady",
+  terminal_event: "terminalEvent",
   reconnect_report: "reconnectReport",
   reconciliation_decision: "reconciliationDecision",
   data_attach: "dataAttach",

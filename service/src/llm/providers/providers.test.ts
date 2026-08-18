@@ -769,11 +769,8 @@ test("OpenAI provider preserves function call name and call_id from streamed ite
         item_id: "fc_tool",
         output_index: 1,
         arguments: JSON.stringify({
-          command: "pwd",
-          raw_text: null,
+          raw_text: "partial input",
           key: null,
-          observe_after_ms: null,
-          wait_for: "settled",
         }),
       };
       yield {
@@ -805,11 +802,8 @@ test("OpenAI provider preserves function call name and call_id from streamed ite
   assert.equal(toolUseDone.id, "call_tool");
   assert.equal(toolUseDone.name, "terminal_send");
   assert.deepEqual(toolUseDone.input, {
-    command: "pwd",
-    raw_text: null,
+    raw_text: "partial input",
     key: null,
-    observe_after_ms: null,
-    wait_for: "settled",
   });
 });
 

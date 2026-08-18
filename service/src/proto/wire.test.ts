@@ -64,26 +64,25 @@ test("encodes known frames as typed protobuf payloads", () => {
 
 test("round-trips terminal result frames with typed protobuf fields", () => {
   const frame = {
-    proto: "0.2",
+    proto: "0.3",
     type: "terminal_send_result",
     id: "msg_terminal_send_result",
     ts: 1777132800000,
     ext: {},
     session_id: "sess_test",
     request_id: "req_test",
-    submitted: true,
-    delta: {
-      changed: true,
-      text: "hello",
-      truncated: false,
-    },
-    readiness: {
-      ready: true,
-      confidence: 0.94,
-      trigger: "prompt",
+    dispatched: true,
+    outcome: {
+      event: "command_finished",
+      data: {
+        command_id: "cmd_test",
+        exit_code: 0,
+        duration_ms: 412,
+        output_byte_start: 0,
+        output_byte_end: 640,
+      },
     },
     error: null,
-    host_cwd: "/Users/adam/bud",
   };
 
   const bytes = encodeLegacyJsonFrame(frame);
@@ -93,15 +92,61 @@ test("round-trips terminal result frames with typed protobuf fields", () => {
   assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
 });
 
-test("round-trips terminal output frames with typed protobuf fields", () => {
+test("round-trips terminal event frames with typed protobuf fields", () => {
   const frame = {
-    proto: "0.2",
+    proto: "0.3",
+    type: "terminal_event",
+    id: "msg_terminal_event",
+    ts: 1777132800000,
+    ext: {},
+    session_id: "sess_test",
+    event: "mode_changed",
+    data: { mode: "tui", integration: "osc133" },
+  };
+
+  const bytes = encodeLegacyJsonFrame(frame);
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "terminal_event");
+  assert.equal(decodeBudEnvelopePayloadEncoding(bytes), "typed_fields");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});
+
+test("round-trips terminal observe result frames with typed protobuf fields", () => {
+  const frame = {
+    proto: "0.3",
+    type: "terminal_observe_result",
+    id: "msg_terminal_observe_result",
+    ts: 1777132800000,
+    ext: {},
+    session_id: "sess_test",
+    request_id: "obs_test",
+    view: "screen",
+    output: Buffer.from("grid text").toString("base64"),
+    lines_captured: 24,
+    changed: true,
+    mode: "tui",
+    integration: "osc133",
+    alt_screen: true,
+    cursor_row: 3,
+    cursor_col: 11,
+    error: null,
+  };
+
+  const bytes = encodeLegacyJsonFrame(frame);
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "terminal_observe_result");
+  assert.equal(decodeBudEnvelopePayloadEncoding(bytes), "typed_fields");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});
+
+test("round-trips terminal output frames with typed protobuf fields (offset-only)", () => {
+  const frame = {
+    proto: "0.3",
     type: "terminal_output",
     id: "msg_terminal_output",
     ts: 1777132800000,
     ext: {},
     session_id: "sess_test",
-    seq: 42,
     data: Buffer.from("hello").toString("base64"),
     byte_offset: 1024,
   };
@@ -242,24 +287,22 @@ test("rejects uint64 values outside JavaScript's safe integer range", () => {
   assert.throws(
     () =>
       encodeLegacyJsonFrame({
-        proto: "0.2",
+        proto: "0.3",
         type: "terminal_output",
         id: "msg_terminal_output",
         ts: 1777132800000,
         ext: {},
         session_id: "sess_test",
-        seq: Number.MAX_SAFE_INTEGER + 1,
         data: Buffer.from("hello").toString("base64"),
-        byte_offset: 0,
+        byte_offset: Number.MAX_SAFE_INTEGER + 1,
       }),
     /safe integer/,
   );
 
   const payload = Buffer.concat([
     encodeStringField(1, "sess_test"),
-    encodeVarintField(2, BigInt(Number.MAX_SAFE_INTEGER) + 1n),
     encodeLengthDelimitedField(3, Buffer.from("hello", "utf8")),
-    encodeVarintField(4, 0),
+    encodeVarintField(4, BigInt(Number.MAX_SAFE_INTEGER) + 1n),
   ]);
   const bytes = Buffer.concat([
     encodeVarintField(1, 1),
@@ -269,7 +312,7 @@ test("rejects uint64 values outside JavaScript's safe integer range", () => {
     encodeLengthDelimitedField(129, payload),
   ]);
 
-  assert.throws(() => decodeBudEnvelope(bytes), /terminal_output\.seq.*safe integer/);
+  assert.throws(() => decodeBudEnvelope(bytes), /terminal_output\.byte_offset.*safe integer/);
 });
 
 test("encodes proxy open frames as typed protobuf payloads", () => {

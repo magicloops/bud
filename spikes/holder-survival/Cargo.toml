@@ -1,0 +1,20 @@
+[package]
+name = "holder-survival"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "Phase 0 spike: does a detached PTY-holder process survive daemon restart/upgrade under launchd/systemd?"
+
+# Standalone project on purpose — must NOT join the bud/ package or any workspace.
+[workspace]
+
+[dependencies]
+# PTY + fork/setsid/signal plumbing. We use `nix` openpty + manual fork rather than
+# `portable-pty` because the holder must daemonize (double-fork) *before* any threads
+# or runtimes exist; keeping everything on raw fds + std threads makes that safe and
+# keeps the harness a faithful approximation of the production holder's detach path.
+nix = { version = "0.29", features = ["process", "signal", "term", "fs"] }
+libc = "0.2"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

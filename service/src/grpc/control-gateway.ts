@@ -17,12 +17,7 @@ import { handleLocalLlmOpenResult } from "../llm/local-llm-data-plane.js";
 import { DaemonStateStore } from "../runtime/daemon-state.js";
 import { handleProxyOpenResult } from "../proxy/proxy-runtime.js";
 import type { TerminalSessionManager } from "../runtime/terminal-session-manager.js";
-import type {
-  ReadinessAssessment,
-  ReadinessHints,
-  TerminalPromptType,
-  TerminalReadyTrigger,
-} from "../terminal/types.js";
+import { isTerminalIntegration, isTerminalMode } from "../terminal/types.js";
 import { finalizeGrpcDataSessionsForControlTracker } from "./data-gateway.js";
 import { decodeGrpcLegacyJsonEnvelope, encodeGrpcLegacyJsonEnvelope } from "./envelope-codec.js";
 import {
@@ -45,9 +40,10 @@ import {
   HelloSchema,
   ReconnectReportSchema,
   TerminalEnvelopeSchema,
+  TerminalEventSchema,
+  TerminalGridSchema,
   TerminalObserveResultSchema,
   TerminalOutputSchema,
-  TerminalReadySchema,
   TerminalSendResultSchema,
   TerminalStatusSchema,
 } from "../ws/protocol.js";
@@ -266,8 +262,11 @@ class GrpcControlConnection {
       case "terminal_output":
         await this.handleTerminalOutput(frame);
         break;
-      case "terminal_ready":
-        await this.handleTerminalReady(frame);
+      case "terminal_event":
+        await this.handleTerminalEvent(frame);
+        break;
+      case "terminal_grid":
+        await this.handleTerminalGrid(frame);
         break;
       case "terminal_observe_result":
         await this.handleTerminalObserveResult(frame);
@@ -639,7 +638,7 @@ class GrpcControlConnection {
       );
       return;
     }
-    await this.terminalSessionManager.handleTerminalStatus(result.data.session_id, {
+    await this.terminalSessionManager.handleTerminalStatus(this.state.budId, result.data.session_id, {
       state: result.data.state,
       info: result.data.info,
     });
@@ -657,31 +656,45 @@ class GrpcControlConnection {
       );
       return;
     }
-    await this.terminalSessionManager.handleTerminalOutput(result.data.session_id, {
-      seq: result.data.seq,
+    await this.terminalSessionManager.handleTerminalOutput(this.state.budId, result.data.session_id, {
       data: result.data.data,
       byte_offset: result.data.byte_offset,
     });
   }
 
-  private async handleTerminalReady(raw: unknown): Promise<void> {
+  private async handleTerminalEvent(raw: unknown): Promise<void> {
     if (!config.terminalEnabled || this.state.kind !== "connected") {
       return;
     }
-    const result = TerminalReadySchema.safeParse(raw);
+    const result = TerminalEventSchema.safeParse(raw);
     if (!result.success) {
       this.logger.warn(
         { error: result.error.message, component: "grpc_control_gateway" },
-        "Invalid terminal_ready frame",
+        "Invalid terminal_event frame",
       );
       return;
     }
-    const assessment = normalizeReadinessAssessment(result.data.assessment);
-    if (!assessment) {
-      this.logger.warn({ component: "grpc_control_gateway" }, "Invalid terminal_ready readiness assessment");
+    await this.terminalSessionManager.handleTerminalEvent(this.state.budId, result.data.session_id, {
+      event: result.data.event,
+      data: result.data.data,
+      ts: result.data.ts,
+    });
+  }
+
+  private async handleTerminalGrid(raw: unknown): Promise<void> {
+    if (!config.terminalEnabled || this.state.kind !== "connected") {
       return;
     }
-    await this.terminalSessionManager.handleTerminalReady(result.data.session_id, { assessment });
+    const result = TerminalGridSchema.safeParse(raw);
+    if (!result.success) {
+      this.logger.warn(
+        { error: result.error.message, component: "grpc_control_gateway" },
+        "Invalid terminal_grid frame",
+      );
+      return;
+    }
+    const { proto: _proto, type: _type, id: _id, ts: _ts, ext: _ext, session_id, ...grid } = result.data;
+    await this.terminalSessionManager.handleTerminalGrid(this.state.budId, session_id, grid);
   }
 
   private async handleTerminalObserveResult(raw: unknown): Promise<void> {
@@ -696,25 +709,22 @@ class GrpcControlConnection {
       );
       return;
     }
-    const readiness = normalizeReadinessAssessment(result.data.readiness);
-    if (!readiness) {
-      this.logger.warn(
-        { component: "grpc_control_gateway" },
-        "Invalid terminal_observe_result readiness assessment",
-      );
-      return;
-    }
-    await this.terminalSessionManager.handleObserveResult(result.data.session_id, {
+    await this.terminalSessionManager.handleObserveResult(this.state.budId, result.data.session_id, {
       requestId: result.data.request_id,
       view: result.data.view,
       output: result.data.output,
-      outputBytes: result.data.output_bytes,
       linesCaptured: result.data.lines_captured,
       changed: result.data.changed ?? undefined,
-      truncated: result.data.truncated ?? undefined,
-      readiness,
+      ...(isTerminalMode(result.data.mode) ? { mode: result.data.mode } : {}),
+      ...(isTerminalIntegration(result.data.integration) ? { integration: result.data.integration } : {}),
+      ...(typeof result.data.alt_screen === "boolean" ? { altScreen: result.data.alt_screen } : {}),
+      ...(typeof result.data.cursor_row === "number" ? { cursorRow: result.data.cursor_row } : {}),
+      ...(typeof result.data.cursor_col === "number" ? { cursorCol: result.data.cursor_col } : {}),
+      ...(typeof result.data.ring_next_offset === "number"
+        ? { ringNextOffset: result.data.ring_next_offset }
+        : {}),
+      ...(typeof result.data.output_ansi === "string" ? { outputAnsi: result.data.output_ansi } : {}),
       error: result.data.error,
-      ...(result.data.host_cwd ? { hostCwd: result.data.host_cwd } : {}),
     });
   }
 
@@ -730,21 +740,11 @@ class GrpcControlConnection {
       );
       return;
     }
-    const readiness = normalizeReadinessAssessment(result.data.readiness);
-    if (!readiness) {
-      this.logger.warn(
-        { component: "grpc_control_gateway" },
-        "Invalid terminal_send_result readiness assessment",
-      );
-      return;
-    }
-    await this.terminalSessionManager.handleSendResult(result.data.session_id, {
+    await this.terminalSessionManager.handleSendResult(this.state.budId, result.data.session_id, {
       requestId: result.data.request_id,
-      submitted: result.data.submitted,
-      delta: result.data.delta ?? null,
-      readiness,
+      dispatched: result.data.dispatched,
+      outcome: result.data.outcome ?? null,
       error: result.data.error,
-      ...(result.data.host_cwd ? { hostCwd: result.data.host_cwd } : {}),
     });
   }
 
@@ -1017,91 +1017,3 @@ function loadBudControlServices(): LoadedBudProto["bud"]["v1"] {
   return loaded.bud.v1;
 }
 
-const READINESS_TRIGGER_VALUES = [
-  "prompt_detected",
-  "quiescence",
-  "timeout",
-  "error",
-  "activity_stable",
-  "changed",
-  "settled",
-] as const satisfies readonly TerminalReadyTrigger[];
-
-const PROMPT_TYPE_VALUES = [
-  "shell",
-  "python",
-  "node",
-  "ruby",
-  "confirmation",
-  "password",
-  "pager",
-  "database",
-  "unknown",
-] as const satisfies readonly TerminalPromptType[];
-
-const DEFAULT_READINESS_HINTS: ReadinessHints = {
-  looks_like_prompt: false,
-  looks_like_confirmation: false,
-  looks_like_password: false,
-  looks_like_pager: false,
-  looks_like_error: false,
-  may_still_be_processing: false,
-};
-
-function normalizeReadinessAssessment(value: unknown): ReadinessAssessment | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  if (
-    typeof value.ready !== "boolean" ||
-    typeof value.confidence !== "number" ||
-    !Number.isFinite(value.confidence) ||
-    !isReadinessTrigger(value.trigger)
-  ) {
-    return null;
-  }
-
-  return {
-    ready: value.ready,
-    confidence: value.confidence,
-    trigger: value.trigger,
-    ...(isPromptType(value.prompt_type) ? { prompt_type: value.prompt_type } : {}),
-    hints: normalizeReadinessHints(value.hints),
-    ...(typeof value.quiet_for_ms === "number" && Number.isFinite(value.quiet_for_ms)
-      ? { quiet_for_ms: value.quiet_for_ms }
-      : {}),
-    ...(typeof value.activity_checks === "number" && Number.isFinite(value.activity_checks)
-      ? { activity_checks: value.activity_checks }
-      : {}),
-    ...(typeof value.stable_checks === "number" && Number.isFinite(value.stable_checks)
-      ? { stable_checks: value.stable_checks }
-      : {}),
-  };
-}
-
-function normalizeReadinessHints(value: unknown): ReadinessHints {
-  if (!isRecord(value)) {
-    return DEFAULT_READINESS_HINTS;
-  }
-
-  return {
-    looks_like_prompt: value.looks_like_prompt === true,
-    looks_like_confirmation: value.looks_like_confirmation === true,
-    looks_like_password: value.looks_like_password === true,
-    looks_like_pager: value.looks_like_pager === true,
-    looks_like_error: value.looks_like_error === true,
-    may_still_be_processing: value.may_still_be_processing === true,
-  };
-}
-
-function isReadinessTrigger(value: unknown): value is TerminalReadyTrigger {
-  return typeof value === "string" && READINESS_TRIGGER_VALUES.includes(value as TerminalReadyTrigger);
-}
-
-function isPromptType(value: unknown): value is TerminalPromptType {
-  return typeof value === "string" && PROMPT_TYPE_VALUES.includes(value as TerminalPromptType);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}

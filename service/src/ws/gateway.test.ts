@@ -105,7 +105,7 @@ test("sendFrameToBud uses protobuf envelope carrier for capable sessions", () =>
   tracker.supportsEnvelopeBinary = true;
   sessions.set("bud-1", tracker);
 
-  const payload = { proto: "0.2", type: "terminal_ensure", id: "msg_test", ts: 1, ext: {}, session_id: "sess-1" };
+  const payload = { proto: "0.3", type: "terminal_ensure", id: "msg_test", ts: 1, ext: {}, session_id: "sess-1" };
   const sent = sendFrameToBud("bud-1", payload);
 
   assert.equal(sent, true);

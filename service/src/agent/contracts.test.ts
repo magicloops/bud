@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAgentMessageTiming,
-  buildEffectiveToolArgs,
-  getEffectiveToolWaitFor,
-  parseWaitForArg,
+  buildToolArgs,
   serializeAgentMessageTiming,
+  serializeTerminalDelta,
   serializeToolExecutionTiming,
+  toolNameForConversation,
 } from "./contracts.js";
 
 test("agent message timing serializes service wall-clock duration metadata", () => {
@@ -28,78 +28,54 @@ test("agent message timing serializes service wall-clock duration metadata", () 
   assert.deepEqual(serializeToolExecutionTiming(timing), serializeAgentMessageTiming(timing));
 });
 
-test("parseWaitForArg accepts public modes and legacy compatibility modes", () => {
-  assert.equal(parseWaitForArg("none"), "none");
-  assert.equal(parseWaitForArg("changed"), "changed");
-  assert.equal(parseWaitForArg("settled"), "settled");
-  assert.equal(parseWaitForArg("shell_ready"), "shell_ready");
-  assert.equal(parseWaitForArg("screen_stable"), "settled");
-  assert.equal(parseWaitForArg("unknown"), undefined);
-  assert.equal(parseWaitForArg(null), undefined);
-});
-
-test("effective tool args expose default terminal wait modes", () => {
-  assert.equal(
-    getEffectiveToolWaitFor({
+test("terminal tool args serialize the proto 0.3 model-facing shapes", () => {
+  assert.deepEqual(
+    buildToolArgs({
       type: "tool_call",
-      tool: "terminal.send",
-      command: "pwd",
-      callId: "call-send-default",
+      tool: "terminal.run",
+      command: "git status",
+      callId: "call-run",
     }),
-    "settled",
+    { command: "git status" },
   );
   assert.deepEqual(
-    buildEffectiveToolArgs({
+    buildToolArgs({
       type: "tool_call",
       tool: "terminal.send",
-      command: "pwd",
-      callId: "call-send-default",
+      rawText: "partial input",
+      callId: "call-send-raw",
     }),
-    {
-      command: "pwd",
-      wait_for: "settled",
-    },
+    { raw_text: "partial input" },
   );
   assert.deepEqual(
-    buildEffectiveToolArgs({
+    buildToolArgs({
       type: "tool_call",
       tool: "terminal.send",
       key: "ctrl+c",
-      waitFor: "none",
-      callId: "call-send-none",
+      callId: "call-send-key",
     }),
-    {
-      key: "ctrl+c",
-      wait_for: "none",
-    },
+    { key: "ctrl+c" },
   );
   assert.deepEqual(
-    buildEffectiveToolArgs({
+    buildToolArgs({
       type: "tool_call",
       tool: "terminal.observe",
       lines: -50,
       callId: "call-observe-default",
     }),
-    {
-      lines: -50,
-      wait_for: "none",
-    },
+    { lines: -50 },
   );
   assert.deepEqual(
-    buildEffectiveToolArgs({
+    buildToolArgs({
       type: "tool_call",
       tool: "terminal.observe",
       view: "screen",
-      waitFor: "settled",
-      callId: "call-observe-settled",
+      callId: "call-observe-screen",
     }),
-    {
-      view: "screen",
-      wait_for: "settled",
-    },
+    { view: "screen" },
   );
   assert.deepEqual(
-    buildEffectiveToolArgs({
+    buildToolArgs({
       type: "tool_call",
       tool: "web_view.open",
       targetHost: "localhost",
@@ -113,4 +89,19 @@ test("effective tool args expose default terminal wait modes", () => {
       path: "/",
     },
   );
+});
+
+test("terminal directives map to canonical provider tool names", () => {
+  assert.equal(toolNameForConversation("terminal.run"), "terminal_run");
+  assert.equal(toolNameForConversation("terminal.send"), "terminal_send");
+  assert.equal(toolNameForConversation("terminal.observe"), "terminal_observe");
+});
+
+test("terminal deltas serialize changed and text only", () => {
+  assert.equal(serializeTerminalDelta(null), null);
+  assert.equal(serializeTerminalDelta(undefined), null);
+  assert.deepEqual(serializeTerminalDelta({ changed: true, text: "hello" }), {
+    changed: true,
+    text: "hello",
+  });
 });

@@ -6,37 +6,43 @@ import { ASK_USER_QUESTIONS_TOOL } from "./user-question-contracts.js";
 // Canonical tool definitions using standard JSON Schema.
 export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   {
-    name: "terminal_send",
+    name: "terminal_run",
     description:
-      "Send one input gesture to the current terminal program. Use command for text plus Enter, raw_text for text without Enter, and key for one semantic key gesture.",
+      "Run one shell command in the thread terminal and wait for it to finish. Returns the real exit_code, duration_ms, and the command's output. Use this for anything that is a shell command; only works while the terminal is at a shell prompt.",
     parameters: {
       type: "object",
       properties: {
         command: {
           type: "string",
           description:
-            "Line input to send followed by Enter. Use for shell commands, REPL input, confirmations, and prompts.",
+            "The shell command to run. Multi-line input such as heredocs or small pasted scripts is allowed.",
         },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "terminal_send",
+    description:
+      "Send one input gesture to the interactive program in the terminal (TUI, REPL, prompt). Provide exactly one of raw_text or key. Waits for the screen to settle and returns the screen delta as proof of what changed. Shell commands belong to terminal_run instead.",
+    parameters: {
+      type: "object",
+      properties: {
         raw_text: {
           type: "string",
           description:
-            "Literal text to type without pressing Enter. Use only when intentionally leaving input unsubmitted.",
+            "Literal text to type. Presses Enter afterward by default; set submit to false to type without submitting (e.g. composing text in an editor buffer).",
+        },
+        submit: {
+          type: "boolean",
+          description:
+            "Whether to press Enter after raw_text (default true). Ignored for key gestures.",
         },
         key: {
           type: "string",
           description:
-            'Optional semantic key gesture. Use backend-neutral names such as "ctrl+c", "enter", or "escape".',
-        },
-        observe_after_ms: {
-          type: "integer",
-          description:
-            'Optional delay before the final capture when wait_for:"none" is used. Defaults to 1000ms for that explicit fast path.',
-        },
-        wait_for: {
-          type: "string",
-          enum: ["none", "changed", "settled"],
-          description:
-            'Optional wait mode after sending input. Defaults to "settled" when omitted.',
+            'One semantic key gesture. Use backend-neutral names such as "ctrl+c", "enter", "escape", "up", or "q".',
         },
       },
       required: [],
@@ -46,23 +52,20 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_observe",
     description:
-      "Observe the rendered terminal screen or recent scrollback after interactive work or when more visibility is needed.",
+      "Look at the terminal without sending input: what changed since the last observation (delta), the full rendered screen, or recent scrollback history.",
     parameters: {
       type: "object",
       properties: {
-        lines: {
-          type: "integer",
-          description: "Optional number of scrollback lines to include. Negative values mean recent history.",
-        },
-        wait_for: {
-          type: "string",
-          enum: ["none", "changed", "settled"],
-          description: "Optional wait mode before observing.",
-        },
         view: {
           type: "string",
           enum: ["delta", "screen", "history"],
-          description: "Observation view. Defaults to delta. Use screen for the full current screen and history for recent scrollback.",
+          description:
+            "Observation view. Defaults to delta. Use screen for the full current screen and history for recent scrollback.",
+        },
+        lines: {
+          type: "integer",
+          description:
+            "Optional number of scrollback lines to include. Negative values mean recent history.",
         },
       },
       required: [],
@@ -220,6 +223,7 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
 ];
 
 const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "terminal_run",
   "terminal_send",
   "terminal_observe",
   "web_view_open",

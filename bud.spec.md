@@ -10,7 +10,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 
 - **Persistent Terminal Sessions**: Unlike ephemeral shell commands, Bud maintains stateful terminal sessions where environment variables, working directories, and running processes persist across interactions.
 - **Thread-Scoped Sessions**: Each conversation thread owns its terminal session, enabling parallel workstreams without state collision.
-- **Context-Aware Agent**: The LLM understands terminal state (prompt detection, REPL detection, pager detection) and adapts its behavior accordingly.
+- **Context-Aware Agent**: The LLM receives typed terminal facts (command lifecycle with real exit codes, shell/TUI/REPL mode, integration state) from the daemon's `stem` runtime and adapts its behavior accordingly.
 
 ---
 
@@ -24,12 +24,12 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 │                 │         │                                     │         │                 │
 └────────┬────────┘         └──────────────────┬──────────────────┘         └─────────────────┘
          │                                     │
-         │ Terminal backend                    │ SQL
+         │ stem terminal runtime               │ SQL
          ▼                                     ▼
 ┌─────────────────┐                  ┌─────────────────┐         ┌─────────────────┐
-│                 │                  │                 │         │                 │
-│  Local Shell    │                  │   PostgreSQL    │         │ Provider APIs   │
-│   (bash/zsh)    │                  │   (Drizzle)     │         │ HTTP APIs       │
+│  PTY holders    │                  │                 │         │                 │
+│ (bud term-hold  │                  │   PostgreSQL    │         │ Provider APIs   │
+│  + local shell) │                  │   (Drizzle)     │         │ HTTP APIs       │
 │                 │                  │                 │         │                 │
 └─────────────────┘                  └─────────────────┘         └─────────────────┘
 ```
@@ -70,7 +70,7 @@ Bud is a three-tier system that connects AI agents to physical devices through p
 | **Thread** | A conversation belonging to a bud and a single authenticated user. Contains messages and owns at most one active terminal session at a time. |
 | **Message** | A chat message or visible reasoning artifact with role (user/assistant/tool/system/reasoning), content, an owning user id, canonical persisted `message_id`, and stable public/UI `client_id`. Tool/system/reasoning messages inherit thread ownership; reasoning rows are display-only and excluded from model-visible replay, previews, attention, and push notifications. |
 | **Agent Context Checkpoint** | Durable model-context compaction checkpoint for a thread. Stores summary replacement history plus message/provider-ledger boundaries while leaving the visible transcript intact. |
-| **Terminal Session** | A thread-scoped tmux session providing persistent terminal access. Tracks input/output bytes, activity timestamps, and cached daemon-reported cwd for file-link resolution. |
+| **Terminal Session** | A thread-scoped `stem` holder session (detached PTY process) providing persistent terminal access with typed mode/integration facts, command lifecycle records, and cached cwd (OSC 7 first) for file-link resolution. |
 | **Terminal Output** | Chunked binary output from terminal sessions, stored with byte offsets for efficient streaming/backfill. |
 
 ### Session States
@@ -86,7 +86,7 @@ pending → creating → ready ↔ active → idle → closed
 | State | Description |
 |-------|-------------|
 | `pending` | Session requested, waiting for daemon |
-| `creating` | Daemon is spawning tmux session |
+| `creating` | Daemon is spawning/attaching the stem holder session |
 | `ready` | Session exists, no recent activity |
 | `active` | Currently receiving input/output |
 | `idle` | No activity for configured timeout |
@@ -121,14 +121,12 @@ bud/
 │   │   ├── journal.rs      # Local daemon reconciliation journal foundation
 │   │   ├── terminal/
 │   │   │   ├── mod.rs      # Shared terminal runtime types
-│   │   │   ├── backend.rs  # Terminal backend trait
-│   │   │   ├── registry.rs # Session/status lifecycle
-│   │   │   ├── interaction.rs
-│   │   │   ├── observe.rs
-│   │   │   ├── readiness.rs
-│   │   │   ├── delta.rs
-│   │   │   └── tmux.rs     # tmux backend adapter
-│   │   └── ...             # Config, protocol, identity, claim, utilities
+│   │   │   ├── manager.rs  # stem-backed session manager (spawn/attach holders)
+│   │   │   ├── session_task.rs # Per-session stem event pump → wire frames
+│   │   │   ├── repl_registry.rs
+│   │   │   └── shims.rs    # OSC 133 shell-integration shims
+│   │   └── ...             # Config, protocol, identity, claim, doctor, utilities
+│   ├── stem/               # Native PTY session manager crate (holders, VT emulator, registry)
 │   └── Cargo.toml
 │
 ├── proto/                  # Shared daemon-service protobuf schema and fixtures
@@ -293,7 +291,8 @@ User Message
 ```
 
 **Available Tools**:
-- `terminal.send` - Primary terminal input tool for shell commands, multiline shell input, confirmations, and one semantic key gesture at a time (for example `key:"ctrl+c"`)
+- `terminal.run` - Run one shell command and await its `command_finished` event; the result carries the real exit code, duration, and command-sliced output
+- `terminal.send` - Interactive input tool for raw text or one semantic key gesture at a time (for example `key:"ctrl+c"`), awaiting settled output plus a delta observation
 - `terminal.observe` - Inspect the rendered terminal screen explicitly
 - `web_view.open` / `web_view.close` / `web_view.list` - Product-level tools for owned local web previews through Bud proxy transports
 - `ask_user_questions` - Structured user prompts that let the agent pause and resume with explicit human input
@@ -308,32 +307,22 @@ Current service ownership split:
 - `terminal-tool-executor` owns `terminal.send` / `terminal.observe`
 - `transcript-writer` owns durable assistant/tool/reasoning writes, terminal visibility metadata, plus runtime emission boundaries
 
-### 3. Terminal Readiness Detection
+### 3. Terminal Event Model
 
-The system analyzes terminal output to determine state:
+The daemon's `stem` runtime reports typed facts instead of readiness heuristics (the old `looks_like_*`/confidence vocabulary is retired; see `docs/proto.md` §6):
 
-| Hint | Meaning |
-|------|---------|
-| `looks_like_prompt` | Shell/REPL prompt detected, safe to send commands |
-| `looks_like_confirmation` | Waiting for y/n response |
-| `looks_like_password` | Password prompt (input won't echo) |
-| `looks_like_pager` | In less/more (send 'q' to exit) |
-| `may_still_be_processing` | Command likely still running |
+| `terminal_event` | Meaning |
+|------------------|---------|
+| `prompt_ready` | Shell back at prompt (OSC 133 `A`), safe to send commands |
+| `command_started` / `command_finished` | Command lifecycle with real exit codes and output byte ranges |
+| `mode_changed` | Session mode transitions: `shell` / `tui` / `repl` / `unknown`, plus integration state (`osc133` / `sentinel` / `none`) |
+| `settled` | Damage-quiet threshold reached in non-prompt modes (honest "output has stopped changing") |
+| `output_gap` | Ring truncation on resume — a gap is reported, never silently skipped |
+| `child_exited` | Session root process exited |
 
-### 4. REPL Context Detection
+### 4. Mode Detection (TUI/REPL)
 
-When inside interactive programs (Python, Node, psql, Claude Code), the agent receives context:
-
-```json
-{
-  "context_after": {
-    "mode": "repl",
-    "program": "python",
-    "programDisplayName": "Python REPL",
-    "hints": ["Send Python code, not shell commands"]
-  }
-}
-```
+Alt-screen tracking and REPL pattern matching (Python, Node, psql, and similar interactive programs) drive `mode_changed` events, so the agent knows whether it is typing into a shell, a full-screen TUI, or a REPL, and tool results carry `mode`/`integration` facts rather than prompt-guessing hints.
 
 ---
 
@@ -345,9 +334,9 @@ When inside interactive programs (Python, Node, psql, Claude Code), the agent re
 1. Web UI POST /api/threads/:id/messages { content: "list files" }
 2. Service creates message record, starts agent loop
 3. Service calls the selected LLM provider with thread context
-4. Model returns tool_call: terminal.send({ text: "ls -la", submit: true })
-5. Service sends `terminal_send` to the daemon
-6. Daemon submits the input in tmux and returns `terminal_send_result` with readiness, delta, and optional `host_cwd`
+4. Model returns tool_call: terminal.run({ command: "ls -la" })
+5. Service sends `terminal_send` (await: "command") to the daemon
+6. Daemon dispatches the gesture to the stem session and returns `terminal_send_result` with `dispatched` plus the awaited `outcome` event (command_finished with exit code, or settled)
 7. Service decides whether follow-up observation is needed, then calls the selected provider with result
 8. Model returns final response
 9. Service stores assistant message, emits SSE events
@@ -457,6 +446,7 @@ Detailed specifications for each subproject:
 | Project | Spec File | Description | Status |
 |---------|-----------|-------------|--------|
 | `/bud` | [bud/bud.spec.md](./bud/bud.spec.md) | Rust device daemon | ✅ Complete |
+| `/bud/stem` | [bud/stem/stem.spec.md](./bud/stem/stem.spec.md) | Native terminal session manager (tmux replacement, workspace member crate) | ✅ Cutover complete (daemon terminal runtime) |
 | `/service` | [service/service.spec.md](./service/service.spec.md) | Node.js backend | ✅ Complete |
 | `/web` | [web/web.spec.md](./web/web.spec.md) | React frontend | ✅ Complete |
 | `/spikes` | [spikes/spikes.spec.md](./spikes/spikes.spec.md) | Isolated validation harnesses | ✅ Active |
@@ -476,14 +466,16 @@ Previous design had bud-global sessions, causing:
 
 Thread-scoped sessions provide isolation and predictability.
 
-### Why tmux?
+### Why `stem` (and no longer tmux)?
 
-- Session persistence (survives network disconnects)
-- Scrollback buffer management
-- Window/pane support for future features
-- Well-tested, reliable
+Terminals are provided by the in-repo `stem` crate ([bud/stem/stem.spec.md](./bud/stem/stem.spec.md)) — a native PTY session manager that replaced tmux in the Phase-2 cutover ([design/native-terminal-session-manager.md](./design/native-terminal-session-manager.md)):
 
-The daemon now keeps tmux behind an internal backend adapter so future PTY or mosh-like backends can reuse the same higher-level terminal runtime and readiness logic. The normal Bud↔service↔browser contract is now backend-neutral above that adapter, with only a temporary one-entry `keys` compatibility alias left in place during rollout.
+- **Persistence** across network disconnects AND daemon restarts/upgrades via detached per-session holder processes (double-fork/setsid; survival validated on launchd and systemd — `spikes/holder-survival/`)
+- **Exact command lifecycle**: OSC 133 shell integration (zsh/bash shims, fish native) with a sentinel fallback — real exit codes as events, no readiness scraping
+- **Efficient TUI handling**: client-side VT emulation (`alacritty_terminal`) with damage-quiet settling instead of capture-hash polling
+- **Single-binary install**: the holder is `bud term-hold` (re-exec); no external tmux dependency, preflight, or user-config leakage
+
+tmux was retired because its shell-out integration required pervasive workarounds (subprocess-per-operation, pipe-pane log tailing, send-keys escaping, sleep-guarded races) while providing no command semantics; see the review and design docs for the full accounting.
 
 ### Why Provider APIs?
 
@@ -726,6 +718,14 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [plan/neutral-terminal-wire-contract/phase-2-single-gesture-terminal-send-cutover.md](./plan/neutral-terminal-wire-contract/phase-2-single-gesture-terminal-send-cutover.md) | Input-contract phase covering the single-gesture `terminal.send` model, canonical semantic `key`, and compatibility handling for legacy `keys` |
 | [plan/neutral-terminal-wire-contract/phase-3-terminal-status-and-hello-capability-cleanup.md](./plan/neutral-terminal-wire-contract/phase-3-terminal-status-and-hello-capability-cleanup.md) | Wire-cleanup phase covering removal of `tmux_session` from status payloads and removal of tmux identity/version fields from normal hello capabilities |
 | [plan/neutral-terminal-wire-contract/phase-4-service-runtime-and-persistence-cleanup.md](./plan/neutral-terminal-wire-contract/phase-4-service-runtime-and-persistence-cleanup.md) | Runtime/schema phase covering removal of service-owned tmux session naming, cleanup of `tmuxSessionName` runtime state, and schema cleanup if no real consumers remain |
+| [plan/native-terminal-session-manager/native-terminal-session-manager.spec.md](./plan/native-terminal-session-manager/native-terminal-session-manager.spec.md) | Folder spec for the phased tmux-replacement plan built on the `stem` PTY session manager design, sequencing the survival spike, `stem` crate, daemon+service cutover, client adoption, and deferred follow-ups |
+| [plan/native-terminal-session-manager/implementation-spec.md](./plan/native-terminal-session-manager/implementation-spec.md) | Parent implementation spec for replacing tmux with `stem` and redesigning the terminal wire/tool contracts around typed events, with phase gates, impacted contracts, and contract-first rollout rules |
+| [plan/native-terminal-session-manager/phase-0-holder-survival-spike-and-proto-draft.md](./plan/native-terminal-session-manager/phase-0-holder-survival-spike-and-proto-draft.md) | Gating phase covering the detached-holder survival matrix under launchd/systemd, the terminal emulator bake-off with a reusable fixture corpus, and the proposed `docs/proto.md` terminal contract revision |
+| [plan/native-terminal-session-manager/phase-1-stem-crate.md](./plan/native-terminal-session-manager/phase-1-stem-crate.md) | Phase covering the `stem` crate itself: Cargo workspace conversion, dumb-holder/IPC/ring/registry modules, daemon-side emulator and OSC 133 semantic layer, and the daemon-free test suite with IPC version-skew CI |
+| [plan/native-terminal-session-manager/phase-2-daemon-and-service-cutover.md](./plan/native-terminal-session-manager/phase-2-daemon-and-service-cutover.md) | Cutover phase deleting the tmux backend and `TerminalBackend` trait, rebuilding the daemon terminal runtime on `stem` events, finalizing the offset-only/`terminal_event` wire contract, and landing service event routing, the `terminal_command` table, and the `terminal.run` tool |
+| [plan/native-terminal-session-manager/phase-3-web-mobile-and-install-cleanup.md](./plan/native-terminal-session-manager/phase-3-web-mobile-and-install-cleanup.md) | Client-adoption phase covering browser offset-based resume, event-driven terminal status UI, the mobile contract handoff, and removal of tmux from installer, doctor, and service templates |
+| [plan/native-terminal-session-manager/phase-4-deferred-follow-ups.md](./plan/native-terminal-session-manager/phase-4-deferred-follow-ups.md) | Optional follow-ups: `bud term attach`/`peek` human escape hatch, command-block UX on the `terminal_command` substrate, `stem` crate extraction, and Windows/ConPTY |
+| [plan/native-terminal-session-manager/validation-checklist.md](./plan/native-terminal-session-manager/validation-checklist.md) | Manual end-to-end verification checklist for the `stem` cutover: OSC 133 exit codes, TUI/REPL modes, restart/upgrade persistence and ring backfill, client resume behavior, tmux-less install, and regression sentinels |
 | [plan/neutral-terminal-wire-contract/phase-5-validation-specs-and-rollout-cleanup.md](./plan/neutral-terminal-wire-contract/phase-5-validation-specs-and-rollout-cleanup.md) | Finalization phase covering automated/manual validation, protocol/spec updates, compatibility-shim retention decisions, and explicit diagnostics follow-up capture |
 | [plan/neutral-terminal-wire-contract/progress-checklist.md](./plan/neutral-terminal-wire-contract/progress-checklist.md) | Running implementation checklist for the neutral terminal wire-contract cleanup |
 | [plan/neutral-terminal-wire-contract/validation-checklist.md](./plan/neutral-terminal-wire-contract/validation-checklist.md) | Manual verification checklist for the neutral terminal wire-contract cleanup |
@@ -850,6 +850,7 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/message-client-id-and-stable-message-identity.md](./design/message-client-id-and-stable-message-identity.md) | Design for adding a UUIDv7 `client_id` to messages as a stable public/UI identity while retaining `message_id` as the persisted row identifier, and threading that new identity through `/messages`, `/agent/state`, and agent SSE payloads |
 | [design/thread-title-generation-and-streaming.md](./design/thread-title-generation-and-streaming.md) | Design for generating a short thread title from the first user message, persisting it onto `thread.title`, and streaming title updates over the existing thread agent stream |
 | [design/mobile-thread-title-stream-handoff.md](./design/mobile-thread-title-stream-handoff.md) | Mobile handoff for the new streamed thread-title update contract, covering the `thread.title` event, client reducer expectations, and recovery rules |
+| [design/mobile-terminal-events-handoff.md](./design/mobile-terminal-events-handoff.md) | Mobile handoff for the proto `0.3` terminal surface after the stem cutover: terminal SSE event catalog (`terminal.output`/`terminal.event`/status/online-offline), offset-based resume rules (`from_offset`, `Last-Event-ID`), the snapshot-then-resume render flow, interrupt/history routes, browser-facing terminal tool arg shapes, and a §B validation section |
 | [design/agent-sse-stale-cursor-recovery.md](./design/agent-sse-stale-cursor-recovery.md) | Design for fixing stale agent-SSE cursor retry loops after service restart or frontend HMR by adding client-owned bootstrap recovery when native EventSource retries reuse an invalid `after` cursor |
 | [design/thread-message-timeline-ux-refresh.md](./design/thread-message-timeline-ux-refresh.md) | Draft design for the next-pass thread message UX work across web and iOS, covering latest-window pagination, bottom-follow scroll behavior, compact tool activity, and the backend changes required for true assistant text streaming |
 | [design/ios-local-auth-backend-readiness.md](./design/ios-local-auth-backend-readiness.md) | Focused design for the remaining backend/web changes needed to hand the iOS team a real local OAuth client, public-origin auth bundle, and validation plan |
@@ -870,6 +871,8 @@ grep -rn "SPEC:TODO" --include="*.spec.md" .
 | [design/terminal-send-command-raw-text-contract.md](./design/terminal-send-command-raw-text-contract.md) | Draft design for replacing model-facing `terminal.send` `text`/`submit` with mutually exclusive `command`, `raw_text`, and `key` gestures while initially preserving the current service-to-Bud wire shape |
 | [design/terminal-delta-observation-and-minimal-tool-payloads.md](./design/terminal-delta-observation-and-minimal-tool-payloads.md) | Design for making `terminal.send` and default `terminal.observe` return additive deltas instead of replay-heavy snapshots, while keeping explicit full-screen/history modes and reducing the model-facing tool payload to success, readiness, and delta |
 | [design/backend-neutral-terminal-wire-contract.md](./design/backend-neutral-terminal-wire-contract.md) | Design for removing tmux-specific leakage from the Bud↔service and service↔browser terminal contract, including `tmux_session`, tmux-shaped hello capabilities, a single-gesture `terminal.send` model with semantic keys, and service-owned tmux session naming |
+| [design/terminal-grid-sync-and-predictive-echo.md](./design/terminal-grid-sync-and-predictive-echo.md) | Scoping draft for mosh-style live terminal UX on top of stem's authoritative daemon-side grid: damage-diff grid sync to dumb client renderers (eliminating byte-stream size/timing rendering races), predictive local echo with reconciliation, and per-client renderer positioning (web canvas now, libghostty for native later) |
+| [design/native-terminal-session-manager.md](./design/native-terminal-session-manager.md) | High-level design and decision register for replacing tmux with a Bud-shipped PTY session manager (`stem`): dumb per-session holder processes for restart survival, daemon-side VT emulation, OSC 133 command lifecycle, mode-based TUI/REPL readiness, and a pre-release hard cutover that also redesigns the terminal wire/tool contracts around typed events (offset-only resume, `terminal_event`, `terminal.run` with exit codes) |
 | [design/reconsidering-terminal-exec-vs-terminal-send.md](./design/reconsidering-terminal-exec-vs-terminal-send.md) | Design review of whether `terminal.exec` still earns a place in the model-facing contract, given its newline restriction, lack of real exit-code authority, and overlap with the now-working `terminal.send` path |
 | [design/removing-terminal-interrupt-in-favor-of-terminal-send.md](./design/removing-terminal-interrupt-in-favor-of-terminal-send.md) | Design review of whether `terminal.interrupt` should be removed from the model-facing contract, arguing that interrupts belong on the general `terminal.send` path and that browser interrupt UX can survive as a thin wrapper over that same send surface |
 | [render.yaml](./render.yaml) | Render Blueprint for the prototype staging deployment, declaring the separate `bud-web`, `bud-service`, and `bud-postgres` resources along with monorepo build boundaries, auth/env placeholders, and hosted web-view proxy env placeholders |

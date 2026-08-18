@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Holder-survival spike LaunchAgent template (sed-able placeholders).
+
+  Placeholders:
+    @LABEL@        launchd job label, e.g. com.bud.spike.holder-survival.jobexit.true
+    @BINARY@       absolute path to the holder-survival binary ("installed" copy under run/bin/)
+    @SESSION_DIR@  absolute path to the session dir for this scenario
+    @ONCE_ARG@     "<string>-\-once</string>" for the run-at-load/verify variant, or empty
+                   for the long-running attach-loop variant (needed for the kill -9 scenario,
+                   which requires a live daemon process to kill)
+    @ABANDON@      "true" or "false" — THE VARIABLE UNDER TEST.
+                   AbandonProcessGroup=false (launchd default): launchd sends SIGKILL to the
+                   job's whole process group when the job exits/is killed. The holder calls
+                   setsid() so it leaves that group — the spike measures whether that is
+                   actually sufficient, or whether AbandonProcessGroup=true is required.
+    @LOG@          absolute path for the fake-daemon's stdout/stderr
+
+  run-macos.sh renders both AbandonProcessGroup variants from this one template.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BINARY@</string>
+    <string>fake-daemon</string>
+    <string>--dir</string>
+    <string>@SESSION_DIR@</string>
+    @ONCE_ARG@
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- No KeepAlive: scenarios control restarts explicitly via kickstart/bootstrap. -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>AbandonProcessGroup</key>
+  <@ABANDON@/>
+
+  <key>StandardOutPath</key>
+  <string>@LOG@</string>
+  <key>StandardErrorPath</key>
+  <string>@LOG@</string>
+</dict>
+</plist>

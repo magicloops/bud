@@ -357,7 +357,7 @@ function extractTerminalPathContext(metadata: unknown): Record<string, unknown> 
   if (
     pathContext.schema !== "terminal_cwd_v1" ||
     pathContext.source !== "terminal_runtime_cache" ||
-    pathContext.reported_by !== "tmux_pane_current_path" ||
+    pathContext.reported_by !== "prompt_ready_osc7" ||
     typeof pathContext.terminal_session_id !== "string" ||
     typeof pathContext.host_cwd !== "string" ||
     typeof pathContext.captured_at !== "string"

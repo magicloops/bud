@@ -1,0 +1,49 @@
+# Holder-survival spike systemd USER unit template (sed-able placeholders).
+#
+# Placeholders:
+#   @UNIT_DESC@    human-readable scenario tag
+#   @BINARY@       absolute path to the holder-survival binary ("installed" copy under run/bin/)
+#   @SESSION_DIR@  absolute path to the session dir for this scenario
+#   @EXTRA_ARGS@   "--once" for the verify-and-exit variant, or empty for the attach-loop
+#                  variant (needed for the kill -9 scenario)
+#   @TYPE@         "oneshot" for the --once variant, "simple" for the attach-loop variant
+#   @KILLMODE@     THE VARIABLE UNDER TEST:
+#                    control-group  (systemd default) — on unit stop/exit, every process left
+#                                   in the unit's cgroup gets SIGTERM/SIGKILL. setsid() does
+#                                   NOT escape a cgroup, so the detached holder is expected
+#                                   to be killed under this mode.
+#                    process        — only the main daemon process is signalled on stop; the
+#                                   holder should survive, but note the cgroup may still be
+#                                   torn down on some systemd versions/settings.
+#
+# Alternative detach mechanism (documented variant, exercised by run-linux.sh as the
+# "scope-escape" scenario): instead of relying on KillMode, launch the HOLDER in its own
+# transient scope so it never lives in the daemon unit's cgroup at all:
+#
+#   systemd-run --user --scope --unit=bud-spike-holder-<scenario> \
+#       @BINARY@ holder --dir @SESSION_DIR@
+#
+# systemd-run returns once the initial process exits (the holder double-forks); the scope
+# unit lingers around the daemonized grandchild. The daemon unit then merely reattaches
+# over the UDS, and no daemon-unit stop/restart/kill can touch the holder's cgroup.
+# In production this would mean the daemon shells out to systemd-run when spawning holders
+# on Linux; the spike measures whether plain KillMode=process makes that unnecessary.
+#
+# Install without copying into ~/.config/systemd/user:
+#   systemctl --user link <rendered .service path> && systemctl --user daemon-reload
+
+[Unit]
+Description=Bud holder-survival spike fake daemon (@UNIT_DESC@)
+
+[Service]
+Type=@TYPE@
+ExecStart=@BINARY@ fake-daemon --dir @SESSION_DIR@ @EXTRA_ARGS@
+KillMode=@KILLMODE@
+# No Restart=: scenarios drive restarts explicitly via systemctl --user restart.
+Restart=no
+# Keep the oneshot variant from being considered "active" after exit; the survival
+# question is precisely what happens to the cgroup when the unit finishes.
+RemainAfterExit=no
+
+[Install]
+WantedBy=default.target

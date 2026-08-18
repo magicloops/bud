@@ -260,12 +260,14 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
     runner.resolveModelReasoning("gpt-5.4"),
   );
 
+  const runTool = capturedTools.find((tool) => tool.name === "terminal_run");
   const sendTool = capturedTools.find((tool) => tool.name === "terminal_send");
   const observeTool = capturedTools.find((tool) => tool.name === "terminal_observe");
   const webViewOpenTool = capturedTools.find((tool) => tool.name === "web_view_open");
   const webViewCloseTool = capturedTools.find((tool) => tool.name === "web_view_close");
   const webViewListTool = capturedTools.find((tool) => tool.name === "web_view_list");
   const askUserQuestionsTool = capturedTools.find((tool) => tool.name === "ask_user_questions");
+  assert.ok(runTool);
   assert.ok(sendTool);
   assert.ok(observeTool);
   assert.ok(webViewOpenTool);
@@ -273,23 +275,23 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.ok(webViewListTool);
   assert.ok(askUserQuestionsTool);
 
+  const runProperties = runTool.parameters.properties as Record<string, unknown>;
   const sendProperties = sendTool.parameters.properties as Record<string, unknown>;
   const observeProperties = observeTool.parameters.properties as Record<string, unknown>;
-  assert.ok(sendProperties.command);
-  assert.ok(sendProperties.raw_text);
-  assert.ok(sendProperties.key);
-  assert.equal(sendProperties.text, undefined);
-  assert.equal(sendProperties.submit, undefined);
-  assert.equal(sendProperties.timeout_ms, undefined);
-  assert.equal(observeProperties.timeout_ms, undefined);
+  assert.ok(runProperties.command);
+  assert.deepEqual(runTool.parameters.required, ["command"]);
+  assert.deepEqual(Object.keys(runProperties), ["command"]);
+  assert.deepEqual(Object.keys(sendProperties).sort(), ["key", "raw_text", "submit"]);
+  assert.deepEqual(Object.keys(observeProperties).sort(), ["lines", "view"]);
   assert.deepEqual(
-    (sendProperties.wait_for as { enum?: unknown }).enum,
-    ["none", "changed", "settled"],
+    (observeProperties.view as { enum?: unknown }).enum,
+    ["delta", "screen", "history"],
   );
-  assert.deepEqual(
-    (observeProperties.wait_for as { enum?: unknown }).enum,
-    ["none", "changed", "settled"],
-  );
+  // Retired 0.2 vocabulary must not appear in any tool schema.
+  const serializedTools = JSON.stringify(capturedTools);
+  for (const retired of ["wait_for", "shell_ready", "screen_stable", "readiness", "looks_like", "observe_after_ms", "timeout_ms"]) {
+    assert.equal(serializedTools.includes(retired), false, `tool schemas leak ${retired}`);
+  }
   assert.deepEqual(webViewOpenTool.parameters.required, ["target_port"]);
   const webViewOpenProperties = webViewOpenTool.parameters.properties as Record<string, unknown>;
   assert.match(
@@ -730,14 +732,57 @@ test("extractToolCall normalizes legacy keys arrays to canonical semantic key st
   assert.deepEqual(directive, {
     type: "tool_call",
     tool: "terminal.send",
-    command: undefined,
     rawText: undefined,
     key: "ctrl+c",
-    observeAfterMs: undefined,
-    waitFor: undefined,
-    timeoutMs: undefined,
     callId: "call_send_legacy",
   });
+});
+
+test("extractToolCall parses terminal_run commands and rejects command-less calls", () => {
+  const runner = new AgentModelRunner(
+    createRuntime() as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  const directive = runner.extractToolCall({
+    id: "resp_run",
+    content: [],
+    stopReason: "tool_use",
+    toolCalls: [
+      {
+        id: "call_run_1",
+        name: "terminal_run",
+        input: {
+          command: "git status",
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(directive, {
+    type: "tool_call",
+    tool: "terminal.run",
+    command: "git status",
+    callId: "call_run_1",
+  });
+
+  assert.equal(
+    runner.extractToolCall({
+      id: "resp_run_invalid",
+      content: [],
+      stopReason: "tool_use",
+      toolCalls: [
+        {
+          id: "call_run_2",
+          name: "terminal_run",
+          input: {},
+        },
+      ],
+    }),
+    null,
+  );
 });
 
 test("extractToolCalls parses web view tool directives", () => {

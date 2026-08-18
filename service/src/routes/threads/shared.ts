@@ -111,7 +111,11 @@ export const TerminalResizeBodySchema = z.object({
 });
 
 export const TerminalInputBodySchema = z.object({
-  input: z.string().min(1)
+  input: z.string().min(1),
+  // Grid-sync predictive echo (proto §6.8.3): client-minted monotonic
+  // sequence; forwarded to the daemon as terminal_input.input_seq so grid
+  // frames can ack it via applied_input_seq.
+  seq: z.number().int().nonnegative().optional()
 });
 
 export function serializeThread(row: typeof threadTable.$inferSelect): SerializedThread {

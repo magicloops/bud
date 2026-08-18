@@ -1,29 +1,30 @@
 import { useMemo, useState, type ReactNode, type RefObject } from 'react'
 import { MoreVertical, Square } from 'lucide-react'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
+import { TERMINAL_RENDERER_STORAGE_KEY } from '@/features/threads/terminal-renderer'
 
 type ThreadTerminalPaneProps = {
   error: string | null
   status: WorkbenchStatus
+  terminalCommand:
+    | { status: 'running'; commandId: string | null }
+    | { status: 'finished'; commandId: string | null; exitCode: number | null }
+    | null
   terminalConnection: 'connected' | 'reconnecting' | 'offline' | 'disconnected'
   terminalHasOutput: boolean
+  terminalInputQueued: boolean
   terminalOutputTruncated: boolean
   terminalPaneRef: RefObject<HTMLDivElement | null>
-  terminalReadiness: {
-    ready: boolean
-    confidence: number
-    trigger: string
-    hints: {
-      looks_like_prompt?: boolean
-      looks_like_confirmation?: boolean
-      looks_like_password?: boolean
-      looks_like_pager?: boolean
-      looks_like_error?: boolean
-      may_still_be_processing?: boolean
-    }
+  terminalFacts: {
+    mode: 'shell' | 'tui' | 'repl' | 'unknown'
+    integration: 'osc133' | 'sentinel' | 'none'
   } | null
   terminalScrolledToTop: boolean
   terminalState: string
+  /** Active renderer: `bytes` = xterm over the raw stream, `grid` = grid sync. */
+  terminalRenderer?: 'bytes' | 'grid'
+  /** Rendered instead of the xterm container when `terminalRenderer` is `grid`. */
+  gridPane?: ReactNode
   viewMode: 'terminal' | 'web'
   webViewPane?: ReactNode
   showDisconnectOverlay: boolean
@@ -35,13 +36,17 @@ type ThreadTerminalPaneProps = {
 export function ThreadTerminalPane({
   error,
   status,
+  terminalCommand,
   terminalConnection,
   terminalHasOutput,
+  terminalInputQueued,
   terminalOutputTruncated,
   terminalPaneRef,
-  terminalReadiness,
+  terminalFacts,
   terminalScrolledToTop,
   terminalState,
+  terminalRenderer = 'bytes',
+  gridPane = null,
   viewMode,
   webViewPane = null,
   showDisconnectOverlay,
@@ -104,49 +109,77 @@ export function ThreadTerminalPane({
               <span className="font-mono font-semibold uppercase tracking-wide">
                 {terminalConnectionLabel ?? `Terminal: ${terminalState}`}
               </span>
-            </div>
-            {terminalReadiness &&
-              terminalConnection === 'connected' &&
-              (status === 'streaming' || status === 'dispatching') && (
-                <div className="flex items-center gap-2 border-l border-border/50 pl-3">
-                  <span
-                    className={`h-2 w-2 rounded-full ${
-                      terminalReadiness.ready
-                        ? 'bg-green-400'
-                        : terminalReadiness.confidence > 0.5
-                          ? 'bg-yellow-400'
-                          : 'animate-pulse bg-orange-400'
-                    }`}
-                  />
-                  <span className="font-mono text-muted-foreground">
-                    {terminalReadiness.ready
-                      ? 'Ready'
-                      : terminalReadiness.confidence > 0.5
-                        ? 'Waiting...'
-                        : 'Processing...'}
-                  </span>
-                  {terminalReadiness.hints.looks_like_password && (
-                    <span className="text-yellow-400" title="Password prompt detected">
-                      🔐
-                    </span>
-                  )}
-                  {terminalReadiness.hints.looks_like_confirmation && (
-                    <span className="text-blue-400" title="Confirmation prompt (y/n)">
-                      ❓
-                    </span>
-                  )}
-                  {terminalReadiness.hints.looks_like_pager && (
-                    <span className="text-cyan-400" title="In pager (press q to exit)">
-                      📄
-                    </span>
-                  )}
-                  {terminalReadiness.hints.looks_like_error && (
-                    <span className="text-red-400" title="Error detected">
-                      ⚠️
-                    </span>
-                  )}
-                </div>
+              {terminalInputQueued && (
+                <span
+                  className="rounded border border-yellow-600/50 bg-yellow-900/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-yellow-400"
+                  title="Typed input is queued and will be sent when the terminal reconnects"
+                >
+                  input queued
+                </span>
               )}
+            </div>
+            {terminalFacts && terminalConnection === 'connected' && (
+              <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    terminalFacts.mode === 'shell'
+                      ? 'bg-green-400'
+                      : terminalFacts.mode === 'tui'
+                        ? 'bg-blue-400'
+                        : terminalFacts.mode === 'repl'
+                          ? 'bg-cyan-400'
+                          : 'bg-zinc-400'
+                  }`}
+                  title={
+                    terminalFacts.integration === 'osc133'
+                      ? 'Shell integration active (exact command results)'
+                      : terminalFacts.integration === 'sentinel'
+                        ? 'Sentinel integration (wrapped commands)'
+                        : 'No shell integration'
+                  }
+                />
+                <span className="font-mono uppercase tracking-wide text-muted-foreground">
+                  {terminalFacts.mode}
+                </span>
+              </div>
+            )}
+            {terminalCommand && terminalConnection === 'connected' && (
+              <div className="flex items-center gap-2 border-l border-border/50 pl-3">
+                {terminalCommand.status === 'running' ? (
+                  <>
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-yellow-400" />
+                    <span className="font-mono uppercase tracking-wide text-muted-foreground">
+                      running
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        terminalCommand.exitCode === null
+                          ? 'bg-zinc-400'
+                          : terminalCommand.exitCode === 0
+                            ? 'bg-green-500'
+                            : 'bg-red-500'
+                      }`}
+                    />
+                    <span
+                      className={`font-mono uppercase tracking-wide ${
+                        terminalCommand.exitCode === null
+                          ? 'text-muted-foreground'
+                          : terminalCommand.exitCode === 0
+                            ? 'text-green-400'
+                            : 'text-red-400'
+                      }`}
+                    >
+                      {terminalCommand.exitCode === null
+                        ? 'done'
+                        : `exit ${terminalCommand.exitCode}`}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
             {error && <span className="text-destructive">{error}</span>}
           </div>
           <div className="flex items-center gap-2">
@@ -197,6 +230,33 @@ export function ThreadTerminalPane({
                       <span className="font-mono text-xs text-muted-foreground">Ctrl+C</span>
                       <span>Interrupt</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          window.localStorage.setItem(
+                            TERMINAL_RENDERER_STORAGE_KEY,
+                            terminalRenderer === 'grid' ? 'bytes' : 'grid',
+                          )
+                        } catch {
+                          // Storage unavailable — the toggle just won't stick.
+                        }
+                        // Renderer choice is resolved once per mount; a reload
+                        // reconnects the terminal under the new renderer.
+                        window.location.reload()
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-foreground transition hover:bg-muted"
+                      title="Switch the live terminal renderer (reloads the page)"
+                    >
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {terminalRenderer === 'grid' ? 'grid' : 'bytes'}
+                      </span>
+                      <span>
+                        {terminalRenderer === 'grid'
+                          ? 'Use classic renderer'
+                          : 'Use grid renderer (beta)'}
+                      </span>
+                    </button>
                   </div>
                 </>
               )}
@@ -205,12 +265,21 @@ export function ThreadTerminalPane({
         </div>
       )}
       <div className={`relative min-h-0 flex-1 overflow-hidden ${viewMode === 'web' ? 'invisible' : ''}`}>
-        <div
-          ref={terminalPaneRef}
-          className={`flex h-full w-full flex-col justify-end overflow-hidden font-mono text-sm transition-opacity duration-300 [&>.xterm]:w-full [&>.xterm]:shrink-0 ${showDisconnectOverlay ? 'opacity-40' : 'opacity-100'}`}
-          style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
-          onClick={onFocusTerminal}
-        />
+        {terminalRenderer === 'grid' ? (
+          <div
+            className={`h-full w-full transition-opacity duration-300 ${showDisconnectOverlay ? 'opacity-40' : 'opacity-100'}`}
+            style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
+          >
+            {gridPane}
+          </div>
+        ) : (
+          <div
+            ref={terminalPaneRef}
+            className={`flex h-full w-full flex-col justify-end overflow-hidden font-mono text-sm transition-opacity duration-300 [&>.xterm]:w-full [&>.xterm]:shrink-0 ${showDisconnectOverlay ? 'opacity-40' : 'opacity-100'}`}
+            style={{ pointerEvents: terminalConnection === 'connected' && viewMode === 'terminal' ? 'auto' : 'none' }}
+            onClick={onFocusTerminal}
+          />
+        )}
         {showDisconnectOverlay && viewMode === 'terminal' && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             {terminalState === 'bud_offline' ? (

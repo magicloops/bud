@@ -203,7 +203,7 @@ Runtime managers for terminal sessions, cached daemon cwd path context, extracte
 
 ### `terminal/` → [terminal.spec.md](./terminal/terminal.spec.md)
 
-Terminal protocol types and known REPL program registry.
+Terminal proto 0.3 wire types plus the freshness helper (the 0.2 REPL program registry and the legacy `ContextSyncService` were deleted in the stem cutover / Phase 3 cleanup).
 
 ### `proto/` → [proto/proto.spec.md](./proto/proto.spec.md)
 

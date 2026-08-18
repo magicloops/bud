@@ -9,7 +9,7 @@ Keeps browser-visible thread ownership checks explicit while splitting the old m
 - message history/create flows
 - read-watermark updates for unread-attention state
 - agent state/stream/cancel and structured question-response submission
-- terminal create/ensure/input/history/stream
+- terminal create/ensure/input/history/snapshot/stream
 - user-clicked file viewer session creation
 
 ## Files
@@ -109,17 +109,22 @@ Thread-scoped file viewer route for `POST /api/threads/:threadId/files/open`.
 
 ### `terminal.ts`
 
-Thread-scoped terminal routes for session create/ensure/read, SSE attach, human input/interrupt/resize, and history reads.
+Thread-scoped terminal routes for session create/ensure/read, snapshot, SSE attach, human input/interrupt/resize, and history reads (terminal proto 0.3).
 
-The interrupt route sends a human Ctrl+C through the terminal runtime and rejects older pending terminal waits as `interrupted`, so a long settled agent tool can return a conservative tool result instead of remaining pending for the full settled timeout.
+- The stream route treats `Last-Event-ID` as the stringified byte offset the client last applied: a numeric cursor triggers durable output replay from that offset (via `readOutputRange`, internally paginated) before attaching live, with offset-based dedupe between replayed and live `terminal.output` events. `?from_offset=<n>` carries the same cursor via the query string for first connects (browsers cannot set `Last-Event-ID` on a fresh EventSource) and wins over the header when both are present. Non-numeric/absent cursors fall back to the in-memory buffer replay. Output SSE events carry offset ids; `terminal.event` and other non-output events carry no id.
+- `GET /terminal/snapshot?lines=<N>` (default 1000, cap 2000) serves the Phase 3 line-oriented initial render: it observes the daemon emulator's `history` view (scrollback text) then its `screen` view on the same session and responds with `{ session_id, mode, integration, alt_screen, history_text, screen_text, cols, rows, ring_next_offset }`. `ring_next_offset` comes from the SCREEN observe (the daemon's `terminal_observe_result` watermark) so resuming the stream via `?from_offset=ring_next_offset` yields no duplication; a line that scrolls off between the two observes is lost from the snapshot only (accepted). Errors: `404 no_terminal_session`, `503 bud_offline` (pre-check plus observe-time race), `502 observe_failed` on daemon observe failure/timeout. Mode/integration fall back to the runtime context and the watermark to the durable stream offset for older daemons that omit observe facts.
+- The history route serves `since_offset` reads through `readOutputRange(...)` (covering-chunk trim, explicit `truncated`/`next_offset`) and tail reads through the byte-budget `tailOutput(...)`.
+- The interrupt route sends a human Ctrl+C as a dispatch-only `terminal_send` (no `wait_for`/`await` field) and rejects older pending terminal waits as `interrupted`, so a long awaited agent tool can return a conservative tool result instead of remaining pending for the full awaited budget. The HTTP response keeps the `submitted` field name (mapped from the runtime's `dispatched`).
 
 ### `terminal.test.ts`
 
-Focused route-handler coverage for the terminal interrupt route.
+Focused route-handler coverage for the terminal interrupt route, the snapshot route, and the offset-resume SSE stream (durable replay from `Last-Event-ID` and `?from_offset`, overlap dedupe against live events, verbatim `terminal.event` forwarding).
 
 **Current Coverage**:
 - owned terminal interrupt returns dispatch metadata from the terminal manager
 - missing active sessions return `404 no_terminal_session`
+- snapshot observes history-then-screen, reports the screen observe's `ring_next_offset`, caps `lines` at 2000, falls back to runtime context/stored watermark for older daemons, and returns `401`/`404`/`503`/`502` on the auth/no-session/offline/observe-failure paths
+- `?from_offset` stream resume replays durable output from the cursor before live events, filters overlapping live chunks, and wins over a conflicting `Last-Event-ID` header
 
 ### `files.test.ts`
 

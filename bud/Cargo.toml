@@ -1,3 +1,6 @@
+[workspace]
+members = ["stem"]
+
 [package]
 name = "bud"
 version = "0.1.0"
@@ -20,6 +23,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 shellexpand = "3.1"
 sha2 = "0.10"
+stem = { path = "stem" }
 tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "signal", "fs", "time", "process", "sync"] }
 tokio-rustls = "0.25"
 tokio-stream = "0.1"
@@ -34,3 +38,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14"
+
+[dev-dependencies]
+tempfile = "3"

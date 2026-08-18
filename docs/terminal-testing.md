@@ -1,6 +1,28 @@
 # Terminal Testing Guide
 
-This document describes the test strategy for the persistent terminal feature (Phases 1–5).
+> **SUPERSEDED (2026-08, stem cutover).** This guide describes the retired
+> tmux-backed terminal architecture (tmux probes, pipe-pane capture,
+> readiness-confidence heuristics, `terminal_ready`). That backend and its
+> vocabulary were deleted when the daemon terminal runtime moved to the
+> in-repo `stem` PTY session manager
+> ([design/native-terminal-session-manager.md](../design/native-terminal-session-manager.md)).
+> The body below is retained as history only — do not use it to write new
+> tests.
+>
+> Current terminal testing entry points:
+>
+> - **stem crate unit/integration tests**: `bud/stem/` (`cargo test` from `bud/`)
+> - **daemon terminal runtime tests**: `bud/src/terminal/` unit tests plus
+>   `bud/tests/terminal_stem.rs` (end-to-end stem-backed sessions, OSC 133 exit
+>   codes, resume offsets) and `bud/tests/term_hold.rs` (real `bud term-hold`
+>   re-exec spawn/reuse/kill)
+> - **doctor checks**: `bud/tests/doctor.rs` (terminal registry + holder smoke
+>   through the real binary)
+> - **service terminal runtime/tool tests**: `service/src/runtime/` and
+>   `service/src/agent/` test files (`pnpm test` from `service/`)
+> - **manual end-to-end validation**:
+>   [plan/native-terminal-session-manager/validation-checklist.md](../plan/native-terminal-session-manager/validation-checklist.md)
+> - **wire contract**: [docs/proto.md](./proto.md) §6–7
 
 ---
 

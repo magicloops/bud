@@ -204,8 +204,7 @@ impl RunExecutor {
         command.current_dir(&run.cwd);
         unsafe {
             command.pre_exec(|| {
-                unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0))
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+                unistd::setpgid(Pid::from_raw(0), Pid::from_raw(0)).map_err(io::Error::other)
             });
         }
 

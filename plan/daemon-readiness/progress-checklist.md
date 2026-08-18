@@ -1,5 +1,10 @@
 # Progress Checklist: Daemon Production Binary Readiness
 
+> **Supersession note (2026-08):** tmux-related items below are obsolete — the
+> stem cutover ([plan/native-terminal-session-manager](../native-terminal-session-manager/implementation-spec.md))
+> removed the tmux dependency entirely. Do not implement or validate them;
+> the replacement doctor/installer behavior is tracked in that plan's Phase 3.
+
 ## Phase 1: Daemon Runtime Foundation
 
 - [x] production endpoint/config strategy selected (installer-written production config/env; binary defaults stay development-friendly)

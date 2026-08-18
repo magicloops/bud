@@ -13,7 +13,9 @@ type TerminalKeydownOptions = {
 }
 
 const SIMPLE_KEY_MAP: Record<string, string> = {
-  Enter: '\n',
+  // Terminal Enter is CR. Shells accept LF too, but raw-mode TUIs (codex,
+  // crossterm/ratatui apps) treat LF as insert-newline — CR is what submits.
+  Enter: '\r',
   Tab: '\t',
   Backspace: '\x7f',
   Escape: '\x1b',
@@ -122,6 +124,12 @@ export const translateTerminalKeydown = (
 
   if (hasNoModifiers(event) && SIMPLE_KEY_MAP[event.key]) {
     return { kind: 'bytes', text: SIMPLE_KEY_MAP[event.key] }
+  }
+
+  // Backtab: real terminal input (CSI Z, used by TUIs for reverse focus) —
+  // and letting it fall through would move browser focus out of the terminal.
+  if (event.key === 'Tab' && event.shiftKey && hasNoControlModifiers(event)) {
+    return { kind: 'bytes', text: '\x1b[Z' }
   }
 
   if (hasNoModifiers(event) && NAVIGATION_KEY_MAP[event.key]) {

@@ -14,7 +14,7 @@ Phase 4.4 file implementation.
 
 - accepts `file_open` frames from the app dispatcher
 - accepts metadata-only `file_resolve` frames for absolute POSIX path preflight
-- accepts optional `terminal_session_id` context resolved by the app dispatcher into one fresh tmux `pane_current_path` query
+- accepts optional `terminal_session_id` context resolved by the app dispatcher into one fresh terminal-session cwd query (stem OSC 7 / process introspection)
 - accepts optional `resolution_hint.kind = "host_cwd"` and tries that message-time cwd first when it canonicalizes inside the workspace root
 - only permits `stream_type = "file_read"`
 - only permits `root_key = "workspace"`

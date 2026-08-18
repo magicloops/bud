@@ -1,5 +1,15 @@
 # Phase 4: Installer Preflight And User Service
 
+> **Supersession note (2026-08):** The tmux dependency described in this phase
+> was removed by the `stem` cutover
+> ([plan/native-terminal-session-manager](../native-terminal-session-manager/implementation-spec.md)).
+> Terminal sessions are now provided by detached `bud term-hold` holder
+> processes — the install is single-binary and no tmux preflight or
+> remediation exists. The tmux-specific steps below are retained as history;
+> the service-template directives marked REQUIRED below are the current
+> mandatory contract (validated by
+> [spikes/holder-survival/findings.md](../../spikes/holder-survival/findings.md)).
+
 ## Objective
 
 Build the public shell installer and user-service integration.
@@ -43,11 +53,15 @@ Do not include `--install-deps` in v1 unless the team explicitly accepts package
 9. Write production config under the effective base dir.
 10. Preserve any existing identity/config unless an explicit safe upgrade path applies.
 11. Run `bud doctor`.
-12. Print tmux remediation and stop or continue with terminal capability disabled according to the final policy.
+12. Print tmux remediation and stop or continue with terminal capability disabled according to the final policy. *(Superseded by the stem cutover: no tmux dependency exists; `bud doctor` now runs registry/holder-smoke/supervision-directive checks instead.)*
 13. Install and start the user service on supported platforms, unless foreground/no-start was requested.
 14. Print status, log path, and next step.
 
 ## Tmux Policy
+
+> **Superseded (stem cutover):** this whole section no longer applies — Bud
+> ships its own terminal holder (`bud term-hold`) and has no tmux dependency.
+> See [plan/native-terminal-session-manager](../native-terminal-session-manager/implementation-spec.md).
 
 V1 installer does not install tmux automatically.
 
@@ -80,6 +94,11 @@ Install a per-user LaunchAgent:
 - starts at login
 - keeps alive after failure with reasonable throttling
 - logs to `~/.bud/logs/`
+- **REQUIRED:** `<key>AbandonProcessGroup</key><true/>` — defense-in-depth so
+  detached terminal holders (`bud term-hold`) are never reaped with the daemon
+  job; validated in [spikes/holder-survival/findings.md](../../spikes/holder-survival/findings.md)
+  (survival held without it on current macOS, but the directive is mandatory in
+  shipped templates). `bud doctor` warns when an installed bud plist lacks it.
 
 Use `launchctl bootstrap gui/$UID ...` and `launchctl bootout gui/$UID ...` where available.
 
@@ -90,6 +109,11 @@ Install a user service:
 - path: `~/.config/systemd/user/bud.service`
 - runs `~/.bud/bin/bud` with config/base-dir arguments or env
 - uses `Restart=on-failure`
+- **REQUIRED (load-bearing):** `KillMode=process` under `[Service]` — the
+  systemd default (`control-group`) kills every detached terminal holder on
+  daemon stop/restart/upgrade, so sessions will not survive daemon restarts
+  without it; validated in [spikes/holder-survival/findings.md](../../spikes/holder-survival/findings.md).
+  `bud doctor` warns when an installed bud unit lacks it.
 - starts via `systemctl --user enable --now bud.service`
 - documents lingering if needed for non-login background behavior, but do not require privileged setup for v1
 

@@ -3,12 +3,11 @@ import type { FastifyBaseLogger } from "fastify";
 import { ulid } from "ulid";
 import { TERMINAL_PROTO_VERSION } from "../../config.js";
 import type {
-  ReadinessAssessment,
-  TerminalContext,
-  TerminalDelta,
-  TerminalDeltaMessage,
+  TerminalEventOutcome,
+  TerminalIntegration,
+  TerminalMode,
   TerminalObservationView,
-  TerminalWaitFor,
+  TerminalSendAwait,
 } from "../../terminal/types.js";
 import { normalizeTerminalSendKeyName } from "../../terminal/types.js";
 import type { TerminalSession } from "./session-types.js";
@@ -17,14 +16,10 @@ type ObserveDebugState = {
   sessionId: string;
   requestId: string;
   view: TerminalObservationView;
-  waitFor: TerminalWaitFor;
   lines: number;
   timeoutMs: number;
-  localTimeoutMs: number;
   startedAt: number;
   deadlineAt: number;
-  context: TerminalContext;
-  readinessAtDispatch: ReadinessAssessment | null;
   startOffset: number;
   latestOffset: number;
   outputSeen: boolean;
@@ -35,9 +30,8 @@ type ObserveDebugState = {
 type SendDebugState = {
   sessionId: string;
   requestId: string;
-  waitFor: TerminalWaitFor;
+  await: TerminalSendAwait | null;
   timeoutMs: number;
-  localTimeoutMs: number;
   startedAt: number;
   deadlineAt: number;
   startOffset: number;
@@ -50,18 +44,22 @@ type SendDebugState = {
   timedOutAt?: number;
 };
 
-export const TERMINAL_SETTLED_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
-export const TERMINAL_DEFAULT_WAIT_TIMEOUT_MS = 30 * 1000;
-export const TERMINAL_LOCAL_TIMEOUT_GRACE_MS = 1000;
+/**
+ * Service-owned timeout budget for awaited sends (`await: "command" | "settled"`):
+ * proto 0.3 removed `timeout_ms` from the wire, so the local pending-request
+ * timer is the only budget.
+ */
+// Awaited-send budget: long enough for ordinary commands, short enough that a
+// genuinely long-running command surfaces as an actionable still-running
+// result (with command_id + observe guidance) instead of a silently pending
+// agent turn — the §A codex incident hung a turn for the old one-hour budget.
+export const TERMINAL_AWAITED_SEND_TIMEOUT_MS = 2 * 60 * 1000;
+export const TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS = 30 * 1000;
 
-export function resolveTerminalWaitTimeout(
-  waitFor: TerminalWaitFor,
+export function resolveTerminalSendTimeout(
+  awaitMode: TerminalSendAwait | undefined,
   requestedTimeoutMs?: number | null,
 ): number {
-  if (waitFor === "settled") {
-    return TERMINAL_SETTLED_WAIT_TIMEOUT_MS;
-  }
-
   if (
     typeof requestedTimeoutMs === "number" &&
     Number.isFinite(requestedTimeoutMs) &&
@@ -69,65 +67,66 @@ export function resolveTerminalWaitTimeout(
   ) {
     return Math.floor(requestedTimeoutMs);
   }
-
-  return TERMINAL_DEFAULT_WAIT_TIMEOUT_MS;
+  return awaitMode ? TERMINAL_AWAITED_SEND_TIMEOUT_MS : TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 export type ObserveOptions = {
   lines?: number;
-  waitFor?: TerminalWaitFor;
   view?: TerminalObservationView;
 };
 
 export type ObserveResult = {
   view: TerminalObservationView;
   output: string;
-  outputBytes: number;
   linesCaptured: number;
   changed?: boolean;
-  truncated?: boolean;
-  readiness: ReadinessAssessment;
-  error?: string;
-  hostCwd?: string;
+  mode?: TerminalMode;
+  integration?: TerminalIntegration;
+  altScreen?: boolean;
+  cursorRow?: number;
+  cursorCol?: number;
+  /**
+   * Stream watermark the daemon's emulator reflected when this observation was
+   * taken (the next output byte offset). Lets snapshot consumers resume the
+   * terminal SSE stream from exactly this offset without duplication.
+   */
+  ringNextOffset?: number;
+  outputAnsi?: string;
 };
 
 export type ObserveResponsePayload = {
   requestId: string;
   view: TerminalObservationView;
-  output: string;
-  outputBytes: number;
+  output: string; // base64
   linesCaptured: number;
   changed?: boolean | null;
-  truncated?: boolean | null;
-  readiness: ReadinessAssessment;
+  mode?: TerminalMode;
+  integration?: TerminalIntegration;
+  altScreen?: boolean;
+  cursorRow?: number;
+  cursorCol?: number;
+  ringNextOffset?: number;
+  outputAnsi?: string;
   error: string | null;
-  hostCwd?: string;
 };
 
 export type SendInteraction = {
   text?: string;
   submit?: boolean;
   key?: string;
-  keys?: string[];
-  observeAfterMs?: number;
-  waitFor?: TerminalWaitFor;
+  await?: TerminalSendAwait;
 };
 
 export type SendResult = {
-  submitted: boolean;
-  delta?: TerminalDelta | null;
-  readiness: ReadinessAssessment;
-  error?: string;
-  hostCwd?: string;
+  dispatched: boolean;
+  outcome: TerminalEventOutcome | null;
 };
 
 export type SendResultPayload = {
   requestId: string;
-  submitted: boolean;
-  delta?: TerminalDeltaMessage | null;
-  readiness: ReadinessAssessment;
+  dispatched: boolean;
+  outcome: TerminalEventOutcome | null;
   error: string | null;
-  hostCwd?: string;
 };
 
 type PendingObserve = {
@@ -148,14 +147,8 @@ type PendingSend = {
 type TerminalRequestDispatcherDeps = {
   logger: FastifyBaseLogger;
   getSession: (sessionId: string) => Promise<TerminalSession | null>;
-  getSessionContext: (sessionId: string) => TerminalContext;
-  getLatestReadiness: (sessionId: string) => ReadinessAssessment | null;
   getLastOffset: (sessionId: string) => number;
-  storeReadinessAssessment: (sessionId: string, assessment: ReadinessAssessment) => void;
-  storeHostCwd?: (sessionId: string, hostCwd: string) => Promise<void>;
-  emitReadyEvent: (sessionId: string, assessment: ReadinessAssessment) => void;
   sendFrameToBud: (budId: string, payload: Record<string, unknown>) => boolean;
-  summarizeContextForLog: (context: TerminalContext) => Record<string, unknown>;
   summarizeObservedOutput: (output: string) => Record<string, unknown>;
 };
 
@@ -181,28 +174,23 @@ export class TerminalRequestDispatcher {
     }
 
     const requestId = `obs_${ulid()}`;
-    const view = options.view ?? "delta";
-    const waitFor = options.waitFor ?? "none";
-    const timeoutMs = resolveTerminalWaitTimeout(waitFor, requestedTimeoutMs);
+    const view = options.view ?? "screen";
     const lines = options.lines ?? -50;
-    const localTimeoutMs = timeoutMs + TERMINAL_LOCAL_TIMEOUT_GRACE_MS;
+    const timeoutMs =
+      typeof requestedTimeoutMs === "number" && Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > 0
+        ? Math.floor(requestedTimeoutMs)
+        : TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS;
     const startedAt = Date.now();
-    const deadlineAt = startedAt + localTimeoutMs;
-    const context = this.deps.getSessionContext(sessionId);
-    const readinessAtDispatch = this.deps.getLatestReadiness(sessionId);
+    const deadlineAt = startedAt + timeoutMs;
     const startOffset = this.deps.getLastOffset(sessionId);
     const observeState: ObserveDebugState = {
       sessionId,
       requestId,
       view,
-      waitFor,
       lines,
       timeoutMs,
-      localTimeoutMs,
       startedAt,
       deadlineAt,
-      context,
-      readinessAtDispatch,
       startOffset,
       latestOffset: startOffset,
       outputSeen: false,
@@ -219,8 +207,6 @@ export class TerminalRequestDispatcher {
       request_id: requestId,
       view,
       lines,
-      wait_for: waitFor,
-      timeout_ms: timeoutMs,
     };
 
     const sent = this.deps.sendFrameToBud(session.budId, payload);
@@ -236,14 +222,10 @@ export class TerminalRequestDispatcher {
         sessionId,
         requestId,
         view,
-        waitFor,
         lines,
         timeoutMs,
-        localTimeoutMs,
         startedAt: new Date(startedAt).toISOString(),
         deadlineAt: new Date(deadlineAt).toISOString(),
-        context: this.deps.summarizeContextForLog(context),
-        readinessAtDispatch,
         startOffset,
         component: "terminal_request_dispatcher"
       },
@@ -264,15 +246,9 @@ export class TerminalRequestDispatcher {
           {
             sessionId,
             requestId,
-            waitFor: pending.state.waitFor,
             timeoutMs: pending.state.timeoutMs,
-            localTimeoutMs: pending.state.localTimeoutMs,
             ageMs: timedOutAt - pending.state.startedAt,
             deadlineAt: new Date(pending.state.deadlineAt).toISOString(),
-            contextAtDispatch: this.deps.summarizeContextForLog(pending.state.context),
-            contextNow: this.deps.summarizeContextForLog(this.deps.getSessionContext(sessionId)),
-            readinessAtDispatch: pending.state.readinessAtDispatch,
-            readinessNow: this.deps.getLatestReadiness(sessionId),
             startOffset: pending.state.startOffset,
             latestOffset: pending.state.latestOffset,
             outputSeen: pending.state.outputSeen,
@@ -283,7 +259,7 @@ export class TerminalRequestDispatcher {
           "terminal_observe timed out locally"
         );
         reject(new Error("observe_timeout"));
-      }, localTimeoutMs);
+      }, timeoutMs);
 
       this.pendingObserves.set(requestId, { resolve, reject, timeout, state: observeState });
     });
@@ -304,26 +280,12 @@ export class TerminalRequestDispatcher {
     }
 
     const requestId = `send_${ulid()}`;
-    const waitFor = interaction.waitFor ?? "settled";
-    const timeoutMs = resolveTerminalWaitTimeout(waitFor, options.timeoutMs);
-    const localTimeoutMs = timeoutMs + TERMINAL_LOCAL_TIMEOUT_GRACE_MS;
-    const observeAfterMs =
-      waitFor === "none" ? (interaction.observeAfterMs ?? 1000) : interaction.observeAfterMs;
-    const legacyKeys = interaction.keys?.filter((value) => value.trim().length > 0) ?? [];
-    const key = interaction.key?.trim()
-      ? normalizeTerminalSendKeyName(interaction.key)
-      : legacyKeys.length === 1
-        ? normalizeTerminalSendKeyName(legacyKeys[0])
-        : undefined;
+    const awaitMode = interaction.await;
+    const timeoutMs = resolveTerminalSendTimeout(awaitMode, options.timeoutMs);
+    const key = interaction.key?.trim() ? normalizeTerminalSendKeyName(interaction.key) : undefined;
     const hasTextField = typeof interaction.text === "string";
     const hasTextPayload = typeof interaction.text === "string" && interaction.text.length > 0;
 
-    if (interaction.key && legacyKeys.length > 0) {
-      throw new Error("ambiguous_interaction");
-    }
-    if (legacyKeys.length > 1) {
-      throw new Error("multiple_keys_unsupported");
-    }
     if (interaction.submit === true && !hasTextField) {
       throw new Error("submit_requires_text");
     }
@@ -335,14 +297,13 @@ export class TerminalRequestDispatcher {
     }
 
     const startedAt = Date.now();
-    const deadlineAt = startedAt + localTimeoutMs;
+    const deadlineAt = startedAt + timeoutMs;
     const startOffset = this.deps.getLastOffset(sessionId);
     const sendState: SendDebugState = {
       sessionId,
       requestId,
-      waitFor,
+      await: awaitMode ?? null,
       timeoutMs,
-      localTimeoutMs,
       startedAt,
       deadlineAt,
       startOffset,
@@ -362,12 +323,9 @@ export class TerminalRequestDispatcher {
       ext: {},
       session_id: sessionId,
       request_id: requestId,
-      text: interaction.text ?? null,
-      submit: interaction.submit === true,
-      key: key ?? null,
-      observe_after_ms: observeAfterMs,
-      wait_for: waitFor,
-      timeout_ms: timeoutMs,
+      ...(hasTextField ? { text: interaction.text, submit: interaction.submit === true } : {}),
+      ...(key ? { key } : {}),
+      ...(awaitMode ? { await: awaitMode } : {}),
     };
 
     const sent = this.deps.sendFrameToBud(session.budId, payload);
@@ -385,10 +343,8 @@ export class TerminalRequestDispatcher {
         hasText: sendState.hasText,
         submit: sendState.submit,
         hasKey: sendState.hasKey,
-        observeAfterMs,
-        waitFor,
+        await: awaitMode ?? null,
         timeoutMs,
-        localTimeoutMs,
         startedAt: new Date(startedAt).toISOString(),
         deadlineAt: new Date(deadlineAt).toISOString(),
         startOffset,
@@ -411,9 +367,8 @@ export class TerminalRequestDispatcher {
           {
             sessionId,
             requestId,
-            waitFor: pending.state.waitFor,
+            await: pending.state.await,
             timeoutMs: pending.state.timeoutMs,
-            localTimeoutMs: pending.state.localTimeoutMs,
             elapsedMs: timedOutAt - pending.state.startedAt,
             deadlineAt: new Date(pending.state.deadlineAt).toISOString(),
             startOffset: pending.state.startOffset,
@@ -421,13 +376,12 @@ export class TerminalRequestDispatcher {
             outputSeen: pending.state.outputSeen,
             outputEventCount: pending.state.outputEventCount,
             offsetDelta: Math.max(pending.state.latestOffset - pending.state.startOffset, 0),
-            readinessNow: this.summarizeReadiness(this.deps.getLatestReadiness(sessionId)),
             component: "terminal_request_dispatcher"
           },
           "terminal_send timed out locally"
         );
         reject(new Error("send_timeout"));
-      }, localTimeoutMs);
+      }, timeoutMs);
 
       this.pendingSends.set(requestId, { sessionId, resolve, reject, timeout, state: sendState });
 
@@ -486,9 +440,6 @@ export class TerminalRequestDispatcher {
     const output = Buffer.from(payload.output, "base64").toString("utf-8");
     const outputSummary = this.deps.summarizeObservedOutput(output);
     const latencyMs = observeState ? Date.now() - observeState.startedAt : undefined;
-    if (payload.hostCwd) {
-      await this.storeHostCwd(sessionId, payload.hostCwd);
-    }
 
     if (!pending) {
       if (observeState?.timedOutAt) {
@@ -496,14 +447,10 @@ export class TerminalRequestDispatcher {
           {
             sessionId,
             requestId: payload.requestId,
-            waitFor: observeState.waitFor,
             timeoutMs: observeState.timeoutMs,
-            localTimeoutMs: observeState.localTimeoutMs,
             latencyMs,
             lateByMs: Date.now() - observeState.timedOutAt,
-            outputBytes: payload.outputBytes,
             linesCaptured: payload.linesCaptured,
-            readiness: payload.readiness,
             outputSummary,
             component: "terminal_request_dispatcher"
           },
@@ -516,9 +463,7 @@ export class TerminalRequestDispatcher {
         {
           sessionId,
           requestId: payload.requestId,
-          outputBytes: payload.outputBytes,
           linesCaptured: payload.linesCaptured,
-          readiness: payload.readiness,
           outputSummary,
           component: "terminal_request_dispatcher"
         },
@@ -541,36 +486,37 @@ export class TerminalRequestDispatcher {
         sessionId,
         requestId: payload.requestId,
         view: payload.view,
-        waitFor: observeState?.waitFor,
         timeoutMs: observeState?.timeoutMs,
-        localTimeoutMs: observeState?.localTimeoutMs,
         latencyMs,
-        outputBytes: payload.outputBytes,
         linesCaptured: payload.linesCaptured,
+        mode: payload.mode ?? null,
+        integration: payload.integration ?? null,
+        altScreen: payload.altScreen ?? null,
         outputSeenDuringWait: observeState?.outputSeen ?? false,
         outputEventCount: observeState?.outputEventCount ?? 0,
         outputOffsetDelta: observeState
           ? Math.max(observeState.latestOffset - observeState.startOffset, 0)
           : 0,
-        readiness: payload.readiness,
         outputSummary,
         component: "terminal_request_dispatcher"
       },
       "Observe result received"
     );
 
-    this.deps.storeReadinessAssessment(sessionId, payload.readiness);
-    this.deps.emitReadyEvent(sessionId, payload.readiness);
-
     pending.resolve({
       view: payload.view,
       output,
-      outputBytes: payload.outputBytes,
       linesCaptured: payload.linesCaptured,
       changed: typeof payload.changed === "boolean" ? payload.changed : undefined,
-      truncated: typeof payload.truncated === "boolean" ? payload.truncated : undefined,
-      readiness: payload.readiness,
-      ...(payload.hostCwd ? { hostCwd: payload.hostCwd } : {}),
+      ...(payload.mode ? { mode: payload.mode } : {}),
+      ...(payload.integration ? { integration: payload.integration } : {}),
+      ...(typeof payload.altScreen === "boolean" ? { altScreen: payload.altScreen } : {}),
+      ...(typeof payload.cursorRow === "number" ? { cursorRow: payload.cursorRow } : {}),
+      ...(typeof payload.cursorCol === "number" ? { cursorCol: payload.cursorCol } : {}),
+      ...(typeof payload.ringNextOffset === "number" ? { ringNextOffset: payload.ringNextOffset } : {}),
+      ...(typeof payload.outputAnsi === "string"
+        ? { outputAnsi: Buffer.from(payload.outputAnsi, "base64").toString("utf-8") }
+        : {}),
     });
   }
 
@@ -578,30 +524,18 @@ export class TerminalRequestDispatcher {
     const pending = this.pendingSends.get(payload.requestId);
     const sendState = this.recentSendStates.get(payload.requestId) ?? pending?.state;
     const latencyMs = sendState ? Date.now() - sendState.startedAt : undefined;
-    if (payload.hostCwd) {
-      await this.storeHostCwd(sessionId, payload.hostCwd);
-    }
     if (!pending) {
       if (sendState?.timedOutAt) {
         this.deps.logger.warn(
           {
             sessionId,
             requestId: payload.requestId,
-            waitFor: sendState.waitFor,
+            await: sendState.await,
             timeoutMs: sendState.timeoutMs,
-            localTimeoutMs: sendState.localTimeoutMs,
             latencyMs,
             lateByMs: Date.now() - sendState.timedOutAt,
-            submitted: payload.submitted,
-            delta: payload.delta
-              ? {
-                  changed: payload.delta.changed,
-                  textBytes: Buffer.byteLength(payload.delta.text, "utf-8"),
-                  truncated: payload.delta.truncated,
-                  summary: this.deps.summarizeObservedOutput(payload.delta.text),
-                }
-              : null,
-            readiness: this.summarizeReadiness(payload.readiness),
+            dispatched: payload.dispatched,
+            outcome: payload.outcome,
             outputSeenDuringWait: sendState.outputSeen,
             outputEventCount: sendState.outputEventCount,
             outputOffsetDelta: Math.max(sendState.latestOffset - sendState.startOffset, 0),
@@ -632,44 +566,24 @@ export class TerminalRequestDispatcher {
       {
         sessionId,
         requestId: payload.requestId,
-        submitted: payload.submitted,
-        waitFor: sendState?.waitFor,
+        dispatched: payload.dispatched,
+        await: sendState?.await,
         timeoutMs: sendState?.timeoutMs,
-        localTimeoutMs: sendState?.localTimeoutMs,
         latencyMs,
-        delta: payload.delta
-          ? {
-              changed: payload.delta.changed,
-              textBytes: Buffer.byteLength(payload.delta.text, "utf-8"),
-              truncated: payload.delta.truncated,
-              summary: this.deps.summarizeObservedOutput(payload.delta.text),
-            }
-          : null,
+        outcomeEvent: payload.outcome?.event ?? null,
         outputSeenDuringWait: sendState?.outputSeen ?? false,
         outputEventCount: sendState?.outputEventCount ?? 0,
         outputOffsetDelta: sendState
           ? Math.max(sendState.latestOffset - sendState.startOffset, 0)
           : 0,
-        readiness: this.summarizeReadiness(payload.readiness),
         component: "terminal_request_dispatcher"
       },
       "Send result received"
     );
 
-    this.deps.storeReadinessAssessment(sessionId, payload.readiness);
-    this.deps.emitReadyEvent(sessionId, payload.readiness);
-
     pending.resolve({
-      submitted: payload.submitted,
-      delta: payload.delta
-        ? {
-            changed: payload.delta.changed,
-            text: payload.delta.text,
-            truncated: payload.delta.truncated,
-          }
-        : null,
-      readiness: payload.readiness,
-      ...(payload.hostCwd ? { hostCwd: payload.hostCwd } : {}),
+      dispatched: payload.dispatched,
+      outcome: payload.outcome ?? null,
     });
   }
 
@@ -735,37 +649,19 @@ export class TerminalRequestDispatcher {
       {
         sessionId: state.sessionId,
         requestId: state.requestId,
-        waitFor: state.waitFor,
         view: state.view,
         errorMessage,
         timeoutMs: state.timeoutMs,
-        localTimeoutMs: state.localTimeoutMs,
         elapsedMs: rejectedAt - state.startedAt,
         startOffset: state.startOffset,
         latestOffset: state.latestOffset,
         outputSeen: state.outputSeen,
         outputEventCount: state.outputEventCount,
         offsetDelta: Math.max(state.latestOffset - state.startOffset, 0),
-        readinessNow: this.summarizeReadiness(this.deps.getLatestReadiness(state.sessionId)),
         component: "terminal_request_dispatcher"
       },
       "Rejected pending terminal observe request"
     );
-  }
-
-  private async storeHostCwd(sessionId: string, hostCwd: string): Promise<void> {
-    if (!hostCwd.trim() || !this.deps.storeHostCwd) {
-      return;
-    }
-
-    try {
-      await this.deps.storeHostCwd(sessionId, hostCwd);
-    } catch (err) {
-      this.deps.logger.warn(
-        { err, sessionId, component: "terminal_request_dispatcher" },
-        "Failed to persist terminal cwd from result",
-      );
-    }
   }
 
   private logPendingSendRejected(state: SendDebugState, errorMessage: string): void {
@@ -775,34 +671,19 @@ export class TerminalRequestDispatcher {
       {
         sessionId: state.sessionId,
         requestId: state.requestId,
-        waitFor: state.waitFor,
+        await: state.await,
         errorMessage,
         timeoutMs: state.timeoutMs,
-        localTimeoutMs: state.localTimeoutMs,
         elapsedMs: rejectedAt - state.startedAt,
         startOffset: state.startOffset,
         latestOffset: state.latestOffset,
         outputSeen: state.outputSeen,
         outputEventCount: state.outputEventCount,
         offsetDelta: Math.max(state.latestOffset - state.startOffset, 0),
-        readinessNow: this.summarizeReadiness(this.deps.getLatestReadiness(state.sessionId)),
         component: "terminal_request_dispatcher"
       },
       "Rejected pending terminal send request"
     );
-  }
-
-  private summarizeReadiness(readiness: ReadinessAssessment | null): Record<string, unknown> | null {
-    if (!readiness) {
-      return null;
-    }
-
-    return {
-      ready: readiness.ready,
-      confidence: readiness.confidence,
-      trigger: readiness.trigger,
-      promptType: readiness.prompt_type ?? null
-    };
   }
 
   private debug(message: string, meta?: Record<string, unknown>) {

@@ -1,0 +1,9 @@
+fixture                    bytes  grid diff cursor match     alt-screen   scrollback w/a
+osc133-session.raw           840  identical          yes    false/false              0/0
+utf8-wide.raw              16444  identical          yes    false/false          228/228
+altscreen-vim.raw           2099  identical          yes    false/false              0/0
+repl-python.raw              276  identical          yes    false/false              0/0
+scroll-regions.raw          2259  identical          yes    false/false            62/63
+flood.raw                3888895  identical          yes    false/false      10000/10000
+
+flood throughput (best of 3, 3.9 MB): wezterm-term 43.7 MB/s (0.089s), alacritty_terminal 191.4 MB/s (0.020s)

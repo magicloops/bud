@@ -305,18 +305,120 @@ Pure reconnect/heartbeat timing helpers shared by the agent and terminal stream 
 
 **Responsibilities**:
 - reconnect backoff calculation
-- development vs production heartbeat/check interval policy
-- stale-heartbeat and stale-terminal-status threshold decisions
+- development vs production heartbeat/check interval policy, derived from the
+  service SSE heartbeat cadence (5s prod / 1s dev, see
+  `service/src/routes/threads/*.ts`) times a watchdog multiplier that must stay
+  ≥ 2.5× so one late heartbeat never triggers a false reconnect
+- the former `shouldTreatTerminalStatusAsStale` 5s status-staleness heuristic
+  equaled the production heartbeat interval exactly and caused spurious
+  terminal reconnects; it was deleted. Stream reconnects are driven only by
+  EventSource errors and the missed-heartbeat watchdog. The agent stream's
+  effective values are unchanged (prod 15s timeout / 5s check, dev 3s / 1s)
 
 **Exports**:
+- `THREAD_STREAM_HEARTBEAT_INTERVAL_MS` / `THREAD_STREAM_DEV_HEARTBEAT_INTERVAL_MS`
+- `THREAD_STREAM_HEARTBEAT_TIMEOUT_MULTIPLIER`
 - `getThreadStreamReconnectDelay(...)`
 - `getThreadStreamHeartbeatConfig(...)`
 - `hasMissedThreadStreamHeartbeat(...)`
-- `shouldTreatTerminalStatusAsStale(...)`
 
 ### `thread-stream-timing.test.ts`
 
-Node-runner coverage for reconnect delay and heartbeat/staleness thresholds used by both live stream hooks.
+Node-runner coverage for reconnect delay, heartbeat-cadence-derived watchdog
+thresholds (including the ≥ 2.5× invariant and agent-stream value stability),
+and the missed-heartbeat boundary.
+
+### `terminal-resume.ts`
+
+Pure helpers for offset-based terminal stream resume and snapshot planning.
+
+**Responsibilities**:
+- decide snapshot vs resume per (re)connect: full snapshot only on initial
+  mount (no applied offset), an `output_gap` terminal.event, or a bud
+  offline→online transition; otherwise resume with `?from_offset=` and no
+  `term.reset()`
+- resolve each `terminal.output` event's end offset from the SSE event id
+  (server-stamped `byte_offset + decoded length`), falling back to
+  `byte_offset + decodedByteLength` when the id is absent/non-numeric
+- keep the applied offset monotonic across replayed/duplicate events
+- build the terminal stream path with the resume cursor
+- compose snapshot text (emulator scrollback lines above the visible screen)
+
+**Exports**:
+- `planTerminalConnect(...)`
+- `resolveOutputEndOffset(...)`
+- `advanceAppliedOffset(...)`
+- `buildTerminalStreamPath(...)`
+- `buildTerminalSnapshotText(...)`
+
+### `terminal-resume.test.ts`
+
+Node-runner coverage for connect planning, event-id/byte-offset end-offset
+resolution, monotonic cursor advancement, stream-path construction, and
+snapshot text composition.
+
+### `terminal-input-queue.ts`
+
+Pure queue policy for terminal input typed while the terminal is disconnected.
+
+**Responsibilities**:
+- queue input chunks in order up to `TERMINAL_INPUT_QUEUE_MAX_BYTES` (8 KiB)
+- drop the oldest queued chunks beyond the cap (trimming a single oversized
+  chunk to its tail on a UTF-8 code point boundary) and report dropped bytes
+- drain the queue as one ordered payload for flush-on-reconnect
+
+### `terminal-input-queue.test.ts`
+
+Node-runner coverage for ordered accumulation, drop-oldest overflow, oversized
+single-chunk tail trimming, and UTF-8 boundary safety.
+
+### `terminal-grid-state.ts`
+
+Grid-sync client reducer (plan/terminal-grid-sync phase 2): applies
+`terminal.grid` frames (proto §6.8.2) — full seeds, contiguous deltas patch
+rows, §6.8.5 `row_shift` frames splice the viewport (identity-preserving for
+row memoization) before dirty rows apply, generation gaps/size mismatches
+return a `discontinuity` signal, full frames recover from anything
+(recording a scrollback seam across missed generations). The cursor carries
+optional DECSCUSR `shape`/`blink` facts (§6.8.6). Accumulates scrollback pushes (capped 5000, drops counted),
+seeds scrollback from snapshot `history_text`, and resolves run colors
+(named/256/truecolor) to CSS. Pure; node-tested in
+`terminal-grid-state.test.ts`.
+
+### `terminal-renderer.ts`
+
+Terminal renderer selection: `?renderer=` URL override →
+`localStorage["bud.terminal.renderer"]` → `grid` default. Resolved once per
+mount.
+
+### `terminal-prediction.ts`
+
+Predictive local echo engine (grid-sync phase 3, §6.8.3): pure ghost-tail
+state — printable bursts accumulate as pending ghost text, backspace edits the
+unflushed tail, every input flush assigns a client seq, frames'
+`applied_input_seq` retire covered chunks, and anything unpredictable
+(control keys, Enter, gate closure, failed posts, reconnects) clears all
+ghosts. Node-tested in `terminal-prediction.test.ts`.
+
+### `terminal-mouse.ts`
+
+Mouse event encoding for the grid renderer (§6.8.4): SGR (preferred) and
+legacy X10 (coordinates clamped to the UTF-8-safe range), modifier bits,
+wheel buttons, the alternate-scroll arrow fallback, and the DECCKM SS3
+rewrite for cursor keys. Pure; node-tested in `terminal-mouse.test.ts`.
+
+### `terminal-command-state.ts`
+
+Pure reducer for the terminal pane's command lifecycle chip, driven by typed
+`terminal.event` payloads (no heuristic activity inference): `command_started`
+→ running, `command_finished` → exit code (persists until the next command),
+`child_exited` → cleared, all other events pass through unchanged.
+
+### `terminal-command-state.test.ts`
+
+Node-runner coverage for command lifecycle transitions, exit-code handling,
+chip persistence/supersession, child-exit clearing, and malformed-payload
+tolerance.
 
 ### `use-terminal-session.ts`
 
@@ -326,14 +428,57 @@ Terminal session/xterm ownership for the existing-thread route.
 - initialize and dispose the xterm instance plus `FitAddon`
 - translate browser keyboard/paste events into explicit terminal input bytes
 - batch terminal input and post resize/input mutations to thread-scoped terminal endpoints
-- create or reuse the terminal session record, attach to terminal SSE, and reconnect on stale/closed streams
-- recover terminal state through `terminal/ensure` plus terminal history replay after reconnects
-- expose narrow terminal UI state such as connection status, readiness assessment, truncation, and disconnect overlay visibility
+- queue typed input while disconnected (bounded drop-oldest policy via
+  `terminal-input-queue.ts`), flush it in order on reconnect, and surface an
+  `terminalInputQueued` state instead of silently discarding keystrokes
+- create or reuse the terminal session record, then establish the view per the
+  `terminal-resume.ts` plan: on initial mount / `output_gap` / bud
+  offline→online, fetch `GET /terminal/snapshot?lines=1000` (emulator
+  scrollback + visible screen), `term.reset()`, render it, and open the SSE
+  stream at `?from_offset=<ring_next_offset>`
+- on routine reconnects, resume the SSE stream from the highest applied output
+  end-offset (tracked via `terminal.output` SSE event ids) with no
+  `term.reset()` and no snapshot — the server replays the missed range on one
+  ordered stream
+- fall back to the legacy byte-tail history replay
+  (`/terminal/history?bytes=131072`, with its truncation banner) only when the
+  snapshot endpoint is unavailable; the snapshot path clears the banner
+- decode streamed `terminal.output` chunks through one persistent streaming
+  `TextDecoder` per SSE connection (`createTerminalStreamDecoder`), reset on
+  `term.reset()` and on each new connection, fixing UTF-8 chunk-boundary
+  corruption
+- recover the daemon-side PTY through `terminal/ensure` (idempotent, no
+  history replay of its own)
+- reconnect only on EventSource errors and the missed-heartbeat watchdog (the
+  5s status-staleness heuristic is gone)
+- reduce typed `terminal.event` payloads into session facts (`mode_changed`)
+  and the command lifecycle chip (`command_started` / `command_finished` /
+  `child_exited`); `output_gap` forces a re-snapshot reconnect
+- expose narrow terminal UI state such as connection status, session facts,
+  command chip, queued-input flag, truncation, and disconnect overlay
+  visibility
+- renderer selection (grid-sync phase 2): `terminal-renderer.ts` resolves
+  `grid` (default) vs `bytes` (legacy xterm fallback) once per mount. In grid mode xterm is
+  never instantiated; the SSE stream connects with `?grid=1` and no
+  `from_offset`, `terminal.grid` frames reduce through
+  `terminal-grid-state.ts` (discontinuity ⇒ reconnect; the watch re-arm
+  ships a fresh full frame), the snapshot seeds scrollback only, and
+  `terminal.output` counts only as stream liveness
+- input POSTs are strictly serialized through a promise chain: concurrent
+  fetches ride parallel HTTP connections and can arrive out of order,
+  reordering typed bytes at the PTY (surfaced by leading-edge per-keystroke
+  flushing; the E2E's intermittent "perl- e" command corruption was this)
+- predictive echo (§6.8.3): keystrokes ghost via `terminal-prediction.ts`
+  while the latest frame's `predict_ok` gate is open; flushes carry `seq` on
+  the input POST; frame `applied_input_seq` retires chunks; the hook exposes
+  `terminalPredictionGhost` for the grid pane
 
 **Exports**:
-- `useTerminalSession(...)`
+- `useTerminalSession(...)` (returns `terminalRenderer`, `terminalGridState`,
+  `sendTerminalInput`, `sendTerminalResize` for the grid pane)
 - `TerminalConnectionState`
-- `TerminalReadinessAssessment`
+- `TerminalSessionFacts` / `TerminalMode` / `TerminalIntegration`
+- `TerminalCommandChip` (re-export)
 
 **Route contract**:
 - the route still owns terminal-specific presentation such as the overlays, status bar, and terminal menu wiring

@@ -12,7 +12,6 @@ import type {
   TerminalSessionManager,
 } from "../runtime/terminal-session-manager.js";
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
-import type { ContextSyncService } from "../terminal/context-sync-service.js";
 import {
   buildTerminalVisibilityMetadata,
   type TerminalVisibilityMetadata,
@@ -89,7 +88,6 @@ import { formatAgentRuntimeFailure } from "./failure-message.js";
 
 export class AgentService {
   private readonly terminalSessionManager: TerminalSessionManager;
-  private readonly contextSyncService: ContextSyncService | null;
   private readonly runtime: AgentRuntimeStateManager;
   private readonly logger: FastifyBaseLogger;
   private readonly debugEnabled: boolean;
@@ -109,10 +107,8 @@ export class AgentService {
     logger: FastifyBaseLogger,
     debugEnabled: boolean,
     openaiDebugEnabled: boolean,
-    contextSyncService?: ContextSyncService,
   ) {
     this.terminalSessionManager = terminalSessionManager;
-    this.contextSyncService = contextSyncService ?? null;
     this.runtime = runtime;
     this.logger = logger;
     this.debugEnabled = debugEnabled;
@@ -743,8 +739,9 @@ export class AgentService {
 	              const terminalExecution = execution as ExecutedTerminalTool;
 	              terminalVisibility = await this.buildTerminalVisibilityForToolResult(
 	                currentSessionId,
-	                terminalExecution.directive.tool === "terminal.send" ? "terminal_send" : "terminal_observe",
-	                terminalExecution.result.readiness,
+	                terminalExecution.directive.tool === "terminal.observe"
+	                  ? "terminal_observe"
+	                  : "terminal_send",
 	              );
 	            }
             const { payload, message } = await this.transcriptWriter.recordToolResult({
@@ -771,11 +768,6 @@ export class AgentService {
               messageId: message.message_id,
               ownerUserId,
             });
-
-            const executionError = "error" in execution.result ? execution.result.error : null;
-	            if (shouldRefreshContext && this.contextSyncService && currentSessionId && !executionError) {
-	              await this.contextSyncService.refreshSnapshot(currentSessionId);
-	            }
 
             if (supersededQuestionResponse?.continuation === "supersede") {
               this.runtime.emit(threadId, {
@@ -1200,7 +1192,6 @@ export class AgentService {
   private async buildTerminalVisibilityForToolResult(
     sessionId: string,
     source: TerminalVisibilityMetadata["source"],
-    readiness: Record<string, unknown> | null,
   ): Promise<TerminalVisibilityMetadata | null> {
     const session = await this.terminalSessionManager.getSession(sessionId);
     if (!session) {
@@ -1212,7 +1203,9 @@ export class AgentService {
       source,
       outputLogBytes: session.outputLogBytes,
       cwd: session.cwd,
-      readiness,
+      // Proto 0.3 retired readiness assessments; the watermark now keys off
+      // output bytes and cwd only.
+      readiness: null,
     });
   }
 

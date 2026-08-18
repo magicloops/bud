@@ -310,7 +310,7 @@ test("install.sh surfaces bud doctor dependency remediation without failing inst
   const dir = await tempDir(t);
   const { bytes, sha256 } = await createFakeBudArchive(t, dir, {
     doctorExitCode: 1,
-    doctorMessage: "tmux is missing; install it with: brew install tmux",
+    doctorMessage: "holder smoke check failed: terminal sessions will not work until a holder can be spawned",
   });
   const placeholder = "http://127.0.0.1:1";
   const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
@@ -327,7 +327,7 @@ test("install.sh surfaces bud doctor dependency remediation without failing inst
   });
 
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stderr, /tmux is missing/);
+  assert.match(result.stderr, /holder smoke check failed/);
   assert.match(result.stderr, /Bud preflight reported issues/);
   assert.ok((await stat(path.join(installRoot, "bin", "bud"))).isFile());
   assert.match(

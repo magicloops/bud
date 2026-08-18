@@ -317,7 +317,55 @@ Terminal presentation component for the existing-thread workspace.
 **Purpose**:
 - renders the terminal pane wrapper, optional injected web-view pane,
   disconnect overlays, truncated-history badge, terminal status bar, and
-  terminal options menu
+  terminal options menu (incl. the renderer toggle: bytes/xterm ↔ grid beta,
+  persisted to localStorage + reload)
+- when `terminalRenderer` is `grid`, renders the injected `gridPane` in place
+  of the xterm container
+
+### `thread-terminal-grid-pane.tsx`
+
+Grid-sync renderer (plan/terminal-grid-sync phase 2): draws
+`TerminalGridState` as DOM rows of styled run spans — no VT parsing, native
+selection/copy. Owns geometry: measures its cell box, calls `onResize`, and
+re-asserts the measured size against mismatched frames **until the stream
+converges on it once** (the mount-time resize races session creation and
+404s; converge-once prevents two differently-sized viewers fighting over the
+PTY — last resize wins, and a reconnect re-arms the assertion to cover daemon
+respawns at the stale spawn hint). Keyboard/paste capture via
+`lib/terminal-input` translation into `onInput`, bottom-pinned scrolling with
+scrollback above the live grid, and a `ch`-positioned cursor overlay.
+Run spans render as cell-height inline-blocks so app background colors
+paint the full cell rect (inline font-boxes left dark gaps between lines
+under vim themes); rows are memoized on run-array identity so delta frames
+re-render only dirty rows.
+Mouse support (§6.8.4): press/release/drag/motion/wheel encoded via
+`terminal-mouse.ts` only while the app enabled reporting (Shift bypasses to
+native selection; contextmenu suppressed while reporting); wheel falls back
+to alternate-scroll arrows in the alt screen and native scrollback scrolling
+on the primary screen; cursor-key bytes are rewritten to SS3 under DECCKM.
+The cursor renders per DECSCUSR facts (block/underline/beam, blink) with a
+blinking-block default for older daemons — but only while the pane owns
+keyboard focus; unfocused it draws a hollow non-blinking cell outline
+(xterm parity), so a filled/blinking cursor unambiguously means keystrokes
+go to the terminal rather than the message composer. Focus is tracked via
+focus/blur on the container (child↔child moves filtered by `relatedTarget`). Keyboard focus lives on a hidden
+cursor-positioned textarea: IME composition (compositionend), dead keys, and
+non-keyboard insertions (emoji picker → input events) commit as ordinary
+text; mid-composition keydowns (keyCode 229) are never translated; the
+textarea is pointer-transparent and focused programmatically.
+Renders the predictive-echo ghost tail (dotted underline, dimmed) after the
+authoritative cursor, with the cursor block sitting after the ghost.
+Known v1 limitation: wide-glyph cursor positioning assumes CJK glyphs render
+at exactly 2ch. Validated by the automated browser E2E
+(plan/terminal-grid-sync/browser-validation.md).
+- renders typed `terminal.event` status chips in the header: the mode chip
+  (`shell`/`tui`/`repl`), a command lifecycle chip (pulsing "running" dot from
+  `command_started`, then green `exit 0` / red `exit N` from
+  `command_finished`, persisting until the next command), and an "input
+  queued" chip while typed input is buffered during a disconnect — no
+  heuristic activity inference
+- the truncated-history badge only appears on the byte-tail history fallback
+  path; the emulator-scrollback snapshot path never sets it
 - renders the terminal status/menu bar as a compact 2rem top header above the xterm host for visual testing
 - bottom-anchors the injected xterm element inside its measured host so whole-row fit remainder pixels collect above the terminal screen instead of below it
 - remains mounted underneath file-viewer and web-view overlays in the

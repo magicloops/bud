@@ -91,6 +91,51 @@ test("ensureSessionRecordForThread returns the concurrent winner after an active
   assert.equal(result.session.sessionId, "sess_existing");
 });
 
+test("concurrent create recovers when the 23505 hides inside a wrapped cause", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const store = new TerminalSessionStore(createLogger());
+  // First lookup misses (both callers race past it); the post-conflict
+  // lookup finds the winner.
+  let lookups = 0;
+  Reflect.set(store, "getSessionForThread", async () => {
+    lookups += 1;
+    return lookups === 1 ? null : rowToSessionLike("sess_winner");
+  });
+
+  // Drizzle-style wrapping: the pg unique violation sits on `cause`, not the
+  // top-level error (the regression that turned this benign race into 500s).
+  mock.method(db, "insert", () => ({
+    values() {
+      return {
+        async returning() {
+          const pgError = Object.assign(new Error("duplicate key value"), { code: "23505" });
+          throw Object.assign(new Error("Failed query: insert into terminal_session"), {
+            name: "DrizzleQueryError",
+            cause: pgError,
+          });
+        }
+      };
+    }
+  }) as never);
+
+  const result = await store.ensureSessionRecordForThread(
+    "11111111-1111-1111-1111-111111111111",
+    "bud-1",
+    "user-1",
+  );
+
+  assert.equal(result.created, false);
+  assert.equal(result.session.sessionId, "sess_winner");
+});
+
+function rowToSessionLike(sessionId: string) {
+  const store = new TerminalSessionStore(createLogger());
+  return Reflect.get(store, "rowToSession").call(store, createSessionRow(sessionId));
+}
+
 test("ensureSessionRecordForThread returns a created session when the insert wins", async (t) => {
   t.after(() => {
     mock.restoreAll();

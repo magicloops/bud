@@ -14,6 +14,7 @@ import { WorkspaceShell } from '@/components/workbench/workspace-shell'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
+import { ThreadTerminalGridPane } from '@/components/workbench/thread-terminal-grid-pane'
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { WebViewPane } from '@/components/workbench/web-view-pane'
 import { DebugPanel } from '@/components/debug-panel'
@@ -592,12 +593,19 @@ function ThreadView() {
     currentSessionId,
     focusTerminal,
     sendTerminalCtrlC,
+    sendTerminalInput,
+    sendTerminalResize,
     showDisconnectOverlay,
+    terminalCommand,
     terminalConnection,
+    terminalGridState,
+    terminalPredictionGhost,
     terminalHasOutput,
+    terminalInputQueued,
     terminalOutputTruncated,
     terminalPaneRef,
-    terminalReadiness,
+    terminalFacts,
+    terminalRenderer,
     terminalScrolledToTop,
     terminalState,
   } = useTerminalSession({
@@ -881,13 +889,27 @@ function ThreadView() {
           <ThreadTerminalPane
             error={error}
             status={status}
+            terminalCommand={terminalCommand}
             terminalConnection={terminalConnection}
             terminalHasOutput={terminalHasOutput}
+            terminalInputQueued={terminalInputQueued}
             terminalOutputTruncated={terminalOutputTruncated}
             terminalPaneRef={terminalPaneRef}
-            terminalReadiness={terminalReadiness}
+            terminalFacts={terminalFacts}
             terminalScrolledToTop={terminalScrolledToTop}
             terminalState={terminalState}
+            terminalRenderer={terminalRenderer}
+            gridPane={
+              terminalRenderer === 'grid' ? (
+                <ThreadTerminalGridPane
+                  state={terminalGridState}
+                  connected={terminalConnection === 'connected'}
+                  predictionGhost={terminalPredictionGhost}
+                  onInput={sendTerminalInput}
+                  onResize={sendTerminalResize}
+                />
+              ) : null
+            }
             viewMode={viewMode === 'web' ? 'web' : 'terminal'}
             webViewPane={(
               <WebViewPane

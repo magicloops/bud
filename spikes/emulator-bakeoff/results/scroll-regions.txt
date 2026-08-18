@@ -1,0 +1,56 @@
+fixture: scroll-regions.raw (2259 bytes, fed in 4096-byte chunks)
+grid: 80x24, scrollback config: 10000 lines
+
+== state after full feed ==
+                         wezterm-term                 alacritty_terminal          
+cursor (row, col)        (23, 0)                      (23, 0)                     
+alt-screen active        false                        false                       
+scrollback lines         62                           63                          
+quiet chunks             0/1                          0/1                         
+
+== final grid diff (trailing-space-trimmed) ==
+  IDENTICAL
+  row  0 == |scrollback filler 039|
+  row  1 == |scrollback filler 040|
+  row  2 == |scrollback filler 041|
+  row  3 == |scrollback filler 042|
+  row  4 == |scrollback filler 043|
+  row  5 == |scrollback filler 044|
+  row  6 == |scrollback filler 045|
+  row  7 == |scrollback filler 046|
+  row  8 == |scrollback filler 047|
+  row  9 == |scrollback filler 048|
+  row 10 == |scrollback filler 049|
+  row 11 == |scrollback filler 050|
+  row 12 == |scrollback filler 051|
+  row 13 == |scrollback filler 052|
+  row 14 == |scrollback filler 053|
+  row 15 == |scrollback filler 054|
+  row 16 == |scrollback filler 055|
+  row 17 == |scrollback filler 056|
+  row 18 == |scrollback filler 057|
+  row 19 == |scrollback filler 058|
+  row 20 == |scrollback filler 059|
+  row 21 == |scrollback filler 060|
+  row 22 == |last line of scroll-regions fixture|
+
+cursor match: true
+
+== damage log: wezterm-term (seqno/changed-lines model) ==
+  chunk    0: 24 visible lines changed (stable rows [62, 63, 64, 65, 66, 67, 68, 69], ...)
+
+== damage log: alacritty_terminal (LineDamageBounds model) ==
+  chunk    0: full damage (entire viewport)
+
+== OSC 133 observability ==
+wezterm (typed pre-parse via wezterm-escape-parser):
+  (none seen)
+alacritty (second raw vte::Parser + custom Perform):
+  (none seen)
+
+== emulator-specific extras ==
+wezterm-term:
+  semantic zones (native OSC 133 support): 1 zones
+    zone Output rows 0..84 cols 0..34
+alacritty_terminal:
+  EventListener events (0):

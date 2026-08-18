@@ -46,7 +46,7 @@ Wire-format rules:
 ## 2. Versioning
 
 - Base WebSocket protocol version: `proto: "0.1"`
-- Terminal protocol extension version: `proto: "0.2"`
+- Terminal protocol extension version: `proto: "0.3"` (`0.2` retired by the stem cutover)
 - Unknown fields must be ignored by receivers
 - Breaking wire changes must bump the relevant `proto`
 
@@ -650,7 +650,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - `draft_assistant` includes `client_id`, `text`, `started_at`, and `updated_at` while assistant text is streaming
 - `draft_reasoning` is an additive list of in-flight provider reasoning text visible to the browser but not included in future model-visible conversation reconstruction. Each item includes `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`.
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
-- For terminal tools, `pending_tool.args.wait_for` is the effective wait mode the service will use, including implicit defaults (`terminal.send` → `"settled"`, `terminal.observe` → `"none"`)
+- For terminal tools, `pending_tool.args` mirrors the model-facing schema (`terminal.run` `{command}`, `terminal.send` `{raw_text|key}`, `terminal.observe` `{view?, lines?}`); there is no `wait_for` field
 - For `terminal.send`, browser-facing `pending_tool.args` uses the model-facing gesture fields: exactly one of `command`, `raw_text`, or `key`. `command` means text plus Enter; `raw_text` means literal text without an implicit Enter; `key` means one semantic key gesture.
 - For web-view tools, `pending_tool.args` contains only product fields such as
   `target_port`, `path`, `title`, `proxied_site_id`, and `disable`; viewer
@@ -673,14 +673,15 @@ Rejected file opens and resolves use the same frame-family shape with
 
 - URL: `GET /api/threads/:thread_id/terminal/stream`
 - Authorized, thread-scoped SSE stream
-- Carries live terminal output/status/readiness plus Bud online/offline notices for the owning thread
-- Historical backfill comes from `GET /api/threads/:thread_id/terminal/history`, not SSE replay
+- Carries live terminal output/status/typed terminal events plus Bud online/offline notices for the owning thread
+- Reconnect resume: the cursor is a byte offset (see §7.2/§7.3), supplied via `?from_offset=<n>` on first connects (browsers cannot set the header then) or `Last-Event-ID` on reconnects; when both are present the HIGHER cursor wins (native EventSource reconnects reuse the URL's stale query param while sending a fresher header). The server replays durably stored output from the cursor before live forwarding on one ordered stream
+- Snapshot bootstrap: `GET /api/threads/:thread_id/terminal/snapshot?lines=<n>` returns `{ session_id, mode, integration, alt_screen, history_text, screen_text, screen_ansi?, cols, rows, ring_next_offset }` (prefer `screen_ansi` — ANSI-serialized grid with colors and cursor) — emulator-backed scrollback lines + visible grid; render it, then open the stream with `from_offset=ring_next_offset` for a duplication-free, gap-free handoff. Bulk byte-range backfill remains available via `GET /api/threads/:thread_id/terminal/history`
 
 ### 3.4.1 Terminal Interrupt
 
 - URL: `POST /api/threads/:thread_id/terminal/interrupt`
 - Authorized, thread-scoped human interrupt endpoint
-- Sends `ctrl+c` through the normal `terminal_send` request path with `key: "ctrl+c"` and `wait_for: "none"`
+- Sends `ctrl+c` through the normal `terminal_send` request path with `key: "ctrl+c"` (dispatch-only, no `await`)
 - Rejects older pending send/observe waits for the same terminal session as `interrupted`, excluding the newly-created Ctrl+C request
 - Missing active terminal session returns `404 { "error": "no_terminal_session" }`
 
@@ -1435,180 +1436,462 @@ Service reply to `reconnect_report`. Each reported operation/stream is returned 
 
 ---
 
-## 6. Terminal Protocol (Bud ⇄ Service)
+## 6. Terminal Protocol (Bud ⇄ Service, proto `0.3`)
 
-The active execution contract is thread-scoped terminals. The service sends structured terminal requests; Bud responds with status/output/readiness and request-scoped results.
+The active execution contract is thread-scoped terminals backed by the daemon's
+`stem` runtime: detached PTY holder processes that survive daemon restarts, a
+client-side VT emulator, and OSC 133 shell integration. The daemon reports
+typed facts (command lifecycle with real exit codes, mode transitions,
+damage-quiet settling) — the `0.2` readiness-confidence vocabulary
+(`terminal_ready`, `confidence`, `hints`, `wait_for`) is retired.
+
+**Changes from `0.2`** (for readers of old transcripts/fixtures): output is
+offset-only (`seq` removed); `terminal_ensure` gained `resume_from_offset` with
+`output_gap` reporting; `terminal_event` replaces `terminal_ready`;
+`terminal_send` gained `await` and lost `wait_for`/`timeout_ms`/the `keys`
+alias; send/observe results carry outcomes and grid facts instead of
+readiness/deltas; `terminal_status.info.output_log_bytes` is retired.
 
 ### 6.1 Service → Bud Terminal Requests
 
-Supported request families:
+Request families: `terminal_ensure`, `terminal_resize`, `terminal_send`,
+`terminal_observe`, `terminal_input`, `terminal_close`.
 
-- `terminal_ensure`: create or verify the thread terminal session
-- `terminal_resize`: resize the active terminal session
-- `terminal_send`: send one structured gesture
-- `terminal_observe`: explicitly inspect the terminal
-- `terminal_close`: close the session
-
-`terminal_send` uses a single gesture model:
+`terminal_ensure` creates or reattaches the thread session:
 
 ```json
 {
-  "proto": "0.2",
+  "proto": "0.3",
+  "type": "terminal_ensure",
+  "id": "01...",
+  "ts": 1731,
+  "session_id": "sess_01H...",
+  "config": { "cols": 120, "rows": 40, "cwd": "/Users/adam/bud" },
+  "resume_from_offset": 16384,
+  "ext": {}
+}
+```
+
+- `resume_from_offset` (optional) is the service's highest durably stored end
+  offset; the daemon backfills ring-buffered output from exactly that offset
+  before live output. Omitted or `0` on first ensure.
+- If the holder ring has already discarded bytes at that offset, the daemon
+  emits a `terminal_event` `output_gap` (§6.4) before any output and resumes at
+  the ring's oldest retained offset.
+- Ensure failures report `terminal_status` with `state: "none"` and
+  `info.error`.
+- Ensure `config.cols/rows` are a **spawn-time hint only** (the service's
+  last-known cache): the daemon applies them when spawning a fresh holder and
+  never resizes a surviving PTY from them — the live renderer owns geometry
+  and re-asserts its dimensions via `terminal_resize` when the session reports
+  ready (clients must do this; stored dims are not authoritative).
+
+`terminal_send` sends one gesture:
+
+```json
+{
+  "proto": "0.3",
   "type": "terminal_send",
   "id": "01...",
   "ts": 1731,
-  "session_id": "bud-b_123-thread-456",
+  "session_id": "sess_01H...",
   "request_id": "req_01H...",
   "text": "git status",
   "submit": true,
-  "wait_for": "settled",
-  "timeout_ms": 3600000,
+  "await": "command",
   "ext": {}
 }
 ```
 
 Rules:
-- the request is either `text` with optional `submit`, or one semantic `key`
-- agent/model-facing `terminal.send` calls no longer expose `text` or `submit`; the service adapts `command` to `{ "text": command, "submit": true }`, `raw_text` to `{ "text": raw_text, "submit": false }`, and `key` to the Bud `key` field at this boundary
-- canonical keys are backend-neutral names such as `ctrl+c`, `enter`, and `escape`
-- canonical model-facing wait modes are `settled`, `changed`, and `none`
-- `wait_for: "settled"` is the default agent path and uses a service-owned one-hour timeout budget
-- `wait_for: "changed"` waits for quick visible change evidence; `wait_for: "none"` is the explicit fast path for deliberate send-and-follow or no-immediate-output workflows
-- `screen_stable` remains a legacy wire alias for `settled` during rollout but is not canonical or advertised to the model
-- `shell_ready` remains compatibility-only where implemented, is not advertised to the model, and `terminal_observe` rejects `view: "delta"` with `wait_for: "shell_ready"`
-- non-settled wait modes keep shorter service defaults unless a trusted lower-level caller supplies an explicit timeout
-- the model-facing agent schema does not expose `timeout_ms`; the service owns timeout policy and keeps `timeout_ms` on the Bud wire only
-- settled `terminal_send` waits begin output-quiescence/readiness assessment after dispatch plus a short guard delay, while the returned delta still compares the pre-send capture to the final capture so command echo can remain visible
-- `terminal.observe` is the explicit inspection hatch for `delta`, `screen`, or `history`
-- `terminal_observe` with `wait_for: "settled"` uses the same one-hour timeout budget as default `terminal_send`
-- weak settled captures do not become high-confidence ready solely because output is quiet; prompt, confirmation, password, and pager evidence can still produce high-confidence readiness
+- exactly one of `text` (with optional `submit`) or one semantic `key`
+  (backend-neutral names: `ctrl+c`, `enter`, `escape`, `up`, `shift+tab`, …)
+- `submit: true` dispatches the text as an explicit bracketed paste when the
+  application has enabled `?2004` (programmatic text IS a paste — chat TUIs
+  use burst/paste heuristics that can otherwise swallow the submit), then a
+  short beat, then a real Enter *keypress* (not an appended newline — under
+  bracketed paste a trailing newline would be inserted, not executed)
+- `await` ∈ `"command"` (resolve on that command's `command_finished` —
+  including via the sentinel fallback below — or EARLY with an
+  `interactive_started` outcome when the command demonstrably launched an
+  interactive program, so `terminal.run codex` returns in ~1s instead of
+  riding the timeout) | `"settled"` (resolve on the next
+  damage-quiet `settled` event, on `prompt_ready` — returning to a shell
+  prompt is maximal settlement, covering gestures that exit an interactive
+  program — or on `command_finished` when the gesture completed a shell
+  command, carrying its exit code: send/run substitutability for weaker
+  models) | absent (resolve on dispatch). The service
+  owns timeout policy; the daemon holds a 4h internal safety cap that resolves
+  with `error: "TIMEOUT"`.
+- **Sentinel fallback**: when the session shows no live OSC 133 integration and
+  the gesture is `text`+`submit`+`await:"command"`, the daemon appends an
+  invisible exit-code trailer (`; printf '\033]133;D;%s\a' "$?"`) so
+  `command_finished` still carries a real exit code.
+- **Busy guard**: `text`+`submit`+`await:"command"` while a command is already
+  OPEN (a `command_started` with no finish — e.g. an inline TUI running under
+  the shell) is refused with `terminal_send_result` `error:
+  "command_in_flight"` and `dispatched: false`; nothing is typed into the PTY.
+  Declared command intent is the only signal that distinguishes "run this at a
+  prompt" from "type this into the foreground program", so the daemon refuses
+  rather than guesses.
+
+`terminal_observe` = `{ session_id, request_id, view, lines? }` with
+`view ∈ "screen" | "delta" | "history"` (wire default `screen`; the
+model-facing tool layer defaults to `delta`). `history` takes optional `lines`
+(daemon default 200, cap 2000).
+
+`terminal_input` = `{ session_id, data }` — raw human keyboard bytes (browser
+xterm path) written verbatim to the PTY. `terminal_resize` and `terminal_close`
+are unchanged in shape.
 
 ### 6.2 `terminal_status` (Bud → Service)
 
 ```json
 {
-  "proto": "0.2",
+  "proto": "0.3",
   "type": "terminal_status",
   "id": "01...",
   "ts": 1731,
-  "session_id": "bud-b_123-thread-456",
-  "state": "creating",
+  "session_id": "sess_01H...",
+  "state": "ready",
   "info": {
     "pid": 12345,
     "cwd": "/Users/adam/bud",
     "cols": 120,
     "rows": 40,
-    "output_log_bytes": 4096
+    "ring_next_offset": 84213,
+    "mode": "shell",
+    "integration": "osc133"
   },
   "ext": {}
 }
 ```
+
+`pid` is the session's PTY child pid. `mode` ∈ `shell|tui|repl|unknown`;
+`integration` ∈ `osc133|sentinel|none`.
 
 ### 6.3 `terminal_output` (Bud → Service)
 
 ```json
 {
-  "proto": "0.2",
+  "proto": "0.3",
   "type": "terminal_output",
   "id": "01...",
   "ts": 1731,
-  "session_id": "bud-b_123-thread-456",
-  "seq": 42,
-  "data": "base64 payload",
+  "session_id": "sess_01H...",
   "byte_offset": 16384,
+  "data": "base64 payload",
   "ext": {}
 }
 ```
 
 Rules:
-- `seq` is monotonic per session output stream
-- `byte_offset` is monotonic and is the durable ordering/backfill coordinate stored by the service
-- Bud output chunks should remain at or below 16 KiB
-- gRPC-capable daemons send `terminal_output` on `BudData.Attach` when the data stream is attached; WebSocket and gRPC-control fallback carry the same frame shape
+- `byte_offset` addresses the FIRST byte of `data`, absolute from session
+  start, monotonic per session, and never resets across daemon restarts or
+  reattach
+- chunks are ≤ 16 KiB and may split UTF-8 code points; reassembly is a consumer
+  concern
+- delivery is at-least-once: the service treats `(session_id, byte_offset)` as
+  the idempotency key (stats and SSE emission gated on first insert)
 
-### 6.4 `terminal_ready` (Bud → Service)
+### 6.4 `terminal_event` (Bud → Service)
 
 ```json
 {
-  "proto": "0.2",
-  "type": "terminal_ready",
+  "proto": "0.3",
+  "type": "terminal_event",
   "id": "01...",
   "ts": 1731,
-  "session_id": "bud-b_123-thread-456",
-  "assessment": {
-    "ready": true,
-    "confidence": 0.93,
-    "trigger": "settled",
-    "prompt_type": "shell",
-    "hints": {
-      "looks_like_prompt": true,
-      "looks_like_confirmation": false,
-      "looks_like_password": false,
-      "looks_like_pager": false,
-      "may_still_be_processing": false
-    }
+  "session_id": "sess_01H...",
+  "event": "command_finished",
+  "data": {
+    "command_id": "cmd_01H...",
+    "exit_code": 1,
+    "duration_ms": 2311,
+    "output_byte_start": 16384,
+    "output_byte_end": 18101
   },
   "ext": {}
 }
 ```
+
+| `event` | `data` | Emitted when |
+|---|---|---|
+| `prompt_ready` | `{ "cwd"?: string }` | OSC 133 `A` (shell back at prompt); `cwd` from OSC 7 when available |
+| `command_started` | `{ "command_id", "output_byte_start" }` | OSC 133 `B`→`C` (or sentinel-issued command dispatched) |
+| `command_finished` | `{ "command_id", "exit_code"?, "duration_ms"?, "output_byte_start", "output_byte_end" }` | OSC 133 `D;<exit>` |
+| `mode_changed` | `{ "mode", "integration" }` | alt-screen enter/exit, REPL pattern match, integration detection |
+| `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes, or in `shell` mode while a command is mid-flight (inline TUIs that never enter the alternate screen); an at-prompt shell emits `prompt_ready` instead |
+| `output_gap` | `{ "from_offset", "resume_offset" }` | ring truncation on resume (§6.1) |
+| `interactive_started` | `{ "command_id", "signal": "alt_screen"\|"bracketed_paste" }` | the OPEN command launched an interactive program (alt-screen entry, or a mid-command bracketed-paste enable — shells keep `?2004` off while a command runs, so an enable is the child speaking) |
+| `child_exited` | `{ "exit_code"?, "signal"?: string }` | session root process exited (`signal` is a name such as `"SIGTERM"`) |
+
+Rules:
+- `command_id` is a daemon-minted ULID; the service persists `terminal_command`
+  rows keyed by it and slices transcript output via the byte range
+- `exit_code`/`duration_ms` are **omitted** (not null) when unknown
+  (e.g. a `command_finished` synthesized without an observed start)
+- an event's byte references never point past output the service has not yet
+  been sent
+- unknown `event` values must be ignored (additive evolution); the service
+  still forwards them to SSE
+- `mode: "unknown"` with heuristic settling is the honest fallback; producers
+  must not fabricate `command_finished` without a marker or sentinel exit code
 
 ### 6.5 `terminal_send_result` (Bud → Service)
 
 ```json
 {
-  "proto": "0.2",
+  "proto": "0.3",
   "type": "terminal_send_result",
   "id": "01...",
   "ts": 1731,
-  "session_id": "bud-b_123-thread-456",
+  "session_id": "sess_01H...",
   "request_id": "req_01H...",
-  "submitted": true,
-  "delta": {
-    "changed": true,
-    "text": "On branch main",
-    "truncated": false
-  },
-  "readiness": {
-    "ready": true,
-    "confidence": 0.84,
-    "trigger": "settled"
-  },
+  "dispatched": true,
+  "outcome": { "event": "command_finished", "data": { "command_id": "cmd_01H...", "exit_code": 0, "duration_ms": 412, "output_byte_start": 0, "output_byte_end": 640 } },
   "error": null,
-  "host_cwd": "/Users/adam/bud/service",
   "ext": {}
 }
 ```
 
-If a human interrupt rejects an older pending send wait, the service records a conservative tool result for the agent with `error: "interrupted"` and `readiness.trigger: "error"`. This is not a Bud wire-frame change; it is the service-side result shape used when the pending request promise is rejected before a matching `terminal_send_result` arrives.
-
-`host_cwd` is optional and reports the daemon-observed tmux pane cwd at result time. The service caches it on the terminal session before resolving pending terminal tool promises, then stamps message metadata with a `terminal_cwd_v1` path context for future file-link opens.
+`outcome` mirrors the terminating `terminal_event` when `await` was requested,
+`null` otherwise. Await failures use canonical codes (`TIMEOUT`, `CANCELED`);
+validation failures use descriptive strings (`ambiguous_interaction`,
+`session_not_found`, …). Screen/delta payloads are not part of send results;
+`terminal_observe` is the inspection surface, and byte-exact history is a
+service-side read from `terminal_session_output` by offset range.
 
 ### 6.6 `terminal_observe_result` (Bud → Service)
 
 ```json
 {
-  "proto": "0.2",
+  "proto": "0.3",
   "type": "terminal_observe_result",
   "id": "01...",
   "ts": 1731,
-  "session_id": "bud-b_123-thread-456",
+  "session_id": "sess_01H...",
   "request_id": "req_01H...",
-  "view": "delta",
-  "output": "base64 payload",
-  "output_bytes": 1024,
-  "lines_captured": 18,
+  "view": "screen",
+  "output": "base64 text payload",
+  "lines_captured": 24,
   "changed": true,
-  "truncated": false,
-  "readiness": {
-    "ready": true,
-    "confidence": 0.91,
-    "trigger": "changed"
-  },
+  "mode": "tui",
+  "integration": "osc133",
+  "alt_screen": true,
+  "cursor_row": 3,
+  "cursor_col": 11,
+  "ring_next_offset": 84213,
   "error": null,
-  "host_cwd": "/Users/adam/bud/service",
   "ext": {}
 }
 ```
+
+`ring_next_offset` is the output-stream offset the emulator state reflects at
+observe time: a client can render an observation as a snapshot and resume the
+output stream from exactly that offset — no duplication, no gap.
+
+`view: "screen"` results also carry `output_ansi` (base64): the grid
+serialized as ANSI — SGR color/style runs plus a final cursor-position
+sequence — so replaying it reproduces presentation, not just text. The
+snapshot endpoint surfaces it as `screen_ansi`; clients should prefer it over
+`screen_text` when present (plain text made reloading into a colorful TUI
+look broken).
+
+`delta` is a grid-diff: the lines that changed since the previous observe/send
+snapshot for the session (`changed: false` with empty output when nothing
+did).
+
+### 6.7 Model-facing tool surface (service-side, for reference)
+
+- `terminal.run { command }` → send with `await: "command"` → tool result
+  `{ exit_code, duration_ms, command_id, output, truncated?, mode,
+  integration, cwd }` (output sliced by the command byte range, tail-kept at
+  64 KiB). On service timeout (~2 minutes) the result reports still-running —
+  never a fabricated failure. A non-zero exit code is a normal result, not an
+  error. While a command is already open the result is `status:
+  "terminal_busy"` with guidance (nothing is typed). Every terminal tool
+  result carries `open_command` (`{command_id, running_ms}` or null) — the
+  fact that distinguishes an idle prompt from an inline TUI running under a
+  shell, since both report `mode: "shell"`.
+- `terminal.send { raw_text | key, submit? }` → `await: "settled"` followed by
+  an explicit `delta` observe (send-plus-proof). `raw_text` presses Enter
+  afterward by default (`submit: false` types without submitting; ignored for
+  `key` gestures).
+- `terminal.observe { view?, lines? }` → tool default `view: "delta"`.
+- `wait_for` and the readiness-confidence vocabulary do not exist in tool
+  schemas or prompts.
+
+### 6.8 Grid Sync (additive; plan/terminal-grid-sync)
+
+Server-authoritative grid deltas for live client rendering. The byte stream
+(§6.3) remains the durable transcript and resume substrate; grid frames are
+the live *rendering* transport for clients that opt in, and are emitted only
+while at least one viewer is watching. Neither frame has a typed BudEnvelope
+slot — both travel via the `legacy_json` payload.
+
+#### 6.8.1 `terminal_grid_watch` (Service → Bud)
+
+```json
+{ "type": "terminal_grid_watch", "proto": "0.3", "session_id": "sess_01H...", "enabled": true }
+```
+
+- Idempotent. `enabled: true` (re)starts emission and always produces an
+  immediate `full` frame; `enabled: false` stops it.
+- Watch state dies with the daemon's session attachment and the WS
+  connection. The service refcounts grid viewers per session and re-arms on
+  **every viewer join** (a newcomer to an already-watched session has no
+  baseline, and the daemon cannot target one SSE connection — the fresh full
+  is idempotent for existing viewers), on every `terminal_status
+  state:"ready"` while viewers exist (covers ensure/reconnect/resize), and
+  disarms when the last viewer leaves.
+
+#### 6.8.2 `terminal_grid` (Bud → Service)
+
+```json
+{
+  "type": "terminal_grid", "proto": "0.3", "session_id": "sess_01H...",
+  "generation": 42, "full": false,
+  "cols": 120, "rows": 40, "alt_screen": false,
+  "cursor": { "row": 12, "col": 7, "visible": true },
+  "dirty_rows": [ { "row": 12, "runs": [ { "t": "cargo test", "fg": 2 }, { "t": " ok", "fg": [0, 255, 0], "a": 1 } ] } ],
+  "scrollback_push": [ [ { "t": "a line that scrolled off" } ] ],
+  "scrollback_dropped": 0
+}
+```
+
+- **Runs**: a row is maximal same-presentation text runs. `t` required; `fg`/
+  `bg` omitted = terminal default, palette index number (0–255) or `[r,g,b]`
+  truecolor; `a` attr bitfield (1 bold, 2 dim, 4 italic, 8 underline, 16
+  inverse, 32 strikeout), omitted = 0. Wide chars appear once; zero-width
+  combiners stay attached; trailing default-styled blanks are trimmed (client
+  clears the rest of the row). Run text is cell text: a tab lives in exactly
+  one grid cell (the emulator stores `\t` in the tab's start cell) and is
+  exported as a single space — clients must never re-expand tabs (CSS
+  `white-space: pre` would re-expand at per-span tab stops and misalign
+  columns, e.g. BSD `ls` output). The run object is additive (future keys:
+  hyperlinks, underline styles).
+- **Deltas** are relative to the previously emitted frame. Cadence:
+  event-driven — the daemon emits when session activity produces damage,
+  after a ~8 ms coalescing beat (a burst of PTY chunks becomes one frame)
+  and floored by a ~16 ms minimum inter-frame gap (~60 fps cap; a row
+  overwritten many times inside the window ships once, and slow consumers
+  skip intermediate states by construction). An idle poll (~100 ms) covers
+  predict-gate flips that paint nothing. `full: true` means `dirty_rows` covers every row
+  (watch start, resize, viewport scroll, alt-screen toggle). Cursor-only
+  changes emit a frame with empty `dirty_rows`.
+- **`generation`** is monotonic per daemon session attachment starting at 1.
+  A client seeing anything other than `last + 1` (SSE drop, daemon restart —
+  which resets to 1) must treat its grid as untrustworthy and recover via
+  reconnect (the watch re-arm produces a fresh `full`).
+- **`scrollback_push`**: lines pushed into scrollback history since the last
+  frame, oldest first (exact even at emulator history-cap saturation; the
+  alt screen never pushes). **`scrollback_dropped`** is a best-effort count
+  of pushes lost since the last frame (pending-buffer overflow, tracking
+  loss); any nonzero value means the client's accumulated scrollback has a
+  seam.
+- The service forwards frames live (SSE `terminal.grid`, §7.2) and stores
+  nothing — grid state is reconstructible, so frames are excluded from the
+  SSE replay buffer.
+
+#### 6.8.3 Predictive echo sequencing (additive)
+
+Client-side predictive echo (mosh-style ghost text) rides three additive
+fields; all are optional for compatibility with pre-phase-3 peers.
+
+- `terminal_input` (Service → Bud) gains `input_seq` (client-minted,
+  monotonic per page session; BudEnvelope typed field **4** — field 3 is the
+  retired 0.2 `await_ready`). Browser input posts carry it as `seq` on
+  `POST /terminal/input`.
+- `terminal_grid` gains:
+  - `applied_input_seq`: highest `input_seq` the daemon has written to the
+    PTY. A client retires its prediction chunks with `seq <= applied` — the
+    authoritative echo owns those cells now.
+  - `predict_ok`: daemon-computed gate. True only at an interactive prompt:
+    mode ∈ {shell, repl} with **no open command**, primary screen, and the
+    PTY line discipline not in the silent-canonical state
+    (`ICANON && !ECHO`, the classic password prompt). Note this is an
+    exclusion, not `ECHO && ICANON`: readline/zle shells sit at the prompt
+    in raw mode with kernel echo off and echo app-side — exactly what
+    predictions model. A gate flip with no accompanying damage forces a
+    frame on the idle poll (a password prompt closes the gate within
+    ~100 ms). The
+    termios facts come from the v2 holder IPC op `QueryTermios` (holder
+    PROTO_VERSION 2); surviving v1 holders answer nothing and the gate
+    stays closed.
+- Client rules: predict only printable bursts and backspace over the
+  unflushed tail; anything else (Enter, control keys, gate closure, failed
+  input posts, reconnects) clears all ghosts. Ghosts render in a distinct
+  tentative style after the authoritative cursor and are never written into
+  grid state.
+
+#### 6.8.4 Mouse + cursor-key facts (additive)
+
+`terminal_grid` frames carry the application's input-mode DECSET facts so
+grid clients can encode input correctly (all optional; older daemons omit
+them, and mode toggles force a frame even when they damage no cells):
+
+- `mouse: { report, sgr, alt_scroll }` — `report` is the highest enabled
+  reporting level (`none` | `click` (1000) | `drag` (1002) | `motion`
+  (1003)); `sgr` = extended coordinates (1006); `alt_scroll` = the
+  alternate-scroll convention (1007, default-on like real terminals).
+- `app_cursor: bool` — DECCKM: cursor keys must be sent as SS3 (`ESC O x`)
+  instead of CSI. Pagers in smkx (`less`) ignore CSI arrows entirely.
+
+Client behavior: mouse events are encoded (SGR preferred; legacy X10 with
+coordinates clamped to the UTF-8-safe range) only while `report != none`,
+with Shift bypassing to native browser selection (terminal convention).
+Wheel: `report != none` → SGR wheel buttons 64/65 at the hovered cell;
+otherwise in the alt screen with `alt_scroll` → arrow keys (SS3 when
+`app_cursor`); otherwise the primary screen scrolls local scrollback
+natively.
+
+#### 6.8.5 Scroll-hint delta (additive)
+
+Scrolling marks the whole viewport damaged in the emulator, which would ship
+a full frame per scroll step (~KBs at up to 60 fps — the dominant grid-sync
+WAN cost). Instead, when a pending full repaint can be explained by a
+vertical shift, the daemon emits a **shift delta**:
+
+- `row_shift: n` (non-`full` frames only; omitted when zero): the client
+  first moves its viewport content UP by `n` rows (negative = down) —
+  `new[i] = old[i + n]` — then applies `dirty_rows` as usual.
+- Detection is take-time and identity-based: each viewport row carries a
+  stable identity (its cell-buffer address, which survives every emulator
+  rotation) plus a content hash; the shift is the dominant offset that maps
+  current rows onto the last emitted frame's rows, and every row the shift
+  cannot account for byte-for-byte (revealed, rewritten, region-static) is
+  included in `dirty_rows`. Correctness never depends on the hint — any
+  ambiguity (no baseline, resize, alt toggle, under a quarter of rows
+  matching) degrades to a true `full` frame.
+- Multiple scroll steps between frames collapse into one net shift; region
+  scrolls (vim with a status line) emit the region's shift with the static
+  rows re-sent as dirty; whole-screen replacements (a giant output burst)
+  legitimately remain fulls.
+- Generation contiguity rules are those of ordinary deltas.
+
+Measured on the validation harness: paced scrolling ships ~50 shift frames
+per 1 full, at ~5× fewer bytes per frame even on a sparse screen.
+
+#### 6.8.6 Cursor style facts (additive)
+
+The frame `cursor` object gains `shape` (`block` | `underline` | `beam`) and
+`blink` — DECSCUSR facts (vi-mode aware via the emulator), frame-worthy on
+change like the other input-mode facts since DECSCUSR paints no cells.
+Absent on older daemons; clients render a blinking block then. Hidden
+cursors remain expressed via `visible`, never as a shape.
+
+The emulator's default style is a **blinking block**, and prompt return
+(OSC 133 `A`) resets DECSCUSR back to that default: full-screen apps
+(nvim) leave an explicit steady style behind on exit and never restore it,
+which would permanently steady the shell cursor. Prompt-level styling
+(zsh vi-mode widgets) is emitted after the prompt marker and therefore
+lands on top of the reset and is honored normally.
+
+(Client-side, not wire: grid clients must route keyboard focus through a
+hidden text element at the cursor position so IME composition, dead keys,
+and non-keyboard insertions — emoji pickers — commit as ordinary input text;
+mid-composition keydowns, keyCode 229, must not be translated.)
 
 ---
 
@@ -1637,8 +1920,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "message_id": "uuid", "text": "I should inspect the terminal state.", "message": { "message_id": "uuid", "client_id": "uuidv7", "role": "reasoning", "display_role": "Reasoning", "content": "I should inspect the terminal state.", "metadata": { "artifact_kind": "reasoning", "model_visible": false, "turn_id": "01TURN...", "llm_call_id": "01LLM...", "started_at": "2026-06-05T20:00:01.000Z", "finished_at": "2026-06-05T20:00:05.000Z", "duration_ms": 4000, "duration_source": "service_wall_clock" }, "created_at": "2026-06-05T20:00:05.000Z" } }`
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
-  - For terminal tools, `args.wait_for` is the effective wait mode exposed to web/native clients; ordinary `terminal.send` calls include `"settled"` even when the model omitted `wait_for`, and default `terminal.observe` calls include `"none"`
-  - For `terminal.send`, `args` exposes exactly one input gesture: `{ "command": "whoami", "wait_for": "settled" }`, `{ "raw_text": "partial", "wait_for": "settled" }`, or `{ "key": "ctrl+c", "wait_for": "settled" }`. It does not expose legacy `text`/`submit` fields.
+  - Terminal tool `args` mirror the model-facing schemas: `terminal.run` exposes `{ "command": "whoami" }`; `terminal.send` exposes exactly one gesture — `{ "raw_text": "partial" }` or `{ "key": "ctrl+c" }`; `terminal.observe` exposes `{ "view": "delta" }`-style args. `wait_for` and legacy `text`/`submit`/`command`-on-send fields do not exist.
   - For web-view tools, `args` contains product fields only; examples include
     `target_host`, `target_port`, `path`, `title`, `proxied_site_id`, and
     `disable`. When `web_view.open` omits `target_host`, the service defaults
@@ -1719,16 +2001,33 @@ Resume rules:
 `GET /api/threads/:thread_id/terminal/stream` may emit:
 
 - `terminal.output`
-  - `{ "session_id": "bud-b_123-thread-456", "seq": 42, "data": "base64 payload", "byte_offset": 16384 }`
+  - `{ "session_id": "sess_01H...", "data": "base64 payload", "byte_offset": 16384 }`
+  - SSE `id:` is the chunk's END offset (`byte_offset + decoded length`); a client's `Last-Event-ID` therefore always names the next byte it needs, and the server replays durable output from that offset on reconnect
 - `terminal.status`
   - `{ "session_id": "bud-b_123-thread-456", "state": "ready|active|idle|closed", "info"?: { ... } }`
-- `terminal.ready`
-  - `{ "session_id": "bud-b_123-thread-456", "assessment": { ... } }`
+- `terminal.event`
+  - `{ "session_id": "sess_01H...", "event": "command_finished", "data": { ... }, "ts": 1731 }` — §6.4 frames forwarded verbatim; non-output events carry no SSE `id` so output offsets stay the resume cursor
+- `terminal.grid`
+  - `{ "session_id": "sess_01H...", "generation": 42, "full": false, "cols": 120, "rows": 40, "alt_screen": false, "cursor": { ... }, "dirty_rows": [ ... ], "scrollback_push": [ ... ], "scrollback_dropped": 0 }` — §6.8.2 frames forwarded verbatim, minus envelope
+  - emitted only to connections that opted in with `?grid=1` registered as grid viewers; carries no SSE `id` and is never buffered/replayed (a reconnecting grid client re-arms the watch and receives a fresh `full` frame)
 - `terminal.bud_offline`
   - `{ "bud_id": "b_01H...", "reason": "disconnected" }`
 - `terminal.bud_online`
   - `{ "bud_id": "b_01H..." }`
 - `heartbeat`
+
+`terminal.bud_offline` / `terminal.bud_online` are live presence signals and
+are **never buffered/replayed**: a replayed stale transition reads as fresh
+and triggers spurious client reconnects (which loop forever on connections
+that never resume by offset).
+
+Grid opt-in: `GET /terminal/stream?grid=1` registers the SSE connection as a
+grid viewer for its lifetime (refcounted across connections; every join
+re-arms `terminal_grid_watch enabled:true`, the last one leaving sends
+`enabled:false`). Grid connections attach **live-only** — no buffered-event
+replay of any kind; their state rebuilds from the re-arm's full frame. Grid
+clients still receive `terminal.status` / `terminal.event`; they ignore
+`terminal.output` for rendering.
 
 The old Bud-scoped `/api/terminals/:bud_id/stream` route is not part of the supported contract.
 
@@ -1749,7 +2048,7 @@ Rules:
 - first-party clients should key optimistic user rows, draft assistant rows, and pending tool rows by `client_id`
 - first-party clients should key draft reasoning rows by `client_id`, overlay `/agent/state.draft_reasoning` after bootstrap/recovery, and reconcile persisted reasoning from `agent.reasoning_done` or `/messages`
 - first-party clients must not remove a visible assistant draft just because an `agent.tool_call` arrives; text before or between tool calls is persisted as an assistant `agent.message`
-- first-party clients should use `agent.tool_call.args.wait_for` or `/agent/state.pending_tool.args.wait_for` to detect settled terminal waits instead of inferring long-running terminal progress from elapsed time
+- first-party clients should use `terminal.event` facts (`command_started`/`command_finished`, `mode_changed`, `settled`) to render terminal progress instead of inferring it from elapsed time
 - first-party clients should render `ask_user_questions` prompts from either a live `agent.tool_call` or `/agent/state.pending_tool` after refresh, and submit answers through the thread-scoped response route
 - first-party clients should treat `/agent/state.phase: "waiting_for_user"` as paused human input rather than background loading, and may send normal follow-up messages through `/api/threads/:thread_id/messages`
 - normal follow-up messages while `ask_user_questions` is pending are service-owned supersession: the service stores skipped answers for pending prompts, emits a completed tool row when possible, and may emit successful `final` without `message_id` or `text`
@@ -1764,7 +2063,7 @@ Rules:
 ## 8. Ordering and Delivery
 
 - Bud must preserve terminal-output order within a session
-- `terminal_output.seq` and `terminal_output.byte_offset` are monotonic per session
+- `terminal_output.byte_offset` is monotonic per session, absolute from session start, and never resets across daemon restarts or reattach
 - terminal history correctness comes from durable storage keyed by `(session_id, byte_offset)`
 - agent-stream replay is intentionally bounded and process-local; transcript correctness comes from `/messages` plus `/agent/state`
 - a cursor rejected by `agent.resync_required` is not a durable ordering point and must not be retried without a fresh `/agent/state` bootstrap
@@ -1825,10 +2124,10 @@ reconciliation_decision ◀── service current/unknown states
 ### 10.3 Terminal Send
 
 ```text
-Service → Bud: terminal_send{text|key, submit?, wait_for, timeout_ms}
-Bud → Service: terminal_output(seq, byte_offset, data)*
+Service → Bud: terminal_send{text|key, submit?, await?}
+Bud → Service: terminal_output(byte_offset, data)*  +  terminal_event(command_started/command_finished/...)
 Bud → Service: terminal_send_result{submitted, delta, readiness, error}
-Service → Browser SSE: terminal.output* and terminal.ready/status as applicable
+Service → Browser SSE: terminal.output*, terminal.event*, terminal.status as applicable
 Agent tool args/results exposed to browsers use `terminal.send{command|raw_text|key}` plus gesture metadata; the `text`/`submit` shape above is the current Service → Bud wire frame.
 ```
 
@@ -1836,7 +2135,7 @@ Agent tool args/results exposed to browsers use `terminal.send{command|raw_text|
 
 ```text
 Browser → Service: POST /api/threads/:thread_id/terminal/interrupt
-Service → Bud: terminal_send{key:"ctrl+c", wait_for:"none"}
+Service → Bud: terminal_send{key:"ctrl+c"} (dispatch-only)
 Service: reject older pending send/observe waits for the session as "interrupted"
 Service → Browser SSE: agent.tool_result with conservative interrupted result when an agent tool was pending
 ```
@@ -1941,6 +2240,18 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - the proto `0.3` terminal contract (§6) is ACTIVE via the `stem` backend cutover
+    (plan/native-terminal-session-manager): offset-only `terminal_output`,
+    `terminal_ensure.resume_from_offset` with `output_gap` reporting, the
+    `terminal_event` frame (OSC 133 command lifecycle with daemon-minted command
+    ULIDs and real exit codes, mode/integration transitions, damage-quiet
+    settling), `terminal_send.await` with slimmed `terminal_send_result`,
+    grid-backed `terminal_observe`, the `terminal_command` table, browser
+    `terminal.event` SSE with offset-based resume, and the model-facing
+    `terminal.run`/`terminal.send`/`terminal.observe` tool surface; `terminal_ready`,
+    readiness-confidence/hints, `wait_for`, `timeout_ms`-on-the-wire, the `keys`
+    alias, and `terminal_output.seq` are retired (older changelog entries below
+    describing that vocabulary are historical)
   - WebSocket-capable terminal/control traffic now uses binary `BudEnvelope` typed payload fields instead of typed `frame_json`; active sessions reject legacy JSON after capability negotiation, while `LegacyJsonPayload` decode support remains for fixtures and conformance tests
   - WebSocket-capable core data-plane lifecycle traffic now uses typed protobuf fields for `data_attach`, `data_attach_ack`, `stream_data`, `stream_credit`, `stream_reset`, and `stream_close`
   - Explicit daemon transport policy defaults to the WebSocket baseline, with opt-in HTTP/2/QUIC preference ordering for hosted deployments

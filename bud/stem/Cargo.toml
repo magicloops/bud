@@ -1,0 +1,22 @@
+[package]
+name = "stem"
+version = "0.1.0"
+edition = "2021"
+description = "Bud's native terminal session manager: persistent PTY sessions via detached holder processes, VT emulation, and OSC 133 semantic events"
+
+# Dependency policy (design D1): stem must never depend on the `bud` crate.
+# alacritty_terminal is pinned to the 0.26 minor per design D5 (API churn between
+# minors); confine its API surface to `emu.rs`.
+
+[dependencies]
+alacritty_terminal = "=0.26.0"
+nix = { version = "0.29", default-features = false, features = ["fs", "term", "process", "signal", "poll"] }
+postcard = { version = "1", features = ["use-std"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+tokio = { version = "1.36", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
+vte = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.36", features = ["net", "io-util", "sync", "time", "rt", "macros", "rt-multi-thread"] }

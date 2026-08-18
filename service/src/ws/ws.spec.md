@@ -33,7 +33,7 @@ Owns:
 - durable `device_session` / `transport_session` registration for authenticated daemon connections
 - daemon reconnect-report handling and reconciliation-decision replies
 - heartbeat handling
-- terminal frame parsing and routing
+- terminal frame parsing and routing (incl. `terminal_grid` grid-sync frames → `TerminalSessionManager.handleTerminalGrid`)
 - WebSocket data-plane carrier registration when `bud_envelope.stream_frames` is advertised
 - Bud-local LLM capability inspection; healthy ds4 Responses capability adds
   `local_llm_http` to the negotiated WebSocket data-plane stream families
@@ -92,13 +92,13 @@ Browser/Client                 Service                      Bud Daemon
 | `HelloSchema` | Initial handshake from bud |
 | `HelloProofSchema` | HMAC challenge response |
 | `TerminalStatusSchema` | Terminal state changes |
-| `TerminalOutputSchema` | Terminal output chunks |
-| `TerminalReadySchema` | Readiness assessments |
-| `TerminalObserveResultSchema` | Delta-first observe results with explicit screen/history modes plus optional daemon-reported `host_cwd` |
-| `TerminalSendResultSchema` | Send-first acknowledgements with settled-by-default timing, additive delta, timeout-aware readiness, and optional daemon-reported `host_cwd` |
+| `TerminalOutputSchema` | Offset-only terminal output chunks (`data`, `byte_offset`; proto 0.3 dropped `seq`) |
+| `TerminalEventSchema` | Proto 0.3 semantic event frames (`event`, `data`); unknown event values are tolerated |
+| `TerminalObserveResultSchema` | Grid-backed observe results (`view`, `output`, `lines_captured`, `changed`, `mode`, `integration`, `alt_screen`, cursor position, optional `ring_next_offset` stream watermark) |
+| `TerminalSendResultSchema` | Transport acks plus optional awaited terminating event (`dispatched`, `outcome`, `error`) |
 | `ReconnectReportSchema` | Daemon journal summary used after reconnect for operation/stream reconciliation |
 
-`TerminalStatusSchema` still tolerates deprecated `info.tmux_session` from older daemons during rollout, but the gateway no longer treats tmux session identity as part of the normal terminal contract.
+`TerminalReadySchema` and all readiness/confidence/hints payloads were removed in the proto 0.3 cutover. `TerminalStatusSchema.info` now carries the stem-backed shape (`pid`, `cwd`, `cols`, `rows`, `ring_next_offset`, `mode`, `integration`).
 
 **WebSocket Carrier Modes**:
 - the current daemon sends bootstrap `hello` as a binary `BudEnvelope`; the service only tolerates pre-negotiation JSON `hello` enough to return useful protocol errors to unsupported clients
@@ -154,6 +154,7 @@ Direct regression coverage for the extracted Bud connection runtime.
 - negotiated binary-envelope sessions reject legacy JSON text frames
 - unknown protobuf payload fields fail with a typed `UNSUPPORTED_PAYLOAD` error frame
 - WebSocket `stream_data` frames dispatch through the shared data-plane runtime, and back-to-back data/close frames are not reordered by activity heartbeat writes
+- `terminal_observe_result` frames thread the optional `ring_next_offset` watermark through to the dispatcher payload (`ringNextOffset`), and omit it when the daemon does
 
 **Exported Functions**:
 
@@ -218,11 +219,13 @@ The gateway also rejects `hello` frames that do not advertise `bud_envelope.vers
 | `hello` | `handleHello()` - Start auth flow |
 | `hello_proof` | `handleHelloProof()` - Verify HMAC |
 | `heartbeat` | Update lastHeartbeat timestamp |
-| `terminal_status` | `terminalSessionManager.handleStatus()` |
-| `terminal_output` | `terminalSessionManager.handleOutput()` |
-| `terminal_ready` | `terminalSessionManager.handleTerminalReady()` with the parsed readiness assessment |
-| `terminal_observe_result` | `terminalSessionManager.handleObserveResult()` with optional `host_cwd` persistence |
-| `terminal_send_result` | `terminalSessionManager.handleSendResult()` with optional additive `delta` (`changed`, `text`, `truncated`) plus settled/timeout readiness assessment and optional `host_cwd` persistence |
+| `terminal_status` | `terminalSessionManager.handleTerminalStatus(budId, ...)` |
+| `terminal_output` | `terminalSessionManager.handleTerminalOutput(budId, ...)` (offset-only) |
+| `terminal_event` | `terminalSessionManager.handleTerminalEvent(budId, ...)` — command lifecycle / mode / settling facts |
+| `terminal_observe_result` | `terminalSessionManager.handleObserveResult(budId, ...)` with grid mode facts and the optional `ring_next_offset` watermark |
+| `terminal_send_result` | `terminalSessionManager.handleSendResult(budId, ...)` resolving `{ dispatched, outcome }` |
+
+All terminal handlers run only for authenticated (`connected`) sockets and pass the authenticated `budId`; the terminal manager asserts `session.budId === budId` before any write/emit/resolve and drops mismatched frames with a warning (review finding S-C1).
 | `reconnect_report` | `DaemonStateStore.reconcileReconnectReport()` then `reconciliation_decision` reply |
 | `stream_data` / `stream_credit` / `stream_reset` / `stream_close` | shared data-plane runtime dispatch |
 | `proxy_open_result` | proxy runtime open-result delivery |
@@ -242,7 +245,7 @@ Bud's `hello` frame includes capabilities:
   shell_default?: string;
   sessions: boolean;
   terminal: boolean;
-  terminal_proto?: string;      // "0.2"
+  terminal_proto?: string;      // "0.3"
   bud_envelope?: {
     version: 1;
     websocket_binary: true;

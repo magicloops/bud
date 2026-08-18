@@ -1,0 +1,15 @@
+>>> 1+1
+2
+>>> "bud" * 3
+'budbudbud'
+>>> for i in range(3):
+...     print("loop", i)
+... 
+loop 0
+loop 1
+loop 2
+>>> undefined_name
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+NameError: name 'undefined_name' is not defined
+>>> exit()

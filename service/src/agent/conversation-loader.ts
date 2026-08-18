@@ -21,7 +21,6 @@ import type { TerminalObservationView } from "../terminal/types.js";
 import {
   buildToolArgs,
   normalizeToolKeyInput,
-  parseWaitForArg,
   toolNameForConversation,
   type AgentToolCallDirective,
 } from "./contracts.js";
@@ -179,8 +178,16 @@ export class AgentConversationLoader {
       });
     }
 
+    const repaired = repairOrphanedToolCalls(messages);
+    if (repaired.injectedResults > 0) {
+      console.warn(
+        "[conversation_loader] repaired orphaned tool calls in replay (crashed turn left function calls without outputs)",
+        { threadId, injectedResults: repaired.injectedResults }
+      );
+    }
+
     return {
-      messages,
+      messages: repaired.messages,
       reconstruction: buildReconstructionDiagnostics({
         targetProvider: options.provider,
         targetModel: options.targetModel,
@@ -307,8 +314,6 @@ export class AgentConversationLoader {
         submit?: boolean;
         key?: string;
         keys?: string[];
-        observe_after_ms?: number;
-        wait_for?: unknown;
         lines?: number;
         view?: string;
         target_host?: string;
@@ -328,7 +333,20 @@ export class AgentConversationLoader {
           : `tool_${ulid()}`;
 
       switch (payload.tool) {
+        case "terminal.run":
+          if (typeof payload.command !== "string") {
+            return null;
+          }
+          return {
+            type: "tool_call",
+            tool: "terminal.run",
+            command: payload.command,
+            callId,
+          };
         case "terminal.send": {
+          // Historical rows: submitted line input (`command`, or legacy
+          // `text` + `submit`) replays as terminal.run so old transcripts
+          // round-trip into the current tool vocabulary.
           let command = typeof payload.command === "string" ? payload.command : undefined;
           let rawText = typeof payload.raw_text === "string" ? payload.raw_text : undefined;
 
@@ -340,17 +358,20 @@ export class AgentConversationLoader {
             }
           }
 
+          if (command !== undefined) {
+            return {
+              type: "tool_call",
+              tool: "terminal.run",
+              command,
+              callId,
+            };
+          }
+
           return {
             type: "tool_call",
             tool: "terminal.send",
-            command,
             rawText,
             key: normalizeToolKeyInput(payload.key, payload.keys),
-            observeAfterMs:
-              typeof payload.observe_after_ms === "number"
-                ? payload.observe_after_ms
-                : undefined,
-            waitFor: parseWaitForArg(payload.wait_for),
             callId,
           };
         }
@@ -360,7 +381,6 @@ export class AgentConversationLoader {
             tool: "terminal.observe",
             lines: typeof payload.lines === "number" ? payload.lines : undefined,
             view: this.parseObservationView(payload.view),
-            waitFor: parseWaitForArg(payload.wait_for),
             callId,
           };
         case "terminal.interrupt":
@@ -698,4 +718,57 @@ function assistantPhaseFromMetadata(metadata: unknown): AssistantMessagePhase | 
 
 function parseAssistantMessagePhase(value: unknown): AssistantMessagePhase | undefined {
   return value === "commentary" || value === "final_answer" ? value : undefined;
+}
+
+/**
+ * A turn that crashes between recording the model's tool calls (provider
+ * ledger) and recording the tool results leaves orphaned calls in the
+ * transcript. Providers reject such replays outright (OpenAI Responses:
+ * "No tool output found for function call ..."), permanently poisoning the
+ * thread. Inject an explicit interrupted-result for every orphaned call so
+ * replay stays valid and the model sees what actually happened.
+ * Pure and provider-agnostic (canonical layer).
+ */
+export function repairOrphanedToolCalls(messages: CanonicalMessage[]): {
+  messages: CanonicalMessage[];
+  injectedResults: number;
+} {
+  const blocksOf = (message: CanonicalMessage) =>
+    Array.isArray(message.content) ? message.content : [];
+
+  const resultIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "user") continue;
+    for (const block of blocksOf(message)) {
+      if (block.type === "tool_result") {
+        resultIds.add(block.tool_use_id);
+      }
+    }
+  }
+
+  const out: CanonicalMessage[] = [];
+  let injectedResults = 0;
+  for (const message of messages) {
+    out.push(message);
+    if (message.role !== "assistant") continue;
+    const orphaned = blocksOf(message).filter(
+      (block) => block.type === "tool_use" && !resultIds.has(block.id)
+    );
+    if (orphaned.length === 0) continue;
+    injectedResults += orphaned.length;
+    out.push({
+      role: "user",
+      content: orphaned.map((block) => ({
+        type: "tool_result" as const,
+        tool_use_id: block.type === "tool_use" ? block.id : "",
+        content: JSON.stringify({
+          error: "interrupted",
+          summary:
+            "Tool execution was interrupted before any result was recorded (the turn failed). Treat this call as failed and re-issue it if it is still needed.",
+        }),
+      })),
+    });
+  }
+
+  return { messages: out, injectedResults };
 }

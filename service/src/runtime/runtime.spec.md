@@ -5,7 +5,7 @@ Runtime managers for thread terminals and agent-stream state, plus shared SSE ev
 ## Purpose
 
 Orchestrates terminal sessions and agent-stream state across connected bud daemons. Handles:
-- Thread-scoped terminal sessions (tmux-backed)
+- Thread-scoped terminal sessions (stem-backed, terminal proto 0.3)
 - Generic SSE event broadcasting for terminal streams
 - Agent-thread runtime snapshots plus bounded resume state
 
@@ -71,7 +71,7 @@ Generic SSE event bus with buffering for replay.
 - `AgentEventBus` - Legacy generic agent bus export retained for compatibility/tests; production agent-thread streaming now uses `agent-runtime-state.ts`
 
 **Key Features**:
-- **Buffering**: Stores up to 1000 events per channel for replay
+- **Buffering**: Stores up to 1000 events per channel for replay; `emit(..., { buffer: false })` delivers live-only (used for `terminal.grid` frames, whose state is reconstructible via watch re-arm and which would otherwise evict output events from the shared buffer)
 - **Cursor-aware replay on attach**: New listeners receive buffered events, or only the events after a provided `last_event_id` / `Last-Event-ID` cursor when available
 - **Replay miss fallback**: If a resume cursor is not present in the in-memory buffer, the attach falls back to live-only delivery and relies on canonical history for recovery
 - **Immediate stream priming**: Any attach with zero replayable events emits a heartbeat frame so `fastify-sse-v2` opens the stream before the route returns
@@ -84,7 +84,7 @@ Generic SSE event bus with buffering for replay.
 | `emit(channelId, event)` | Broadcast event to listeners and buffer |
 | `clearBuffer(channelId)` | Clear buffer (e.g., on bud disconnect) |
 | `attach(channelId, reply, { lastEventId? })` | Attach Fastify reply as SSE listener with optional cursor-aware replay |
-| `attachCallback(channelId, callback, { lastEventId? })` | Attach callback function as listener with the same replay semantics |
+| `attachCallback(channelId, callback, { lastEventId?, replay? })` | Attach callback function as listener; `replay: false` skips the in-memory buffer replay (used by the terminal stream's byte-offset resume, which replays output from durable storage instead) |
 
 ### `agent-runtime-state.test.ts`
 
@@ -115,11 +115,14 @@ Standalone Node test coverage for the generic replay contract still used by term
 
 ### `terminal-session-manager.test.ts`
 
-Standalone Node tests for targeted terminal-session-manager context tracking regressions.
+Standalone Node tests for the proto 0.3 terminal-session-manager composition layer.
 
 **Current Coverage**:
-- non-shell readiness assessments do not clear pending REPL context
-- observed shell readiness still clears pending REPL context
+- `terminal_event` routing: `mode_changed` updates runtime context, `prompt_ready` persists cwd, unknown events are ignored for processing but still forwarded verbatim as `terminal.event` SSE, `child_exited` closes the session locally
+- `command_started` / `command_finished` persistence with owner stamping inherited from the session
+- S-C1 ownership guard: terminal output / event / send-result / observe-result / status frames from a bud that does not own the session (or for unknown sessions) are dropped before any write, emit, or pending-request resolution
+- `ensureSession(...)` forwards the durable stored end offset as `resume_from_offset`
+- `getPathContextForSession(...)` returns cached cwd metadata (`reported_by: "prompt_ready_osc7"`) without daemon access
 
 ### `daemon-state.ts`
 
@@ -155,27 +158,35 @@ Thread-scoped terminal session composition root.
 | `isBudOnline(budId)` / `getBudTransportStatus(budId)` | Expose current daemon transport availability for route/agent environment resolution |
 | `getSessionForThread(threadId)` | Get the active (non-closed) session |
 | `getSession(sessionId)` | Get by ID |
-| `getPathContextForSession(sessionId)` | Return cached daemon cwd as `terminal_cwd_v1` metadata when available |
+| `getPathContextForSession(sessionId)` | Return cached daemon cwd as `terminal_cwd_v1` metadata (`reported_by: "prompt_ready_osc7"`) when available |
 | `getPathContextForThread(threadId)` | Return cached daemon cwd for the active thread session without querying Bud |
-| `getLatestReadiness(sessionId)` | Return the latest cached readiness assessment without querying Bud |
-| `ensureSession(sessionId)` | Send `terminal_ensure` to bud |
-| `sendInput(sessionId, data, options)` | Send input with optional readiness waiting and user audit metadata |
+| `getSessionContext(sessionId)` | Daemon-reported runtime facts: `mode`, `integration`, latest `cwd` |
+| `ensureSession(sessionId)` | Send `terminal_ensure` with `resume_from_offset` = highest durably stored end offset |
+| `sendInput(sessionId, data, options)` | Forward raw browser input (`terminal_input { session_id, data }`) with user audit metadata |
 | `sendResize(sessionId, cols, rows)` | Resize terminal |
 | `closeSession(sessionId, reason)` | Close session |
-| `observeTerminal(sessionId, options)` | Explicit delta/screen/history observation request-response |
-| `capturePane(sessionId, options)` | Compatibility wrapper used by context sync |
-| `sendInteraction(sessionId, interaction, options)` | Request-response interactive input / keypress dispatch |
-| `interruptThreadTerminal(threadId)` | Send `ctrl+c` as a terminal send, reject older pending waits as `interrupted`, and return dispatch metadata for human interrupt controls |
-| `tailOutput(sessionId, bytes, options)` | Get recent output from DB |
-| `setPendingCommand(sessionId, command)` | Track REPL program execution |
-| `handleTerminalStatus(sessionId, payload)` | Bud reports session state |
-| `handleTerminalOutput(sessionId, payload)` | Store and broadcast output |
-| `handleTerminalReady(sessionId, payload)` | Readiness assessment received |
-| `handleObserveResult(sessionId, payload)` | Observe result received; persists optional daemon-reported `hostCwd` before resolving a pending observe |
-| `handleSendResult(sessionId, payload)` | Send result received; persists optional daemon-reported `hostCwd` before resolving a pending send |
+| `observeTerminal(sessionId, { view, lines })` | Explicit grid-backed delta/screen/history observation request-response (results may carry the `ringNextOffset` stream watermark) |
+| `sendInteraction(sessionId, { text?, submit?, key?, await? }, options)` | Request-response gesture dispatch; resolves `{ dispatched, outcome }` |
+| `interruptThreadTerminal(threadId)` | Send `ctrl+c` as a dispatch-only terminal send, reject older pending waits as `interrupted`, and return dispatch metadata for human interrupt controls |
+| `tailOutput(sessionId, maxBytes)` | Most recent stored output (byte-budget paginated) |
+| `readOutputRange(sessionId, { startOffset, endOffset?, maxBytes })` | Offset-exact range read with covering-chunk trim and explicit truncation/continuation |
+| `getStoredOutputBytes(sessionId)` | Total durably stored output bytes |
+| `getCommandOutput(commandId, { maxBytes? })` | Internal API for agent tools: `terminal_command` row plus lossy-UTF-8 output slice by byte range (tail-kept when capped) |
+| `getLatestCommandForSession(sessionId)` | Most recent `terminal_command` row for a session (started_at order, command_id tie-break); lets still-running `terminal.run` reports carry the dispatched command_id |
+| `handleTerminalGrid(budId, sessionId, payload)` | Grid-sync (§6.8): ownership-checked live forward of `terminal_grid` frames to SSE `terminal.grid`, unbuffered, through the per-session ingest queue (generation order preserved); no storage |
+| `addGridViewer(sessionId)` / `removeGridViewer(sessionId)` / `hasGridViewers(sessionId)` | Grid viewer refcount: EVERY join re-arms `terminal_grid_watch enabled:true` (a newcomer to an already-watched session needs the fresh full frame — browser-E2E finding), 1→0 sends `enabled:false`; every `ready` status also re-arms while viewers exist (daemon watch state dies with its attachment) |
+| `emitBudOfflineForSessions` / `emitBudOnlineForSessions` | Presence events emit `buffer:false` — replayed stale presence transitions caused spurious reconnects (an infinite loop for live-only grid connections; browser-E2E finding) |
+| `handleTerminalStatus(budId, sessionId, payload)` | Bud reports session state (ownership-asserted) |
+| `handleTerminalOutput(budId, sessionId, payload)` | Idempotently store and broadcast offset-addressed output (ownership-asserted) |
+| `handleTerminalEvent(budId, sessionId, payload)` | Route proto 0.3 semantic events, persist command rows, forward `terminal.event` SSE verbatim (ownership-asserted) |
+| `handleObserveResult(budId, sessionId, payload)` | Observe result received; updates runtime mode facts before resolving the pending observe (ownership-asserted) |
+| `handleSendResult(budId, sessionId, payload)` | Send result received; resolves `{ dispatched, outcome }` (ownership-asserted) |
 | `startIdleChecks()` / `stopIdleChecks()` | Periodic idle-state management; destructive cleanup runs only when explicitly configured |
 | `rejectPendingRequestsForThread(threadId, errorMessage)` | Reject in-flight terminal waits for the active thread session |
 | `rejectPendingRequestsForBud(budId, errorMessage)` | Reject in-flight terminal waits for all active sessions on an offline Bud |
+
+**Ownership Guard (review finding S-C1)**:
+Every inbound terminal frame handler takes the authenticated connection's `budId`, resolves the session, and asserts `session.budId === budId` before any write, SSE emit, or pending-request resolution. Mismatches and unknown sessions are logged and dropped. Gateways (`ws/bud-connection.ts`, `grpc/control-gateway.ts`, `grpc/data-gateway.ts`) only invoke these handlers for authenticated (`connected` / attached) connections.
 
 **Session States**:
 ```
@@ -187,52 +198,48 @@ pending → creating → ready ↔ active ↔ idle → closed
 - Only one non-closed session may exist for a thread at once.
 - Explicit close produces a closed historical row; revisiting the thread creates a fresh session row.
 - Non-closed sessions persist across Bud/service reconnects.
-- The service no longer derives or persists tmux session names as first-class runtime state; only the Bud-owned `session_id` and backend-neutral status metadata survive in the normal contract.
+- The daemon terminal runtime is `stem`-backed; only the service-owned `session_id` and backend-neutral status metadata survive in the contract.
+- A `child_exited` terminal event closes the session locally (mark closed, reject pending waits, emit `terminal.status: closed`) without sending `terminal_close` back to the daemon.
 
-**REPL Context Tracking**:
+**Terminal Event Routing (proto 0.3, docs/proto.md §6.7.3)**:
 
-When agent sends commands like `python`, `node`, `claude`, the manager:
-1. Stores as `pendingCommand` with timestamp
-2. Provides `getContext(sessionId)` for agent to understand terminal state
-3. Uses `known-programs.ts` registry for program-specific hints
+`handleTerminalEvent(...)` processes the semantic event stream:
+- `prompt_ready` → latest `cwd` cached on runtime state and persisted to `terminal_session.cwd`
+- `mode_changed` → runtime `mode` / `integration` facts updated
+- `command_started` / `command_finished` → `terminal_command` rows minted/finalized (idempotent on daemon `command_id`)
+- `output_gap` → logged as a truncation warning
+- `settled` → no service-side action (awaited outcomes arrive on `terminal_send_result.outcome`)
+- `child_exited` → local session close
+- unknown `event` values are ignored for processing (additive evolution)
+
+Every `terminal_event` (including unknown ones) is forwarded verbatim to the thread's terminal SSE stream as `terminal.event`.
 
 Ctrl+C note:
 - server-side callers should reuse `sendInteraction(sessionId, { key: "ctrl+c" })` rather than adding a dedicated interrupt transport
-- human interrupt controls use `interruptThreadTerminal(threadId)`, which sends `key: "ctrl+c"` with `waitFor: "none"` and rejects any older pending send/observe wait with `error: "interrupted"` so the agent can record a conservative tool result instead of waiting up to the settled timeout
-- `sendInteraction(...)` still tolerates the older `keys: ["C-c"]` shape as a compatibility alias during rollout, but the canonical runtime model is now a single semantic `key`
-- pending REPL/TUI context is preserved until a later observed shell return clears it via readiness or context sync
+- human interrupt controls use `interruptThreadTerminal(threadId)`, which sends `key: "ctrl+c"` as a dispatch-only send (no `await`) and rejects any older pending send/observe wait with `error: "interrupted"` so the agent can record a conservative tool result instead of waiting out the awaited budget
 
-**Observe Protocol**:
+**Observe Protocol (0.3)**:
 
-1. Service sends `terminal_observe` with `request_id`
-2. Bud optionally waits using `shell_ready`, `changed`, or `settled`; `changed` stays on the screen-diff path while `settled` waits on output quiescence before the final capture
-3. Bud sends `terminal_observe_result` with matching `request_id`
-4. Promise resolves with delta by default, or full screen/history when explicitly requested
+1. Service sends `terminal_observe` with `request_id`, `view` (`delta` | `screen` | `history`), and `lines`
+2. Bud answers from the emulator grid: full visible grid (`screen`), damage-region text (`delta`), or recent scrollback (`history`)
+3. Bud sends `terminal_observe_result` with matching `request_id` plus `mode` / `integration` / `alt_screen` / cursor facts
+4. Promise resolves with the decoded text and mode facts; observe never waits server-side beyond the 30s local budget
 
-**Send Protocol**:
+**Send Protocol (0.3)**:
 
-1. Service sends Bud `terminal_send` with one structured gesture: `text` with optional `submit`, or one semantic `key`; the agent-facing executor adapts `command` / `raw_text` / `key` into this wire shape
-2. Bud dispatches literal text and special keys through the current terminal backend adapter
-3. Bud captures a pre-send baseline and, by default, waits for output quiescence before doing one final `capture-pane`
-4. `observe_after_ms` is only relevant for explicit `wait_for: "none"` sends; `changed` remains available for first-visible-reaction waits
-5. Bud sends `terminal_send_result` with dispatch status, additive delta, and timeout-aware readiness / partial-progress semantics
+1. Service sends `terminal_send` with one structured gesture: `text` with optional `submit`, or one semantic `key`, plus optional `await: "command" | "settled"`
+2. Bud dispatches through `stem`; when `await` was requested it resolves the request on the terminating event (`command_finished` or `settled`)
+3. Bud sends `terminal_send_result` with `dispatched`, the mirrored `outcome` event (or `null`), and `error`
+4. The service owns the timeout budget locally (`timeout_ms` is gone from the wire); byte-exact output history remains a service-side read from `terminal_session_output`
 
-These request-response paths replace the previous overloaded `terminal_run` / `terminal_capture` contract. The active model-facing contract is now send-first: shell and interactive input both flow through `terminal.send`, while `terminal.observe` is the explicit inspection hatch.
-
-**Terminal SSE Payload Notes**:
-- `terminal.output` carries `seq`, `data`, and `byte_offset`
-- `terminal.bud_offline` and `terminal.bud_online` now carry `bud_id` in snake_case
-- the thread history route accepts `since_offset` at the HTTP boundary even though the internal helper still uses a camelCase option name
-- `sendInteraction()` now defaults to `waitFor: "settled"` and resolves settled waits to the service-owned one-hour timeout before dispatching to Bud
-- `sendInteraction()` still accepts `observeAfterMs`, but only uses the default `1000ms` fast-capture behavior when `waitFor: "none"` is requested explicitly
-- `sendInteraction()` now treats interactive input as a single gesture and emits canonical `key` values such as `ctrl+c`; the older `interaction.keys` array is accepted only as a one-entry compatibility alias
-- `handleSendResult()` now resolves a minimal send contract centered on `submitted`, `delta`, readiness, optional `hostCwd`, and conservative timeout summaries
-- terminal result `hostCwd` values update `terminal_session.cwd`; message writers read the cached value later and do not query the daemon when stamping message metadata
-- terminal freshness compares cached output bytes, cwd, and readiness through service-owned DB/runtime state before provider calls; this path never sends a daemon observe request
-- pending send and observe rejections now log request id, wait mode, elapsed time, latest output offset, output event count, and current readiness summary for long-wait diagnostics
-- `observeTerminal(waitFor: "settled")` uses the same one-hour settled budget as `sendInteraction()`, while non-settled observe modes keep the shorter default or trusted explicit timeout
-- `observeTerminal()` now gives the daemon timeout budget plus a local `1000ms` grace window so normal results do not orphan as quickly
-- `observeTerminal()` defaults to `view: "delta"` and only returns full capture content for explicit `screen` / `history` requests
+**Terminal SSE Payload Notes (§6.7.7)**:
+- `terminal.output` carries `data` and `byte_offset` only (no `seq`); its SSE `id` is the stringified end offset so `Last-Event-ID` is the byte-offset resume cursor
+- `terminal.event` forwards `terminal_event` frames verbatim (`session_id`, `event`, `data`, `ts`); it carries no SSE id, as do `terminal.status` / `terminal.bud_offline` / `terminal.bud_online`, so the browser cursor always remains an output byte offset
+- `terminal.ready` is retired along with `terminal_ready`
+- `terminal.bud_offline` and `terminal.bud_online` carry `bud_id` in snake_case
+- the thread history route accepts `since_offset` at the HTTP boundary and serves it through `readOutputRange(...)` with explicit `truncated` / `next_offset` continuation
+- `prompt_ready.cwd` updates `terminal_session.cwd`; message writers read the cached value later and do not query the daemon when stamping message metadata
+- terminal freshness compares cached output bytes and cwd through service-owned DB/runtime state before provider calls; this path never sends a daemon observe request
 
 ### `terminal/` → [terminal/terminal.spec.md](./terminal/terminal.spec.md)
 
@@ -255,8 +262,7 @@ Internal terminal-runtime ownership helpers extracted from the old monolithic ma
 | `../agent/context-budget-state.js` | Client-safe active context budget snapshot type |
 | `../transport/*.js` | Daemon transport router interface and current WebSocket adapter |
 | `../terminal/types.js` | Type definitions |
-| `../terminal/known-programs.js` | REPL detection |
-| `./terminal/*` | Extracted lifecycle/dispatch/output/runtime/idle helpers |
+| `./terminal/*` | Extracted lifecycle/dispatch/output/command/runtime/idle helpers |
 | `./daemon-state.js` | Phase 1 daemon operation/stream/session persistence helpers |
 
 ## Configuration Used

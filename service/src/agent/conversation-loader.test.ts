@@ -13,12 +13,25 @@ function createLoader(checkpoint: AgentContextCheckpoint | null = null): AgentCo
   });
 }
 
-test("system prompt documents only public wait_for modes", () => {
+test("system prompt uses the proto 0.3 terminal tool surface without retired vocabulary", () => {
+  // Retired 0.2 vocabulary must not appear anywhere in the prompt.
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /wait_for/);
   assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /shell_ready/);
   assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /screen_stable/);
-  assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"settled"/);
-  assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"changed"/);
-  assert.match(AGENT_SYSTEM_PROMPT, /wait_for:"none"/);
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /readiness/);
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /confidence/);
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /looks_like/);
+  assert.doesNotMatch(AGENT_SYSTEM_PROMPT, /context_after/);
+  // The three-tool surface and the mode model are described.
+  assert.match(AGENT_SYSTEM_PROMPT, /terminal\.run/);
+  assert.match(AGENT_SYSTEM_PROMPT, /terminal\.send/);
+  assert.match(AGENT_SYSTEM_PROMPT, /terminal\.observe/);
+  assert.match(AGENT_SYSTEM_PROMPT, /exit_code/);
+  assert.match(AGENT_SYSTEM_PROMPT, /still_running/);
+  assert.match(AGENT_SYSTEM_PROMPT, /"shell"/);
+  assert.match(AGENT_SYSTEM_PROMPT, /"tui"/);
+  assert.match(AGENT_SYSTEM_PROMPT, /"repl"/);
+  assert.match(AGENT_SYSTEM_PROMPT, /osc133/);
   assert.match(AGENT_SYSTEM_PROMPT, /target_host:"localhost"/);
   assert.match(AGENT_SYSTEM_PROMPT, /Do not substitute 127\.0\.0\.1 for localhost/);
   assert.match(AGENT_SYSTEM_PROMPT, /the service defaults to localhost/);
@@ -72,9 +85,18 @@ test("load normalizes persisted tool rows and preserves preferred cwd context", 
                 {
                   role: "tool",
                   content: JSON.stringify({
+                    tool: "terminal.send",
+                    call_id: "call_legacy_send_1",
+                    text: "ls",
+                    submit: true,
+                  }),
+                  metadata: null,
+                },
+                {
+                  role: "tool",
+                  content: JSON.stringify({
                     tool: "terminal.observe",
                     call_id: "call_observe_1",
-                    wait_for: "screen_stable",
                     view: "screen",
                     lines: 25,
                   }),
@@ -117,9 +139,20 @@ test("load normalizes persisted tool rows and preserves preferred cwd context", 
     content: [
       {
         type: "tool_use",
+        id: "call_legacy_send_1",
+        name: "terminal_run",
+        input: { command: "ls" },
+      },
+    ],
+  });
+  assert.deepEqual(messages[6], {
+    role: "assistant",
+    content: [
+      {
+        type: "tool_use",
         id: "call_observe_1",
         name: "terminal_observe",
-        input: { lines: 25, view: "screen", wait_for: "settled" },
+        input: { lines: 25, view: "screen" },
       },
     ],
   });
@@ -963,4 +996,39 @@ test("loadWithDiagnostics falls back when Anthropic thinking replay is incompati
     sameProviderIncompatibleCallCount: 1,
     sameProviderIncompatibleOutputItemCount: 3,
   });
+});
+
+test("repairOrphanedToolCalls injects interrupted results for calls without outputs", async () => {
+  const { repairOrphanedToolCalls } = await import("./conversation-loader.js");
+  const messages = [
+    { role: "user" as const, content: [{ type: "text" as const, text: "run it" }] },
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "tool_use" as const, id: "call_ok", name: "terminal_run", input: { command: "true" } },
+      ],
+    },
+    {
+      role: "user" as const,
+      content: [{ type: "tool_result" as const, tool_use_id: "call_ok", content: "{}" }],
+    },
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "tool_use" as const, id: "call_orphan", name: "terminal_send", input: { key: "enter" } },
+      ],
+    },
+    { role: "user" as const, content: [{ type: "text" as const, text: "try again" }] },
+  ];
+
+  const repaired = repairOrphanedToolCalls(messages as never);
+  assert.equal(repaired.injectedResults, 1);
+  // Synthetic result lands immediately after the orphaned assistant message.
+  const injected = repaired.messages[4] as { role: string; content: Array<Record<string, unknown>> };
+  assert.equal(injected.role, "user");
+  assert.equal(injected.content[0].type, "tool_result");
+  assert.equal(injected.content[0].tool_use_id, "call_orphan");
+  assert.match(String(injected.content[0].content), /interrupted/);
+  // The matched pair is untouched and message count grew by exactly one.
+  assert.equal(repaired.messages.length, messages.length + 1);
 });

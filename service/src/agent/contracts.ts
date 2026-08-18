@@ -1,8 +1,7 @@
 import type {
-  ReadinessHints,
-  TerminalDelta,
+  TerminalIntegration,
+  TerminalMode,
   TerminalObservationView,
-  TerminalWaitFor,
 } from "../terminal/types.js";
 import { normalizeTerminalSendKeyName } from "../terminal/types.js";
 import {
@@ -14,13 +13,16 @@ import {
 export type AgentToolCallDirective =
   | {
       type: "tool_call";
+      tool: "terminal.run";
+      command: string;
+      callId: string;
+    }
+  | {
+      type: "tool_call";
       tool: "terminal.send";
-      command?: string;
       rawText?: string;
+      submit?: boolean;
       key?: string;
-      observeAfterMs?: number;
-      waitFor?: TerminalWaitFor;
-      timeoutMs?: number;
       callId: string;
     }
   | {
@@ -28,8 +30,6 @@ export type AgentToolCallDirective =
       tool: "terminal.observe";
       lines?: number;
       view?: TerminalObservationView;
-      waitFor?: TerminalWaitFor;
-      timeoutMs?: number;
       callId: string;
     }
   | {
@@ -62,7 +62,7 @@ export type AgentToolCallDirective =
 
 export type TerminalToolCallDirective = Extract<
   AgentToolCallDirective,
-  { tool: "terminal.send" | "terminal.observe" }
+  { tool: "terminal.run" | "terminal.send" | "terminal.observe" }
 >;
 
 export type WebViewToolCallDirective = Extract<
@@ -83,33 +83,64 @@ export type AgentFinalDirective = {
 
 export type AgentDirective = AgentToolCallDirective | AgentFinalDirective;
 
+/** Post-send screen delta captured as proof of what the input changed. */
+export type TerminalDeltaSnapshot = {
+  changed: boolean;
+  text: string;
+};
+
+/**
+ * Result of one terminal tool execution (proto 0.3 vocabulary).
+ *
+ * - `kind: "command"` — terminal.run; carries the daemon-authoritative exit
+ *   code, duration, and the command's output slice. `status: "still_running"`
+ *   means the service wait budget expired before `command_finished`; that is a
+ *   normal result, not a failure.
+ * - `kind: "interaction_ack"` — terminal.send; dispatch acknowledgement plus a
+ *   settled screen delta.
+ * - `kind: "observation"` — terminal.observe; grid-backed screen/delta/history.
+ */
 export type TerminalCallResult = {
-  kind: "interaction_ack" | "observation";
+  kind: "command" | "interaction_ack" | "observation";
+  // terminal.run
+  status?: "completed" | "still_running" | "terminal_busy" | "interactive";
+  commandId?: string | null;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  // terminal.run + terminal.observe output text
   output?: string;
   outputBytes?: number;
-  readiness: Record<string, unknown>;
   truncated?: boolean;
-  omittedLines?: number;
-  submitted?: boolean;
-  inputDispatched?: boolean;
-  commandSent?: boolean;
+  // terminal.send
+  dispatched?: boolean;
+  /** interaction_ack: when the gesture completed a shell command (settled
+   * awaits accept command_finished), its real exit code rides along — the
+   * send/run substitutability path for models that pick send at a prompt. */
+  interactionExitCode?: number | null;
   rawTextSent?: boolean;
+  /** raw_text gestures: whether Enter was pressed after the text (default true). */
+  submitted?: boolean;
   keySent?: string | null;
-  enterRequested?: boolean;
-  delta?: TerminalDelta | null;
+  delta?: TerminalDeltaSnapshot | null;
+  // terminal.observe
   view?: TerminalObservationView;
+  linesCaptured?: number;
+  changed?: boolean;
+  /** The session's OPEN command (started, unfinished) — THE discriminating
+   * fact between an idle shell prompt and an inline TUI running under a
+   * shell (both report mode "shell"). null/absent = no command running. */
+  openCommand?: { commandId: string; runningMs: number } | null;
+  // Daemon-observed terminal context facts
+  mode?: TerminalMode;
+  integration?: TerminalIntegration | null;
+  altScreen?: boolean;
+  cwd?: string | null;
+  /** Model-facing guidance attached to unusual results (still running, etc.). */
+  note?: string;
   error?: string;
   errorCode?: AgentToolErrorCode;
   retryable?: boolean;
   errorSummary?: string;
-  contextAfter?: {
-    mode: "shell" | "repl" | "unknown";
-    program?: string;
-    programDisplayName?: string;
-    interactionStyle?: string;
-    hints?: string[];
-    source?: "observed" | "inferred";
-  };
 };
 
 export type ExecutedTerminalTool = {
@@ -185,18 +216,10 @@ export type AgentTransportToolError = {
   summary: string;
 };
 
-export const DEFAULT_READINESS_HINTS: ReadinessHints = {
-  looks_like_prompt: false,
-  looks_like_confirmation: false,
-  looks_like_password: false,
-  looks_like_pager: false,
-  looks_like_error: false,
-  may_still_be_processing: false,
-};
-
 export function toolNameForConversation(
   tool: AgentToolCallDirective["tool"],
 ):
+  | "terminal_run"
   | "terminal_send"
   | "terminal_observe"
   | "web_view_open"
@@ -204,6 +227,8 @@ export function toolNameForConversation(
   | "web_view_list"
   | typeof ASK_USER_QUESTIONS_TOOL {
   switch (tool) {
+    case "terminal.run":
+      return "terminal_run";
     case "terminal.send":
       return "terminal_send";
     case "terminal.observe":
@@ -222,28 +247,17 @@ export function toolNameForConversation(
 export function isTerminalToolDirective(
   directive: AgentToolCallDirective,
 ): directive is TerminalToolCallDirective {
-  return directive.tool === "terminal.send" || directive.tool === "terminal.observe";
+  return (
+    directive.tool === "terminal.run" ||
+    directive.tool === "terminal.send" ||
+    directive.tool === "terminal.observe"
+  );
 }
 
 export function isUserQuestionToolDirective(
   directive: AgentToolCallDirective,
 ): directive is UserQuestionToolCallDirective {
   return directive.tool === ASK_USER_QUESTIONS_TOOL;
-}
-
-export function parseWaitForArg(value: unknown): TerminalWaitFor | undefined {
-  if (
-    value === "none" ||
-    value === "shell_ready" ||
-    value === "changed" ||
-    value === "settled"
-  ) {
-    return value;
-  }
-  if (value === "screen_stable") {
-    return "settled";
-  }
-  return undefined;
 }
 
 export function normalizeToolKeyInput(
@@ -271,21 +285,18 @@ export function buildToolArgs(
   directive: AgentToolCallDirective,
 ): Record<string, unknown> {
   switch (directive.tool) {
+    case "terminal.run":
+      return { command: directive.command };
     case "terminal.send":
       return {
-        ...(typeof directive.command === "string" ? { command: directive.command } : {}),
         ...(typeof directive.rawText === "string" ? { raw_text: directive.rawText } : {}),
+        ...(typeof directive.submit === "boolean" ? { submit: directive.submit } : {}),
         ...(directive.key ? { key: directive.key } : {}),
-        ...(typeof directive.observeAfterMs === "number"
-          ? { observe_after_ms: directive.observeAfterMs }
-          : {}),
-        ...(directive.waitFor ? { wait_for: directive.waitFor } : {}),
       };
     case "terminal.observe":
       return {
         ...(typeof directive.lines === "number" ? { lines: directive.lines } : {}),
         ...(directive.view ? { view: directive.view } : {}),
-        ...(directive.waitFor ? { wait_for: directive.waitFor } : {}),
       };
     case "web_view.open":
       return {
@@ -306,31 +317,8 @@ export function buildToolArgs(
   }
 }
 
-export function getEffectiveToolWaitFor(
-  directive: TerminalToolCallDirective,
-): TerminalWaitFor {
-  switch (directive.tool) {
-    case "terminal.send":
-      return directive.waitFor ?? "settled";
-    case "terminal.observe":
-      return directive.waitFor ?? "none";
-  }
-}
-
-export function buildEffectiveToolArgs(
-  directive: AgentToolCallDirective,
-): Record<string, unknown> {
-  if (!isTerminalToolDirective(directive)) {
-    return buildToolArgs(directive);
-  }
-  return {
-    ...buildToolArgs(directive),
-    wait_for: getEffectiveToolWaitFor(directive),
-  };
-}
-
 export function serializeTerminalDelta(
-  delta?: TerminalDelta | null,
+  delta?: TerminalDeltaSnapshot | null,
 ): Record<string, unknown> | null {
   if (!delta) {
     return null;
@@ -339,7 +327,6 @@ export function serializeTerminalDelta(
   return {
     changed: delta.changed,
     text: delta.text,
-    truncated: delta.truncated,
   };
 }
 

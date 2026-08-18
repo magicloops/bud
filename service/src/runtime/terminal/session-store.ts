@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
-import { and, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db } from "../../db/client.js";
 import { terminalSessionTable } from "../../db/schema.js";
@@ -83,7 +83,10 @@ export class TerminalSessionStore {
     return row ? this.rowToSession(row) : null;
   }
 
-  async ensureSession(sessionId: string): Promise<{ ok: boolean; resumed: boolean; created?: boolean; error?: string }> {
+  async ensureSession(
+    sessionId: string,
+    options: { resumeFromOffset?: number } = {},
+  ): Promise<{ ok: boolean; resumed: boolean; created?: boolean; error?: string }> {
     const session = await this.getSession(sessionId);
     if (!session) {
       return { ok: false, resumed: false, error: "session_not_found" };
@@ -104,6 +107,13 @@ export class TerminalSessionStore {
       return { ok: true, resumed: true };
     }
 
+    const resumeFromOffset =
+      typeof options.resumeFromOffset === "number" &&
+      Number.isFinite(options.resumeFromOffset) &&
+      options.resumeFromOffset > 0
+        ? Math.floor(options.resumeFromOffset)
+        : 0;
+
     const payload = {
       proto: TERMINAL_PROTO_VERSION,
       type: "terminal_ensure",
@@ -114,7 +124,8 @@ export class TerminalSessionStore {
       config: {
         cols: session.cols,
         rows: session.rows
-      }
+      },
+      ...(resumeFromOffset > 0 ? { resume_from_offset: resumeFromOffset } : {})
     };
 
     const sent = this.daemonTransport.sendFrameToBud(session.budId, payload);
@@ -144,12 +155,13 @@ export class TerminalSessionStore {
     payload: {
       state: string;
       info?: {
+        pid?: number;
+        cwd?: string;
         cols?: number;
         rows?: number;
-        output_log_bytes?: number;
-        started_at?: string;
-        last_activity_at?: string;
-        cwd?: string;
+        ring_next_offset?: number;
+        mode?: string;
+        integration?: string;
       };
     }
   ): Promise<void> {
@@ -162,9 +174,15 @@ export class TerminalSessionStore {
         cols: payload.info?.cols ?? undefined,
         rows: payload.info?.rows ?? undefined,
         cwd: payload.info?.cwd ?? undefined,
-        startedAt: payload.info?.started_at ? new Date(payload.info.started_at) : undefined,
-        lastActivityAt: payload.info?.last_activity_at ? new Date(payload.info.last_activity_at) : now,
-        outputLogBytes: payload.info?.output_log_bytes ?? undefined
+        // proto 0.3 status info no longer carries started_at; stamp it on the
+        // first ready transition.
+        startedAt: payload.state === "ready" ? sql`COALESCE(started_at, now())` : undefined,
+        // A daemon-announced closure must stamp closedAt: session lookups
+        // filter on closedAt IS NULL, so leaving it unset pinned threads to a
+        // dead session forever (ensure kept returning session_closed instead
+        // of provisioning a fresh one — live §A holder-crash finding).
+        closedAt: payload.state === "closed" ? sql`COALESCE(closed_at, now())` : undefined,
+        lastActivityAt: now
       })
       .where(eq(terminalSessionTable.sessionId, sessionId));
   }
@@ -251,16 +269,24 @@ export class TerminalSessionStore {
       createdAt: row.createdAt,
       startedAt: row.startedAt,
       lastActivityAt: row.lastActivityAt,
-      outputLogBytes: row.outputLogBytes
+      outputLogBytes: row.outputLogBytes,
+      createdByUserId: row.createdByUserId ?? null,
+      tenantId: row.tenantId ?? null
     };
   }
 }
 
-function isUniqueViolation(error: unknown): error is { code: string } {
-  return Boolean(
-    error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "23505"
-  );
+function isUniqueViolation(error: unknown): boolean {
+  // Drizzle wraps the pg error (code 23505) in DrizzleQueryError with the
+  // original on `cause` — walk the chain instead of trusting the top level
+  // (found live: the concurrent-create recovery path silently stopped
+  // matching after a Drizzle upgrade, turning the benign race into 500s).
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth += 1) {
+    if ((current as { code?: unknown }).code === "23505") {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }

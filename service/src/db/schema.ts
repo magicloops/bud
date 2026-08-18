@@ -768,17 +768,48 @@ export const terminalSessionOutputTable = pgTable(
   {
     sessionId: text("session_id").notNull(),
     byteOffset: bigint("byte_offset", { mode: "number" }).notNull(),
-    seq: bigint("seq", { mode: "number" }).notNull(),
     data: byteaColumn("data").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
   },
   (table) => ({
     pk: primaryKey({ columns: [table.sessionId, table.byteOffset], name: "terminal_session_output_pkey" }),
-    seqIdx: index("terminal_session_output_seq_idx").on(table.sessionId, table.seq),
     sessionFk: foreignKey({
       columns: [table.sessionId],
       foreignColumns: [terminalSessionTable.sessionId],
       name: "terminal_session_output_session_fk",
+    }).onDelete("cascade"),
+  })
+);
+
+// Command lifecycle rows minted from proto 0.3 terminal_event frames
+// (command_started / command_finished). command_id is a daemon-minted ULID;
+// output byte ranges slice transcript output from terminal_session_output.
+// Owner stamping (created_by_user_id / tenant_id) inherits from the owning
+// terminal session's thread per AGENTS.md §4.6.
+export const terminalCommandTable = pgTable(
+  "terminal_command",
+  {
+    commandId: text("command_id").primaryKey(),
+    terminalSessionId: text("terminal_session_id").notNull(),
+    threadId: uuid("thread_id"),
+    budId: text("bud_id").notNull(),
+    createdByUserId: text("created_by_user_id"),
+    tenantId: text("tenant_id"),
+    commandStartedAt: timestamp("command_started_at", { withTimezone: true }).notNull(),
+    commandFinishedAt: timestamp("command_finished_at", { withTimezone: true }),
+    exitCode: integer("exit_code"),
+    outputByteStart: bigint("output_byte_start", { mode: "number" }).notNull().default(0),
+    outputByteEnd: bigint("output_byte_end", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull()
+  },
+  (table) => ({
+    sessionIdx: index("terminal_command_session_idx").on(table.terminalSessionId, table.commandStartedAt),
+    threadIdx: index("terminal_command_thread_idx").on(table.threadId, table.commandStartedAt),
+    budIdx: index("terminal_command_bud_idx").on(table.budId),
+    sessionFk: foreignKey({
+      columns: [table.terminalSessionId],
+      foreignColumns: [terminalSessionTable.sessionId],
+      name: "terminal_command_session_fk",
     }).onDelete("cascade"),
   })
 );
