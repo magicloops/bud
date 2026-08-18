@@ -28,13 +28,14 @@ use stem::registry::{HolderLauncher, Registry};
 use stem::session::{Session, SessionConfig};
 
 use crate::protocol::{
-    terminal_event_frame, terminal_observe_result_frame, terminal_send_result_frame,
-    terminal_status_frame, TerminalCloseFrame, TerminalEnsureConfig, TerminalEnsureFrame,
-    TerminalInputFrame, TerminalObservation, TerminalObserveFrame, TerminalResizeFrame,
-    TerminalSendAwait, TerminalSendFrame,
+    terminal_event_frame, terminal_grid_frame, terminal_observe_result_frame,
+    terminal_send_result_frame, terminal_status_frame, TerminalCloseFrame, TerminalEnsureConfig,
+    TerminalEnsureFrame, TerminalGridWatchFrame, TerminalInputFrame, TerminalObservation,
+    TerminalObserveFrame, TerminalResizeFrame, TerminalSendAwait, TerminalSendFrame,
 };
 use crate::transport::{send_transport_frame, OutboundSender};
 
+use super::grid::grid_frame_fields;
 use super::repl_registry::BudReplRegistry;
 use super::session_task::{
     integration_str, mode_str, run_pump, PumpEvent, SessionFacts, SessionShared,
@@ -68,6 +69,10 @@ const FIRST_PROMPT_GRACE: Duration = Duration::from_secs(3);
 const SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
 /// Sentinel exit-code trailer (design D6c). Sent as literal shell input.
 const SENTINEL_TRAILER: &str = r#"; printf '\033]133;D;%s\a' "$?""#;
+/// Grid-sync coalescing tick while a session is watched (§6.8.2): dirty state
+/// ships at most every tick; deltas are relative to the last taken frame, so
+/// a slow consumer naturally skips intermediate states.
+const GRID_TICK: Duration = Duration::from_millis(50);
 
 const DEFAULT_TERMINAL_COLORTERM: &str = "truecolor";
 const DEFAULT_TERMINAL_COLORFGBG: &str = "15;0";
@@ -108,6 +113,10 @@ struct SessionEntry {
     pump_tx: broadcast::Sender<PumpEvent>,
     pump: JoinHandle<()>,
     detect: std::sync::Mutex<Option<JoinHandle<()>>>,
+    /// Grid-sync watch tick task (§6.8): present while the service has grid
+    /// viewers attached. Dies with the entry (re-ensure/reconnect: the
+    /// service re-arms with a fresh `terminal_grid_watch`).
+    grid_watch: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl SessionEntry {
@@ -115,6 +124,9 @@ impl SessionEntry {
         self.pump.abort();
         if let Some(detect) = self.detect.lock().unwrap().take() {
             detect.abort();
+        }
+        if let Some(watch) = self.grid_watch.lock().unwrap().take() {
+            watch.abort();
         }
     }
 }
@@ -358,6 +370,7 @@ impl TerminalManager {
             pump_tx,
             pump,
             detect: std::sync::Mutex::new(None),
+            grid_watch: std::sync::Mutex::new(None),
         });
 
         let detect = tokio::spawn(detect_integration_window(
@@ -791,6 +804,50 @@ impl TerminalManager {
     }
 
     // ------------------------------------------------------------------
+    // terminal_grid_watch (§6.8)
+    // ------------------------------------------------------------------
+
+    /// Start/stop grid-delta emission for a session. Enable is idempotent and
+    /// always (re)starts with an immediate `full` frame — the service re-arms
+    /// after reconnects/re-ensures, and a consumer that just subscribed needs
+    /// complete state regardless of what was emitted before.
+    pub async fn handle_grid_watch(&self, frame: TerminalGridWatchFrame) -> Result<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        let entry = match self.entry_or_attach(&frame.session_id).await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => {
+                debug!(session_id = %frame.session_id, "terminal_grid_watch: no session");
+                return Ok(());
+            }
+            Err(err) => {
+                warn!(session_id = %frame.session_id, error = %err, "terminal_grid_watch attach failed");
+                return Ok(());
+            }
+        };
+
+        if let Some(existing) = entry.grid_watch.lock().unwrap().take() {
+            existing.abort();
+        }
+        if !frame.enabled {
+            debug!(session_id = %frame.session_id, "grid watch disabled");
+            return Ok(());
+        }
+        let Some(sender) = self.sender().await else {
+            return Ok(());
+        };
+        debug!(session_id = %frame.session_id, "grid watch enabled");
+        let task = tokio::spawn(grid_watch_loop(
+            Arc::downgrade(&entry),
+            frame.session_id.clone(),
+            sender,
+        ));
+        *entry.grid_watch.lock().unwrap() = Some(task);
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
     // terminal_input / terminal_resize / terminal_close
     // ------------------------------------------------------------------
 
@@ -960,6 +1017,32 @@ async fn await_outcome(
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => return AwaitResult::Closed,
         }
+    }
+}
+
+/// Grid-sync emission loop (one per watched session): an immediate `full`
+/// frame, then a coalescing tick draining accumulated damage. Holding only a
+/// `Weak` keeps the entry's lifecycle authoritative — the loop ends when the
+/// entry is replaced/removed, the session closes, or the transport drops.
+async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: OutboundSender) {
+    let mut force_full = true;
+    loop {
+        let Some(entry) = entry.upgrade() else { return };
+        if entry.shared.facts.lock().unwrap().closed {
+            return;
+        }
+        // Lock scope: take only — serialization and send happen unlocked.
+        let frame = entry.session.lock().await.take_grid_frame(force_full);
+        force_full = false;
+        drop(entry);
+        if let Some(frame) = frame {
+            let wire = terminal_grid_frame(&session_id, grid_frame_fields(&frame));
+            if send_transport_frame(&sender, wire).is_err() {
+                debug!(session_id = %session_id, "grid watch stopping: transport gone");
+                return;
+            }
+        }
+        tokio::time::sleep(GRID_TICK).await;
     }
 }
 

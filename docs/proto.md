@@ -1722,6 +1722,71 @@ did).
 - `wait_for` and the readiness-confidence vocabulary do not exist in tool
   schemas or prompts.
 
+### 6.8 Grid Sync (additive; plan/terminal-grid-sync)
+
+Server-authoritative grid deltas for live client rendering. The byte stream
+(§6.3) remains the durable transcript and resume substrate; grid frames are
+the live *rendering* transport for clients that opt in, and are emitted only
+while at least one viewer is watching. Neither frame has a typed BudEnvelope
+slot — both travel via the `legacy_json` payload.
+
+#### 6.8.1 `terminal_grid_watch` (Service → Bud)
+
+```json
+{ "type": "terminal_grid_watch", "proto": "0.3", "session_id": "sess_01H...", "enabled": true }
+```
+
+- Idempotent. `enabled: true` (re)starts emission and always produces an
+  immediate `full` frame; `enabled: false` stops it.
+- Watch state dies with the daemon's session attachment and the WS
+  connection. The service refcounts grid viewers per session and re-arms on
+  **every viewer join** (a newcomer to an already-watched session has no
+  baseline, and the daemon cannot target one SSE connection — the fresh full
+  is idempotent for existing viewers), on every `terminal_status
+  state:"ready"` while viewers exist (covers ensure/reconnect/resize), and
+  disarms when the last viewer leaves.
+
+#### 6.8.2 `terminal_grid` (Bud → Service)
+
+```json
+{
+  "type": "terminal_grid", "proto": "0.3", "session_id": "sess_01H...",
+  "generation": 42, "full": false,
+  "cols": 120, "rows": 40, "alt_screen": false,
+  "cursor": { "row": 12, "col": 7, "visible": true },
+  "dirty_rows": [ { "row": 12, "runs": [ { "t": "cargo test", "fg": 2 }, { "t": " ok", "fg": [0, 255, 0], "a": 1 } ] } ],
+  "scrollback_push": [ [ { "t": "a line that scrolled off" } ] ],
+  "scrollback_dropped": 0
+}
+```
+
+- **Runs**: a row is maximal same-presentation text runs. `t` required; `fg`/
+  `bg` omitted = terminal default, palette index number (0–255) or `[r,g,b]`
+  truecolor; `a` attr bitfield (1 bold, 2 dim, 4 italic, 8 underline, 16
+  inverse, 32 strikeout), omitted = 0. Wide chars appear once; zero-width
+  combiners stay attached; trailing default-styled blanks are trimmed (client
+  clears the rest of the row). The run object is additive (future keys:
+  hyperlinks, underline styles).
+- **Deltas** are relative to the previously emitted frame. Cadence: while
+  watched and dirty, the daemon emits every 50 ms tick — a row overwritten
+  many times between ticks ships once, and slow consumers skip intermediate
+  states by construction. `full: true` means `dirty_rows` covers every row
+  (watch start, resize, viewport scroll, alt-screen toggle). Cursor-only
+  changes emit a frame with empty `dirty_rows`.
+- **`generation`** is monotonic per daemon session attachment starting at 1.
+  A client seeing anything other than `last + 1` (SSE drop, daemon restart —
+  which resets to 1) must treat its grid as untrustworthy and recover via
+  reconnect (the watch re-arm produces a fresh `full`).
+- **`scrollback_push`**: lines pushed into scrollback history since the last
+  frame, oldest first (exact even at emulator history-cap saturation; the
+  alt screen never pushes). **`scrollback_dropped`** is a best-effort count
+  of pushes lost since the last frame (pending-buffer overflow, tracking
+  loss); any nonzero value means the client's accumulated scrollback has a
+  seam.
+- The service forwards frames live (SSE `terminal.grid`, §7.2) and stores
+  nothing — grid state is reconstructible, so frames are excluded from the
+  SSE replay buffer.
+
 ---
 
 ## 7. Browser SSE Contracts
@@ -1836,11 +1901,27 @@ Resume rules:
   - `{ "session_id": "bud-b_123-thread-456", "state": "ready|active|idle|closed", "info"?: { ... } }`
 - `terminal.event`
   - `{ "session_id": "sess_01H...", "event": "command_finished", "data": { ... }, "ts": 1731 }` — §6.4 frames forwarded verbatim; non-output events carry no SSE `id` so output offsets stay the resume cursor
+- `terminal.grid`
+  - `{ "session_id": "sess_01H...", "generation": 42, "full": false, "cols": 120, "rows": 40, "alt_screen": false, "cursor": { ... }, "dirty_rows": [ ... ], "scrollback_push": [ ... ], "scrollback_dropped": 0 }` — §6.8.2 frames forwarded verbatim, minus envelope
+  - emitted only to connections that opted in with `?grid=1` registered as grid viewers; carries no SSE `id` and is never buffered/replayed (a reconnecting grid client re-arms the watch and receives a fresh `full` frame)
 - `terminal.bud_offline`
   - `{ "bud_id": "b_01H...", "reason": "disconnected" }`
 - `terminal.bud_online`
   - `{ "bud_id": "b_01H..." }`
 - `heartbeat`
+
+`terminal.bud_offline` / `terminal.bud_online` are live presence signals and
+are **never buffered/replayed**: a replayed stale transition reads as fresh
+and triggers spurious client reconnects (which loop forever on connections
+that never resume by offset).
+
+Grid opt-in: `GET /terminal/stream?grid=1` registers the SSE connection as a
+grid viewer for its lifetime (refcounted across connections; every join
+re-arms `terminal_grid_watch enabled:true`, the last one leaving sends
+`enabled:false`). Grid connections attach **live-only** — no buffered-event
+replay of any kind; their state rebuilds from the re-arm's full frame. Grid
+clients still receive `terminal.status` / `terminal.event`; they ignore
+`terminal.output` for rendering.
 
 The old Bud-scoped `/api/terminals/:bud_id/stream` route is not part of the supported contract.
 

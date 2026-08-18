@@ -38,9 +38,9 @@ use crate::protocol::{
     HelloAckFrame, HelloChallengeFrame, LocalLlmOpenFrame, ProxyOpenFrame,
     ProxyWebSocketCloseFrame, ProxyWebSocketErrorFrame, ProxyWebSocketMessageFrame,
     ProxyWebSocketOpenFrame, RunFrame, StreamCloseFrame, StreamCreditFrame, StreamDataFrame,
-    StreamResetFrame, TerminalCloseFrame, TerminalEnsureFrame, TerminalInputFrame,
-    TerminalObserveFrame, TerminalResizeFrame, TerminalSendFrame, DEFAULT_HEARTBEAT_SEC,
-    PROTO_VERSION, TERMINAL_PROTO_VERSION,
+    StreamResetFrame, TerminalCloseFrame, TerminalEnsureFrame, TerminalGridWatchFrame,
+    TerminalInputFrame, TerminalObserveFrame, TerminalResizeFrame, TerminalSendFrame,
+    DEFAULT_HEARTBEAT_SEC, PROTO_VERSION, TERMINAL_PROTO_VERSION,
 };
 use crate::proxy::ProxyManager;
 use crate::run::RunExecutor;
@@ -1086,6 +1086,15 @@ impl BudApp {
                 task::spawn_local(async move {
                     if let Err(err) = manager.handle_observe(frame).await {
                         warn!(error = %err, "terminal_observe handling failed");
+                    }
+                });
+            }
+            "terminal_grid_watch" => {
+                let frame: TerminalGridWatchFrame = serde_json::from_str(text)?;
+                let manager = self.terminal_manager.clone();
+                task::spawn_local(async move {
+                    if let Err(err) = manager.handle_grid_watch(frame).await {
+                        warn!(error = %err, "terminal_grid_watch handling failed");
                     }
                 });
             }

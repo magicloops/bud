@@ -7,6 +7,7 @@
 //! come from `stem::Session` events, which `session_task` maps onto proto
 //! 0.3 wire frames.
 
+mod grid;
 mod manager;
 mod repl_registry;
 mod session_task;

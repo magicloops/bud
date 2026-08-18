@@ -12,8 +12,9 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
 use bud::protocol::{
-    Envelope, TerminalCloseFrame, TerminalEnsureConfig, TerminalEnsureFrame, TerminalObserveFrame,
-    TerminalResizeFrame, TerminalSendAwait, TerminalSendFrame,
+    Envelope, TerminalCloseFrame, TerminalEnsureConfig, TerminalEnsureFrame,
+    TerminalGridWatchFrame, TerminalObserveFrame, TerminalResizeFrame, TerminalSendAwait,
+    TerminalSendFrame,
 };
 use bud::terminal::{TerminalConfig, TerminalManager};
 use bud::transport::TransportSender;
@@ -910,6 +911,121 @@ async fn settled_await_resolves_on_prompt_return() {
             "exit code must ride along: {result:?}"
         );
     }
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+/// All dirty-row run text of a `terminal_grid` frame, concatenated.
+fn grid_frame_text(frame: &Value) -> String {
+    frame["dirty_rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|row| row["runs"].as_array().into_iter().flatten())
+        .filter_map(|run| run["t"].as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn grid_watch_streams_full_then_deltas_and_stops_on_unwatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-grid";
+    manager
+        .handle_ensure(ensure_frame(session_id, None))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "ready status", |frame| {
+        is_status(frame, "ready")
+    })
+    .await;
+
+    let watch = |enabled: bool| TerminalGridWatchFrame {
+        envelope: envelope("terminal_grid_watch"),
+        session_id: session_id.to_string(),
+        enabled,
+    };
+
+    // Enable: an immediate full frame with the session's geometry.
+    manager.handle_grid_watch(watch(true)).await.unwrap();
+    let full = wait_frame(&mut rx, Duration::from_secs(10), "full grid frame", |f| {
+        is_type(f, "terminal_grid")
+    })
+    .await;
+    assert_eq!(full["full"], true);
+    assert_eq!(full["cols"], 80);
+    assert_eq!(full["rows"], 24);
+    assert_eq!(full["proto"], "0.3");
+    assert!(full["generation"].as_u64().unwrap() >= 1);
+    assert_eq!(full["dirty_rows"].as_array().unwrap().len(), 24);
+
+    // New output shows up in a subsequent frame's dirty rows.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-grid-echo",
+            "echo grid_sync_marker",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    let mut seen_marker = false;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_generation = full["generation"].as_u64().unwrap();
+    while !seen_marker {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .expect("timed out waiting for marker grid frame");
+        let message = tokio::time::timeout(remaining, rx.recv())
+            .await
+            .expect("timed out waiting for marker grid frame")
+            .expect("channel closed");
+        if let Some(frame) = parse(message) {
+            if is_type(&frame, "terminal_grid") {
+                let generation = frame["generation"].as_u64().unwrap();
+                assert!(generation > last_generation, "generation must be monotonic");
+                last_generation = generation;
+                if grid_frame_text(&frame).contains("grid_sync_marker") {
+                    seen_marker = true;
+                }
+            }
+        }
+    }
+
+    // Disable: no grid frames for further activity.
+    manager.handle_grid_watch(watch(false)).await.unwrap();
+    // Drain anything already in flight before asserting silence.
+    collect_frames(&mut rx, Duration::from_millis(300)).await;
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-grid-quiet",
+            "echo after_unwatch",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    let frames = collect_frames(&mut rx, Duration::from_millis(800)).await;
+    assert!(
+        !frames.iter().any(|f| is_type(f, "terminal_grid")),
+        "grid frames must stop after unwatch"
+    );
+
+    // Re-enable: a fresh full frame (re-arm semantics).
+    manager.handle_grid_watch(watch(true)).await.unwrap();
+    let rearmed = wait_frame(&mut rx, Duration::from_secs(10), "re-armed full", |f| {
+        is_type(f, "terminal_grid")
+    })
+    .await;
+    assert_eq!(rearmed["full"], true);
+    assert!(grid_frame_text(&rearmed).contains("after_unwatch"));
 
     manager
         .handle_close(TerminalCloseFrame {

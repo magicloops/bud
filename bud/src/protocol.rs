@@ -130,6 +130,17 @@ pub struct TerminalSendFrame {
     pub r#await: Option<TerminalSendAwait>,
 }
 
+/// `terminal_grid_watch` (§6.8.1): viewer-driven grid-delta subscription.
+/// Idempotent; watch state dies with the WS connection.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TerminalGridWatchFrame {
+    #[serde(flatten)]
+    #[allow(dead_code)]
+    pub envelope: Envelope,
+    pub session_id: String,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct TerminalObserveFrame {
     #[serde(flatten)]
@@ -345,6 +356,16 @@ pub fn terminal_event_frame(session_id: &str, event: &str, data: Value) -> Value
     frame.insert("session_id".into(), Value::String(session_id.into()));
     frame.insert("event".into(), Value::String(event.into()));
     frame.insert("data".into(), data);
+    Value::Object(frame)
+}
+
+/// `terminal_grid` (§6.8.2): grid-delta frame. `fields` carries the payload
+/// (generation/full/cols/rows/alt_screen/cursor/dirty_rows/scrollback_push/
+/// scrollback_dropped) serialized by `terminal::grid::grid_frame_fields`.
+pub fn terminal_grid_frame(session_id: &str, fields: Map<String, Value>) -> Value {
+    let mut frame = terminal_envelope("terminal_grid");
+    frame.insert("session_id".into(), Value::String(session_id.into()));
+    frame.extend(fields);
     Value::Object(frame)
 }
 
