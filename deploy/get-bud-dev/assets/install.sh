@@ -2,7 +2,7 @@
 set -eu
 
 BASE_URL="${BUD_INSTALL_BASE_URL:-https://get.bud.dev}"
-SERVER_URL="${BUD_SERVER_URL:-wss://api.bud.dev/ws}"
+SERVER_URL="${BUD_SERVER_URL:-wss://app.bud.dev/ws}"
 INSTALL_ROOT="${BUD_INSTALL_ROOT:-$HOME/.bud}"
 BIN_DIR="$INSTALL_ROOT/bin"
 BUD_BIN="$BIN_DIR/bud"

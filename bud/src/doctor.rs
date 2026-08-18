@@ -554,12 +554,12 @@ async fn check_tls_trust(api_base: &reqwest::Url) -> DoctorCheck {
                 "TLS trust check skipped for non-HTTPS claim/bootstrap origin {}",
                 api_base
             ),
-            vec!["Production installs should use wss://api.bud.dev/ws.".to_string()],
+            vec!["Production installs should use wss://app.bud.dev/ws.".to_string()],
         );
     }
 
     let host = api_base.host_str().unwrap_or_default();
-    if host != "api.bud.dev" {
+    if host != "app.bud.dev" {
         return check_ok(
             "tls_trust",
             format!("TLS trust check skipped for non-production host {host}"),
@@ -584,13 +584,13 @@ async fn check_tls_trust(api_base: &reqwest::Url) -> DoctorCheck {
     match client.head(api_base.clone()).send().await {
         Ok(_) => check_ok(
             "tls_trust",
-            "validated TLS trust for https://api.bud.dev".to_string(),
+            "validated TLS trust for https://app.bud.dev".to_string(),
         ),
         Err(err) => check_warning(
             "tls_trust",
-            format!("could not validate TLS trust for https://api.bud.dev: {err}"),
+            format!("could not validate TLS trust for https://app.bud.dev: {err}"),
             vec![
-                "Check network connectivity to api.bud.dev.".to_string(),
+                "Check network connectivity to app.bud.dev.".to_string(),
                 "On Ubuntu/Debian, install or update ca-certificates.".to_string(),
             ],
         ),
