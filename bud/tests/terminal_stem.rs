@@ -1038,6 +1038,101 @@ async fn grid_watch_streams_full_then_deltas_and_stops_on_unwatch() {
 }
 
 #[tokio::test]
+async fn grid_frames_carry_predict_gate_and_applied_input_seq() {
+    // Predictive echo substrate (§6.8.3): frames carry predict_ok (mode +
+    // alt-screen + live termios ECHO/ICANON) and applied_input_seq (highest
+    // client input_seq written to the PTY). `stty -echo` must close the gate
+    // even though it paints nothing (forced emission on gate flips).
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present on this machine");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-predict";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |frame| {
+        is_type(frame, "terminal_event")
+            && frame.get("event").and_then(Value::as_str) == Some("prompt_ready")
+    })
+    .await;
+
+    manager
+        .handle_grid_watch(TerminalGridWatchFrame {
+            envelope: envelope("terminal_grid_watch"),
+            session_id: session_id.to_string(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let full = wait_frame(&mut rx, Duration::from_secs(10), "full grid frame", |f| {
+        is_type(f, "terminal_grid")
+    })
+    .await;
+    assert_eq!(
+        full["predict_ok"], true,
+        "integrated shell at prompt must open the predict gate: {full}"
+    );
+
+    // Sequenced raw input: the echo damage frame must carry the ack.
+    manager
+        .handle_input(bud::protocol::TerminalInputFrame {
+            envelope: envelope("terminal_input"),
+            session_id: session_id.to_string(),
+            data: BASE64_STANDARD.encode(b"x"),
+            input_seq: Some(7),
+        })
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "seq-acked frame", |f| {
+        is_type(f, "terminal_grid") && f["applied_input_seq"].as_u64() == Some(7)
+    })
+    .await;
+
+    // A foreground command closes the gate for its whole run (this is what
+    // covers sudo/read -s/inline raw TUIs — anything a prediction could type
+    // into blindly), and prompt return reopens it. Clear the pending 'x'
+    // first (ctrl+u), then run a short sleep.
+    manager
+        .handle_input(bud::protocol::TerminalInputFrame {
+            envelope: envelope("terminal_input"),
+            session_id: session_id.to_string(),
+            data: BASE64_STANDARD.encode(b"\x15sleep 2\r"),
+            input_seq: Some(8),
+        })
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "gate closed", |f| {
+        is_type(f, "terminal_grid") && f["predict_ok"] == false
+    })
+    .await;
+    let reopened = wait_frame(&mut rx, Duration::from_secs(15), "gate reopened", |f| {
+        is_type(f, "terminal_grid") && f["predict_ok"] == true
+    })
+    .await;
+    assert!(reopened["applied_input_seq"].as_u64() >= Some(8));
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn command_await_resolves_early_when_command_turns_interactive() {
     // `terminal.run codex`: the command never finishes on its own. A
     // mid-command bracketed-paste enable (or alt-screen entry) is crisp

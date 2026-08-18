@@ -87,6 +87,11 @@ pub struct TerminalInputFrame {
     pub envelope: Envelope,
     pub session_id: String,
     pub data: String,
+    /// Grid-sync predictive echo (§6.8.3): client-minted monotonic sequence
+    /// number. After this input is written to the PTY, grid frames carry
+    /// `applied_input_seq >= input_seq`, letting the client retire its local
+    /// prediction for these bytes.
+    pub input_seq: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

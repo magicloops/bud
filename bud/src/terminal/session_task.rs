@@ -51,6 +51,9 @@ pub(crate) struct SessionFacts {
     pub closed: bool,
     /// Grid snapshot from the last observe/send — the `delta` view baseline.
     pub last_observed_screen: Option<Vec<String>>,
+    /// Highest client `input_seq` written to the PTY (grid-sync predictive
+    /// echo, §6.8.3): stamped onto grid frames as `applied_input_seq`.
+    pub last_applied_input_seq: Option<u64>,
 }
 
 pub(crate) struct SessionShared {
@@ -399,6 +402,7 @@ mod tests {
                 child_pid: 42,
                 closed: false,
                 last_observed_screen: None,
+                last_applied_input_seq: None,
             }),
         })
     }

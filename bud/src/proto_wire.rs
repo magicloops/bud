@@ -582,6 +582,13 @@ fn decode_field_level_payload(
                         "data",
                         BASE64_STANDARD.encode(reader.read_bytes_for_wire_type(wire_type)?),
                     );
+                } else if field_number == 4 {
+                    // Predictive-echo sequencing (§6.8.3).
+                    insert_u64(
+                        &mut frame,
+                        "input_seq",
+                        reader.read_varint_for_wire_type(wire_type)?,
+                    );
                 } else {
                     // Field 3 was the retired 0.2 `await_ready` message.
                     reader.skip(wire_type)?;

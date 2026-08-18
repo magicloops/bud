@@ -343,6 +343,7 @@ impl TerminalManager {
                 child_pid: session.child_pid(),
                 closed: !stat.child_alive,
                 last_observed_screen: None,
+                last_applied_input_seq: None,
             }),
         });
 
@@ -867,11 +868,22 @@ impl TerminalManager {
             );
             return Ok(());
         };
-        let mut session = entry.session.lock().await;
-        session
-            .write_raw(&bytes)
-            .await
-            .map_err(|err| anyhow!("terminal_input write failed: {err}"))
+        {
+            let mut session = entry.session.lock().await;
+            session
+                .write_raw(&bytes)
+                .await
+                .map_err(|err| anyhow!("terminal_input write failed: {err}"))?;
+        }
+        // Record AFTER the write succeeds: grid frames emitted from here on
+        // carry `applied_input_seq >= input_seq` (§6.8.3), which is what lets
+        // the client retire its predictive echo for these bytes.
+        if let Some(seq) = frame.input_seq {
+            let mut facts = entry.shared.facts.lock().unwrap();
+            let current = facts.last_applied_input_seq.unwrap_or(0);
+            facts.last_applied_input_seq = Some(current.max(seq));
+        }
+        Ok(())
     }
 
     pub async fn handle_resize(&self, frame: TerminalResizeFrame) -> Result<()> {
@@ -1026,21 +1038,68 @@ async fn await_outcome(
 /// entry is replaced/removed, the session closes, or the transport drops.
 async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: OutboundSender) {
     let mut force_full = true;
+    // Last SHIPPED predict_ok: a gate flip with no natural frame forces one
+    // (a password prompt must close the gate within ~one tick even though
+    // `stty -echo` itself paints nothing).
+    let mut last_predict_ok: Option<bool> = None;
     loop {
         let Some(entry) = entry.upgrade() else { return };
         if entry.shared.facts.lock().unwrap().closed {
             return;
         }
-        // Lock scope: take only — serialization and send happen unlocked.
-        let frame = entry.session.lock().await.take_grid_frame(force_full);
+        // Lock scope: termios poll + frame take + alt fact under one hold;
+        // serialization and send happen unlocked. The termios query is a
+        // local UDS roundtrip (None for surviving pre-v2 holders → gate
+        // stays closed, predictions off).
+        let (frame, termios, alt_screen) = {
+            let mut session = entry.session.lock().await;
+            let termios = session.query_termios().await.ok().flatten();
+            let frame = session.take_grid_frame(force_full);
+            (frame, termios, session.alt_screen_active())
+        };
         force_full = false;
+        let (mode, open_command, applied_input_seq) = {
+            let facts = entry.shared.facts.lock().unwrap();
+            (
+                facts.mode,
+                facts.open_command.is_some(),
+                facts.last_applied_input_seq,
+            )
+        };
+        // §6.8.3 gate: predictions only at an interactive prompt on the
+        // primary screen. Note the termios test is an EXCLUSION, not a
+        // positive `ECHO && ICANON` check: line-editor shells (readline/zle)
+        // sit at the prompt in raw mode with kernel echo OFF and echo
+        // app-side — the thing predictions model. What must never predict is
+        // the silent-canonical pattern (`ICANON && !ECHO` — classic password
+        // prompts) and any state with a foreground command open (sudo/read -s
+        // /inline raw TUIs like codex all live under open_command).
+        let at_interactive_prompt = match mode {
+            stem::events::Mode::Shell => !open_command,
+            stem::events::Mode::Repl => true,
+            _ => false,
+        };
+        // `!t.icanon || t.echo` == NOT silent-canonical (`ICANON && !ECHO`).
+        let predict_ok =
+            at_interactive_prompt && !alt_screen && termios.is_some_and(|t| !t.icanon || t.echo);
+        let frame = if frame.is_none() && last_predict_ok.is_some_and(|last| last != predict_ok) {
+            entry.session.lock().await.take_grid_frame(true)
+        } else {
+            frame
+        };
         drop(entry);
         if let Some(frame) = frame {
-            let wire = terminal_grid_frame(&session_id, grid_frame_fields(&frame));
+            let mut fields = grid_frame_fields(&frame);
+            fields.insert("predict_ok".into(), Value::Bool(predict_ok));
+            if let Some(seq) = applied_input_seq {
+                fields.insert("applied_input_seq".into(), Value::Number(Number::from(seq)));
+            }
+            let wire = terminal_grid_frame(&session_id, fields);
             if send_transport_frame(&sender, wire).is_err() {
                 debug!(session_id = %session_id, "grid watch stopping: transport gone");
                 return;
             }
+            last_predict_ok = Some(predict_ok);
         }
         tokio::time::sleep(GRID_TICK).await;
     }

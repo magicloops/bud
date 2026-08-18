@@ -1787,6 +1787,36 @@ slot — both travel via the `legacy_json` payload.
   nothing — grid state is reconstructible, so frames are excluded from the
   SSE replay buffer.
 
+#### 6.8.3 Predictive echo sequencing (additive)
+
+Client-side predictive echo (mosh-style ghost text) rides three additive
+fields; all are optional for compatibility with pre-phase-3 peers.
+
+- `terminal_input` (Service → Bud) gains `input_seq` (client-minted,
+  monotonic per page session; BudEnvelope typed field **4** — field 3 is the
+  retired 0.2 `await_ready`). Browser input posts carry it as `seq` on
+  `POST /terminal/input`.
+- `terminal_grid` gains:
+  - `applied_input_seq`: highest `input_seq` the daemon has written to the
+    PTY. A client retires its prediction chunks with `seq <= applied` — the
+    authoritative echo owns those cells now.
+  - `predict_ok`: daemon-computed gate. True only at an interactive prompt:
+    mode ∈ {shell, repl} with **no open command**, primary screen, and the
+    PTY line discipline not in the silent-canonical state
+    (`ICANON && !ECHO`, the classic password prompt). Note this is an
+    exclusion, not `ECHO && ICANON`: readline/zle shells sit at the prompt
+    in raw mode with kernel echo off and echo app-side — exactly what
+    predictions model. A gate flip with no accompanying damage forces a
+    frame (a password prompt closes the gate within ~one tick). The
+    termios facts come from the v2 holder IPC op `QueryTermios` (holder
+    PROTO_VERSION 2); surviving v1 holders answer nothing and the gate
+    stays closed.
+- Client rules: predict only printable bursts and backspace over the
+  unflushed tail; anything else (Enter, control keys, gate closure, failed
+  input posts, reconnects) clears all ghosts. Ghosts render in a distinct
+  tentative style after the authoritative cursor and are never written into
+  grid state.
+
 ---
 
 ## 7. Browser SSE Contracts
