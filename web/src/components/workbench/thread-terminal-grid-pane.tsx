@@ -111,6 +111,11 @@ export function ThreadTerminalGridPane({
   onInputRef.current = onInput
   const pressedButtonRef = useRef<TerminalMouseButton | null>(null)
   const lastMoveCellRef = useRef<{ col: number; row: number } | null>(null)
+  const imeRef = useRef<HTMLTextAreaElement | null>(null)
+  const composingRef = useRef(false)
+  const focusIme = useCallback(() => {
+    imeRef.current?.focus({ preventScroll: true })
+  }, [])
   const platformRef = useRef(detectTerminalInputPlatform())
   const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null)
   const pinnedToBottomRef = useRef(true)
@@ -253,7 +258,7 @@ export function ThreadTerminalGridPane({
       }
       // preventDefault suppresses native selection AND focus — refocus.
       event.preventDefault()
-      containerRef.current?.focus()
+      focusIme()
       pressedButtonRef.current = button
       lastMoveCellRef.current = cell
       sendMouse(
@@ -269,7 +274,7 @@ export function ThreadTerminalGridPane({
         }),
       )
     },
-    [cellFromPoint, sendMouse],
+    [cellFromPoint, focusIme, sendMouse],
   )
 
   const handleMouseMove = useCallback(
@@ -403,8 +408,46 @@ export function ThreadTerminalGridPane({
     return () => scroller.removeEventListener('wheel', handleWheel)
   }, [cellFromPoint])
 
+  // IME composition: the hidden textarea is the real focus target. Regular
+  // keydowns are translated and preventDefault'd (so nothing accumulates);
+  // composed input (CJK IMEs, dead keys) and non-keyboard insertions (the
+  // macOS emoji picker) arrive via compositionend/input and are sent as
+  // ordinary text.
+  const drainIme = useCallback((value: string) => {
+    const ime = imeRef.current
+    if (ime) {
+      ime.value = ''
+    }
+    if (value.length > 0) {
+      onInputRef.current(value)
+    }
+  }, [])
+  const handleCompositionStart = useCallback(() => {
+    composingRef.current = true
+  }, [])
+  const handleCompositionEnd = useCallback(
+    (event: React.CompositionEvent<HTMLTextAreaElement>) => {
+      composingRef.current = false
+      drainIme(event.data ?? event.currentTarget.value)
+    },
+    [drainIme],
+  )
+  const handleImeInput = useCallback(
+    (event: React.FormEvent<HTMLTextAreaElement>) => {
+      if (composingRef.current) {
+        return
+      }
+      drainIme(event.currentTarget.value)
+    },
+    [drainIme],
+  )
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      // Mid-composition keydowns (keyCode 229) belong to the IME.
+      if (event.nativeEvent.isComposing || event.keyCode === 229) {
+        return
+      }
       const selection = window.getSelection()
       const hasSelection =
         !!selection && !selection.isCollapsed && !!containerRef.current?.contains(selection.anchorNode)
@@ -450,18 +493,49 @@ export function ThreadTerminalGridPane({
   // the ghost (that's where it will land once the echo is confirmed).
   const ghost = state.predictOk ? predictionGhost : ''
   const ghostCells = Array.from(ghost).length
+  // DECSCUSR: vim's insert-mode beam, underline shells, etc. Older daemons
+  // omit the facts — render a blinking block like the bytes path.
+  const cursorShape = state.cursor.shape ?? 'block'
+  const cursorBlink = state.cursor.blink ?? true
   const cursorStyle = useMemo<React.CSSProperties>(
     () => ({
       position: 'absolute',
       left: `calc(${state.cursor.col}ch + ${ghostCells}ch)`,
-      top: state.cursor.row * LINE_HEIGHT_PX,
-      width: '1ch',
-      height: LINE_HEIGHT_PX,
+      top:
+        state.cursor.row * LINE_HEIGHT_PX +
+        (cursorShape === 'underline' ? LINE_HEIGHT_PX - 2 : 0),
+      width: cursorShape === 'beam' ? 2 : '1ch',
+      height: cursorShape === 'underline' ? 2 : LINE_HEIGHT_PX,
       backgroundColor: '#ffffff',
       opacity: 0.65,
       pointerEvents: 'none',
+      ...(cursorBlink ? { animation: 'bud-grid-cursor-blink 1.06s step-end infinite' } : {}),
     }),
-    [state.cursor.col, state.cursor.row, ghostCells],
+    [state.cursor.col, state.cursor.row, ghostCells, cursorShape, cursorBlink],
+  )
+  // The IME helper sits AT the cursor so candidate windows anchor correctly.
+  const imeStyle = useMemo<React.CSSProperties>(
+    () => ({
+      position: 'absolute',
+      left: `${state.cursor.col}ch`,
+      top: state.cursor.row * LINE_HEIGHT_PX,
+      width: '1ch',
+      height: LINE_HEIGHT_PX,
+      opacity: 0,
+      border: 'none',
+      padding: 0,
+      margin: 0,
+      resize: 'none',
+      overflow: 'hidden',
+      background: 'transparent',
+      caretColor: 'transparent',
+      outline: 'none',
+      // Focus is always programmatic; the helper must never eat clicks or
+      // create a 1ch selection dead zone at the cursor.
+      pointerEvents: 'none',
+      whiteSpace: 'pre',
+    }),
+    [state.cursor.col, state.cursor.row],
   )
   const ghostStyle = useMemo<React.CSSProperties>(
     () => ({
@@ -481,7 +555,8 @@ export function ThreadTerminalGridPane({
   return (
     <div
       ref={containerRef}
-      tabIndex={0}
+      tabIndex={-1}
+      onClick={focusIme}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
       onMouseDown={handleMouseDown}
@@ -497,6 +572,7 @@ export function ThreadTerminalGridPane({
       }}
       data-testid="terminal-grid-pane"
     >
+      <style>{'@keyframes bud-grid-cursor-blink { 50% { opacity: 0 } }'}</style>
       {/* Cell measurement probe: 10 monospace cells. */}
       <span
         ref={measureRef}
@@ -518,7 +594,21 @@ export function ThreadTerminalGridPane({
                 {ghost}
               </span>
             )}
-            {cursorVisible && <div style={cursorStyle} />}
+            {cursorVisible && <div data-testid="terminal-cursor" style={cursorStyle} />}
+            <textarea
+              ref={imeRef}
+              style={imeStyle}
+              tabIndex={0}
+              autoCapitalize="off"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="Terminal input"
+              data-testid="terminal-ime"
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
+              onInput={handleImeInput}
+            />
           </div>
         </div>
       </div>

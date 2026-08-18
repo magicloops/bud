@@ -343,6 +343,12 @@ Mouse support (§6.8.4): press/release/drag/motion/wheel encoded via
 native selection; contextmenu suppressed while reporting); wheel falls back
 to alternate-scroll arrows in the alt screen and native scrollback scrolling
 on the primary screen; cursor-key bytes are rewritten to SS3 under DECCKM.
+The cursor renders per DECSCUSR facts (block/underline/beam, blink) with a
+blinking-block default for older daemons. Keyboard focus lives on a hidden
+cursor-positioned textarea: IME composition (compositionend), dead keys, and
+non-keyboard insertions (emoji picker → input events) commit as ordinary
+text; mid-composition keydowns (keyCode 229) are never translated; the
+textarea is pointer-transparent and focused programmatically.
 Renders the predictive-echo ghost tail (dotted underline, dimmed) after the
 authoritative cursor, with the cursor block sitting after the ghost.
 Known v1 limitation: wide-glyph cursor positioning assumes CJK glyphs render

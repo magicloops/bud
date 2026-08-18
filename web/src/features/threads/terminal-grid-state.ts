@@ -18,7 +18,17 @@ export type GridRun = {
   a?: number
 }
 
-export type GridCursor = { row: number; col: number; visible: boolean }
+export type GridCursorShape = 'block' | 'underline' | 'beam'
+
+export type GridCursor = {
+  row: number
+  col: number
+  visible: boolean
+  /** DECSCUSR shape; absent on older daemons (render as block). */
+  shape?: GridCursorShape
+  /** DECSCUSR blink; absent on older daemons (render blinking). */
+  blink?: boolean
+}
 
 export type GridMouseReport = 'none' | 'click' | 'drag' | 'motion'
 
