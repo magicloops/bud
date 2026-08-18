@@ -388,7 +388,7 @@ seeds scrollback from snapshot `history_text`, and resolves run colors
 ### `terminal-renderer.ts`
 
 Terminal renderer selection: `?renderer=` URL override →
-`localStorage["bud.terminal.renderer"]` → `bytes` default. Resolved once per
+`localStorage["bud.terminal.renderer"]` → `grid` default. Resolved once per
 mount.
 
 ### `terminal-prediction.ts`
@@ -458,7 +458,7 @@ Terminal session/xterm ownership for the existing-thread route.
   command chip, queued-input flag, truncation, and disconnect overlay
   visibility
 - renderer selection (grid-sync phase 2): `terminal-renderer.ts` resolves
-  `bytes` (default, xterm) vs `grid` once per mount. In grid mode xterm is
+  `grid` (default) vs `bytes` (legacy xterm fallback) once per mount. In grid mode xterm is
   never instantiated; the SSE stream connects with `?grid=1` and no
   `from_offset`, `terminal.grid` frames reduce through
   `terminal-grid-state.ts` (discontinuity ⇒ reconnect; the watch re-arm

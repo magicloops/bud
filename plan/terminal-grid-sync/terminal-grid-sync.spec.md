@@ -22,13 +22,15 @@ design authority:
 | — mouse/wheel (post-phase-3) | SGR/X10 mouse encoding gated on frame DECSET facts, wheel → mouse events or alternate-scroll arrows, DECCKM-aware cursor keys | **complete + browser-validated** (2026-08-18, 26/26) |
 | — scroll-hint delta (§6.8.5, WAN readiness) | Take-time row-identity shift detection → `row_shift` + revealed-rows-only frames; full-frame fallback on any ambiguity | **complete + browser-validated** (2026-08-18, 28/28 — measured 50 shifts : 1 full at ~441B vs ~2331B/frame on a sparse screen) |
 | — cursor shape + IME (§6.8.6) | DECSCUSR shape/blink on frames (vim beam/underline); hidden-textarea focus target for IME composition, dead keys, emoji-picker insertions | **complete + browser-validated** (2026-08-18, 32/32) |
+| — focus-dependent cursor | Filled/blinking cursor only while the pane owns keyboard focus; hollow outline otherwise (xterm parity) | **complete + browser-validated** (2026-08-18, 35/35) |
+| — **default renderer flip** | `terminal-renderer.ts` default `bytes` → `grid` after human dogfooding; xterm stays as the `?renderer=bytes` / localStorage fallback | **complete** (2026-08-18, harness re-validated with the flipped default) |
 
 ## Design-doc open questions resolved by this plan
 
 1. Attr fidelity floor → the `SgrState` set (6 attrs, named/indexed/truecolor); run object additive for later (hyperlinks etc.).
 2. Selection/copy → DOM-row renderer with native browser selection in v1; canvas deferred until profiling demands it.
 3. Scrollback → emu-line pushes over the delta channel + snapshot line-history bootstrap (confirms the design's lean).
-4. Flag placement → per-user `localStorage` toggle + `?renderer=` override; byte-stream/xterm.js remains default until validation passes.
+4. Flag placement → per-user `localStorage` toggle + `?renderer=` override; byte-stream/xterm.js remained default until validation passed; flipped to `grid` 2026-08-18 after browser validation + human dogfooding.
 
 ## Non-goals (unchanged from design §4)
 

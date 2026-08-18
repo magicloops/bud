@@ -1,10 +1,12 @@
 /**
  * Terminal renderer selection (plan/terminal-grid-sync phase 2 §8).
  *
- * `bytes` = xterm.js over the raw output stream (default, battle-tested).
- * `grid` = server-authoritative grid deltas (beta). Resolution order:
- * `?renderer=` URL override, then the persisted per-user preference, then
- * `bytes`. Resolved once per mount — switching reconnects the terminal.
+ * `grid` = server-authoritative grid deltas (default since the phase 0–3
+ * rollout completed browser validation + human dogfooding).
+ * `bytes` = xterm.js over the raw output stream (legacy fallback).
+ * Resolution order: `?renderer=` URL override, then the persisted per-user
+ * preference, then `grid`. Resolved once per mount — switching reconnects
+ * the terminal.
  */
 
 export type TerminalRendererMode = 'bytes' | 'grid'
@@ -27,5 +29,5 @@ export function resolveTerminalRendererMode(
   } catch {
     // Storage unavailable (private mode) — fall through to the default.
   }
-  return 'bytes'
+  return 'grid'
 }

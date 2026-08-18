@@ -175,11 +175,17 @@ try {
 
   // ---- 7. Byte-path (default) regression ----------------------------------
   const bytesPage = await context.newPage()
+  // Default is now the grid renderer; bytes/xterm survives as an explicit
+  // fallback behind ?renderer=bytes.
   await bytesPage.goto(`${BASE}/${BUD_ID}/${THREAD_ID}`, { waitUntil: 'domcontentloaded' })
+  await bytesPage.waitForSelector(PANE, { timeout: 20000 })
+  const xtermOnDefault = await bytesPage.locator('.xterm').count()
+  record('default path mounts the grid renderer (no xterm)', xtermOnDefault === 0, `xterm instances: ${xtermOnDefault}`)
+  await bytesPage.goto(`${BASE}/${BUD_ID}/${THREAD_ID}?renderer=bytes`, { waitUntil: 'domcontentloaded' })
   await bytesPage.waitForSelector('.xterm', { timeout: 20000 })
   const gridPaneOnBytes = await bytesPage.locator(PANE).count()
-  record('default path still mounts xterm (no grid pane)', gridPaneOnBytes === 0, `grid panes: ${gridPaneOnBytes}`)
-  await bytesPage.screenshot({ path: `${SHOTS}/08-bytes-default.png` })
+  record('?renderer=bytes still mounts xterm (no grid pane)', gridPaneOnBytes === 0, `grid panes: ${gridPaneOnBytes}`)
+  await bytesPage.screenshot({ path: `${SHOTS}/08-bytes-fallback.png` })
   await bytesPage.close()
 
 
