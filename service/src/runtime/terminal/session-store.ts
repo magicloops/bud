@@ -276,11 +276,17 @@ export class TerminalSessionStore {
   }
 }
 
-function isUniqueViolation(error: unknown): error is { code: string } {
-  return Boolean(
-    error &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "23505"
-  );
+function isUniqueViolation(error: unknown): boolean {
+  // Drizzle wraps the pg error (code 23505) in DrizzleQueryError with the
+  // original on `cause` — walk the chain instead of trusting the top level
+  // (found live: the concurrent-create recovery path silently stopped
+  // matching after a Drizzle upgrade, turning the benign race into 500s).
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth += 1) {
+    if ((current as { code?: unknown }).code === "23505") {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
