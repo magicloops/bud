@@ -874,6 +874,7 @@ mod grid_tests {
         let mut off = 0;
         let first = take_grid_frame_inner(&mut inner, false).unwrap();
         assert_eq!(first.cursor_shape, CursorShapeKind::Block);
+        assert!(first.cursor_blink, "terminal default is a blinking block");
 
         // DECSCUSR 6 = steady beam (vim insert mode) — paints nothing but
         // must ship.
@@ -889,10 +890,11 @@ mod grid_tests {
         assert_eq!(frame.cursor_shape, CursorShapeKind::Underline);
         assert!(frame.cursor_blink);
 
-        // DECSCUSR 0 = reset to default.
+        // DECSCUSR 0 = reset to default (blinking block again).
         feed(&mut inner, &mut off, b"\x1b[0 q");
         let frame = take_grid_frame_inner(&mut inner, false).expect("reset frame");
         assert_eq!(frame.cursor_shape, CursorShapeKind::Block);
+        assert!(frame.cursor_blink);
     }
 
     #[test]

@@ -27,7 +27,7 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::vte::ansi::{
-    Color as AnsiColor, CursorShape as AnsiCursorShape, NamedColor,
+    Color as AnsiColor, CursorShape as AnsiCursorShape, CursorStyle as AnsiCursorStyle, NamedColor,
 };
 
 use crate::error::Result;
@@ -135,6 +135,14 @@ impl Emu {
         let rows = rows.max(1);
         let config = Config {
             scrolling_history: scrollback_lines,
+            // Real-terminal default: a BLINKING block (alacritty's own config
+            // default is steady, which is an app preference, not the wire
+            // convention). Apps that set DECSCUSR steady variants still
+            // report blinking:false; DECSCUSR 0 resets back to this.
+            default_cursor_style: AnsiCursorStyle {
+                shape: AnsiCursorShape::Block,
+                blinking: true,
+            },
             ..Config::default()
         };
         let size = TermSize::new(cols as usize, rows as usize);
