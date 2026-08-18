@@ -1,5 +1,5 @@
-// Automated browser validation harness for the grid renderer — see
-// ../browser-validation.md for the environment it expects:
+// Automated browser validation harness for the grid renderer + predictive
+// echo — see ../browser-validation.md for the environment it expects:
 //   - dev stack running (service :3000, vite :5173, a daemon owned by the
 //     signed-in user with terminal enabled and a SHORT base dir)
 //   - a signed session cookie in <scratch>/cookie.txt (better-call signing:
@@ -215,6 +215,55 @@ try {
   await waitFor(async () => (await paneText()).includes('interrupted_ok_99'), 'echo after ctrl+c')
   record('ctrl+c interrupts a running command', true)
   await page.screenshot({ path: `${SHOTS}/11-interrupt.png` })
+
+
+  // ---- 11. Predictive echo (phase 3) --------------------------------------
+  // Add real network latency via CDP so the server ack lags the keystroke:
+  // the ghost must render locally first, then reconcile away.
+  const predictPage = await context.newPage()
+  await predictPage.goto(`${BASE}/${BUD_ID}/${THREAD_ID}?renderer=grid`, { waitUntil: 'domcontentloaded' })
+  await predictPage.waitForSelector(PANE, { timeout: 20000 })
+  const predictText = () => predictPage.locator(PANE).innerText()
+  await waitFor(async () => /[%$#]/.test(await predictText()), 'prompt on predict page', 25000)
+  const cdp = await context.newCDPSession(predictPage)
+  await cdp.send('Network.enable')
+  await cdp.send('Network.emulateNetworkConditions', {
+    offline: false,
+    latency: 300,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  })
+  await predictPage.locator(PANE).click()
+  await predictPage.keyboard.type('echo ghost_train', { delay: 5 })
+  // Ghost appears locally long before the 300ms-late ack can retire it.
+  const ghost = predictPage.locator('[data-testid="terminal-prediction"]')
+  await waitFor(async () => (await ghost.count()) > 0 && (await ghost.innerText()).includes('ghost_train'), 'prediction ghost', 3000)
+  record('predictive ghost renders before server echo', true)
+  await predictPage.screenshot({ path: `${SHOTS}/12-prediction.png` })
+  // Reconciliation: the ack retires the ghost and the authoritative echo
+  // carries the same text.
+  await waitFor(async () => (await ghost.count()) === 0, 'ghost retired', 10000)
+  await waitFor(async () => (await predictText()).includes('echo ghost_train'), 'authoritative echo')
+  record('ghost reconciles into authoritative echo', true)
+  await predictPage.keyboard.press('Enter')
+  await waitFor(async () => {
+    const text = await predictText()
+    return text.split('ghost_train').length >= 3 // command line + output line
+  }, 'predicted command executes', 10000)
+  record('predicted command executes normally', true)
+
+  // Gate: no predictions while a foreground command runs.
+  await predictPage.keyboard.type('sleep 2', { delay: 5 })
+  await predictPage.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 900))
+  await predictPage.keyboard.type('zzz', { delay: 5 })
+  await new Promise((r) => setTimeout(r, 200))
+  const ghostDuringCommand = await ghost.count()
+  record('no ghosts while a command is running (predict gate)', ghostDuringCommand === 0, `ghost count ${ghostDuringCommand}`)
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 })
+  await waitFor(async () => /zzz/.test(await predictText()), 'typed-through text lands after sleep', 15000)
+  await predictPage.keyboard.press('Enter')
+  await predictPage.close()
 
   const fatal = consoleErrors.filter(
     (e) => !e.includes('favicon') && !e.includes('404') && !e.includes('WebSocket'),

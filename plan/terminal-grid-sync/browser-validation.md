@@ -47,6 +47,22 @@ Environment note (not a grid bug): holders fail with
 `path must be shorter than SUN_LEN` when the registry base dir is very long
 (macOS 104-byte UDS path limit) — worth a friendlier ensure error someday.
 
+## Phase 3 addendum (same day)
+
+The harness now also validates predictive echo end-to-end with CDP-injected
+300 ms network latency (23/23 total): the ghost tail renders locally before
+the server echo, reconciles into the authoritative echo, the predicted
+command executes, and the gate keeps ghosts off while a foreground command
+runs. Two more cross-layer bugs found by the run, both of the same
+"stripped at a boundary" family: the service zod schema dropped
+`predict_ok`/`applied_input_seq` from grid frames, and the BudEnvelope typed
+field-level encoding for `terminal_input` dropped `input_seq` (now field 4;
+field 3 stays reserved for the retired 0.2 `await_ready`). One design
+correction over the plan: readline/zle shells sit at the prompt in raw mode
+with app-side echo, so the termios gate is an exclusion of silent-canonical
+(`ICANON && !ECHO`) plus no-open-command — not a positive `ECHO && ICANON`
+check, which would never open.
+
 ## What this run does NOT cover
 
 Subjective rendering feel/perf on a physical display, IME composition, wide-
