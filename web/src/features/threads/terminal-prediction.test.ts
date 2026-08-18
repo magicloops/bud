@@ -71,5 +71,5 @@ test('oversized bursts and clears are conservative', () => {
   const huge = 'x'.repeat(200)
   const result = predictKeystroke(predictKeystroke(emptyPredictionState, 'a').state, huge)
   assert.equal(result.cleared, true)
-  assert.equal(predictionGhostText(clearPredictions(result.state)), '')
+  assert.equal(predictionGhostText(clearPredictions()), '')
 })

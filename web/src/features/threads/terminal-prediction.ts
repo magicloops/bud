@@ -90,7 +90,7 @@ export function ackApplied(
   }
 }
 
-export function clearPredictions(_state: TerminalPredictionState): TerminalPredictionState {
+export function clearPredictions(): TerminalPredictionState {
   return emptyPredictionState
 }
 
