@@ -40,6 +40,11 @@ upgrades with every release.
 `tests/` — integration suites plus `tests/fixtures/` (corpus copied from
 `spikes/emulator-bakeoff/fixtures/`).
 
+`README.md` — standalone-package framing: embedder quickstart and
+responsibilities, semantic edge cases, and the extraction roadmap
+(crates.io naming, holder-binary distribution, skew CI, API polish,
+shim helpers, platform matrix, IPC semver policy, fuzzing).
+
 ## Contracts
 
 - `stem` never imports `bud` (dependency direction enforced by Cargo).
