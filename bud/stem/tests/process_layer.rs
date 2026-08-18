@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use stem::client::{HolderClient, HolderPush};
 use stem::holder::{run_holder, HolderConfig};
+use stem::ipc::PROTO_VERSION;
 use stem::pty::SpawnSpec;
 use stem::registry::{HolderLauncher, Registry};
 
@@ -110,7 +111,7 @@ async fn stat_write_echo_subscribe_kill() {
 
     let (mut client, hello) = HolderClient::connect(&dir).await.unwrap();
     assert!(hello.child_pid > 0);
-    assert_eq!(hello.proto_version, 1);
+    assert_eq!(hello.proto_version, PROTO_VERSION);
 
     let stat = client.stat().await.unwrap();
     assert!(stat.child_alive);
@@ -294,7 +295,7 @@ async fn registry_reuse_alive_list_and_gc() {
     let meta = reg.meta("sess_live").unwrap();
     assert_eq!(meta.holder_pid, std::process::id() as i32); // in-process holder
     assert!(meta.child_pid > 0);
-    assert_eq!(meta.ipc_proto_version, 1);
+    assert_eq!(meta.ipc_proto_version, PROTO_VERSION);
 
     // ensure() on a live session must reuse it, never spawn: /usr/bin/false as
     // launcher would fail loudly if the spawn path ran.

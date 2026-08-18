@@ -550,6 +550,18 @@ fn handle_conn(mut conn: UnixStream, sh: &Shared) {
                 let _ = serve_subscription(conn, sh, from_offset);
                 return;
             }
+            ClientMsg::QueryTermios => match nix::sys::termios::tcgetattr(&sh.master) {
+                Ok(termios) => {
+                    use nix::sys::termios::LocalFlags;
+                    HolderMsg::TermiosAck {
+                        echo: termios.local_flags.contains(LocalFlags::ECHO),
+                        icanon: termios.local_flags.contains(LocalFlags::ICANON),
+                    }
+                }
+                Err(e) => HolderMsg::Err {
+                    msg: format!("tcgetattr: {e}"),
+                },
+            },
             ClientMsg::Kill | ClientMsg::Shutdown => {
                 let _ = ipc::write_msg_sync(&mut conn, &HolderMsg::Ok);
                 if sh.inner.lock().unwrap().exit.is_none() {

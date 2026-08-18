@@ -23,7 +23,7 @@ upgrades with every release.
 |---|---|---|
 | `lib.rs` | — | Module tree, crate docs, re-exports (`Session`, `Event`, `StemError`) |
 | `error.rs` | both | `StemError` (typed `SessionGone` / `VersionMismatch` for daemon branching) |
-| `ipc.rs` | both | **Frozen wire contract** (`PROTO_VERSION`, `ClientMsg`/`HolderMsg`, length-prefixed postcard framing, sync + async codecs). Additive-only evolution |
+| `ipc.rs` | both | **Frozen wire contract** (`PROTO_VERSION` = 2, `ClientMsg`/`HolderMsg`, length-prefixed postcard framing, sync + async codecs). Additive-only evolution; v2 appends `QueryTermios`/`TermiosAck` (clients MUST version-gate: v1 holders close the connection on unknown variants) |
 | `events.rs` | daemon | Typed `Event`/`Mode`/`Integration` — facts mapped by the daemon onto proto `0.3` `terminal_event` (docs/proto.md §6.7.3). Command ids are session-local `u64`; daemon mints ULIDs |
 | `pty.rs` | holder | `nix` openpty + fork/exec (D4 amended: spike-proven raw-fd mechanics; portable-pty reserved for future ConPTY), TIOCSWINSZ resize |
 | `ring.rs` | holder | Capped file-backed ring, absolute offsets forever, truncation-reporting range reads |
@@ -63,6 +63,11 @@ integration suites for the process layer (real in-process holders), stream layer
 settling), plus the true single-binary re-exec test (`bud/tests/term_hold.rs`:
 daemonized `bud term-hold` spawn/reuse/kill through `Registry`). `examples/repl.rs`
 is the manual smoke tool. clippy/fmt clean.
+
+Grid-sync Phase 3 additions (2026-08-18): IPC v2 `QueryTermios` (tcgetattr on the
+PTY master; ECHO/ICANON facts for the predictive-echo gate), version-gated
+`HolderClient::query_termios` / `Session::query_termios` (`None` for surviving v1
+holders), real-PTY toggle test (`stty -echo`) plus the v1 skip test.
 
 Grid-sync Phase 0 complete (2026-08-18,
 [plan/terminal-grid-sync/phase-0-stem-grid-deltas.md](../../plan/terminal-grid-sync/phase-0-stem-grid-deltas.md)):

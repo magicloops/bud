@@ -311,3 +311,54 @@ async fn unintegrated_output_settles_in_unknown_mode() {
         .contains("plain-output-no-markers"));
     session.kill().await.unwrap();
 }
+
+#[tokio::test]
+async fn termios_facts_track_echo_toggles() {
+    // v2 QueryTermios against a real PTY: an interactive /bin/sh starts with
+    // ECHO+ICANON; `stty -echo` flips the echo fact (the predictive-echo gate).
+    let (_tmp, dir) = start_holder(
+        "stty echo icanon; while read -r cmd; do eval \"$cmd\"; done",
+        256 * 1024,
+    );
+    wait_for_holder(&dir).await;
+    let (mut session, _events) = Session::attach(config(&dir, 0)).await.unwrap();
+
+    let facts = session
+        .query_termios()
+        .await
+        .unwrap()
+        .expect("same-version holder must answer termios");
+    assert!(facts.echo, "fresh interactive shell should echo: {facts:?}");
+    assert!(
+        facts.icanon,
+        "fresh interactive shell should be canonical: {facts:?}"
+    );
+
+    session.write_text("stty -echo\n").await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let facts = session.query_termios().await.unwrap().unwrap();
+        if !facts.echo {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "echo flag never turned off after stty -echo: {facts:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    session.write_text("stty echo\n").await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let facts = session.query_termios().await.unwrap().unwrap();
+        if facts.echo {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "echo flag never restored after stty echo: {facts:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}

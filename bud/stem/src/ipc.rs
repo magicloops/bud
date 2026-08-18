@@ -23,7 +23,16 @@ use crate::error::{Result, StemError};
 /// Bump only for breaking changes; see module docs. Holders answer their own
 /// version in [`HolderMsg::HelloAck`]; the client decides compatibility
 /// (`holder < client` must be tolerated per D3d's N-2 policy).
-pub const PROTO_VERSION: u16 = 1;
+///
+/// History:
+/// - 1: initial op set
+/// - 2: adds `QueryTermios`/`TermiosAck` (appended variants — a v2 client MUST
+///   version-gate the new op: a v1 holder cannot decode unknown variants and
+///   closes the connection on them)
+pub const PROTO_VERSION: u16 = 2;
+
+/// First protocol version that understands [`ClientMsg::QueryTermios`].
+pub const PROTO_VERSION_TERMIOS: u16 = 2;
 
 /// Hard cap on a single frame's postcard payload. Output pushes chunk below this.
 pub const MAX_FRAME: usize = 256 * 1024;
@@ -56,6 +65,13 @@ pub enum ClientMsg {
     /// owns the PTY; orphaning it would leak. `Shutdown` kills child then exits
     /// (alias of Kill semantics today; kept distinct for future TTL logic).
     Shutdown,
+    /// v2+: read the PTY line discipline's input-relevant termios flags
+    /// (`tcgetattr` on the master). Used to gate client-side predictive echo:
+    /// predictions are only safe when the tty is echoing canonical input.
+    /// NEVER send to a holder that answered Hello with a version below
+    /// [`PROTO_VERSION_TERMIOS`] — older holders close the connection on
+    /// unknown variants.
+    QueryTermios,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +119,13 @@ pub enum HolderMsg {
         bytes: Vec<u8>,
         /// Set when `start` was clamped forward past truncated bytes.
         truncated_from: Option<u64>,
+    },
+    /// v2+: reply to [`ClientMsg::QueryTermios`].
+    TermiosAck {
+        /// termios local flag ECHO is set.
+        echo: bool,
+        /// termios local flag ICANON is set (canonical line mode).
+        icanon: bool,
     },
 }
 

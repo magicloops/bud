@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use crate::error::{Result, StemError};
-use crate::ipc::{self, ClientMsg, HolderMsg, PROTO_VERSION};
+use crate::ipc::{self, ClientMsg, HolderMsg, PROTO_VERSION, PROTO_VERSION_TERMIOS};
 
 /// Per-op deadline: a holder is local and either answers fast or is wedged.
 const OP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -19,6 +19,16 @@ const OP_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct HolderClient {
     stream: UnixStream,
     session_dir: PathBuf,
+    /// The holder's Hello-answered protocol version: gates ops the holder
+    /// predates (older holders close the connection on unknown variants).
+    holder_proto_version: u16,
+}
+
+/// Input-relevant PTY line-discipline flags (v2 `QueryTermios`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TermiosFacts {
+    pub echo: bool,
+    pub icanon: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +136,7 @@ impl HolderClient {
             HolderClient {
                 stream,
                 session_dir: session_dir.to_path_buf(),
+                holder_proto_version: info.proto_version,
             },
             info,
         ))
@@ -189,6 +200,22 @@ impl HolderClient {
         match self.request(&ClientMsg::RingRead { start, end }).await? {
             msg @ HolderMsg::RingData { .. } => Ok(msg),
             other => Err(StemError::Ipc(format!("expected RingData, got {other:?}"))),
+        }
+    }
+
+    /// PTY termios facts, or `None` when the holder predates the op (v1
+    /// holders survive daemon upgrades; callers degrade — e.g. predictive
+    /// echo stays off). Never sends the op to an old holder: it would close
+    /// the control connection on the unknown variant.
+    pub async fn query_termios(&mut self) -> Result<Option<TermiosFacts>> {
+        if self.holder_proto_version < PROTO_VERSION_TERMIOS {
+            return Ok(None);
+        }
+        match self.request(&ClientMsg::QueryTermios).await? {
+            HolderMsg::TermiosAck { echo, icanon } => Ok(Some(TermiosFacts { echo, icanon })),
+            other => Err(StemError::Ipc(format!(
+                "expected TermiosAck, got {other:?}"
+            ))),
         }
     }
 
@@ -297,6 +324,19 @@ mod tests {
         assert_eq!(info.holder_version, "fake");
         assert_eq!(info.child_pid, 42);
         assert_eq!(client.session_dir(), &dir.path().to_path_buf());
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn termios_query_is_skipped_for_pre_v2_holders() {
+        // The op must never reach an old holder (it would close the control
+        // connection on the unknown variant); the fake holder here answers
+        // nothing after HelloAck, so any sent frame would hang/err the op.
+        let dir = tempfile::tempdir().unwrap();
+        let server = fake_holder(dir.path(), 1);
+        let (mut client, info) = HolderClient::connect(dir.path()).await.unwrap();
+        assert_eq!(info.proto_version, 1);
+        assert_eq!(client.query_termios().await.unwrap(), None);
         server.join().unwrap();
     }
 

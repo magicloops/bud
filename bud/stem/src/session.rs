@@ -315,6 +315,13 @@ impl Session {
         self.child_pid
     }
 
+    /// PTY termios facts (v2 holders; `None` for surviving v1 holders —
+    /// callers degrade, e.g. predictive echo stays off). Cheap local IPC
+    /// roundtrip; callers own the polling cadence.
+    pub async fn query_termios(&mut self) -> Result<Option<crate::client::TermiosFacts>> {
+        self.client.query_termios().await
+    }
+
     /// Caller policy override: commands will carry sentinel exit markers (D6c).
     pub fn mark_sentinel_integration(&self) {
         self.inner.lock().unwrap().modes.mark_sentinel_integration();
