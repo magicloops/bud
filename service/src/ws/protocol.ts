@@ -119,7 +119,10 @@ export const TerminalGridSchema = TerminalEnvelopeSchema.extend({
   cursor: z.object({
     row: z.number().int().nonnegative(),
     col: z.number().int().nonnegative(),
-    visible: z.boolean()
+    visible: z.boolean(),
+    // DECSCUSR facts (§6.8.6) — optional on older daemons.
+    shape: z.enum(["block", "underline", "beam"]).optional(),
+    blink: z.boolean().optional()
   }),
   dirty_rows: z.array(
     z.object({

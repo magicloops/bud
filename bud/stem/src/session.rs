@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::client::{HolderClient, HolderPush};
-use crate::emu::{CursorPos, Emu, FeedReport, MouseModes, StyledRun};
+use crate::emu::{CursorPos, CursorShapeKind, Emu, FeedReport, MouseModes, StyledRun};
 use crate::error::{Result, StemError};
 use crate::events::{Event, Mode};
 use crate::ipc::HolderMsg;
@@ -64,6 +64,10 @@ pub struct GridFrame {
     /// always included in `dirty_rows`; correctness never depends on the
     /// hint, only bandwidth.
     pub row_shift: i32,
+    /// DECSCUSR cursor shape + blink (frame-worthy on change: vim's
+    /// insert-mode beam paints no cells).
+    pub cursor_shape: CursorShapeKind,
+    pub cursor_blink: bool,
     /// Application-enabled mouse modes (DECSET facts; clients encode mouse
     /// events only when the app asked, and fall back to arrow keys for
     /// alt-screen wheel otherwise).
@@ -90,7 +94,7 @@ struct GridTracker {
     scrollback_dropped: u64,
     generation: u64,
     last_cursor: Option<CursorPos>,
-    last_mouse: Option<(MouseModes, bool)>,
+    last_mouse: Option<(MouseModes, bool, CursorShapeKind, bool)>,
     /// Per-row (address, content-hash) identities captured at the last
     /// emitted frame, with the geometry they were captured at — the baseline
     /// for take-time scroll-shift detection.
@@ -467,11 +471,14 @@ fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFram
     let cursor = inner.emu.cursor();
     let mouse = inner.emu.mouse_modes();
     let app_cursor = inner.emu.key_modes().application_cursor;
+    let (cursor_shape, cursor_blink) = inner.emu.cursor_shape();
     let full = force_full || inner.grid.full_pending;
     let cursor_moved = inner.grid.last_cursor != Some(cursor);
-    // Mode toggles (mouse DECSETs, DECCKM) usually damage no cells; they are
-    // frame-worthy on their own so clients never encode against stale modes.
-    let mouse_changed = inner.grid.last_mouse != Some((mouse, app_cursor));
+    // Mode toggles (mouse DECSETs, DECCKM, DECSCUSR) usually damage no cells;
+    // they are frame-worthy on their own so clients never render or encode
+    // against stale modes.
+    let mouse_changed =
+        inner.grid.last_mouse != Some((mouse, app_cursor, cursor_shape, cursor_blink));
     if !full
         && inner.grid.dirty_rows.is_empty()
         && inner.grid.scrollback_push.is_empty()
@@ -528,7 +535,7 @@ fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFram
     grid.dirty_rows.clear();
     grid.full_pending = false;
     grid.last_cursor = Some(cursor);
-    grid.last_mouse = Some((mouse, app_cursor));
+    grid.last_mouse = Some((mouse, app_cursor, cursor_shape, cursor_blink));
     grid.last_row_ids = Some((cols, rows, current_ids));
     Some(GridFrame {
         generation: grid.generation,
@@ -538,6 +545,8 @@ fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFram
         alt_screen: inner.emu.alt_screen_active(),
         cursor,
         row_shift,
+        cursor_shape,
+        cursor_blink,
         mouse,
         app_cursor,
         dirty_rows,
@@ -856,6 +865,34 @@ mod grid_tests {
         let frame = take_grid_frame_inner(&mut inner, false).expect("mouse-off frame");
         assert_eq!(frame.mouse.report, MouseReport::None);
         assert!(!frame.mouse.sgr);
+    }
+
+    #[test]
+    fn decscusr_shape_changes_emit_frames() {
+        use crate::emu::CursorShapeKind;
+        let mut inner = test_inner(80, 4, 100);
+        let mut off = 0;
+        let first = take_grid_frame_inner(&mut inner, false).unwrap();
+        assert_eq!(first.cursor_shape, CursorShapeKind::Block);
+
+        // DECSCUSR 6 = steady beam (vim insert mode) — paints nothing but
+        // must ship.
+        feed(&mut inner, &mut off, b"\x1b[6 q");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("beam frame");
+        assert_eq!(frame.cursor_shape, CursorShapeKind::Beam);
+        assert!(!frame.cursor_blink);
+        assert!(take_grid_frame_inner(&mut inner, false).is_none());
+
+        // DECSCUSR 3 = blinking underline.
+        feed(&mut inner, &mut off, b"\x1b[3 q");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("underline frame");
+        assert_eq!(frame.cursor_shape, CursorShapeKind::Underline);
+        assert!(frame.cursor_blink);
+
+        // DECSCUSR 0 = reset to default.
+        feed(&mut inner, &mut off, b"\x1b[0 q");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("reset frame");
+        assert_eq!(frame.cursor_shape, CursorShapeKind::Block);
     }
 
     #[test]

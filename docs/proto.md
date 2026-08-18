@@ -1869,6 +1869,19 @@ vertical shift, the daemon emits a **shift delta**:
 Measured on the validation harness: paced scrolling ships ~50 shift frames
 per 1 full, at ~5× fewer bytes per frame even on a sparse screen.
 
+#### 6.8.6 Cursor style facts (additive)
+
+The frame `cursor` object gains `shape` (`block` | `underline` | `beam`) and
+`blink` — DECSCUSR facts (vi-mode aware via the emulator), frame-worthy on
+change like the other input-mode facts since DECSCUSR paints no cells.
+Absent on older daemons; clients render a blinking block then. Hidden
+cursors remain expressed via `visible`, never as a shape.
+
+(Client-side, not wire: grid clients must route keyboard focus through a
+hidden text element at the cursor position so IME composition, dead keys,
+and non-keyboard insertions — emoji pickers — commit as ordinary input text;
+mid-composition keydowns, keyCode 229, must not be translated.)
+
 ---
 
 ## 7. Browser SSE Contracts

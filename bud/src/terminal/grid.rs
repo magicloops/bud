@@ -9,7 +9,7 @@
 
 use serde_json::{json, Map, Number, Value};
 
-use stem::emu::{CellColor, MouseReport, StyledRun};
+use stem::emu::{CellColor, CursorShapeKind, MouseReport, StyledRun};
 use stem::session::GridFrame;
 
 fn color_value(color: CellColor) -> Value {
@@ -63,6 +63,12 @@ pub(crate) fn grid_frame_fields(frame: &GridFrame) -> Map<String, Value> {
             "row": frame.cursor.row,
             "col": frame.cursor.col,
             "visible": frame.cursor.visible,
+            "shape": match frame.cursor_shape {
+                CursorShapeKind::Block => "block",
+                CursorShapeKind::Underline => "underline",
+                CursorShapeKind::Beam => "beam",
+            },
+            "blink": frame.cursor_blink,
         }),
     );
     fields.insert(
@@ -131,6 +137,8 @@ mod tests {
                 visible: true,
             },
             row_shift: 3,
+            cursor_shape: CursorShapeKind::Beam,
+            cursor_blink: true,
             mouse: stem::emu::MouseModes {
                 report: MouseReport::Drag,
                 sgr: true,
@@ -167,6 +175,8 @@ mod tests {
         assert_eq!(fields["generation"], 7);
         assert_eq!(fields["full"], false);
         assert_eq!(fields["cursor"]["col"], 9);
+        assert_eq!(fields["cursor"]["shape"], "beam");
+        assert_eq!(fields["cursor"]["blink"], true);
         assert_eq!(
             fields["mouse"],
             json!({ "report": "drag", "sgr": true, "alt_scroll": false })

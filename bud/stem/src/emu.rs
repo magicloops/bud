@@ -26,7 +26,9 @@ use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
+use alacritty_terminal::vte::ansi::{
+    Color as AnsiColor, CursorShape as AnsiCursorShape, NamedColor,
+};
 
 use crate::error::Result;
 
@@ -432,6 +434,18 @@ impl Emu {
         }
     }
 
+    /// DECSCUSR cursor style: (shape, blinking). Hidden is expressed via
+    /// [`CursorPos::visible`], not a shape.
+    pub fn cursor_shape(&self) -> (CursorShapeKind, bool) {
+        let style = self.term.cursor_style();
+        let shape = match style.shape {
+            AnsiCursorShape::Underline => CursorShapeKind::Underline,
+            AnsiCursorShape::Beam => CursorShapeKind::Beam,
+            _ => CursorShapeKind::Block,
+        };
+        (shape, style.blinking)
+    }
+
     pub fn alt_screen_active(&self) -> bool {
         self.term.mode().contains(TermMode::ALT_SCREEN)
     }
@@ -537,6 +551,15 @@ fn color_hash(color: AnsiColor) -> u64 {
             0x0100_0000 + ((rgb.r as u64) << 16) + ((rgb.g as u64) << 8) + rgb.b as u64
         }
     }
+}
+
+/// DECSCUSR cursor shape (vim's insert-mode beam, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorShapeKind {
+    #[default]
+    Block,
+    Underline,
+    Beam,
 }
 
 /// Highest mouse-reporting level enabled: DECSET 1000 (clicks) < 1002
