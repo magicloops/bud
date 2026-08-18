@@ -132,6 +132,8 @@ export const TerminalGridSchema = TerminalEnvelopeSchema.extend({
   // Predictive echo (§6.8.3) — optional: absent on pre-phase-3 daemons.
   predict_ok: z.boolean().optional(),
   applied_input_seq: z.number().int().nonnegative().optional(),
+  // Scroll-hint delta (§6.8.5) — shift-then-patch; omitted when zero.
+  row_shift: z.number().int().optional(),
   // DECCKM application-cursor fact (§6.8.4) — optional on older daemons.
   app_cursor: z.boolean().optional(),
   // Mouse-reporting facts (§6.8.4) — optional: absent on older daemons.

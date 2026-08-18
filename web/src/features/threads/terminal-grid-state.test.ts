@@ -102,6 +102,50 @@ test('a full frame recovers from any generation (recording a scrollback seam)', 
   assert.equal(restarted.state.generation, 1)
 })
 
+test('row_shift splices the viewport before dirty rows apply', () => {
+  const state = seeded()
+  const base = applyGridFrame(state, frame({
+    generation: 2,
+    full: false,
+    dirty_rows: [
+      { row: 0, runs: [{ t: 'AAA' }] },
+      { row: 1, runs: [{ t: 'BBB' }] },
+      { row: 2, runs: [{ t: 'CCC' }] },
+    ],
+  })).state
+
+  // Content moved up by one: old row 1 lands at row 0 BY REFERENCE (memo
+  // identity preserved); the revealed bottom row arrives dirty.
+  const shifted = applyGridFrame(base, frame({
+    generation: 3,
+    full: false,
+    row_shift: 1,
+    dirty_rows: [{ row: 2, runs: [{ t: 'DDD' }] }],
+  }))
+  assert.equal(shifted.discontinuity, false)
+  assert.deepEqual(
+    shifted.state.grid.map((runs) => gridRowText(runs)),
+    ['BBB', 'CCC', 'DDD'],
+  )
+  assert.equal(shifted.state.grid[0], base.grid[1], 'shifted rows keep identity')
+
+  // Negative shift = content moved down; holes covered by dirty rows.
+  const down = applyGridFrame(shifted.state, frame({
+    generation: 4,
+    full: false,
+    row_shift: -1,
+    dirty_rows: [{ row: 0, runs: [{ t: 'TOP' }] }],
+  }))
+  assert.deepEqual(
+    down.state.grid.map((runs) => gridRowText(runs)),
+    ['TOP', 'BBB', 'CCC'],
+  )
+
+  // Shift frames obey delta contiguity (generation gaps still discontinuity).
+  const gap = applyGridFrame(down.state, frame({ generation: 9, full: false, row_shift: 1 }))
+  assert.equal(gap.discontinuity, true)
+})
+
 test('scrollback pushes accumulate oldest-first and cap with drop accounting', () => {
   let state = seeded()
   const pushed = applyGridFrame(

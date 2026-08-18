@@ -376,9 +376,10 @@ single-chunk tail trimming, and UTF-8 boundary safety.
 
 Grid-sync client reducer (plan/terminal-grid-sync phase 2): applies
 `terminal.grid` frames (proto §6.8.2) — full seeds, contiguous deltas patch
-rows, generation gaps/size mismatches return a `discontinuity` signal, full
-frames recover from anything (recording a scrollback seam across missed
-generations). Accumulates scrollback pushes (capped 5000, drops counted),
+rows, §6.8.5 `row_shift` frames splice the viewport (identity-preserving for
+row memoization) before dirty rows apply, generation gaps/size mismatches
+return a `discontinuity` signal, full frames recover from anything
+(recording a scrollback seam across missed generations). Accumulates scrollback pushes (capped 5000, drops counted),
 seeds scrollback from snapshot `history_text`, and resolves run colors
 (named/256/truecolor) to CSS. Pure; node-tested in
 `terminal-grid-state.test.ts`.

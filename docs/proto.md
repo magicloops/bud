@@ -1842,6 +1842,33 @@ otherwise in the alt screen with `alt_scroll` → arrow keys (SS3 when
 `app_cursor`); otherwise the primary screen scrolls local scrollback
 natively.
 
+#### 6.8.5 Scroll-hint delta (additive)
+
+Scrolling marks the whole viewport damaged in the emulator, which would ship
+a full frame per scroll step (~KBs at up to 60 fps — the dominant grid-sync
+WAN cost). Instead, when a pending full repaint can be explained by a
+vertical shift, the daemon emits a **shift delta**:
+
+- `row_shift: n` (non-`full` frames only; omitted when zero): the client
+  first moves its viewport content UP by `n` rows (negative = down) —
+  `new[i] = old[i + n]` — then applies `dirty_rows` as usual.
+- Detection is take-time and identity-based: each viewport row carries a
+  stable identity (its cell-buffer address, which survives every emulator
+  rotation) plus a content hash; the shift is the dominant offset that maps
+  current rows onto the last emitted frame's rows, and every row the shift
+  cannot account for byte-for-byte (revealed, rewritten, region-static) is
+  included in `dirty_rows`. Correctness never depends on the hint — any
+  ambiguity (no baseline, resize, alt toggle, under a quarter of rows
+  matching) degrades to a true `full` frame.
+- Multiple scroll steps between frames collapse into one net shift; region
+  scrolls (vim with a status line) emit the region's shift with the static
+  rows re-sent as dirty; whole-screen replacements (a giant output burst)
+  legitimately remain fulls.
+- Generation contiguity rules are those of ordinary deltas.
+
+Measured on the validation harness: paced scrolling ships ~50 shift frames
+per 1 full, at ~5× fewer bytes per frame even on a sparse screen.
+
 ---
 
 ## 7. Browser SSE Contracts

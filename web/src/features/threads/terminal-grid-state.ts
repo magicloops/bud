@@ -48,6 +48,9 @@ export type TerminalGridFrame = {
   mouse?: { report: GridMouseReport; sgr: boolean; alt_scroll: boolean }
   /** §6.8.4: DECCKM — arrows must be SS3 (`ESC O x`) when set. */
   app_cursor?: boolean
+  /** §6.8.5: scroll hint — shift viewport content up by n rows (negative =
+   * down) BEFORE applying dirty rows. Never on full frames. */
+  row_shift?: number
 }
 
 export type TerminalGridState = {
@@ -121,9 +124,21 @@ export function applyGridFrame(
     }
   }
 
-  const grid = frame.full
-    ? Array.from({ length: frame.rows }, (): GridRun[] => [])
-    : state.grid.slice()
+  let grid: GridRun[][]
+  if (frame.full) {
+    grid = Array.from({ length: frame.rows }, (): GridRun[] => [])
+  } else if (frame.row_shift) {
+    // Scroll hint: splice the existing rows by the shift (preserving row
+    // array identity for unmoved-content memoization), blank the holes —
+    // the frame's dirty rows always cover every hole.
+    const shift = frame.row_shift
+    grid = Array.from({ length: frame.rows }, (_, i): GridRun[] => {
+      const src = i + shift
+      return src >= 0 && src < state.grid.length ? state.grid[src]! : []
+    })
+  } else {
+    grid = state.grid.slice()
+  }
   for (const dirty of frame.dirty_rows) {
     if (dirty.row >= 0 && dirty.row < frame.rows) {
       grid[dirty.row] = dirty.runs

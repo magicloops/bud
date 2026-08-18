@@ -50,6 +50,13 @@ pub(crate) fn grid_frame_fields(frame: &GridFrame) -> Map<String, Value> {
     fields.insert("cols".into(), Value::Number(Number::from(frame.cols)));
     fields.insert("rows".into(), Value::Number(Number::from(frame.rows)));
     fields.insert("alt_screen".into(), Value::Bool(frame.alt_screen));
+    if frame.row_shift != 0 {
+        // Scroll-hint (§6.8.5): shift-then-patch delta; omitted when zero.
+        fields.insert(
+            "row_shift".into(),
+            Value::Number(Number::from(frame.row_shift)),
+        );
+    }
     fields.insert(
         "cursor".into(),
         json!({
@@ -123,6 +130,7 @@ mod tests {
                 col: 9,
                 visible: true,
             },
+            row_shift: 3,
             mouse: stem::emu::MouseModes {
                 report: MouseReport::Drag,
                 sgr: true,
@@ -164,6 +172,7 @@ mod tests {
             json!({ "report": "drag", "sgr": true, "alt_scroll": false })
         );
         assert_eq!(fields["app_cursor"], true);
+        assert_eq!(fields["row_shift"], 3);
         let runs = &fields["dirty_rows"][0]["runs"];
         // Default style omits every style key.
         assert_eq!(runs[0], json!({ "t": "plain " }));
