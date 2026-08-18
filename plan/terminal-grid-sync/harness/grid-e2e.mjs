@@ -265,6 +265,82 @@ try {
   await predictPage.keyboard.press('Enter')
   await predictPage.close()
 
+
+  // ---- 12. Mouse reporting (§6.8.4) ---------------------------------------
+  const mousePage = await context.newPage()
+  await mousePage.goto(`${BASE}/${BUD_ID}/${THREAD_ID}?renderer=grid`, { waitUntil: 'domcontentloaded' })
+  await mousePage.waitForSelector(PANE, { timeout: 20000 })
+  const mouseText = () => mousePage.locator(PANE).innerText()
+  await waitFor(async () => /[%$#]/.test(await mouseText()), 'prompt on mouse page', 25000)
+  await mousePage.locator(PANE).click()
+  // The session is shared across scenarios — kill any leftover prompt line
+  // (e.g. the predict-gate test's typed-through text) before composing.
+  await mousePage.keyboard.press('Control+u')
+  await new Promise((r) => setTimeout(r, 150))
+  // A raw-mode reader that enables SGR mouse reporting and prints whatever
+  // bytes the click delivers (ESC sanitized to "E").
+  await mousePage.keyboard.type(
+    `perl -e '$|=1; system("stty","raw","-echo"); print "\\e[?1000h\\e[?1006h"; sysread(STDIN,$b,256); print "\\e[?1000l\\e[?1006l"; system("stty","sane"); $b=~s/\\x1b/E/g; print "\\r\\nCAP[$b]\\r\\n"'`,
+    { delay: 5 },
+  )
+  await mousePage.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 800))
+  const paneBox = await mousePage.locator(PANE).boundingBox()
+  // Retry the click until captured: the mouse-mode frame may still be in
+  // flight when the first click lands (a report:none click is a no-op).
+  await waitFor(async () => {
+    await mousePage.mouse.click(paneBox.x + paneBox.width / 2, paneBox.y + paneBox.height / 2)
+    await new Promise((r) => setTimeout(r, 300))
+    return (await mouseText()).includes('CAP[E[<0;')
+  }, 'SGR click captured', 15000, 200)
+  record('SGR mouse click reaches the application', true)
+  // Leftover release bytes land at the prompt as noise — clear the line.
+  await mousePage.keyboard.press('Control+c')
+  await new Promise((r) => setTimeout(r, 300))
+
+  // ---- 13. Wheel in the alt screen ----------------------------------------
+  // (a) Arrow fallback: `less` never enables mouse reporting, so wheel must
+  // become arrow keys via the alternate-scroll convention.
+  await mousePage.keyboard.press('Control+u')
+  await mousePage.keyboard.type('seq 1 200 > /tmp/grid-wheel.txt && less /tmp/grid-wheel.txt', { delay: 5 })
+  await mousePage.keyboard.press('Enter')
+  await waitFor(async () => /(^|\n)1(\n)/.test(await mouseText()), 'less opened at top', 20000)
+  await new Promise((r) => setTimeout(r, 600))
+  await mousePage.mouse.move(paneBox.x + paneBox.width / 2, paneBox.y + paneBox.height / 2)
+  for (let i = 0; i < 3; i += 1) {
+    await mousePage.mouse.wheel(0, 120)
+    await new Promise((r) => setTimeout(r, 150))
+  }
+  await waitFor(async () => {
+    const text = await mouseText()
+    return !/(^|\n)1(\n)/.test(text) && /(^|\n)(2[0-9]|[3-9][0-9])(\n|$)/.test(text)
+  }, 'less scrolled via arrow fallback', 10000)
+  record('wheel scrolls a mouse-less pager via alternate-scroll arrows', true)
+  await mousePage.keyboard.type('q', { delay: 20 })
+  await new Promise((r) => setTimeout(r, 500))
+
+  // (b) Mouse reporting: nvim enables mouse by default; wheel must encode
+  // SGR wheel events (nvim scrolls the VIEW, not the cursor).
+  await mousePage.keyboard.type('vim -u NONE /tmp/grid-wheel.txt', { delay: 5 })
+  await mousePage.keyboard.press('Enter')
+  await waitFor(async () => /(^|\n)1 *(\n|$)/.test(await mouseText()), 'vim opened at top', 20000)
+  await new Promise((r) => setTimeout(r, 800))
+  for (let i = 0; i < 4; i += 1) {
+    await mousePage.mouse.wheel(0, 120)
+    await new Promise((r) => setTimeout(r, 150))
+  }
+  await waitFor(async () => {
+    const text = await mouseText()
+    return !/(^|\n)1 *(\n)/.test(text) && /(^|\n)([4-9][0-9]|1[0-9][0-9]) *(\n|$)/.test(text)
+  }, 'vim scrolled via mouse reporting', 10000)
+  record('wheel scrolls nvim via SGR mouse reporting', true)
+  await mousePage.keyboard.press('Escape')
+  await mousePage.keyboard.type(':q!', { delay: 15 })
+  await mousePage.keyboard.press('Enter')
+  await new Promise((r) => setTimeout(r, 400))
+  await mousePage.screenshot({ path: `${SHOTS}/14-mouse.png` })
+  await mousePage.close()
+
   const fatal = consoleErrors.filter(
     (e) => !e.includes('favicon') && !e.includes('404') && !e.includes('WebSocket'),
   )

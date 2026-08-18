@@ -63,6 +63,18 @@ with app-side echo, so the termios gate is an exclusion of silent-canonical
 (`ICANON && !ECHO`) plus no-open-command — not a positive `ECHO && ICANON`
 check, which would never open.
 
+## Mouse/wheel addendum (same day)
+
+26/26 after adding mouse support: a real browser click delivered as SGR
+bytes into a raw-mode PTY reader; wheel scrolling `less` via the
+alternate-scroll arrow fallback; wheel scrolling nvim via SGR mouse
+reporting (nvim enables mouse by default — a scenario-design surprise).
+The `less` scenario caught a real bug beyond the mouse work: cursor keys
+were CSI-hardcoded, but smkx apps set DECCKM and only accept SS3 arrows —
+`app_cursor` now rides grid frames and the client rewrites cursor keys
+accordingly. (The bytes/xterm path has the same latent CSI-only arrow bug
+in its custom key handler — noted, not fixed here.)
+
 ## What this run does NOT cover
 
 Subjective rendering feel/perf on a physical display, IME composition, wide-

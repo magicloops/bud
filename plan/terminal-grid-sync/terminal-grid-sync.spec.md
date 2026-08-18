@@ -19,6 +19,7 @@ design authority:
 | [phase-3-predictive-echo.md](./phase-3-predictive-echo.md) | Termios fact (IPC v2), input sequencing, client prediction + reconciliation | **complete + browser-validated** (2026-08-18) — ghost-tail model shipped; E2E under 300 ms injected latency: ghost pre-echo, reconciliation, gate closed during commands. Gate design corrected from the plan: readline/zle prompts are raw-mode with app-side echo, so the gate excludes silent-canonical (`ICANON && !ECHO`) + open commands instead of requiring `ECHO && ICANON` |
 | [browser-validation.md](./browser-validation.md) | Automated headless-Chromium validation of phase 2 against the real stack: setup, 19 scenarios, the four bugs it found (all fixed) | complete (2026-08-18) |
 | [harness/grid-e2e.mjs](./harness/grid-e2e.mjs) | The playwright-core harness itself (prereqs in its header + browser-validation.md) | reference |
+| — mouse/wheel (post-phase-3) | SGR/X10 mouse encoding gated on frame DECSET facts, wheel → mouse events or alternate-scroll arrows, DECCKM-aware cursor keys | **complete + browser-validated** (2026-08-18, 26/26) |
 
 ## Design-doc open questions resolved by this plan
 
