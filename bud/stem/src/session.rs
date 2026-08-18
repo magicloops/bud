@@ -32,6 +32,10 @@ use crate::semantic::{ScanKind, Scanner};
 /// overflow is counted, never silent.
 const SCROLLBACK_PENDING_CAP: usize = 1024;
 
+/// Per-row identity baseline for scroll-shift detection: the geometry it was
+/// captured at plus (cell-buffer address, content hash) per viewport row.
+type RowIdBaseline = (u16, u16, Vec<(usize, u64)>);
+
 /// One viewport row of a [`GridFrame`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridRow {
@@ -53,6 +57,13 @@ pub struct GridFrame {
     pub rows: u16,
     pub alt_screen: bool,
     pub cursor: CursorPos,
+    /// Scroll-shift hint (only on non-`full` frames): the client first moves
+    /// its viewport content UP by this many rows (negative = down) —
+    /// `new[i] = old[i + row_shift]` — then applies `dirty_rows`. Rows the
+    /// shift cannot account for (revealed, rewritten, out of range) are
+    /// always included in `dirty_rows`; correctness never depends on the
+    /// hint, only bandwidth.
+    pub row_shift: i32,
     /// Application-enabled mouse modes (DECSET facts; clients encode mouse
     /// events only when the app asked, and fall back to arrow keys for
     /// alt-screen wheel otherwise).
@@ -80,6 +91,10 @@ struct GridTracker {
     generation: u64,
     last_cursor: Option<CursorPos>,
     last_mouse: Option<(MouseModes, bool)>,
+    /// Per-row (address, content-hash) identities captured at the last
+    /// emitted frame, with the geometry they were captured at — the baseline
+    /// for take-time scroll-shift detection.
+    last_row_ids: Option<RowIdBaseline>,
 }
 
 impl GridTracker {
@@ -93,6 +108,7 @@ impl GridTracker {
             generation: 0,
             last_cursor: None,
             last_mouse: None,
+            last_row_ids: None,
         }
     }
 
@@ -467,8 +483,28 @@ fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFram
     }
 
     let (cols, rows) = inner.emu.size();
+    let current_ids = inner.emu.viewport_row_ids();
+
+    // A pending "full" repaint (scroll, clear, alt toggle) is first offered
+    // to the shift detector: diff row identities against the last emitted
+    // frame, find the dominant vertical shift, and ship only the rows the
+    // shift cannot explain. Ambiguity always degrades to a true full frame.
+    let mut row_shift = 0i32;
+    let mut emit_full = full;
     let dirty: Vec<u16> = if full {
-        (0..rows).collect()
+        let detected = if force_full {
+            None
+        } else {
+            detect_row_shift(&inner.grid.last_row_ids, cols, rows, &current_ids)
+        };
+        match detected {
+            Some((shift, dirty)) => {
+                row_shift = shift;
+                emit_full = false;
+                dirty
+            }
+            None => (0..rows).collect(),
+        }
     } else {
         // Stale rows beyond a shrink are dropped (a resize sets full anyway).
         inner
@@ -493,19 +529,66 @@ fn take_grid_frame_inner(inner: &mut Inner, force_full: bool) -> Option<GridFram
     grid.full_pending = false;
     grid.last_cursor = Some(cursor);
     grid.last_mouse = Some((mouse, app_cursor));
+    grid.last_row_ids = Some((cols, rows, current_ids));
     Some(GridFrame {
         generation: grid.generation,
-        full,
+        full: emit_full,
         cols,
         rows,
         alt_screen: inner.emu.alt_screen_active(),
         cursor,
+        row_shift,
         mouse,
         app_cursor,
         dirty_rows,
         scrollback_push: grid.scrollback_push.drain(..).collect(),
         scrollback_dropped: std::mem::take(&mut grid.scrollback_dropped),
     })
+}
+
+/// Shift detection over row identities: find the vertical offset `k` that
+/// explains the most rows (`current[i] == previous[i + k]`, address AND
+/// content hash), then mark everything else dirty. Returns `None` (emit a
+/// true full frame) when there is no baseline, geometry changed, or too few
+/// rows match to be worth a hint.
+fn detect_row_shift(
+    baseline: &Option<RowIdBaseline>,
+    cols: u16,
+    rows: u16,
+    current: &[(usize, u64)],
+) -> Option<(i32, Vec<u16>)> {
+    let (prev_cols, prev_rows, prev) = baseline.as_ref()?;
+    if *prev_cols != cols || *prev_rows != rows || prev.len() != current.len() {
+        return None;
+    }
+    // Addresses are unique among live rows: map address -> previous index.
+    let prev_by_addr: std::collections::HashMap<usize, usize> =
+        prev.iter().enumerate().map(|(i, id)| (id.0, i)).collect();
+    let mut votes: std::collections::HashMap<i32, u32> = std::collections::HashMap::new();
+    for (i, (addr, hash)) in current.iter().enumerate() {
+        if let Some(&j) = prev_by_addr.get(addr) {
+            if prev[j].1 == *hash {
+                *votes.entry(j as i32 - i as i32).or_insert(0) += 1;
+            }
+        }
+    }
+    let (&shift, &count) = votes.iter().max_by_key(|(_, &count)| count)?;
+    // A hint that explains under a quarter of the viewport isn't worth its
+    // bookkeeping — a full frame is simpler and barely bigger.
+    if (count as usize) * 4 < rows as usize {
+        return None;
+    }
+    let mut dirty = Vec::new();
+    for (i, (addr, hash)) in current.iter().enumerate() {
+        let source = i as i32 + shift;
+        let matched = source >= 0
+            && (source as usize) < prev.len()
+            && prev[source as usize] == (*addr, *hash);
+        if !matched {
+            dirty.push(i as u16);
+        }
+    }
+    Some((shift, dirty))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -800,7 +883,14 @@ mod grid_tests {
 
         feed(&mut inner, &mut off, b"\r\nfour\r\nfive");
         let frame = take_grid_frame_inner(&mut inner, false).expect("scroll frame");
-        assert!(frame.full, "viewport scroll forces a full frame");
+        // Scroll-hint delta: the viewport shifted up by 2; only the revealed
+        // bottom rows ship (row 0 = old row 2 survives by reference).
+        assert!(!frame.full, "scrolls ship as shift deltas, not fulls");
+        assert_eq!(frame.row_shift, 2);
+        let dirty: Vec<u16> = frame.dirty_rows.iter().map(|r| r.row).collect();
+        assert_eq!(dirty, vec![1, 2]);
+        assert_eq!(row_text(&frame.dirty_rows[0]), "four");
+        assert_eq!(row_text(&frame.dirty_rows[1]), "five");
         let pushed: Vec<String> = frame
             .scrollback_push
             .iter()
@@ -808,6 +898,49 @@ mod grid_tests {
             .collect();
         assert_eq!(pushed, vec!["one".to_string(), "two".to_string()]);
         assert_eq!(frame.scrollback_dropped, 0);
+    }
+
+    #[test]
+    fn region_scroll_ships_shift_with_static_rows_dirty_only_if_changed() {
+        // vim-style: scroll region 1..3 of a 4-row grid (status row fixed).
+        let mut inner = test_inner(80, 4, 100);
+        let mut off = 0;
+        feed(&mut inner, &mut off, b"AAA\r\nBBB\r\nCCC\r\nSTATUS");
+        take_grid_frame_inner(&mut inner, false).unwrap();
+
+        // Set region rows 1-3, move into it, scroll it by one line.
+        feed(&mut inner, &mut off, b"\x1b[1;3r\x1b[3;1H\nNEW\x1b[r");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("region frame");
+        assert!(!frame.full, "region scroll should also ship as a delta");
+        assert_eq!(frame.row_shift, 1, "region rows dominate the vote");
+        // The fixed status row did NOT move: the shift cannot explain it, so
+        // it re-ships as dirty alongside the revealed region row.
+        let dirty: Vec<u16> = frame.dirty_rows.iter().map(|r| r.row).collect();
+        assert!(dirty.contains(&2), "revealed region row: {dirty:?}");
+        assert!(dirty.contains(&3), "static status row: {dirty:?}");
+        assert_eq!(row_text(&frame.dirty_rows[1]), "STATUS");
+    }
+
+    #[test]
+    fn clear_screen_ships_a_zero_shift_delta_not_a_full() {
+        // ED2 marks full damage but most rows end up blank on both sides —
+        // identity diffing turns it into a small k=0 delta.
+        let mut inner = test_inner(80, 6, 100);
+        let mut off = 0;
+        feed(&mut inner, &mut off, b"top");
+        take_grid_frame_inner(&mut inner, false).unwrap();
+        feed(&mut inner, &mut off, b"\x1b[2J\x1b[H");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("clear frame");
+        // alacritty implements ED2 as scroll-into-history + clear, so this
+        // may arrive as a small rotation shift rather than k=0 — either way
+        // the point is that a "full damage" clear ships as a tiny delta.
+        assert!(!frame.full);
+        assert!(
+            frame.dirty_rows.len() <= 2,
+            "clear should be a small delta: {} dirty rows (shift {})",
+            frame.dirty_rows.len(),
+            frame.row_shift,
+        );
     }
 
     #[test]
@@ -908,6 +1041,16 @@ mod grid_tests {
                 if frame.full {
                     for row in &mut reduced {
                         row.clear();
+                    }
+                } else if frame.row_shift != 0 {
+                    let old_rows = reduced.clone();
+                    for (i, slot) in reduced.iter_mut().enumerate() {
+                        let src = i as i32 + frame.row_shift;
+                        *slot = if src >= 0 && (src as usize) < old_rows.len() {
+                            old_rows[src as usize].clone()
+                        } else {
+                            String::new()
+                        };
                     }
                 }
                 for row in &frame.dirty_rows {

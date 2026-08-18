@@ -260,6 +260,37 @@ impl Emu {
         &self.term.grid()[line][Column(0)] as *const Cell as usize
     }
 
+    /// FNV-1a over a viewport row's visible cell state (char + colors +
+    /// style flags). Paired with [`Self::row_addr`] it identifies "this exact
+    /// row content moved" for scroll-shift detection: address equality alone
+    /// cannot distinguish a moved row from one rewritten in place.
+    fn row_content_hash(&self, line: Line) -> u64 {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+        let mut hash = FNV_OFFSET;
+        let mut mix = |value: u64| {
+            hash ^= value;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        };
+        let row = &self.term.grid()[line];
+        for col in 0..self.cols as usize {
+            let cell = &row[Column(col)];
+            mix(cell.c as u64);
+            mix(color_hash(cell.fg));
+            mix(color_hash(cell.bg));
+            mix(cell.flags.bits() as u64);
+        }
+        hash
+    }
+
+    /// (address, content hash) identity per viewport row — the substrate for
+    /// take-time scroll-shift detection (grid-sync `row_shift`).
+    pub(crate) fn viewport_row_ids(&self) -> Vec<(usize, u64)> {
+        (0..self.rows as i32)
+            .map(|line| (self.row_addr(Line(line)), self.row_content_hash(Line(line))))
+            .collect()
+    }
+
     fn locate_row(&self, addr: usize, history: usize) -> RowLocation {
         for r in 0..self.rows as i32 {
             if self.row_addr(Line(r)) == addr {
@@ -495,6 +526,17 @@ impl Emu {
 
 fn is_cursor_cell(line: usize, col: usize, cursor: Point) -> bool {
     cursor.line.0 >= 0 && cursor.line.0 as usize == line && cursor.column.0 == col
+}
+
+/// Stable numeric encoding of a cell color for row content hashing.
+fn color_hash(color: AnsiColor) -> u64 {
+    match color {
+        AnsiColor::Named(named) => 0x0100 + named as u64,
+        AnsiColor::Indexed(index) => 0x0200 + index as u64,
+        AnsiColor::Spec(rgb) => {
+            0x0100_0000 + ((rgb.r as u64) << 16) + ((rgb.g as u64) << 8) + rgb.b as u64
+        }
+    }
 }
 
 /// Highest mouse-reporting level enabled: DECSET 1000 (clicks) < 1002
