@@ -1765,7 +1765,11 @@ slot — both travel via the `legacy_json` payload.
   truecolor; `a` attr bitfield (1 bold, 2 dim, 4 italic, 8 underline, 16
   inverse, 32 strikeout), omitted = 0. Wide chars appear once; zero-width
   combiners stay attached; trailing default-styled blanks are trimmed (client
-  clears the rest of the row). The run object is additive (future keys:
+  clears the rest of the row). Run text is cell text: a tab lives in exactly
+  one grid cell (the emulator stores `\t` in the tab's start cell) and is
+  exported as a single space — clients must never re-expand tabs (CSS
+  `white-space: pre` would re-expand at per-span tab stops and misalign
+  columns, e.g. BSD `ls` output). The run object is additive (future keys:
   hyperlinks, underline styles).
 - **Deltas** are relative to the previously emitted frame. Cadence:
   event-driven — the daemon emits when session activity produces damage,
@@ -1876,6 +1880,13 @@ The frame `cursor` object gains `shape` (`block` | `underline` | `beam`) and
 change like the other input-mode facts since DECSCUSR paints no cells.
 Absent on older daemons; clients render a blinking block then. Hidden
 cursors remain expressed via `visible`, never as a shape.
+
+The emulator's default style is a **blinking block**, and prompt return
+(OSC 133 `A`) resets DECSCUSR back to that default: full-screen apps
+(nvim) leave an explicit steady style behind on exit and never restore it,
+which would permanently steady the shell cursor. Prompt-level styling
+(zsh vi-mode widgets) is emitted after the prompt marker and therefore
+lands on top of the reset and is honored normally.
 
 (Client-side, not wire: grid clients must route keyboard focus through a
 hidden text element at the cursor position so IME composition, dead keys,

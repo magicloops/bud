@@ -112,6 +112,32 @@ bytes at the PTY (the intermittent SGR-click scenario failures were typed
 commands corrupting, e.g. "perl- e"). Input POSTs are now strictly
 serialized through a client-side promise chain.
 
+## Tab-cell + blink-residue addendum (dogfood follow-up)
+
+Two more user-reported nits, both root-caused at the stem layer:
+
+**Ragged `ls` columns (both renderers, new worse, persisted after refresh):**
+BSD `ls` pads columns with TABS, and alacritty's `put_tab` stores a literal
+`'\t'` in the tab's start cell (one cell wide — subsequent cells stay
+spaces). The grid renderer's per-run spans under CSS `white-space: pre`
+re-expanded those tabs at PER-SPAN tab stops, shifting everything after
+them; the tab also leaked into `screen_text` snapshots (hence "old content
+after refresh has it too" — the snapshot path shares the emulator text).
+Fix: stem maps `'\t'` → `' '` at text extraction (`display_char` in
+`line_runs`/`row_text`), so a tab renders as exactly its one grid cell.
+Verified with a DOM-geometry probe: emulator truth and span widths now
+column-align (`probe-spacing.mjs`).
+
+**Blink relapse ("saw it blinking temporarily, then never again"):** wire
+probe showed nvim sets an explicit STEADY block via DECSCUSR and never
+resets it on exit — one vim visit permanently steadied the session cursor
+(real terminals have this same residue problem). Fix: OSC 133 `A` (prompt
+return) resets the cursor style to the default blinking block in
+`session.rs`. Ordering makes this safe for prompt-level styling: zsh
+vi-mode widgets emit DECSCUSR after the prompt marker, so their style lands
+on top of the reset and is honored (unit-tested). Wire-verified: fresh
+prompt blinks → in-vim steady (honest) → post-`:q!` blinks again.
+
 ## What this run does NOT cover
 
 Subjective rendering feel/perf on a physical display, IME composition, wide-

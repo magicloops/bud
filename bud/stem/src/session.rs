@@ -411,6 +411,10 @@ fn process_chunk(
             ScanKind::PromptStart => {
                 inner.last_region_start = ev.at_offset;
                 inner.open_command = None;
+                // Clear app cursor-style residue (nvim's steady-block exit
+                // style); anything set at the prompt itself arrives after
+                // this marker and overrides normally.
+                inner.emu.reset_cursor_style();
                 if emit {
                     out.push(Event::PromptReady {
                         cwd: inner.last_cwd.clone(),
@@ -895,6 +899,30 @@ mod grid_tests {
         let frame = take_grid_frame_inner(&mut inner, false).expect("reset frame");
         assert_eq!(frame.cursor_shape, CursorShapeKind::Block);
         assert!(frame.cursor_blink);
+    }
+
+    #[test]
+    fn prompt_return_clears_app_cursor_style_residue() {
+        use crate::emu::CursorShapeKind;
+        let mut inner = test_inner(80, 4, 100);
+        let mut off = 0;
+        take_grid_frame_inner(&mut inner, false).unwrap();
+
+        // An app sets a steady beam and exits without resetting (nvim).
+        feed(&mut inner, &mut off, b"\x1b[6 q");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("app style");
+        assert_eq!(frame.cursor_shape, CursorShapeKind::Beam);
+
+        // Prompt return (OSC 133 A) clears the residue back to the default.
+        feed(&mut inner, &mut off, b"\x1b]133;A\x07");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("prompt reset");
+        assert_eq!(frame.cursor_shape, CursorShapeKind::Block);
+        assert!(frame.cursor_blink, "default is a blinking block");
+
+        // Prompt-level styling emitted AFTER the marker still wins.
+        feed(&mut inner, &mut off, b"\x1b[2 q");
+        let frame = take_grid_frame_inner(&mut inner, false).expect("prompt style");
+        assert!(!frame.cursor_blink, "explicit steady at the prompt honored");
     }
 
     #[test]

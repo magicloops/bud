@@ -378,11 +378,17 @@ impl Emu {
     /// from (drift between the two is impossible by construction).
     fn line_runs(&self, line: Line) -> Vec<StyledRun> {
         let row = &self.term.grid()[line];
-        // Trim trailing cells that are blank AND default-styled.
+        // Trim trailing cells that are blank AND default-styled. A '\t' cell
+        // counts as blank: alacritty stores the tab CHARACTER in the cell the
+        // tab started at (put_tab), but it occupies exactly one cell — see
+        // display_char below.
         let mut last = 0usize;
         for col in 0..self.cols as usize {
             let cell = &row[Column(col)];
-            if cell.c != ' ' || !cell_is_default_style(cell) || cell.zerowidth().is_some() {
+            if !matches!(cell.c, ' ' | '\t')
+                || !cell_is_default_style(cell)
+                || cell.zerowidth().is_some()
+            {
                 last = col + 1;
             }
         }
@@ -395,19 +401,20 @@ impl Emu {
             {
                 continue;
             }
+            let ch = display_char(cell.c);
             let fg = convert_color(cell.fg);
             let bg = convert_color(cell.bg);
             let attrs = attr_bits(cell.flags);
             match runs.last_mut() {
                 Some(run) if run.fg == fg && run.bg == bg && run.attrs == attrs => {
-                    run.text.push(cell.c);
+                    run.text.push(ch);
                     if let Some(zerowidth) = cell.zerowidth() {
                         run.text.extend(zerowidth.iter());
                     }
                 }
                 _ => {
                     let mut text = String::new();
-                    text.push(cell.c);
+                    text.push(ch);
                     if let Some(zerowidth) = cell.zerowidth() {
                         text.extend(zerowidth.iter());
                     }
@@ -452,6 +459,15 @@ impl Emu {
             _ => CursorShapeKind::Block,
         };
         (shape, style.blinking)
+    }
+
+    /// Reset DECSCUSR back to the terminal default. Used at prompt return:
+    /// full-screen apps (nvim) leave an explicit steady style behind on exit
+    /// and never reset it; prompt-level styling (zsh vi-mode widgets) is
+    /// emitted AFTER the prompt marker and lands on top of this unharmed.
+    pub fn reset_cursor_style(&mut self) {
+        use alacritty_terminal::vte::ansi::Handler as _;
+        self.term.set_cursor_style(None);
     }
 
     pub fn alt_screen_active(&self) -> bool {
@@ -536,7 +552,7 @@ impl Emu {
             {
                 continue;
             }
-            s.push(cell.c);
+            s.push(display_char(cell.c));
             if let Some(zerowidth) = cell.zerowidth() {
                 s.extend(zerowidth.iter());
             }
@@ -548,6 +564,20 @@ impl Emu {
 
 fn is_cursor_cell(line: usize, col: usize, cursor: Point) -> bool {
     cursor.line.0 >= 0 && cursor.line.0 as usize == line && cursor.column.0 == col
+}
+
+/// Grid cell char → what a renderer should draw for it. A cell holding
+/// '\t' is the single cell a tab STARTED at (alacritty's put_tab stores the
+/// character for copy fidelity but advances the cursor past it); rendering
+/// the raw '\t' through CSS/text pipelines re-expands it at arbitrary tab
+/// stops and shreds column alignment (found live: BSD `ls` pads columns
+/// with tabs).
+fn display_char(c: char) -> char {
+    if c == '\t' {
+        ' '
+    } else {
+        c
+    }
 }
 
 /// Stable numeric encoding of a cell color for row content hashing.
@@ -916,6 +946,23 @@ mod tests {
         for row in 0..5 {
             assert_eq!(a.row_runs(row), b.row_runs(row), "row {row}");
         }
+    }
+
+    #[test]
+    fn tab_cells_render_as_single_blank_cells() {
+        // BSD ls pads columns with tabs; alacritty stores '\t' in the cell
+        // the tab started at. Text extraction must never leak raw tabs (CSS
+        // and copy pipelines re-expand them at arbitrary stops).
+        let mut emu = Emu::new(40, 4, 100).unwrap();
+        emu.feed(b"A\tB\tC");
+        let line = emu.screen_lines()[0].clone();
+        assert!(!line.contains('\t'), "screen_lines leaked a tab: {line:?}");
+        assert_eq!(line, format!("A{}B{}C", " ".repeat(7), " ".repeat(7)));
+        let runs = emu.row_runs(0);
+        let text: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert!(!text.contains('\t'), "row_runs leaked a tab: {text:?}");
+        assert_eq!(text, line);
+        assert!(!emu.screen_ansi().contains('\t'));
     }
 
     #[test]
