@@ -470,6 +470,43 @@ try {
   await shapePage.keyboard.press('Enter')
   await new Promise((r) => setTimeout(r, 400))
   await shapePage.screenshot({ path: `${SHOTS}/15-cursor-ime.png` })
+
+  // Focus affordance: filled+blinking cursor only while the pane owns
+  // keyboard focus; hollow outline otherwise (parity with xterm).
+  const cursorFacts = () =>
+    shapePage.evaluate(() => {
+      const c = document.querySelector('[data-testid="terminal-cursor"]')
+      if (!c) return { present: false }
+      const s = getComputedStyle(c)
+      return {
+        present: true,
+        filled: s.backgroundColor !== 'rgba(0, 0, 0, 0)',
+        hollow: s.boxShadow !== 'none',
+        animated: s.animationName !== 'none',
+      }
+    })
+  let focusF = await cursorFacts()
+  record(
+    'focused pane renders a filled cursor',
+    focusF.present && focusF.filled && !focusF.hollow,
+    JSON.stringify(focusF),
+  )
+  await shapePage.evaluate(() => {
+    const el = document.createElement('input')
+    document.body.appendChild(el)
+    el.focus()
+  })
+  await new Promise((r) => setTimeout(r, 250))
+  focusF = await cursorFacts()
+  record(
+    'unfocused pane renders a hollow, non-blinking cursor',
+    focusF.present && focusF.hollow && !focusF.filled && !focusF.animated,
+    JSON.stringify(focusF),
+  )
+  await shapePage.locator(PANE).click()
+  await new Promise((r) => setTimeout(r, 250))
+  focusF = await cursorFacts()
+  record('refocus restores the filled cursor', focusF.filled && !focusF.hollow, JSON.stringify(focusF))
   await shapePage.close()
 
   const fatal = consoleErrors.filter(

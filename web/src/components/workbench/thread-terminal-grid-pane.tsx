@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   GRID_DEFAULT_BG,
   GRID_DEFAULT_FG,
@@ -115,6 +115,17 @@ export function ThreadTerminalGridPane({
   const composingRef = useRef(false)
   const focusIme = useCallback(() => {
     imeRef.current?.focus({ preventScroll: true })
+  }, [])
+  // Terminal convention: filled blinking cursor only while the pane owns
+  // keyboard focus; hollow outline otherwise (matches xterm on the bytes
+  // path, and disambiguates terminal focus vs. the message composer).
+  const [paneFocused, setPaneFocused] = useState(false)
+  const handleFocusIn = useCallback(() => setPaneFocused(true), [])
+  const handleFocusOut = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    // Focus moving between children (container ↔ IME helper) is not a blur.
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setPaneFocused(false)
+    }
   }, [])
   const platformRef = useRef(detectTerminalInputPlatform())
   const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null)
@@ -497,8 +508,21 @@ export function ThreadTerminalGridPane({
   // omit the facts — render a blinking block like the bytes path.
   const cursorShape = state.cursor.shape ?? 'block'
   const cursorBlink = state.cursor.blink ?? true
-  const cursorStyle = useMemo<React.CSSProperties>(
-    () => ({
+  const cursorStyle = useMemo<React.CSSProperties>(() => {
+    if (!paneFocused) {
+      // Unfocused: a hollow full-cell outline, never blinking — shows where
+      // input WOULD go without claiming the keyboard is here.
+      return {
+        position: 'absolute',
+        left: `calc(${state.cursor.col}ch + ${ghostCells}ch)`,
+        top: state.cursor.row * LINE_HEIGHT_PX,
+        width: '1ch',
+        height: LINE_HEIGHT_PX,
+        boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.65)',
+        pointerEvents: 'none',
+      }
+    }
+    return {
       position: 'absolute',
       left: `calc(${state.cursor.col}ch + ${ghostCells}ch)`,
       top:
@@ -510,9 +534,8 @@ export function ThreadTerminalGridPane({
       opacity: 0.65,
       pointerEvents: 'none',
       ...(cursorBlink ? { animation: 'bud-grid-cursor-blink 1.06s step-end infinite' } : {}),
-    }),
-    [state.cursor.col, state.cursor.row, ghostCells, cursorShape, cursorBlink],
-  )
+    }
+  }, [state.cursor.col, state.cursor.row, ghostCells, cursorShape, cursorBlink, paneFocused])
   // The IME helper sits AT the cursor so candidate windows anchor correctly.
   const imeStyle = useMemo<React.CSSProperties>(
     () => ({
@@ -557,6 +580,8 @@ export function ThreadTerminalGridPane({
       ref={containerRef}
       tabIndex={-1}
       onClick={focusIme}
+      onFocus={handleFocusIn}
+      onBlur={handleFocusOut}
       onKeyDown={handleKeyDown}
       onPaste={handlePaste}
       onMouseDown={handleMouseDown}

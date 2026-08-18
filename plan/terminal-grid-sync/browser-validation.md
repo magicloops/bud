@@ -138,6 +138,17 @@ vi-mode widgets emit DECSCUSR after the prompt marker, so their style lands
 on top of the reset and is honored (unit-tested). Wire-verified: fresh
 prompt blinks → in-vim steady (honest) → post-`:q!` blinks again.
 
+## Focus-affordance addendum
+
+Dogfood ask: with the cursor always filled/blinking, it was unclear whether
+keystrokes would land in the terminal or the message composer. The grid
+cursor now renders filled + blinking only while the pane owns keyboard
+focus, and as a hollow non-blinking cell outline otherwise — the classic
+terminal-emulator affordance, and parity with xterm.js on the bytes path.
+Focus is tracked with focus/blur on the pane container (moves between the
+container and the IME helper are filtered via `relatedTarget`). Three new
+harness scenarios cover the focused/unfocused/refocus transitions (35/35).
+
 ## What this run does NOT cover
 
 Subjective rendering feel/perf on a physical display, IME composition, wide-
