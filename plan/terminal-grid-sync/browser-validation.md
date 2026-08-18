@@ -99,6 +99,19 @@ CJK input source. Also: the Playwright browser cache updated underneath the
 harness mid-day (1228 → 1234) — the harness now resolves the newest cached
 build dynamically.
 
+## Cursor-blink + input-ordering addendum (same day)
+
+Two dogfood/nit fixes, both E2E-verified (32/32): stem's emulator default
+cursor style is now a BLINKING block (alacritty's steady default is an app
+preference, not the terminal convention — with no DECSCUSR set, prompts were
+steady; post-nvim sessions stay honestly steady because nvim's exit sets an
+explicit style). And a real ordering bug: leading-edge flushing made
+per-keystroke input POSTs common, and concurrent fetches on parallel HTTP
+connections can ARRIVE out of order — fast typing occasionally reordered
+bytes at the PTY (the intermittent SGR-click scenario failures were typed
+commands corrupting, e.g. "perl- e"). Input POSTs are now strictly
+serialized through a client-side promise chain.
+
 ## What this run does NOT cover
 
 Subjective rendering feel/perf on a physical display, IME composition, wide-

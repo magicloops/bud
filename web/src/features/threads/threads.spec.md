@@ -464,6 +464,10 @@ Terminal session/xterm ownership for the existing-thread route.
   `terminal-grid-state.ts` (discontinuity ⇒ reconnect; the watch re-arm
   ships a fresh full frame), the snapshot seeds scrollback only, and
   `terminal.output` counts only as stream liveness
+- input POSTs are strictly serialized through a promise chain: concurrent
+  fetches ride parallel HTTP connections and can arrive out of order,
+  reordering typed bytes at the PTY (surfaced by leading-edge per-keystroke
+  flushing; the E2E's intermittent "perl- e" command corruption was this)
 - predictive echo (§6.8.3): keystrokes ghost via `terminal-prediction.ts`
   while the latest frame's `predict_ok` gate is open; flushes carry `seq` on
   the input POST; frame `applied_input_seq` retires chunks; the hook exposes

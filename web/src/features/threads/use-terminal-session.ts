@@ -115,6 +115,11 @@ export function useTerminalSession({
   const [terminalPredictionGhost, setTerminalPredictionGhost] = useState('')
   const predictionRef = useRef<TerminalPredictionState>(emptyPredictionState)
   const inputSeqCounterRef = useRef(0)
+  // Input POSTs must be strictly ordered: concurrent fetches ride parallel
+  // HTTP connections and can ARRIVE out of order, reordering typed bytes at
+  // the PTY (found live once leading-edge flushing made per-keystroke POSTs
+  // common). Every flush enqueues onto this chain instead of racing.
+  const inputPostChainRef = useRef<Promise<void>>(Promise.resolve())
   const [terminalConnection, setTerminalConnection] =
     useState<TerminalConnectionState>('disconnected')
   const [terminalFacts, setTerminalFacts] =
@@ -537,32 +542,38 @@ export function useTerminalSession({
       setPrediction(assignFlushSeq(predictionRef.current, seq))
     }
 
-    try {
-      const resp = await apiFetch(`/api/threads/${threadId}/terminal/input`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input, ...(seq !== null ? { seq } : {}) }),
-      })
-      if (shouldAbortForUnauthorized(resp)) {
-        return
-      }
-      if (!resp.ok) {
-        console.warn('[terminal] input request failed', { status: resp.status })
-        // The flush never reached the PTY: its ghosts would linger unacked.
-        setPrediction(emptyPredictionState)
-        if (resp.status >= 500 || resp.status === 0) {
-          setConnectionState('reconnecting')
+    const postInput = async () => {
+      try {
+        const resp = await apiFetch(`/api/threads/${threadId}/terminal/input`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input, ...(seq !== null ? { seq } : {}) }),
+        })
+        if (shouldAbortForUnauthorized(resp)) {
+          return
         }
+        if (!resp.ok) {
+          console.warn('[terminal] input request failed', { status: resp.status })
+          // The flush never reached the PTY: its ghosts would linger unacked.
+          setPrediction(emptyPredictionState)
+          if (resp.status >= 500 || resp.status === 0) {
+            setConnectionState('reconnecting')
+          }
+        }
+      } catch (err) {
+        if (isAuthRedirectPending()) {
+          return
+        }
+        console.error('Failed to send terminal input', err)
+        setPrediction(emptyPredictionState)
+        setConnectionState('reconnecting')
+        onError(err instanceof Error ? err.message : 'Failed to send input')
       }
-    } catch (err) {
-      if (isAuthRedirectPending()) {
-        return
-      }
-      console.error('Failed to send terminal input', err)
-      setPrediction(emptyPredictionState)
-      setConnectionState('reconnecting')
-      onError(err instanceof Error ? err.message : 'Failed to send input')
     }
+    // Strict ordering: enqueue behind every earlier in-flight input POST.
+    const chained = inputPostChainRef.current.then(postInput)
+    inputPostChainRef.current = chained.catch(() => undefined)
+    await chained
   }, [onError, setConnectionState, setPrediction, shouldAbortForUnauthorized, terminalRenderer, threadId])
 
   const sendTerminalInput = useCallback<QueueTerminalInput>(
