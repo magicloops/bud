@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  fileSessionRequestPath,
   loadFileViewerSessionContent,
   openFileViewerCandidateFlow,
   type FileViewerFlowStateAccess,
@@ -264,6 +265,93 @@ test('openFileViewerCandidateFlow retries once when a session reports content ch
   const activeEntry = getActiveEntry(getState())
   assert.equal(activeEntry?.status, 'ready')
   assert.equal(activeEntry?.content, 'export const fresh = true\n')
+})
+
+test('fileSessionRequestPath strips server-minted origins but keeps path + query', () => {
+  // The service builds file_url from ITS configured APP_BASE_URL; the
+  // browser must route the request through its own API transport instead
+  // of trusting that origin (which may be unreachable from this profile).
+  assert.equal(
+    fileSessionRequestPath('https://localhost:3443/api/files/fs_1'),
+    '/api/files/fs_1',
+  )
+  assert.equal(
+    fileSessionRequestPath('https://app.bud.dev/api/files/fs_1?range=0-9'),
+    '/api/files/fs_1?range=0-9',
+  )
+  assert.equal(fileSessionRequestPath('/api/files/fs_1'), '/api/files/fs_1')
+})
+
+test('loadFileViewerSessionContent fetches through a relative path even for absolute file_url', async () => {
+  const { stateAccess } = createStateHarness()
+  const response = createOpenResponse()
+  response.file_session.file_url = 'https://localhost:3443/api/files/fs_test'
+  const baseEntry = createPendingFileEntry(createCandidate())
+  const urls: string[] = []
+
+  await loadFileViewerSessionContent({
+    key: baseEntry.key,
+    response,
+    baseEntry,
+    stateAccess,
+    transport: createTransport({
+      fetch: async (url, init) => {
+        urls.push(url)
+        if (init.method === 'HEAD') {
+          return new Response(null, { status: 200, headers: { 'content-length': '2' } })
+        }
+        return new Response('ok', { status: 200 })
+      },
+    }),
+  })
+
+  assert.deepEqual(urls, ['/api/files/fs_test', '/api/files/fs_test'])
+})
+
+test('a bare 401 surfaces as an error instead of hanging in loading_metadata', async () => {
+  const { stateAccess, getState } = createStateHarness()
+  const response = createOpenResponse()
+  const baseEntry = createPendingFileEntry(createCandidate())
+
+  await loadFileViewerSessionContent({
+    key: baseEntry.key,
+    response,
+    baseEntry,
+    stateAccess,
+    transport: {
+      ...createTransport({
+        fetch: async () => new Response(null, { status: 401 }),
+      }),
+      // Mimic the route wiring: 401 responses look abort-worthy, but no
+      // login redirect is pending (argless call returns false).
+      shouldAbortForUnauthorized: (resp?: Response | null) => resp?.status === 401,
+    },
+  })
+
+  const entry = getActiveEntry(getState())
+  assert.equal(entry?.status, 'error')
+})
+
+test('a pending login redirect keeps the flow quiet without an error splash', async () => {
+  const { stateAccess, getState } = createStateHarness()
+  const response = createOpenResponse()
+  const baseEntry = createPendingFileEntry(createCandidate())
+
+  await loadFileViewerSessionContent({
+    key: baseEntry.key,
+    response,
+    baseEntry,
+    stateAccess,
+    transport: {
+      ...createTransport({
+        fetch: async () => new Response(null, { status: 401 }),
+      }),
+      shouldAbortForUnauthorized: () => true,
+    },
+  })
+
+  const entry = getActiveEntry(getState())
+  assert.equal(entry?.status, 'loading_metadata')
 })
 
 test('loadFileViewerSessionContent stops after HEAD when metadata exceeds the display cap', async () => {
