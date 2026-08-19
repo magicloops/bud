@@ -83,20 +83,29 @@ canonical entry:
 - `bud llm probe` lists every served model (already true) and stops
   filtering to the ds4 family for *reporting* — the family only decides
   which capability shape is advertised.
-- `bud llm enable <url> [--model <id>]`: when the server serves multiple
-  models and none is ds4-family, `--model` picks one (interactive prompt on
-  a tty, first-model default with a printed note otherwise).
+- `bud llm enable <url>` stores the URL only — no `--model`: the daemon
+  advertises **all** served models and selection happens per thread in the
+  web picker (decided 2026-08-20). One enable serves however many models
+  the server loads.
 - Request forwarding generalizes the path allowlist to the advertised
-  `generation_path` (`/v1/responses` | `/v1/chat/completions`) and keeps
-  the edge model-id rewrite (canonical/product id → served id).
+  `generation_path` (`/v1/responses` | `/v1/chat/completions`). With all
+  models advertised, the service sends the served id directly, so the edge
+  model-id rewrite shrinks to the ds4 canonical-id compatibility case.
 
 ### 3.3 Service
 
 - **Catalog template**: unknown bud-local models synthesize an entry
-  `bud-local:<served-id>` with conservative defaults — tools *assumed*
-  (the agent requires them), streaming on, structured outputs off,
-  context window from the capability (floor 8k, cap 1M), one reasoning
+  **`bud-local:<bud_id>:<served-id>`** (decided 2026-08-20: per-bud
+  namespace, so two Buds on one account — even one machine — serving
+  different models never collide, and a persisted thread-model selection
+  is unambiguous). Conservative defaults — tools *assumed* (the agent
+  requires them), streaming on, structured outputs off, one reasoning
   level ("default"). Template entries are flagged `experimental: true`.
+- **Context is dynamic per model** (decided 2026-08-20): the input window
+  comes from the probe (`max_model_len` on vllm and friends) advertised in
+  the capability per model; the service's context policy derives usable
+  input/reserved output from it exactly as for catalog models. A
+  conservative fallback applies only when the server reports nothing.
 - **Family overrides**: a small registry keyed by served-id prefix
   (ds4 today; future validated families) supplies curated capabilities and
   reasoning policy. ds4 keeps its existing catalog entry and product id.
@@ -104,13 +113,24 @@ canonical entry:
   `ds4_openai_responses` — adapter translating the agent's message/tool
   state to the chat-completions shape (tool calls, streaming deltas).
   Mode chosen from the server's advertised `request_mode`.
+- **Reasoning normalization** (decided 2026-08-20: follow the settled
+  industry conventions): the adapter maps the structured
+  `reasoning_content` delta/message field (DeepSeek API convention,
+  emitted by vllm/SGLang) — and the `reasoning` field used by
+  OpenRouter-compatible servers — into the agent's reasoning stream,
+  keeping `content` clean. Fallback normalization: inline
+  `<think>…</think>` blocks (emitted by R1/Qwen-style models when the
+  server does not split them) are extracted into reasoning rather than
+  rendered as answer text. Reasoning text is never replayed into
+  follow-up requests (matching provider semantics).
 - `getHealthyBudLocalDs4Server` generalizes to `getHealthyBudLocalServers`
   with the ds4 matcher preserved as a compatibility case.
 
 ### 3.4 Product surface
 
-- Model picker: experimental models render with an "experimental" badge and
-  a one-line disclosure ("unvalidated for agentic tool use").
+- Model picker: every advertised model appears (per-thread choice is the
+  selection mechanism); experimental models render with an "experimental"
+  badge and a one-line disclosure ("unvalidated for agentic tool use").
 - `bud status` llm line already prints the served id; add `(experimental)`
   when the family is unvalidated.
 - Installer probe stays family-agnostic in *detection* but only
@@ -151,14 +171,28 @@ reports the result (nice UX, not required for phase 1).
 - Provider keys/remote endpoints through this path — this is for
   loopback/LAN local inference only.
 
-## 6. Open Questions
+## 6. Decision Record (2026-08-20)
 
-- Product model id shape for generic models: `bud-local:<served-id>` vs a
-  per-bud namespace (`bud-local:<bud>:<id>`) — matters once two buds serve
-  different models under one account.
-- Should the chat-completions adapter normalize reasoning ("thinking")
-  blocks that some servers emit as content, or drop them?
-- Context floor/cap defaults for the template entry (8k floor may be too
-  generous for tiny models; probe `max_model_len` coverage varies).
-- Does `--model` belong in the capability (per-model enable) or should the
-  daemon advertise all served models and let the picker choose per thread?
+The original open questions were resolved:
+
+1. **Product model ids are per-bud namespaced**: `bud-local:<bud_id>:<served-id>`.
+   Two Buds under one account (even on one machine) serving different models
+   never collide, and persisted per-thread selections stay unambiguous.
+2. **Reasoning is normalized to the industry conventions**: structured
+   `reasoning_content` (DeepSeek/vllm/SGLang) and `reasoning` (OpenRouter
+   style) map into the agent's reasoning stream; inline `<think>` blocks are
+   extracted as a fallback; reasoning is never replayed into follow-ups.
+3. **The daemon advertises all served models; the web picker chooses per
+   thread.** `bud llm enable <url>` takes no model argument.
+4. **Context windows are dynamic per model** from the probe's
+   `max_model_len`-class metadata, flowing through the existing context
+   policy; a conservative fallback applies only when the server reports
+   nothing.
+
+## 7. Remaining Open Questions
+
+- Fallback context default when the server reports no length metadata
+  (probe coverage varies outside vllm) — proposal: 8k with the experimental
+  badge calling it out.
+- Whether the tool-call smoke (§3.5) should gate picker visibility or only
+  the badge.
