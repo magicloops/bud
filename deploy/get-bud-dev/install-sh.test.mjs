@@ -34,8 +34,13 @@ async function createFakeBudArchive(t, dir, options = {}) {
       `  exit ${options.claimExitCode ?? 0}`,
       "fi",
       'if [ "$1" = "llm" ]; then',
-      '  echo "llm $2 ${3:-} ${4:-}" >> "$BUD_TEST_LOG"',
-      `  if [ "$2" = "probe" ]; then exit ${options.llmProbeExitCode ?? 1}; fi`,
+      '  echo "llm $2 ${3:-} ${4:-} ${5:-}" >> "$BUD_TEST_LOG"',
+      'if [ "$2" = "probe" ]; then',
+      '  case "$*" in',
+      `    *--require-validated*) exit ${options.llmProbeValidatedExitCode ?? 1} ;;`,
+      `    *) exit ${options.llmProbeExitCode ?? 1} ;;`,
+      "  esac",
+      "fi",
       `  exit ${options.llmEnableExitCode ?? 0}`,
       "fi",
       'if [ "$1" = "service" ]; then',
@@ -378,9 +383,11 @@ test("install.sh configures local LLM via BUD_INSTALL_DS4_URL and probe path", a
   });
   assert.equal(result.code, 0, result.stderr);
   fakeLog = await readFile(logPath, "utf8");
-  assert.match(fakeLog, /llm probe --url http:\/\/127\.0\.0\.1:8888\/v1/);
+  assert.match(fakeLog, /llm probe --url http:\/\/127\.0\.0\.1:8888\/v1 --require-validated/);
+  assert.match(fakeLog, /llm probe --url http:\/\/127\.0\.0\.1:8888\/v1 \n/m);
   assert.doesNotMatch(fakeLog, /llm enable/);
-  assert.match(result.stderr, /Enable it later with/);
+  assert.match(result.stderr, /experimental models/);
+  assert.match(result.stderr, /Enable it with/);
 
   // Opt-out skips everything.
   await rm(logPath, { force: true });

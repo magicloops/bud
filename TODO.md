@@ -1,6 +1,22 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **Generic local LLM follow-ups** (from [design/generic-local-llm-support.md](./design/generic-local-llm-support.md), phases 1-3 shipped)
+  - Phase 4 tool-call validation smoke harness: scripted forced-tool-call plus a
+    multi-turn tool loop through the real `bud_local` chat-completions adapter;
+    passing families graduate from `experimental` via the override registry.
+    Decide whether the smoke gates picker visibility or only the badge.
+  - Context compaction for bud-local models: `context-compactor.ts` invokes
+    providers without a `ProviderInvocationContext` (no `budId`), so compaction
+    on bud-local models throws today — this predates the generic work (bud-local
+    ds4 has the same gap). Thread the owning bud through `CompactContextInput`
+    or pin compaction to a cloud model when the thread model is bud-local.
+  - Live end-to-end validation of the chat-completions provider against a real
+    non-DeepSeek server (any llama/Qwen vllm instance): streaming tool calls,
+    reasoning normalization (`reasoning_content` and `<think>` variants), and
+    turn-scoped replay behavior under vllm prefix caching.
+  - Fallback context default when a server reports no length metadata (probe
+    coverage varies outside vllm): currently 8k; revisit once real servers land.
 - **Pre-production wait mode cleanup**
   - Before production launch, remove compatibility-only `wait_for` modes `screen_stable` and `shell_ready` from the service and Bud daemon once search/telemetry confirms no stored tool rows, old clients, or internal callers still depend on them.
   - Phase 5 of [plan/improve-observe](./plan/improve-observe/phase-5-wait-for-mode-cleanup.md) removed `shell_ready` from model-facing schemas and prompt guidance; this TODO tracks the later lower-level compatibility removal.

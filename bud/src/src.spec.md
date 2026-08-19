@@ -224,7 +224,14 @@ Daemon-side Phase 4.4 workspace file adapter.
 
 ### `local_llm.rs`
 
-DeepSeek v4 family detection accepts versioned served ids (`deepseek-v4-flash-0731`): the canonical `deepseek-v4-flash` id is spoken platform-wide, the probe captures the ACTUAL served id, and the daemon rewrites the request `model` field at the edge before forwarding to the local server (`rewrite_model_field`; content-length is recomputed since it is not on the forwarded-header allowlist). `probe_ds4_url`/`ds4_served_model` are shared with `bud llm` verbs.
+DeepSeek v4 family detection accepts versioned served ids (`deepseek-v4-flash-0731`): the canonical `deepseek-v4-flash` id is spoken platform-wide, the probe captures the ACTUAL served id, and the daemon rewrites the request `model` field at the edge before forwarding to the local server (`rewrite_model_field`; content-length is recomputed since it is not on the forwarded-header allowlist). `probe_ds4_url`/`ds4_served_model` are shared with `bud llm` verbs. The capability now advertises every served
+model: the ds4 server entry is preserved unchanged when the family is
+present, and a generic `local` server (provider `bud_local`, request mode
+`openai_chat_completions`, path `/v1/chat/completions`) lists all models
+with `validated` flags and probe-derived context windows
+(`list_served_models`/`build_capability`). `BUD_LOCAL_LLM_URL` is the
+generic env key (ds4 var wins as family alias); the open-frame policy
+allows server ids `ds4`/`local` and both generation paths.
 
 Daemon-side Bud-local LLM adapter for ds4.
 

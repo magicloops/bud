@@ -101,6 +101,20 @@ Also exports:
   normalized provider error shape used by the agent to trigger a one-shot
   automatic context compaction retry when a model rejects an oversized request
 
+### `providers/bud-local-chat.ts`
+
+Generic bud-local provider (`bud_local`) speaking OpenAI Chat Completions
+over the Bud local-LLM data plane (design/generic-local-llm-support.md).
+Serves dynamically synthesized `bud-local:<bud_id>:<served_model_id>`
+product models. Reasoning normalization follows industry conventions:
+`reasoning_content` (DeepSeek/vllm/SGLang) and `reasoning` (OpenRouter)
+deltas plus inline `<think>` extraction fallback map into the canonical
+reasoning stream; replay is turn-scoped (in-flight tool loop replays its
+own reasoning for vllm KV-cache continuity; completed turns drop it).
+Cross-bud invocation is rejected (model's embedded bud id must match the
+invocation context). Tool-call argument deltas accumulate per index;
+`stream_options.include_usage` captures the trailing usage chunk.
+
 ### `local-llm-capabilities.ts`
 
 Helpers for projecting daemon `capabilities.llm` into service model behavior.

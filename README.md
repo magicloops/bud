@@ -41,8 +41,11 @@ Service management:
   platform service (identity and terminal sessions are never touched)
 - `bud claim` — run the device claim on its own (no-op when already claimed)
 - `bud llm enable http://127.0.0.1:8888/v1` — verify and register a local
-  DeepSeek v4 endpoint (the installer also offers this when it detects one);
-  `bud llm probe` checks the default ports, `bud llm disable` removes it
+  OpenAI-compatible LLM endpoint; every served model appears in the web
+  model picker (validated DeepSeek v4 as a curated model, anything else
+  marked experimental). `bud llm probe` checks the default ports,
+  `bud llm disable` removes it; the installer auto-offers only validated
+  families
 - `bud run` — foreground mode for debugging; `bud start` with no service
   installed runs a pidfile-managed background daemon instead
 - `BUD_INSTALL_FOREGROUND=1 curl -fsSL https://get.bud.dev | sh` — skip the

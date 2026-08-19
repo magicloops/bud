@@ -58,6 +58,12 @@ pub struct BudArgs {
     #[arg(long, env = "BUD_LOCAL_LLM_DS4_URL")]
     pub local_llm_ds4_url: Option<String>,
 
+    /// Generic local OpenAI-compatible endpoint (any served model). The ds4
+    /// variable above remains honored as the family alias and wins when both
+    /// are set.
+    #[arg(long, env = "BUD_LOCAL_LLM_URL")]
+    pub local_llm_url: Option<String>,
+
     #[arg(
         long,
         env = "BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS",
@@ -122,6 +128,11 @@ pub struct LlmProbeArgs {
     /// Endpoint base URL, e.g. http://127.0.0.1:8888/v1.
     #[arg(long)]
     pub url: Option<String>,
+
+    /// Succeed only when a validated model family (DeepSeek v4) is served.
+    /// Used by the installer, which only auto-offers validated families.
+    #[arg(long, default_value_t = false)]
+    pub require_validated: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -253,6 +264,7 @@ mod tests {
             terminal_cols: 80,
             terminal_rows: 24,
             local_llm_ds4_url: None,
+            local_llm_url: None,
             local_llm_ds4_context_tokens: 100_000,
             local_llm_ds4_max_output_tokens: 384_000,
             debug: false,

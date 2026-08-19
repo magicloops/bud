@@ -363,8 +363,10 @@ Bud-local LLM open request (Service -> Bud on control):
 
 The service sends exactly `request_body_bytes` upload bytes on the same
 `stream_id` as generic `stream_data` frames before waiting for
-`local_llm_open_result`. The daemon resolves `local_llm_server_id: "ds4"` to
-its configured loopback ds4 origin and allows only `POST /v1/responses` in this
+`local_llm_open_result`. The daemon resolves `local_llm_server_id` (`"ds4"`
+for the DeepSeek v4 family, `"local"` for the generic chat-completions
+server — both share the one configured loopback origin) and allows only
+`POST /v1/responses` or `POST /v1/chat/completions` in this
 phase. Raw localhost URLs, cookies, browser auth headers, Bud credentials, and
 arbitrary endpoint paths are not part of the frame contract.
 
@@ -1220,6 +1222,23 @@ Dev-only token bypass example:
           ],
           "concurrency": 1,
           "healthy": true
+        },
+        {
+          "id": "local",
+          "provider": "bud_local",
+          "compatibility": ["openai_chat_completions"],
+          "request_mode": "openai_chat_completions",
+          "generation_path": "/v1/chat/completions",
+          "models": [
+            {
+              "id": "deepseek-v4-flash-0731",
+              "display_name": "deepseek-v4-flash-0731",
+              "validated": true,
+              "context_window_tokens": 1048576
+            }
+          ],
+          "concurrency": 1,
+          "healthy": true
         }
       ]
     }
@@ -1227,6 +1246,14 @@ Dev-only token bypass example:
   "ext": {}
 }
 ```
+
+The `llm.servers` list advertises every locally served model
+(design/generic-local-llm-support.md): the `ds4` entry is preserved
+unchanged whenever the DeepSeek v4 family is detected (older services need
+no changes), and the generic `local` entry lists ALL served models with
+`validated` flags (curated families) and probe-derived
+`context_window_tokens` (vllm `max_model_len`). Unvalidated models surface
+in the product as experimental.
 
 Reconnect example:
 
@@ -1285,6 +1312,23 @@ Reconnect example:
               "display_name": "ds4 DeepSeek V4",
               "context_window_tokens": 100000,
               "max_output_tokens": 384000
+            }
+          ],
+          "concurrency": 1,
+          "healthy": true
+        },
+        {
+          "id": "local",
+          "provider": "bud_local",
+          "compatibility": ["openai_chat_completions"],
+          "request_mode": "openai_chat_completions",
+          "generation_path": "/v1/chat/completions",
+          "models": [
+            {
+              "id": "deepseek-v4-flash-0731",
+              "display_name": "deepseek-v4-flash-0731",
+              "validated": true,
+              "context_window_tokens": 1048576
             }
           ],
           "concurrency": 1,

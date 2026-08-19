@@ -20,7 +20,7 @@ test("initializeProviders allows startup without cloud or direct providers", () 
 
   try {
     assert.doesNotThrow(() => initializeProviders());
-    assert.deepEqual(providerRegistry.listProviders(), ["ds4"]);
+    assert.deepEqual(providerRegistry.listProviders(), ["ds4", "bud_local"]);
     const provider = providerRegistry.getProviderForModel("ds4-deepseek-v4-flash");
     assert.equal(provider.name, "ds4");
     assert.equal(provider.supportsModel("deepseek-v4-flash"), true);
@@ -61,7 +61,7 @@ test("initializeProviders registers direct ds4 provider from local-dev config", 
   try {
     initializeProviders();
 
-    assert.deepEqual(providerRegistry.listProviders(), ["ds4"]);
+    assert.deepEqual(providerRegistry.listProviders(), ["ds4", "bud_local"]);
     const provider = providerRegistry.getProviderForModel("ds4-deepseek-v4-flash");
     assert.equal(provider.name, "ds4");
     assert.equal(provider.supportsModel("deepseek-v4-flash"), true);

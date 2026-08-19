@@ -982,7 +982,7 @@ function toResponsesToolChoice(toolChoice: ToolChoice | undefined): ResponsesToo
   };
 }
 
-async function* readSseData(
+export async function* readSseData(
   body: ReadableStream<Uint8Array>,
 ): AsyncIterable<string> {
   const decoder = new TextDecoder();

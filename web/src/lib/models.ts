@@ -37,6 +37,8 @@ export type ModelInfo = {
   }
   request_mode?: string
   compatibility?: string[]
+  /** Unvalidated for agentic tool use (generic bud-local models). */
+  experimental?: boolean
   source?: {
     kind: 'service_local_dev' | 'bud_local'
     bud_id?: string

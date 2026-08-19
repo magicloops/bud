@@ -680,6 +680,9 @@ function expectedRequestModeForProvider(provider: CanonicalProviderId): LlmCallR
   if (provider === "anthropic") {
     return "anthropic_messages";
   }
+  if (provider === "bud_local") {
+    return "openai_chat_completions";
+  }
   return "ds4_openai_responses";
 }
 

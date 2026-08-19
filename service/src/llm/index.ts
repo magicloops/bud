@@ -12,6 +12,7 @@ import {
   createBudLocalDs4Provider,
   createDs4ProviderFromConfig,
 } from "./providers/ds4.js";
+import { createBudLocalChatCompletionsProvider } from "./providers/bud-local-chat.js";
 
 // Types
 export type {
@@ -108,6 +109,7 @@ export function initializeProviders(): void {
   providerRegistry.unregister("openai");
   providerRegistry.unregister("anthropic");
   providerRegistry.unregister("ds4");
+  providerRegistry.unregister("bud_local");
 
   // Register OpenAI provider if API key is configured
   if (config.openaiApiKey) {
@@ -134,4 +136,6 @@ export function initializeProviders(): void {
   }
 
   // Provider-less startup is valid for local development and non-LLM flows.
+
+  providerRegistry.register(createBudLocalChatCompletionsProvider());
 }

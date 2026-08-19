@@ -342,3 +342,10 @@ The ds4 provider uses platform `fetch` and adds no SDK dependency.
 ---
 
 *Referenced by: [../llm.spec.md](../llm.spec.md)*
+
+### `bud-local-chat.ts`
+
+See llm.spec.md — generic `bud_local` chat-completions provider for
+dynamically synthesized per-bud model ids; turn-scoped reasoning replay,
+`<think>`/`reasoning_content`/`reasoning` normalization, cross-bud guard.
+Tested in `bud-local-chat.test.ts`.

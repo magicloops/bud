@@ -1,5 +1,8 @@
 # Design: Local ds4 LLM Over Bud
 
+> Generalization beyond the ds4 family is scoped separately in
+> [generic-local-llm-support.md](./generic-local-llm-support.md).
+
 **Date:** 2026-06-02
 **Status:** Proposed
 **Implementation Plan:** [../plan/ds4/implementation-spec.md](../plan/ds4/implementation-spec.md)

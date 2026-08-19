@@ -14,7 +14,7 @@ import type { ReasoningLevel } from "./model-catalog.js";
 
 export type CanonicalRole = "system" | "user" | "assistant";
 
-export type CanonicalProviderId = "openai" | "anthropic" | "ds4";
+export type CanonicalProviderId = "openai" | "anthropic" | "ds4" | "bud_local";
 
 export type CanonicalProviderData<
   Provider extends CanonicalProviderId = CanonicalProviderId,

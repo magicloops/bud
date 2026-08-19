@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { registerBudLocalModelsFromCapabilities } from "../llm/local-llm-capabilities.js";
 import { createHmac, randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
@@ -812,6 +813,9 @@ export class BudConnection {
       budId,
       capabilities: hello.capabilities,
     });
+    // Refresh the dynamic model catalog from the advertised local-LLM
+    // servers (generic bud-local models resolve like catalog models).
+    registerBudLocalModelsFromCapabilities(budId, hello.capabilities);
     const transportSession = await this.daemonStateStore.registerTransportSession({
       budId,
       deviceSessionId: deviceSession.deviceSessionId,

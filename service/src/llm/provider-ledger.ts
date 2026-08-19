@@ -22,7 +22,8 @@ export type LlmCallRequestMode =
   | "openai_responses"
   | "anthropic_messages"
   | "ds4_openai_responses"
-  | "ds4_openai_chat";
+  | "ds4_openai_chat"
+  | "openai_chat_completions";
 
 export type LlmCallVisibility = "provider_only" | "product_text" | "tool";
 

@@ -305,7 +305,10 @@ setup_local_llm() {
   fi
 
   for candidate in http://127.0.0.1:8888/v1 http://127.0.0.1:8000/v1; do
-    if env BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" llm probe --url "$candidate" >/dev/null 2>&1; then
+    # Only VALIDATED model families (DeepSeek v4) are auto-offered; other
+    # local servers get a suggestion instead — the installer must not tee
+    # users into an unvalidated agent experience.
+    if env BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" llm probe --url "$candidate" --require-validated >/dev/null 2>&1; then
       answer="n"
       if (: < /dev/tty) 2>/dev/null; then
         printf 'Found a local DeepSeek v4 server at %s. Enable it for this Bud? [Y/n] ' "$candidate" > /dev/tty
@@ -324,6 +327,10 @@ setup_local_llm() {
           log "Skipped local LLM setup. Enable it later with: $BUD_BIN llm enable $candidate"
           ;;
       esac
+      return
+    elif env BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" llm probe --url "$candidate" >/dev/null 2>&1; then
+      log "Found a local LLM server at $candidate (experimental models)."
+      log "Enable it with: $BUD_BIN llm enable $candidate"
       return
     fi
   done
