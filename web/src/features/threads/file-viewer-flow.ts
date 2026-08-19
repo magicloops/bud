@@ -192,7 +192,11 @@ export async function loadFileViewerSessionContent(args: {
     method: 'HEAD',
     redirectOnUnauthorized: false,
   })
-  if (args.transport.shouldAbortForUnauthorized(headResponse)) {
+  // Go quiet only while a login redirect is actually pending (argless call).
+  // A bare 401 on the file fetch with a healthy app session (e.g. cookies
+  // withheld from a cross-scheme request) must surface as an error — aborting
+  // here left the pane stuck on "Reading metadata" forever.
+  if (args.transport.shouldAbortForUnauthorized()) {
     return args.baseEntry.status
   }
   if (!headResponse.ok) {
@@ -222,7 +226,7 @@ export async function loadFileViewerSessionContent(args: {
     method: 'GET',
     redirectOnUnauthorized: false,
   })
-  if (args.transport.shouldAbortForUnauthorized(getResponse)) {
+  if (args.transport.shouldAbortForUnauthorized()) {
     return args.baseEntry.status
   }
   if (!getResponse.ok) {

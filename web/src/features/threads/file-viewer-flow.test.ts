@@ -308,6 +308,52 @@ test('loadFileViewerSessionContent fetches through a relative path even for abso
   assert.deepEqual(urls, ['/api/files/fs_test', '/api/files/fs_test'])
 })
 
+test('a bare 401 surfaces as an error instead of hanging in loading_metadata', async () => {
+  const { stateAccess, getState } = createStateHarness()
+  const response = createOpenResponse()
+  const baseEntry = createPendingFileEntry(createCandidate())
+
+  await loadFileViewerSessionContent({
+    key: baseEntry.key,
+    response,
+    baseEntry,
+    stateAccess,
+    transport: {
+      ...createTransport({
+        fetch: async () => new Response(null, { status: 401 }),
+      }),
+      // Mimic the route wiring: 401 responses look abort-worthy, but no
+      // login redirect is pending (argless call returns false).
+      shouldAbortForUnauthorized: (resp?: Response | null) => resp?.status === 401,
+    },
+  })
+
+  const entry = getActiveEntry(getState())
+  assert.equal(entry?.status, 'error')
+})
+
+test('a pending login redirect keeps the flow quiet without an error splash', async () => {
+  const { stateAccess, getState } = createStateHarness()
+  const response = createOpenResponse()
+  const baseEntry = createPendingFileEntry(createCandidate())
+
+  await loadFileViewerSessionContent({
+    key: baseEntry.key,
+    response,
+    baseEntry,
+    stateAccess,
+    transport: {
+      ...createTransport({
+        fetch: async () => new Response(null, { status: 401 }),
+      }),
+      shouldAbortForUnauthorized: () => true,
+    },
+  })
+
+  const entry = getActiveEntry(getState())
+  assert.equal(entry?.status, 'loading_metadata')
+})
+
 test('loadFileViewerSessionContent stops after HEAD when metadata exceeds the display cap', async () => {
   const { stateAccess, getState } = createStateHarness()
   const response = createOpenResponse({ maxDisplayBytes: 16 })

@@ -243,6 +243,9 @@ Pure async file-viewer flow used by `use-file-viewer.ts`.
 - retry once with a fresh file session when `HEAD` or `GET` reports `content_changed`
 - enforce display caps before and after content fetch
 - map file-edge failures and binary/text states into `FileViewerEntry` updates
+- abort quietly only while a login redirect is pending (argless
+  `shouldAbortForUnauthorized()`); a bare 401 on file bytes surfaces as an
+  error instead of pinning the pane on "Reading metadata"
 
 ### `file-viewer-flow.test.ts`
 
