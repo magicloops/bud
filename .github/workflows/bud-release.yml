@@ -91,6 +91,9 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
             min_os: "glibc 2.35"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            min_os: "glibc 2.35"
     steps:
       - uses: actions/checkout@v5
 

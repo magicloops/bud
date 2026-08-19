@@ -11,6 +11,7 @@ Builds Bud daemon release artifacts for the required Phase 3 platform matrix:
 - `aarch64-apple-darwin`
 - `x86_64-apple-darwin`
 - `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu` (native `ubuntu-22.04-arm` runner)
 
 The workflow:
 

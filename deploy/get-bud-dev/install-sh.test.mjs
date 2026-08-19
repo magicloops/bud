@@ -152,9 +152,9 @@ test("install.sh installs verified artifact and passes claim only to bootstrap",
   const fakeLog = await readFile(logPath, "utf8");
   assert.match(
     fakeLog,
-    new RegExp(`^doctor server=wss://api\\.bud\\.dev/ws base=${escapeRegExp(installRoot)} terminal=true claim=$`, "m"),
+    new RegExp(`^doctor server=wss://app\\.bud\\.dev/ws base=${escapeRegExp(installRoot)} terminal=true claim=$`, "m"),
   );
-  assert.match(fakeLog, /bootstrap claim=bic_test server=wss:\/\/api\.bud\.dev\/ws base=/);
+  assert.match(fakeLog, /bootstrap claim=bic_test server=wss:\/\/app\.bud\.dev\/ws base=/);
 });
 
 test("install.sh maps supported hosts to release targets", async (t) => {
@@ -183,6 +183,15 @@ test("install.sh maps supported hosts to release targets", async (t) => {
       env: {
         BUD_INSTALL_OS: "Linux",
         BUD_INSTALL_ARCH: "x86_64",
+        BUD_INSTALL_GLIBC_VERSION: "2.35",
+      },
+    },
+    {
+      name: "Ubuntu aarch64",
+      target: "aarch64-unknown-linux-gnu",
+      env: {
+        BUD_INSTALL_OS: "Linux",
+        BUD_INSTALL_ARCH: "aarch64",
         BUD_INSTALL_GLIBC_VERSION: "2.35",
       },
     },
@@ -332,7 +341,7 @@ test("install.sh surfaces bud doctor dependency remediation without failing inst
   assert.ok((await stat(path.join(installRoot, "bin", "bud"))).isFile());
   assert.match(
     await readFile(logPath, "utf8"),
-    new RegExp(`^doctor server=wss://api\\.bud\\.dev/ws base=${escapeRegExp(installRoot)} terminal=true claim=$`, "m"),
+    new RegExp(`^doctor server=wss://app\\.bud\\.dev/ws base=${escapeRegExp(installRoot)} terminal=true claim=$`, "m"),
   );
 });
 
