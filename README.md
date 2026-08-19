@@ -1,6 +1,8 @@
 # Bud
 
-Bud is a device-agent platform for AI-assisted terminal access across remote machines. The repo has three runnable packages:
+Bud is an agentic runtime with a built-in agent connectivity plane, allowing you to turn any machine into an accessible agent.
+
+The repo has three runnable packages:
 
 - [bud/](./bud): Rust daemon that runs on the target machine
 - [service/](./service): Fastify backend with Better Auth, REST/SSE, and Bud WebSocket gateway
