@@ -1323,6 +1323,27 @@ impl BudApp {
         Ok(())
     }
 
+    /// `bud claim`: run the device-claim flow and exit instead of
+    /// connecting — lets the installer complete the interactive claim in the
+    /// foreground and then hand the daemon to the background service.
+    pub async fn claim_only(mut self) -> Result<()> {
+        self.installation_id = load_or_create_installation_id(&self.installation_id_path).await?;
+        self.identity = load_identity(&self.identity_path).await?;
+        if let Some(identity) = &self.identity {
+            println!(
+                "Already claimed as `{}` ({}). Nothing to do.",
+                identity.name, identity.bud_id
+            );
+            return Ok(());
+        }
+        self.bootstrap_device_auth().await?;
+        println!(
+            "Identity saved to {}. Start Bud with `bud service install` (background) or `bud run` (foreground).",
+            self.identity_path.display()
+        );
+        Ok(())
+    }
+
     async fn clear_identity(&mut self) -> Result<()> {
         self.identity = None;
         clear_identity(&self.identity_path).await?;
@@ -1381,7 +1402,7 @@ impl BudApp {
                     self.args.token = None;
                     self.args.claim_id = None;
                     println!();
-                    println!("Device claim approved for Bud `{}`. Connecting...", bud_id);
+                    println!("Device claim approved for Bud `{}`.", bud_id);
                     println!();
                     return Ok(());
                 }

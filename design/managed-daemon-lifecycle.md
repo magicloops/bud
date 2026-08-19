@@ -187,7 +187,16 @@ Out of scope: root/system services, auto-update timers, OS packages (D),
 multi-instance service management (`--local` buds stay foreground/manual until
 the base-dir design lands).
 
-## 5. Open Questions
+## 5. Status
+
+Phase 1 implemented on this branch (see
+[plan/managed-daemon-lifecycle/phase-1-service-and-verbs.md](../plan/managed-daemon-lifecycle/phase-1-service-and-verbs.md)):
+lifecycle module + verbs, `bud claim`, installer handoff, doctor
+cross-validation. Real-host validation (macOS launchd + Ubuntu systemd,
+reboot + holder-survival rows) still pending before the README documents the
+flow.
+
+## 6. Open Questions
 
 - Should `bud service install` run automatically on *tokenless* installs too,
   or only after a completed claim? (A daemon with no identity waiting in the

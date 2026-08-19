@@ -197,11 +197,29 @@ bootstrap_bud() {
     return
   fi
 
-  log "Starting Bud in the foreground. Press Ctrl+C to stop it."
-  if [ "${BUD_CLAIM_ID:-}" ]; then
-    exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_CLAIM_ID="$BUD_CLAIM_ID" "$BUD_BIN" --terminal-enabled
+  if [ "${BUD_INSTALL_FOREGROUND:-}" = "1" ]; then
+    log "Starting Bud in the foreground. Press Ctrl+C to stop it."
+    if [ "${BUD_CLAIM_ID:-}" ]; then
+      exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_CLAIM_ID="$BUD_CLAIM_ID" "$BUD_BIN" --terminal-enabled
+    fi
+    exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" --terminal-enabled
   fi
-  exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" --terminal-enabled
+
+  # Standard flow: complete the interactive claim (link/QR, or install-token
+  # redemption) in the foreground, then hand the daemon to the platform
+  # background service so it survives terminal close, logout, and reboot.
+  if [ "${BUD_CLAIM_ID:-}" ]; then
+    env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_CLAIM_ID="$BUD_CLAIM_ID" "$BUD_BIN" claim || fail "Bud device claim failed"
+  else
+    env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" claim || fail "Bud device claim failed"
+  fi
+
+  if env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" service install; then
+    log "Bud is installed as a background service. Check it with: $BUD_BIN status"
+  else
+    log "No supported background service manager; starting Bud in the foreground. Press Ctrl+C to stop it."
+    exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" --terminal-enabled
+  fi
 }
 
 main() {

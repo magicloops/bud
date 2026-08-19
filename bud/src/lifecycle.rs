@@ -1,0 +1,747 @@
+//! Managed daemon lifecycle: platform service install and the standard-user
+//! verbs (`bud start|stop|restart|status|logs`), per
+//! design/managed-daemon-lifecycle.md Option A.
+//!
+//! Invariants:
+//! - Terminal holders (`bud term-hold`) must outlive the daemon. The
+//!   generated supervision directives (`KillMode=process`,
+//!   `AbandonProcessGroup`) and the pidfile fallback (SIGTERM to the daemon
+//!   pid only, never a process group) both encode this.
+//! - `bud.env` is the single configuration home. Both service files and the
+//!   pidfile fallback source it; nothing else writes daemon env.
+//! - Identity is never touched by install/uninstall/start/stop.
+
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
+use std::process::Command;
+
+use anyhow::{bail, Context, Result};
+
+use crate::config::BudArgs;
+use crate::identity::load_identity;
+
+pub const LAUNCHD_LABEL: &str = "dev.bud.daemon";
+pub const SYSTEMD_UNIT_NAME: &str = "bud.service";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceManager {
+    Launchd,
+    SystemdUser,
+    None,
+}
+
+impl ServiceManager {
+    pub fn detect() -> Self {
+        if cfg!(target_os = "macos") {
+            return ServiceManager::Launchd;
+        }
+        if cfg!(target_os = "linux") && systemd_user_available() {
+            return ServiceManager::SystemdUser;
+        }
+        ServiceManager::None
+    }
+
+    pub fn describe(&self) -> &'static str {
+        match self {
+            ServiceManager::Launchd => "launchd user agent",
+            ServiceManager::SystemdUser => "systemd user service",
+            ServiceManager::None => "no supported service manager",
+        }
+    }
+}
+
+fn systemd_user_available() -> bool {
+    Command::new("systemctl")
+        .args(["--user", "show-environment"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// Everything the generators and verbs need, resolved once.
+pub struct LifecyclePaths {
+    pub base_dir: PathBuf,
+    pub binary: PathBuf,
+    pub env_file: PathBuf,
+    pub log_dir: PathBuf,
+    pub log_file: PathBuf,
+    pub pid_file: PathBuf,
+    pub identity_file: PathBuf,
+}
+
+impl LifecyclePaths {
+    pub fn resolve(args: &BudArgs) -> Result<Self> {
+        let resolved = args.resolved_paths();
+        let base_dir = resolved.base_dir.clone();
+        // Prefer the installed binary path when it exists (the service file
+        // must survive `cargo` dev binaries moving around); fall back to the
+        // current executable for dev installs.
+        let installed = base_dir.join("bin").join("bud");
+        let binary = if installed.is_file() {
+            installed
+        } else {
+            std::env::current_exe().context("cannot resolve current executable")?
+        };
+        Ok(Self {
+            env_file: base_dir.join("bud.env"),
+            log_dir: base_dir.join("logs"),
+            log_file: base_dir.join("logs").join("daemon.log"),
+            pid_file: base_dir.join("bud.pid"),
+            identity_file: resolved.identity_file,
+            base_dir,
+            binary,
+        })
+    }
+
+    pub fn launchd_plist_path(&self) -> PathBuf {
+        home_dir()
+            .join("Library")
+            .join("LaunchAgents")
+            .join(format!("{LAUNCHD_LABEL}.plist"))
+    }
+
+    pub fn systemd_unit_path(&self) -> PathBuf {
+        home_dir()
+            .join(".config")
+            .join("systemd")
+            .join("user")
+            .join(SYSTEMD_UNIT_NAME)
+    }
+
+    pub fn service_file_path(&self, manager: ServiceManager) -> Option<PathBuf> {
+        match manager {
+            ServiceManager::Launchd => Some(self.launchd_plist_path()),
+            ServiceManager::SystemdUser => Some(self.systemd_unit_path()),
+            ServiceManager::None => None,
+        }
+    }
+
+    pub fn service_installed(&self, manager: ServiceManager) -> bool {
+        self.service_file_path(manager)
+            .map(|p| p.is_file())
+            .unwrap_or(false)
+    }
+}
+
+fn home_dir() -> PathBuf {
+    PathBuf::from(shellexpand::tilde("~").into_owned())
+}
+
+// ---------------------------------------------------------------------------
+// Service file generation (pure — fixture-tested)
+// ---------------------------------------------------------------------------
+
+/// launchd has no EnvironmentFile: source `bud.env` in a shell wrapper so it
+/// stays the single configuration home.
+pub fn launchd_plist(paths: &LifecyclePaths) -> String {
+    let exec = format!(
+        "set -a; [ -f {env} ] && . {env}; set +a; exec {bin} --terminal-enabled",
+        env = shell_quote(&paths.env_file.to_string_lossy()),
+        bin = shell_quote(&paths.binary.to_string_lossy()),
+    );
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>{exec}</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>AbandonProcessGroup</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>{log}</string>
+	<key>StandardErrorPath</key>
+	<string>{log}</string>
+</dict>
+</plist>
+"#,
+        label = LAUNCHD_LABEL,
+        exec = xml_escape(&exec),
+        log = xml_escape(&paths.log_file.to_string_lossy()),
+    )
+}
+
+/// `KillMode=process` is load-bearing: the default (`control-group`) would
+/// reap detached `bud term-hold` holders on every daemon restart.
+pub fn systemd_unit(paths: &LifecyclePaths) -> String {
+    format!(
+        r#"[Unit]
+Description=Bud daemon
+After=network-online.target
+
+[Service]
+EnvironmentFile=-{env}
+ExecStart={bin} --terminal-enabled
+Restart=on-failure
+RestartSec=2
+KillMode=process
+StandardOutput=append:{log}
+StandardError=append:{log}
+
+[Install]
+WantedBy=default.target
+"#,
+        env = paths.env_file.display(),
+        bin = paths.binary.display(),
+        log = paths.log_file.display(),
+    )
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+// ---------------------------------------------------------------------------
+// bud.env parsing (single-quoted KEY='value' lines, as the installer writes)
+// ---------------------------------------------------------------------------
+
+pub fn parse_env_file(content: &str) -> Vec<(String, String)> {
+    let mut vars = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, raw)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().trim_start_matches("export ").trim();
+        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            continue;
+        }
+        let raw = raw.trim();
+        let value = if raw.len() >= 2 && raw.starts_with('\'') && raw.ends_with('\'') {
+            raw[1..raw.len() - 1].replace(r"'\''", "'")
+        } else if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
+            raw[1..raw.len() - 1].to_string()
+        } else {
+            raw.to_string()
+        };
+        vars.push((key.to_string(), value));
+    }
+    vars
+}
+
+fn load_env_file(paths: &LifecyclePaths) -> Vec<(String, String)> {
+    std::fs::read_to_string(&paths.env_file)
+        .map(|content| parse_env_file(&content))
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Install / uninstall
+// ---------------------------------------------------------------------------
+
+pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
+    let manager = ServiceManager::detect();
+    std::fs::create_dir_all(&paths.log_dir)
+        .with_context(|| format!("cannot create {}", paths.log_dir.display()))?;
+
+    match manager {
+        ServiceManager::Launchd => {
+            let plist_path = paths.launchd_plist_path();
+            if let Some(parent) = plist_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&plist_path, launchd_plist(paths))
+                .with_context(|| format!("cannot write {}", plist_path.display()))?;
+            // Re-installs: drop any loaded copy first (ignore "not loaded").
+            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target()]);
+            run_checked(
+                "launchctl",
+                &["bootstrap", &gui_domain(), &plist_path.to_string_lossy()],
+            )?;
+            println!(
+                "Installed launchd agent {plist_path}",
+                plist_path = plist_path.display()
+            );
+        }
+        ServiceManager::SystemdUser => {
+            let unit_path = paths.systemd_unit_path();
+            if let Some(parent) = unit_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&unit_path, systemd_unit(paths))
+                .with_context(|| format!("cannot write {}", unit_path.display()))?;
+            run_checked("systemctl", &["--user", "daemon-reload"])?;
+            run_checked(
+                "systemctl",
+                &["--user", "enable", "--now", SYSTEMD_UNIT_NAME],
+            )?;
+            // Linger keeps the user manager (and Bud) alive without an open
+            // session. Best-effort: polkit may refuse on hardened distros.
+            if !run_quiet("loginctl", &["enable-linger"]) {
+                println!(
+                    "warning: could not enable lingering; Bud will stop when you log out.\n\
+                     Run `loginctl enable-linger {}` manually (may need sudo).",
+                    whoami()
+                );
+            }
+            println!(
+                "Installed systemd user service {unit}",
+                unit = unit_path.display()
+            );
+        }
+        ServiceManager::None => {
+            bail!(
+                "no supported service manager found (need launchd or systemd --user); \
+                 run `bud start` for pidfile-managed background mode or `bud run` for foreground"
+            );
+        }
+    }
+    println!("Bud is running in the background. Try `bud status`.");
+    Ok(())
+}
+
+pub fn service_uninstall(paths: &LifecyclePaths) -> Result<()> {
+    match ServiceManager::detect() {
+        ServiceManager::Launchd => {
+            let plist_path = paths.launchd_plist_path();
+            let _ = run_quiet("launchctl", &["bootout", &gui_domain_target()]);
+            if plist_path.is_file() {
+                std::fs::remove_file(&plist_path)?;
+            }
+            println!("Removed launchd agent (identity and terminal sessions untouched).");
+        }
+        ServiceManager::SystemdUser => {
+            let unit_path = paths.systemd_unit_path();
+            let _ = run_quiet(
+                "systemctl",
+                &["--user", "disable", "--now", SYSTEMD_UNIT_NAME],
+            );
+            if unit_path.is_file() {
+                std::fs::remove_file(&unit_path)?;
+            }
+            let _ = run_quiet("systemctl", &["--user", "daemon-reload"]);
+            println!("Removed systemd user service (identity and terminal sessions untouched).");
+        }
+        ServiceManager::None => {
+            println!("No service manager detected; nothing to uninstall.");
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Verbs
+// ---------------------------------------------------------------------------
+
+pub fn start(paths: &LifecyclePaths) -> Result<()> {
+    let manager = ServiceManager::detect();
+    if paths.service_installed(manager) {
+        match manager {
+            ServiceManager::Launchd => {
+                let plist = paths.launchd_plist_path();
+                let _ = run_quiet("launchctl", &["bootout", &gui_domain_target()]);
+                run_checked(
+                    "launchctl",
+                    &["bootstrap", &gui_domain(), &plist.to_string_lossy()],
+                )?;
+            }
+            ServiceManager::SystemdUser => {
+                run_checked("systemctl", &["--user", "start", SYSTEMD_UNIT_NAME])?;
+            }
+            ServiceManager::None => unreachable!(),
+        }
+        println!("Bud started. Try `bud status`.");
+        return Ok(());
+    }
+    start_pidfile(paths)
+}
+
+pub fn stop(paths: &LifecyclePaths) -> Result<()> {
+    let manager = ServiceManager::detect();
+    if paths.service_installed(manager) {
+        match manager {
+            ServiceManager::Launchd => {
+                run_checked("launchctl", &["bootout", &gui_domain_target()])?;
+            }
+            ServiceManager::SystemdUser => {
+                run_checked("systemctl", &["--user", "stop", SYSTEMD_UNIT_NAME])?;
+            }
+            ServiceManager::None => unreachable!(),
+        }
+    } else {
+        stop_pidfile(paths)?;
+    }
+    println!("Bud stopped. Terminal sessions keep running; they reattach on the next start.");
+    Ok(())
+}
+
+pub fn restart(paths: &LifecyclePaths) -> Result<()> {
+    let manager = ServiceManager::detect();
+    if paths.service_installed(manager) {
+        match manager {
+            ServiceManager::Launchd => {
+                run_checked(
+                    "launchctl",
+                    &[
+                        "kickstart",
+                        "-k",
+                        &format!("{}/{}", gui_domain(), LAUNCHD_LABEL),
+                    ],
+                )?;
+            }
+            ServiceManager::SystemdUser => {
+                run_checked("systemctl", &["--user", "restart", SYSTEMD_UNIT_NAME])?;
+            }
+            ServiceManager::None => unreachable!(),
+        }
+        println!("Bud restarted. Terminal sessions reattach automatically.");
+        return Ok(());
+    }
+    let _ = stop_pidfile(paths);
+    start_pidfile(paths)
+}
+
+pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
+    let manager = ServiceManager::detect();
+    println!("Bud status");
+    println!("==========");
+    println!("service manager: {}", manager.describe());
+
+    let installed = paths.service_installed(manager);
+    let state = if installed {
+        match manager {
+            ServiceManager::Launchd => launchd_state(),
+            ServiceManager::SystemdUser => systemd_state(),
+            ServiceManager::None => "unknown".to_string(),
+        }
+    } else {
+        "not installed (run `bud service install`)".to_string()
+    };
+    println!("service: {state}");
+
+    match read_live_pid(paths) {
+        Some(pid) => println!("daemon pid: {pid}"),
+        None => {
+            if !installed {
+                println!("daemon pid: not running");
+            }
+        }
+    }
+
+    match load_identity(&paths.identity_file).await? {
+        Some(identity) => {
+            println!("identity: `{}` ({})", identity.name, identity.bud_id);
+        }
+        None => {
+            println!("identity: not claimed — run `bud claim` (the claim link prints there)");
+        }
+    }
+
+    let env = load_env_file(paths);
+    let server = env
+        .iter()
+        .find(|(k, _)| k == "BUD_SERVER_URL")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| args.server.clone());
+    println!("server: {server}");
+    println!("holders: {} terminal holder(s) running", holder_count());
+    println!("logs: {} (tail with `bud logs`)", paths.log_file.display());
+    Ok(())
+}
+
+pub fn logs(paths: &LifecyclePaths, lines: usize, follow: bool) -> Result<()> {
+    let path = &paths.log_file;
+    if !path.is_file() {
+        bail!(
+            "no log file at {} (the service writes it after the first managed start)",
+            path.display()
+        );
+    }
+    let mut file = std::fs::File::open(path)?;
+    let content = {
+        let mut buf = String::new();
+        file.read_to_string(&mut buf)?;
+        buf
+    };
+    let tail_start = content.lines().count().saturating_sub(lines);
+    for line in content.lines().skip(tail_start) {
+        println!("{line}");
+    }
+    if !follow {
+        return Ok(());
+    }
+    let mut offset = file.seek(SeekFrom::End(0))?;
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let len = std::fs::metadata(path)?.len();
+        if len < offset {
+            offset = 0; // rotated/truncated
+        }
+        if len > offset {
+            let mut file = std::fs::File::open(path)?;
+            file.seek(SeekFrom::Start(offset))?;
+            let mut chunk = String::new();
+            file.read_to_string(&mut chunk)?;
+            print!("{chunk}");
+            use std::io::Write as _;
+            std::io::stdout().flush().ok();
+            offset = len;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pidfile fallback (no service manager, or service not installed)
+// ---------------------------------------------------------------------------
+
+fn start_pidfile(paths: &LifecyclePaths) -> Result<()> {
+    if let Some(pid) = read_live_pid(paths) {
+        println!("Bud is already running (pid {pid}).");
+        return Ok(());
+    }
+    std::fs::create_dir_all(&paths.log_dir)?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.log_file)?;
+    let log_err = log.try_clone()?;
+
+    let mut command = Command::new(&paths.binary);
+    command
+        .arg("--terminal-enabled")
+        .envs(load_env_file(paths))
+        .stdin(std::process::Stdio::null())
+        .stdout(log)
+        .stderr(log_err);
+    // Detach from our session so closing this terminal does not kill it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                nix::unistd::setsid().map_err(std::io::Error::other)?;
+                Ok(())
+            });
+        }
+    }
+    let child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn {}", paths.binary.display()))?;
+    std::fs::write(&paths.pid_file, child.id().to_string())?;
+    println!(
+        "Bud started in the background (pid {}, logs at {}).",
+        child.id(),
+        paths.log_file.display()
+    );
+    println!(
+        "Note: without a service install it will not survive a reboot; run `bud service install`."
+    );
+    Ok(())
+}
+
+fn stop_pidfile(paths: &LifecyclePaths) -> Result<()> {
+    let Some(pid) = read_live_pid(paths) else {
+        println!("Bud is not running (no live pidfile).");
+        return Ok(());
+    };
+    // SIGTERM to the daemon pid ONLY. Never a process group / pkill: holder
+    // processes share the binary name and must survive.
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid as i32),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .with_context(|| format!("failed to signal pid {pid}"))?;
+    let _ = std::fs::remove_file(&paths.pid_file);
+    Ok(())
+}
+
+fn read_live_pid(paths: &LifecyclePaths) -> Option<u32> {
+    let raw = std::fs::read_to_string(&paths.pid_file).ok()?;
+    let pid: u32 = raw.trim().parse().ok()?;
+    // Signal 0 = existence probe.
+    let alive = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok();
+    if alive {
+        Some(pid)
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn gui_domain() -> String {
+    format!("gui/{}", nix::unistd::getuid().as_raw())
+}
+
+fn gui_domain_target() -> String {
+    format!("{}/{}", gui_domain(), LAUNCHD_LABEL)
+}
+
+fn whoami() -> String {
+    std::env::var("USER").unwrap_or_else(|_| "<user>".to_string())
+}
+
+fn launchd_state() -> String {
+    let target = gui_domain_target();
+    match Command::new("launchctl").args(["print", &target]).output() {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            if text.contains("state = running") {
+                "running".to_string()
+            } else {
+                "loaded (not running)".to_string()
+            }
+        }
+        _ => "installed (not loaded — `bud start`)".to_string(),
+    }
+}
+
+fn systemd_state() -> String {
+    match Command::new("systemctl")
+        .args(["--user", "is-active", SYSTEMD_UNIT_NAME])
+        .output()
+    {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        Err(_) => "unknown".to_string(),
+    }
+}
+
+fn holder_count() -> usize {
+    let Ok(out) = Command::new("ps").args(["ax", "-o", "command"]).output() else {
+        return 0;
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| line.contains("bud term-hold") && !line.contains("grep"))
+        .count()
+}
+
+fn run_checked(program: &str, args: &[&str]) -> Result<()> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run {program}"))?;
+    if !output.status.success() {
+        bail!(
+            "{program} {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+fn run_quiet(program: &str, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_paths() -> LifecyclePaths {
+        LifecyclePaths {
+            base_dir: PathBuf::from("/home/user/.bud"),
+            binary: PathBuf::from("/home/user/.bud/bin/bud"),
+            env_file: PathBuf::from("/home/user/.bud/bud.env"),
+            log_dir: PathBuf::from("/home/user/.bud/logs"),
+            log_file: PathBuf::from("/home/user/.bud/logs/daemon.log"),
+            pid_file: PathBuf::from("/home/user/.bud/bud.pid"),
+            identity_file: PathBuf::from("/home/user/.bud/identity.json"),
+        }
+    }
+
+    #[test]
+    fn systemd_unit_carries_holder_safe_directives() {
+        let unit = systemd_unit(&test_paths());
+        assert!(
+            unit.contains("KillMode=process"),
+            "holders must survive restarts"
+        );
+        assert!(unit.contains("EnvironmentFile=-/home/user/.bud/bud.env"));
+        assert!(unit.contains("ExecStart=/home/user/.bud/bin/bud --terminal-enabled"));
+        assert!(unit.contains("Restart=on-failure"));
+        assert!(unit.contains("StandardOutput=append:/home/user/.bud/logs/daemon.log"));
+        assert!(unit.contains("WantedBy=default.target"));
+    }
+
+    #[test]
+    fn launchd_plist_sources_env_and_abandons_process_group() {
+        let plist = launchd_plist(&test_paths());
+        assert!(
+            plist.contains("<key>AbandonProcessGroup</key>"),
+            "holders must survive"
+        );
+        assert!(plist.contains("dev.bud.daemon"));
+        // env sourced through the shell wrapper (launchd has no EnvironmentFile)
+        assert!(
+            plist.contains(". &apos;/home/user/.bud/bud.env&apos;")
+                || plist.contains(". '/home/user/.bud/bud.env'")
+        );
+        assert!(plist.contains("exec '/home/user/.bud/bin/bud' --terminal-enabled"));
+        assert!(plist.contains("<key>RunAtLoad</key>"));
+        assert!(plist.contains("/home/user/.bud/logs/daemon.log"));
+        // KeepAlive on failure only: `bud stop` must stick.
+        assert!(plist.contains("<key>SuccessfulExit</key>"));
+    }
+
+    #[test]
+    fn generated_files_pass_the_doctor_supervision_parsers() {
+        // The doctor validates installed service files for holder-safe
+        // directives; the generators must always satisfy it.
+        let paths = test_paths();
+        assert_eq!(
+            crate::doctor::plist_abandon_process_group(&launchd_plist(&paths)),
+            Some(true)
+        );
+        assert_eq!(
+            crate::doctor::systemd_unit_kill_mode(&systemd_unit(&paths)).as_deref(),
+            Some("process")
+        );
+    }
+
+    #[test]
+    fn env_file_parser_handles_installer_format() {
+        let parsed = parse_env_file(
+            "BUD_SERVER_URL='wss://app.bud.dev/ws'\nBUD_TERMINAL_ENABLED=true\n# comment\n\nexport BUD_BASE_DIR=\"/home/u/.bud\"\nBAD LINE\nWEIRD-KEY='x'\n",
+        );
+        assert_eq!(
+            parsed,
+            vec![
+                (
+                    "BUD_SERVER_URL".to_string(),
+                    "wss://app.bud.dev/ws".to_string()
+                ),
+                ("BUD_TERMINAL_ENABLED".to_string(), "true".to_string()),
+                ("BUD_BASE_DIR".to_string(), "/home/u/.bud".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn env_file_parser_unescapes_single_quotes() {
+        let parsed = parse_env_file(r"NAME='it'\''s bud'");
+        assert_eq!(parsed, vec![("NAME".to_string(), "it's bud".to_string())]);
+    }
+}

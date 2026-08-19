@@ -29,6 +29,14 @@ async function createFakeBudArchive(t, dir, options = {}) {
       options.doctorMessage ? `  echo ${JSON.stringify(options.doctorMessage)} >&2` : "",
       `  exit ${options.doctorExitCode ?? 0}`,
       "fi",
+      'if [ "$1" = "claim" ]; then',
+      '  echo "claim claim=${BUD_CLAIM_ID:-} server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-}" >> "$BUD_TEST_LOG"',
+      `  exit ${options.claimExitCode ?? 0}`,
+      "fi",
+      'if [ "$1" = "service" ]; then',
+      '  echo "service $2 server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-}" >> "$BUD_TEST_LOG"',
+      `  exit ${options.serviceExitCode ?? 0}`,
+      "fi",
       'echo "bootstrap claim=${BUD_CLAIM_ID:-} server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-}" >> "$BUD_TEST_LOG"',
       "exit 0",
       "",
@@ -154,7 +162,57 @@ test("install.sh installs verified artifact and passes claim only to bootstrap",
     fakeLog,
     new RegExp(`^doctor server=wss://app\\.bud\\.dev/ws base=${escapeRegExp(installRoot)} terminal=true claim=$`, "m"),
   );
-  assert.match(fakeLog, /bootstrap claim=bic_test server=wss:\/\/app\.bud\.dev\/ws base=/);
+  assert.match(fakeLog, /claim claim=bic_test server=wss:\/\/app\.bud\.dev\/ws base=/);
+  assert.match(fakeLog, /service install server=wss:\/\/app\.bud\.dev\/ws base=/);
+  assert.doesNotMatch(fakeLog, /bootstrap/, "background flow must not exec the foreground daemon");
+});
+
+test("install.sh falls back to foreground when service install fails", async (t) => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir, { serviceExitCode: 1 });
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const installRoot = path.join(dir, "home", ".bud");
+  const logPath = path.join(dir, "bud.log");
+
+  const result = await runInstall({
+    HOME: path.join(dir, "home"),
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: installRoot,
+    BUD_TEST_LOG: logPath,
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const fakeLog = await readFile(logPath, "utf8");
+  assert.match(fakeLog, /claim claim= server=/);
+  assert.match(fakeLog, /service install/);
+  assert.match(fakeLog, /bootstrap claim= server=/, "foreground fallback runs the daemon");
+});
+
+test("install.sh honors BUD_INSTALL_FOREGROUND=1 (no claim/service handoff)", async (t) => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const installRoot = path.join(dir, "home", ".bud");
+  const logPath = path.join(dir, "bud.log");
+
+  const result = await runInstall({
+    HOME: path.join(dir, "home"),
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: installRoot,
+    BUD_TEST_LOG: logPath,
+    BUD_INSTALL_FOREGROUND: "1",
+    BUD_CLAIM_ID: "bic_fg",
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const fakeLog = await readFile(logPath, "utf8");
+  assert.match(fakeLog, /bootstrap claim=bic_fg server=/);
+  assert.doesNotMatch(fakeLog, /claim claim=bic_fg server=.*\n.*service/s);
+  assert.doesNotMatch(fakeLog, /service install/);
 });
 
 test("install.sh maps supported hosts to release targets", async (t) => {
