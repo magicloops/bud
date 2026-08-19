@@ -249,8 +249,12 @@ jobs:
             dist/bud-release/checksums.txt
             "dist/bud-release/manifest.${VERSION}.json"
           )
-          if [[ "${#release_assets[@]}" -ne 5 ]]; then
-            printf 'Expected 5 release assets, found %s:\n' "${#release_assets[@]}"
+          # Tarball count must match the release target matrix; derive it
+          # from the single source of truth instead of hardcoding (adding a
+          # target once broke publish with a stale literal count).
+          expected_assets="$(node -e 'import("./scripts/bud-release.mjs").then((m) => console.log(m.REQUIRED_TARGETS.length + 2));')"
+          if [[ "${#release_assets[@]}" -ne "${expected_assets}" ]]; then
+            printf 'Expected %s release assets, found %s:\n' "${expected_assets}" "${#release_assets[@]}"
             for asset in "${release_assets[@]}"; do
               printf '  %s\n' "${asset}"
             done
