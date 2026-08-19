@@ -1,6 +1,6 @@
 # Bud
 
-Bud is an agentic runtime with a built-in agent connectivity plane, allowing you to turn any machine into an accessible agent.
+Bud is an agentic runtime with a built-in connectivity plane, allowing you to turn any machine into an accessible agent.
 
 The repo has three runnable packages:
 
