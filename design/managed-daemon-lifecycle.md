@@ -196,7 +196,19 @@ cross-validation. Real-host validation (macOS launchd + Ubuntu systemd,
 reboot + holder-survival rows) still pending before the README documents the
 flow.
 
-## 6. Open Questions
+## 6. Decision Record
+
+**Device-secret storage (2026-08-19):** keep the 0600 `identity.json` file.
+It matches the posture of ssh/AWS/kube credentials and is the only approach
+that authenticates unattended at boot on both platforms (macOS Keychain ACLs
+break on unsigned-binary upgrades and locked login keychains on headless
+Macs; Linux keyrings are session-bound and absent on servers). The eventual
+upgrade path, if warranted, is asymmetric device identity (Secure Enclave /
+TPM2 challenge-response, server stores only the public key) as a device-auth
+protocol evolution — not a keychain bolt-on for the shared secret. `bud.env`
+itself carries no secrets (claim tokens are never persisted).
+
+## 7. Open Questions
 
 - Should `bud service install` run automatically on *tokenless* installs too,
   or only after a completed claim? (A daemon with no identity waiting in the
