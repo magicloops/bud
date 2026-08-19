@@ -31,6 +31,10 @@ bud stop        # stops the daemon only — never terminal sessions
 bud logs -f     # tail the daemon log (~/.bud/logs/daemon.log)
 ```
 
+The installer also offers (with confirmation) to add `~/.bud/bin` to your
+shell PATH; decline it or set `BUD_INSTALL_NO_MODIFY_PATH=1` and use the
+printed `export PATH` line instead.
+
 Service management:
 
 - `bud service install` / `bud service uninstall` — add or remove the
