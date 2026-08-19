@@ -30,6 +30,23 @@ export type FileViewerFlowTransport = {
   readResponseErrorMessage: (response: Response, fallback: string) => Promise<string>
 }
 
+/**
+ * The service mints `file_url` as an ABSOLUTE URL from its configured
+ * APP_BASE_URL, which is an origin the browser may not be able to reach
+ * (e.g. the HTTPS-local Caddy origin while the developer browses plain
+ * HTTP, or any base-URL drift in a deployment). The browser's own API
+ * transport already knows the right origin for `/api` requests, so keep
+ * only the path + query and let it route like every other API call.
+ */
+export function fileSessionRequestPath(fileUrl: string): string {
+  try {
+    const parsed = new URL(fileUrl, 'http://file-url.invalid')
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    return fileUrl
+  }
+}
+
 export type FileViewerFlowStateAccess = {
   getState: () => FileViewerState
   setState: (updater: (current: FileViewerState) => FileViewerState) => void
@@ -170,7 +187,8 @@ export async function loadFileViewerSessionContent(args: {
     error_message: undefined,
   }))
 
-  const headResponse = await args.transport.fetchFile(session.file_url, {
+  const fileRequestPath = fileSessionRequestPath(session.file_url)
+  const headResponse = await args.transport.fetchFile(fileRequestPath, {
     method: 'HEAD',
     redirectOnUnauthorized: false,
   })
@@ -200,7 +218,7 @@ export async function loadFileViewerSessionContent(args: {
     error_message: undefined,
   }))
 
-  const getResponse = await args.transport.fetchFile(session.file_url, {
+  const getResponse = await args.transport.fetchFile(fileRequestPath, {
     method: 'GET',
     redirectOnUnauthorized: false,
   })

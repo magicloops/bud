@@ -236,6 +236,10 @@ Pure async file-viewer flow used by `use-file-viewer.ts`.
 - reuse valid ready entries without new network calls when the source-aware key matches
 - move successful absolute POSIX opens from raw pending keys to backend-normalized workspace keys
 - run `HEAD` before `GET`
+- resolve `file_url` to its path + query (`fileSessionRequestPath`) so file
+  bytes route through the browser's own API transport — the server mints the
+  URL from ITS `APP_BASE_URL`, which the browsing origin may not reach
+  (HTTP dev vs HTTPS-local Caddy profile, or deployed base-URL drift)
 - retry once with a fresh file session when `HEAD` or `GET` reports `content_changed`
 - enforce display caps before and after content fetch
 - map file-edge failures and binary/text states into `FileViewerEntry` updates
@@ -246,6 +250,7 @@ Node-runner coverage for the file-viewer open/fetch flow.
 
 **Coverage**:
 - session creation followed by `HEAD` then `GET`
+- origin-stripping of absolute `file_url` values (path + query preserved)
 - valid ready entry reuse without network calls
 - same relative path from a different source message creates a fresh session
 - absolute POSIX opens send raw paths and normalize to backend workspace keys
