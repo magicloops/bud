@@ -71,6 +71,24 @@ jobs:
           head -n 1 "${root_script}" | grep -Fx '#!/bin/sh'
           curl -fsSI https://get.bud.dev/install.sh
           curl -fsSI https://get.bud.dev/releases/stable/manifest.json
-          curl -fsSL https://get.bud.dev/releases/stable/manifest.json \
-            | node -e 'let data=""; process.stdin.on("data", c => data += c); process.stdin.on("end", () => { const manifest = JSON.parse(data); if (manifest.version !== process.env.VERSION) throw new Error(`expected ${process.env.VERSION}, got ${manifest.version}`); console.log(manifest.version); });'
+          # Worker version propagation to the edge is eventually consistent:
+          # a single-shot check right after deploy has repeatedly caught the
+          # PREVIOUS release. Poll until the new manifest version shows up.
+          matched=""
+          for attempt in $(seq 1 18); do
+            served="$(curl -fsSL https://get.bud.dev/releases/stable/manifest.json \
+              | node -e 'let d=""; process.stdin.on("data", c => d += c); process.stdin.on("end", () => { console.log(JSON.parse(d).version ?? ""); });')"
+            if [ "${served}" = "${VERSION}" ]; then
+              echo "stable manifest serves ${served} (attempt ${attempt})"
+              matched="1"
+              break
+            fi
+            echo "stable manifest still ${served:-<unparseable>} (want ${VERSION}); retrying in 10s (attempt ${attempt}/18)"
+            sleep 10
+          done
+          if [ -z "${matched}" ]; then
+            echo "stable manifest never converged on ${VERSION} within 3 minutes"
+            exit 1
+          fi
           curl -fsSI "https://get.bud.dev/releases/${VERSION}/bud-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSI "https://get.bud.dev/releases/${VERSION}/bud-aarch64-unknown-linux-gnu.tar.gz"
