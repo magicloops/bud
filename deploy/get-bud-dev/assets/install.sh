@@ -257,13 +257,25 @@ setup_path() {
     y | Y | yes | YES)
       append_path_line "$profile"
       log "Added $BIN_DIR to PATH in $profile."
-      log "Restart your shell (or run: export PATH=\"$BIN_DIR:\$PATH\") to pick it up."
+      # Remembered so the very LAST line of the install repeats the
+      # activation hint — this one scrolls away behind the claim QR and
+      # service output.
+      PATH_PROFILE_UPDATED="$profile"
       ;;
     *)
       log "Skipped PATH setup."
       print_path_hint
       ;;
   esac
+}
+
+print_path_activation_hint() {
+  if [ "${PATH_PROFILE_UPDATED:-}" ]; then
+    log ""
+    log "To use the \`bud\` command in THIS shell, run:"
+    log "  source $PATH_PROFILE_UPDATED"
+    log "(new terminals pick it up automatically)"
+  fi
 }
 
 run_doctor() {
@@ -277,6 +289,7 @@ bootstrap_bud() {
   if [ "${BUD_INSTALL_SKIP_BOOTSTRAP:-}" = "1" ]; then
     log "Skipping Bud bootstrap because BUD_INSTALL_SKIP_BOOTSTRAP=1."
     log "Start Bud manually with: $BUD_BIN --terminal-enabled"
+    print_path_activation_hint
     return
   fi
 
@@ -299,6 +312,7 @@ bootstrap_bud() {
 
   if env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" service install; then
     log "Bud is installed as a background service. Check it with: $BUD_BIN status"
+    print_path_activation_hint
   else
     log "No supported background service manager; starting Bud in the foreground. Press Ctrl+C to stop it."
     exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" --terminal-enabled

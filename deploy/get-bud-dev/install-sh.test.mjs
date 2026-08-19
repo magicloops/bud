@@ -275,6 +275,9 @@ test("install.sh adds bud to PATH with confirmation knobs", async (t) => {
   assert.equal(result.code, 0, result.stderr);
   const rc = await readFile(zshrc, "utf8");
   assert.match(rc, /# Added by the Bud installer/);
+  // The activation hint must be repeated at the END of the install output so
+  // it survives the claim/service scrollback.
+  assert.match(result.stderr.trimEnd(), /source .*\.zshrc\s*\n\(new terminals pick it up automatically\)$/);
   assert.match(rc, /export PATH='[^']*\.bud\/bin':"\$PATH"/);
 
   // Idempotent: a second run must not duplicate the block.
