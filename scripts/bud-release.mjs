@@ -28,12 +28,17 @@ export const REQUIRED_TARGETS = Object.freeze([
     target: "x86_64-unknown-linux-gnu",
     min_os: "glibc 2.35",
   },
+  {
+    target: "aarch64-unknown-linux-gnu",
+    min_os: "glibc 2.35",
+  },
 ]);
 
 const TARGET_BY_OS_ARCH = new Map([
   ["darwin:arm64", "aarch64-apple-darwin"],
   ["darwin:x64", "x86_64-apple-darwin"],
   ["linux:x64", "x86_64-unknown-linux-gnu"],
+  ["linux:arm64", "aarch64-unknown-linux-gnu"],
 ]);
 
 const MIN_OS_BY_TARGET = new Map(REQUIRED_TARGETS.map((entry) => [entry.target, entry.min_os]));

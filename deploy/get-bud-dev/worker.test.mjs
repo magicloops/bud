@@ -27,6 +27,8 @@ const worker = createGetBudDevWorker({
   releaseAssets: {
     "v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz":
       "https://github.com/bud-dev/bud/releases/download/v0.1.0/bud-x86_64-unknown-linux-gnu.tar.gz",
+    "v0.1.0/bud-aarch64-unknown-linux-gnu.tar.gz":
+      "https://github.com/bud-dev/bud/releases/download/v0.1.0/bud-aarch64-unknown-linux-gnu.tar.gz",
   },
 });
 
@@ -152,6 +154,18 @@ test("redirects versioned artifact paths to exact GitHub release asset", async (
   );
   assert.equal(response.headers.get("x-bud-release-origin"), "github-release");
   assert.equal(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
+});
+
+test("redirects aarch64 linux artifact paths (newest release target)", async () => {
+  const response = await worker.fetch(
+    request("/releases/v0.1.0/bud-aarch64-unknown-linux-gnu.tar.gz"),
+  );
+
+  assert.equal(response.status, 302);
+  assert.equal(
+    response.headers.get("location"),
+    "https://github.com/bud-dev/bud/releases/download/v0.1.0/bud-aarch64-unknown-linux-gnu.tar.gz",
+  );
 });
 
 test("HEAD returns headers without a body", async () => {

@@ -41,7 +41,7 @@ Node fixture tests for the installer shell script.
 Covers:
 
 - verified archive install from a local manifest/archive server
-- macOS arm64, macOS x86_64, and Linux x86_64 target detection
+- macOS arm64, macOS x86_64, Linux x86_64, and Linux aarch64 target detection
 - `BUD_CLAIM_ID` forwarding to first bootstrap without persistence
 - `bud doctor` execution with the installer-written production server/base-dir
   environment and without the one-time claim id

@@ -25,6 +25,7 @@ Supported Bud installer targets:
   macOS 13+ arm64      -> aarch64-apple-darwin
   macOS 13+ x86_64     -> x86_64-apple-darwin
   Linux glibc 2.35+ x86_64 -> x86_64-unknown-linux-gnu
+  Linux glibc 2.35+ aarch64 -> aarch64-unknown-linux-gnu
 EOF
 }
 
@@ -126,6 +127,14 @@ detect_target() {
         fail "glibc 2.35+ is required; detected ${glibc_version:-unknown}"
       fi
       printf '%s\n' "x86_64-unknown-linux-gnu"
+      ;;
+    Linux:aarch64 | Linux:arm64)
+      glibc_version="$(detect_glibc_version || true)"
+      if ! version_major_minor_at_least "${glibc_version:-}" 2 35; then
+        usage_matrix
+        fail "glibc 2.35+ is required; detected ${glibc_version:-unknown}"
+      fi
+      printf '%s\n' "aarch64-unknown-linux-gnu"
       ;;
     *)
       usage_matrix

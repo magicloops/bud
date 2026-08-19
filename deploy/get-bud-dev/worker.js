@@ -7,7 +7,7 @@ exit 1
 `;
 
 const ALLOWED_METHODS = new Set(["GET", "HEAD"]);
-const ARTIFACT_PATH_RE = /^\/releases\/(v[^/]+)\/(bud-(aarch64-apple-darwin|x86_64-apple-darwin|x86_64-unknown-linux-gnu)\.tar\.gz)$/;
+const ARTIFACT_PATH_RE = /^\/releases\/(v[^/]+)\/(bud-(aarch64-apple-darwin|x86_64-apple-darwin|x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)\.tar\.gz)$/;
 const VERSION_MANIFEST_PATH_RE = /^\/releases\/(v[^/]+)\/manifest\.json$/;
 const INSTALLER_PATHS = new Set(["/", "/install.sh"]);
 const MUTABLE_RESPONSE_CACHE_CONTROL = "no-store";

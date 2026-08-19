@@ -281,5 +281,6 @@ test("targetForPlatform maps supported installer platforms", () => {
   assert.equal(targetForPlatform("darwin", "arm64"), "aarch64-apple-darwin");
   assert.equal(targetForPlatform("darwin", "x64"), "x86_64-apple-darwin");
   assert.equal(targetForPlatform("linux", "x64"), "x86_64-unknown-linux-gnu");
-  assert.throws(() => targetForPlatform("linux", "arm64"), /unsupported Bud release platform/);
+  assert.equal(targetForPlatform("linux", "arm64"), "aarch64-unknown-linux-gnu");
+  assert.throws(() => targetForPlatform("linux", "riscv64"), /unsupported Bud release platform/);
 });

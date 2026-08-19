@@ -18,6 +18,7 @@ Versioned artifacts are immutable:
 /releases/vX.Y.Z/bud-aarch64-apple-darwin.tar.gz
 /releases/vX.Y.Z/bud-x86_64-apple-darwin.tar.gz
 /releases/vX.Y.Z/bud-x86_64-unknown-linux-gnu.tar.gz
+/releases/vX.Y.Z/bud-aarch64-unknown-linux-gnu.tar.gz
 ```
 
 These first-party URLs are served by the Worker as redirects to GitHub Release
