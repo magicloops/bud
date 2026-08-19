@@ -179,8 +179,14 @@ install_archive() {
   tar -xzf "$archive" -C "$tmp_extract"
   [ -x "$tmp_extract/bud" ] || [ -x "$tmp_extract/./bud" ] || fail "release archive did not contain executable bud"
   mkdir -p "$BIN_DIR"
-  cp "$tmp_extract/bud" "$BUD_BIN"
-  chmod 0755 "$BUD_BIN"
+  # Stage next to the destination and rename: overwriting a RUNNING binary
+  # in place fails on Linux with ETXTBSY ("Text file busy"), while rename
+  # atomically swaps the directory entry and leaves the executing inode
+  # untouched. A live daemon keeps running the old binary until restarted.
+  staged="$BIN_DIR/.bud.install.$$"
+  cp "$tmp_extract/bud" "$staged"
+  chmod 0755 "$staged"
+  mv -f "$staged" "$BUD_BIN"
 }
 
 run_doctor() {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -213,6 +213,41 @@ test("install.sh honors BUD_INSTALL_FOREGROUND=1 (no claim/service handoff)", as
   assert.match(fakeLog, /bootstrap claim=bic_fg server=/);
   assert.doesNotMatch(fakeLog, /claim claim=bic_fg server=.*\n.*service/s);
   assert.doesNotMatch(fakeLog, /service install/);
+});
+
+test("install.sh reinstalls over an existing binary via atomic rename", async (t) => {
+  // Regression: a live daemon executing bin/bud made in-place `cp` fail on
+  // Linux with ETXTBSY. The installer must stage-and-rename instead; rename
+  // swaps the directory entry without touching the executing inode. (A shell
+  // fixture cannot reproduce ETXTBSY itself — the interpreter, not the
+  // script, is the busy text file — so this asserts the swap path and that
+  // no staged temp file is left behind.)
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const installRoot = path.join(dir, "home", ".bud");
+  const binDir = path.join(installRoot, "bin");
+  await mkdir(binDir, { recursive: true });
+  await writeFile(path.join(binDir, "bud"), "#!/bin/sh\nsleep 30\n");
+  await chmod(path.join(binDir, "bud"), 0o755);
+  const running = spawn(path.join(binDir, "bud"), [], { stdio: "ignore" });
+  t.after(() => running.kill("SIGKILL"));
+
+  const result = await runInstall({
+    HOME: path.join(dir, "home"),
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: installRoot,
+    BUD_TEST_LOG: path.join(dir, "bud.log"),
+    BUD_INSTALL_SKIP_BOOTSTRAP: "1",
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const installed = await readFile(path.join(binDir, "bud"), "utf8");
+  assert.match(installed, /BUD_TEST_LOG/, "new binary content replaced the old one");
+  const leftovers = (await readdir(binDir)).filter((name) => name.startsWith(".bud.install."));
+  assert.deepEqual(leftovers, [], "no staged temp files left behind");
 });
 
 test("install.sh maps supported hosts to release targets", async (t) => {
