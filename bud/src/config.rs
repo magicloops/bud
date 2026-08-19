@@ -82,6 +82,44 @@ pub struct BudArgs {
 #[derive(Debug, Subcommand, Clone)]
 pub enum BudCommand {
     Doctor(DoctorArgs),
+    /// Claim this device against the configured server, then exit
+    /// (no-op success when an identity already exists).
+    Claim,
+    /// Run the daemon in the foreground (same as no subcommand).
+    Run,
+    /// Start the daemon (via the installed service, or detached with a
+    /// pidfile when no service is installed).
+    Start,
+    /// Stop the daemon. Terminal sessions keep running and reattach.
+    Stop,
+    /// Restart the daemon.
+    Restart,
+    /// Show service state, daemon pid, identity, server, and holder count.
+    Status,
+    /// Tail the daemon log.
+    Logs(LogsArgs),
+    /// Manage the platform background service (launchd / systemd --user).
+    #[command(subcommand)]
+    Service(ServiceCommand),
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum ServiceCommand {
+    /// Generate and load the platform service so Bud survives logout/reboot.
+    Install,
+    /// Unload and remove the platform service (identity untouched).
+    Uninstall,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct LogsArgs {
+    /// Number of trailing lines to print.
+    #[arg(short = 'n', long, default_value_t = 100)]
+    pub lines: usize,
+
+    /// Keep the log open and stream new lines.
+    #[arg(short = 'f', long, default_value_t = false)]
+    pub follow: bool,
 }
 
 #[derive(Debug, Args, Clone)]

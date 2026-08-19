@@ -10,6 +10,42 @@ The repo has three runnable packages:
 
 Start with [AGENTS.md](./AGENTS.md) for repo rules and [bud.spec.md](./bud.spec.md) for architecture.
 
+## Installing the Bud Daemon
+
+Supported platforms: macOS 13+ (arm64/x64) and Linux glibc 2.35+ (x64/arm64).
+
+```sh
+curl -fsSL https://get.bud.dev | sh
+```
+
+The installer downloads a checksum-verified release to `~/.bud/bin/bud`,
+runs the interactive device claim (open the printed link or QR in a
+signed-in browser), then installs Bud as a background service — a launchd
+user agent on macOS, a systemd user service on Linux — so it survives
+terminal close, logout, and reboot. Afterwards:
+
+```sh
+bud status      # service state, daemon pid, identity, server, holder count
+bud restart     # terminal sessions keep running and reattach
+bud stop        # stops the daemon only — never terminal sessions
+bud logs -f     # tail the daemon log (~/.bud/logs/daemon.log)
+```
+
+Service management:
+
+- `bud service install` / `bud service uninstall` — add or remove the
+  platform service (identity and terminal sessions are never touched)
+- `bud claim` — run the device claim on its own (no-op when already claimed)
+- `bud run` — foreground mode for debugging; `bud start` with no service
+  installed runs a pidfile-managed background daemon instead
+- `BUD_INSTALL_FOREGROUND=1 curl -fsSL https://get.bud.dev | sh` — skip the
+  service handoff and run in the foreground like the v1 installer
+
+Configuration lives in `~/.bud/bud.env` (server URL, base dir); the device
+credential lives in `~/.bud/identity.json` (mode 0600). `bud doctor`
+validates the whole setup, including the service files' holder-safety
+directives.
+
 ## Prereqs
 
 - Node `20.19+` or `22.12+` for the Vite 7 web toolchain

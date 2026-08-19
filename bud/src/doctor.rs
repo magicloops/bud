@@ -483,7 +483,7 @@ fn join_paths(paths: &[PathBuf]) -> String {
 /// `Some(false)` when the key is present with a boolean value, `None` when
 /// absent or unparseable. Text-level scan — good enough for the well-formed
 /// plists our installer/templates produce.
-fn plist_abandon_process_group(content: &str) -> Option<bool> {
+pub(crate) fn plist_abandon_process_group(content: &str) -> Option<bool> {
     let key_pos = content.find("<key>AbandonProcessGroup</key>")?;
     let rest = content[key_pos + "<key>AbandonProcessGroup</key>".len()..].trim_start();
     if rest.starts_with("<true/>") || rest.starts_with("<true />") {
@@ -496,7 +496,7 @@ fn plist_abandon_process_group(content: &str) -> Option<bool> {
 }
 
 /// First `KillMode=` value in a systemd unit file, ignoring comment lines.
-fn systemd_unit_kill_mode(content: &str) -> Option<String> {
+pub(crate) fn systemd_unit_kill_mode(content: &str) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with('#') || line.starts_with(';') {

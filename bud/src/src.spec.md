@@ -19,15 +19,15 @@ Thin CLI entrypoint:
 Crate root for the daemon runtime.
 
 - declares the internal modules
-- re-exports `BudArgs`, `BudCommand`, and `setup_tracing()`
-- exposes `run(args)` as the single high-level entry used by `main.rs`, dispatching subcommands such as `doctor` before entering the long-running daemon loop
+- re-exports `BudArgs`, `BudCommand`, `ServiceCommand`, and `setup_tracing()`
+- exposes `run(args)` as the single high-level entry used by `main.rs`, dispatching subcommands (`doctor`, `claim`, lifecycle verbs `start|stop|restart|status|logs`, `service install|uninstall`) before entering the long-running daemon loop; `run` or no subcommand = foreground daemon
 
 ### `config.rs`
 
 CLI and environment configuration.
 
 - defines `BudArgs`
-- defines `BudCommand`, `DoctorArgs`, and `DoctorFormat`
+- defines `BudCommand` (doctor, claim, run, start/stop/restart/status/logs, service install/uninstall), `ServiceCommand`, `LogsArgs`, `DoctorArgs`, and `DoctorFormat`
 - owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
 - owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` (default 384000)
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
@@ -44,9 +44,35 @@ Local diagnostic command implementation.
 - prints human-readable output by default and JSON when `bud doctor --format json` is requested
 - `bud doctor --cleanup-tmux` is a one-shot best-effort kill of legacy tmux-era `s_*` sessions; it is a silent no-op when no tmux binary exists
 
+### `lifecycle.rs`
+
+Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
+
+- `ServiceManager::detect()` → launchd (macOS) / systemd user (Linux with a
+  reachable user manager) / none
+- generates the launchd plist (`~/Library/LaunchAgents/dev.bud.daemon.plist`;
+  sources `bud.env` via a `/bin/sh -c 'set -a; . bud.env; …'` wrapper since
+  launchd has no EnvironmentFile; `RunAtLoad`, `KeepAlive.SuccessfulExit=false`,
+  `AbandonProcessGroup=true`, stdout/err → `<base>/logs/daemon.log`) and the
+  systemd user unit (`~/.config/systemd/user/bud.service`;
+  `EnvironmentFile=-<base>/bud.env`, `Restart=on-failure`, **`KillMode=process`**,
+  `StandardOutput/Error=append:` the same log file) — generated content is
+  cross-validated against the doctor's supervision parsers in tests
+- `service install` writes + loads the service (bootstrap/enable --now) and
+  best-effort `loginctl enable-linger` on Linux; `service uninstall` unloads
+  and removes it; identity is never touched
+- verbs `start|stop|restart` dispatch to the platform manager when the service
+  file exists, otherwise a pidfile fallback (`<base>/bud.pid`): detached
+  `setsid` spawn with env parsed from `bud.env`, SIGTERM to the daemon pid
+  only — never process groups, never holders
+- `status` prints manager kind + service state, daemon pid, identity summary
+  (or a `bud claim` hint), server URL from `bud.env`, holder count, log path;
+  `logs [-n] [-f]` tails `<base>/logs/daemon.log`
+- `parse_env_file` handles the installer's single-quoted `KEY='value'` format
+
 ### `app.rs`
 
-Top-level daemon orchestrator.
+Top-level daemon orchestrator. `claim_only()` (backing `bud claim`) runs the device-claim flow and exits instead of connecting, enabling the installer's claim-then-service handoff.
 
 **`BudApp`** coordinates:
 

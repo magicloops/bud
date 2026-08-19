@@ -42,7 +42,10 @@ Covers:
 
 - verified archive install from a local manifest/archive server
 - macOS arm64, macOS x86_64, Linux x86_64, and Linux aarch64 target detection
-- `BUD_CLAIM_ID` forwarding to first bootstrap without persistence
+- `BUD_CLAIM_ID` forwarding to the claim step without persistence
+- claim-then-service bootstrap handoff (`bud claim` → `bud service install`),
+  foreground fallback when service install fails, and the
+  `BUD_INSTALL_FOREGROUND=1` escape hatch
 - `bud doctor` execution with the installer-written production server/base-dir
   environment and without the one-time claim id
 - checksum mismatch failure before install
