@@ -514,7 +514,7 @@ fn check_platform() -> DoctorCheck {
     let arch = std::env::consts::ARCH;
     let supported = matches!(
         (os, arch),
-        ("macos", "aarch64") | ("macos", "x86_64") | ("linux", "x86_64")
+        ("macos", "aarch64") | ("macos", "x86_64") | ("linux", "x86_64") | ("linux", "aarch64")
     );
 
     if supported {
@@ -524,7 +524,7 @@ fn check_platform() -> DoctorCheck {
             "platform",
             format!("unsupported platform for v1 managed installs: {os}/{arch}"),
             vec![
-                "Supported v1 platforms are macOS arm64/x64 and Ubuntu x64.".to_string(),
+                "Supported platforms are macOS arm64/x64 and Linux (glibc) x64/arm64.".to_string(),
                 "Use foreground/manual mode only if you are deliberately testing another platform."
                     .to_string(),
             ],
