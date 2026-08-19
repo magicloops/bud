@@ -244,6 +244,67 @@ pub fn parse_env_file(content: &str) -> Vec<(String, String)> {
     vars
 }
 
+/// Replace or append `KEY='value'` in the env file, preserving every other
+/// line byte-for-byte (bud.env is the single config home; edits must be
+/// surgical).
+pub fn upsert_env_var(path: &std::path::Path, key: &str, value: &str) -> Result<()> {
+    let quoted = format!("{key}={}", sh_single_quote(value));
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<String> = Vec::new();
+    let mut replaced = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start().trim_start_matches("export ").trim_start();
+        if trimmed.starts_with(&format!("{key}=")) && !replaced {
+            lines.push(quoted.clone());
+            replaced = true;
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    if !replaced {
+        lines.push(quoted);
+    }
+    let mut output = lines.join("\n");
+    output.push('\n');
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, output)?;
+    Ok(())
+}
+
+/// Remove `KEY=...` lines; returns whether anything was removed.
+pub fn remove_env_var(path: &std::path::Path, key: &str) -> Result<bool> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    let mut removed = false;
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start().trim_start_matches("export ").trim_start();
+            if trimmed.starts_with(&format!("{key}=")) {
+                removed = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    if removed {
+        let mut output = lines.join("\n");
+        output.push('\n');
+        std::fs::write(path, output)?;
+    }
+    Ok(removed)
+}
+
+fn sh_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
 fn load_env_file(paths: &LifecyclePaths) -> Vec<(String, String)> {
     std::fs::read_to_string(&paths.env_file)
         .map(|content| parse_env_file(&content))
@@ -459,6 +520,18 @@ pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
         .map(|(_, v)| v.clone())
         .unwrap_or_else(|| args.server.clone());
     println!("server: {server}");
+    match configured_llm_url(paths, args) {
+        Some(url) => {
+            let client = reqwest::Client::new();
+            match crate::local_llm::probe_ds4_url(&client, &url).await {
+                Ok((crate::local_llm::Ds4ModelMatch::Found(served), _)) => {
+                    println!("llm: ds4 at {url} (serving `{served}`)");
+                }
+                _ => println!("llm: configured at {url} but no DeepSeek v4 server responded"),
+            }
+        }
+        None => println!("llm: not configured (enable with `bud llm enable <url>`)"),
+    }
     println!("holders: {} terminal holder(s) running", holder_count());
     println!("logs: {} (tail with `bud logs`)", paths.log_file.display());
     Ok(())
@@ -503,6 +576,107 @@ pub fn logs(paths: &LifecyclePaths, lines: usize, follow: bool) -> Result<()> {
             offset = len;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Local LLM (`bud llm probe|enable|disable`)
+// ---------------------------------------------------------------------------
+
+pub const LLM_ENV_KEY: &str = "BUD_LOCAL_LLM_DS4_URL";
+const LLM_DEFAULT_CANDIDATES: &[&str] = &["http://127.0.0.1:8888/v1", "http://127.0.0.1:8000/v1"];
+
+fn configured_llm_url(paths: &LifecyclePaths, args: &BudArgs) -> Option<String> {
+    load_env_file(paths)
+        .into_iter()
+        .find(|(key, _)| key == LLM_ENV_KEY)
+        .map(|(_, value)| value)
+        .or_else(|| args.local_llm_ds4_url.clone())
+}
+
+pub async fn llm_probe(paths: &LifecyclePaths, args: &BudArgs, url: Option<String>) -> Result<()> {
+    let candidates: Vec<String> = match url {
+        Some(url) => vec![url],
+        None => {
+            let mut candidates = Vec::new();
+            if let Some(configured) = configured_llm_url(paths, args) {
+                candidates.push(configured);
+            }
+            for default in LLM_DEFAULT_CANDIDATES {
+                if !candidates.iter().any(|c| c == default) {
+                    candidates.push((*default).to_string());
+                }
+            }
+            candidates
+        }
+    };
+
+    let client = reqwest::Client::new();
+    for candidate in &candidates {
+        match crate::local_llm::probe_ds4_url(&client, candidate).await {
+            Ok((crate::local_llm::Ds4ModelMatch::Found(served), _)) => {
+                println!("Found a DeepSeek v4 server at {candidate} (serving `{served}`).");
+                println!("Enable it with: bud llm enable {candidate}");
+                return Ok(());
+            }
+            Ok((_, models)) if !models.is_empty() => {
+                println!(
+                    "{candidate} answered but serves no DeepSeek v4 model (models: {}).",
+                    models.join(", ")
+                );
+            }
+            Ok(_) => {
+                println!("{candidate} answered but advertised no models.");
+            }
+            Err(_) => {}
+        }
+    }
+    bail!(
+        "no DeepSeek v4 server found (tried {})",
+        candidates.join(", ")
+    );
+}
+
+pub async fn llm_enable(paths: &LifecyclePaths, url: String, force: bool) -> Result<()> {
+    let client = reqwest::Client::new();
+    match crate::local_llm::probe_ds4_url(&client, &url).await {
+        Ok((crate::local_llm::Ds4ModelMatch::Found(served), _)) => {
+            println!("Verified DeepSeek v4 at {url} (serving `{served}`).");
+        }
+        Ok((_, models)) if !force => {
+            bail!(
+                "{url} answered but serves no DeepSeek v4 model (models: {}). \
+                 Rerun with --force to persist anyway.",
+                if models.is_empty() {
+                    "none".to_string()
+                } else {
+                    models.join(", ")
+                }
+            );
+        }
+        Err(err) if !force => {
+            bail!("could not reach {url}: {err}. Rerun with --force to persist anyway.");
+        }
+        _ => {
+            println!("warning: persisting {url} without a successful probe (--force).");
+        }
+    }
+    // Normalization mirrors the daemon's own config parsing; reject what the
+    // daemon would reject rather than persisting a dud.
+    crate::local_llm::normalize_ds4_url(&url)?;
+    upsert_env_var(&paths.env_file, LLM_ENV_KEY, &url)?;
+    println!("Saved {LLM_ENV_KEY} to {}.", paths.env_file.display());
+    println!("Apply it with: bud restart");
+    Ok(())
+}
+
+pub fn llm_disable(paths: &LifecyclePaths) -> Result<()> {
+    if remove_env_var(&paths.env_file, LLM_ENV_KEY)? {
+        println!("Removed {LLM_ENV_KEY} from {}.", paths.env_file.display());
+        println!("Apply it with: bud restart");
+    } else {
+        println!("Local LLM endpoint was not configured; nothing to do.");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -719,6 +893,39 @@ mod tests {
             crate::doctor::systemd_unit_kill_mode(&systemd_unit(&paths)).as_deref(),
             Some("process")
         );
+    }
+
+    #[test]
+    fn env_upsert_replaces_appends_and_removes_surgically() {
+        let dir = std::env::temp_dir().join(format!("bud-lifecycle-env-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bud.env");
+        std::fs::write(
+            &path,
+            "BUD_SERVER_URL='wss://app.bud.dev/ws'\nBUD_TERMINAL_ENABLED=true\n",
+        )
+        .unwrap();
+
+        upsert_env_var(&path, LLM_ENV_KEY, "http://127.0.0.1:8888/v1").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("BUD_LOCAL_LLM_DS4_URL='http://127.0.0.1:8888/v1'"));
+        assert!(
+            content.starts_with("BUD_SERVER_URL='wss://app.bud.dev/ws'"),
+            "other lines preserved"
+        );
+
+        // Replace, not duplicate.
+        upsert_env_var(&path, LLM_ENV_KEY, "http://127.0.0.1:8000/v1").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content.matches(LLM_ENV_KEY).count(), 1);
+        assert!(content.contains("8000"));
+
+        assert!(remove_env_var(&path, LLM_ENV_KEY).unwrap());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(!content.contains(LLM_ENV_KEY));
+        assert!(content.contains("BUD_TERMINAL_ENABLED=true"));
+        assert!(!remove_env_var(&path, LLM_ENV_KEY).unwrap());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

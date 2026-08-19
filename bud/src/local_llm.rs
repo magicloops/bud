@@ -47,6 +47,10 @@ struct LocalLlmManagerInner {
     client: Client,
     streams: Mutex<HashMap<String, mpsc::UnboundedSender<LocalLlmStreamEvent>>>,
     capability: StdMutex<Option<Value>>,
+    // The id the local server actually serves (e.g. a versioned
+    // `deepseek-v4-flash-0731` from vllm). The platform speaks the canonical
+    // family id end-to-end; the daemon translates at the edge.
+    served_model: StdMutex<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -97,6 +101,7 @@ impl LocalLlmManager {
                 client,
                 streams: Mutex::new(HashMap::new()),
                 capability: StdMutex::new(None),
+                served_model: StdMutex::new(None),
             }),
         }
     }
@@ -108,6 +113,14 @@ impl LocalLlmManager {
     pub fn capability(&self) -> Option<Value> {
         self.inner
             .capability
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+    }
+
+    pub fn served_model(&self) -> Option<String> {
+        self.inner
+            .served_model
             .lock()
             .ok()
             .and_then(|value| value.clone())
@@ -153,26 +166,22 @@ impl LocalLlmManager {
         };
 
         let body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
-        let model_available = body
-            .get("data")
-            .and_then(Value::as_array)
-            .map(|models| {
-                models.iter().any(|model| {
-                    model
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| id == DS4_PROVIDER_MODEL)
-                })
-            })
-            .unwrap_or(true);
-
-        if !model_available {
-            warn!(
-                model = DS4_PROVIDER_MODEL,
-                "Local ds4 probe succeeded but expected model was not advertised"
-            );
-            self.clear_capability();
-            return;
+        let served = match ds4_served_model(&body) {
+            Ds4ModelMatch::Found(id) => Some(id),
+            // Lenient on malformed bodies (no `data` array): keep the
+            // canonical id and let generation surface real errors.
+            Ds4ModelMatch::Unknown => None,
+            Ds4ModelMatch::Missing => {
+                warn!(
+                    model = DS4_PROVIDER_MODEL,
+                    "Local ds4 probe succeeded but no DeepSeek v4 family model was advertised"
+                );
+                self.clear_capability();
+                return;
+            }
+        };
+        if let Ok(mut stored) = self.inner.served_model.lock() {
+            *stored = served.clone();
         }
 
         let capability = json!({
@@ -347,6 +356,8 @@ impl LocalLlmManager {
                 return Ok(());
             }
         };
+
+        let request_body = rewrite_model_field(request_body, self.served_model().as_deref());
 
         let url = config.origin.join(&frame.path)?;
         let mut request = self.inner.client.request(Method::POST, url);
@@ -542,6 +553,9 @@ impl LocalLlmManager {
     fn clear_capability(&self) {
         if let Ok(mut capability) = self.inner.capability.lock() {
             *capability = None;
+        }
+        if let Ok(mut served) = self.inner.served_model.lock() {
+            *served = None;
         }
     }
 }
@@ -897,8 +911,187 @@ fn send_stream_reset(
     )
 }
 
+/// Outcome of scanning a `/v1/models` body for the DeepSeek v4 family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ds4ModelMatch {
+    /// A family model is served; carries the ACTUAL advertised id (vllm
+    /// serves versioned ids like `deepseek-v4-flash-0731`).
+    Found(String),
+    /// Body was well-formed and no family model is present.
+    Missing,
+    /// Body was malformed / missing the `data` array.
+    Unknown,
+}
+
+/// Canonical exact id wins; otherwise the first versioned family id
+/// (`deepseek-v4-flash-*`).
+pub fn ds4_served_model(body: &Value) -> Ds4ModelMatch {
+    let Some(models) = body.get("data").and_then(Value::as_array) else {
+        return Ds4ModelMatch::Unknown;
+    };
+    let ids: Vec<&str> = models
+        .iter()
+        .filter_map(|model| model.get("id").and_then(Value::as_str))
+        .collect();
+    if ids.contains(&DS4_PROVIDER_MODEL) {
+        return Ds4ModelMatch::Found(DS4_PROVIDER_MODEL.to_string());
+    }
+    if let Some(versioned) = ids
+        .iter()
+        .find(|id| id.starts_with(concat!("deepseek-v4-flash", "-")))
+    {
+        return Ds4ModelMatch::Found((*versioned).to_string());
+    }
+    Ds4ModelMatch::Missing
+}
+
+/// All advertised model ids (for `bud llm probe` output).
+pub fn list_model_ids(body: &Value) -> Vec<String> {
+    body.get("data")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| model.get("id").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The platform speaks the canonical family id; the local server may serve a
+/// versioned one. Rewrite `model` at the edge so requests match what the
+/// server actually loads. Non-JSON bodies and non-canonical ids pass through
+/// untouched.
+fn rewrite_model_field(body: Vec<u8>, served: Option<&str>) -> Vec<u8> {
+    let Some(served) = served else {
+        return body;
+    };
+    if served == DS4_PROVIDER_MODEL {
+        return body;
+    }
+    let Ok(mut parsed) = serde_json::from_slice::<Value>(&body) else {
+        return body;
+    };
+    let Some(model) = parsed.get("model").and_then(Value::as_str) else {
+        return body;
+    };
+    if model != DS4_PROVIDER_MODEL {
+        return body;
+    }
+    parsed["model"] = Value::String(served.to_string());
+    serde_json::to_vec(&parsed).unwrap_or(body)
+}
+
+/// Probe an arbitrary base URL for a ds4-family server. Used by `bud llm
+/// probe|enable` and shares the exact detection rule the daemon applies at
+/// connect time.
+pub async fn probe_ds4_url(
+    client: &Client,
+    base_url: &str,
+) -> anyhow::Result<(Ds4ModelMatch, Vec<String>)> {
+    let origin = normalize_ds4_url(base_url)?;
+    let models_url = origin.join("/v1/models")?;
+    let response = time::timeout(PROBE_TIMEOUT, client.get(models_url).send())
+        .await
+        .map_err(|_| anyhow::anyhow!("probe timed out"))??
+        .error_for_status()?;
+    let body = response.json::<Value>().await?;
+    Ok((ds4_served_model(&body), list_model_ids(&body)))
+}
+
+/// Accepts the documented `http://host:port/v1` form (any path is reduced to
+/// the origin, matching LocalLlmConfig's own normalization).
+pub fn normalize_ds4_url(raw: &str) -> anyhow::Result<Url> {
+    let url = Url::parse(raw)?;
+    match url.scheme() {
+        "http" | "https" => {}
+        other => anyhow::bail!("unsupported scheme for local LLM URL: {other}"),
+    }
+    let mut origin = url.clone();
+    origin.set_path("/");
+    origin.set_query(None);
+    origin.set_fragment(None);
+    Ok(origin)
+}
+
 #[cfg(test)]
 mod tests {
+    // Real payload from a vllm host serving DeepSeek-V4-Flash-0731
+    // (observed live 2026-08-19): the id is VERSIONED.
+    const VLLM_MODELS_BODY: &str = r#"{"object":"list","data":[{"id":"deepseek-v4-flash-0731","object":"model","created":1787173264,"owned_by":"vllm","root":"deepseek-ai/DeepSeek-V4-Flash-0731","parent":null,"max_model_len":1048576}]}"#;
+
+    #[test]
+    fn served_model_matches_versioned_family_ids() {
+        let body: Value = serde_json::from_str(VLLM_MODELS_BODY).unwrap();
+        assert_eq!(
+            super::ds4_served_model(&body),
+            super::Ds4ModelMatch::Found("deepseek-v4-flash-0731".to_string())
+        );
+        assert_eq!(
+            super::list_model_ids(&body),
+            vec!["deepseek-v4-flash-0731".to_string()]
+        );
+    }
+
+    #[test]
+    fn served_model_prefers_canonical_and_reports_missing_and_unknown() {
+        let both = serde_json::json!({"data": [
+            {"id": "deepseek-v4-flash-0731"},
+            {"id": "deepseek-v4-flash"}
+        ]});
+        assert_eq!(
+            super::ds4_served_model(&both),
+            super::Ds4ModelMatch::Found("deepseek-v4-flash".to_string())
+        );
+        let other = serde_json::json!({"data": [{"id": "llama-3-8b"}]});
+        assert_eq!(
+            super::ds4_served_model(&other),
+            super::Ds4ModelMatch::Missing
+        );
+        // Lookalike prefixes without the family dash separator do not match.
+        let lookalike = serde_json::json!({"data": [{"id": "deepseek-v4-flashy"}]});
+        assert_eq!(
+            super::ds4_served_model(&lookalike),
+            super::Ds4ModelMatch::Missing
+        );
+        let malformed = serde_json::json!({"object": "list"});
+        assert_eq!(
+            super::ds4_served_model(&malformed),
+            super::Ds4ModelMatch::Unknown
+        );
+    }
+
+    #[test]
+    fn rewrite_model_field_translates_canonical_to_served() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "model": "deepseek-v4-flash",
+            "input": "hi"
+        }))
+        .unwrap();
+        let rewritten = super::rewrite_model_field(body.clone(), Some("deepseek-v4-flash-0731"));
+        let parsed: Value = serde_json::from_slice(&rewritten).unwrap();
+        assert_eq!(parsed["model"], "deepseek-v4-flash-0731");
+        assert_eq!(parsed["input"], "hi");
+
+        // Passthroughs: canonical served id, different model, non-JSON.
+        assert_eq!(
+            super::rewrite_model_field(body.clone(), Some("deepseek-v4-flash")),
+            body
+        );
+        let other = serde_json::to_vec(&serde_json::json!({"model": "gpt-x"})).unwrap();
+        assert_eq!(
+            super::rewrite_model_field(other.clone(), Some("deepseek-v4-flash-0731")),
+            other
+        );
+        let junk = b"not json".to_vec();
+        assert_eq!(
+            super::rewrite_model_field(junk.clone(), Some("deepseek-v4-flash-0731")),
+            junk
+        );
+        assert_eq!(super::rewrite_model_field(body.clone(), None), body);
+    }
+
     use super::*;
     use crate::config::BudArgs;
     use crate::protocol::Envelope;

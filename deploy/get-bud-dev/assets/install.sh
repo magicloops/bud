@@ -273,6 +273,50 @@ run_doctor() {
   fi
 }
 
+# --- Local LLM setup ---------------------------------------------------------
+# Detection lives in the bud binary (`bud llm probe/enable`) so the installer
+# and daemon share one rule. Knobs: BUD_INSTALL_DS4_URL=<url> (enable without
+# probing candidates), BUD_INSTALL_NO_LLM_PROBE=1 (skip entirely).
+
+setup_local_llm() {
+  if [ "${BUD_INSTALL_NO_LLM_PROBE:-}" = "1" ]; then
+    return
+  fi
+
+  if [ "${BUD_INSTALL_DS4_URL:-}" ]; then
+    if env BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" llm enable "$BUD_INSTALL_DS4_URL"; then
+      log "Local LLM endpoint configured from BUD_INSTALL_DS4_URL."
+    else
+      log "warning: could not enable local LLM at $BUD_INSTALL_DS4_URL (continuing)."
+    fi
+    return
+  fi
+
+  for candidate in http://127.0.0.1:8888/v1 http://127.0.0.1:8000/v1; do
+    if env BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" llm probe --url "$candidate" >/dev/null 2>&1; then
+      answer="n"
+      if (: < /dev/tty) 2>/dev/null; then
+        printf 'Found a local DeepSeek v4 server at %s. Enable it for this Bud? [Y/n] ' "$candidate" > /dev/tty
+        IFS= read -r answer < /dev/tty || answer="n"
+        [ "$answer" ] || answer="y"
+      else
+        log "Found a local DeepSeek v4 server at $candidate."
+        log "Enable it later with: $BUD_BIN llm enable $candidate"
+        return
+      fi
+      case "$answer" in
+        y | Y | yes | YES)
+          env BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" llm enable "$candidate" || log "warning: enabling local LLM failed (continuing)."
+          ;;
+        *)
+          log "Skipped local LLM setup. Enable it later with: $BUD_BIN llm enable $candidate"
+          ;;
+      esac
+      return
+    fi
+  done
+}
+
 bootstrap_bud() {
   if [ "${BUD_INSTALL_SKIP_BOOTSTRAP:-}" = "1" ]; then
     log "Skipping Bud bootstrap because BUD_INSTALL_SKIP_BOOTSTRAP=1."
@@ -296,6 +340,8 @@ bootstrap_bud() {
   else
     env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" claim || fail "Bud device claim failed"
   fi
+
+  setup_local_llm
 
   if env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" service install; then
     log "Bud is installed as a background service. Check it with: $BUD_BIN status"

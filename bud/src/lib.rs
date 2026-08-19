@@ -18,7 +18,7 @@ pub mod transport;
 pub mod util;
 pub mod version;
 
-pub use config::{BudArgs, BudCommand, ServiceCommand};
+pub use config::{BudArgs, BudCommand, LlmCommand, ServiceCommand};
 pub use util::setup_tracing;
 
 pub async fn run(args: BudArgs) -> anyhow::Result<()> {
@@ -44,6 +44,18 @@ pub async fn run(args: BudArgs) -> anyhow::Result<()> {
             match service_cmd {
                 ServiceCommand::Install => lifecycle::service_install(&paths),
                 ServiceCommand::Uninstall => lifecycle::service_uninstall(&paths),
+            }
+        }
+        Some(BudCommand::Llm(llm_cmd)) => {
+            let paths = LifecyclePaths::resolve(&args)?;
+            match llm_cmd {
+                LlmCommand::Probe(probe_args) => {
+                    lifecycle::llm_probe(&paths, &args, probe_args.url).await
+                }
+                LlmCommand::Enable(enable_args) => {
+                    lifecycle::llm_enable(&paths, enable_args.url, enable_args.force).await
+                }
+                LlmCommand::Disable => lifecycle::llm_disable(&paths),
             }
         }
     }

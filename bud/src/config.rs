@@ -101,6 +101,37 @@ pub enum BudCommand {
     /// Manage the platform background service (launchd / systemd --user).
     #[command(subcommand)]
     Service(ServiceCommand),
+    /// Manage the optional local LLM endpoint (DeepSeek v4).
+    #[command(subcommand)]
+    Llm(LlmCommand),
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum LlmCommand {
+    /// Check a URL (or the configured/default candidates) for a local
+    /// DeepSeek v4 server; exits non-zero when none is found.
+    Probe(LlmProbeArgs),
+    /// Verify the endpoint serves DeepSeek v4, then persist it in bud.env.
+    Enable(LlmEnableArgs),
+    /// Remove the local LLM endpoint from bud.env.
+    Disable,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct LlmProbeArgs {
+    /// Endpoint base URL, e.g. http://127.0.0.1:8888/v1.
+    #[arg(long)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct LlmEnableArgs {
+    /// Endpoint base URL, e.g. http://127.0.0.1:8888/v1.
+    pub url: String,
+
+    /// Persist even when the probe finds no DeepSeek v4 server right now.
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
 }
 
 #[derive(Debug, Subcommand, Clone)]
