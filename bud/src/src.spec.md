@@ -27,7 +27,7 @@ Crate root for the daemon runtime.
 CLI and environment configuration.
 
 - defines `BudArgs`
-- defines `BudCommand` (doctor, claim, run, start/stop/restart/status/logs, service install/uninstall), `ServiceCommand`, `LogsArgs`, `DoctorArgs`, and `DoctorFormat`
+- defines `BudCommand` (doctor, claim, run, start/stop/restart/status/logs, service install/uninstall, llm probe/enable/disable), `ServiceCommand`, `LlmCommand`, `LogsArgs`, `DoctorArgs`, and `DoctorFormat`
 - owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
 - owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` (default 384000)
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
@@ -68,7 +68,15 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
 - `status` prints manager kind + service state, daemon pid, identity summary
   (or a `bud claim` hint), server URL from `bud.env`, holder count, log path;
   `logs [-n] [-f]` tails `<base>/logs/daemon.log`
-- `parse_env_file` handles the installer's single-quoted `KEY='value'` format
+- `parse_env_file` handles the installer's single-quoted `KEY='value'` format;
+  `upsert_env_var`/`remove_env_var` edit `bud.env` surgically (single config
+  home)
+- `bud llm probe|enable|disable`: probes candidate URLs (configured →
+  `127.0.0.1:8888/v1` → `127.0.0.1:8000/v1`) through the daemon's own ds4
+  detection (`local_llm::probe_ds4_url` — one rule for installer, CLI, and
+  connect-time capability), persists/removes `BUD_LOCAL_LLM_DS4_URL` in
+  `bud.env`; `status` reports the llm state (serving id / unreachable / not
+  configured)
 
 ### `app.rs`
 
@@ -215,6 +223,8 @@ Daemon-side Phase 4.4 workspace file adapter.
 - cancels active file streams when the active daemon transport disconnects
 
 ### `local_llm.rs`
+
+DeepSeek v4 family detection accepts versioned served ids (`deepseek-v4-flash-0731`): the canonical `deepseek-v4-flash` id is spoken platform-wide, the probe captures the ACTUAL served id, and the daemon rewrites the request `model` field at the edge before forwarding to the local server (`rewrite_model_field`; content-length is recomputed since it is not on the forwarded-header allowlist). `probe_ds4_url`/`ds4_served_model` are shared with `bud llm` verbs.
 
 Daemon-side Bud-local LLM adapter for ds4.
 

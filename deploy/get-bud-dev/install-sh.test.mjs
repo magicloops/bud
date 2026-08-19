@@ -33,6 +33,11 @@ async function createFakeBudArchive(t, dir, options = {}) {
       '  echo "claim claim=${BUD_CLAIM_ID:-} server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-}" >> "$BUD_TEST_LOG"',
       `  exit ${options.claimExitCode ?? 0}`,
       "fi",
+      'if [ "$1" = "llm" ]; then',
+      '  echo "llm $2 ${3:-} ${4:-}" >> "$BUD_TEST_LOG"',
+      `  if [ "$2" = "probe" ]; then exit ${options.llmProbeExitCode ?? 1}; fi`,
+      `  exit ${options.llmEnableExitCode ?? 0}`,
+      "fi",
       'if [ "$1" = "service" ]; then',
       '  echo "service $2 server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-}" >> "$BUD_TEST_LOG"',
       `  exit ${options.serviceExitCode ?? 0}`,
@@ -332,6 +337,63 @@ test("install.sh writes fish PATH config via conf.d", async (t) => {
   assert.equal(result.code, 0, result.stderr);
   const conf = await readFile(path.join(home, ".config", "fish", "conf.d", "bud.fish"), "utf8");
   assert.match(conf, /fish_add_path -g .*\.bud\/bin/);
+});
+
+test("install.sh configures local LLM via BUD_INSTALL_DS4_URL and probe path", async (t) => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const home = path.join(dir, "home");
+  const logPath = path.join(dir, "bud.log");
+  const base = {
+    HOME: home,
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: path.join(home, ".bud"),
+    BUD_TEST_LOG: logPath,
+  };
+
+  // Explicit URL: enabled without probing candidates.
+  let result = await runInstall({ ...base, BUD_INSTALL_DS4_URL: "http://127.0.0.1:8888/v1" });
+  assert.equal(result.code, 0, result.stderr);
+  let fakeLog = await readFile(logPath, "utf8");
+  assert.match(fakeLog, /llm enable http:\/\/127\.0\.0\.1:8888\/v1/);
+  assert.doesNotMatch(fakeLog, /llm probe/);
+
+  // Probe hit without a tty: never enables silently, prints the manual hint.
+  // (The probe exit code is baked into the fake binary, so this scenario
+  // ships its own archive.)
+  await rm(logPath, { force: true });
+  const dir2 = await tempDir(t);
+  const probeArchive = await createFakeBudArchive(t, dir2, { llmProbeExitCode: 0 });
+  const probeBase2 = await startReleaseServer(t, manifestFor(placeholder, probeArchive.sha256), probeArchive.bytes);
+  const probeServer = await startReleaseServer(t, manifestFor(probeBase2, probeArchive.sha256), probeArchive.bytes);
+  const home2 = path.join(dir2, "home2");
+  result = await runInstall({
+    ...base,
+    HOME: home2,
+    BUD_INSTALL_BASE_URL: probeServer,
+    BUD_INSTALL_ROOT: path.join(home2, ".bud"),
+  });
+  assert.equal(result.code, 0, result.stderr);
+  fakeLog = await readFile(logPath, "utf8");
+  assert.match(fakeLog, /llm probe --url http:\/\/127\.0\.0\.1:8888\/v1/);
+  assert.doesNotMatch(fakeLog, /llm enable/);
+  assert.match(result.stderr, /Enable it later with/);
+
+  // Opt-out skips everything.
+  await rm(logPath, { force: true });
+  const home3 = path.join(dir, "home3");
+  result = await runInstall({
+    ...base,
+    HOME: home3,
+    BUD_INSTALL_ROOT: path.join(home3, ".bud"),
+    BUD_INSTALL_NO_LLM_PROBE: "1",
+  });
+  assert.equal(result.code, 0, result.stderr);
+  fakeLog = await readFile(logPath, "utf8");
+  assert.doesNotMatch(fakeLog, /llm/);
 });
 
 test("install.sh maps supported hosts to release targets", async (t) => {

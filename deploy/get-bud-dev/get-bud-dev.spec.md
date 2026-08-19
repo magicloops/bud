@@ -47,6 +47,9 @@ Covers:
   fallback) with /dev/tty confirmation under `curl | sh`; forced by
   `BUD_INSTALL_MODIFY_PATH=1`, suppressed by `BUD_INSTALL_NO_MODIFY_PATH=1`;
   never edits profiles silently without a tty; idempotent across reruns
+- local LLM setup: candidate probing (`bud llm probe`) with tty confirmation
+  before `bud llm enable`; `BUD_INSTALL_DS4_URL` enables directly,
+  `BUD_INSTALL_NO_LLM_PROBE=1` skips; never enabled silently without a tty
 - claim-then-service bootstrap handoff (`bud claim` → `bud service install`),
   foreground fallback when service install fails, and the
   `BUD_INSTALL_FOREGROUND=1` escape hatch
