@@ -189,6 +189,83 @@ install_archive() {
   mv -f "$staged" "$BUD_BIN"
 }
 
+# --- PATH setup -------------------------------------------------------------
+# Offers to add ~/.bud/bin to the user's shell profile so `bud status` etc.
+# work after install. Confirmation is read from /dev/tty because stdin is the
+# piped script under `curl | sh`. Knobs: BUD_INSTALL_MODIFY_PATH=1 (yes
+# without prompting), BUD_INSTALL_NO_MODIFY_PATH=1 (never touch profiles).
+
+profile_file_for_shell() {
+  case "$(basename "${SHELL:-/bin/sh}")" in
+    zsh) printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash) printf '%s\n' "$HOME/.bashrc" ;;
+    fish) printf '%s\n' "$HOME/.config/fish/conf.d/bud.fish" ;;
+    *) printf '%s\n' "$HOME/.profile" ;;
+  esac
+}
+
+path_already_configured() {
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) return 0 ;;
+  esac
+  [ -f "$1" ] && grep -F "$BIN_DIR" "$1" >/dev/null 2>&1
+}
+
+append_path_line() {
+  profile="$1"
+  profile_dir="$(dirname "$profile")"
+  mkdir -p "$profile_dir"
+  if [ "$(basename "${SHELL:-/bin/sh}")" = "fish" ]; then
+    printf '# Added by the Bud installer\nfish_add_path -g %s\n' "$BIN_DIR" >> "$profile"
+  else
+    printf '\n# Added by the Bud installer\nexport PATH=%s:"$PATH"\n' "$(shell_quote "$BIN_DIR")" >> "$profile"
+  fi
+}
+
+print_path_hint() {
+  log "To use the \`bud\` command directly, add it to your PATH:"
+  log "  export PATH=\"$BIN_DIR:\$PATH\""
+}
+
+setup_path() {
+  if [ "${BUD_INSTALL_NO_MODIFY_PATH:-}" = "1" ]; then
+    return
+  fi
+  profile="$(profile_file_for_shell)"
+  if path_already_configured "$profile"; then
+    return
+  fi
+
+  answer=""
+  if [ "${BUD_INSTALL_MODIFY_PATH:-}" = "1" ]; then
+    answer="y"
+  elif (: < /dev/tty) 2>/dev/null; then
+    # -r/-w on /dev/tty pass even without a controlling terminal; only an
+    # actual open proves one exists (stdin is the piped script under
+    # `curl | sh`, so the prompt must go through the tty).
+    printf 'Add %s to your PATH in %s? [Y/n] ' "$BIN_DIR" "$profile" > /dev/tty
+    IFS= read -r answer < /dev/tty || answer="n"
+    [ "$answer" ] || answer="y"
+  else
+    # Non-interactive (no tty): never edit profiles silently.
+    print_path_hint
+    log "(rerun with BUD_INSTALL_MODIFY_PATH=1 to do this automatically)"
+    return
+  fi
+
+  case "$answer" in
+    y | Y | yes | YES)
+      append_path_line "$profile"
+      log "Added $BIN_DIR to PATH in $profile."
+      log "Restart your shell (or run: export PATH=\"$BIN_DIR:\$PATH\") to pick it up."
+      ;;
+    *)
+      log "Skipped PATH setup."
+      print_path_hint
+      ;;
+  esac
+}
+
 run_doctor() {
   log "Running Bud preflight..."
   if ! (unset BUD_CLAIM_ID; env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" doctor); then
@@ -263,6 +340,7 @@ main() {
   log "Installing Bud to $BUD_BIN..."
   install_archive "$archive" "$extract_dir"
   write_env_file
+  setup_path
   run_doctor
 
   log "Bud installed."

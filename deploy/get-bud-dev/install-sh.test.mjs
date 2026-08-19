@@ -120,6 +120,9 @@ async function runInstall(env) {
       BUD_INSTALL_OS: "Linux",
       BUD_INSTALL_ARCH: "x86_64",
       BUD_INSTALL_GLIBC_VERSION: "2.35",
+      // PATH setup would prompt on /dev/tty when the test runner has one;
+      // keep tests deterministic (individual tests override these knobs).
+      BUD_INSTALL_NO_MODIFY_PATH: "1",
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -248,6 +251,84 @@ test("install.sh reinstalls over an existing binary via atomic rename", async (t
   assert.match(installed, /BUD_TEST_LOG/, "new binary content replaced the old one");
   const leftovers = (await readdir(binDir)).filter((name) => name.startsWith(".bud.install."));
   assert.deepEqual(leftovers, [], "no staged temp files left behind");
+});
+
+test("install.sh adds bud to PATH with confirmation knobs", async (t) => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const home = path.join(dir, "home");
+  const zshrc = path.join(home, ".zshrc");
+  const base = {
+    HOME: home,
+    SHELL: "/bin/zsh",
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: path.join(home, ".bud"),
+    BUD_TEST_LOG: path.join(dir, "bud.log"),
+    BUD_INSTALL_SKIP_BOOTSTRAP: "1",
+  };
+
+  // Forced yes: appends the export line to the shell profile.
+  let result = await runInstall({ ...base, BUD_INSTALL_NO_MODIFY_PATH: "", BUD_INSTALL_MODIFY_PATH: "1" });
+  assert.equal(result.code, 0, result.stderr);
+  const rc = await readFile(zshrc, "utf8");
+  assert.match(rc, /# Added by the Bud installer/);
+  assert.match(rc, /export PATH='[^']*\.bud\/bin':"\$PATH"/);
+
+  // Idempotent: a second run must not duplicate the block.
+  result = await runInstall({ ...base, BUD_INSTALL_NO_MODIFY_PATH: "", BUD_INSTALL_MODIFY_PATH: "1" });
+  assert.equal(result.code, 0, result.stderr);
+  const rcAgain = await readFile(zshrc, "utf8");
+  assert.equal(rcAgain.split("Added by the Bud installer").length, 2, "single PATH block");
+
+  // Non-interactive without knobs (no tty in the spawned shell): profiles are
+  // never edited silently; the installer prints the manual export hint.
+  const home2 = path.join(dir, "home2");
+  result = await runInstall({
+    ...base,
+    HOME: home2,
+    BUD_INSTALL_ROOT: path.join(home2, ".bud"),
+    BUD_INSTALL_NO_MODIFY_PATH: "",
+  });
+  assert.equal(result.code, 0, result.stderr);
+  await assert.rejects(() => stat(path.join(home2, ".zshrc")), "no silent profile edit");
+  assert.match(result.stderr, /add it to your PATH/);
+
+  // Explicit opt-out stays silent about profiles entirely.
+  const home3 = path.join(dir, "home3");
+  result = await runInstall({
+    ...base,
+    HOME: home3,
+    BUD_INSTALL_ROOT: path.join(home3, ".bud"),
+    BUD_INSTALL_NO_MODIFY_PATH: "1",
+  });
+  assert.equal(result.code, 0, result.stderr);
+  await assert.rejects(() => stat(path.join(home3, ".zshrc")));
+});
+
+test("install.sh writes fish PATH config via conf.d", async (t) => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const home = path.join(dir, "home");
+
+  const result = await runInstall({
+    HOME: home,
+    SHELL: "/usr/bin/fish",
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: path.join(home, ".bud"),
+    BUD_TEST_LOG: path.join(dir, "bud.log"),
+    BUD_INSTALL_SKIP_BOOTSTRAP: "1",
+    BUD_INSTALL_NO_MODIFY_PATH: "",
+    BUD_INSTALL_MODIFY_PATH: "1",
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const conf = await readFile(path.join(home, ".config", "fish", "conf.d", "bud.fish"), "utf8");
+  assert.match(conf, /fish_add_path -g .*\.bud\/bin/);
 });
 
 test("install.sh maps supported hosts to release targets", async (t) => {

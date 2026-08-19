@@ -43,6 +43,10 @@ Covers:
 - verified archive install from a local manifest/archive server
 - macOS arm64, macOS x86_64, Linux x86_64, and Linux aarch64 target detection
 - `BUD_CLAIM_ID` forwarding to the claim step without persistence
+- PATH setup: append `~/.bud/bin` to the shell profile (zsh/bash/fish/POSIX
+  fallback) with /dev/tty confirmation under `curl | sh`; forced by
+  `BUD_INSTALL_MODIFY_PATH=1`, suppressed by `BUD_INSTALL_NO_MODIFY_PATH=1`;
+  never edits profiles silently without a tty; idempotent across reruns
 - claim-then-service bootstrap handoff (`bud claim` → `bud service install`),
   foreground fallback when service install fails, and the
   `BUD_INSTALL_FOREGROUND=1` escape hatch
