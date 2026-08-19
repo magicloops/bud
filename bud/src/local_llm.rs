@@ -24,6 +24,7 @@ use crate::util::{new_message_id, now_millis};
 pub const LOCAL_LLM_HTTP_STREAM_TYPE: &str = "local_llm_http";
 
 const DS4_SERVER_ID: &str = "ds4";
+const GENERIC_SERVER_ID: &str = "local";
 const DS4_PROVIDER_MODEL: &str = "deepseek-v4-flash";
 const DEFAULT_INITIAL_CREDIT_BYTES: u64 = 1024 * 1024;
 const DEFAULT_MAX_CHUNK_BYTES: usize = 16 * 1024;
@@ -81,7 +82,11 @@ enum LocalLlmStreamEvent {
 
 impl LocalLlmManager {
     pub fn new(args: &BudArgs, client: Client) -> Self {
-        let config = match args.local_llm_ds4_url.as_deref() {
+        let configured_url = args
+            .local_llm_ds4_url
+            .as_deref()
+            .or(args.local_llm_url.as_deref());
+        let config = match configured_url {
             Some(raw_url) => match LocalLlmConfig::from_args(raw_url, args) {
                 Ok(config) => Some(config),
                 Err(err) => {
@@ -166,50 +171,30 @@ impl LocalLlmManager {
         };
 
         let body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
-        let served = match ds4_served_model(&body) {
-            Ds4ModelMatch::Found(id) => Some(id),
-            // Lenient on malformed bodies (no `data` array): keep the
-            // canonical id and let generation surface real errors.
-            Ds4ModelMatch::Unknown => None,
-            Ds4ModelMatch::Missing => {
-                warn!(
-                    model = DS4_PROVIDER_MODEL,
-                    "Local ds4 probe succeeded but no DeepSeek v4 family model was advertised"
-                );
-                self.clear_capability();
-                return;
-            }
+        let ds4_match = ds4_served_model(&body);
+        let served_models = list_served_models(&body);
+        if served_models.is_empty() && matches!(ds4_match, Ds4ModelMatch::Missing) {
+            warn!("Local LLM probe succeeded but the server advertised no models");
+            self.clear_capability();
+            return;
+        }
+        let served = match &ds4_match {
+            Ds4ModelMatch::Found(id) => Some(id.clone()),
+            _ => None,
         };
         if let Ok(mut stored) = self.inner.served_model.lock() {
             *stored = served.clone();
         }
 
-        let capability = json!({
-            "local_api": true,
-            "servers": [
-                {
-                    "id": DS4_SERVER_ID,
-                    "provider": "ds4",
-                    "compatibility": ["openai_responses"],
-                    "request_mode": "ds4_openai_responses",
-                    "generation_path": "/v1/responses",
-                    "models": [
-                        {
-                            "id": DS4_PROVIDER_MODEL,
-                            "display_name": "ds4 DeepSeek V4",
-                            "context_window_tokens": config.context_tokens,
-                            "max_output_tokens": config.max_output_tokens
-                        }
-                    ],
-                    "concurrency": 1,
-                    "healthy": true
-                }
-            ]
-        });
+        let capability = build_capability(&config, &ds4_match, &served_models);
         if let Ok(mut stored) = self.inner.capability.lock() {
             *stored = Some(capability);
         }
-        info!("Local ds4 capability probe succeeded");
+        info!(
+            models = served_models.len(),
+            ds4 = served.is_some(),
+            "Local LLM capability probe succeeded"
+        );
     }
 
     pub async fn handle_open(&self, frame: LocalLlmOpenFrame, sender: TransportSender) {
@@ -577,7 +562,8 @@ fn validate_open_frame(frame: &LocalLlmOpenFrame) -> Result<()> {
     if frame.stream_type != LOCAL_LLM_HTTP_STREAM_TYPE {
         bail!("unsupported local LLM stream_type: {}", frame.stream_type);
     }
-    if frame.local_llm_server_id != DS4_SERVER_ID {
+    if frame.local_llm_server_id != DS4_SERVER_ID && frame.local_llm_server_id != GENERIC_SERVER_ID
+    {
         bail!(
             "unsupported local LLM server id: {}",
             frame.local_llm_server_id
@@ -586,7 +572,7 @@ fn validate_open_frame(frame: &LocalLlmOpenFrame) -> Result<()> {
     if frame.method.to_uppercase() != "POST" {
         bail!("unsupported local LLM method: {}", frame.method);
     }
-    if frame.path != "/v1/responses" {
+    if frame.path != "/v1/responses" && frame.path != "/v1/chat/completions" {
         bail!("unsupported local LLM path: {}", frame.path);
     }
     Ok(())
@@ -945,6 +931,97 @@ pub fn ds4_served_model(body: &Value) -> Ds4ModelMatch {
     Ds4ModelMatch::Missing
 }
 
+/// A model the local server actually serves, with probe-derived metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServedModel {
+    pub id: String,
+    /// vllm and friends report `max_model_len`; absent when the server
+    /// exposes no length metadata (the service applies a conservative
+    /// fallback and flags the model experimental either way).
+    pub context_window_tokens: Option<u64>,
+}
+
+pub fn is_ds4_family(id: &str) -> bool {
+    id == DS4_PROVIDER_MODEL || id.starts_with(concat!("deepseek-v4-flash", "-"))
+}
+
+/// Every served model with metadata (empty on malformed bodies).
+pub fn list_served_models(body: &Value) -> Vec<ServedModel> {
+    body.get("data")
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| {
+                    let id = model.get("id").and_then(Value::as_str)?;
+                    Some(ServedModel {
+                        id: id.to_string(),
+                        context_window_tokens: model.get("max_model_len").and_then(Value::as_u64),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Capability shape per design/generic-local-llm-support.md §3.1: the ds4
+/// server entry is emitted UNCHANGED whenever the family is present (older
+/// services keep working), and a generic `local` server advertises every
+/// served model with `validated` flags and probe-derived context windows.
+fn build_capability(
+    config: &LocalLlmConfig,
+    ds4_match: &Ds4ModelMatch,
+    served_models: &[ServedModel],
+) -> Value {
+    let mut servers = Vec::new();
+    if matches!(ds4_match, Ds4ModelMatch::Found(_) | Ds4ModelMatch::Unknown) {
+        servers.push(json!({
+            "id": DS4_SERVER_ID,
+            "provider": "ds4",
+            "compatibility": ["openai_responses"],
+            "request_mode": "ds4_openai_responses",
+            "generation_path": "/v1/responses",
+            "models": [
+                {
+                    "id": DS4_PROVIDER_MODEL,
+                    "display_name": "ds4 DeepSeek V4",
+                    "context_window_tokens": config.context_tokens,
+                    "max_output_tokens": config.max_output_tokens
+                }
+            ],
+            "concurrency": 1,
+            "healthy": true
+        }));
+    }
+    if !served_models.is_empty() {
+        let models: Vec<Value> = served_models
+            .iter()
+            .map(|model| {
+                let mut entry = json!({
+                    "id": model.id,
+                    "display_name": model.id,
+                    "validated": is_ds4_family(&model.id),
+                });
+                if let Some(tokens) = model.context_window_tokens {
+                    entry["context_window_tokens"] = json!(tokens);
+                }
+                entry
+            })
+            .collect();
+        servers.push(json!({
+            "id": GENERIC_SERVER_ID,
+            "provider": "bud_local",
+            "compatibility": ["openai_chat_completions"],
+            "request_mode": "openai_chat_completions",
+            "generation_path": "/v1/chat/completions",
+            "models": models,
+            "concurrency": 1,
+            "healthy": true
+        }));
+    }
+    json!({ "local_api": true, "servers": servers })
+}
+
 /// All advertised model ids (for `bud llm probe` output).
 pub fn list_model_ids(body: &Value) -> Vec<String> {
     body.get("data")
@@ -1063,6 +1140,51 @@ mod tests {
     }
 
     #[test]
+    fn capability_advertises_all_models_with_ds4_compat_entry() {
+        let body: Value = serde_json::from_str(VLLM_MODELS_BODY).unwrap();
+        let served = super::list_served_models(&body);
+        assert_eq!(
+            served,
+            vec![super::ServedModel {
+                id: "deepseek-v4-flash-0731".to_string(),
+                context_window_tokens: Some(1_048_576),
+            }]
+        );
+
+        let config = super::LocalLlmConfig {
+            origin: url::Url::parse("http://127.0.0.1:8888/").unwrap(),
+            context_tokens: 100_000,
+            max_output_tokens: 384_000,
+        };
+        let capability = super::build_capability(
+            &config,
+            &super::Ds4ModelMatch::Found("deepseek-v4-flash-0731".to_string()),
+            &served,
+        );
+        let servers = capability["servers"].as_array().unwrap();
+        assert_eq!(servers.len(), 2, "ds4 compat entry + generic entry");
+        assert_eq!(servers[0]["id"], "ds4");
+        assert_eq!(servers[0]["models"][0]["id"], "deepseek-v4-flash");
+        assert_eq!(servers[1]["id"], "local");
+        assert_eq!(servers[1]["provider"], "bud_local");
+        assert_eq!(servers[1]["request_mode"], "openai_chat_completions");
+        assert_eq!(servers[1]["generation_path"], "/v1/chat/completions");
+        assert_eq!(servers[1]["models"][0]["id"], "deepseek-v4-flash-0731");
+        assert_eq!(servers[1]["models"][0]["validated"], true);
+        assert_eq!(servers[1]["models"][0]["context_window_tokens"], 1_048_576);
+
+        // Non-ds4 server: generic entry only, unvalidated.
+        let other = serde_json::json!({"data": [{"id": "llama-3.3-70b", "max_model_len": 131072}]});
+        let served = super::list_served_models(&other);
+        let capability = super::build_capability(&config, &super::Ds4ModelMatch::Missing, &served);
+        let servers = capability["servers"].as_array().unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0]["id"], "local");
+        assert_eq!(servers[0]["models"][0]["validated"], false);
+        assert_eq!(servers[0]["models"][0]["context_window_tokens"], 131_072);
+    }
+
+    #[test]
     fn rewrite_model_field_translates_canonical_to_served() {
         let body = serde_json::to_vec(&serde_json::json!({
             "model": "deepseek-v4-flash",
@@ -1114,6 +1236,7 @@ mod tests {
             terminal_cols: 80,
             terminal_rows: 24,
             local_llm_ds4_url: None,
+            local_llm_url: None,
             local_llm_ds4_context_tokens: 100_000,
             local_llm_ds4_max_output_tokens: 384_000,
             debug: false,
@@ -1197,8 +1320,18 @@ mod tests {
         wrong_method.method = "GET".to_string();
         assert!(validate_open_frame(&wrong_method).is_err());
 
+        // Generic local-LLM support: chat-completions path and the
+        // generic server id are valid; anything else stays rejected.
+        let mut chat_path = open_frame();
+        chat_path.path = "/v1/chat/completions".to_string();
+        assert!(validate_open_frame(&chat_path).is_ok());
+
+        let mut generic_server = open_frame();
+        generic_server.local_llm_server_id = "local".to_string();
+        assert!(validate_open_frame(&generic_server).is_ok());
+
         let mut wrong_path = open_frame();
-        wrong_path.path = "/v1/chat/completions".to_string();
+        wrong_path.path = "/v1/embeddings".to_string();
         assert!(validate_open_frame(&wrong_path).is_err());
     }
 

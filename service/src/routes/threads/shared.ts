@@ -15,6 +15,8 @@ import {
 import {
   hasHealthyBudLocalDs4Capability,
   isDs4ProductModel,
+  parseBudLocalModelId,
+  listBudLocalGenericModels,
 } from "../../llm/local-llm-capabilities.js";
 
 type AuthorizedThreadAccess = {
@@ -192,6 +194,41 @@ export async function sendLocalModelAvailabilityError(
   reply: FastifyReply,
   args: { budId: string; model: string },
 ): Promise<boolean> {
+  // Generic bud-local ids carry their owning bud: reject cross-bud use
+  // outright (security-relevant — a thread on Bud A must not select Bud B's
+  // model), then require the bud to be online and actually serving the id.
+  const budLocal = parseBudLocalModelId(args.model);
+  if (budLocal) {
+    if (budLocal.budId !== args.budId) {
+      reply.code(424).send({
+        error: "local_model_unavailable",
+        message: "This local model belongs to a different Bud",
+        model: args.model,
+        bud_id: args.budId,
+      });
+      return true;
+    }
+    const bud = await db.query.budTable.findFirst({
+      where: eq(budTable.budId, args.budId),
+      columns: { status: true, capabilities: true },
+    });
+    const served =
+      bud?.status === "online" &&
+      listBudLocalGenericModels(bud.capabilities).some(
+        (model) => model.id === budLocal.servedModelId,
+      );
+    if (served) {
+      return false;
+    }
+    reply.code(424).send({
+      error: "local_model_unavailable",
+      message: "This Bud is not currently serving the selected local model",
+      model: args.model,
+      bud_id: args.budId,
+    });
+    return true;
+  }
+
   if (!isDs4ProductModel(args.model)) {
     return false;
   }

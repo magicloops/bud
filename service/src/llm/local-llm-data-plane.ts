@@ -16,6 +16,7 @@ import { EnvelopeSchema } from "../ws/protocol.js";
 
 export const LOCAL_LLM_HTTP_STREAM_TYPE = "local_llm_http";
 export const LOCAL_LLM_DS4_SERVER_ID = "ds4";
+export const LOCAL_LLM_GENERIC_SERVER_ID = "local";
 
 const LOCAL_LLM_MAX_CONCURRENT_STREAMS_PER_BUD = 1;
 const LOCAL_LLM_MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
@@ -61,22 +62,22 @@ type PendingOpenResult = {
   streamId: string;
   ownerUserId?: string | null;
   threadId?: string | null;
-  localLlmServerId: typeof LOCAL_LLM_DS4_SERVER_ID;
-  provider: "ds4";
+  localLlmServerId: string;
+  provider: string;
   model: string;
-  requestMode: "ds4_openai_responses";
+  requestMode: string;
 };
 
 type OpenBudLocalLlmHttpArgs = {
   budId: string;
   threadId?: string | null;
   ownerUserId?: string | null;
-  localLlmServerId: typeof LOCAL_LLM_DS4_SERVER_ID;
-  provider: "ds4";
+  localLlmServerId: string;
+  provider: string;
   model: string;
-  requestMode: "ds4_openai_responses";
+  requestMode: string;
   method: "POST";
-  path: "/v1/responses";
+  path: "/v1/responses" | "/v1/chat/completions";
   headers: Record<string, string>;
   body: Buffer;
   signal?: AbortSignal;

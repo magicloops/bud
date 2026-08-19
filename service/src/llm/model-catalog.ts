@@ -1,4 +1,4 @@
-export type ProviderId = "anthropic" | "openai" | "ds4";
+export type ProviderId = "anthropic" | "openai" | "ds4" | "bud_local";
 
 export type ReasoningLevel =
   | "none"
@@ -49,7 +49,7 @@ export type ModelCatalogEntry = {
   provider: ProviderId;
   providerModel: string;
   displayName: string;
-  family: "claude" | "gpt" | "deepseek";
+  family: "claude" | "gpt" | "deepseek" | "local";
   tier: "frontier" | "balanced" | "fast" | "local";
   sortOrder: number;
   defaultForProvider?: boolean;
@@ -323,8 +323,42 @@ export function listCatalogEntriesForProviders(providers: Iterable<string>): Mod
   return listCatalogEntries().filter((entry) => providerSet.has(entry.provider));
 }
 
+// Dynamically synthesized entries for bud-local models
+// (design/generic-local-llm-support.md): keyed by owning bud so capability
+// refreshes replace that bud's set atomically. Static catalog always wins on
+// id collisions; the global catalog listing never includes dynamic entries.
+const DYNAMIC_CATALOG_BY_BUD = new Map<string, Map<string, ModelCatalogEntry>>();
+
+export function registerDynamicCatalogEntries(
+  budId: string,
+  entries: ModelCatalogEntry[],
+): void {
+  DYNAMIC_CATALOG_BY_BUD.set(
+    budId,
+    new Map(entries.map((entry) => [entry.id, entry])),
+  );
+}
+
+export function clearDynamicCatalogEntries(budId: string): void {
+  DYNAMIC_CATALOG_BY_BUD.delete(budId);
+}
+
+export function getDynamicCatalogEntry(modelId: string): ModelCatalogEntry | null {
+  for (const entries of DYNAMIC_CATALOG_BY_BUD.values()) {
+    const entry = entries.get(modelId);
+    if (entry) {
+      return entry;
+    }
+  }
+  return null;
+}
+
 export function getCatalogEntry(modelId: string): ModelCatalogEntry | null {
-  return MODEL_CATALOG_BY_ID.get(modelId) ?? MODEL_CATALOG_BY_PROVIDER_MODEL.get(modelId) ?? null;
+  return (
+    MODEL_CATALOG_BY_ID.get(modelId) ??
+    MODEL_CATALOG_BY_PROVIDER_MODEL.get(modelId) ??
+    getDynamicCatalogEntry(modelId)
+  );
 }
 
 export function resolveProviderModel(modelId: string): string {

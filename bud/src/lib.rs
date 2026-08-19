@@ -50,7 +50,13 @@ pub async fn run(args: BudArgs) -> anyhow::Result<()> {
             let paths = LifecyclePaths::resolve(&args)?;
             match llm_cmd {
                 LlmCommand::Probe(probe_args) => {
-                    lifecycle::llm_probe(&paths, &args, probe_args.url).await
+                    lifecycle::llm_probe(
+                        &paths,
+                        &args,
+                        probe_args.url,
+                        probe_args.require_validated,
+                    )
+                    .await
                 }
                 LlmCommand::Enable(enable_args) => {
                     lifecycle::llm_enable(&paths, enable_args.url, enable_args.force).await

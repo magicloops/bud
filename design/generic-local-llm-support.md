@@ -163,6 +163,13 @@ reports the result (nice UX, not required for phase 1).
 
 ## 4. Phases
 
+> **Status (2026-08-20)**: phases 1-3 implemented on this branch — daemon
+> advertise-all capability + generic env keys + `--require-validated`
+> probe, service dynamic catalog + `bud_local` chat-completions provider +
+> per-bud product ids + cross-bud 424 guard, web experimental marker,
+> installer validated-only auto-offer. Phase 4 (tool-call smoke harness)
+> remains open; until it exists every generic model is experimental.
+
 1. **Wire + daemon**: advertise served models with `validated` flags,
    generic env keys (+ ds4 alias), `--model` selection, generation-path
    generalization. Ships alone — service ignores unknown servers today.

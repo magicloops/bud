@@ -18,6 +18,10 @@ import {
   BUD_LOCAL_DS4_COMPATIBILITY,
   BUD_LOCAL_DS4_REQUEST_MODE,
   listHealthyBudLocalDs4Models,
+  listBudLocalGenericModels,
+  synthesizeBudLocalCatalogEntry,
+  registerBudLocalModelsFromCapabilities,
+  BUD_LOCAL_GENERIC_REQUEST_MODE,
 } from "../llm/local-llm-capabilities.js";
 import { getAuthorizedBud, requireViewer } from "../auth/session.js";
 import { resolveModelContextPolicy } from "../agent/context-budget.js";
@@ -28,6 +32,8 @@ type ModelInfo = {
   provider_model: string;
   display_name: string;
   is_default: boolean;
+  /** Unvalidated for agentic tool use (generic bud-local models). */
+  experimental?: boolean;
   capabilities: {
     vision: boolean;
     tools: boolean;
@@ -191,6 +197,52 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
           },
         });
         existingIds.add(localModel.entry.id);
+      }
+
+      // Generic (experimental) bud-local models: synthesized per-bud entries
+      // from the generic chat-completions server. Ensure the dynamic catalog
+      // reflects this bud's stored capabilities even across service restarts
+      // where the bud has not re-helloed yet.
+      if (bud.status === "online") {
+        registerBudLocalModelsFromCapabilities(bud.budId, bud.capabilities);
+        for (const advertised of listBudLocalGenericModels(bud.capabilities)) {
+          const entry = synthesizeBudLocalCatalogEntry(bud.budId, advertised);
+          if (existingIds.has(entry.id)) {
+            continue;
+          }
+          const contextPolicy = resolveModelContextPolicy(entry);
+          models.push({
+            id: entry.id,
+            provider: entry.provider,
+            provider_model: entry.providerModel,
+            display_name: entry.displayName,
+            is_default: false,
+            experimental: true,
+            capabilities: {
+              vision: entry.capabilities.vision,
+              tools: entry.capabilities.tools,
+              streaming: entry.capabilities.streaming,
+              structured_outputs: entry.capabilities.structuredOutputs,
+              context_window_tokens: entry.capabilities.contextWindowTokens,
+              usable_context_window_tokens: contextPolicy.usableContextWindowTokens,
+              reserved_output_tokens: contextPolicy.reservedOutputTokens,
+              usable_input_window_tokens: contextPolicy.usableInputWindowTokens,
+              max_output_tokens: entry.capabilities.maxOutputTokens,
+            },
+            reasoning: {
+              kind: entry.reasoning.kind,
+              levels: getReasoningLevelOptions(entry),
+              default_level: entry.reasoning.defaultLevel,
+            },
+            request_mode: BUD_LOCAL_GENERIC_REQUEST_MODE,
+            compatibility: [BUD_LOCAL_GENERIC_REQUEST_MODE],
+            source: {
+              kind: "bud_local",
+              bud_id: bud.budId,
+            },
+          });
+          existingIds.add(entry.id);
+        }
       }
     }
 

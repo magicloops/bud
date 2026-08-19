@@ -527,7 +527,13 @@ pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
                 Ok((crate::local_llm::Ds4ModelMatch::Found(served), _)) => {
                     println!("llm: ds4 at {url} (serving `{served}`)");
                 }
-                _ => println!("llm: configured at {url} but no DeepSeek v4 server responded"),
+                Ok((_, models)) if !models.is_empty() => {
+                    println!(
+                        "llm: local server at {url} serving {} (experimental)",
+                        models.join(", ")
+                    );
+                }
+                _ => println!("llm: configured at {url} but no server responded"),
             }
         }
         None => println!("llm: not configured (enable with `bud llm enable <url>`)"),
@@ -583,17 +589,25 @@ pub fn logs(paths: &LifecyclePaths, lines: usize, follow: bool) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 pub const LLM_ENV_KEY: &str = "BUD_LOCAL_LLM_DS4_URL";
+pub const LLM_GENERIC_ENV_KEY: &str = "BUD_LOCAL_LLM_URL";
 const LLM_DEFAULT_CANDIDATES: &[&str] = &["http://127.0.0.1:8888/v1", "http://127.0.0.1:8000/v1"];
 
 fn configured_llm_url(paths: &LifecyclePaths, args: &BudArgs) -> Option<String> {
-    load_env_file(paths)
-        .into_iter()
+    let env = load_env_file(paths);
+    env.iter()
         .find(|(key, _)| key == LLM_ENV_KEY)
-        .map(|(_, value)| value)
+        .or_else(|| env.iter().find(|(key, _)| key == LLM_GENERIC_ENV_KEY))
+        .map(|(_, value)| value.clone())
         .or_else(|| args.local_llm_ds4_url.clone())
+        .or_else(|| args.local_llm_url.clone())
 }
 
-pub async fn llm_probe(paths: &LifecyclePaths, args: &BudArgs, url: Option<String>) -> Result<()> {
+pub async fn llm_probe(
+    paths: &LifecyclePaths,
+    args: &BudArgs,
+    url: Option<String>,
+    require_validated: bool,
+) -> Result<()> {
     let candidates: Vec<String> = match url {
         Some(url) => vec![url],
         None => {
@@ -613,16 +627,27 @@ pub async fn llm_probe(paths: &LifecyclePaths, args: &BudArgs, url: Option<Strin
     let client = reqwest::Client::new();
     for candidate in &candidates {
         match crate::local_llm::probe_ds4_url(&client, candidate).await {
-            Ok((crate::local_llm::Ds4ModelMatch::Found(served), _)) => {
-                println!("Found a DeepSeek v4 server at {candidate} (serving `{served}`).");
+            Ok((family, models)) if !models.is_empty() => {
+                let validated = matches!(family, crate::local_llm::Ds4ModelMatch::Found(_));
+                if require_validated && !validated {
+                    println!(
+                        "{candidate} serves {} model(s) ({}) but none from a validated family.",
+                        models.len(),
+                        models.join(", ")
+                    );
+                    continue;
+                }
+                if let crate::local_llm::Ds4ModelMatch::Found(served) = &family {
+                    println!("Found a DeepSeek v4 server at {candidate} (serving `{served}`).");
+                } else {
+                    println!(
+                        "Found a local LLM server at {candidate} serving {} model(s): {} (experimental - unvalidated for agentic tool use).",
+                        models.len(),
+                        models.join(", ")
+                    );
+                }
                 println!("Enable it with: bud llm enable {candidate}");
                 return Ok(());
-            }
-            Ok((_, models)) if !models.is_empty() => {
-                println!(
-                    "{candidate} answered but serves no DeepSeek v4 model (models: {}).",
-                    models.join(", ")
-                );
             }
             Ok(_) => {
                 println!("{candidate} answered but advertised no models.");
@@ -631,7 +656,7 @@ pub async fn llm_probe(paths: &LifecyclePaths, args: &BudArgs, url: Option<Strin
         }
     }
     bail!(
-        "no DeepSeek v4 server found (tried {})",
+        "no local LLM server found (tried {})",
         candidates.join(", ")
     );
 }
@@ -642,16 +667,18 @@ pub async fn llm_enable(paths: &LifecyclePaths, url: String, force: bool) -> Res
         Ok((crate::local_llm::Ds4ModelMatch::Found(served), _)) => {
             println!("Verified DeepSeek v4 at {url} (serving `{served}`).");
         }
-        Ok((_, models)) if !force => {
-            bail!(
-                "{url} answered but serves no DeepSeek v4 model (models: {}). \
-                 Rerun with --force to persist anyway.",
-                if models.is_empty() {
-                    "none".to_string()
-                } else {
-                    models.join(", ")
-                }
+        Ok((_, models)) if !models.is_empty() => {
+            println!(
+                "Verified a local LLM server at {url} serving {} model(s): {}.",
+                models.len(),
+                models.join(", ")
             );
+            println!(
+                "Note: these models are experimental for agentic use (unvalidated tool calling)."
+            );
+        }
+        Ok(_) if !force => {
+            bail!("{url} answered but advertised no models. Rerun with --force to persist anyway.");
         }
         Err(err) if !force => {
             bail!("could not reach {url}: {err}. Rerun with --force to persist anyway.");
