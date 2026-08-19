@@ -121,8 +121,20 @@ canonical entry:
   keeping `content` clean. Fallback normalization: inline
   `<think>…</think>` blocks (emitted by R1/Qwen-style models when the
   server does not split them) are extracted into reasoning rather than
-  rendered as answer text. Reasoning text is never replayed into
-  follow-up requests (matching provider semantics).
+  rendered as answer text.
+- **Reasoning replay is turn-scoped** (refined 2026-08-20 for vllm
+  prefix-cache economics): the current turn's reasoning IS replayed
+  through that turn's tool loop — dropping it would invalidate the KV
+  cache exactly at the freshly generated tokens (often the longest part
+  of an agentic step) and diverge from what tool-capable reasoning
+  templates render for the in-flight turn. Once a turn completes, its
+  reasoning is dropped: chat templates for the DeepSeek/Qwen families
+  strip prior-turn thinking on re-render (the models are trained without
+  it), and identical re-rendering is what keeps the long conversation
+  prefix cache-hot — cross-turn replay would only add context bloat.
+  This matches the hosted-provider shape (Anthropic preserves thinking
+  within the tool-use turn; OpenAI Responses replays reasoning items
+  within a turn).
 - `getHealthyBudLocalDs4Server` generalizes to `getHealthyBudLocalServers`
   with the ds4 matcher preserved as a compatibility case.
 
@@ -181,7 +193,10 @@ The original open questions were resolved:
 2. **Reasoning is normalized to the industry conventions**: structured
    `reasoning_content` (DeepSeek/vllm/SGLang) and `reasoning` (OpenRouter
    style) map into the agent's reasoning stream; inline `<think>` blocks are
-   extracted as a fallback; reasoning is never replayed into follow-ups.
+   extracted as a fallback. Replay is turn-scoped: current-turn reasoning is
+   replayed through its tool loop (KV-cache continuity on vllm + template
+   expectations); completed turns drop it (templates strip it anyway, and
+   identical re-rendering keeps the conversation prefix cache-hot).
 3. **The daemon advertises all served models; the web picker chooses per
    thread.** `bud llm enable <url>` takes no model argument.
 4. **Context windows are dynamic per model** from the probe's
