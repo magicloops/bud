@@ -15,6 +15,7 @@ pub mod proxy;
 pub mod run;
 pub mod terminal;
 pub mod transport;
+pub mod upgrade;
 pub mod util;
 pub mod version;
 
@@ -45,6 +46,9 @@ pub async fn run(args: BudArgs) -> anyhow::Result<()> {
                 ServiceCommand::Install => lifecycle::service_install(&paths),
                 ServiceCommand::Uninstall => lifecycle::service_uninstall(&paths),
             }
+        }
+        Some(BudCommand::Upgrade(upgrade_args)) => {
+            upgrade::run_upgrade(&LifecyclePaths::resolve(&args)?, upgrade_args.check).await
         }
         Some(BudCommand::Llm(llm_cmd)) => {
             let paths = LifecyclePaths::resolve(&args)?;

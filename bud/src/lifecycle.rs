@@ -484,6 +484,18 @@ pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
     let manager = ServiceManager::detect();
     println!("Bud status");
     println!("==========");
+    // Best-effort update check: short budget, silent on failure.
+    let current = crate::upgrade::current_release_version();
+    match crate::upgrade::fetch_manifest(crate::upgrade::STATUS_CHECK_TIMEOUT).await {
+        Ok(manifest) if crate::upgrade::update_available(&current, &manifest.version) => {
+            println!(
+                "version: {current} (update available: {} — run `bud upgrade`)",
+                crate::upgrade::normalize_version(&manifest.version)
+            );
+        }
+        Ok(_) => println!("version: {current} (up to date)"),
+        Err(_) => println!("version: {current}"),
+    }
     println!("service manager: {}", manager.describe());
 
     let installed = paths.service_installed(manager);
@@ -783,6 +795,12 @@ fn stop_pidfile(paths: &LifecyclePaths) -> Result<()> {
     .with_context(|| format!("failed to signal pid {pid}"))?;
     let _ = std::fs::remove_file(&paths.pid_file);
     Ok(())
+}
+
+/// Whether a pidfile-managed daemon is currently alive (upgrade uses this
+/// to decide between restart and a start hint).
+pub(crate) fn daemon_running(paths: &LifecyclePaths) -> bool {
+    read_live_pid(paths).is_some()
 }
 
 fn read_live_pid(paths: &LifecyclePaths) -> Option<u32> {

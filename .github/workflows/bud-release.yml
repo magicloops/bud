@@ -137,6 +137,9 @@ jobs:
         env:
           BUD_BUILD_COMMIT: ${{ github.sha }}
           BUD_BUILD_TARGET: ${{ matrix.target }}
+          # Baked into the binary so `bud upgrade` can compare itself
+          # against the stable manifest (release tags never bump Cargo.toml).
+          BUD_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           if [[ "${{ matrix.target }}" == *apple-darwin ]]; then
