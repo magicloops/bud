@@ -1,6 +1,11 @@
 # Interactive Sessions TODOs
 
 ## Immediate
+- **stem IPC response mismatch under concurrent requests**: live ARM logs show
+  `terminal_resize handling failed ... expected Ok, got TermiosAck` — the grid
+  termios cache refresh (`QueryTermios`) and resize share the holder IPC
+  connection and can consume each other's replies. Serialize per-connection
+  request/response pairs (or tag replies) in `bud/stem/src/client.rs`.
 - **Generic local LLM follow-ups** (from [design/generic-local-llm-support.md](./design/generic-local-llm-support.md), phases 1-3 shipped)
   - Phase 4 tool-call validation smoke harness: scripted forced-tool-call plus a
     multi-turn tool loop through the real `bud_local` chat-completions adapter;
