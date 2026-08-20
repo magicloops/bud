@@ -13,6 +13,7 @@ import {
 import { normalizeCapabilities, type ApiBud, type ApiThread } from '@/lib/api-types'
 import { toLoginRedirect } from '@/lib/route-auth'
 import { useLayout } from '@/contexts/layout-context'
+import { useAppHeightVar, useIsCompact, useIsMobile } from '@/lib/use-viewport'
 
 const toThreadSummary = (thread: ApiThread): ThreadSummary => ({
   thread_id: thread.thread_id,
@@ -93,7 +94,18 @@ function BudLayout() {
   const navigate = useNavigate()
 
   // Thread panel visibility - from global context (shared across all buds/threads)
-  const { threadPanelOpen } = useLayout()
+  const { threadPanelOpen, setThreadPanelOpen } = useLayout()
+  const isMobile = useIsMobile()
+  const isCompact = useIsCompact()
+  useAppHeightVar()
+  // Crossing into the compact range must not leave the persisted-open
+  // panel covering the whole screen as a drawer.
+  useEffect(() => {
+    if (isCompact) {
+      setThreadPanelOpen(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCompact])
 
   // Sessions modal state
   const [sessionsModalOpen, setSessionsModalOpen] = useState(false)
@@ -200,26 +212,63 @@ function BudLayout() {
     navigate({ to: '/$budId/$threadId', params: { budId, threadId } })
   }, [navigate, budId])
 
+  const threadPanel = activeBudProfile ? (
+    <ThreadPanel
+      threads={threads}
+      activeThreadId={activeThreadId}
+      onSelectThread={(threadId) => {
+        handleSelectThread(threadId)
+        if (isCompact) {
+          setThreadPanelOpen(false)
+        }
+      }}
+      onThreadDeleted={handleThreadDeleted}
+      onOpenSessions={handleOpenSessions}
+      onStatusChange={setThreadPanelStatus}
+      accentColor={palette.vibrant}
+      budLabel={activeBudProfile.label}
+      budId={budId}
+    />
+  ) : null
+
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      <BudRail
-        buds={buds}
-        activeBudId={budId}
-        onSelectBud={handleSelectBud}
-        onOpenSettings={handleOpenSettings}
-      />
-      {threadPanelOpen && activeBudProfile && (
-        <ThreadPanel
-          threads={threads}
-          activeThreadId={activeThreadId}
-          onSelectThread={handleSelectThread}
-          onThreadDeleted={handleThreadDeleted}
-          onOpenSessions={handleOpenSessions}
-          onStatusChange={setThreadPanelStatus}
-          accentColor={palette.vibrant}
-          budLabel={activeBudProfile.label}
-          budId={budId}
+    <div
+      className="flex bg-background text-foreground"
+      style={{ height: 'var(--app-height, 100dvh)' }}
+    >
+      {/* Below md the rail lives inside the thread drawer instead. */}
+      <div className="flex max-md:hidden">
+        <BudRail
+          buds={buds}
+          activeBudId={budId}
+          onSelectBud={handleSelectBud}
+          onOpenSettings={handleOpenSettings}
         />
+      </div>
+      {threadPanelOpen && !isCompact && threadPanel}
+      {threadPanelOpen && isCompact && (
+        <div className="fixed inset-0 z-40 flex">
+          <button
+            type="button"
+            aria-label="Close thread list"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setThreadPanelOpen(false)}
+          />
+          <div className="relative flex h-full max-w-[92vw] pb-[env(safe-area-inset-bottom)]">
+            {isMobile && (
+              <BudRail
+                buds={buds}
+                activeBudId={budId}
+                onSelectBud={(id) => {
+                  handleSelectBud(id)
+                  setThreadPanelOpen(false)
+                }}
+                onOpenSettings={handleOpenSettings}
+              />
+            )}
+            {threadPanel}
+          </div>
+        </div>
       )}
 
       {/* Sessions Modal */}

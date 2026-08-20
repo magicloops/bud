@@ -9,6 +9,8 @@
  */
 
 import { createFileRoute } from '@tanstack/react-router'
+import { useIsMobile } from '@/lib/use-viewport'
+import { readStoredWorkbenchView, resolveInitialViewMode, writeStoredWorkbenchView } from '@/features/threads/workbench-view'
 import { useState, useCallback, useMemo, useRef, useEffect, type FormEvent } from 'react'
 import { WorkspaceShell } from '@/components/workbench/workspace-shell'
 import { CommandComposer } from '@/components/workbench/command-composer'
@@ -122,7 +124,25 @@ function ThreadView() {
   const [error, setError] = useState<string | null>(() => getAgentStateRuntimeErrorMessage(initialAgentState))
   const [questionSubmitError, setQuestionSubmitError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
-  const [viewMode, setViewMode] = useState<ViewMode>('terminal')
+  const isMobile = useIsMobile()
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    resolveInitialViewMode(
+      typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+      readStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null),
+    ),
+  )
+  const handleViewChange = useCallback((view: ViewMode) => {
+    setViewMode(view)
+    writeStoredWorkbenchView(typeof window !== 'undefined' ? window.localStorage : null, view)
+  }, [])
+  // Growing past md with 'chat' selected: chat is no longer a peer view.
+  useEffect(() => {
+    if (!isMobile && viewMode === 'chat') {
+      setViewMode(
+        resolveInitialViewMode(false, readStoredWorkbenchView(window.localStorage)),
+      )
+    }
+  }, [isMobile, viewMode])
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
   const initializedModelSelectionThreadRef = useRef<string | null>(null)
   const persistModelSelectionSeqRef = useRef(0)
@@ -862,12 +882,18 @@ function ThreadView() {
     <WorkspaceShell
       title={currentThread.title ?? 'Untitled thread'}
       view={viewMode}
-      onViewChange={setViewMode}
+      onViewChange={handleViewChange}
+      isMobile={isMobile}
       onToggleThreads={toggleThreadPanel}
       status={status}
       fileViewLabel={activeFileEntry ? 'File' : null}
       leftPane={(
-        <div className="flex min-h-0 w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
+        <div
+          className={`min-h-0 flex-col border-black max-md:w-full md:flex md:w-80 md:border-r-4 lg:w-96 ${
+            isMobile && viewMode !== 'chat' ? 'hidden' : 'flex'
+          }`}
+          style={{ backgroundColor: 'var(--chat-bg)' }}
+        >
           <ChatTimeline
             messages={messages}
             notices={contextCompactionNotices}
@@ -885,7 +911,11 @@ function ThreadView() {
         </div>
       )}
       rightPane={(
-        <div className="relative flex flex-1 overflow-hidden">
+        <div
+          className={`relative flex-1 overflow-hidden ${
+            isMobile && viewMode === 'chat' ? 'hidden' : 'flex'
+          }`}
+        >
           <ThreadTerminalPane
             error={error}
             status={status}
@@ -907,6 +937,7 @@ function ThreadView() {
                   predictionGhost={terminalPredictionGhost}
                   onInput={sendTerminalInput}
                   onResize={sendTerminalResize}
+                  assertGeometry={!isMobile}
                 />
               ) : null
             }

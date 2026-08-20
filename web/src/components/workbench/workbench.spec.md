@@ -244,6 +244,15 @@ Node-runner coverage for structured prompt response helpers.
 
 ### `workspace-shell.tsx`
 
+Responsive shell (design/responsive-web-layout.md): below `md` it is a
+single-pane shell — `ViewMode` gains `'chat'`, the top bar shows the chat
+tab, the composer renders only with the chat view, and the debug pill is
+hidden. Panes stay MOUNTED and hide via CSS (terminal/iframe state
+preservation). Tablet (`md..lg`) shows chat (w-80) + the last-used
+workbench view; the thread panel is an overlay drawer below `lg` and the
+bud rail lives inside the drawer below `md`. View toggle buttons are
+icon-only below `md` with aria-labels.
+
 Shared frame for the two workbench routes.
 
 **Props**:
@@ -324,6 +333,10 @@ Terminal presentation component for the existing-thread workspace.
 
 ### `thread-terminal-grid-pane.tsx`
 
+`assertGeometry` prop (default true): when false the pane is a geometry
+OBSERVER (small viewports) — it never sends resizes or re-asserts, renders
+arrival-size frames in a pannable `overflow-auto` container, and keeps the
+cursor in view on local activity (grid design doc 2026-08-20 amendment).
 Grid-sync renderer (plan/terminal-grid-sync phase 2): draws
 `TerminalGridState` as DOM rows of styled run spans — no VT parsing, native
 selection/copy. Owns geometry: measures its cell box, calls `onResize`, and
