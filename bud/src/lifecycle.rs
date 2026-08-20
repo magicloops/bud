@@ -347,10 +347,13 @@ pub fn service_install(paths: &LifecyclePaths) -> Result<()> {
             std::fs::write(&unit_path, systemd_unit(paths))
                 .with_context(|| format!("cannot write {}", unit_path.display()))?;
             run_checked("systemctl", &["--user", "daemon-reload"])?;
-            run_checked(
-                "systemctl",
-                &["--user", "enable", "--now", SYSTEMD_UNIT_NAME],
-            )?;
+            run_checked("systemctl", &["--user", "enable", SYSTEMD_UNIT_NAME])?;
+            // restart, not `enable --now`: reinstalls/upgrades run over an
+            // ALREADY-RUNNING unit, and `--now` only starts stopped units —
+            // the old daemon kept running the old binary/env (seen live:
+            // a freshly enabled local-LLM endpoint never reached the
+            // picker because the pre-upgrade daemon never re-helloed).
+            run_checked("systemctl", &["--user", "restart", SYSTEMD_UNIT_NAME])?;
             // Linger keeps the user manager (and Bud) alive without an open
             // session. Best-effort: polkit may refuse on hardened distros.
             if !run_quiet("loginctl", &["enable-linger"]) {
@@ -687,18 +690,29 @@ pub async fn llm_enable(paths: &LifecyclePaths, url: String, force: bool) -> Res
             println!("warning: persisting {url} without a successful probe (--force).");
         }
     }
-    // Normalization mirrors the daemon's own config parsing; reject what the
-    // daemon would reject rather than persisting a dud.
+    // Validation IS the daemon's own config parser (normalize_ds4_url
+    // delegates to it), so what we persist here cannot be rejected at
+    // startup. New installs write the generic key; the legacy ds4-named
+    // key is removed so it can never shadow the generic one.
     crate::local_llm::normalize_ds4_url(&url)?;
-    upsert_env_var(&paths.env_file, LLM_ENV_KEY, &url)?;
-    println!("Saved {LLM_ENV_KEY} to {}.", paths.env_file.display());
+    upsert_env_var(&paths.env_file, LLM_GENERIC_ENV_KEY, &url)?;
+    let _ = remove_env_var(&paths.env_file, LLM_ENV_KEY)?;
+    println!(
+        "Saved {LLM_GENERIC_ENV_KEY} to {}.",
+        paths.env_file.display()
+    );
     println!("Apply it with: bud restart");
     Ok(())
 }
 
 pub fn llm_disable(paths: &LifecyclePaths) -> Result<()> {
-    if remove_env_var(&paths.env_file, LLM_ENV_KEY)? {
-        println!("Removed {LLM_ENV_KEY} from {}.", paths.env_file.display());
+    let removed_generic = remove_env_var(&paths.env_file, LLM_GENERIC_ENV_KEY)?;
+    let removed_legacy = remove_env_var(&paths.env_file, LLM_ENV_KEY)?;
+    if removed_generic || removed_legacy {
+        println!(
+            "Removed the local LLM endpoint from {}.",
+            paths.env_file.display()
+        );
         println!("Apply it with: bud restart");
     } else {
         println!("Local LLM endpoint was not configured; nothing to do.");
@@ -952,6 +966,22 @@ mod tests {
         assert!(!content.contains(LLM_ENV_KEY));
         assert!(content.contains("BUD_TERMINAL_ENABLED=true"));
         assert!(!remove_env_var(&path, LLM_ENV_KEY).unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn llm_enable_key_migration_prefers_generic_and_removes_legacy() {
+        let dir = std::env::temp_dir().join(format!("bud-llm-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bud.env");
+        std::fs::write(&path, "BUD_LOCAL_LLM_DS4_URL='http://127.0.0.1:8888/v1'\n").unwrap();
+
+        // What llm_enable does post-migration: generic upsert + legacy removal.
+        upsert_env_var(&path, LLM_GENERIC_ENV_KEY, "http://127.0.0.1:8888/v1").unwrap();
+        remove_env_var(&path, LLM_ENV_KEY).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("BUD_LOCAL_LLM_URL='http://127.0.0.1:8888/v1'"));
+        assert!(!content.contains("BUD_LOCAL_LLM_DS4_URL"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

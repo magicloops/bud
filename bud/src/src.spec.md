@@ -229,8 +229,7 @@ model: the ds4 server entry is preserved unchanged when the family is
 present, and a generic `local` server (provider `bud_local`, request mode
 `openai_chat_completions`, path `/v1/chat/completions`) lists all models
 with `validated` flags and probe-derived context windows
-(`list_served_models`/`build_capability`). `BUD_LOCAL_LLM_URL` is the
-generic env key (ds4 var wins as family alias); the open-frame policy
+(`list_served_models`/`build_capability`). `BUD_LOCAL_LLM_URL` is the generic env key (`bud llm enable` writes it and removes the legacy ds4-named key; the ds4 var wins as family alias when present); the config URL parser accepts the documented `/v1` form and reduces any path to the origin (probe/enable delegate to the SAME parser — two-parser drift once silently discarded persisted config at startup); the open-frame policy
 allows server ids `ds4`/`local` and both generation paths.
 
 Daemon-side Bud-local LLM adapter for ds4.

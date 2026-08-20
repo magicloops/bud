@@ -703,7 +703,7 @@ fn drain_events(
     }
 }
 
-fn normalize_loopback_http_origin(raw_url: &str) -> Result<Url> {
+pub(crate) fn normalize_loopback_http_origin(raw_url: &str) -> Result<Url> {
     let trimmed = raw_url.trim();
     let with_scheme = if trimmed.contains("://") {
         trimmed.to_string()
@@ -712,19 +712,21 @@ fn normalize_loopback_http_origin(raw_url: &str) -> Result<Url> {
     };
     let mut parsed = Url::parse(&with_scheme)?;
     if parsed.scheme() != "http" {
-        bail!("local ds4 URL must use http://");
+        bail!("local LLM URL must use http://");
     }
-    if parsed.path() != "/" && !parsed.path().is_empty() {
-        bail!("local ds4 URL must be an origin without a path");
-    }
+    // The documented form everywhere is `http://host:port/v1`; the daemon
+    // joins its own API paths, so ANY path is reduced to the origin. (This
+    // parser rejecting `/v1` while `bud llm enable` accepted it silently
+    // discarded the persisted config at startup — found live on the first
+    // ARM rollout.)
     if parsed.query().is_some() || parsed.fragment().is_some() {
-        bail!("local ds4 URL must not include query or fragment");
+        bail!("local LLM URL must not include query or fragment");
     }
     let host = parsed
         .host_str()
-        .ok_or_else(|| anyhow!("local ds4 URL must include a host"))?;
+        .ok_or_else(|| anyhow!("local LLM URL must include a host"))?;
     if !is_loopback_host(host) {
-        bail!("local ds4 URL host must be localhost or a loopback IP");
+        bail!("local LLM URL host must be localhost or a loopback IP");
     }
     parsed.set_path("/");
     Ok(parsed)
@@ -1077,19 +1079,11 @@ pub async fn probe_ds4_url(
     Ok((ds4_served_model(&body), list_model_ids(&body)))
 }
 
-/// Accepts the documented `http://host:port/v1` form (any path is reduced to
-/// the origin, matching LocalLlmConfig's own normalization).
+/// Accepts the documented `http://host:port/v1` form. Delegates to the
+/// daemon's OWN config parser so `bud llm enable` can never persist a URL
+/// the daemon would reject at startup (two-parser drift did exactly that).
 pub fn normalize_ds4_url(raw: &str) -> anyhow::Result<Url> {
-    let url = Url::parse(raw)?;
-    match url.scheme() {
-        "http" | "https" => {}
-        other => anyhow::bail!("unsupported scheme for local LLM URL: {other}"),
-    }
-    let mut origin = url.clone();
-    origin.set_path("/");
-    origin.set_query(None);
-    origin.set_fragment(None);
-    Ok(origin)
+    normalize_loopback_http_origin(raw)
 }
 
 #[cfg(test)]
@@ -1182,6 +1176,29 @@ mod tests {
         assert_eq!(servers[0]["id"], "local");
         assert_eq!(servers[0]["models"][0]["validated"], false);
         assert_eq!(servers[0]["models"][0]["context_window_tokens"], 131_072);
+    }
+
+    #[test]
+    fn loopback_origin_parser_accepts_the_documented_v1_form() {
+        // The value `bud llm enable` persists and the installer documents.
+        for raw in [
+            "http://127.0.0.1:8888/v1",
+            "http://127.0.0.1:8888/v1/",
+            "http://localhost:8000",
+            "127.0.0.1:8888/v1",
+        ] {
+            let origin = super::normalize_loopback_http_origin(raw)
+                .unwrap_or_else(|e| panic!("{raw} rejected: {e}"));
+            assert_eq!(origin.path(), "/");
+        }
+        assert!(super::normalize_loopback_http_origin("https://127.0.0.1:8888/v1").is_err());
+        assert!(super::normalize_loopback_http_origin("http://10.0.0.5:8888/v1").is_err());
+        assert!(super::normalize_loopback_http_origin("http://127.0.0.1:8888/v1?x=1").is_err());
+        // probe/enable normalization is the SAME parser (drift regression).
+        assert_eq!(
+            super::normalize_ds4_url("http://127.0.0.1:8888/v1").unwrap(),
+            super::normalize_loopback_http_origin("http://127.0.0.1:8888/v1").unwrap()
+        );
     }
 
     #[test]
@@ -1290,11 +1307,13 @@ mod tests {
 
     #[test]
     fn loopback_origin_normalization_rejects_unsafe_targets() {
+        // NOTE: paths (the documented `/v1` form) are ACCEPTED and reduced
+        // to the origin — rejecting them silently discarded `bud llm
+        // enable`'s persisted config at startup (live ARM finding).
         for raw_url in [
             "https://127.0.0.1:8000",
             "http://127.0.0.0:8000",
             "http://192.168.1.10:8000",
-            "http://localhost:8000/v1",
             "http://localhost:8000?x=1",
         ] {
             assert!(
