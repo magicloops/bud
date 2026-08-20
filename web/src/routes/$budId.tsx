@@ -254,7 +254,10 @@ function BudLayout() {
             className="absolute inset-0 bg-black/40"
             onClick={() => setThreadPanelOpen(false)}
           />
-          <div className="relative flex h-full max-w-[92vw] pb-[env(safe-area-inset-bottom)]">
+          {/* Opaque base: the panel's translucent bg-secondary/40 (and the
+              rail's bg-less aside) are composited over the app background
+              in-flow, but as an overlay they showed the chat through. */}
+          <div className="relative flex h-full max-w-[92vw] bg-background pb-[env(safe-area-inset-bottom)]">
             {isMobile && (
               <BudRail
                 buds={buds}
