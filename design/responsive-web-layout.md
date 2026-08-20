@@ -135,6 +135,13 @@ internals beyond their containers (their control rows already
 
 ## 4. Phases
 
+> **Status (2026-08-20)**: phases 1-4 implemented on this branch and
+> browser-validated at 390/768/1400 (16 interactive scenarios: single-pane
+> shell, drawer open/close, observer-mode pannable grid, composer gating,
+> tablet two-pane, desktop unchanged). Remaining for real devices: iOS
+> Safari/Android Chrome pass (soft keyboard, toolbar collapse, programmatic
+> IME focus from tap).
+
 1. **Viewport foundation** — `dvh`, `visualViewport` var, safe-area,
    scroll audit. Ships alone; improves desktop-in-small-window too.
 2. **Mobile shell** — breakpoint, `ViewMode + 'chat'`, drawers, top-bar

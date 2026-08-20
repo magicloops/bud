@@ -181,7 +181,7 @@ function NewThreadView() {
       onToggleThreads={toggleThreadPanel}
       status={status}
       leftPane={(
-        <div className="flex w-96 flex-col border-r-4 border-black" style={{ backgroundColor: 'var(--chat-bg)' }}>
+        <div className="flex w-full flex-col border-black md:w-80 md:border-r-4 lg:w-96" style={{ backgroundColor: 'var(--chat-bg)' }}>
           <div className="flex flex-1 items-center justify-center p-4">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium">Start a new conversation</p>

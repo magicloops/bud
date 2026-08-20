@@ -178,3 +178,14 @@ built and nothing blocks flipping later.
 2. Selection/copy UX on a grid renderer (needs logical-line metadata from emu reflow info).
 3. Scrollback: server-side emu history vs client splice of byte-derived history (lean: emu scrollback lines over the same delta channel, capped). Note: byte-derived history is now a DOCUMENTED §A limitation — a raw byte tail after TUI-heavy use renders ~zero lines (alt-screen bytes leave no scrollback), so emu-line scrollback is the accepted resolution, not just a preference.
 4. Where the flag lives during coexistence (per-user? per-session?).
+
+
+## Amendment (2026-08-20): small viewports are geometry observers
+
+Per [responsive-web-layout.md](./responsive-web-layout.md) §3.4: below the
+web app's `md` breakpoint the grid pane never sends `terminal_resize` and
+never re-asserts geometry — it renders whatever size frames arrive at
+inside a pannable container with keep-cursor-in-view on local activity.
+"Last resize wins" therefore only ever applies between geometry-owning
+(desktop/tablet) viewers; a phone joining a shared thread cannot reshape
+the PTY.

@@ -8,6 +8,11 @@ type WorkspaceShellProps = {
   onToggleThreads: () => void
   status: WorkbenchStatus
   fileViewLabel?: string | null
+  /** Below md: single-pane shell — chat becomes a peer view with its own
+   *  tab, the composer shows only with the chat view, and the debug pill
+   *  is hidden. Panes stay MOUNTED and hide via CSS (the terminal/iframe
+   *  state-preservation rule). */
+  isMobile?: boolean
   leftPane: ReactNode
   rightPane: ReactNode
   composer: ReactNode
@@ -21,6 +26,7 @@ export function WorkspaceShell({
   onToggleThreads,
   status,
   fileViewLabel = null,
+  isMobile = false,
   leftPane,
   rightPane,
   composer,
@@ -35,13 +41,14 @@ export function WorkspaceShell({
         onToggleThreads={onToggleThreads}
         status={status}
         fileViewLabel={fileViewLabel}
+        showChatTab={isMobile}
       />
       <div className="flex flex-1 overflow-hidden">
         {leftPane}
         {rightPane}
       </div>
-      {composer}
-      {debugPanel}
+      {(!isMobile || view === 'chat') && composer}
+      {!isMobile && debugPanel}
     </>
   )
 }

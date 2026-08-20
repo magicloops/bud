@@ -35,6 +35,14 @@ type ThreadTerminalGridPaneProps = {
   predictionGhost?: string
   onInput: (text: string, options?: { flushImmediately?: boolean }) => void
   onResize: (cols: number, rows: number) => void
+  /**
+   * Geometry ownership (design/responsive-web-layout.md §3.4): when false
+   * the pane is an OBSERVER — it never resizes the shared PTY and renders
+   * whatever size frames arrive at inside a pannable container, with
+   * keep-cursor-in-view on local activity. Small viewports must not
+   * silently reshape the terminal for every other viewer.
+   */
+  assertGeometry?: boolean
 }
 
 const FONT_STACK = '"JetBrains Mono", SFMono-Regular, Menlo, monospace'
@@ -96,6 +104,7 @@ export function ThreadTerminalGridPane({
   predictionGhost = '',
   onInput,
   onResize,
+  assertGeometry = true,
 }: ThreadTerminalGridPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -134,7 +143,12 @@ export function ThreadTerminalGridPane({
   // Geometry ownership: the renderer measures its own cell box and asks the
   // server for exactly that many cells; frames then arrive at that size (or
   // are rejected by the reducer until the resize's full frame lands).
+  const assertGeometryRef = useRef(assertGeometry)
+  assertGeometryRef.current = assertGeometry
   const measureAndResize = useCallback(() => {
+    if (!assertGeometryRef.current) {
+      return // observer mode: never resize the shared PTY
+    }
     const container = containerRef.current
     const measure = measureRef.current
     if (!container || !measure) {
@@ -200,7 +214,7 @@ export function ThreadTerminalGridPane({
       geometryConvergedRef.current = true
       return
     }
-    if (!geometryConvergedRef.current) {
+    if (!geometryConvergedRef.current && assertGeometryRef.current) {
       onResize(last.cols, last.rows)
     }
   }, [state.seeded, state.cols, state.rows, onResize, connected])
@@ -506,6 +520,17 @@ export function ThreadTerminalGridPane({
   const ghostCells = Array.from(ghost).length
   // DECSCUSR: vim's insert-mode beam, underline shells, etc. Older daemons
   // omit the facts — render a blinking block like the bytes path.
+  const cursorElRef = useRef<HTMLDivElement | null>(null)
+  // Observer mode keep-cursor-in-view (decision record #3): the PTY may be
+  // wider than the phone, so pan the grid to the cursor (and ghost tail)
+  // whenever it moves while this pane owns focus — typing stays visible.
+  useEffect(() => {
+    if (assertGeometry || !paneFocused) {
+      return
+    }
+    cursorElRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [assertGeometry, paneFocused, state.cursor.row, state.cursor.col, predictionGhost])
+
   const cursorShape = state.cursor.shape ?? 'block'
   const cursorBlink = state.cursor.blink ?? true
   const cursorStyle = useMemo<React.CSSProperties>(() => {
@@ -594,6 +619,7 @@ export function ThreadTerminalGridPane({
         lineHeight: `${LINE_HEIGHT_PX}px`,
         backgroundColor: GRID_DEFAULT_BG,
         color: GRID_DEFAULT_FG,
+        touchAction: 'manipulation',
       }}
       data-testid="terminal-grid-pane"
     >
@@ -606,8 +632,14 @@ export function ThreadTerminalGridPane({
       >
         {'W'.repeat(10)}
       </span>
-      <div ref={scrollRef} onScroll={handleScroll} className="h-full w-full overflow-y-auto">
-        <div className="flex min-h-full flex-col justify-end">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className={`h-full w-full ${assertGeometry ? 'overflow-y-auto' : 'overflow-auto'}`}
+      >
+        <div
+          className={`flex min-h-full flex-col justify-end ${assertGeometry ? '' : 'w-max min-w-full'}`}
+        >
           {!state.altScreen &&
             state.scrollback.map((runs, index) => <GridRow key={`sb-${index}`} runs={runs} />)}
           <div ref={gridBlockRef} style={{ position: 'relative' }}>
@@ -619,7 +651,9 @@ export function ThreadTerminalGridPane({
                 {ghost}
               </span>
             )}
-            {cursorVisible && <div data-testid="terminal-cursor" style={cursorStyle} />}
+            {cursorVisible && (
+              <div ref={cursorElRef} data-testid="terminal-cursor" style={cursorStyle} />
+            )}
             <textarea
               ref={imeRef}
               style={imeStyle}
