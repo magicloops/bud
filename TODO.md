@@ -1,6 +1,18 @@
-# Interactive Sessions TODOs
+# Bud TODOs
+
+> Pruned 2026-08-20: the tmux-era terminal items (wait_for cleanup, tmux
+> preflight, the 10ms submit pause, attached-tmux fidelity, PTY-backed
+> browser attach, session reattach/roster, schema deploy parity, base-dir
+> local mode) were resolved or obsoleted by the stem migration, the grid
+> renderer, and the managed-daemon-lifecycle work. History is in git.
 
 ## Immediate
+
+- **Responsive web: real-device pass**
+  - iOS Safari / Android Chrome against prod: soft-keyboard viewport
+    behavior, toolbar collapse, programmatic IME focus from tap — the three
+    things headless Chromium cannot emulate
+    ([design/responsive-web-layout.md](./design/responsive-web-layout.md) status).
 - **Multi-server local LLM support** (deferred by design — one origin per Bud)
   - `BUD_LOCAL_LLM_URL` is a single origin; multiple models behind that one
     endpoint already work (advertise-all + per-thread picker). Multiple
@@ -30,9 +42,6 @@
     turn-scoped replay behavior under vllm prefix caching.
   - Fallback context default when a server reports no length metadata (probe
     coverage varies outside vllm): currently 8k; revisit once real servers land.
-- **Pre-production wait mode cleanup**
-  - Before production launch, remove compatibility-only `wait_for` modes `screen_stable` and `shell_ready` from the service and Bud daemon once search/telemetry confirms no stored tool rows, old clients, or internal callers still depend on them.
-  - Phase 5 of [plan/improve-observe](./plan/improve-observe/phase-5-wait-for-mode-cleanup.md) removed `shell_ready` from model-facing schemas and prompt guidance; this TODO tracks the later lower-level compatibility removal.
 - **LLM first visible token latency / prompt caching**
   - Follow up on the 2-4s first-visible-token gap documented in [debug/llm-first-visible-token-latency.md](./debug/llm-first-visible-token-latency.md).
   - New-thread testing showed roughly 1s responses, so prioritize provider-side prompt/cache behavior, context size, max-output defaults, and instrumentation before assuming a local service bottleneck.
@@ -58,6 +67,7 @@
   - Follow up with a separate design/implementation pass if product needs authoritative non-tool timing, for example by timestamping assistant draft events or introducing an explicit turn-summary contract, rather than overloading the new tool-timing fields.
 - **Web refactor test hardening**
   - Add the deeper automated browser/runtime coverage outlined in [design/web-refactor-test-hardening.md](./design/web-refactor-test-hardening.md), with priority on transcript hook behavior, agent stream reconnect/resync, terminal reconnect/recovery, and a small route-composition smoke layer.
+  - The grid-renderer and responsive-layout browser probes (`plan/terminal-grid-sync/harness/`, `plan/responsive-web-layout/`) are the working pattern to build on.
 - **Web proxy follow-on hardening**
   - Finish the remaining proxy hardening outlined in [design/web-proxy-follow-on-hardening.md](./design/web-proxy-follow-on-hardening.md).
   - Prioritize daemon/local WebSocket echo tests, authorized browser-to-local gateway echo tests, daemon-disconnect cleanup coverage, per-site/per-Bud limit tests, and product-visible diagnostics for local connect failures, auth-blocked embeds, connection limits, open timeouts, and transport loss.
@@ -68,52 +78,31 @@
 - **Streaming tool-call assembly previews**
   - Implement the additive `agent.tool_call_preview` direction from [design/streaming-tool-call-assembly.md](./design/streaming-tool-call-assembly.md), preserving final `agent.tool_call` as the authoritative executable/waiting boundary.
   - Start with earlier `client_id` allocation in `AgentModelRunner`, raw argument deltas for known tools, and structured non-interactive previews for `ask_user_questions`.
-- **Schema deploy parity (`db:migrate` vs `db:push`)**
-  - Align staging/production schema rollout with the actual repo workflow: either generate and commit Drizzle SQL migrations for deploy-time `pnpm db:migrate`, or intentionally switch deploys to the audited `pnpm db:push` wrapper.
-  - Capture the current `message.client_id` staging gap as the concrete example: predeploy `pnpm db:migrate` ran, but no generated migration existed, so staging never received the new column before the backfill script ran.
 - **Send-message client_id idempotency hardening**
   - Follow up on [review/send-message-client-id-idempotency-review.md](./review/send-message-client-id-idempotency-review.md).
   - Add strict duplicate validation so reused `client_id` requests with conflicting text/cwd/request fingerprint return `409` without side effects.
   - Close the inserted-but-not-started gap by adding a durable send/agent-start marker or equivalent recovery path, so a retry after a lost HTTP response can restart or resume the assistant turn exactly once.
 - **Cancel vs interrupt contract**
   - Decide and implement the product/API contract for agent cancel vs terminal interrupt so web and mobile do not need to guess whether "stop" means aborting the LLM loop, sending Ctrl+C to the terminal, or both.
-- **Bud base dir + local identity mode**
-  - Implement the launch-cwd-based Bud base dir model from [design/bud-base-dir-and-local-identity.md](./design/bud-base-dir-and-local-identity.md), including `--base-dir`, `--local`, local identity under `<base-dir>/.bud/`, and the same-change service-side terminal session cwd wiring.
 - **Self-serve Bud install flow**
-  - Implement the authenticated `+`-button install modal from [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md), including machine-wide vs local install commands, one-time install tokens, generic `install.sh`, and daemon fallback to the QR/browser claim flow.
-- **Bud terminal dependency preflight**
-  - Show an actionable startup error, or fail fast, when Bud is launched with terminal support enabled but `tmux` is not installed, instead of allowing the claim/connect flow to proceed into handshake or runtime failures.
-- **TUI submit semantics beyond the 10ms tmux pause**
-  - The current Bud-side `text -> 10ms pause -> Enter` dispatch fixes Codex prompt submission, but it is still a timing-based workaround rather than a principled transport contract.
-  - Follow up on stronger options such as explicit pane targeting, alternate submit-key semantics for TUIs that do not use plain `Enter`, or a state-based post-text submit trigger instead of a fixed sleep.
-- **Session observability**
-  - Expose per-session metrics (bytes in/out, writer rotations, truncate counts) via logs + `/metrics` to feed future dashboards.
-  - Surface `last_activity_at` + idle TTLs in `/api/sessions` so the UI can flag stale sessions.
-- **Reattach & roster UX**
-  - Implement `/api/sessions` list + UI to reattach, show SSE status badges outside the interactive pane, and warn when the writer seat is free.
-  - Offer "Copy as text" / download for `session_log` (ANSI-stripped + raw) once soft caps trigger.
-- **Docs / QA**
-  - Fold the manual verification recipe into README/developer docs and reference the new SSE endpoints.
-  - Extend integration coverage for `/term` (attach → resize → Take writer) to guard against regressions.
+  - Implement the authenticated `+`-button install modal from [design/self-serve-bud-install-command-and-local-mode.md](./design/self-serve-bud-install-command-and-local-mode.md), including machine-wide vs local install commands, one-time install tokens, and daemon fallback to the QR/browser claim flow. (`install.sh` and the claim flow exist; the web surface does not.)
+- **Terminal/session observability**
+  - Expose per-session metrics (bytes in/out, holder restarts, ring truncations) via logs + `/metrics` to feed future dashboards.
+  - Surface `last_activity_at` + idle TTLs to the UI so stale sessions are visible.
 
 ## Future / Long-Term
+
 - **Mobile logout + account switching**
   - Implement the Bud-owned hosted logout and explicit account-switch contract from [design/mobile-auth-logout-and-account-switch.md](./design/mobile-auth-logout-and-account-switch.md) so mobile sign-out clears the hosted auth session and a follow-up sign-in can reliably choose a different account.
-- **Attached tmux / terminal-query fidelity**
-  - Explore a future terminal architecture that keeps a direct stdin/stdout path attached to tmux instead of relying only on detached sessions plus `capture-pane` / `pipe-pane`.
-  - The current detached model is sufficient for screen capture and output streaming, but it does not faithfully support OSC/CSI palette queries, terminal-state queries, or other emulator reply flows used by TUIs like Codex during startup.
-  - This work should evaluate whether Bud needs an attached tmux client, a true PTY bridge, or another direct terminal I/O path so browser-rendered terminals can answer queries correctly without timing out on fallback logic.
-- **Full PTY-backed browser terminal attach**
-  - If a real workflow proves the current browser escape hatch needs full terminal-emulator fidelity, design and implement a separate PTY-backed browser attach path instead of stretching the phase-1 intent-only model further.
-  - This follow-up should cover emulator-originated replies, broader modifier support, and any other terminal-protocol gaps intentionally left out of [plan/browser-terminal-input-contract/implementation-spec.md](./plan/browser-terminal-input-contract/implementation-spec.md).
-- **Session durability enhancements**
-  - tmux is already the default terminal backend. Future work: reconnect to existing tmux sessions across Bud restarts, scrollback replay, multi-viewers.
+- **First-class multi-viewer terminal**
+  - Today: last-resize-wins with converge-once, and small viewports are
+    geometry observers. A real policy (smallest-client-wins, or per-viewer
+    virtual geometry with server-side reflow) is deliberately deferred —
+    see the grid-sync design doc's non-goals.
 - **Session transcripts & exports**
   - Persist transcripts (UTF-8/plain + ANSI-stripped) to blob storage and expose download/export endpoints.
 - **GC & quotas**
   - Enforce idle TTL / hard TTL with cleanup jobs and soft quotas per tenant.
 - **Monitoring & admin tooling**
-  - Centralized metrics dashboards (sessions open, writer rotations, errors).
+  - Centralized metrics dashboards (sessions open, holder restarts, errors).
   - Admin API to list/force-close sessions and view logs.
-
-We can call the interactive sessions feature "complete" once the reliability polish is finished (xterm.js, SSE, docs/tests), with multi-viewer/export tracked as follow-on enhancements.
