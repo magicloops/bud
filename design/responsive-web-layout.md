@@ -159,15 +159,24 @@ emulation) — same headless-Chromium pattern as the grid validation.
 - Per-viewer virtual terminal geometry (option C above).
 - Offline/PWA packaging.
 
-## 6. Open Questions
+## 6. Decision Record (2026-08-20)
 
-- Tablet two-pane: is chat+terminal the right default pair, or should
-  the last-used workbench view win?
-- Should the thread list be a *route* on phones (browser back closes it)
-  rather than a drawer? Back-button semantics matter more on mobile web.
+1. **Thread list is a drawer**, not a route. Selecting a thread closes
+   it; the browser back button keeps its ordinary navigation meaning.
+2. **Tablet two-pane shows chat + the last-used workbench view**
+   (persisted `ViewMode`, defaulting to terminal) — preserves the user's
+   working context across breakpoint changes instead of forcing a
+   default pair.
+3. **Predictive echo stays enabled on mobile.** Typing latency matters
+   most on mobile networks, and the ghost tail renders adjacent to the
+   authoritative cursor regardless of PTY width. Observer mode adds
+   keep-cursor-in-view: every local keystroke auto-pans the grid
+   container so the cursor (and ghost) stay visible while typing.
+   Tap-to-focus drives the hidden IME textarea — typing on mobile is a
+   first-class requirement, not an afterthought.
+
+## 7. Remaining Open Questions
+
 - Does the `md` breakpoint switch on width alone, or width + `pointer:
   coarse` (a narrow desktop window arguably wants the mobile shell too —
   width-alone is simpler and probably right)?
-- Observer-mode terminal + predictive echo: ghosts render at the PTY's
-  desktop width on a phone — acceptable, or should predictions disable
-  below `md`?
