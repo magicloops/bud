@@ -110,6 +110,16 @@ pub enum BudCommand {
     /// Manage the optional local LLM endpoint (DeepSeek v4).
     #[command(subcommand)]
     Llm(LlmCommand),
+    /// Self-update from the stable release channel (checksum-verified
+    /// atomic swap; restarts the daemon, terminal sessions survive).
+    Upgrade(UpgradeArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct UpgradeArgs {
+    /// Only report whether an update is available.
+    #[arg(long, default_value_t = false)]
+    pub check: bool,
 }
 
 #[derive(Debug, Subcommand, Clone)]

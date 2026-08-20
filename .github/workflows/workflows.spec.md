@@ -20,6 +20,7 @@ The workflow:
   (`actions/checkout@v5`, `actions/upload-artifact@v7`, and
   `actions/download-artifact@v7`)
 - installs Rust stable plus the target triple
+- bakes `BUD_BUILD_VERSION` (the release tag) into the binary for `bud upgrade`'s self-comparison
 - installs `protoc` in CI so end-user machines do not need protobuf tooling
 - records Rust, target, runner, and commit metadata in logs
 - builds release binaries with `BUD_BUILD_COMMIT` and `BUD_BUILD_TARGET`

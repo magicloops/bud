@@ -189,6 +189,14 @@ the base-dir design lands).
 
 ## 5. Status
 
+**Phase 2 (`bud upgrade`) implemented 2026-08-20**: manifest check,
+checksum-verified atomic swap (ETXTBSY-safe rename), service restart with
+holder survival, `--check` mode, and a best-effort update line in
+`bud status`. Release builds now bake `BUD_BUILD_VERSION` so binaries know
+their release tag; validated live against the promoted v0.1.6 manifest
+(real download, real checksum, real install).
+
+
 Phase 1 implemented on this branch (see
 [plan/managed-daemon-lifecycle/phase-1-service-and-verbs.md](../plan/managed-daemon-lifecycle/phase-1-service-and-verbs.md)):
 lifecycle module + verbs, `bud claim`, installer handoff, doctor

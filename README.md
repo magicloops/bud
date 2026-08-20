@@ -25,7 +25,8 @@ user agent on macOS, a systemd user service on Linux — so it survives
 terminal close, logout, and reboot. Afterwards:
 
 ```sh
-bud status      # service state, daemon pid, identity, server, holder count
+bud status      # version + update check, service state, pid, identity, holders
+bud upgrade     # self-update from the stable channel (sessions survive)
 bud restart     # terminal sessions keep running and reattach
 bud stop        # stops the daemon only — never terminal sessions
 bud logs -f     # tail the daemon log (~/.bud/logs/daemon.log)

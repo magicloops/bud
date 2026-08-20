@@ -27,7 +27,7 @@ Crate root for the daemon runtime.
 CLI and environment configuration.
 
 - defines `BudArgs`
-- defines `BudCommand` (doctor, claim, run, start/stop/restart/status/logs, service install/uninstall, llm probe/enable/disable), `ServiceCommand`, `LlmCommand`, `LogsArgs`, `DoctorArgs`, and `DoctorFormat`
+- defines `BudCommand` (doctor, claim, run, start/stop/restart/status/logs, service install/uninstall, llm probe/enable/disable, upgrade), `ServiceCommand`, `LlmCommand`, `LogsArgs`, `DoctorArgs`, and `DoctorFormat`
 - owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
 - owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` (default 384000)
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
@@ -77,6 +77,19 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
   connect-time capability), persists/removes `BUD_LOCAL_LLM_DS4_URL` in
   `bud.env`; `status` reports the llm state (serving id / unreachable / not
   configured)
+
+### `upgrade.rs`
+
+`bud upgrade [--check]` (design/managed-daemon-lifecycle.md phase 2):
+fetches the get.bud.dev stable manifest (`BUD_UPGRADE_BASE_URL`
+override), compares the baked release version (`BUD_BUILD_VERSION`,
+dev fallback `v<crate>`), downloads the target's archive
+(baked `BUD_BUILD_TARGET`, runtime os/arch fallback), verifies sha256,
+extracts the binary, and installs via the ETXTBSY-safe staged rename.
+Restarts the managed service (or pidfile daemon) so the new inode runs;
+"different version" — including rollbacks — counts as an update, since
+the manifest is the authority on stable. `bud status` gains a
+best-effort version/update line (1.5s budget, silent on failure).
 
 ### `app.rs`
 
