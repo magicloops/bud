@@ -1,11 +1,6 @@
 # Interactive Sessions TODOs
 
 ## Immediate
-- **stem IPC response mismatch under concurrent requests**: live ARM logs show
-  `terminal_resize handling failed ... expected Ok, got TermiosAck` — the grid
-  termios cache refresh (`QueryTermios`) and resize share the holder IPC
-  connection and can consume each other's replies. Serialize per-connection
-  request/response pairs (or tag replies) in `bud/stem/src/client.rs`.
 - **Multi-server local LLM support** (deferred by design — one origin per Bud)
   - `BUD_LOCAL_LLM_URL` is a single origin; multiple models behind that one
     endpoint already work (advertise-all + per-thread picker). Multiple
