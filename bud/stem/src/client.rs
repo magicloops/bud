@@ -22,6 +22,13 @@ pub struct HolderClient {
     /// The holder's Hello-answered protocol version: gates ops the holder
     /// predates (older holders close the connection on unknown variants).
     holder_proto_version: u16,
+    /// Replies the holder still owes us for requests whose futures were
+    /// CANCELLED between write and read (task aborts, caller timeouts). The
+    /// protocol has no request ids, so an orphaned reply would otherwise be
+    /// consumed by the NEXT request as its own answer — seen live as
+    /// `terminal_resize ... expected Ok, got TermiosAck` when a grid-watch
+    /// re-arm aborted a mid-flight termios query. Drained before each write.
+    replies_owed: u32,
 }
 
 /// Input-relevant PTY line-discipline flags (v2 `QueryTermios`).
@@ -137,6 +144,7 @@ impl HolderClient {
                 stream,
                 session_dir: session_dir.to_path_buf(),
                 holder_proto_version: info.proto_version,
+                replies_owed: 0,
             },
             info,
         ))
@@ -147,10 +155,28 @@ impl HolderClient {
     }
 
     async fn request(&mut self, msg: &ClientMsg) -> Result<HolderMsg> {
+        // Drain replies owed by cancelled predecessors so this request never
+        // reads someone else's ack. The owed counter only decrements after a
+        // frame is fully read, so cancellation ANYWHERE (including inside
+        // this drain) keeps the accounting correct. A cancel that lands
+        // mid-frame-read can still desync the byte stream itself; that
+        // window is a local-UDS read and practically unhittable compared to
+        // the write→read gap this closes.
+        while self.replies_owed > 0 {
+            let payload = timeout(OP_TIMEOUT, ipc::read_frame_async(&mut self.stream))
+                .await
+                .map_err(|_| {
+                    StemError::Other("holder op timed out draining stale reply".into())
+                })??;
+            let _ = ipc::decode_payload::<HolderMsg>(&payload)?;
+            self.replies_owed -= 1;
+        }
         ipc::write_msg_async(&mut self.stream, msg).await?;
+        self.replies_owed += 1;
         let payload = timeout(OP_TIMEOUT, ipc::read_frame_async(&mut self.stream))
             .await
             .map_err(|_| StemError::Other("holder op timed out".into()))??;
+        self.replies_owed -= 1;
         match ipc::decode_payload::<HolderMsg>(&payload)? {
             HolderMsg::Err { msg } => Err(StemError::Holder(msg)),
             other => Ok(other),
@@ -271,6 +297,64 @@ mod tests {
     use super::*;
     use crate::ipc::{read_frame_sync, write_msg_sync};
     use std::os::unix::net::UnixListener;
+
+    /// Regression (live ARM finding): a request future cancelled between
+    /// write and read (grid-watch re-arm aborting a mid-flight termios
+    /// query) left the TermiosAck in the socket, and the NEXT request read
+    /// it as its own reply ("expected Ok, got TermiosAck"). The client now
+    /// counts owed replies and drains them before writing.
+    #[tokio::test]
+    async fn cancelled_request_reply_is_drained_not_misattributed() {
+        let (client_stream, mut holder_side) = UnixStream::pair().unwrap();
+        let mut client = HolderClient {
+            stream: client_stream,
+            session_dir: PathBuf::from("/tmp/fake"),
+            holder_proto_version: PROTO_VERSION,
+            replies_owed: 0,
+        };
+
+        // 1. Termios query whose future is cancelled after the request is
+        //    written (the holder has not replied yet).
+        let cancelled =
+            tokio::time::timeout(Duration::from_millis(50), client.query_termios()).await;
+        assert!(cancelled.is_err(), "query must time out (no reply yet)");
+        assert_eq!(client.replies_owed, 1);
+
+        // 2. Holder answers the orphaned query late.
+        let payload = ipc::read_frame_async(&mut holder_side).await.unwrap();
+        assert!(matches!(
+            ipc::decode_payload::<ClientMsg>(&payload).unwrap(),
+            ClientMsg::QueryTermios
+        ));
+        ipc::write_msg_async(
+            &mut holder_side,
+            &HolderMsg::TermiosAck {
+                echo: false,
+                icanon: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        // 3. The next op must drain the stale ack instead of reading it as
+        //    its own reply.
+        let holder_task = tokio::spawn(async move {
+            let payload = ipc::read_frame_async(&mut holder_side).await.unwrap();
+            assert!(matches!(
+                ipc::decode_payload::<ClientMsg>(&payload).unwrap(),
+                ClientMsg::Resize { cols: 80, rows: 24 }
+            ));
+            ipc::write_msg_async(&mut holder_side, &HolderMsg::Ok)
+                .await
+                .unwrap();
+        });
+        client
+            .resize(80, 24)
+            .await
+            .expect("resize must not read the stale TermiosAck");
+        assert_eq!(client.replies_owed, 0);
+        holder_task.await.unwrap();
+    }
 
     /// Fake holder answering Hello with an arbitrary proto version.
     fn fake_holder(dir: &Path, answer_version: u16) -> std::thread::JoinHandle<()> {
