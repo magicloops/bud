@@ -6,6 +6,19 @@
   termios cache refresh (`QueryTermios`) and resize share the holder IPC
   connection and can consume each other's replies. Serialize per-connection
   request/response pairs (or tag replies) in `bud/stem/src/client.rs`.
+- **Multi-server local LLM support** (deferred by design — one origin per Bud)
+  - `BUD_LOCAL_LLM_URL` is a single origin; multiple models behind that one
+    endpoint already work (advertise-all + per-thread picker). Multiple
+    SERVERS (e.g. vllm :8888 + ollama :11434) need: config as a list, N
+    advertised server entries with distinct ids, a server discriminator in
+    the product id (`bud-local:<bud>:<served_id>` collides when two servers
+    serve the same model id), per-server stream concurrency (currently one
+    active local-LLM stream per Bud), and add/remove semantics for
+    `bud llm enable`. The wire contract already supports it
+    (`llm.servers[]` + `local_llm_server_id` routing) — no protocol change.
+  - Interim answer for users: front multiple backends with a local
+    OpenAI-compatible router (LiteLLM proxy / llama-swap) and point the one
+    URL at it; the aggregated `/v1/models` advertises the union.
 - **Generic local LLM follow-ups** (from [design/generic-local-llm-support.md](./design/generic-local-llm-support.md), phases 1-3 shipped)
   - Phase 4 tool-call validation smoke harness: scripted forced-tool-call plus a
     multi-turn tool loop through the real `bud_local` chat-completions adapter;
