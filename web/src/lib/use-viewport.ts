@@ -53,16 +53,35 @@ export function useAppHeightVar(): void {
   useEffect(() => {
     const root = document.documentElement
     const vv = window.visualViewport
+    let raf: number | null = null
     const apply = () => {
       const height = vv?.height ?? window.innerHeight
       root.style.setProperty('--app-height', `${Math.round(height)}px`)
+      // iOS scrolls the PAGE when focusing an input near the keyboard,
+      // shifting the visual viewport away from our fixed-height shell —
+      // the composer ends up rendered above the visible area ("input
+      // jumps to the top, typing invisible"). The shell already fits the
+      // visual viewport exactly, so that scroll is never needed: pin the
+      // page back after the keyboard settles.
+      if (window.scrollY !== 0 || (vv && vv.offsetTop > 0)) {
+        if (raf !== null) cancelAnimationFrame(raf)
+        raf = requestAnimationFrame(() => {
+          raf = null
+          window.scrollTo(0, 0)
+        })
+      }
     }
     apply()
     vv?.addEventListener('resize', apply)
+    vv?.addEventListener('scroll', apply)
     window.addEventListener('resize', apply)
+    window.addEventListener('scroll', apply, { passive: true })
     return () => {
       vv?.removeEventListener('resize', apply)
+      vv?.removeEventListener('scroll', apply)
       window.removeEventListener('resize', apply)
+      window.removeEventListener('scroll', apply)
+      if (raf !== null) cancelAnimationFrame(raf)
       root.style.removeProperty('--app-height')
     }
   }, [])
