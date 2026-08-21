@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { hasCoarsePointer } from '@/lib/use-viewport'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
@@ -56,18 +57,27 @@ export function CommandComposer({
     }
   }
 
-  // Mobile auto-grow: track content height between one line and ~40% of the
-  // visual viewport; desktop keeps the fixed h-32 box.
-  const handleTextareaInput = (event: React.FormEvent<HTMLTextAreaElement>) => {
-    const el = event.currentTarget
+  // Mobile auto-grow (value-driven, not event-driven, so clearing after a
+  // send and programmatic changes also resize): ONE line at rest, grows
+  // with content, caps at ~40% of the visual viewport and scrolls
+  // internally beyond that. Desktop keeps the fixed h-32 box.
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) {
+      return
+    }
     if (!window.matchMedia('(max-width: 767px)').matches) {
       el.style.height = ''
+      el.style.overflowY = ''
       return
     }
     el.style.height = 'auto'
     const max = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4)
-    el.style.height = `${Math.min(el.scrollHeight, max)}px`
-  }
+    const next = Math.min(el.scrollHeight, max)
+    el.style.height = `${next}px`
+    el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden'
+  }, [messageText])
 
   return (
     <form onSubmit={onSubmit} className="relative border-t-4 border-black bg-background">
@@ -79,13 +89,14 @@ export function CommandComposer({
         </div>
       )}
       <textarea
+        ref={textareaRef}
         name="message"
+        rows={1}
         value={messageText}
         onChange={(e) => onMessageChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        onInput={handleTextareaInput}
         placeholder={disabledReason ?? 'Describe the task for Bud…'}
-        className="h-24 w-full resize-none bg-background p-4 pb-2 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:h-32 md:pb-20"
+        className="w-full resize-none bg-background px-4 py-3 font-mono text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground md:h-32 md:p-4 md:pb-20"
         disabled={inputDisabled}
       />
       {/* Static row below the textarea on phones (the absolute pinning
