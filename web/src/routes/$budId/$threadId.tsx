@@ -16,6 +16,7 @@ import { WorkspaceShell } from '@/components/workbench/workspace-shell'
 import { CommandComposer } from '@/components/workbench/command-composer'
 import { ChatTimeline, type ChatTimelineNotice } from '@/components/workbench/chat-timeline'
 import { ThreadTerminalPane } from '@/components/workbench/thread-terminal-pane'
+import { showTerminalInterrupt } from '@/features/threads/terminal-interrupt'
 import { ThreadTerminalGridPane } from '@/components/workbench/thread-terminal-grid-pane'
 import { FileViewerPane } from '@/components/workbench/file-viewer-pane'
 import { WebViewPane } from '@/components/workbench/web-view-pane'
@@ -928,6 +929,12 @@ function ThreadView() {
             terminalFacts={terminalFacts}
             terminalScrolledToTop={terminalScrolledToTop}
             terminalState={terminalState}
+            showInterrupt={showTerminalInterrupt({
+              connection: terminalConnection,
+              chip: terminalCommand,
+              mode: terminalFacts?.mode ?? null,
+              grid: terminalRenderer === 'grid' ? terminalGridState : null,
+            })}
             terminalRenderer={terminalRenderer}
             gridPane={
               terminalRenderer === 'grid' ? (

@@ -428,6 +428,19 @@ Node-runner coverage for command lifecycle transitions, exit-code handling,
 chip persistence/supersession, child-exit clearing, and malformed-payload
 tolerance.
 
+### `terminal-interrupt.ts`
+
+`showTerminalInterrupt`: fact-gated visibility for the contextual Interrupt
+(Ctrl+C) affordance. Precedence: full-screen suppression first — alt screen
+(grid fact) or `tui` mode (event fact, bytes renderer) hides it even while
+the launching command is still open (a TUI launched as a command keeps the
+chip `running` for its whole run; Ctrl+C there is a keystroke, not "stop").
+Then an open command shows it (both renderers); then, with grid frames
+seeded, the closed predictive-echo gate (`!predict_ok`) shows it — covering
+busy REPLs, `unknown` mode, and password prompts. Hidden at idle prompts,
+when disconnected, and on the bytes renderer without an open command. Pure;
+node-tested in `terminal-interrupt.test.ts`.
+
 ### `use-terminal-session.ts`
 
 Terminal session/xterm ownership for the existing-thread route.
