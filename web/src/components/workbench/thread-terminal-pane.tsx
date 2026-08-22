@@ -21,6 +21,12 @@ type ThreadTerminalPaneProps = {
   } | null
   terminalScrolledToTop: boolean
   terminalState: string
+  /**
+   * Fact-gated interrupt affordance (`showTerminalInterrupt`): true while an
+   * interrupt is meaningful — open command, busy REPL, `unknown` mode, or a
+   * password prompt — and false at an idle prompt or in the alt screen.
+   */
+  showInterrupt: boolean
   /** Active renderer: `bytes` = xterm over the raw stream, `grid` = grid sync. */
   terminalRenderer?: 'bytes' | 'grid'
   /** Rendered instead of the xterm container when `terminalRenderer` is `grid`. */
@@ -45,6 +51,7 @@ export function ThreadTerminalPane({
   terminalFacts,
   terminalScrolledToTop,
   terminalState,
+  showInterrupt,
   terminalRenderer = 'bytes',
   gridPane = null,
   viewMode,
@@ -179,6 +186,17 @@ export function ThreadTerminalPane({
                   </>
                 )}
               </div>
+            )}
+            {showInterrupt && (
+              <button
+                type="button"
+                onClick={onInterruptTerminal}
+                className="flex items-center gap-1.5 rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-red-400 transition hover:bg-red-500/25 hover:text-red-300"
+                title="Send Ctrl+C to the terminal"
+              >
+                <Square className="h-2.5 w-2.5 fill-current" />
+                <span>Interrupt</span>
+              </button>
             )}
             {error && <span className="text-destructive">{error}</span>}
           </div>

@@ -321,12 +321,16 @@ Terminal presentation component for the existing-thread workspace.
 **Props**:
 - terminal UI/runtime state from `useTerminalSession(...)`
 - agent turn status/error state from the route
+- `showInterrupt` — fact-gated by the route via `showTerminalInterrupt`
+  (`features/threads/terminal-interrupt.ts`)
 - callbacks for focus, agent cancel, and terminal interrupt actions
 
 **Purpose**:
 - renders the terminal pane wrapper, optional injected web-view pane,
-  disconnect overlays, truncated-history badge, terminal status bar, and
-  terminal options menu (incl. the renderer toggle: bytes/xterm ↔ grid beta,
+  disconnect overlays, truncated-history badge, terminal status bar (incl.
+  the contextual Interrupt button next to the command chip, shown only while
+  Ctrl+C is meaningful), and terminal options menu (incl. the always-there
+  Interrupt escape hatch and the renderer toggle: bytes/xterm ↔ grid beta,
   persisted to localStorage + reload)
 - when `terminalRenderer` is `grid`, renders the injected `gridPane` in place
   of the xterm container
