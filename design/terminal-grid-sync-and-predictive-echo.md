@@ -189,3 +189,19 @@ inside a pannable container with keep-cursor-in-view on local activity.
 "Last resize wins" therefore only ever applies between geometry-owning
 (desktop/tablet) viewers; a phone joining a shared thread cannot reshape
 the PTY.
+
+## Amendment (2026-08-21): geometry ownership is per-client policy, not viewport size
+
+The mobile team's native client ships **mobile-only sessions** where the
+phone is the sole viewer — and there the mobile client IS the geometry
+owner (it sends `terminal_resize` and the PTY takes phone dimensions).
+This sharpens the 2026-08-20 rule to its actual invariant: the wire has no
+ownership concept; owning geometry means choosing to send resizes, and the
+rule is **never reshape the PTY under other concurrent viewers**, not
+"small screens never resize". The web app's policy is unchanged (below
+`md` = observer, because mobile web always coexists with potential desktop
+viewers of the same thread). A mobile owner must follow the same
+discipline desktop web does: converge-once (assert measured size until the
+stream matches once, then stop — blind re-assertion recreates the
+multi-viewer tug-of-war fixed in Phase 2 validation), and accept
+last-resize-wins if another viewer joins and asserts.
