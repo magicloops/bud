@@ -29,6 +29,7 @@ CLI and environment configuration.
 - defines `BudArgs`
 - defines `BudCommand` (doctor, claim, run, start/stop/restart/status/logs, service install/uninstall, llm probe/enable/disable, upgrade), `ServiceCommand`, `LlmCommand`, `LogsArgs`, `DoctorArgs`, and `DoctorFormat`
 - owns daemon defaults for server URL, optional gRPC control/data URLs, optional install claim id, base-dir/local mode, identity path overrides, terminal base dir overrides, terminal dimensions, reconnect timing, and debug mode
+- resolves the device display name via `BudArgs::device_name()`: explicit `--name`/`BUD_DEVICE_NAME` when set, otherwise the machine's short hostname (label before the first dot; `bud` fallback) — the old hardcoded `bud-dev` default is gone; the service may suffix the name (`host-2`, …) on the owning account
 - owns optional Bud-local ds4 configuration through `BUD_LOCAL_LLM_DS4_URL`, `BUD_LOCAL_LLM_DS4_CONTEXT_TOKENS`, and `BUD_LOCAL_LLM_DS4_MAX_OUTPUT_TOKENS` (default 384000)
 - resolves effective daemon paths so machine installs default to `~/.bud` plus `$HOME` while `--local` derives `.bud` and cwd from the launch directory
 

@@ -113,10 +113,16 @@ Browser/Client                 Service                      Bud Daemon
 ```typescript
 type ConnectionState =
   | { kind: "awaiting_hello" }
-  | { kind: "awaiting_proof"; budId; deviceSecret; nonce; hello }
+  | { kind: "awaiting_proof"; budId; deviceSecret; nonce; hello; ownerUserId; currentName }
   | { kind: "connected"; budId; sessionId; hello }
   | { kind: "closed" };
 ```
+
+`ownerUserId`/`currentName` carry the challenge-time bud row into the proof
+step so `hello_proof` stores a **stabilized** display name via
+`resolveConnectedBudName` (`src/bud-name.ts`): the daemon re-sends its raw
+requested name every hello, and a deduped `host-2` must not flip back (same
+logic in the gRPC control gateway).
 
 **Session Tracking** now lives in `session-trackers.ts` for WebSocket sessions. The composite transport router also consults the gRPC session tracker when deciding active Bud routing.
 

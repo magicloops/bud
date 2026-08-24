@@ -1242,7 +1242,7 @@ mod tests {
             grpc_data_url: None,
             token: None,
             claim_id: None,
-            name: "bud-test".into(),
+            name: Some("bud-test".into()),
             cwd: None,
             base_dir: None,
             local: false,

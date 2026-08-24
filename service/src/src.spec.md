@@ -70,6 +70,14 @@ Focused regression coverage for service composition behavior that is easiest to 
   ephemeral port so it does not collide with a running local dev server
 - gRPC control shutdown finalization is covered in [grpc/control-gateway.test.ts](./grpc/control-gateway.test.ts)
 
+### `bud-name.ts`
+
+Bud display-name resolution (dynamic install names): pure `pickBudName`
+(owner-scoped numeric-suffix dedupe — `host`, `host-2`, … — with a
+reconnect stability rule so a suffixed name survives hellos that re-send
+the raw hostname) plus db-backed `resolveConnectedBudName` shared by the
+WebSocket and gRPC gateways. Node-tested in `bud-name.test.ts`.
+
 ### `config.ts`
 
 Environment-based configuration with defaults.

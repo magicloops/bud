@@ -51,20 +51,19 @@ async function invokeRoute(
   };
 }
 
-test("device auth start redeems valid install claims into owner-stamped Buds", async (t) => {
-  t.after(() => {
-    mock.restoreAll();
-  });
-
-  const claimToken = "bic_test";
-  const inserts: Array<Record<string, unknown>> = [];
-  const updates: Array<Record<string, unknown>> = [];
-  const tx = {
+function makeClaimTx(options: {
+  claimToken: string;
+  inserts: Array<Record<string, unknown>>;
+  updates: Array<Record<string, unknown>>;
+  /** Rows returned by the owner-scoped bud name query (dedupe input). */
+  ownedBuds?: Array<{ budId: string; name: string }>;
+}) {
+  return {
     query: {
       deviceInstallClaimTable: {
         findFirst: async () => ({
           installClaimId: "dic_test",
-          claimTokenHash: hashDeviceInstallClaimToken(claimToken),
+          claimTokenHash: hashDeviceInstallClaimToken(options.claimToken),
           createdByUserId: "user-claim-owner",
           tenantId: null,
           deviceNameHint: null,
@@ -83,10 +82,19 @@ test("device auth start redeems valid install claims into owner-stamped Buds", a
         findFirst: async () => null,
       },
     },
+    select() {
+      return {
+        from() {
+          return {
+            where: async () => options.ownedBuds ?? [],
+          };
+        },
+      };
+    },
     insert() {
       return {
         values(values: Record<string, unknown>) {
-          inserts.push(values);
+          options.inserts.push(values);
           return Promise.resolve();
         },
       };
@@ -94,7 +102,7 @@ test("device auth start redeems valid install claims into owner-stamped Buds", a
     update() {
       return {
         set(values: Record<string, unknown>) {
-          updates.push(values);
+          options.updates.push(values);
           return {
             where() {
               return Promise.resolve();
@@ -104,6 +112,17 @@ test("device auth start redeems valid install claims into owner-stamped Buds", a
       };
     },
   };
+}
+
+test("device auth start redeems valid install claims into owner-stamped Buds", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const claimToken = "bic_test";
+  const inserts: Array<Record<string, unknown>> = [];
+  const updates: Array<Record<string, unknown>> = [];
+  const tx = makeClaimTx({ claimToken, inserts, updates });
   mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) =>
     callback(tx),
   );
@@ -128,6 +147,7 @@ test("device auth start redeems valid install claims into owner-stamped Buds", a
   assert.equal(response.statusCode, 201);
   assert.equal(inserts[0]?.installationId, "install-1");
   assert.equal(inserts[1]?.createdByUserId, "user-claim-owner");
+  assert.equal(inserts[1]?.name, "Test Bud");
   assert.match(String(inserts[1]?.budId), /^b_/);
   assert.ok(updates.some((update) => update.approvedByUserId === "user-claim-owner"));
   assert.ok(
@@ -138,4 +158,46 @@ test("device auth start redeems valid install claims into owner-stamped Buds", a
         update.redeemedIp === "127.0.0.1",
     ),
   );
+});
+
+test("device auth claim suffixes the requested name when the owner already has it", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+
+  const claimToken = "bic_test_dupe";
+  const inserts: Array<Record<string, unknown>> = [];
+  const updates: Array<Record<string, unknown>> = [];
+  const tx = makeClaimTx({
+    claimToken,
+    inserts,
+    updates,
+    ownedBuds: [
+      { budId: "b_existing", name: "mbp" },
+      { budId: "b_existing2", name: "mbp-2" },
+    ],
+  });
+  mock.method(db, "transaction", async (callback: (tx: unknown) => Promise<unknown>) =>
+    callback(tx),
+  );
+
+  const server = createServer();
+  await registerDeviceAuthRoutes(server);
+
+  const handler = server.handlers.get("POST /api/device-auth/start");
+  assert.ok(handler);
+  const response = await invokeRoute(handler, {
+    headers: { "user-agent": "bud-test" },
+    body: {
+      installation_id: "install-2",
+      name: "mbp",
+      os: "macos",
+      arch: "aarch64",
+      capabilities: {},
+      claim_id: claimToken,
+    },
+  });
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(inserts[1]?.name, "mbp-3");
 });

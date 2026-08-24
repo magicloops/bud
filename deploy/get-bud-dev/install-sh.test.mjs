@@ -30,7 +30,7 @@ async function createFakeBudArchive(t, dir, options = {}) {
       `  exit ${options.doctorExitCode ?? 0}`,
       "fi",
       'if [ "$1" = "claim" ]; then',
-      '  echo "claim claim=${BUD_CLAIM_ID:-} server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-}" >> "$BUD_TEST_LOG"',
+      '  echo "claim claim=${BUD_CLAIM_ID:-} server=${BUD_SERVER_URL:-} base=${BUD_BASE_DIR:-} name=${BUD_DEVICE_NAME:-}" >> "$BUD_TEST_LOG"',
       `  exit ${options.claimExitCode ?? 0}`,
       "fi",
       'if [ "$1" = "llm" ]; then',
@@ -130,9 +130,10 @@ async function runInstall(env) {
       BUD_INSTALL_OS: "Linux",
       BUD_INSTALL_ARCH: "x86_64",
       BUD_INSTALL_GLIBC_VERSION: "2.35",
-      // PATH setup would prompt on /dev/tty when the test runner has one;
-      // keep tests deterministic (individual tests override these knobs).
+      // PATH/name setup would prompt on /dev/tty when the test runner has
+      // one; keep tests deterministic (individual tests override these).
       BUD_INSTALL_NO_MODIFY_PATH: "1",
+      BUD_INSTALL_NO_NAME_PROMPT: "1",
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -178,6 +179,55 @@ test("install.sh installs verified artifact and passes claim only to bootstrap",
   assert.match(fakeLog, /claim claim=bic_test server=wss:\/\/app\.bud\.dev\/ws base=/);
   assert.match(fakeLog, /service install server=wss:\/\/app\.bud\.dev\/ws base=/);
   assert.doesNotMatch(fakeLog, /bootstrap/, "background flow must not exec the foreground daemon");
+});
+
+test("install.sh names the bud: BUD_INSTALL_NAME override rides bud.env and the claim env", async (t) => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const installRoot = path.join(dir, "home", ".bud");
+  const logPath = path.join(dir, "bud.log");
+
+  const result = await runInstall({
+    HOME: path.join(dir, "home"),
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: installRoot,
+    BUD_TEST_LOG: logPath,
+    BUD_CLAIM_ID: "bic_named",
+    BUD_INSTALL_NAME: "my custom bud",
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const envFile = await readFile(path.join(installRoot, "bud.env"), "utf8");
+  assert.match(envFile, /^BUD_DEVICE_NAME='my custom bud'$/m);
+  const fakeLog = await readFile(logPath, "utf8");
+  assert.match(fakeLog, /claim claim=bic_named .* name=my custom bud$/m);
+  assert.match(result.stderr, /Naming this Bud 'my custom bud'/);
+});
+
+test("install.sh defaults the bud name to the short hostname without a tty", async (t) => {
+  const dir = await tempDir(t);
+  const { bytes, sha256 } = await createFakeBudArchive(t, dir);
+  const placeholder = "http://127.0.0.1:1";
+  const serverBase = await startReleaseServer(t, manifestFor(placeholder, sha256), bytes);
+  const server = await startReleaseServer(t, manifestFor(serverBase, sha256), bytes);
+  const installRoot = path.join(dir, "home", ".bud");
+
+  const result = await runInstall({
+    HOME: path.join(dir, "home"),
+    BUD_INSTALL_BASE_URL: server,
+    BUD_INSTALL_ROOT: installRoot,
+    BUD_TEST_LOG: path.join(dir, "bud.log"),
+    BUD_INSTALL_SKIP_BOOTSTRAP: "1",
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const shortHost = os.hostname().split(".")[0];
+  const envFile = await readFile(path.join(installRoot, "bud.env"), "utf8");
+  assert.match(envFile, new RegExp(`^BUD_DEVICE_NAME='${escapeRegExp(shortHost)}'$`, "m"));
+  assert.match(result.stderr, /a -2\/-3 suffix is added automatically/);
 });
 
 test("install.sh falls back to foreground when service install fails", async (t) => {

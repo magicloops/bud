@@ -50,6 +50,10 @@ use crate::util::{compute_hmac, default_shell, new_message_id, now_millis};
 
 pub struct BudApp {
     args: BudArgs,
+    /// Resolved display name (explicit BUD_DEVICE_NAME or the machine's
+    /// short hostname) — sent as `hello.name` / claim metadata; the service
+    /// may stabilize it with a `-N` suffix on the owning account.
+    device_name: String,
     identity_path: PathBuf,
     journal_path: PathBuf,
     installation_id_path: PathBuf,
@@ -127,8 +131,10 @@ impl BudApp {
             launcher_program,
             debug_enabled,
         };
+        let device_name = args.device_name();
         Self {
             args,
+            device_name,
             identity_path,
             journal_path,
             installation_id_path,
@@ -364,7 +370,7 @@ impl BudApp {
                             bud_id: ack.bud_id.clone(),
                             device_secret: secret,
                             server_url: self.args.server.clone(),
-                            name: self.args.name.clone(),
+                            name: self.device_name.clone(),
                             default_cwd: self.default_cwd.clone(),
                         };
                         persist_identity(&self.identity_path, &new_identity)
@@ -807,7 +813,7 @@ impl BudApp {
                             bud_id: ack.bud_id.clone(),
                             device_secret: secret,
                             server_url: self.args.server.clone(),
-                            name: self.args.name.clone(),
+                            name: self.device_name.clone(),
                             default_cwd: self.default_cwd.clone(),
                         };
                         persist_identity(&self.identity_path, &new_identity)
@@ -1357,7 +1363,7 @@ impl BudApp {
             &self.http_client,
             &self.args.server,
             &self.installation_id,
-            &self.args.name,
+            &self.device_name,
             self.device_capabilities(HelloTransportMode::WebSocket),
             self.args.claim_id.as_deref(),
         )
@@ -1394,7 +1400,7 @@ impl BudApp {
                         bud_id: bud_id.clone(),
                         device_secret,
                         server_url: self.args.server.clone(),
-                        name: self.args.name.clone(),
+                        name: self.device_name.clone(),
                         default_cwd: self.default_cwd.clone(),
                     };
                     persist_identity(&self.identity_path, &identity).await?;
@@ -1439,7 +1445,7 @@ impl BudApp {
         frame.insert("id".into(), Value::String(new_message_id()));
         frame.insert("ts".into(), Value::Number(Number::from(now_millis())));
         frame.insert("ext".into(), json!({}));
-        frame.insert("name".into(), Value::String(self.args.name.clone()));
+        frame.insert("name".into(), Value::String(self.device_name.clone()));
         frame.insert("os".into(), Value::String(std::env::consts::OS.into()));
         frame.insert("arch".into(), Value::String(std::env::consts::ARCH.into()));
         frame.insert(
@@ -1534,7 +1540,7 @@ mod tests {
             grpc_data_url: None,
             token: None,
             claim_id: None,
-            name: "bud-test".into(),
+            name: Some("bud-test".into()),
             cwd: Some(workspace.to_string_lossy().into_owned()),
             base_dir: None,
             local: false,

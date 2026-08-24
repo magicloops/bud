@@ -11,6 +11,7 @@ import { z } from "zod";
 import { PROTO_VERSION, config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable } from "../db/schema.js";
+import { resolveConnectedBudName } from "../bud-name.js";
 import { handleFileOpenResult } from "../files/file-runtime.js";
 import { handleFileResolveResult as handleFileResolveRuntimeResult } from "../files/file-resolve.js";
 import { handleLocalLlmOpenResult } from "../llm/local-llm-data-plane.js";
@@ -406,6 +407,8 @@ class GrpcControlConnection {
       deviceSecret: bud.deviceSecret,
       nonce,
       hello: frame,
+      ownerUserId: bud.createdByUserId ?? null,
+      currentName: bud.name ?? null,
     };
     await this.sendFrame("hello_challenge", { nonce });
   }
@@ -422,13 +425,17 @@ class GrpcControlConnection {
       this.endStream();
       return;
     }
-    const { budId, deviceSecret, nonce, hello } = this.state;
+    const { budId, deviceSecret, nonce, hello, ownerUserId, currentName } = this.state;
     const computed = createHmac("sha256", deviceSecret).update(nonce).digest("base64url");
     if (computed !== result.data.hmac) {
       await this.sendError("AUTH_FAILED", "Invalid proof");
       this.endStream();
       return;
     }
+
+    // Stabilized display name — hello.name is the requested name (see
+    // bud-name.ts); a deduped "host-2" must survive reconnects.
+    const resolvedName = await resolveConnectedBudName(budId, hello.name, ownerUserId, currentName);
 
     const sessionId = `s_${ulid()}`;
     await db
@@ -437,7 +444,7 @@ class GrpcControlConnection {
         installationId: hello.installation_id ?? undefined,
         status: "online",
         lastSeenAt: new Date(),
-        name: hello.name,
+        name: resolvedName,
         os: hello.os,
         arch: hello.arch,
         version: hello.version,

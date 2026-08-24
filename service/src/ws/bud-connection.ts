@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { resolveConnectedBudName } from "../bud-name.js";
 import { registerBudLocalModelsFromCapabilities } from "../llm/local-llm-capabilities.js";
 import { createHmac, randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
@@ -496,7 +497,9 @@ export class BudConnection {
       budId: bud.budId,
       deviceSecret: bud.deviceSecret,
       nonce,
-      hello: frame
+      hello: frame,
+      ownerUserId: bud.createdByUserId ?? null,
+      currentName: bud.name ?? null
     };
     await this.sendFrame("hello_challenge", { nonce });
   }
@@ -513,13 +516,19 @@ export class BudConnection {
       this.socket.close();
       return;
     }
-    const { budId, deviceSecret, nonce, hello } = this.state;
+    const { budId, deviceSecret, nonce, hello, ownerUserId, currentName } = this.state;
     const computed = createHmac("sha256", deviceSecret).update(nonce).digest("base64url");
     if (computed !== result.data.hmac) {
       await this.sendError("AUTH_FAILED", "Invalid proof");
       this.socket.close();
       return;
     }
+
+    // hello.name is the daemon's REQUESTED name (raw hostname by default):
+    // stabilize against the owner's other Buds so a deduped name like
+    // "host-2" survives reconnects, while an explicit rename via
+    // BUD_DEVICE_NAME still re-resolves fresh.
+    const resolvedName = await resolveConnectedBudName(budId, hello.name, ownerUserId, currentName);
 
     const sessionId = `s_${ulid()}`;
     await db
@@ -528,7 +537,7 @@ export class BudConnection {
         installationId: hello.installation_id ?? undefined,
         status: "online",
         lastSeenAt: new Date(),
-        name: hello.name,
+        name: resolvedName,
         os: hello.os,
         arch: hello.arch,
         version: hello.version,

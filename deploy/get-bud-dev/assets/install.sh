@@ -70,7 +70,35 @@ write_env_file() {
     printf 'BUD_SERVER_URL=%s\n' "$(shell_quote "$SERVER_URL")"
     printf 'BUD_TERMINAL_ENABLED=true\n'
     printf 'BUD_BASE_DIR=%s\n' "$(shell_quote "$INSTALL_ROOT")"
+    printf 'BUD_DEVICE_NAME=%s\n' "$(shell_quote "$DEVICE_NAME")"
   } > "$ENV_FILE"
+}
+
+default_device_name() {
+  h="$(hostname -s 2>/dev/null || uname -n 2>/dev/null || true)"
+  h="${h%%.*}"
+  [ "$h" ] || h="bud"
+  printf '%s' "$h"
+}
+
+# Pick the Bud's display name before the claim (the name rides the claim
+# metadata). BUD_INSTALL_NAME=<name> skips the prompt; otherwise a tty
+# prompt defaults to the machine's short hostname; non-interactive installs
+# take the hostname silently. If the owning account already has a Bud with
+# the chosen name, the service suffixes it (host-2, host-3, ...).
+setup_device_name() {
+  if [ "${BUD_INSTALL_NAME:-}" ]; then
+    DEVICE_NAME="$BUD_INSTALL_NAME"
+    log "Naming this Bud '$DEVICE_NAME' (from BUD_INSTALL_NAME)."
+    return
+  fi
+  DEVICE_NAME="$(default_device_name)"
+  if [ "${BUD_INSTALL_NO_NAME_PROMPT:-}" != "1" ] && (: < /dev/tty) 2>/dev/null; then
+    printf 'Name this Bud [%s]: ' "$DEVICE_NAME" > /dev/tty
+    IFS= read -r answer < /dev/tty || answer=""
+    [ "$answer" ] && DEVICE_NAME="$answer"
+  fi
+  log "This Bud will be named '$DEVICE_NAME' (a -2/-3 suffix is added automatically if the name is taken on your account)."
 }
 
 version_major_minor_at_least() {
@@ -280,7 +308,7 @@ print_path_activation_hint() {
 
 run_doctor() {
   log "Running Bud preflight..."
-  if ! (unset BUD_CLAIM_ID; env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" doctor); then
+  if ! (unset BUD_CLAIM_ID; env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_DEVICE_NAME="$DEVICE_NAME" "$BUD_BIN" doctor); then
     log "Bud preflight reported issues. Review the messages above, then rerun the installer after resolving them."
   fi
 }
@@ -347,28 +375,28 @@ bootstrap_bud() {
   if [ "${BUD_INSTALL_FOREGROUND:-}" = "1" ]; then
     log "Starting Bud in the foreground. Press Ctrl+C to stop it."
     if [ "${BUD_CLAIM_ID:-}" ]; then
-      exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_CLAIM_ID="$BUD_CLAIM_ID" "$BUD_BIN" --terminal-enabled
+      exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_DEVICE_NAME="$DEVICE_NAME" BUD_CLAIM_ID="$BUD_CLAIM_ID" "$BUD_BIN" --terminal-enabled
     fi
-    exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" --terminal-enabled
+    exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_DEVICE_NAME="$DEVICE_NAME" "$BUD_BIN" --terminal-enabled
   fi
 
   # Standard flow: complete the interactive claim (link/QR, or install-token
   # redemption) in the foreground, then hand the daemon to the platform
   # background service so it survives terminal close, logout, and reboot.
   if [ "${BUD_CLAIM_ID:-}" ]; then
-    env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_CLAIM_ID="$BUD_CLAIM_ID" "$BUD_BIN" claim || fail "Bud device claim failed"
+    env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_DEVICE_NAME="$DEVICE_NAME" BUD_CLAIM_ID="$BUD_CLAIM_ID" "$BUD_BIN" claim || fail "Bud device claim failed"
   else
-    env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" claim || fail "Bud device claim failed"
+    env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_DEVICE_NAME="$DEVICE_NAME" "$BUD_BIN" claim || fail "Bud device claim failed"
   fi
 
   setup_local_llm
 
-  if env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" service install; then
+  if env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_DEVICE_NAME="$DEVICE_NAME" "$BUD_BIN" service install; then
     log "Bud is installed as a background service. Check it with: $BUD_BIN status"
     print_path_activation_hint
   else
     log "No supported background service manager; starting Bud in the foreground. Press Ctrl+C to stop it."
-    exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" "$BUD_BIN" --terminal-enabled
+    exec env BUD_SERVER_URL="$SERVER_URL" BUD_TERMINAL_ENABLED=true BUD_BASE_DIR="$INSTALL_ROOT" BUD_DEVICE_NAME="$DEVICE_NAME" "$BUD_BIN" --terminal-enabled
   fi
 }
 
@@ -406,6 +434,7 @@ main() {
 
   log "Installing Bud to $BUD_BIN..."
   install_archive "$archive" "$extract_dir"
+  setup_device_name
   write_env_file
   setup_path
   run_doctor

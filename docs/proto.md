@@ -1345,6 +1345,14 @@ Rules:
 - `token` is only accepted for the local-only `DEV_BUD_TOKEN_BYPASS` path; database-backed legacy enrollment tokens are disabled
 - `bud_id` is only present on reconnect
 - `installation_id` is optional but, when present, must remain consistent for an already-known Bud
+- `name` is the daemon's REQUESTED display name (BUD_DEVICE_NAME, defaulting
+  to the machine's short hostname). The service resolves the stored name
+  against the owning user's other Buds — a collision gets a numeric suffix
+  (`host-2`, `host-3`, …) — and the resolution is stable across reconnects:
+  a hello re-sending the raw requested name keeps an already-suffixed stored
+  name, while a genuinely different requested name re-resolves fresh
+  (renames via BUD_DEVICE_NAME still work). Unowned Buds (dev bypass) store
+  the requested name verbatim
 - normal first-time onboarding uses browser-mediated device claim before challenge-response reconnect
 - `capabilities.llm` is optional and advertised only after the daemon's local
   ds4 startup probe succeeds; it uses logical server metadata only and must not
@@ -2284,6 +2292,9 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - `hello.name` / device-auth `name` are now REQUESTED display names that the
+    service resolves against the owning user's other Buds (numeric-suffix
+    dedupe with reconnect stability — see §5.1 rules); no frame shape change
   - the proto `0.3` terminal contract (§6) is ACTIVE via the `stem` backend cutover
     (plan/native-terminal-session-manager): offset-only `terminal_output`,
     `terminal_ensure.resume_from_offset` with `output_gap` reporting, the

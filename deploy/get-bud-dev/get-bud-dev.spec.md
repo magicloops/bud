@@ -47,6 +47,11 @@ Covers:
   fallback) with /dev/tty confirmation under `curl | sh`; forced by
   `BUD_INSTALL_MODIFY_PATH=1`, suppressed by `BUD_INSTALL_NO_MODIFY_PATH=1`;
   never edits profiles silently without a tty; idempotent across reruns
+- device naming: `setup_device_name` before the claim — `BUD_INSTALL_NAME`
+  wins; otherwise a /dev/tty prompt defaulting to the short hostname
+  (`BUD_INSTALL_NO_NAME_PROMPT=1` skips); the name lands in `bud.env` as
+  `BUD_DEVICE_NAME` and rides the claim env (service adds `-2`/`-3`
+  suffixes on collision within the owning account)
 - local LLM setup: candidate probing (`bud llm probe --require-validated`;
   unvalidated servers get an enable suggestion, never a prompt) with tty confirmation
   before `bud llm enable`; `BUD_INSTALL_DS4_URL` enables directly,
