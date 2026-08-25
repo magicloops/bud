@@ -25,8 +25,11 @@ pub struct BudArgs {
     #[arg(long, env = "BUD_CLAIM_ID")]
     pub claim_id: Option<String>,
 
-    #[arg(long, env = "BUD_DEVICE_NAME", default_value = "bud-dev")]
-    pub name: String,
+    /// Device display name. Defaults to the machine's short hostname when
+    /// unset (see [`BudArgs::device_name`]); the service may suffix it
+    /// (`host-2`, …) if the owning account already has a Bud by that name.
+    #[arg(long, env = "BUD_DEVICE_NAME")]
+    pub name: Option<String>,
 
     #[arg(long, env = "BUD_DEFAULT_CWD")]
     pub cwd: Option<String>,
@@ -204,6 +207,19 @@ pub struct ResolvedBudPaths {
 }
 
 impl BudArgs {
+    /// Resolved device display name: the explicit `--name`/`BUD_DEVICE_NAME`
+    /// when set (trimmed), otherwise the machine's short hostname (the label
+    /// before the first dot), otherwise `"bud"`.
+    pub fn device_name(&self) -> String {
+        if let Some(name) = self.name.as_deref() {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        short_hostname().unwrap_or_else(|| "bud".to_string())
+    }
+
     pub fn resolved_paths(&self) -> ResolvedBudPaths {
         let launch_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let local = self.local;
@@ -250,6 +266,19 @@ fn expand_cli_path(path: &str) -> PathBuf {
     PathBuf::from(shellexpand::tilde(path).into_owned())
 }
 
+/// Short machine hostname: the label before the first dot (`mbp.local` →
+/// `mbp`), `None` when unavailable or empty.
+fn short_hostname() -> Option<String> {
+    let full = nix::unistd::gethostname().ok()?;
+    let full = full.to_string_lossy();
+    let short = full.split('.').next().unwrap_or("").trim();
+    if short.is_empty() {
+        None
+    } else {
+        Some(short.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -263,7 +292,7 @@ mod tests {
             grpc_data_url: None,
             token: None,
             claim_id: None,
-            name: "bud-test".into(),
+            name: Some("bud-test".into()),
             cwd: None,
             base_dir: None,
             local: false,
@@ -280,6 +309,27 @@ mod tests {
             debug: false,
             command: None,
         }
+    }
+
+    #[test]
+    fn device_name_prefers_explicit_name() {
+        let mut args = args();
+        args.name = Some("  my-box  ".into());
+        assert_eq!(args.device_name(), "my-box");
+    }
+
+    #[test]
+    fn device_name_falls_back_to_short_hostname() {
+        let mut args = args();
+        args.name = None;
+        let resolved = args.device_name();
+        assert!(!resolved.is_empty());
+        assert!(!resolved.contains('.'), "short label only: {resolved}");
+        assert_ne!(resolved, "bud-dev");
+
+        // Blank explicit names fall through to the hostname too.
+        args.name = Some("   ".into());
+        assert_eq!(args.device_name(), resolved);
     }
 
     #[test]

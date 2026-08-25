@@ -14,6 +14,10 @@ All browser-facing Bud/thread/message/terminal routes now require an authenticat
 
 Bud bootstrap endpoints for QR/link device claims and daemon redemption of service-generated install claims.
 
+Claim approval resolves the daemon's requested display name against the
+owner's other Buds via `pickBudName` (`src/bud-name.ts`): collisions get
+numeric suffixes (`host-2`, `host-3`, …), stable across re-claims.
+
 **Endpoints**:
 
 | Method | Path | Description |

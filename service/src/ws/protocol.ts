@@ -226,6 +226,11 @@ export type ConnectionState =
       deviceSecret: string;
       nonce: string;
       hello: HelloFrame;
+      /** Owner + stored name carried from the challenge lookup so the
+       * proof step can stabilize the display name (hello re-sends the raw
+       * requested name; a deduped `host-2` must not flip back). */
+      ownerUserId: string | null;
+      currentName: string | null;
     }
   | {
       kind: "connected";

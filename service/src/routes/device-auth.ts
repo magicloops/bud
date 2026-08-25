@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { z } from "zod";
 import { requireViewer } from "../auth/session.js";
+import { pickBudName } from "../bud-name.js";
 import { config } from "../config.js";
 import { db } from "../db/client.js";
 import { budTable, deviceAuthFlowTable, deviceInstallClaimTable } from "../db/schema.js";
@@ -128,12 +129,25 @@ async function approveDeviceAuthFlowForUser(
   const deviceSecret = randomBytes(32).toString("base64url");
   const nextExpiry = new Date(now.getTime() + DEVICE_AUTH_POST_APPROVAL_TTL_MS);
 
+  // Resolve the requested display name against the owner's other Buds:
+  // "host" stays "host", a second machine with the same hostname becomes
+  // "host-2" (stable across re-claims — see pickBudName).
+  const effectiveOwner = existingBud?.createdByUserId ?? ownerUserId;
+  const ownedBuds = await tx
+    .select({ budId: budTable.budId, name: budTable.name })
+    .from(budTable)
+    .where(eq(budTable.createdByUserId, effectiveOwner));
+  const takenNames = ownedBuds
+    .filter((bud) => bud.budId !== budId)
+    .map((bud) => bud.name);
+  const resolvedName = pickBudName(flow.requestedName, takenNames, existingBud?.name ?? null);
+
   if (existingBud) {
     await tx
       .update(budTable)
       .set({
         installationId: flow.installationId,
-        name: flow.requestedName,
+        name: resolvedName,
         os: flow.requestedOs,
         arch: flow.requestedArch,
         version: flow.requestedVersion,
@@ -146,7 +160,7 @@ async function approveDeviceAuthFlowForUser(
     await tx.insert(budTable).values({
       budId,
       installationId: flow.installationId,
-      name: flow.requestedName,
+      name: resolvedName,
       os: flow.requestedOs,
       arch: flow.requestedArch,
       version: flow.requestedVersion,
