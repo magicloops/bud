@@ -559,6 +559,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 **Reasoning Effort Support**:
 
 `AgentModelRunner` delegates selected-model reasoning validation to the LLM catalog policy. Current first-party levels include:
+- OpenAI GPT-5.6 Sol/Terra/Luna: `none`, `low`, `medium`, `high`, `xhigh`, `max` (Luna is the global default at `high`)
 - OpenAI GPT-5.4/GPT-5.5: `none`, `low`, `medium`, `high`, `xhigh`
 - Anthropic Opus 4.6/Sonnet 4.6: `low`, `medium`, `high`, `max`
 - Anthropic Opus 4.7: `low`, `medium`, `high`, `xhigh`, `max`

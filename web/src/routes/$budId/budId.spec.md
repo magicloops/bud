@@ -57,6 +57,7 @@ New thread creation view - allows users to start a new conversation.
   capabilities, per-model `reasoning`, and optional Bud-local ds4 source
   metadata)
 - Normalizes the selected reasoning level against the selected model and default reasoning metadata, omitting model fields only if the model list has not loaded yet
+- Follows the service default reasoning level (e.g. GPT-5.6 Luna's `high`) until the user explicitly picks one — the pre-load `'low'` seed never sticks just because the default model also supports it
 - Shows ds4 `Fast`/`Thinking` reasoning choices from `/api/models` without a
   ds4-specific route branch
 - Generates a browser UUIDv7 `client_id` before the first message send

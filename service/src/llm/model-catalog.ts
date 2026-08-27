@@ -73,6 +73,16 @@ export type ReasoningLevelOption = {
 };
 
 const OPENAI_GPT_5_4_REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh"] as const;
+// GPT-5.6 (Sol/Terra/Luna) adds `max` — the first OpenAI tier with all six
+// levels (developers.openai.com model pages, GA 2026-07-09).
+const OPENAI_GPT_5_6_REASONING_LEVELS = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
 const CLAUDE_4_6_REASONING_LEVELS = ["low", "medium", "high", "max"] as const;
 const CLAUDE_OPUS_4_7_REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 const CLAUDE_HAIKU_4_5_REASONING_LEVELS = ["none", "low", "medium", "high"] as const;
@@ -185,6 +195,84 @@ export const MODEL_CATALOG = [
     },
   },
   {
+    id: "gpt-5.6-sol",
+    provider: "openai",
+    providerModel: "gpt-5.6-sol",
+    displayName: "GPT-5.6 Sol",
+    family: "gpt",
+    tier: "frontier",
+    sortOrder: 104,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      structuredOutputs: true,
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      // Usable window capped at the 272K pricing knee (prompts above it
+      // bill 2x input / 1.5x output for the whole request).
+      usableContextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "openai_reasoning_effort",
+      levels: OPENAI_GPT_5_6_REASONING_LEVELS,
+      defaultLevel: "low",
+      requestField: "reasoning.effort",
+    },
+  },
+  {
+    id: "gpt-5.6-terra",
+    provider: "openai",
+    providerModel: "gpt-5.6-terra",
+    displayName: "GPT-5.6 Terra",
+    family: "gpt",
+    tier: "balanced",
+    sortOrder: 106,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      structuredOutputs: true,
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      usableContextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "openai_reasoning_effort",
+      levels: OPENAI_GPT_5_6_REASONING_LEVELS,
+      defaultLevel: "low",
+      requestField: "reasoning.effort",
+    },
+  },
+  {
+    id: "gpt-5.6-luna",
+    provider: "openai",
+    providerModel: "gpt-5.6-luna",
+    displayName: "GPT-5.6 Luna",
+    family: "gpt",
+    tier: "fast",
+    sortOrder: 108,
+    globalDefault: true,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      structuredOutputs: true,
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
+      usableContextWindowTokens: 272_000,
+      reservedOutputTokens: 128_000,
+    },
+    reasoning: {
+      kind: "openai_reasoning_effort",
+      levels: OPENAI_GPT_5_6_REASONING_LEVELS,
+      defaultLevel: "high",
+      requestField: "reasoning.effort",
+    },
+  },
+  {
     id: "gpt-5.4",
     provider: "openai",
     providerModel: "gpt-5.4-2026-03-05",
@@ -262,7 +350,6 @@ export const MODEL_CATALOG = [
     family: "gpt",
     tier: "frontier",
     sortOrder: 140,
-    globalDefault: true,
     capabilities: {
       vision: true,
       tools: true,

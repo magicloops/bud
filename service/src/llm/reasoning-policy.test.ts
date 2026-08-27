@@ -73,6 +73,29 @@ test("resolveEffectiveModelSelection rejects unsupported explicit reasoning", ()
   );
 });
 
+test("gpt-5.6 family accepts max and luna defaults to high", () => {
+  const solMax = resolveEffectiveModelSelection({
+    requestedModel: "gpt-5.6-sol",
+    requestedReasoning: "max",
+    serviceDefaultModel: "gpt-5.6-luna",
+    validateAvailability: false,
+  });
+  assert.equal(solMax.model, "gpt-5.6-sol");
+  assert.equal(solMax.reasoningEffort, "max");
+  assert.deepEqual(solMax.modelReasoning.reasoning, {
+    enabled: true,
+    effort: "max",
+    summaryLevel: "auto",
+  });
+
+  const lunaDefault = resolveEffectiveModelSelection({
+    serviceDefaultModel: "gpt-5.6-luna",
+    validateAvailability: false,
+  });
+  assert.equal(lunaDefault.model, "gpt-5.6-luna");
+  assert.equal(lunaDefault.reasoningEffort, "high");
+});
+
 test("resolveEffectiveModelSelection accepts ds4 thinking and rejects ds4 max", () => {
   const thinking = resolveEffectiveModelSelection({
     requestedModel: "ds4-deepseek-v4-flash",

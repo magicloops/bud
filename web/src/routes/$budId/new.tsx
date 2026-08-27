@@ -41,6 +41,10 @@ function NewThreadView() {
   const [status, setStatus] = useState<'idle' | 'dispatching' | 'streaming'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningLevel>('low')
+  // Until the user explicitly picks a level, follow the service default for
+  // the selected model (e.g. Luna defaults to "high"); the pre-load 'low'
+  // seed must not stick just because the default model also supports low.
+  const reasoningTouchedRef = useRef(false)
   const [viewMode, setViewMode] = useState<ViewMode>('terminal')
   const { models, selectedModel, setSelectedModel, defaultReasoningEffort } = useAvailableModels(budId)
 
@@ -56,9 +60,17 @@ function NewThreadView() {
     setReasoningEffort((current) => normalizeReasoningForModel(models, nextModel, current))
   }
 
+  const handleReasoningChange = (nextReasoningEffort: ReasoningLevel) => {
+    reasoningTouchedRef.current = true
+    setReasoningEffort(nextReasoningEffort)
+  }
+
   useEffect(() => {
     setReasoningEffort((current) => {
-      const preferred = current === 'none' && defaultReasoningEffort ? defaultReasoningEffort : current
+      const preferred =
+        (!reasoningTouchedRef.current || current === 'none') && defaultReasoningEffort
+          ? defaultReasoningEffort
+          : current
       return normalizeReasoningForModel(models, selectedModel, preferred)
     })
   }, [defaultReasoningEffort, models, selectedModel])
@@ -223,7 +235,7 @@ function NewThreadView() {
           selectedModel={selectedModel}
           onModelChange={handleModelChange}
           reasoningEffort={reasoningEffort}
-          onReasoningChange={setReasoningEffort}
+          onReasoningChange={handleReasoningChange}
         />
       )}
       debugPanel={(

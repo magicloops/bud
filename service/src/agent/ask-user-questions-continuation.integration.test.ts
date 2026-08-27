@@ -350,16 +350,16 @@ test("submitQuestionResponse falls back to a self-contained user message without
     source: "ask_user_questions",
     question_request_id: REQUEST_ID,
     schema: "ask_user_questions_tool_result_v1",
-    model: "gpt-5.5",
-    reasoning_effort: "low",
+    model: "gpt-5.6-luna",
+    reasoning_effort: "high",
     model_selection_source: "service_default",
   });
   assert.deepEqual(startedTurns, [
     {
       threadId: THREAD_ID,
       options: {
-        model: "gpt-5.5",
-        reasoningEffort: "low",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "high",
         modelSelectionSource: "service_default",
         ownerUserId: "user-1",
       },

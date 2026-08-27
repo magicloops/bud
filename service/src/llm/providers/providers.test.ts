@@ -567,6 +567,54 @@ test("OpenAI provider sends xhigh reasoning and omits reasoning for none", async
   assert.equal("reasoning" in capturedParams[1], false);
 });
 
+test("OpenAI provider passes max reasoning through for the GPT-5.6 family", async () => {
+  const provider = new OpenAIProvider("test-key");
+  const capturedParams: Record<string, unknown>[] = [];
+  const providerWithClient = provider as unknown as {
+    client: {
+      responses: {
+        create(params: Record<string, unknown>): Promise<AsyncIterable<unknown>>;
+      };
+    };
+  };
+
+  providerWithClient.client.responses.create = async (params) => {
+    capturedParams.push(params);
+    return emptyStream();
+  };
+
+  const maxConfig: ModelConfig = {
+    model: "gpt-5.6-sol",
+    maxOutputTokens: 128000,
+    temperature: 0.4,
+    reasoning: {
+      enabled: true,
+      effort: "max",
+      summaryLevel: "auto",
+    },
+  };
+  await drain(provider.invoke(messages, [], maxConfig));
+
+  const noneConfig: ModelConfig = {
+    model: "gpt-5.6-luna",
+    maxOutputTokens: 128000,
+    reasoning: {
+      enabled: false,
+    },
+  };
+  await drain(provider.invoke(messages, [], noneConfig));
+
+  assert.deepEqual(capturedParams[0].reasoning, {
+    effort: "max",
+    summary: "auto",
+  });
+  assert.deepEqual(capturedParams[0].include, ["reasoning.encrypted_content"]);
+  // Reasoning models must not receive sampling params (the key is present
+  // but explicitly undefined in the Responses params object).
+  assert.equal(capturedParams[0].temperature, undefined);
+  assert.equal("reasoning" in capturedParams[1], false);
+});
+
 test("OpenAI provider normalizes context-window request errors", async () => {
   const provider = new OpenAIProvider("test-key");
   const providerWithClient = provider as unknown as {

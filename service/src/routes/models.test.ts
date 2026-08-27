@@ -131,6 +131,9 @@ function registerTestProviders(t: TestContext) {
   );
   providerRegistry.register(
     createProvider("openai", [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
       "gpt-5.4-2026-03-05",
       "gpt-5.4-mini-2026-03-17",
       "gpt-5.4-nano-2026-03-17",
@@ -173,7 +176,7 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
     mock.restoreAll();
   });
   const previousDefaultModel = config.defaultModel;
-  config.defaultModel = "gpt-5.5";
+  config.defaultModel = "gpt-5.6-luna";
   t.after(() => {
     config.defaultModel = previousDefaultModel;
   });
@@ -190,15 +193,18 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   const payload = (reply.sent ? reply.payload : result) as ModelsPayload;
 
   assert.equal(reply.statusCode, 200);
-  assert.equal(payload.service_default_model, "gpt-5.5");
-  assert.equal(payload.default_model, "gpt-5.5");
-  assert.equal(payload.default_reasoning_effort, "low");
+  assert.equal(payload.service_default_model, "gpt-5.6-luna");
+  assert.equal(payload.default_model, "gpt-5.6-luna");
+  assert.equal(payload.default_reasoning_effort, "high");
   assert.equal(payload.models.some((model) => "available" in model), false);
   assert.deepEqual(payload.models.map((model) => model.id), [
     "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
     "claude-opus-4-7",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
@@ -217,9 +223,24 @@ test("GET /api/models returns catalog-backed reasoning metadata", async (t) => {
   ]);
   assert.equal(opus47.reasoning.default_level, "xhigh");
 
+  const luna = payload.models.find((model) => model.id === "gpt-5.6-luna");
+  assert.ok(luna);
+  assert.equal(luna.is_default, true);
+  assert.equal(luna.capabilities.usable_context_window_tokens, 272_000);
+  assert.equal(luna.capabilities.usable_input_window_tokens, 144_000);
+  assert.deepEqual(luna.reasoning.levels.map((level) => level.value), [
+    "none",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ]);
+  assert.equal(luna.reasoning.default_level, "high");
+
   const gpt55 = payload.models.find((model) => model.id === "gpt-5.5");
   assert.ok(gpt55);
-  assert.equal(gpt55.is_default, true);
+  assert.equal(gpt55.is_default, false);
   assert.equal(gpt55.capabilities.context_window_tokens, 1_050_000);
   assert.equal(gpt55.capabilities.usable_context_window_tokens, 400_000);
   assert.equal(gpt55.capabilities.reserved_output_tokens, 128_000);

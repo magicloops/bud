@@ -99,7 +99,7 @@ test("collectResponse accumulates streamed title text deltas", async () => {
   assert.deepEqual(response.content, [{ type: "text", text: "Fix deploy" }]);
 });
 
-test("resolveThreadTitleModel uses Anthropic Haiku 4.5 when Anthropic is configured", () => {
+test("resolveThreadTitleModel falls back to Haiku when only Anthropic is registered", () => {
   resetTitleTestProviders();
   const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);
 
@@ -112,12 +112,22 @@ test("resolveThreadTitleModel uses Anthropic Haiku 4.5 when Anthropic is configu
   }
 });
 
-test("resolveThreadTitleModel does not fall back to OpenAI when Anthropic is unavailable", () => {
+test("resolveThreadTitleModel prefers GPT-5.6 Luna when OpenAI is registered", () => {
   resetTitleTestProviders();
-  const provider = makeProvider("openai", ["gpt-5.5"]);
+  providerRegistry.register(makeProvider("openai", ["gpt-5.6-luna"]));
+  providerRegistry.register(
+    makeProvider("anthropic", ["claude-haiku-4-5-20251001"]),
+  );
 
-  providerRegistry.register(provider);
+  try {
+    assert.equal(resolveThreadTitleModel(), "gpt-5.6-luna");
+  } finally {
+    resetTitleTestProviders();
+  }
+});
 
+test("resolveThreadTitleModel returns null when no title provider is registered", () => {
+  resetTitleTestProviders();
   try {
     assert.equal(resolveThreadTitleModel(), null);
   } finally {
@@ -125,7 +135,38 @@ test("resolveThreadTitleModel does not fall back to OpenAI when Anthropic is una
   }
 });
 
-test("generateTitle invokes Anthropic Haiku 4.5", async () => {
+test("generateTitle invokes GPT-5.6 Luna with reasoning disabled when OpenAI is registered", async () => {
+  resetTitleTestProviders();
+  const receivedConfigs: ModelConfig[] = [];
+  const provider = makeProvider("openai", ["gpt-5.6-luna"]);
+  provider.invokeSync = async (_messages, _tools, modelConfig) => {
+    receivedConfigs.push(modelConfig);
+    return {
+      id: "title-response",
+      content: [{ type: "text", text: "Fix Deploy Script" }],
+      stopReason: "end_turn",
+    };
+  };
+
+  providerRegistry.register(provider);
+
+  try {
+    const service = new ThreadTitleService({} as never, makeLogger());
+    const generateTitle = Reflect.get(service, "generateTitle").bind(service) as (
+      firstUserMessage: string,
+    ) => Promise<string | null>;
+
+    assert.equal(await generateTitle("Fix the broken deploy script"), "Fix Deploy Script");
+    assert.equal(receivedConfigs.length, 1);
+    assert.equal(receivedConfigs[0].model, "gpt-5.6-luna");
+    assert.equal(receivedConfigs[0].toolChoice, "none");
+    assert.deepEqual(receivedConfigs[0].reasoning, { enabled: false });
+  } finally {
+    resetTitleTestProviders();
+  }
+});
+
+test("generateTitle falls back to Anthropic Haiku 4.5 when OpenAI is absent", async () => {
   resetTitleTestProviders();
   const receivedConfigs: ModelConfig[] = [];
   const provider = makeProvider("anthropic", ["claude-haiku-4-5-20251001"]);

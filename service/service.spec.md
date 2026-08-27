@@ -293,7 +293,7 @@ Provider keys are optional for service boot and auth/device-claim flows. Chat/ag
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` - GitHub OAuth
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - Google OAuth
 - `PORT` - Server port (default: 3000)
-- `DEFAULT_MODEL` - Product model used when requests omit `model` (default: `gpt-5.5`)
+- `DEFAULT_MODEL` - Product model used when requests omit `model` (default: `gpt-5.6-luna`)
 - `OPENAI_MODEL` - Legacy fallback model env read before the built-in default
 - `AGENT_REASONING_EFFORT` - Compatibility fallback reasoning effort for non-catalog model overrides (default: `low`)
 - `AGENT_MAX_STEPS` - Max tool calls (default: 1000)

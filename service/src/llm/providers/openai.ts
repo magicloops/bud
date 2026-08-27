@@ -30,6 +30,10 @@ type OpenAIResponse = Awaited<ReturnType<OpenAI["responses"]["create"]>>;
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai";
   readonly supportedModels = [
+    // GPT-5.6 family (Sol/Terra/Luna; undated snapshots)
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     // GPT-5.5
     "gpt-5.5",
     // GPT-5.4 series
@@ -95,7 +99,11 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   private getFallbackModelLimits(model: string): { contextTokens: number; outputTokens: number } {
-    if (model.includes("gpt-5.5") || model.includes("gpt-5.4-2026")) {
+    if (
+      model.includes("gpt-5.6") ||
+      model.includes("gpt-5.5") ||
+      model.includes("gpt-5.4-2026")
+    ) {
       return { contextTokens: 1_050_000, outputTokens: 128_000 };
     }
     if (model.includes("gpt-5.4-mini") || model.includes("gpt-5.4-nano")) {

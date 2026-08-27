@@ -302,7 +302,7 @@ Empty response at the beginning of history:
 
 **Create Message Flow** (POST /messages):
 Before creating a user message, validates the selected LLM model/reasoning pair without observing the Bud terminal:
-1. Resolve explicit `model` / `reasoning_effort`, otherwise use the stored thread selection, otherwise the service default (`gpt-5.5` + `low`)
+1. Resolve explicit `model` / `reasoning_effort`, otherwise use the stored thread selection, otherwise the service default (`gpt-5.6-luna` + its catalog default `high`)
 2. Return `400 invalid_model` or `400 invalid_reasoning_effort` before duplicate handling, message insert, thread preference persistence, or agent start when the submitted selection is unsupported
 3. Duplicate owned `client_id` retries return the existing user message without mutating the thread preference
 4. Fresh explicit selections, missing old thread selections, and invalid stored selections update `thread.model_id` / `thread.reasoning_effort` to the resolved concrete pair
@@ -586,9 +586,9 @@ Route-registration and route-auth coverage for the Phase 4 file session and edge
       }
     }
   ],
-  "service_default_model": "gpt-5.5",
-  "default_model": "gpt-5.5",
-  "default_reasoning_effort": "low"
+  "service_default_model": "gpt-5.6-luna",
+  "default_model": "gpt-5.6-luna",
+  "default_reasoning_effort": "high"
 }
 ```
 
