@@ -16,6 +16,7 @@ Registry mapping tool names to their renderers:
 export const toolContentRenderers: Record<string, ToolContentRenderer> = {
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
+  'terminal.wait': TerminalWaitContent,
   'ask_user_questions': AskUserQuestionsContent,
 }
 ```
@@ -31,10 +32,12 @@ Renders the revised terminal tool contract:
 - `payload.input_dispatched` / `payload.enter_requested` - Explicit send-result gesture metadata for `terminal.send`
 - `payload.delta` / `payload.readiness` / `payload.context_after` - Delta-first send-result state for `terminal.send`
 - `payload.view` / `payload.lines` - Observation metadata for `terminal.observe`
+- `payload.outcome` / `payload.waited_ms` / `payload.exit_code` - Wait result metadata for `terminal.wait`
 
 **Rendering**:
 - `terminal.send`: compact delta-first card showing readiness, context source, input dispatch state, Enter-request state, and any visible delta excerpt
-- `terminal.observe`: dashed observation badge, including explicit wait mode when present
+- `terminal.observe`: dashed observation badge
+- `terminal.wait`: dashed badge "Waited <duration>: <outcome label>" (settled / command finished (exit N) / back at the prompt / nothing to wait for / still busy / interrupted / ended by a new message) with the mode chip
 
 **Example Outputs**:
 ```text

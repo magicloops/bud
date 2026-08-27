@@ -207,13 +207,14 @@ The prompt/tool-definition ownership now lives in the extracted modules:
 |------|------------|-------------|
 | `terminal_run` | `command` (required) | Run one shell command (multi-line allowed) and await `command_finished`; returns real `exit_code`, `duration_ms`, and the command's output slice |
 | `terminal_send` | `raw_text?`, `key?` (exactly one) | One input gesture for the interactive foreground program; awaits settle and returns the screen delta as proof |
-| `terminal_observe` | `view?`, `lines?` | Look at the terminal without input; `view` defaults to `delta`, with explicit `screen`/`history` modes |
+| `terminal_observe` | `view?`, `lines?` | Look at the terminal without input; `view` defaults to `delta`, with explicit `screen`/`history` modes; output tail-capped at 32 KiB |
+| `terminal_wait` | `until?` (`settled` \| `command_finished`) | Park the turn until the terminal settles or the open command finishes (awaited `terminal_observe`), then return the delta; the only knob is WHAT to wait for, never how long |
 | `web_view_open` | `target_port`, `target_host?`, `path?`, `title?` | Create/reuse a Bud-scoped proxied site and attach it to the current thread; omitted `target_host` defaults to `localhost`, and explicit loopback hosts must be preserved exactly |
 | `web_view_close` | `proxied_site_id?`, `disable?` | Detach the current thread web view and optionally disable the proxied site |
 | `web_view_list` | none | List owned proxied sites for the current Bud and current thread attachment |
 | `ask_user_questions` | `title?`, `body?`, `submit_label?`, `skip_all_label?`, `questions[]` | Pause the current turn and ask the owning user skippable structured questions; v1 supports boolean, single-choice, multi-choice, text, and number questions |
 
-The retired 0.2 vocabulary (`wait_for`, readiness confidence/hints, `observe_after_ms`, `timeout_ms`) appears nowhere in tool schemas or prompt text. The service owns all terminal wait budgets (`await`ed sends get the one-hour budget; dispatch-only sends and observes get 30s).
+The retired 0.2 vocabulary (`wait_for`, readiness confidence/hints, `observe_after_ms`, `timeout_ms`) appears nowhere in tool schemas or prompt text. The service owns all terminal wait budgets (`await`ed sends get 2 minutes; `terminal_wait` gets 30 minutes; dispatch-only sends and plain observes get 30s).
 
 When the current agent environment is `bud_offline`, provider calls use a Bud-specific denylist that removes terminal (`terminal_run`, `terminal_send`, `terminal_observe`) and web-view tools while keeping service-level tools, including `ask_user_questions`, available by default.
 
@@ -304,6 +305,7 @@ startUserMessage()
 - Multiple provider tool calls are parsed and executed serially in provider output order across terminal and web-view tools.
 - `ask_user_questions` tool calls are normalized and persisted before `agent.tool_call` is emitted; live answers resolve the waiter and continue the same provider tool-call loop, answers submitted after a service restart become a self-contained follow-up user message, and normal follow-up messages close pending prompts as skipped before starting a fresh turn.
 - While waiting on `ask_user_questions`, `/agent/state.phase` is `waiting_for_user` and `/agent/state.pending_tool` exposes the normalized request with `request_id`.
+- While parked on `terminal.wait`, `/agent/state.phase` is `waiting_for_terminal`. `supersedePendingTerminalWaitForFollowUp` (called by the message route before starting a follow-up turn) rejects the pending daemon wait with `superseded_by_user_message` and awaits the old turn's finalization (`terminalWaitFinalizers`), so two flows never run on one thread; a wait that resolved on its own in the meantime is a no-op (`superseded: 0`). Failed/canceled turns settle the finalizer with the error.
 - Follow-up supersession records a skipped `ask_user_questions` tool result, emits `final` with `status: "succeeded"` and `reason: "superseded_by_user_message"`, and returns from the old turn without another provider call.
 - Conversation reconstruction diagnostics are logged when degraded and persisted on each `llm_call.cache_metadata`, making provider switches distinguishable from cache misses or missing same-provider ledger ranges.
 - Automatic context compaction is service-owned and invisible to the visible transcript. When estimated model-visible context exceeds the selected model threshold, the agent emits `agent.compaction_start`, writes an `agent_context_checkpoint` row, emits `agent.compaction_done` with an optional post-compaction `context_budget`, reloads context from fresh system prompt plus checkpoint replacement history, and continues the turn. A per-turn boundary guard avoids writing duplicate checkpoints for the same replay cutoff.
@@ -321,11 +323,14 @@ startUserMessage()
 - The 0.2-era post-tool `ContextSyncService.refreshSnapshot(...)` call was removed from the agent loop: mode facts now come from the daemon through the terminal runtime, so no extra observe round-trip happens after each state-changing tool. The dead `ContextSyncService` module itself was deleted in Phase 3; the constructor no longer accepts it.
 - Agent SSE frame ids are now the same opaque runtime cursors used by `/agent/state.stream_cursor`.
 - `terminal.run` is the deterministic command path: dispatch with `await: "command"`, await the daemon's `command_finished`, then slice the command's output from the durable store by byte range (`TerminalSessionManager.getCommandOutput`, 64 KiB tail-keeping cap). A failing command (non-zero exit) is a NORMAL tool result carrying `exit_code`; only transport/session problems become structured errors.
-- If the one-hour awaited-send budget expires without an outcome, `terminal.run` returns a still-running report (`status: "still_running"` plus observe guidance) — never a fabricated failure. Still-running (and interrupted) reports recover the dispatched `command_id` via `TerminalSessionManager.getLatestCommandForSession(sessionId)`, but only while that latest command row is unfinished — a finished latest row means the run's `command_started` event was lost and `command_id` stays `null` rather than mislabeling an older command.
+- If the two-minute awaited-send budget expires without an outcome, `terminal.run` returns a still-running report (`status: "still_running"` plus observe guidance) — never a fabricated failure. Still-running (and interrupted) reports recover the dispatched `command_id` via `TerminalSessionManager.getLatestCommandForSession(sessionId)`, but only while that latest command row is unfinished — a finished latest row means the run's `command_started` event was lost and `command_id` stays `null` rather than mislabeling an older command.
 - `terminal.send` is one gesture at a time (`raw_text` or `key`), dispatched with `await: "settled"`, followed by an explicit `view: "delta"` observation so the result is send-plus-proof (`dispatched`, `delta { changed, text }`, `mode`, `integration`, `alt_screen`). If the settle wait times out, the result reports the program as still active with a best-effort screen capture.
 - historical persisted `terminal.send` rows with `command` or `text`/`submit` replay as `terminal_run`, and `terminal.interrupt` rows replay as `terminal_send` with `key: "ctrl+c"`, so old transcripts round-trip into the current provider/tool vocabulary.
 - `terminal.observe` defaults to `view: "delta"` at the tool layer (the runtime default is `screen`) and exposes `view: "screen"` / `view: "history"` for broader context; results carry `mode` / `integration` / `alt_screen`.
-- model-facing terminal tool schemas advertise no wait or timeout knobs; the service owns effective wait policy (one-hour awaited sends, 30s dispatch-only/observe).
+- model-facing terminal tool schemas advertise no timeout knobs; the service owns effective wait policy (2-minute awaited sends, 30-minute `terminal.wait`, 30s dispatch-only/observe).
+- `terminal.run` maps the daemon's `input_absorbed` outcome (text typed on an OSC 133 shell but no command started — a foreground program consumed it, or the shell ran nothing) to `status: "input_absorbed"` with observe/send guidance; nothing is pending.
+- `terminal.wait { until? }` is the waiting primitive (plan/terminal-wait-async-wakeup.md): an awaited `terminal_observe` (`until` omitted → `command_finished` while `open_command` is set, else `settled` with `quiet_ms: 2000`) that blocks up to the 30-minute `TERMINAL_WAIT_TIMEOUT_MS`, then returns `kind: "wait"` with `outcome` (`settled | command_finished | prompt_ready | idle | closed | timeout | interrupted | superseded`), `waited_ms`, the tail-capped delta `output`, `exit_code` on a finished command, facts, and `open_command`. Budget expiry is a normal `timeout` result with call-again guidance plus a best-effort delta; a human interrupt is `interrupted`; a daemon without awaited observes yields an immediate snapshot with an upgrade note. `superseded` (the pending observe rejected with `superseded_by_user_message`) sets `result.superseded`, and the agent loop finishes the turn with `final.reason: "superseded_by_user_message"` without another provider call.
+- observe/wait output is tail-capped at `TERMINAL_OBSERVE_OUTPUT_CAP_BYTES` (32 KiB, `output_truncation_reason: "service_observe_limit"`) because every tool payload is replayed into every later provider call.
 - `agent.tool_call.args` are exactly the model-facing args (`terminal.run { command }`, `terminal.send { raw_text | key }`, `terminal.observe { view?, lines? }`); the retired effective-`wait_for` decoration is gone, and web keep-alive across this shape change is coordinated in Phase 2/3 web work.
 - human terminal interrupts reject the currently pending terminal wait as `interrupted`; `TerminalToolExecutor` turns that into a conservative tool result (`error: "interrupted"`, unresolved command status for `terminal.run`) so the model regains control without treating the original command as completed.
 - `web_view.open`, `web_view.close`, and `web_view.list` are product-level tools backed by owner-scoped proxied-site helpers; they do not expose viewer grants, cookies, or daemon stream ids to the model.
@@ -496,7 +501,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 
 **Responsibilities**:
 - emit `agent.tool_call` and synchronize `/agent/state.pending_tool`, including the tool `started_at` timestamp; tool-call args are exactly the model-facing directive args
-- set `/agent/state.phase` to `waiting_for_user` for pending `ask_user_questions` tool calls
+- set `/agent/state.phase` to `waiting_for_user` for pending `ask_user_questions` tool calls, and `waiting_for_terminal` for pending `terminal.wait` tool calls
 - persist assistant/tool transcript rows with stable `client_id`
 - persist intermediate assistant text segments that precede or appear between tool calls
 - persist assistant phase metadata for intermediate and final assistant rows so OpenAI replay fallback can recover it
@@ -555,7 +560,7 @@ Direct tests for transcript-writer persistence and stream emission boundaries.
 - canonical tool, reasoning, and assistant rows receive timing fields in `message.metadata` while `message.content` remains the timing-free replay or display payload
 - canonical assistant/tool rows receive cached cwd path context metadata when available
 - terminal tool rows can persist metadata-only `terminal_visibility` watermarks without changing replay content
-- pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`
+- pending `ask_user_questions` tool calls set runtime state to `waiting_for_user`; pending `terminal.wait` tool calls set `waiting_for_terminal`
 - completed `ask_user_questions` results persist Q/A payload rows and emit `user_questions` runtime data
 - visible reasoning segments persist as non-model-visible `reasoning` rows and emit `agent.reasoning_done`
 
@@ -795,7 +800,7 @@ Events are consumed via SSE at `GET /api/threads/:threadId/agent/stream`.
 
 From `../config.js`:
 - `config.defaultModel` - Product model to use when requests omit `model` (default: `gpt-5.5`)
-- `config.agentMaxSteps` - Max tool calls per request (default: 30)
+- `config.agentMaxSteps` - Max tool calls per request (default: 1000)
 - `config.agentMaxOutputTokens` - Global upper bound for response tokens before selected-model capability caps are applied (default: 128000)
 - `config.agentReasoningEffortDefault` - Compatibility fallback for non-catalog model overrides (default: `low`)
 - `config.agentAutoCompactionEnabled` - Enables automatic context compaction (default: enabled)

@@ -25,6 +25,7 @@ import {
   buildAgentMessageTiming,
   serializeAgentMessageTiming,
   type AgentMessageTiming,
+  isTerminalWaitUntil,
   normalizeToolKeyInput,
   type AgentFinalDirective,
   type AgentToolCallDirective,
@@ -606,6 +607,13 @@ export class AgentModelRunner {
             args.view === "delta" || args.view === "screen" || args.view === "history"
               ? args.view
               : undefined,
+          callId: toolCall.id,
+        };
+      case "terminal_wait":
+        return {
+          type: "tool_call",
+          tool: "terminal.wait",
+          ...(isTerminalWaitUntil(args.until) ? { until: args.until } : {}),
           callId: toolCall.id,
         };
       case "web_view_open":

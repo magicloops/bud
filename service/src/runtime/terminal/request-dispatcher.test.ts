@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   TERMINAL_AWAITED_SEND_TIMEOUT_MS,
   TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS,
+  TERMINAL_WAIT_TIMEOUT_MS,
   TerminalRequestDispatcher,
   resolveTerminalSendTimeout,
 } from "./request-dispatcher.js";
@@ -426,4 +427,64 @@ test("send validation rejects ambiguous and empty interactions", async () => {
     dispatcher.sendInteraction("sess_test", { submit: true }),
     /submit_requires_text/,
   );
+});
+
+test("awaited observes carry await/quiet_ms, use the long wait budget, and thread the outcome", async () => {
+  const sentFrames: Record<string, unknown>[] = [];
+  const logEntries: LogEntry[] = [];
+  const dispatcher = createDispatcher(createSession(), sentFrames, logEntries);
+
+  const observePromise = dispatcher.observeTerminal("sess_test", {
+    view: "delta",
+    await: "settled",
+    quietMs: 2000,
+  });
+
+  await waitForPendingRegistration();
+  const frame = sentFrames[0]!;
+  assert.equal(frame.type, "terminal_observe");
+  assert.equal(frame.await, "settled");
+  assert.equal(frame.quiet_ms, 2000);
+  assert.equal("wait_for" in frame, false);
+  assert.equal("timeout_ms" in frame, false);
+  const observeLog = logEntries.find((entry) => entry.message === "Sending terminal_observe request");
+  assert.equal(observeLog?.meta.timeoutMs, TERMINAL_WAIT_TIMEOUT_MS);
+
+  await dispatcher.handleObserveResult("sess_test", {
+    requestId: frame.request_id as string,
+    view: "delta",
+    output: Buffer.from("done", "utf-8").toString("base64"),
+    linesCaptured: 1,
+    changed: true,
+    mode: "shell",
+    outcome: { event: "settled", data: { mode: "shell", quiet_ms: 300 } },
+    error: null,
+  });
+  const result = await observePromise;
+  assert.deepEqual(result.outcome, { event: "settled", data: { mode: "shell", quiet_ms: 300 } });
+  assert.equal(result.output, "done");
+});
+
+test("plain observes omit await and keep the short budget; command awaits omit quiet_ms", async () => {
+  const sentFrames: Record<string, unknown>[] = [];
+  const logEntries: LogEntry[] = [];
+  const dispatcher = createDispatcher(createSession(), sentFrames, logEntries);
+
+  const plain = dispatcher.observeTerminal("sess_test", { view: "delta" });
+  const commandWait = dispatcher.observeTerminal("sess_test", {
+    view: "delta",
+    await: "command",
+    quietMs: 2000,
+  });
+  await waitForPendingRegistration();
+  assert.equal("await" in sentFrames[0]!, false);
+  assert.equal(sentFrames[1]!.await, "command");
+  assert.equal("quiet_ms" in sentFrames[1]!, false);
+  const logs = logEntries.filter((entry) => entry.message === "Sending terminal_observe request");
+  assert.equal(logs[0]?.meta.timeoutMs, TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS);
+  assert.equal(logs[1]?.meta.timeoutMs, TERMINAL_WAIT_TIMEOUT_MS);
+
+  assert.equal(dispatcher.rejectPendingRequestsForSession("sess_test", "superseded_by_user_message"), 2);
+  await assert.rejects(plain, /superseded_by_user_message/);
+  await assert.rejects(commandWait, /superseded_by_user_message/);
 });

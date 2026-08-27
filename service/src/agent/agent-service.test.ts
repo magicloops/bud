@@ -1042,3 +1042,69 @@ test("OpenAI tool-loop replay marks pre-tool assistant text as commentary", asyn
     assistantPhase: "commentary",
   });
 });
+
+test("supersedePendingTerminalWaitForFollowUp rejects the daemon wait and awaits the turn's finalization", async () => {
+  const terminalCalls: Array<{ threadId: string; errorMessage: string }> = [];
+  const runtime = {
+    getSnapshot() {
+      return { active: true, turn_id: "turn-1", phase: "waiting_for_terminal" };
+    },
+  };
+  const service = new AgentService(
+    {
+      async rejectPendingRequestsForThread(threadId: string, errorMessage: string) {
+        terminalCalls.push({ threadId, errorMessage });
+        return 1;
+      },
+    } as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  let settled = false;
+  const supersede = service
+    .supersedePendingTerminalWaitForFollowUp({ threadId: "thread-1" })
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(terminalCalls, [
+    { threadId: "thread-1", errorMessage: "superseded_by_user_message" },
+  ]);
+  assert.equal(settled, false, "must wait for the old turn to finish");
+
+  // The agent flow records the superseded tool result and finishes the turn.
+  (service as unknown as { settleTerminalWaitFinalizer(threadId: string): void })
+    .settleTerminalWaitFinalizer("thread-1");
+  assert.deepEqual(await supersede, { superseded: 1 });
+});
+
+test("supersedePendingTerminalWaitForFollowUp is a no-op unless the turn is parked on terminal.wait", async () => {
+  const terminalCalls: string[] = [];
+  const runtime = {
+    getSnapshot() {
+      return { active: true, turn_id: "turn-1", phase: "tool_running" };
+    },
+  };
+  const service = new AgentService(
+    {
+      async rejectPendingRequestsForThread(threadId: string) {
+        terminalCalls.push(threadId);
+        return 1;
+      },
+    } as never,
+    runtime as never,
+    createLogger() as never,
+    false,
+    false,
+  );
+
+  assert.deepEqual(
+    await service.supersedePendingTerminalWaitForFollowUp({ threadId: "thread-1" }),
+    { superseded: 0 },
+  );
+  assert.deepEqual(terminalCalls, []);
+});

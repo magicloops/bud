@@ -55,7 +55,7 @@ export interface TerminalEventOutcome { event: string; data: Record<string, unkn
 | `TerminalOutputMessage` | ← Bud | Output chunk: `{ session_id, data, byte_offset }` — `byte_offset` is the sole ordering/dedup/resume coordinate (no `seq`) |
 | `TerminalEventMessage` | ← Bud | Semantic event stream: `{ session_id, event, data }` |
 | `TerminalSendMessage` / `TerminalSendResultMessage` | ↔ | One structured gesture (`text` + optional `submit`, or one semantic `key`) with optional `await`; result carries `dispatched`, mirrored `outcome` event or `null`, and `error` |
-| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit grid-backed delta/screen/history observation; result carries text, `lines_captured`, `changed`, plus `mode` / `integration` / `alt_screen` / cursor facts |
+| `TerminalObserveMessage` / `TerminalObserveResultMessage` | ↔ | Explicit grid-backed delta/screen/history observation; optional `await` (`settled` \| `command`) + `quiet_ms` make it an awaited observe (block on the fact, then snapshot); result carries text, `lines_captured`, `changed`, `mode` / `integration` / `alt_screen` / cursor facts, and `outcome` for awaited observes |
 
 Retired from the wire in 0.3: `terminal_ready`, readiness/confidence/hints payloads, `wait_for` / `timeout_ms` / `observe_after_ms`, the one-entry `keys` alias, `host_cwd` (replaced by `prompt_ready.cwd`), `output_bytes` / `truncated` on observe results, and `seq` on output frames.
 

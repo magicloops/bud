@@ -130,9 +130,9 @@ Message input form with options.
 
 **Props**:
 - `messageText` / `onMessageChange` - Controlled input
-- `status` - UI state (idle, dispatching, streaming, waiting_for_user)
+- `status` - UI state (idle, dispatching, streaming, waiting_for_user, waiting_for_terminal)
 - `onSubmit` - Form submission handler
-- optional `onCancelAgentTurn` - Existing-thread cancel action that switches the send button into stop mode while the agent is dispatching or streaming
+- optional `onCancelAgentTurn` - Existing-thread cancel action that switches the send button into stop mode while the agent is dispatching, streaming, or waiting on the terminal
 - `models` / `selectedModel` / `onModelChange` - Model selector
 - `reasoningEffort` / `onReasoningChange` - Reasoning level selector
 - optional `disabledReason` - Human-readable reason to disable normal message composition while a structured prompt is pending
@@ -154,7 +154,7 @@ Message input form with options.
 - The submit button renders context-budget usage as a radial border from 0-100%
   starting at the top and moving clockwise, and exposes the context tooltip on
   hover/focus
-- Keeps text entry, model/reasoning controls, and submit available during `waiting_for_user`; `disabledReason` remains available for other caller-owned disable cases
+- Keeps text entry, model/reasoning controls, and submit available during `waiting_for_user` and `waiting_for_terminal` (a follow-up message supersedes a pending terminal wait); `disabledReason` remains available for other caller-owned disable cases
 - Shows a compact Bud-offline notice when `/agent/state.environment` or the send response reports `bud_offline`; the composer remains usable because the agent can still respond without Bud-specific tools
 - Shows sanitized runtime agent failures from `/agent/state.last_error` or failed `final` events in the existing composer error slot, not in the transcript
 - Consumes shared `ModelInfo[]` from `@/lib/models` rather than owning a route-local model type

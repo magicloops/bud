@@ -137,6 +137,14 @@ export interface TerminalObserveMessage extends TerminalEnvelope {
   request_id: string;
   view?: TerminalObservationView;
   lines?: number;
+  /**
+   * Awaited observe (proto §6.1): block until the requested fact — `settled`
+   * (damage-quiet, or immediately when already quiet) or `command` (the open
+   * command's `command_finished`) — THEN snapshot. Omitted = plain snapshot.
+   */
+  await?: TerminalSendAwait;
+  /** `await:"settled"` only: require this much quiet instead of the daemon default. */
+  quiet_ms?: number;
 }
 
 export interface TerminalObserveResultMessage extends TerminalEnvelope {
@@ -152,6 +160,8 @@ export interface TerminalObserveResultMessage extends TerminalEnvelope {
   alt_screen?: boolean;
   cursor_row?: number;
   cursor_col?: number;
+  /** Awaited observes only (§6.6): the terminating fact `{ event, data }`. */
+  outcome?: TerminalEventOutcome | null;
   error: string | null;
 }
 

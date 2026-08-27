@@ -440,7 +440,7 @@ test("terminal.send settle timeout returns dispatched with a screen fallback not
   assert.equal(execution.result.delta, null);
   assert.equal(execution.result.output, "spinner still going");
   assert.equal(execution.result.altScreen, true);
-  assert.match(String(execution.result.note), /still active/);
+  assert.match(String(execution.result.note), /never settled/);
   assert.match(execution.summary, /still active without settling/);
 });
 
@@ -826,4 +826,257 @@ test("terminal.send of a shell command at a prompt carries the real exit code (s
   assert.equal(execution.result.interactionExitCode, 1);
   assert.equal(execution.payload.exit_code, 1);
   assert.equal(execution.result.dispatched, true);
+});
+
+test("terminal.wait defaults to command_finished while a command is open and returns the delta", async () => {
+  const observeCalls: Array<Record<string, unknown>> = [];
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return { commandId: "cmd_open", commandStartedAt: new Date(Date.now() - 5000), commandFinishedAt: null };
+    },
+    async observeTerminal(sessionId: string, options: Record<string, unknown>) {
+      observeCalls.push(options);
+      assert.equal(sessionId, "sess_test");
+      return {
+        view: "delta",
+        output: "build finished\n$ ",
+        linesCaptured: 2,
+        changed: true,
+        mode: "shell",
+        integration: "osc133",
+        altScreen: false,
+        outcome: { event: "command_finished", data: { command_id: "cmd_open", exit_code: 0 } },
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    callId: "call_wait_cmd",
+  });
+
+  assert.deepEqual(observeCalls, [{ view: "delta", lines: -50, await: "command" }]);
+  assert.equal(execution.result.kind, "wait");
+  assert.equal(execution.result.until, "command_finished");
+  assert.equal(execution.result.waitOutcome, "command_finished");
+  assert.equal(execution.result.waitExitCode, 0);
+  assert.equal(execution.payload.outcome, "command_finished");
+  assert.equal(execution.payload.exit_code, 0);
+  assert.equal(execution.payload.output, "build finished\n$ ");
+  assert.equal(typeof execution.payload.waited_ms, "number");
+  assert.match(execution.summary, /command finished \(exit 0\)/);
+});
+
+test("terminal.wait defaults to settled with the service quiet window when nothing is open", async () => {
+  const observeCalls: Array<Record<string, unknown>> = [];
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "tui", integration: "none", cwd: null };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+    async observeTerminal(_sessionId: string, options: Record<string, unknown>) {
+      observeCalls.push(options);
+      return {
+        view: "delta",
+        output: "",
+        linesCaptured: 0,
+        changed: false,
+        mode: "tui",
+        integration: "none",
+        altScreen: true,
+        outcome: { event: "settled", data: { mode: "tui", quiet_ms: 0, immediate: true } },
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    callId: "call_wait_settled",
+  });
+
+  assert.deepEqual(observeCalls, [{ view: "delta", lines: -50, await: "settled", quietMs: 2000 }]);
+  assert.equal(execution.result.until, "settled");
+  assert.equal(execution.result.waitOutcome, "settled");
+  assert.equal(execution.payload.changed, false);
+  assert.equal(execution.summary, "Terminal is already settled");
+});
+
+test("terminal.wait budget expiry is a normal timeout result with a delta fallback and call-again guidance", async () => {
+  let calls = 0;
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return { commandId: "cmd_open", commandStartedAt: new Date(Date.now() - 1000), commandFinishedAt: null };
+    },
+    async observeTerminal(_sessionId: string, options: Record<string, unknown>) {
+      calls += 1;
+      if (options.await) {
+        throw new Error("observe_timeout");
+      }
+      return { view: "delta", output: "still going", linesCaptured: 1, changed: true, mode: "shell" };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    until: "command_finished",
+    callId: "call_wait_timeout",
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(execution.result.kind, "wait");
+  assert.equal(execution.result.waitOutcome, "timeout");
+  assert.equal(execution.result.error, undefined);
+  assert.equal(execution.payload.outcome, "timeout");
+  assert.equal(execution.payload.output, "still going");
+  assert.match(String(execution.payload.note), /call terminal\.wait again/);
+  assert.match(execution.summary, /still busy/);
+});
+
+test("terminal.wait superseded by a follow-up message flags the result and skips the extra observe", async () => {
+  let calls = 0;
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+    async observeTerminal() {
+      calls += 1;
+      throw new Error("superseded_by_user_message");
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    callId: "call_wait_superseded",
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(execution.result.superseded, true);
+  assert.equal(execution.result.waitOutcome, "superseded");
+  assert.equal(execution.payload.outcome, "superseded");
+  assert.equal(execution.summary, "Terminal wait ended because the user sent a new message");
+});
+
+test("terminal.wait interrupted by the user stays a conservative tool result", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+    async observeTerminal(_sessionId: string, options: Record<string, unknown>) {
+      if (options.await) {
+        throw new Error("interrupted");
+      }
+      return { view: "delta", output: "^C", linesCaptured: 1, changed: true, mode: "shell" };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    callId: "call_wait_interrupted",
+  });
+
+  assert.equal(execution.result.waitOutcome, "interrupted");
+  assert.equal(execution.result.error, "interrupted");
+  assert.equal(execution.payload.output, "^C");
+  assert.equal(execution.summary, "Terminal wait was interrupted by the user");
+});
+
+test("terminal.wait against a daemon without awaited observes notes the immediate snapshot", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "unknown", integration: "none", cwd: null };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+    async observeTerminal() {
+      return { view: "delta", output: "", linesCaptured: 0, changed: false, mode: "unknown" };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    callId: "call_wait_legacy",
+  });
+
+  assert.equal(execution.result.waitOutcome, "settled");
+  assert.match(String(execution.payload.note), /does not support waiting/);
+});
+
+test("terminal.run maps the daemon's input_absorbed outcome to an honest status", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+    async sendInteraction() {
+      return {
+        dispatched: true,
+        outcome: { event: "input_absorbed", data: { signal: "prompt_ready" } },
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.run",
+    command: "   ",
+    callId: "call_absorbed",
+  });
+
+  assert.equal(execution.result.kind, "command");
+  assert.equal(execution.result.status, "input_absorbed");
+  assert.equal(execution.result.error, undefined);
+  assert.equal(execution.payload.status, "input_absorbed");
+  assert.match(String(execution.payload.note), /no shell command started/);
+});
+
+test("terminal.observe output is tail-capped for the model", async () => {
+  const big = Array.from({ length: 4000 }, (_, i) => `line ${i} ${"x".repeat(20)}`).join("\n");
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return null;
+    },
+    async observeTerminal() {
+      return { view: "history", output: big, linesCaptured: 4000, mode: "shell" };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.observe",
+    view: "history",
+    callId: "call_observe_big",
+  });
+
+  assert.equal(execution.result.truncated, true);
+  assert.equal(execution.outputTruncationReason, "service_observe_limit");
+  assert.ok(Buffer.byteLength(String(execution.payload.output), "utf-8") < 33 * 1024);
+  assert.match(String(execution.payload.output), /^\[\.\.\. earlier output omitted/);
+  assert.ok(String(execution.payload.output).endsWith("line 3999 " + "x".repeat(20)));
+  assert.equal(execution.payload.output_truncation_reason, "service_observe_limit");
 });

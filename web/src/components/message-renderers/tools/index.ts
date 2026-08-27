@@ -3,6 +3,7 @@ import {
   TerminalObserveContent,
   TerminalRunContent,
   TerminalSendContent,
+  TerminalWaitContent,
 } from './terminal-run'
 import { AskUserQuestionsContent } from './ask-user-questions'
 
@@ -17,5 +18,6 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
   'terminal.run': TerminalRunContent,
   'terminal.send': TerminalSendContent,
   'terminal.observe': TerminalObserveContent,
+  'terminal.wait': TerminalWaitContent,
   ask_user_questions: AskUserQuestionsContent,
 }

@@ -47,6 +47,13 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   so exits from interactive programs would otherwise ride the timeout) — *after* the session lock is released, so slow commands never block
   other sessions/heartbeats (review finding D-H1). A daemon-internal 4h
   safety cap returns `error: "TIMEOUT"`; the service owns real timeout policy.
+  Command-awaits on a genuinely OSC 133 shell (`genuine_osc133` at dispatch)
+  also resolve `input_absorbed` when a `settled`/`prompt_ready` arrives with
+  no `command_started` since dispatch and none follows within
+  `INPUT_ABSORBED_GRACE` (1.5s): the text went to a foreground program or the
+  shell ran nothing — the codex-incident shape, kept as a backstop behind the
+  busy guard. Sentinel sessions are excluded (their start is synthesized at
+  `D`).
 - Sentinel fallback (design D6c): submitted `await:"command"` text with no
   genuine OSC 133 evidence gets `; printf '\033]133;D;%s\a' "$?"` appended
   and `mark_sentinel_integration()`. The wrap decision keys off live `A`/`C`
@@ -55,7 +62,17 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
 - `handle_observe`: emulator-grid-backed views — `screen` (full grid),
   `delta` (grid-diff v1: rows differing from the last observe/send snapshot),
   `history` (last N scrollback lines, default 200, cap 2000) — plus
-  `mode`/`integration`/`alt_screen`/cursor facts.
+  `mode`/`integration`/`alt_screen`/cursor facts. **Awaited observe**
+  (`await: "settled" | "command"`, `quiet_ms?`; backs the model's
+  `terminal.wait`): `await_observe_outcome` blocks on the fact FIRST (lock
+  never held while waiting), then the snapshot is taken, and the result
+  carries `outcome`. Settled-waits subscribe to the pump AND poll
+  `Session::is_quiet` every 100ms — an at-prompt shell's quiet point emits no
+  `settled`, so a wait that subscribes mid-paint would otherwise never
+  resolve; already-quiet resolves immediately (`data.immediate: true`).
+  `quiet_ms` above the daemon's 300ms adds an output-quiet confirmation
+  (ring offset unchanged across the extra window, else keep waiting).
+  Command-waits resolve `idle` immediately with nothing open. Same 4h cap.
 - `handle_input`: raw browser keyboard bytes written verbatim to the PTY.
 - `handle_resize` / `handle_close`: stem resize (+ status with new geometry)
   and holder kill (+ status `closed`, best-effort registry GC).
@@ -115,8 +132,12 @@ are written under `<session dir>/shim/` at ensure.
 - integration (`tests/terminal_stem.rs`, real holders via
   `CARGO_BIN_EXE_bud term-hold`): ensure→ready, sentinel `terminal.run` exit
   codes 0/1 on `/bin/sh`, observe/resize, close kills holder, offset-exact
-  reattach (no dup/no gap), two-session non-blocking concurrency (D-H1), and
-  zsh/bash shim marker flows (skipped when the shell is absent)
+  reattach (no dup/no gap), two-session non-blocking concurrency (D-H1),
+  zsh/bash shim marker flows (skipped when the shell is absent), awaited
+  observes (`awaited_observe_resolves_immediately_when_already_quiet`,
+  `awaited_observe_resolves_on_the_open_commands_finish` incl. the extra
+  quiet window), and `input_absorbed`
+  (`command_await_reports_input_absorbed_when_nothing_starts`)
 
 
 ## Busy guard (declared-intent enforcement)
@@ -129,7 +150,8 @@ session has an OPEN command — `command_started` without a finish, tracked in
 TUI keeps mode=shell, and typing a "command" would feed the foreground
 program while the await could only resolve when it exits. Integration test:
 `run_refused_while_a_command_is_open` (also proves the guarded text never
-reaches the PTY).
+reaches the PTY). Backstop for the cases the guard cannot see (lost markers,
+bash 3.2 post-SIGINT): `await_outcome`'s `input_absorbed` resolution above.
 
 <!-- SPEC:TODO -->
 - bash 3.2 shim: after SIGINT of a foreground child, the test environment

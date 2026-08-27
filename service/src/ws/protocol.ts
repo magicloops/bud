@@ -173,6 +173,9 @@ export const TerminalObserveResultSchema = TerminalEnvelopeSchema.extend({
   // view "screen" only: the grid serialized as ANSI (SGR runs + cursor
   // position), base64 — replaying it reproduces colors/styles/cursor.
   output_ansi: z.string().optional(),
+  // Awaited observes (§6.1 `await`): the terminating fact the wait resolved
+  // on. Absent on plain snapshots and on pre-wait daemons.
+  outcome: TerminalEventOutcomeSchema.nullable().optional(),
   error: z.string().nullable()
 });
 

@@ -207,13 +207,14 @@ loader: async ({ params }) => {
    - Submission reconciliation delegates to `submitQuestionResponseFlow(...)` in `web/src/features/threads/question-response-submit.ts`
    - Live continuations keep the stream connected while fallback/idempotent responses refresh the transcript/runtime bootstrap
    - The route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to a paused UI status
+   - The route maps `/agent/state.phase === "waiting_for_terminal"` and live `terminal.wait` tool calls to `waiting_for_terminal` ("Waiting on terminal"): the agent is idle until the terminal settles; the composer stays enabled (a follow-up message supersedes the wait server-side) and Stop remains available
    - The timeline thinking indicator is hidden while paused for user input
    - Normal composer input stays enabled while a pending structured prompt is visible; follow-up sends use the normal message route and let the service close the prompt
 
 **State**:
 ```typescript
 // UI state
-status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user'
+status: 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user' | 'waiting_for_terminal'
 messages: ApiMessage[]
 messagePage: ApiMessagePage['page']
 viewMode: 'terminal' | 'web' | 'file'

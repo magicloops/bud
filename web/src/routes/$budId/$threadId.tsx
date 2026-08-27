@@ -508,7 +508,9 @@ function ThreadView() {
 
   const handleCompactionStart = useCallback((event: ApiAgentCompactionStartEvent) => {
     setActiveCompaction(event)
-    setStatus((current) => (current === 'waiting_for_user' ? current : 'streaming'))
+    setStatus((current) =>
+      current === 'waiting_for_user' || current === 'waiting_for_terminal' ? current : 'streaming',
+    )
   }, [])
 
   const handleCompactionDone = useCallback((event: ApiAgentCompactionDoneEvent) => {
@@ -765,7 +767,7 @@ function ThreadView() {
   useEffect(() => {
     if (
       !cancelAgentTurnRequestedRef.current ||
-      (status !== 'streaming' && status !== 'waiting_for_user')
+      (status !== 'streaming' && status !== 'waiting_for_user' && status !== 'waiting_for_terminal')
     ) {
       return
     }
@@ -1017,6 +1019,9 @@ function getStatusFromAgentState(agentState: ApiAgentState): WorkbenchStatus {
   }
   if (agentState.phase === 'waiting_for_user' || agentState.pending_tool?.name === 'ask_user_questions') {
     return 'waiting_for_user'
+  }
+  if (agentState.phase === 'waiting_for_terminal' || agentState.pending_tool?.name === 'terminal.wait') {
+    return 'waiting_for_terminal'
   }
   return 'streaming'
 }

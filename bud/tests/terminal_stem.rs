@@ -161,7 +161,41 @@ fn observe_frame(session_id: &str, request_id: &str, view: &str) -> TerminalObse
         request_id: request_id.to_string(),
         view: Some(view.to_string()),
         lines: None,
+        r#await: None,
+        quiet_ms: None,
     }
+}
+
+fn awaited_observe_frame(
+    session_id: &str,
+    request_id: &str,
+    await_mode: TerminalSendAwait,
+    quiet_ms: Option<u64>,
+) -> TerminalObserveFrame {
+    TerminalObserveFrame {
+        r#await: Some(await_mode),
+        quiet_ms,
+        ..observe_frame(session_id, request_id, "delta")
+    }
+}
+
+/// Inline awaited observe with a hard timeout so a wait regression fails the
+/// test instead of hanging it (the daemon's own cap is 4h).
+async fn awaited_observe(
+    manager: &TerminalManager,
+    frame: TerminalObserveFrame,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(Duration::from_secs(20), manager.handle_observe(frame))
+        .await
+        .expect("awaited observe must resolve within 20s")
+}
+
+fn is_result_for(frame: &Value, kind: &str, request_id: &str) -> bool {
+    is_type(frame, kind) && frame.get("request_id").and_then(Value::as_str) == Some(request_id)
+}
+
+fn is_event(frame: &Value, event: &str) -> bool {
+    is_type(frame, "terminal_event") && frame.get("event").and_then(Value::as_str) == Some(event)
 }
 
 fn decoded_output(frame: &Value) -> String {
@@ -1194,6 +1228,305 @@ async fn command_await_resolves_early_when_command_turns_interactive() {
             .and_then(|d| d.get("signal"))
             .and_then(Value::as_str),
         Some("bracketed_paste")
+    );
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn awaited_observe_resolves_immediately_when_already_quiet() {
+    // terminal.wait on a terminal that is already settled must not hang until
+    // the NEXT quiet point (which may never come at an idle prompt): the
+    // daemon checks `Session::is_quiet` after subscribing and resolves with
+    // `outcome.data.immediate: true`.
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    manager
+        .handle_ensure(ensure_frame("sess-wait-idle", None))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "ready", |f| {
+        is_status(f, "ready")
+    })
+    .await;
+    manager
+        .handle_send(send_frame(
+            "sess-wait-idle",
+            "req-echo",
+            "echo wait_idle_marker",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "echo result", |f| {
+        is_result_for(f, "terminal_send_result", "req-echo")
+    })
+    .await;
+    // Let the post-command quiet point pass.
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    let started = Instant::now();
+    awaited_observe(
+        &manager,
+        awaited_observe_frame(
+            "sess-wait-idle",
+            "req-wait",
+            TerminalSendAwait::Settled,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(10), "awaited observe", |f| {
+        is_result_for(f, "terminal_observe_result", "req-wait")
+    })
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "already-quiet wait must resolve promptly, took {:?}",
+        started.elapsed()
+    );
+    let outcome = result
+        .get("outcome")
+        .expect("awaited observe carries outcome");
+    assert_eq!(
+        outcome.get("event").and_then(Value::as_str),
+        Some("settled")
+    );
+    assert_eq!(
+        outcome.pointer("/data/immediate").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(result.get("view").and_then(Value::as_str), Some("delta"));
+    assert!(result.get("mode").and_then(Value::as_str).is_some());
+
+    // A command-await with nothing open resolves `idle` immediately too.
+    awaited_observe(
+        &manager,
+        awaited_observe_frame(
+            "sess-wait-idle",
+            "req-wait-cmd",
+            TerminalSendAwait::Command,
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    let result = wait_frame(
+        &mut rx,
+        Duration::from_secs(10),
+        "awaited observe (command)",
+        |f| is_result_for(f, "terminal_observe_result", "req-wait-cmd"),
+    )
+    .await;
+    assert_eq!(
+        result.pointer("/outcome/event").and_then(Value::as_str),
+        Some("idle")
+    );
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: "sess-wait-idle".into(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn awaited_observe_resolves_on_the_open_commands_finish() {
+    // terminal.wait until:"command_finished" while a command is open: the
+    // observe blocks (lock-free) and snapshots AFTER the command finishes.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present on this machine");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-wait-cmd";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-long",
+            "sleep 1; echo wait_cmd_done",
+            None,
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "command started", |f| {
+        is_event(f, "command_started")
+    })
+    .await;
+
+    let started = Instant::now();
+    awaited_observe(
+        &manager,
+        awaited_observe_frame(session_id, "req-wait", TerminalSendAwait::Command, None),
+    )
+    .await
+    .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(15), "awaited observe", |f| {
+        is_result_for(f, "terminal_observe_result", "req-wait")
+    })
+    .await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(500),
+        "must have actually waited for the sleep, took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        result.pointer("/outcome/event").and_then(Value::as_str),
+        Some("command_finished"),
+        "{result:?}"
+    );
+    assert!(result.pointer("/outcome/data/command_id").is_some());
+    assert!(
+        decoded_output(&result).contains("wait_cmd_done"),
+        "snapshot is taken after the fact: {:?}",
+        decoded_output(&result)
+    );
+
+    // A settled-await with a longer quiet window on the (now idle) prompt
+    // still resolves promptly via the immediate path plus confirmation.
+    let started = Instant::now();
+    awaited_observe(
+        &manager,
+        awaited_observe_frame(
+            session_id,
+            "req-wait-quiet",
+            TerminalSendAwait::Settled,
+            Some(800),
+        ),
+    )
+    .await
+    .unwrap();
+    let result = wait_frame(
+        &mut rx,
+        Duration::from_secs(15),
+        "quiet-confirmed observe",
+        |f| is_result_for(f, "terminal_observe_result", "req-wait-quiet"),
+    )
+    .await;
+    assert_eq!(
+        result.pointer("/outcome/event").and_then(Value::as_str),
+        Some("settled")
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(400),
+        "extra quiet window applied"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn command_await_reports_input_absorbed_when_nothing_starts() {
+    // On a genuinely OSC 133-integrated shell a submitted command-await
+    // expects a `command_started`. A fresh prompt / quiet point with none
+    // means the text did not run as a shell command (here: a whitespace-only
+    // line the shell simply re-prompts on). The await must resolve with
+    // `input_absorbed` instead of waiting for a `command_finished` that can
+    // never arrive — the backstop behind the busy guard for the codex shape.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present on this machine");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-absorbed";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+    // Establish genuine markers with one real command first.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-real",
+            "true",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    let real = wait_frame(&mut rx, Duration::from_secs(15), "real result", |f| {
+        is_result_for(f, "terminal_send_result", "req-real")
+    })
+    .await;
+    assert_eq!(
+        real.pointer("/outcome/event").and_then(Value::as_str),
+        Some("command_finished")
+    );
+
+    let started = Instant::now();
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-blank",
+            "   ",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(15), "absorbed result", |f| {
+        is_result_for(f, "terminal_send_result", "req-blank")
+    })
+    .await;
+    assert_eq!(
+        result.pointer("/outcome/event").and_then(Value::as_str),
+        Some("input_absorbed"),
+        "{result:?}"
+    );
+    assert!(result
+        .pointer("/outcome/data/signal")
+        .and_then(Value::as_str)
+        .is_some());
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "resolved within the grace, took {:?}",
+        started.elapsed()
     );
 
     manager

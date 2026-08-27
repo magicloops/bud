@@ -4,7 +4,13 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export type ViewMode = 'chat' | 'terminal' | 'web' | 'file'
-export type WorkbenchStatus = 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user'
+export type WorkbenchStatus =
+  | 'idle'
+  | 'dispatching'
+  | 'streaming'
+  | 'waiting_for_user'
+  /** The agent is parked on `terminal.wait`: idle until the terminal settles. */
+  | 'waiting_for_terminal'
 
 type WorkspaceTopBarProps = {
   title: string
@@ -52,7 +58,9 @@ export function WorkspaceTopBar({
               ? 'Streaming'
               : status === 'waiting_for_user'
                 ? 'Waiting'
-                : 'Idle'}
+                : status === 'waiting_for_terminal'
+                  ? 'Waiting on terminal'
+                  : 'Idle'}
         </span>
         {showChatTab && (
           <ViewToggleButton active={view === 'chat'} onClick={() => onViewChange('chat')} icon={<MessageSquare className="h-4 w-4 md:mr-2" />}>

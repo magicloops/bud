@@ -263,6 +263,7 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   const runTool = capturedTools.find((tool) => tool.name === "terminal_run");
   const sendTool = capturedTools.find((tool) => tool.name === "terminal_send");
   const observeTool = capturedTools.find((tool) => tool.name === "terminal_observe");
+  const waitTool = capturedTools.find((tool) => tool.name === "terminal_wait");
   const webViewOpenTool = capturedTools.find((tool) => tool.name === "web_view_open");
   const webViewCloseTool = capturedTools.find((tool) => tool.name === "web_view_close");
   const webViewListTool = capturedTools.find((tool) => tool.name === "web_view_list");
@@ -270,6 +271,7 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.ok(runTool);
   assert.ok(sendTool);
   assert.ok(observeTool);
+  assert.ok(waitTool);
   assert.ok(webViewOpenTool);
   assert.ok(webViewCloseTool);
   assert.ok(webViewListTool);
@@ -286,6 +288,14 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.deepEqual(
     (observeProperties.view as { enum?: unknown }).enum,
     ["delta", "screen", "history"],
+  );
+  // terminal_wait: the only knob is WHAT to wait for — never how long.
+  const waitProperties = waitTool.parameters.properties as Record<string, unknown>;
+  assert.deepEqual(Object.keys(waitProperties), ["until"]);
+  assert.deepEqual(waitTool.parameters.required, []);
+  assert.deepEqual(
+    (waitProperties.until as { enum?: unknown }).enum,
+    ["settled", "command_finished"],
   );
   // Retired 0.2 vocabulary must not appear in any tool schema.
   const serializedTools = JSON.stringify(capturedTools);

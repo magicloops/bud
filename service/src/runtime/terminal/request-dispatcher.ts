@@ -55,6 +55,14 @@ type SendDebugState = {
 // agent turn — the §A codex incident hung a turn for the old one-hour budget.
 export const TERMINAL_AWAITED_SEND_TIMEOUT_MS = 2 * 60 * 1000;
 export const TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS = 30 * 1000;
+/**
+ * Awaited-observe budget (`terminal.wait`): deliberately long. The model
+ * asked to wait for a fact and pays one provider call per wake, so a short
+ * budget only converts waiting into polling. The turn stays cancellable and
+ * a follow-up user message supersedes the wait at any time; the daemon's 4h
+ * safety cap bounds leaks.
+ */
+export const TERMINAL_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function resolveTerminalSendTimeout(
   awaitMode: TerminalSendAwait | undefined,
@@ -73,6 +81,10 @@ export function resolveTerminalSendTimeout(
 export type ObserveOptions = {
   lines?: number;
   view?: TerminalObservationView;
+  /** Awaited observe: block on the fact before snapshotting (proto §6.1). */
+  await?: TerminalSendAwait;
+  /** `await:"settled"`: required quiet window in ms (daemon default when omitted). */
+  quietMs?: number;
 };
 
 export type ObserveResult = {
@@ -92,6 +104,8 @@ export type ObserveResult = {
    */
   ringNextOffset?: number;
   outputAnsi?: string;
+  /** Awaited observes: the terminating fact `{ event, data }` (proto §6.6). */
+  outcome?: TerminalEventOutcome | null;
 };
 
 export type ObserveResponsePayload = {
@@ -107,6 +121,7 @@ export type ObserveResponsePayload = {
   cursorCol?: number;
   ringNextOffset?: number;
   outputAnsi?: string;
+  outcome?: TerminalEventOutcome | null;
   error: string | null;
 };
 
@@ -176,10 +191,17 @@ export class TerminalRequestDispatcher {
     const requestId = `obs_${ulid()}`;
     const view = options.view ?? "screen";
     const lines = options.lines ?? -50;
+    const awaitMode = options.await;
+    const quietMs =
+      typeof options.quietMs === "number" && Number.isFinite(options.quietMs) && options.quietMs > 0
+        ? Math.floor(options.quietMs)
+        : undefined;
     const timeoutMs =
       typeof requestedTimeoutMs === "number" && Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > 0
         ? Math.floor(requestedTimeoutMs)
-        : TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS;
+        : awaitMode
+          ? TERMINAL_WAIT_TIMEOUT_MS
+          : TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS;
     const startedAt = Date.now();
     const deadlineAt = startedAt + timeoutMs;
     const startOffset = this.deps.getLastOffset(sessionId);
@@ -207,6 +229,8 @@ export class TerminalRequestDispatcher {
       request_id: requestId,
       view,
       lines,
+      ...(awaitMode ? { await: awaitMode } : {}),
+      ...(awaitMode === "settled" && quietMs !== undefined ? { quiet_ms: quietMs } : {}),
     };
 
     const sent = this.deps.sendFrameToBud(session.budId, payload);
@@ -223,6 +247,7 @@ export class TerminalRequestDispatcher {
         requestId,
         view,
         lines,
+        ...(awaitMode ? { await: awaitMode, quietMs: quietMs ?? null } : {}),
         timeoutMs,
         startedAt: new Date(startedAt).toISOString(),
         deadlineAt: new Date(deadlineAt).toISOString(),
@@ -517,6 +542,7 @@ export class TerminalRequestDispatcher {
       ...(typeof payload.outputAnsi === "string"
         ? { outputAnsi: Buffer.from(payload.outputAnsi, "base64").toString("utf-8") }
         : {}),
+      ...(payload.outcome ? { outcome: payload.outcome } : {}),
     });
   }
 
