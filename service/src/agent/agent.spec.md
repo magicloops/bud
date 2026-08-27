@@ -538,6 +538,7 @@ Transcript persistence and runtime-emission ownership extracted from `AgentServi
 
 **Responsibilities**:
 - emit `agent.tool_call` and synchronize `/agent/state.pending_tool`, including the tool `started_at` timestamp; tool-call args are exactly the model-facing directive args
+- `agent.tool_result` top-level convenience fields cover all terminal result kinds, including `terminal.wait` (`until`, `outcome`, `waited_ms`; `exit_code` falls back to the wait's command exit code) so live clients need not parse the persisted payload
 - set `/agent/state.phase` to `waiting_for_user` for pending `ask_user_questions` tool calls, and `waiting_for_terminal` for pending `terminal.wait` tool calls
 - persist assistant/tool transcript rows with stable `client_id`
 - persist intermediate assistant text segments that precede or appear between tool calls

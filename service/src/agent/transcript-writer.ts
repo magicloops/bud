@@ -513,14 +513,18 @@ function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<
     };
   }
 
-  // Terminal tool result (terminal.run / terminal.send / terminal.observe).
-  // The command's own duration_ms stays inside the persisted tool payload;
-  // top-level duration_ms remains the service tool-execution timing.
+  // Terminal tool result (terminal.run / terminal.send / terminal.observe /
+  // terminal.wait). The command's own duration_ms stays inside the persisted
+  // tool payload; top-level duration_ms remains the service tool-execution
+  // timing.
   return {
     kind: execution.result.kind,
     status: execution.result.status,
     command_id: execution.result.commandId,
-    exit_code: execution.result.exitCode,
+    exit_code: execution.result.exitCode ?? execution.result.waitExitCode,
+    until: execution.result.until,
+    outcome: execution.result.waitOutcome,
+    waited_ms: execution.result.waitedMs,
     output: execution.result.output,
     output_bytes: execution.result.outputBytes,
     truncated: execution.result.truncated,
