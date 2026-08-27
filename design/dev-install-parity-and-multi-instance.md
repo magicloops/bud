@@ -112,6 +112,13 @@ meaningful.
 
 ### 2.3 Persist the channel and guard dev builds (small, do first)
 
+> **Partially shipped (2026-08-27,
+> [plan/dev-build-guard-and-version-string.md](../plan/dev-build-guard-and-version-string.md)):**
+> the dev-build guard (`bud upgrade` refuses non-release builds without
+> `--force`), the git-describe dev version string, and the `bud status`
+> dev line landed. Still open from this section: `BUD_UPGRADE_BASE_URL`
+> persistence in `bud.env` and loading `bud.env` in `bud upgrade`.
+
 - `write_env_file` also writes `BUD_UPGRADE_BASE_URL` when
   `BUD_INSTALL_BASE_URL` was overridden (default channel stays implicit so
   production `bud.env` files do not change).

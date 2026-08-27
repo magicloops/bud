@@ -83,14 +83,22 @@ Managed daemon lifecycle (design/managed-daemon-lifecycle.md Option A).
 
 `bud upgrade [--check]` (design/managed-daemon-lifecycle.md phase 2):
 fetches the get.bud.dev stable manifest (`BUD_UPGRADE_BASE_URL`
-override), compares the baked release version (`BUD_BUILD_VERSION`,
-dev fallback `v<crate>`), downloads the target's archive
+override), compares the baked release version (`BUD_BUILD_VERSION`;
+dev fallback: git describe / `v<crate>-dev`), downloads the target's archive
 (baked `BUD_BUILD_TARGET`, runtime os/arch fallback), verifies sha256,
 extracts the binary, and installs via the ETXTBSY-safe staged rename.
 Restarts the managed service (or pidfile daemon) so the new inode runs;
 "different version" — including rollbacks — counts as an update, since
 the manifest is the authority on stable. `bud status` gains a
 best-effort version/update line (1.5s budget, silent on failure).
+**Dev-build guard** (`upgrade_gate`, pure + unit-tested): a binary
+without a baked `BUD_BUILD_VERSION` always "differs" from stable, so
+`bud upgrade` would destroy a locally built binary — it refuses with the
+build string and a `--force` hint (`bud upgrade --force` replaces
+deliberately; `--check` stays informational); release builds are
+untouched, rollback-as-update included. `bud status` on a dev build
+prints a dev line and skips the manifest probe (the nag would be
+permanent and would advise a refused command).
 
 ### `app.rs`
 
@@ -327,6 +335,13 @@ Build metadata helpers for release artifacts.
 - formats the `bud --version` output
 - exposes package version, build commit, target triple, and Cargo profile from
   compile-time environment values emitted by `build.rs`
+- `is_release_build()` — true only when the release pipeline baked
+  `BUD_BUILD_VERSION`; gates the `bud upgrade` dev-build guard and the
+  `bud status` update nag
+- dev builds self-describe precisely: `build.rs` bakes
+  `git describe --tags --long --always --dirty` as `BUD_BUILD_DESCRIBE`
+  (e.g. `v0.1.9-0-g1845b9b-dirty`); outside a git checkout the fallback is
+  `v<crate>-dev` — both unmistakably non-release
 - detects `--version` / `-V` before normal daemon startup so release artifacts
   are inspectable without running service setup or tracing
 
