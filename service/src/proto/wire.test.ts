@@ -514,11 +514,9 @@ test("round-trips awaited terminal observe frames (await + quiet_ms survive the 
     session_id: "sess_test",
     request_id: "obs_test",
     view: "delta",
-    // NOTE: positive on purpose — writeOptionalInt32 drops non-positive
-    // values, so the production default lines: -50 never survives the typed
-    // codec (pre-existing; daemon falls back to its own default). This test
-    // pins await/quiet_ms.
-    lines: 50,
+    // Negative lines (the production tail-notation default) must survive:
+    // the int32 writer used to drop negatives entirely.
+    lines: -50,
     await: "settled",
     quiet_ms: 2000,
   };

@@ -2134,6 +2134,24 @@ mod tests {
     }
 
     #[test]
+    fn decodes_negative_observe_lines_from_sign_extended_varint() {
+        // Protobuf int32: negatives arrive as sign-extended 64-bit varints.
+        // The service's writer used to DROP negative `lines` entirely, so the
+        // tail notation `lines: -50` never reached the daemon over typed
+        // payloads; now it encodes sign-extended and must decode back.
+        let mut payload = Vec::new();
+        write_string(&mut payload, 1, "sess_test");
+        write_string(&mut payload, 2, "req_test");
+        write_string(&mut payload, 3, "history");
+        write_varint_field(&mut payload, 4, (-50i64) as u64);
+        let bytes = typed_envelope_with_payload(127, &payload);
+
+        let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
+        let frame: Value = serde_json::from_str(&decoded).expect("json");
+        assert_eq!(frame.get("lines").and_then(Value::as_i64), Some(-50));
+    }
+
+    #[test]
     fn encodes_data_attach_with_typed_payload_field() {
         let frame = json!({
             "proto": "0.1",

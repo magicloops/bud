@@ -1109,7 +1109,7 @@ function readTerminalObserveField(frame: Record<string, unknown>, reader: ProtoR
   if (fieldNumber === 1) frame.session_id = reader.readStringForWireType(wireType);
   else if (fieldNumber === 2) frame.request_id = reader.readStringForWireType(wireType);
   else if (fieldNumber === 3) frame.view = reader.readStringForWireType(wireType);
-  else if (fieldNumber === 4) frame.lines = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 4) frame.lines = readInt32Varint(reader, wireType);
   else if (fieldNumber === 7) frame.await = reader.readStringForWireType(wireType);
   else if (fieldNumber === 8) frame.quiet_ms = Number(readSafeUint64(reader, wireType, "terminal_observe.quiet_ms"));
   else reader.skip(wireType);
@@ -1356,7 +1356,11 @@ function writeOptionalUint64(chunks: Buffer[], fieldNumber: number, value: numbe
 }
 
 function writeOptionalInt32(chunks: Buffer[], fieldNumber: number, value: number | undefined): void {
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+  // Negatives are valid int32 payloads (sign-extended varint). This writer
+  // used to skip them, silently dropping the observe tail notation
+  // `lines: -50` from typed payloads (the daemon then fell back to its own
+  // history default).
+  if (typeof value === "number" && Number.isInteger(value)) {
     writeVarintField(chunks, fieldNumber, value);
   }
 }
@@ -1433,6 +1437,11 @@ function writeBytes(chunks: Buffer[], fieldNumber: number, value: Uint8Array): v
   );
 }
 
+/** Protobuf int32 decode: the wire value is a sign-extended 64-bit varint. */
+function readInt32Varint(reader: ProtoReader, wireType: number): number {
+  return Number(BigInt.asIntN(32, reader.readVarintForWireType(wireType)));
+}
+
 function readSafeUint64(reader: ProtoReader, wireType: number, fieldName: string): number {
   const value = reader.readVarintForWireType(wireType);
   if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -1442,7 +1451,10 @@ function readSafeUint64(reader: ProtoReader, wireType: number, fieldName: string
 }
 
 function encodeVarint(value: number | bigint): Buffer {
-  let next = BigInt(value);
+  // Protobuf varint semantics: negative values sign-extend to 64 bits
+  // (10-byte varint). Without asUintN, a negative BigInt never reaches 0n
+  // and the loop below would spin forever.
+  let next = BigInt.asUintN(64, BigInt(value));
   const bytes: number[] = [];
   do {
     let byte = Number(next & 0x7fn);
