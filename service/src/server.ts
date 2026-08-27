@@ -10,6 +10,7 @@ import { TerminalEventBus } from "./runtime/event-bus.js";
 import { registerThreadRoutes, registerThreadTerminalRoutes } from "./routes/threads.js";
 import { registerModelsRoutes } from "./routes/models.js";
 import { AgentService, ThreadTitleService } from "./agent/index.js";
+import { repairDanglingToolCalls } from "./agent/restart-repair.js";
 import { initializeProviders } from "./llm/index.js";
 import { TerminalSessionManager } from "./runtime/terminal-session-manager.js";
 import { registerDeviceAuthRoutes } from "./routes/device-auth.js";
@@ -251,6 +252,20 @@ async function start() {
     process.once(signal, () => {
       void shutdown(signal);
     });
+  }
+
+  // A prior process may have died mid-tool (deploy/crash — most visibly
+  // mid-terminal.wait). Close those holes durably before accepting traffic;
+  // failures must never block boot (replay-time repair remains the net).
+  try {
+    const repairResult = await repairDanglingToolCalls(
+      server.log.child({ component: "restart_repair" }),
+    );
+    if (repairResult.found > 0) {
+      server.log.info(repairResult, "Dangling tool call repair completed");
+    }
+  } catch (err) {
+    server.log.error({ err }, "Dangling tool call repair failed (continuing boot)");
   }
 
   try {

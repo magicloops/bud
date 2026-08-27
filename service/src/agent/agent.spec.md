@@ -495,6 +495,43 @@ Direct tests for the extracted terminal tool executor.
 - user-interrupted pending run/send/observe waits return conservative tool results instead of failing the agent turn
 - terminal transport failures return structured retryable tool results instead of throwing out of the agent turn
 
+### `restart-repair.ts`
+
+Boot-time durable repair for tool calls a prior process died on (deploy or
+crash mid-tool — most visibly mid-`terminal.wait`, which parks for up to 30
+minutes). Awaited from `server.ts` before `listen`, so repairs precede new
+traffic; failures log and never block boot.
+
+- `findDanglingToolCalls()` — outbound ledger `tool_use` items with no
+  inbound `tool_result` for the same `tool_call_id` in the thread (SQL
+  `NOT EXISTS`, `llm_call_item_tool_call_idx`), joined to `llm_call`
+  (turn id) and `thread` (owner stamp); `ask_user_questions` excluded in SQL
+  and re-checked in JS (it has its own durable lifecycle — pending
+  `agent_question_request` rows answer as fallback user messages).
+- `buildDanglingToolCallRepair(call)` — pure: synthesizes the result payload
+  `{tool, call_id, ...args, kind, error: "server_restarted", code:
+  "SERVER_RESTARTED", ok: false, retryable: true, note,
+  server_restart_repair: true}`; `terminal.wait` additionally reports
+  `outcome: "interrupted"`, and terminal tools carry the "terminal kept
+  running on the Bud" guidance.
+- `repairDanglingToolCalls(logger, deps?)` — per call: persist the tool
+  message row (owner-stamped, `metadata.turn_id`), record the ledger
+  `tool_result` item (input sequences allocated per call so multiple
+  dangling calls on one `llm_call` never collide), update the thread
+  preview. Idempotent: the inserted item makes the call non-dangling.
+  Once repaired, `repairOrphanedToolCalls` (replay-time injection in
+  `conversation-loader.ts`) no longer fires for that call — the replay
+  repair remains the safety net for anything this pass misses.
+
+### `restart-repair.test.ts`
+
+Covers the pure repair payloads (terminal.wait outcome/guidance, web-view
+and unknown tools, args passthrough), the persistence flow (tool row +
+ledger item + thread metadata; per-call input sequence allocation), the
+defensive `ask_user_questions` skip, continue-past-failure accounting
+(`found` vs `repaired`), and the no-op path (nothing inserted when nothing
+dangles).
+
 ### `transcript-writer.ts`
 
 Transcript persistence and runtime-emission ownership extracted from `AgentService`.
