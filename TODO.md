@@ -13,6 +13,15 @@
     behavior, toolbar collapse, programmatic IME focus from tap — the three
     things headless Chromium cannot emulate
     ([design/responsive-web-layout.md](./design/responsive-web-layout.md) status).
+- **Dev-install parity and multiple Bud instances**
+  - Options and recommended order in
+    [design/dev-install-parity-and-multi-instance.md](./design/dev-install-parity-and-multi-instance.md):
+    installer `BUD_INSTALL_BINARY` for local builds, a local release channel
+    for testing `bud upgrade`, persisting `BUD_UPGRADE_BASE_URL` in `bud.env`,
+    and instance-scoped base dirs + service labels so two Buds can coexist.
+  - Do first: `bud upgrade` currently replaces dev builds (crate version
+    `v0.1.0` ≠ stable) and ignores the install channel; a second install
+    overwrites the first's `dev.bud.daemon` / `bud.service` unit.
 - **Multi-server local LLM support** (deferred by design — one origin per Bud)
   - `BUD_LOCAL_LLM_URL` is a single origin; multiple models behind that one
     endpoint already work (advertise-all + per-thread picker). Multiple
