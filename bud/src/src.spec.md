@@ -161,7 +161,7 @@ Minimal protobuf wire codec for `BudEnvelope v1` compatibility frames.
 
 - proto `0.3` terminal frames are carried as `frame_json` inside their typed payload messages; field-level protobuf encoding for terminal frames retired with the `0.2` contract
 - `terminal_event` has no oneof slot in `bud.proto` and travels via the self-describing `legacy_json` payload (field 100); `terminal_ready` (slot 130) is retired
-- keeps inbound decode tolerance for field-level terminal payloads a service encoder may still emit: retired 0.2 wait/readiness fields are skipped, new 0.3 fields decode at the next free numbers (`terminal_ensure.resume_from_offset = 3`, `terminal_send.await = 9`)
+- keeps inbound decode tolerance for field-level terminal payloads a service encoder may still emit: retired 0.2 wait/readiness fields are skipped, new 0.3 fields decode at the next free numbers (`terminal_ensure.resume_from_offset = 3`, `terminal_send.await = 9`, `terminal_observe.await = 7` / `quiet_ms = 8` — the service DOES field-level-encode observes, so awaited-observe fields must exist here or they silently drop; regression `decodes_inbound_field_level_awaited_observe`)
 - stamps `proto: "0.3"` when reconstructing terminal frames from field-level payloads
 - encodes core stream lifecycle frames under typed payload tags with direct protobuf fields so WebSocket binary `BudEnvelope` can carry the file/proxy data plane
 - maps the `local_llm_http` stream family in the protobuf/json stream-type

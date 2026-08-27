@@ -10,6 +10,7 @@ export type AgentRuntimePhase =
   | "thinking"
   | "tool_running"
   | "waiting_for_user"
+  | "waiting_for_terminal"
   | "streaming_message";
 
 export type AgentPendingTool = {
@@ -199,6 +200,28 @@ export class AgentRuntimeStateManager {
       threadId,
       (snapshot) => {
         snapshot.phase = "waiting_for_user";
+        snapshot.pendingTool = pendingTool;
+        snapshot.draftAssistant = null;
+      },
+      cursor,
+    );
+  }
+
+  /**
+   * `terminal.wait` parks the turn on a terminal fact: same shape as a
+   * pending question (idle, cancellable, superseded by a follow-up message)
+   * but the wake source is the daemon, not the human — surfaced as its own
+   * phase so clients can say "waiting on the terminal" instead of spinning.
+   */
+  setPendingTerminalWait(
+    threadId: string,
+    pendingTool: AgentPendingTool,
+    cursor: string,
+  ): AgentRuntimeSnapshot {
+    return this.updateSnapshot(
+      threadId,
+      (snapshot) => {
+        snapshot.phase = "waiting_for_terminal";
         snapshot.pendingTool = pendingTool;
         snapshot.draftAssistant = null;
       },

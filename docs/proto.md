@@ -646,13 +646,14 @@ Rejected file opens and resolves use the same frame-family shape with
 }
 ```
 
-- When `mode` is `bud_offline`, provider calls use a Bud-specific tool denylist: `terminal_send`, `terminal_observe`, `web_view_open`, `web_view_close`, and `web_view_list` are omitted. Service-level non-Bud tools remain available by default.
+- When `mode` is `bud_offline`, provider calls use a Bud-specific tool denylist: `terminal_send`, `terminal_observe`, `terminal_wait`, `web_view_open`, `web_view_close`, and `web_view_list` are omitted. Service-level non-Bud tools remain available by default.
 - `context_budget` reports the backend-authoritative model-visible input estimate against the effective auto-compaction budget. For available snapshots, `estimated_input_tokens` is the trigger estimate and equals `message_estimated_tokens + tool_schema_tokens`; normal agent turns include current tool-schema overhead while tool-free compaction-summary requests do not. Budget snapshots also include provenance fields (`source`, `phase`, `turn_id`, `checked_at`) and optional provider usage diagnostics for non-UI calibration.
 - `pending_tool` includes `client_id`, `call_id`, `name`, `args`, and `started_at` while an agent tool is running
 - `draft_assistant` includes `client_id`, `text`, `started_at`, and `updated_at` while assistant text is streaming
 - `draft_reasoning` is an additive list of in-flight provider reasoning text visible to the browser but not included in future model-visible conversation reconstruction. Each item includes `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`.
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
-- For terminal tools, `pending_tool.args` mirrors the model-facing schema (`terminal.run` `{command}`, `terminal.send` `{raw_text|key}`, `terminal.observe` `{view?, lines?}`); there is no `wait_for` field
+- `phase` may be `waiting_for_terminal` while the agent is parked on `terminal.wait` (idle until the daemon reports the terminal settled / the command finished); clients should present it as waiting, not loading, keep the composer enabled (a follow-up message supersedes the wait), and keep cancel available
+- For terminal tools, `pending_tool.args` mirrors the model-facing schema (`terminal.run` `{command}`, `terminal.send` `{raw_text|key}`, `terminal.observe` `{view?, lines?}`, `terminal.wait` `{until?}`); there is no `wait_for` field
 - For `terminal.send`, browser-facing `pending_tool.args` uses the model-facing gesture fields: exactly one of `command`, `raw_text`, or `key`. `command` means text plus Enter; `raw_text` means literal text without an implicit Enter; `key` means one semantic key gesture.
 - For web-view tools, `pending_tool.args` contains only product fields such as
   `target_port`, `path`, `title`, `proxied_site_id`, and `disable`; viewer
@@ -1567,7 +1568,11 @@ Rules:
   including via the sentinel fallback below — or EARLY with an
   `interactive_started` outcome when the command demonstrably launched an
   interactive program, so `terminal.run codex` returns in ~1s instead of
-  riding the timeout) | `"settled"` (resolve on the next
+  riding the timeout — or EARLY with an `input_absorbed` outcome when the
+  shell has genuine OSC 133 markers and a quiet point / fresh prompt arrives
+  with no `command_started` within a short grace: the text went to a
+  foreground program or the shell ran nothing, so no `command_finished` can
+  come) | `"settled"` (resolve on the next
   damage-quiet `settled` event, on `prompt_ready` — returning to a shell
   prompt is maximal settlement, covering gestures that exit an interactive
   program — or on `command_finished` when the gesture completed a shell
@@ -1587,10 +1592,25 @@ Rules:
   prompt" from "type this into the foreground program", so the daemon refuses
   rather than guesses.
 
-`terminal_observe` = `{ session_id, request_id, view, lines? }` with
-`view ∈ "screen" | "delta" | "history"` (wire default `screen`; the
+`terminal_observe` = `{ session_id, request_id, view, lines?, await?, quiet_ms? }`
+with `view ∈ "screen" | "delta" | "history"` (wire default `screen`; the
 model-facing tool layer defaults to `delta`). `history` takes optional `lines`
 (daemon default 200, cap 2000).
+
+- **Awaited observe** (additive): `await ∈ "settled" | "command"` blocks until
+  the fact, THEN snapshots (the lock is never held while waiting; the result
+  carries `outcome`, §6.6). `settled` resolves immediately when the session is
+  already quiet (`outcome.data.immediate: true`) — an at-prompt shell's quiet
+  point emits no `settled` event, so the daemon observes quiet directly rather
+  than waiting for one — otherwise on the next `settled` / `prompt_ready` /
+  `command_finished` / close. `command` resolves `idle` immediately when no
+  command is open, otherwise on `command_finished` / `prompt_ready` / close.
+  `quiet_ms` (settled only) asks for a longer quiet window than the daemon's
+  default; the extra window is confirmed against output-stream progress, so a
+  program that merely paused keeps the wait going. The service owns the
+  timeout budget (30 minutes for `terminal.wait`); the daemon's 4h safety cap
+  resolves with `error: "TIMEOUT"`. Daemons predating this field ignore it
+  and return a plain snapshot without `outcome`.
 
 `terminal_input` = `{ session_id, data }` — raw human keyboard bytes (browser
 xterm path) written verbatim to the PTY. `terminal_resize` and `terminal_close`
@@ -1673,7 +1693,7 @@ Rules:
 | `command_started` | `{ "command_id", "output_byte_start" }` | OSC 133 `B`→`C` (or sentinel-issued command dispatched) |
 | `command_finished` | `{ "command_id", "exit_code"?, "duration_ms"?, "output_byte_start", "output_byte_end" }` | OSC 133 `D;<exit>` |
 | `mode_changed` | `{ "mode", "integration" }` | alt-screen enter/exit, REPL pattern match, integration detection |
-| `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes, or in `shell` mode while a command is mid-flight (inline TUIs that never enter the alternate screen); an at-prompt shell emits `prompt_ready` instead |
+| `settled` | `{ "mode", "quiet_ms" }` | damage-quiet threshold reached in `tui`/`repl`/`unknown` modes, or in `shell` mode while a command is mid-flight (inline TUIs that never enter the alternate screen), or — in any mode — at the first quiet point after a programmatic `terminal_send` gesture (input is activity: a gesture the program ignores, or one typed at an idle prompt, still settles); an idle at-prompt shell otherwise stays silent and emits `prompt_ready` instead |
 | `output_gap` | `{ "from_offset", "resume_offset" }` | ring truncation on resume (§6.1) |
 | `interactive_started` | `{ "command_id", "signal": "alt_screen"\|"bracketed_paste" }` | the OPEN command launched an interactive program (alt-screen entry, or a mid-command bracketed-paste enable — shells keep `?2004` off while a command runs, so an enable is the child speaking) |
 | `child_exited` | `{ "exit_code"?, "signal"?: string }` | session root process exited (`signal` is a name such as `"SIGTERM"`) |
@@ -1708,7 +1728,9 @@ Rules:
 ```
 
 `outcome` mirrors the terminating `terminal_event` when `await` was requested,
-`null` otherwise. Await failures use canonical codes (`TIMEOUT`, `CANCELED`);
+`null` otherwise; `await:"command"` may also terminate with the synthetic
+`{ "event": "input_absorbed", "data": { "signal": "settled"|"prompt_ready", ... } }`
+outcome (§6.1). Await failures use canonical codes (`TIMEOUT`, `CANCELED`);
 validation failures use descriptive strings (`ambiguous_interaction`,
 `session_not_found`, …). Screen/delta payloads are not part of send results;
 `terminal_observe` is the inspection surface, and byte-exact history is a
@@ -1734,10 +1756,16 @@ service-side read from `terminal_session_output` by offset range.
   "cursor_row": 3,
   "cursor_col": 11,
   "ring_next_offset": 84213,
+  "outcome": { "event": "settled", "data": { "mode": "tui", "quiet_ms": 300 } },
   "error": null,
   "ext": {}
 }
 ```
+
+`outcome` is present only for awaited observes (§6.1 `await`): the
+terminating fact `{ event, data }` — `settled` (with `data.immediate: true`
+when the session was already quiet), `command_finished` (with its exit code),
+`prompt_ready`, `idle` (command-await with nothing open), or `closed`.
 
 `ring_next_offset` is the output-stream offset the emulator state reflects at
 observe time: a client can render an observation as a snapshot and resume the
@@ -1770,7 +1798,20 @@ did).
   an explicit `delta` observe (send-plus-proof). `raw_text` presses Enter
   afterward by default (`submit: false` types without submitting; ignored for
   `key` gestures).
-- `terminal.observe { view?, lines? }` → tool default `view: "delta"`.
+- `terminal.observe { view?, lines? }` → tool default `view: "delta"`. Output
+  is tail-capped at 32 KiB for the model (`truncated`).
+- `terminal.wait { until? }` → awaited `terminal_observe` (`until:
+  "command_finished"` → `await: "command"`; `"settled"` → `await: "settled"`
+  with `quiet_ms: 2000`; omitted → `command_finished` while a command is
+  open, else `settled`) → tool result `{ outcome, waited_ms, output (delta
+  since the last look), changed, exit_code?, mode, open_command }` with
+  `outcome ∈ settled | command_finished | prompt_ready | idle | closed |
+  timeout | interrupted | superseded`. One provider call per wake: the turn
+  parks in `/agent/state.phase: "waiting_for_terminal"` (§3.2) for up to the
+  30-minute service budget (`timeout` = call again); a human interrupt ends
+  it as `interrupted`; a follow-up user message ends it as `superseded` and
+  finishes the turn (§7.1 `final.reason`). `terminal.run` may also report
+  `status: "input_absorbed"` (§6.1).
 - `wait_for` and the readiness-confidence vocabulary do not exist in tool
   schemas or prompts.
 
@@ -1972,7 +2013,7 @@ All browser-facing streams must authorize the viewer before attaching listeners 
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "message_id": "uuid", "text": "I should inspect the terminal state.", "message": { "message_id": "uuid", "client_id": "uuidv7", "role": "reasoning", "display_role": "Reasoning", "content": "I should inspect the terminal state.", "metadata": { "artifact_kind": "reasoning", "model_visible": false, "turn_id": "01TURN...", "llm_call_id": "01LLM...", "started_at": "2026-06-05T20:00:01.000Z", "finished_at": "2026-06-05T20:00:05.000Z", "duration_ms": 4000, "duration_source": "service_wall_clock" }, "created_at": "2026-06-05T20:00:05.000Z" } }`
 - `agent.tool_call`
   - `{ "turn_id": "01TURN...", "client_id": "uuidv7", "call_id": "call_123", "name": "terminal.send", "args": { ... }, "started_at": "2026-04-21T19:00:01.000Z" }`
-  - Terminal tool `args` mirror the model-facing schemas: `terminal.run` exposes `{ "command": "whoami" }`; `terminal.send` exposes exactly one gesture — `{ "raw_text": "partial" }` or `{ "key": "ctrl+c" }`; `terminal.observe` exposes `{ "view": "delta" }`-style args. `wait_for` and legacy `text`/`submit`/`command`-on-send fields do not exist.
+  - Terminal tool `args` mirror the model-facing schemas: `terminal.run` exposes `{ "command": "whoami" }`; `terminal.send` exposes exactly one gesture — `{ "raw_text": "partial" }` or `{ "key": "ctrl+c" }`; `terminal.observe` exposes `{ "view": "delta" }`-style args; `terminal.wait` exposes `{ "until": "settled" }`-style args. `wait_for` and legacy `text`/`submit`/`command`-on-send fields do not exist.
   - For web-view tools, `args` contains product fields only; examples include
     `target_host`, `target_port`, `path`, `title`, `proxied_site_id`, and
     `disable`. When `web_view.open` omits `target_host`, the service defaults
@@ -2103,6 +2144,7 @@ Rules:
 - first-party clients should use `terminal.event` facts (`command_started`/`command_finished`, `mode_changed`, `settled`) to render terminal progress instead of inferring it from elapsed time
 - first-party clients should render `ask_user_questions` prompts from either a live `agent.tool_call` or `/agent/state.pending_tool` after refresh, and submit answers through the thread-scoped response route
 - first-party clients should treat `/agent/state.phase: "waiting_for_user"` as paused human input rather than background loading, and may send normal follow-up messages through `/api/threads/:thread_id/messages`
+- first-party clients should treat `/agent/state.phase: "waiting_for_terminal"` (pending `terminal.wait`) as the agent idling until the terminal settles or its command finishes — not as loading; a follow-up message supersedes the wait (`final.reason: "superseded_by_user_message"`) and starts a fresh turn
 - normal follow-up messages while `ask_user_questions` is pending are service-owned supersession: the service stores skipped answers for pending prompts, emits a completed tool row when possible, and may emit successful `final` without `message_id` or `text`
 - newly created canonical tool, reasoning, and assistant work rows use the same durable metadata shape under `message.metadata`: `turn_id`, `started_at`, `finished_at`, `duration_ms`, and `duration_source`
 - legacy rows may omit some or all of those metadata fields; clients should ignore missing durations rather than inventing estimates
@@ -2292,6 +2334,14 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - awaited `terminal_observe` (`await`, `quiet_ms` → result `outcome`) backs
+    the new model-facing `terminal.wait` tool: one blocking call per wake
+    instead of `terminal.observe` polling while a TUI/REPL/script works;
+    `/agent/state.phase` gains `waiting_for_terminal`, superseded by a
+    follow-up message like `waiting_for_user`. `terminal_send` gestures now
+    arm damage-quiet settling (a no-reaction gesture settles instead of
+    riding the budget) and `await:"command"` may resolve `input_absorbed`
+    (plan/terminal-wait-async-wakeup.md)
   - `hello.name` / device-auth `name` are now REQUESTED display names that the
     service resolves against the owning user's other Buds (numeric-suffix
     dedupe with reconnect stability — see §5.1 rules); no frame shape change

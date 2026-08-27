@@ -284,13 +284,13 @@ Agent SSE ownership for the existing-thread route.
 - detect native EventSource `CONNECTING` error loops with a resume cursor, close the browser-managed source, refresh `/messages` + `/agent/state`, and reconnect with a fresh cursor so service restarts do not retry one stale `after` URL forever
 - apply refreshed `/agent/state.last_error` after bootstrap recovery so missed fast failure events remain visible in the composer error slot
 - parse `agent.tool_call`, `agent.tool_result`, `agent.message_*`, `agent.reasoning_*`, `agent.compaction_*`, `thread.title`, and `final` events
-- map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status instead of the generic streaming state
+- map live `ask_user_questions` tool calls to the route's `waiting_for_user` UI status, and live `terminal.wait` tool calls to `waiting_for_terminal`, instead of the generic streaming state
 - pass `agent.tool_call.started_at` through to message-state reconciliation for pending prompt ordering
 - pass `agent.message_start.started_at`, `agent.message_done.started_at`, `agent.message_done.finished_at`, `agent.message_done.duration_ms`, and `agent.message_done.duration_source` through the stream parser as additive timing metadata
 - accept `agent.message` for both intermediate assistant text segments and final assistant rows
 - accept `agent.reasoning_done` as the canonical persisted `role: "reasoning"` row for a visible provider reasoning segment
 - tolerate additive timing fields such as `started_at`, `finished_at`, `duration_ms`, and `duration_source` on assistant and tool events
-- pass through effective terminal tool args such as `wait_for: "settled"` so presentation code can key terminal-progress UI off the server-owned wait mode
+- pass through terminal tool args exactly as the service emits them (model-facing; `terminal.wait` carries `until?`)
 - pass through `ask_user_questions` request args unchanged so the timeline can render the pending form and submit through the thread route
 - pass through visible provider reasoning start/delta/done events to the transcript state hook
 - pass through automatic context-compaction start/done/failure events to the route for live activity text, non-transcript timeline markers, immediate post-compaction budget snapshots when present, and budget refresh fallback after successful compaction
@@ -303,7 +303,7 @@ Agent SSE ownership for the existing-thread route.
 
 **Route contract**:
 - the route still owns the initial loader fetches plus the top-level `status`/`error` state
-- the route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to `waiting_for_user`, keeping global loading indicators separate from paused human input
+- the route maps `/agent/state.phase === "waiting_for_user"` and live `ask_user_questions` tool calls to `waiting_for_user`, and `/agent/state.phase === "waiting_for_terminal"` / live `terminal.wait` calls to `waiting_for_terminal`, keeping global loading indicators separate from paused human input and idle terminal waits
 - the route owns context budget refresh from `/agent/state`; successful compaction stream events may also carry an additive post-compaction `context_budget` snapshot that the route can apply immediately before the normal refresh fallback
 - the hook owns EventSource lifecycle, cursor tracking, reconnect behavior, and event parsing
 

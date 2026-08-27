@@ -500,3 +500,32 @@ function encodeVarint(value: number | bigint): Buffer {
   chunks.push(Number(remaining));
   return Buffer.from(chunks);
 }
+
+test("round-trips awaited terminal observe frames (await + quiet_ms survive the typed codec)", () => {
+  // Regression: the first live terminal.wait drill silently degraded to a
+  // plain snapshot because the typed field-level codec dropped await/quiet_ms
+  // (encoded by the dispatcher, never written to the wire). Fields 7-8.
+  const frame = {
+    proto: "0.3",
+    type: "terminal_observe",
+    id: "msg_terminal_observe",
+    ts: 1777132800000,
+    ext: {},
+    session_id: "sess_test",
+    request_id: "obs_test",
+    view: "delta",
+    // NOTE: positive on purpose — writeOptionalInt32 drops non-positive
+    // values, so the production default lines: -50 never survives the typed
+    // codec (pre-existing; daemon falls back to its own default). This test
+    // pins await/quiet_ms.
+    lines: 50,
+    await: "settled",
+    quiet_ms: 2000,
+  };
+
+  const bytes = encodeLegacyJsonFrame(frame);
+
+  assert.equal(decodeBudEnvelopePayloadCase(bytes), "terminal_observe");
+  assert.equal(decodeBudEnvelopePayloadEncoding(bytes), "typed_fields");
+  assert.deepEqual(decodeLegacyJsonFrame(bytes), frame);
+});

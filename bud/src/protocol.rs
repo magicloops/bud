@@ -156,6 +156,15 @@ pub struct TerminalObserveFrame {
     /// History view: number of most-recent scrollback lines. Negative values
     /// (legacy tail notation) are treated as their magnitude; daemon-capped.
     pub lines: Option<i64>,
+    /// Awaited observe (§6.1): block until the requested fact — `settled`
+    /// (damage-quiet, or immediately when already quiet) or `command` (the
+    /// open command's `command_finished`) — THEN snapshot. Absent = plain
+    /// snapshot. The service owns the timeout budget (4h daemon safety cap).
+    pub r#await: Option<TerminalSendAwait>,
+    /// `await:"settled"` only: require this much quiet instead of the
+    /// daemon default; the extra window is confirmed against output-stream
+    /// progress so a program that merely paused does not wake the caller.
+    pub quiet_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -425,6 +434,11 @@ pub struct TerminalObservation {
     /// stream resume: subscribe from this offset and nothing in the snapshot
     /// is replayed, nothing after it is missed.
     pub ring_next_offset: u64,
+    /// Awaited observes only (§6.6): the terminating fact the wait resolved
+    /// on, `{ "event", "data" }` — `settled` (with `data.immediate: true`
+    /// when the session was already quiet), `command_finished`,
+    /// `prompt_ready`, `idle` (command-await with nothing open), `closed`.
+    pub outcome: Option<Value>,
     /// `view: "screen"` only: the grid serialized as ANSI (SGR runs + final
     /// cursor position), base64. Rendering this reproduces colors/styles/
     /// cursor faithfully — the plain `output` text loses presentation, which
@@ -459,6 +473,9 @@ pub fn terminal_observe_result_frame(
         );
         if let Some(output_ansi) = observation.output_ansi_base64 {
             frame.insert("output_ansi".into(), Value::String(output_ansi));
+        }
+        if let Some(outcome) = observation.outcome {
+            frame.insert("outcome".into(), outcome);
         }
         frame.insert(
             "cursor_row".into(),
@@ -795,6 +812,7 @@ mod tests {
                 cursor_col: 11,
                 ring_next_offset: 84213,
                 output_ansi_base64: Some("XGUxYlszMW0=".into()),
+                outcome: None,
             }),
             None,
         );

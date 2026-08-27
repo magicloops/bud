@@ -39,9 +39,9 @@ Owns send/observe request orchestration, pending registries, result routing, and
 Proto 0.3 contract:
 - outbound `terminal_send` carries `{ text?, submit?, key?, await? }` only; `wait_for`, `timeout_ms`, `observe_after_ms`, and the one-entry `keys` alias are gone.
 - `await: "command" | "settled"` requests an awaited outcome; omitted `await` resolves on dispatch (transport ack only).
-- the service owns the timeout budget locally: awaited sends use the two-minute `TERMINAL_AWAITED_SEND_TIMEOUT_MS` (long-running commands surface as actionable still-running results instead of silently pending turns), dispatch-only sends and observes use `TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS` (30s), and trusted callers may pass an explicit `timeoutMs`.
-- outbound `terminal_observe` carries `{ view, lines }` only (default view `screen`).
-- `terminal_send_result` resolves to `{ dispatched, outcome }` where `outcome` mirrors the terminating `terminal_event` (or `null`); `terminal_observe_result` resolves to grid-backed `{ view, output, linesCaptured, changed?, mode?, integration?, altScreen?, cursorRow?, cursorCol?, ringNextOffset? }` — `ringNextOffset` is the stream watermark the daemon's emulator reflected at observe time, used by the snapshot route as the stream-resume cursor.
+- the service owns the timeout budget locally: awaited sends use the two-minute `TERMINAL_AWAITED_SEND_TIMEOUT_MS` (long-running commands surface as actionable still-running results instead of silently pending turns), awaited observes (`terminal.wait`) use the thirty-minute `TERMINAL_WAIT_TIMEOUT_MS` (the model pays one provider call per wake, so a short budget only converts waiting into polling; the turn stays cancellable and a follow-up message supersedes it), dispatch-only sends and plain observes use `TERMINAL_DEFAULT_REQUEST_TIMEOUT_MS` (30s), and trusted callers may pass an explicit `timeoutMs`.
+- outbound `terminal_observe` carries `{ view, lines, await?, quiet_ms? }` (default view `screen`); `await` (`settled` | `command`) makes it an awaited observe and `quiet_ms` rides along only with `await: "settled"`.
+- `terminal_send_result` resolves to `{ dispatched, outcome }` where `outcome` mirrors the terminating `terminal_event` (or `null`); `terminal_observe_result` resolves to grid-backed `{ view, output, linesCaptured, changed?, mode?, integration?, altScreen?, cursorRow?, cursorCol?, ringNextOffset?, outcome? }` — `ringNextOffset` is the stream watermark the daemon's emulator reflected at observe time, used by the snapshot route as the stream-resume cursor; `outcome` is the terminating fact of an awaited observe (absent on plain snapshots and pre-wait daemons).
 - human interrupt sends can reject older pending waits as `interrupted` while excluding the new `ctrl+c` send request, avoiding an orphaned interrupt result.
 - send and observe pending state still tracks output activity (latest offset, event count) for long-wait diagnostics; rejection/timeout/result logs include request id, await mode, and elapsed timing.
 
@@ -77,7 +77,7 @@ Periodic idle-state management wrapper.
 
 ### `request-dispatcher.test.ts`
 
-Direct seam tests for pending observe/send rejection behavior, 0.3 frame shapes (`await` present, `wait_for`/`timeout_ms` absent), awaited-vs-dispatch timeout budgets, outcome resolution, `ringNextOffset` watermark passthrough (present and omitted), error rejection, interrupt-excluding-self behavior, and single-gesture validation.
+Direct seam tests for pending observe/send rejection behavior, 0.3 frame shapes (`await` present, `wait_for`/`timeout_ms` absent), awaited-vs-dispatch timeout budgets (sends and observes, including the long `TERMINAL_WAIT_TIMEOUT_MS` for awaited observes and `quiet_ms` only on settled awaits), outcome resolution for sends and awaited observes, `ringNextOffset` watermark passthrough (present and omitted), error rejection, interrupt-excluding-self behavior, and single-gesture validation.
 
 ### `session-store.test.ts`
 

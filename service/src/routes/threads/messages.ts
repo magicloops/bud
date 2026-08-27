@@ -232,6 +232,15 @@ export async function registerThreadMessageRoutes(
         "Superseded pending question requests before follow-up message",
       );
     }
+    const supersededTerminalWait = await agentService.supersedePendingTerminalWaitForFollowUp({
+      threadId: thread.threadId,
+    });
+    if (supersededTerminalWait.superseded > 0) {
+      server.log.info(
+        { threadId: thread.threadId },
+        "Superseded pending terminal wait before follow-up message",
+      );
+    }
 
     if (
       selection.source === "explicit_request" ||

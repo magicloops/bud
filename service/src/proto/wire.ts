@@ -653,6 +653,9 @@ function encodeFieldLevelPayload(frameType: string, frame: Record<string, unknow
       writeOptionalString(chunks, 3, stringField(frame, "view"));
       writeOptionalInt32(chunks, 4, numberField(frame, "lines"));
       // fields 5-6 (wait_for, timeout_ms) reserved (proto 0.2)
+      // 7 = await, 8 = quiet_ms (awaited observe, proto 0.3 §6.1)
+      writeOptionalString(chunks, 7, stringField(frame, "await"));
+      writeOptionalUint64(chunks, 8, numberField(frame, "quiet_ms"));
       break;
     case "terminal_observe_result":
       writeOptionalString(chunks, 1, stringField(frame, "session_id"));
@@ -1107,6 +1110,8 @@ function readTerminalObserveField(frame: Record<string, unknown>, reader: ProtoR
   else if (fieldNumber === 2) frame.request_id = reader.readStringForWireType(wireType);
   else if (fieldNumber === 3) frame.view = reader.readStringForWireType(wireType);
   else if (fieldNumber === 4) frame.lines = Number(reader.readVarintForWireType(wireType));
+  else if (fieldNumber === 7) frame.await = reader.readStringForWireType(wireType);
+  else if (fieldNumber === 8) frame.quiet_ms = Number(readSafeUint64(reader, wireType, "terminal_observe.quiet_ms"));
   else reader.skip(wireType);
 }
 

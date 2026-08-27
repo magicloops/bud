@@ -13,7 +13,25 @@ import {
   type AgentTransportToolError,
   type TerminalCallResult,
   type TerminalToolCallDirective,
+  type TerminalWaitOutcome,
+  type TerminalWaitUntil,
 } from "./contracts.js";
+
+/**
+ * Quiet window the service requests for `terminal.wait until:"settled"`.
+ * Longer than the daemon's 300ms interactive threshold on purpose: a wait
+ * means "tell me when it is done", and a REPL or script that merely pauses
+ * for a second must not wake the model. The daemon confirms the window
+ * against output-stream progress (proto §6.1).
+ */
+export const TERMINAL_WAIT_QUIET_MS = 2000;
+
+/**
+ * Tail-keeping cap on observe/wait output handed to the model. Every tool
+ * payload is persisted verbatim and replayed into every later provider
+ * call, so an uncapped screen/history dump is paid for forever.
+ */
+export const TERMINAL_OBSERVE_OUTPUT_CAP_BYTES = 32 * 1024;
 
 type SessionResolver = (threadId: string) => Promise<TerminalSession>;
 
@@ -43,21 +61,52 @@ const TERMINAL_BUSY_NOTE =
 
 const INTERACTIVE_STARTED_NOTE =
   "The command launched an interactive program (it will not finish on its own). Drive it with " +
-  "terminal.send (raw_text submits by default), inspect it with terminal.observe, and exit it " +
+  "terminal.send (raw_text submits by default), wait for it to finish working with terminal.wait, " +
+  "inspect it with terminal.observe, and exit it " +
   '(its own quit command, or terminal.send key "ctrl+c") before running further shell commands.';
 
 const STILL_RUNNING_NOTE =
   "The command has not finished within the service wait budget and is still running in the terminal. " +
-  "Do not treat this as success or failure. Use terminal.observe to check progress, or terminal.send " +
-  'with key "ctrl+c" to interrupt it.';
+  "Do not treat this as success or failure. Use terminal.wait to wait for it to finish (terminal.observe " +
+  'only to glance at progress), or terminal.send with key "ctrl+c" to interrupt it.';
+
+const INPUT_ABSORBED_NOTE =
+  "The text was typed, but no shell command started: a foreground program consumed the input (or the " +
+  "shell ran nothing). Nothing is being awaited. Use terminal.observe to see what the terminal shows " +
+  "now; if a program is in the foreground, interact with it via terminal.send or interrupt it.";
+
+const WAIT_TIMEOUT_NOTE =
+  "The terminal was still busy when the service wait budget expired. Nothing is wrong: call " +
+  "terminal.wait again to keep waiting, use terminal.observe to look at the screen, or terminal.send " +
+  'key "ctrl+c" to interrupt.';
+
+const WAIT_INTERRUPTED_NOTE =
+  "The wait ended because the user interrupted the terminal. Use terminal.observe before assuming " +
+  "anything about the program's state.";
+
+const WAIT_SUPERSEDED_NOTE =
+  "The wait ended because the user sent a new message; the terminal keeps running and the new " +
+  "message starts a fresh turn.";
+
+const WAIT_IDLE_NOTE =
+  "No command is running and the terminal is idle at a prompt, so there was nothing to wait for.";
+
+const WAIT_CLOSED_NOTE =
+  "The terminal session's root process exited while waiting; the session is closed.";
+
+const LEGACY_DAEMON_WAIT_NOTE =
+  "This Bud's daemon does not support waiting (it predates terminal.wait; upgrade it with `bud upgrade`), " +
+  "so this result is an immediate snapshot rather than a wait. Avoid tight observe loops: prefer " +
+  "fewer, spaced-out observations.";
 
 const INTERRUPTED_RUN_NOTE =
   "The wait was interrupted by the user after the command was dispatched. The command may have been " +
   "interrupted or may still be running. Use terminal.observe before assuming anything about its outcome.";
 
 const SEND_TIMEOUT_NOTE =
-  "The input was dispatched, but the program is still actively producing output and never settled " +
-  "within the service wait budget. Use terminal.observe to inspect the current screen.";
+  "The input was dispatched, but the program kept producing output and never settled within the " +
+  "service wait budget. Use terminal.wait to wait for it to settle, or terminal.observe to inspect " +
+  "the current screen.";
 
 const MISSING_OUTPUT_NOTE =
   "The command finished, but its recorded output could not be loaded. Use terminal.observe with " +
@@ -91,7 +140,12 @@ export class TerminalToolExecutor {
     const result = await this.executeDirective(threadId, directive);
     const args = buildToolArgs(directive);
     const summary = this.buildToolSummary(directive, result);
-    const outputTruncationReason = result.truncated === true ? "service_backfill_limit" : null;
+    const outputTruncationReason =
+      result.truncated === true
+        ? result.kind === "command"
+          ? "service_backfill_limit"
+          : "service_observe_limit"
+        : null;
 
     return {
       directive,
@@ -108,7 +162,7 @@ export class TerminalToolExecutor {
     args: Record<string, unknown>,
     summary: string,
     result: TerminalCallResult,
-    outputTruncationReason: "bud_runtime_limit" | "service_backfill_limit" | null,
+    outputTruncationReason: ExecutedTerminalTool["outputTruncationReason"],
   ): Record<string, unknown> {
     const base: Record<string, unknown> = {
       tool: directive.tool,
@@ -178,6 +232,26 @@ export class TerminalToolExecutor {
           ...(result.outputBytes !== undefined ? { output_bytes: result.outputBytes } : {}),
           ...(result.linesCaptured !== undefined ? { lines_captured: result.linesCaptured } : {}),
           ...(result.changed !== undefined ? { changed: result.changed } : {}),
+          ...(result.truncated !== undefined ? { truncated: result.truncated } : {}),
+          ...(outputTruncationReason
+            ? { output_truncation_reason: outputTruncationReason }
+            : {}),
+        };
+      case "wait":
+        return {
+          ...base,
+          ...(result.until !== undefined ? { until: result.until } : {}),
+          ...(result.waitOutcome !== undefined ? { outcome: result.waitOutcome } : {}),
+          ...(result.waitedMs !== undefined ? { waited_ms: result.waitedMs } : {}),
+          ...(result.waitExitCode !== undefined ? { exit_code: result.waitExitCode } : {}),
+          ...(result.output !== undefined ? { output: result.output } : {}),
+          ...(result.outputBytes !== undefined ? { output_bytes: result.outputBytes } : {}),
+          ...(result.linesCaptured !== undefined ? { lines_captured: result.linesCaptured } : {}),
+          ...(result.changed !== undefined ? { changed: result.changed } : {}),
+          ...(result.truncated !== undefined ? { truncated: result.truncated } : {}),
+          ...(outputTruncationReason
+            ? { output_truncation_reason: outputTruncationReason }
+            : {}),
         };
     }
   }
@@ -205,6 +279,8 @@ export class TerminalToolExecutor {
         return this.executeSend(sessionId, directive);
       case "terminal.observe":
         return this.executeObserve(sessionId, directive);
+      case "terminal.wait":
+        return this.executeWait(sessionId, directive);
     }
   }
 
@@ -295,6 +371,19 @@ export class TerminalToolExecutor {
         status: "interactive",
         commandId: typeof data.command_id === "string" ? data.command_id : null,
         note: INTERACTIVE_STARTED_NOTE,
+        ...this.sessionContextFacts(sessionId),
+        openCommand: await this.resolveOpenCommand(sessionId),
+      };
+    }
+    if (outcome && outcome.event === "input_absorbed") {
+      // The daemon saw a quiet point / fresh prompt with no command_started on
+      // an OSC 133 shell: the text went to a foreground program (or the shell
+      // ran nothing). Honest, actionable — not a failure, nothing pending.
+      return {
+        kind: "command",
+        status: "input_absorbed",
+        commandId: null,
+        note: INPUT_ABSORBED_NOTE,
         ...this.sessionContextFacts(sessionId),
         openCommand: await this.resolveOpenCommand(sessionId),
       };
@@ -619,18 +708,180 @@ export class TerminalToolExecutor {
     }
 
     this.logTerminalOutput(`terminal.observe (${capture.view})`, capture.output);
+    const capped = capObservedOutput(capture.output);
 
     return {
       kind: "observation",
       view: capture.view,
-      output: capture.output,
-      outputBytes: Buffer.byteLength(capture.output, "utf-8"),
+      output: capped.output,
+      outputBytes: capped.outputBytes,
+      truncated: capped.truncated,
       linesCaptured: capture.linesCaptured,
       ...(capture.changed !== undefined ? { changed: capture.changed } : {}),
       ...this.sessionContextFacts(sessionId),
       ...(capture.mode !== undefined ? { mode: capture.mode } : {}),
       ...(capture.integration !== undefined ? { integration: capture.integration } : {}),
       ...(capture.altScreen !== undefined ? { altScreen: capture.altScreen } : {}),
+      openCommand: await this.resolveOpenCommand(sessionId),
+    };
+  }
+
+  /**
+   * terminal.wait: one blocking call per wake. The daemon blocks on the
+   * requested fact (awaited observe, proto §6.1) and snapshots the delta
+   * afterwards, so the model gets "what changed while I waited" in the same
+   * result. Ends early on a human interrupt, a follow-up user message
+   * (`superseded` — the agent loop then finishes the turn), or the service
+   * budget (`timeout` — call again).
+   */
+  private async executeWait(
+    sessionId: string,
+    directive: Extract<TerminalToolCallDirective, { tool: "terminal.wait" }>,
+  ): Promise<TerminalCallResult> {
+    const openCommandBefore = await this.resolveOpenCommand(sessionId);
+    // Default from session state: an open shell command has an exact end
+    // (command_finished); anything else (TUI, REPL, unknown) settles.
+    const until: TerminalWaitUntil =
+      directive.until ?? (openCommandBefore ? "command_finished" : "settled");
+    const startedAt = Date.now();
+    this.debug("terminal.wait", { sessionId, until, openCommand: openCommandBefore?.commandId ?? null });
+
+    let capture: Awaited<ReturnType<TerminalSessionManager["observeTerminal"]>>;
+    try {
+      capture = await this.terminalSessionManager.observeTerminal(sessionId, {
+        view: "delta",
+        lines: -50,
+        await: until === "command_finished" ? "command" : "settled",
+        ...(until === "settled" ? { quietMs: TERMINAL_WAIT_QUIET_MS } : {}),
+      });
+    } catch (err) {
+      const waitedMs = Date.now() - startedAt;
+      if (this.isInterruptedError(err)) {
+        return this.buildWaitEndedResult(sessionId, until, "interrupted", waitedMs, {
+          error: "interrupted",
+          note: WAIT_INTERRUPTED_NOTE,
+          observe: true,
+        });
+      }
+      if (this.isSupersededError(err)) {
+        // No follow-up observe: the old turn must finish promptly so the
+        // user's new message can start its turn.
+        return {
+          ...(await this.buildWaitEndedResult(sessionId, until, "superseded", waitedMs, {
+            note: WAIT_SUPERSEDED_NOTE,
+            observe: false,
+          })),
+          superseded: true,
+        };
+      }
+      if (this.isLocalObserveTimeoutError(err)) {
+        return this.buildWaitEndedResult(sessionId, until, "timeout", waitedMs, {
+          note: WAIT_TIMEOUT_NOTE,
+          observe: true,
+        });
+      }
+      const transportError = this.normalizeTerminalTransportError(directive, err);
+      if (transportError) {
+        return this.buildTransportFailureResult(directive, transportError);
+      }
+      throw err;
+    }
+
+    const waitedMs = Date.now() - startedAt;
+    const outcomeEvent = capture.outcome?.event;
+    const waitOutcome: TerminalWaitOutcome =
+      outcomeEvent === "settled" ||
+      outcomeEvent === "command_finished" ||
+      outcomeEvent === "prompt_ready" ||
+      outcomeEvent === "idle" ||
+      outcomeEvent === "closed"
+        ? outcomeEvent
+        : "settled";
+    const legacyDaemon = capture.outcome === undefined || capture.outcome === null;
+    const exitCode =
+      outcomeEvent === "command_finished" && typeof capture.outcome?.data.exit_code === "number"
+        ? Math.trunc(capture.outcome.data.exit_code)
+        : undefined;
+    const note = legacyDaemon
+      ? LEGACY_DAEMON_WAIT_NOTE
+      : waitOutcome === "idle"
+        ? WAIT_IDLE_NOTE
+        : waitOutcome === "closed"
+          ? WAIT_CLOSED_NOTE
+          : undefined;
+
+    this.logTerminalOutput("terminal.wait delta", capture.output);
+    const capped = capObservedOutput(capture.output);
+    this.debug("terminal.wait resolved", {
+      sessionId,
+      until,
+      outcome: waitOutcome,
+      waitedMs,
+      immediate: capture.outcome?.data.immediate === true,
+    });
+
+    return {
+      kind: "wait",
+      until,
+      waitOutcome,
+      waitedMs,
+      ...(exitCode !== undefined ? { waitExitCode: exitCode } : {}),
+      output: capped.output,
+      outputBytes: capped.outputBytes,
+      truncated: capped.truncated,
+      linesCaptured: capture.linesCaptured,
+      ...(capture.changed !== undefined ? { changed: capture.changed } : {}),
+      ...(note ? { note } : {}),
+      ...this.sessionContextFacts(sessionId),
+      ...(capture.mode !== undefined ? { mode: capture.mode } : {}),
+      ...(capture.integration !== undefined ? { integration: capture.integration } : {}),
+      ...(capture.altScreen !== undefined ? { altScreen: capture.altScreen } : {}),
+      openCommand: await this.resolveOpenCommand(sessionId),
+    };
+  }
+
+  private async buildWaitEndedResult(
+    sessionId: string,
+    until: TerminalWaitUntil,
+    waitOutcome: Extract<TerminalWaitOutcome, "timeout" | "interrupted" | "superseded">,
+    waitedMs: number,
+    options: { note: string; error?: string; observe: boolean },
+  ): Promise<TerminalCallResult> {
+    let observed: Partial<TerminalCallResult> = {};
+    if (options.observe) {
+      // Best-effort delta so the model still sees what happened meanwhile.
+      try {
+        const capture = await this.terminalSessionManager.observeTerminal(sessionId, {
+          view: "delta",
+          lines: -50,
+        });
+        const capped = capObservedOutput(capture.output);
+        observed = {
+          output: capped.output,
+          outputBytes: capped.outputBytes,
+          truncated: capped.truncated,
+          linesCaptured: capture.linesCaptured,
+          ...(capture.changed !== undefined ? { changed: capture.changed } : {}),
+          ...(capture.mode !== undefined ? { mode: capture.mode } : {}),
+          ...(capture.integration !== undefined ? { integration: capture.integration } : {}),
+          ...(capture.altScreen !== undefined ? { altScreen: capture.altScreen } : {}),
+        };
+      } catch (err) {
+        this.logger.warn(
+          { err, sessionId, component: "agent" },
+          "Delta observation after an ended terminal.wait failed",
+        );
+      }
+    }
+    return {
+      kind: "wait",
+      until,
+      waitOutcome,
+      waitedMs,
+      ...(options.error ? { error: options.error } : {}),
+      note: options.note,
+      ...this.sessionContextFacts(sessionId),
+      ...observed,
       openCommand: await this.resolveOpenCommand(sessionId),
     };
   }
@@ -717,6 +968,34 @@ export class TerminalToolExecutor {
         }
         return `Observed terminal ${view}`;
       }
+      case "terminal.wait": {
+        const waited =
+          typeof result.waitedMs === "number" ? formatDuration(result.waitedMs) : null;
+        switch (result.waitOutcome) {
+          case "interrupted":
+            return "Terminal wait was interrupted by the user";
+          case "superseded":
+            return "Terminal wait ended because the user sent a new message";
+          case "timeout":
+            return `Waited ${waited ?? "for the budget"}; the terminal is still busy`;
+          case "idle":
+            return "Nothing to wait for: the terminal is idle at a prompt";
+          case "closed":
+            return `Waited ${waited ?? ""}; the terminal session closed`.replace("  ", " ");
+          case "command_finished":
+            return typeof result.waitExitCode === "number"
+              ? `Waited ${waited ?? ""}; command finished (exit ${result.waitExitCode})`.replace("  ", " ")
+              : `Waited ${waited ?? ""}; command finished`.replace("  ", " ");
+          case "prompt_ready":
+            return `Waited ${waited ?? ""}; back at the shell prompt`.replace("  ", " ");
+          case "settled":
+            return result.waitedMs !== undefined && result.waitedMs < 1000
+              ? "Terminal is already settled"
+              : `Waited ${waited ?? ""}; terminal settled`.replace("  ", " ");
+          default:
+            return waited ? `Waited ${waited} for the terminal` : "Waited for the terminal";
+        }
+      }
     }
   }
 
@@ -762,7 +1041,7 @@ export class TerminalToolExecutor {
     directive: TerminalToolCallDirective,
     err: unknown,
   ): AgentTransportToolError | null {
-    const isObserve = directive.tool === "terminal.observe";
+    const isObserve = directive.tool === "terminal.observe" || directive.tool === "terminal.wait";
     return normalizeAgentTransportError(err, {
       BUD_DISCONNECTED: isObserve
         ? "The Bud disconnected before terminal output could be observed."
@@ -810,6 +1089,12 @@ export class TerminalToolExecutor {
           outputBytes: 0,
           ...base,
         };
+      case "terminal.wait":
+        return {
+          kind: "wait",
+          ...(directive.until ? { until: directive.until } : {}),
+          ...base,
+        };
     }
   }
 
@@ -817,8 +1102,16 @@ export class TerminalToolExecutor {
     return err instanceof Error && err.message === "interrupted";
   }
 
+  private isSupersededError(err: unknown): boolean {
+    return err instanceof Error && err.message === "superseded_by_user_message";
+  }
+
   private isLocalSendTimeoutError(err: unknown): boolean {
     return err instanceof Error && err.message === "send_timeout";
+  }
+
+  private isLocalObserveTimeoutError(err: unknown): boolean {
+    return err instanceof Error && err.message === "observe_timeout";
   }
 
   private logTerminalOutput(tool: string, output: string): void {
@@ -848,6 +1141,30 @@ export class TerminalToolExecutor {
     }
     this.logger.info({ ...meta, component: "agent" }, message);
   }
+}
+
+/** Tail-keeping cap for model-facing observe/wait output (see the constant). */
+export function capObservedOutput(
+  output: string,
+  capBytes = TERMINAL_OBSERVE_OUTPUT_CAP_BYTES,
+): { output: string; outputBytes: number; truncated: boolean } {
+  const outputBytes = Buffer.byteLength(output, "utf-8");
+  if (outputBytes <= capBytes) {
+    return { output, outputBytes, truncated: false };
+  }
+  const buffer = Buffer.from(output, "utf-8");
+  let tail = buffer.subarray(buffer.length - capBytes).toString("utf-8");
+  // Drop a partial first line (and any replacement char from a split
+  // multi-byte sequence) so the kept tail starts on a line boundary.
+  const firstNewline = tail.indexOf("\n");
+  if (firstNewline >= 0 && firstNewline < tail.length - 1) {
+    tail = tail.slice(firstNewline + 1);
+  }
+  return {
+    output: `[... earlier output omitted (${outputBytes - capBytes} bytes) ...]\n${tail}`,
+    outputBytes,
+    truncated: true,
+  };
 }
 
 function truncateForSummary(text: string, maxChars = 96): string {

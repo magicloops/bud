@@ -1048,6 +1048,13 @@ fn read_terminal_observe_field(
         ),
         // Fields 5-6 were the retired 0.2 wait vocabulary
         // (wait_for / timeout_ms): skipped.
+        // 7-8: awaited observe (proto 0.3 §6.1).
+        7 => insert_string(frame, "await", reader.read_string_for_wire_type(wire_type)?),
+        8 => insert_u64(
+            frame,
+            "quiet_ms",
+            reader.read_varint_for_wire_type(wire_type)?,
+        ),
         _ => reader.skip(wire_type)?,
     }
     Ok(())
@@ -2104,6 +2111,26 @@ mod tests {
         );
         assert_eq!(frame.get("view").and_then(Value::as_str), Some("history"));
         assert_eq!(frame.get("lines").and_then(Value::as_i64), Some(500));
+    }
+
+    #[test]
+    fn decodes_inbound_field_level_awaited_observe() {
+        // Regression: the first live terminal.wait drill silently degraded to
+        // a plain snapshot because `await`/`quiet_ms` were missing from the
+        // field-level codec — the service encoded them, the daemon dropped
+        // them, and nobody errored (fields 7-8, proto 0.3 §6.1).
+        let mut payload = Vec::new();
+        write_string(&mut payload, 1, "sess_test");
+        write_string(&mut payload, 2, "req_test");
+        write_string(&mut payload, 3, "delta");
+        write_string(&mut payload, 7, "settled");
+        write_varint_field(&mut payload, 8, 2000);
+        let bytes = typed_envelope_with_payload(127, &payload);
+
+        let decoded = decode_legacy_json_frame(&bytes).expect("decode frame");
+        let frame: Value = serde_json::from_str(&decoded).expect("json");
+        assert_eq!(frame.get("await").and_then(Value::as_str), Some("settled"));
+        assert_eq!(frame.get("quiet_ms").and_then(Value::as_u64), Some(2000));
     }
 
     #[test]

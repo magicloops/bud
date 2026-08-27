@@ -346,7 +346,14 @@ export type ApiDraftReasoning = {
 export type ApiAgentState = {
   active: boolean
   turn_id: string | null
-  phase: 'idle' | 'starting' | 'thinking' | 'tool_running' | 'waiting_for_user' | 'streaming_message'
+  phase:
+    | 'idle'
+    | 'starting'
+    | 'thinking'
+    | 'tool_running'
+    | 'waiting_for_user'
+    | 'waiting_for_terminal'
+    | 'streaming_message'
   can_cancel: boolean
   stream_cursor: string
   pending_tool: {

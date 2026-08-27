@@ -93,6 +93,8 @@ export class AgentTranscriptWriter {
 
     if (directive.tool === ASK_USER_QUESTIONS_TOOL) {
       this.runtime.setPendingUserQuestions(threadId, pendingTool, cursor);
+    } else if (directive.tool === "terminal.wait") {
+      this.runtime.setPendingTerminalWait(threadId, pendingTool, cursor);
     } else {
       this.runtime.setPendingTool(threadId, pendingTool, cursor);
     }

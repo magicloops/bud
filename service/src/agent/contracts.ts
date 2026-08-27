@@ -34,6 +34,14 @@ export type AgentToolCallDirective =
     }
   | {
       type: "tool_call";
+      tool: "terminal.wait";
+      /** What to wait for; omitted = service picks from session state
+       * (open command → command_finished, else settled). */
+      until?: TerminalWaitUntil;
+      callId: string;
+    }
+  | {
+      type: "tool_call";
       tool: "web_view.open";
       targetHost?: "127.0.0.1" | "localhost" | "::1";
       targetPort: number;
@@ -60,9 +68,29 @@ export type AgentToolCallDirective =
       callId: string;
     };
 
+/** Model-facing `terminal.wait { until }` vocabulary. */
+export type TerminalWaitUntil = "settled" | "command_finished";
+
+/**
+ * How a `terminal.wait` resolved. `settled` / `command_finished` /
+ * `prompt_ready` / `closed` are daemon facts; `idle` means nothing was
+ * running for a command wait; `timeout` = the service wait budget expired
+ * (call again to keep waiting); `interrupted` = a human interrupted the
+ * terminal; `superseded` = a follow-up user message ended the turn.
+ */
+export type TerminalWaitOutcome =
+  | "settled"
+  | "command_finished"
+  | "prompt_ready"
+  | "idle"
+  | "closed"
+  | "timeout"
+  | "interrupted"
+  | "superseded";
+
 export type TerminalToolCallDirective = Extract<
   AgentToolCallDirective,
-  { tool: "terminal.run" | "terminal.send" | "terminal.observe" }
+  { tool: "terminal.run" | "terminal.send" | "terminal.observe" | "terminal.wait" }
 >;
 
 export type WebViewToolCallDirective = Extract<
@@ -99,11 +127,15 @@ export type TerminalDeltaSnapshot = {
  * - `kind: "interaction_ack"` — terminal.send; dispatch acknowledgement plus a
  *   settled screen delta.
  * - `kind: "observation"` — terminal.observe; grid-backed screen/delta/history.
+ * - `kind: "wait"` — terminal.wait; blocked on a daemon fact (or the service
+ *   budget / a human) and returns the delta observed since the last look.
  */
 export type TerminalCallResult = {
-  kind: "command" | "interaction_ack" | "observation";
+  kind: "command" | "interaction_ack" | "observation" | "wait";
   // terminal.run
-  status?: "completed" | "still_running" | "terminal_busy" | "interactive";
+  /** `input_absorbed`: the text was typed but no shell command started — a
+   * foreground program consumed it (or the shell ran nothing). */
+  status?: "completed" | "still_running" | "terminal_busy" | "interactive" | "input_absorbed";
   commandId?: string | null;
   exitCode?: number | null;
   durationMs?: number | null;
@@ -126,6 +158,16 @@ export type TerminalCallResult = {
   view?: TerminalObservationView;
   linesCaptured?: number;
   changed?: boolean;
+  // terminal.wait
+  until?: TerminalWaitUntil;
+  waitOutcome?: TerminalWaitOutcome;
+  waitedMs?: number;
+  /** interaction_ack / command: the daemon exit code when the wait ended on
+   * a command_finished (wait) — carried as `exit_code` for the model. */
+  waitExitCode?: number | null;
+  /** The wait ended because a follow-up user message superseded the turn;
+   * the agent loop finishes the turn instead of calling the model again. */
+  superseded?: boolean;
   /** The session's OPEN command (started, unfinished) — THE discriminating
    * fact between an idle shell prompt and an inline TUI running under a
    * shell (both report mode "shell"). null/absent = no command running. */
@@ -147,7 +189,7 @@ export type ExecutedTerminalTool = {
   directive: TerminalToolCallDirective;
   args: Record<string, unknown>;
   summary: string;
-  outputTruncationReason: "bud_runtime_limit" | "service_backfill_limit" | null;
+  outputTruncationReason: "bud_runtime_limit" | "service_backfill_limit" | "service_observe_limit" | null;
   result: TerminalCallResult;
   payload: Record<string, unknown>;
 };
@@ -222,6 +264,7 @@ export function toolNameForConversation(
   | "terminal_run"
   | "terminal_send"
   | "terminal_observe"
+  | "terminal_wait"
   | "web_view_open"
   | "web_view_close"
   | "web_view_list"
@@ -233,6 +276,8 @@ export function toolNameForConversation(
       return "terminal_send";
     case "terminal.observe":
       return "terminal_observe";
+    case "terminal.wait":
+      return "terminal_wait";
     case "web_view.open":
       return "web_view_open";
     case "web_view.close":
@@ -250,8 +295,13 @@ export function isTerminalToolDirective(
   return (
     directive.tool === "terminal.run" ||
     directive.tool === "terminal.send" ||
-    directive.tool === "terminal.observe"
+    directive.tool === "terminal.observe" ||
+    directive.tool === "terminal.wait"
   );
+}
+
+export function isTerminalWaitUntil(value: unknown): value is TerminalWaitUntil {
+  return value === "settled" || value === "command_finished";
 }
 
 export function isUserQuestionToolDirective(
@@ -297,6 +347,10 @@ export function buildToolArgs(
       return {
         ...(typeof directive.lines === "number" ? { lines: directive.lines } : {}),
         ...(directive.view ? { view: directive.view } : {}),
+      };
+    case "terminal.wait":
+      return {
+        ...(directive.until ? { until: directive.until } : {}),
       };
     case "web_view.open":
       return {

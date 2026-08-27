@@ -136,6 +136,48 @@ export function TerminalObserveContent({ payload }: ToolContentRendererProps) {
   )
 }
 
+const WAIT_OUTCOME_LABELS: Record<string, string> = {
+  settled: 'terminal settled',
+  command_finished: 'command finished',
+  prompt_ready: 'back at the prompt',
+  idle: 'nothing to wait for',
+  closed: 'session closed',
+  timeout: 'still busy (budget expired)',
+  interrupted: 'interrupted',
+  superseded: 'ended by a new message',
+}
+
+function formatWaited(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`
+  }
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) {
+    return `${seconds}s`
+  }
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`
+}
+
+/** `terminal.wait`: the agent parked until a terminal fact; show what it waited for and how long. */
+export function TerminalWaitContent({ payload }: ToolContentRendererProps) {
+  const outcome = typeof payload.outcome === 'string' ? payload.outcome : null
+  const waitedMs = typeof payload.waited_ms === 'number' ? payload.waited_ms : null
+  const exitCode = typeof payload.exit_code === 'number' ? payload.exit_code : null
+  const label = outcome ? (WAIT_OUTCOME_LABELS[outcome] ?? outcome) : 'waiting'
+
+  return (
+    <div className="rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+      <span>
+        Waited{waitedMs !== null ? ` ${formatWaited(waitedMs)}` : ''}: {label}
+        {exitCode !== null ? ` (exit ${exitCode})` : ''}
+      </span>
+      <span className="ml-2 inline-flex">{modeChip(payload)}</span>
+    </div>
+  )
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
 }

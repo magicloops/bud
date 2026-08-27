@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::client::{HolderClient, HolderPush};
 use crate::emu::{CursorPos, CursorShapeKind, Emu, FeedReport, MouseModes, StyledRun};
@@ -164,6 +164,13 @@ struct Inner {
     last_region_start: u64,
     /// Meaningful damage seen since the last `Settled` emission.
     settled_pending: bool,
+    /// A programmatic write (text/key) armed the quiet timer since the last
+    /// `Settled` emission. Input counts as activity: a gesture the program
+    /// ignores (no damage at all) must still settle, and a gesture at an
+    /// idle shell prompt (which never settles spontaneously) must too — the
+    /// caller asked "what happened after my input", and "nothing" is a
+    /// legitimate, promptly reported answer.
+    input_pending: bool,
     /// Grid-sync damage accumulation between `take_grid_frame` calls.
     grid: GridTracker,
 }
@@ -173,6 +180,8 @@ pub struct Session {
     client: HolderClient,
     session_dir: PathBuf,
     child_pid: i32,
+    /// Wakes the event loop to (re)arm the quiet deadline after a write.
+    settle_wake: Arc<Notify>,
 }
 
 impl Session {
@@ -189,8 +198,10 @@ impl Session {
             open_command: None,
             last_region_start: stat.ring_oldest_offset,
             settled_pending: false,
+            input_pending: false,
             grid: GridTracker::new(),
         }));
+        let settle_wake = Arc::new(Notify::new());
 
         // Events channel: replay worst case is ring_cap / 128KiB Output events
         // plus semantic events — 4096 slots absorb it without back-pressure on
@@ -199,12 +210,14 @@ impl Session {
         let (replay_done_tx, replay_done_rx) = tokio::sync::oneshot::channel::<Result<u64>>();
 
         let loop_inner = Arc::clone(&inner);
+        let loop_wake = Arc::clone(&settle_wake);
         let session_dir = cfg.session_dir.clone();
         let quiet_ms = cfg.quiet_ms;
         let resume_from = cfg.resume_from_offset;
         tokio::spawn(async move {
             event_loop(
                 loop_inner,
+                loop_wake,
                 session_dir,
                 quiet_ms,
                 resume_from,
@@ -235,9 +248,31 @@ impl Session {
                 client,
                 session_dir: cfg.session_dir,
                 child_pid: hello.child_pid,
+                settle_wake,
             },
             rx,
         ))
+    }
+
+    /// Input is activity: arm the quiet timer so the next quiet point emits
+    /// `Settled` even when the program never repaints (ignored key, silent
+    /// stdin read, compose at an idle prompt). Called after every
+    /// programmatic write; raw human keystrokes (`write_raw`) deliberately
+    /// do not arm it, so an idle prompt stays silent under human typing.
+    fn arm_settle(&self) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.settled_pending = true;
+            inner.input_pending = true;
+        }
+        self.settle_wake.notify_one();
+    }
+
+    /// No meaningful damage (and no armed input) since the last quiet point:
+    /// the terminal is currently settled. Lets an awaited observe resolve
+    /// immediately instead of waiting for a `Settled` that already fired.
+    pub fn is_quiet(&self) -> bool {
+        !self.inner.lock().unwrap().settled_pending
     }
 
     /// Write literal text (bracketed-paste aware; `\n` → CR outside paste mode).
@@ -246,7 +281,9 @@ impl Session {
             let inner = self.inner.lock().unwrap();
             crate::keys::encode_paste(text, inner.emu.key_modes(), false)
         };
-        self.client.write(&bytes).await
+        self.client.write(&bytes).await?;
+        self.arm_settle();
+        Ok(())
     }
 
     /// Write literal text as an explicit PASTE when the application has
@@ -260,7 +297,9 @@ impl Session {
             let inner = self.inner.lock().unwrap();
             crate::keys::encode_paste(text, inner.emu.key_modes(), true)
         };
-        self.client.write(&bytes).await
+        self.client.write(&bytes).await?;
+        self.arm_settle();
+        Ok(())
     }
 
     /// Send one named key (`enter`, `ctrl+c`, `up`, …), honoring terminal modes.
@@ -271,7 +310,9 @@ impl Session {
             let inner = self.inner.lock().unwrap();
             crate::keys::encode_key(key, inner.emu.key_modes())
         };
-        self.client.write(&bytes).await
+        self.client.write(&bytes).await?;
+        self.arm_settle();
+        Ok(())
     }
 
     /// Write raw bytes verbatim (escape hatch; prefer write_text/send_key).
@@ -607,6 +648,7 @@ fn detect_row_shift(
 #[allow(clippy::too_many_arguments)]
 async fn event_loop(
     inner: Arc<Mutex<Inner>>,
+    settle_wake: Arc<Notify>,
     session_dir: PathBuf,
     quiet_ms: u64,
     resume_from: u64,
@@ -734,15 +776,23 @@ async fn event_loop(
                     HolderPush::Closed => break,
                 }
             }
+            _ = settle_wake.notified() => {
+                // A programmatic write armed `settled_pending`/`input_pending`
+                // (see `Session::arm_settle`): start (or restart) the quiet
+                // window from the write, exactly as damage would.
+                deadline = Some(tokio::time::Instant::now() + quiet);
+            }
             _ = tokio::time::sleep_until(sleep_until) => {
                 deadline = None;
                 let mut out = Vec::new();
                 {
                     let mut guard = inner.lock().unwrap();
                     if !guard.settled_pending {
+                        guard.input_pending = false;
                         continue;
                     }
                     guard.settled_pending = false;
+                    let input_armed = std::mem::take(&mut guard.input_pending);
                     // Quiet point: sample the cursor line for REPL detection.
                     let cursor = guard.emu.cursor();
                     let line = guard
@@ -763,9 +813,13 @@ async fn event_loop(
                     // TUIs that never enter the alternate screen (codex,
                     // ratatui inline viewports) keep the session classified
                     // Shell, yet interactive callers still need a settle
-                    // signal. At-prompt Shell stays silent — prompt_ready is
-                    // its signal.
-                    if mode != Mode::Shell || guard.open_command.is_some() {
+                    // signal. An at-prompt Shell stays silent SPONTANEOUSLY —
+                    // prompt_ready is its signal — but a quiet point reached
+                    // after programmatic input (`input_armed`) is reported
+                    // regardless of mode: the caller is waiting on that very
+                    // input, and "no reaction" must resolve promptly instead
+                    // of riding the caller's timeout budget.
+                    if mode != Mode::Shell || guard.open_command.is_some() || input_armed {
                         out.push(Event::Settled { mode, quiet_ms });
                     }
                 }
@@ -792,6 +846,7 @@ mod grid_tests {
             open_command: None,
             last_region_start: 0,
             settled_pending: false,
+            input_pending: false,
             grid: GridTracker::new(),
         }
     }

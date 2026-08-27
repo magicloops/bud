@@ -56,6 +56,14 @@ const INTEGRATION_DETECT_WINDOW: Duration = Duration::from_secs(5);
 /// Daemon-internal safety cap on awaited sends. The service owns real timeout
 /// policy; this only prevents leaked waiters.
 const AWAIT_SAFETY_CAP: Duration = Duration::from_secs(4 * 60 * 60);
+/// `await:"command"` on a genuinely OSC 133-integrated shell: a quiet point
+/// (or a fresh prompt) with no `command_started` since dispatch means the
+/// text most likely went to a foreground program (or the shell ran nothing).
+/// Keep waiting this long for the start marker before concluding
+/// `input_absorbed` — the shell's `C` normally follows Enter within
+/// milliseconds; this only absorbs slow hooks and stale events from the
+/// previous prompt cycle.
+const INPUT_ABSORBED_GRACE: Duration = Duration::from_millis(1500);
 /// Fresh-session grace: how long a command-await will wait for the shell's
 /// FIRST prompt before falling back to the visible sentinel trailer. Only
 /// applies when a shim was installed and no marker has arrived yet (the shell
@@ -570,6 +578,14 @@ impl TerminalManager {
         // Subscribe BEFORE dispatch so the awaited outcome cannot be missed.
         let waiter = frame.r#await.map(|_| entry.pump_tx.subscribe());
 
+        // Live A/C marker evidence for THIS attachment (not the replay-derived
+        // integration fact): decides both the sentinel wrap below and whether
+        // a command-await may conclude `input_absorbed` (a start marker was
+        // expected and never came).
+        let genuine_osc133 = entry.shared.facts.lock().unwrap().genuine_osc133;
+        let expect_start_marker =
+            submit && frame.r#await == Some(TerminalSendAwait::Command) && genuine_osc133;
+
         // Dispatch under the per-session lock (gesture ordering); the await
         // below runs after releasing it.
         let dispatch = {
@@ -581,7 +597,6 @@ impl TerminalManager {
                 // wrap decision keys off live A/C marker evidence rather than
                 // the integration fact, because a reattach replay of earlier
                 // sentinel `D` trailers mislabels the session `osc133`.
-                let genuine_osc133 = entry.shared.facts.lock().unwrap().genuine_osc133;
                 if submit && frame.r#await == Some(TerminalSendAwait::Command) && !genuine_osc133 {
                     payload.push_str(SENTINEL_TRAILER);
                     session.mark_sentinel_integration();
@@ -645,7 +660,12 @@ impl TerminalManager {
 
         let result = match (frame.r#await, waiter) {
             (Some(kind), Some(rx)) => {
-                match tokio::time::timeout(AWAIT_SAFETY_CAP, await_outcome(rx, kind)).await {
+                match tokio::time::timeout(
+                    AWAIT_SAFETY_CAP,
+                    await_outcome(rx, kind, expect_start_marker),
+                )
+                .await
+                {
                     Ok(result) => result,
                     Err(_) => AwaitResult::Timeout,
                 }
@@ -739,6 +759,26 @@ impl TerminalManager {
             .unwrap_or(HISTORY_DEFAULT_LINES)
             .clamp(1, HISTORY_MAX_LINES);
 
+        // Awaited observe: block on the requested fact FIRST (never holding
+        // the session lock), then snapshot — so the caller sees the screen
+        // as of the fact, not as of the request.
+        let outcome = match frame.r#await {
+            None => None,
+            Some(kind) => {
+                let extra_quiet =
+                    Duration::from_millis(frame.quiet_ms.unwrap_or(0).saturating_sub(QUIET_MS));
+                match tokio::time::timeout(
+                    AWAIT_SAFETY_CAP,
+                    await_observe_outcome(&entry, kind, extra_quiet),
+                )
+                .await
+                {
+                    Ok(outcome) => Some(outcome),
+                    Err(_) => return self.observe_error(&sender, &frame, "TIMEOUT"),
+                }
+            }
+        };
+
         let (screen, history, screen_ansi, cursor, alt_screen, mode) = {
             let session = entry.session.lock().await;
             let history = if view == "history" {
@@ -789,6 +829,7 @@ impl TerminalManager {
             cursor_col: cursor.col,
             ring_next_offset: entry.shared.facts.lock().unwrap().ring_next_offset,
             output_ansi_base64: screen_ansi.map(|ansi| BASE64_STANDARD.encode(ansi.as_bytes())),
+            outcome,
         };
         send_transport_frame(
             &sender,
@@ -973,15 +1014,42 @@ impl TerminalManager {
 /// matches the first `command_finished` whose start was observed after this
 /// subscription — or a synthetic-start finish (sentinel path, where the start
 /// may only be synthesized at finish time).
+/// Resolve a `terminal_send` await off the pump broadcast.
+///
+/// `expect_start_marker`: the dispatched text was a submitted command on a
+/// shell with genuine OSC 133 markers, so a `command_started` is expected.
+/// If a quiet point (or a fresh prompt) arrives first and no start marker
+/// follows within `INPUT_ABSORBED_GRACE`, the text did not run as a shell
+/// command — a foreground program absorbed it, or the shell ran nothing —
+/// and the await resolves `input_absorbed` instead of waiting for a
+/// `command_finished` that cannot come (the codex-incident shape, kept as a
+/// backstop behind the busy guard). Sentinel sessions never expect a start
+/// marker (their start is synthesized at `D`), so they are excluded.
 async fn await_outcome(
     mut rx: broadcast::Receiver<PumpEvent>,
     kind: TerminalSendAwait,
+    expect_start_marker: bool,
 ) -> AwaitResult {
     let mut started_after_dispatch: HashSet<String> = HashSet::new();
+    let mut absorbed: Option<(tokio::time::Instant, Value)> = None;
     loop {
-        match rx.recv().await {
+        let received = match absorbed.as_ref() {
+            Some((deadline, _)) => match tokio::time::timeout_at(*deadline, rx.recv()).await {
+                Ok(received) => received,
+                Err(_elapsed) => {
+                    let (_, data) = absorbed.take().expect("absorbed candidate");
+                    return AwaitResult::Outcome(json!({
+                        "event": "input_absorbed",
+                        "data": data,
+                    }));
+                }
+            },
+            None => rx.recv().await,
+        };
+        match received {
             Ok(PumpEvent::CommandStarted { command_id }) => {
                 started_after_dispatch.insert(command_id);
+                absorbed = None;
             }
             Ok(PumpEvent::CommandFinished {
                 command_id,
@@ -1012,6 +1080,14 @@ async fn await_outcome(
                 if kind == TerminalSendAwait::Settled {
                     return AwaitResult::Outcome(json!({ "event": "settled", "data": data }));
                 }
+                if expect_start_marker && started_after_dispatch.is_empty() && absorbed.is_none() {
+                    let mut candidate = data.as_object().cloned().unwrap_or_default();
+                    candidate.insert("signal".into(), Value::String("settled".into()));
+                    absorbed = Some((
+                        tokio::time::Instant::now() + INPUT_ABSORBED_GRACE,
+                        Value::Object(candidate),
+                    ));
+                }
             }
             Ok(PumpEvent::InteractiveStarted { data }) => {
                 if kind == TerminalSendAwait::Command {
@@ -1033,10 +1109,129 @@ async fn await_outcome(
                         "data": data,
                     }));
                 }
+                // A fresh prompt with no start marker since dispatch: the
+                // shell ran nothing (empty/whitespace line, or a shim that
+                // lost its markers). Same grace as the settled case.
+                if expect_start_marker && started_after_dispatch.is_empty() && absorbed.is_none() {
+                    let mut candidate = data.as_object().cloned().unwrap_or_default();
+                    candidate.insert("signal".into(), Value::String("prompt_ready".into()));
+                    absorbed = Some((
+                        tokio::time::Instant::now() + INPUT_ABSORBED_GRACE,
+                        Value::Object(candidate),
+                    ));
+                }
             }
             Ok(PumpEvent::Closed) => return AwaitResult::Closed,
             Err(broadcast::error::RecvError::Lagged(_)) => continue,
             Err(broadcast::error::RecvError::Closed) => return AwaitResult::Closed,
+        }
+    }
+}
+
+/// Resolve an awaited `terminal_observe` (§6.1): block on the requested fact
+/// and return the terminating outcome `{ "event", "data" }`. Never holds the
+/// session lock across a wait.
+///
+/// - `settled`: subscribes FIRST, then checks `Session::is_quiet` — an already
+///   quiet terminal resolves immediately (`data.immediate: true`); otherwise
+///   the next `settled` / `prompt_ready` / `command_finished` / close
+///   resolves it. `extra_quiet > 0` adds an output-quiet confirmation after a
+///   `settled`: if the output stream advanced during the extra window the
+///   program only paused, so the wait continues to the next quiet point.
+/// - `command`: nothing open resolves `idle` immediately; otherwise the next
+///   `command_finished` / `prompt_ready` / close.
+async fn await_observe_outcome(
+    entry: &SessionEntry,
+    kind: TerminalSendAwait,
+    extra_quiet: Duration,
+) -> Value {
+    let mut rx = entry.pump_tx.subscribe();
+    let closed = || json!({ "event": "closed", "data": {} });
+    match kind {
+        TerminalSendAwait::Command => {
+            let open = entry.shared.facts.lock().unwrap().open_command.is_some();
+            if !open {
+                return json!({ "event": "idle", "data": {} });
+            }
+            loop {
+                match rx.recv().await {
+                    Ok(PumpEvent::CommandFinished { data, .. }) => {
+                        return json!({ "event": "command_finished", "data": data })
+                    }
+                    Ok(PumpEvent::PromptReady { data }) => {
+                        return json!({ "event": "prompt_ready", "data": data })
+                    }
+                    Ok(PumpEvent::Closed) | Err(broadcast::error::RecvError::Closed) => {
+                        return closed()
+                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                }
+            }
+        }
+        TerminalSendAwait::Settled => {
+            // Quiet is observed two ways: the pump's `settled` event, and a
+            // direct `is_quiet` poll. The poll is what makes this robust —
+            // an at-prompt shell's quiet point emits NO `settled` (by design;
+            // `prompt_ready` is its signal), and a wait that subscribes
+            // while the prompt is still painting would otherwise never
+            // resolve. Polling a daemon-local flag every 100ms is free.
+            let quiet_poll = Duration::from_millis(100);
+            let mut first_check = true;
+            loop {
+                let (quiet_now, mode) = {
+                    let session = entry.session.lock().await;
+                    (session.is_quiet(), session.mode())
+                };
+                if quiet_now {
+                    // Confirm the extra window (if any) against output
+                    // progress: a program that merely paused resumes and the
+                    // wait continues to the next quiet point.
+                    let before = entry.shared.facts.lock().unwrap().ring_next_offset;
+                    if !extra_quiet.is_zero() {
+                        tokio::time::sleep(extra_quiet).await;
+                    }
+                    let after = entry.shared.facts.lock().unwrap().ring_next_offset;
+                    if after == before {
+                        return json!({
+                            "event": "settled",
+                            "data": {
+                                "mode": mode_str(mode),
+                                "quiet_ms": if first_check { 0 } else { QUIET_MS },
+                                "immediate": first_check,
+                            },
+                        });
+                    }
+                    first_check = false;
+                    continue;
+                }
+                first_check = false;
+                tokio::select! {
+                    received = rx.recv() => match received {
+                        Ok(PumpEvent::Settled { data }) => {
+                            let before = entry.shared.facts.lock().unwrap().ring_next_offset;
+                            if !extra_quiet.is_zero() {
+                                tokio::time::sleep(extra_quiet).await;
+                                let after = entry.shared.facts.lock().unwrap().ring_next_offset;
+                                if after != before {
+                                    continue;
+                                }
+                            }
+                            return json!({ "event": "settled", "data": data });
+                        }
+                        Ok(PumpEvent::CommandFinished { data, .. }) => {
+                            return json!({ "event": "command_finished", "data": data })
+                        }
+                        Ok(PumpEvent::PromptReady { data }) => {
+                            return json!({ "event": "prompt_ready", "data": data })
+                        }
+                        Ok(PumpEvent::Closed) | Err(broadcast::error::RecvError::Closed) => {
+                            return closed()
+                        }
+                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    },
+                    _ = tokio::time::sleep(quiet_poll) => continue,
+                }
+            }
         }
     }
 }

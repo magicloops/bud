@@ -2,7 +2,12 @@ import type { ApiAgentState, ApiMessage } from '../../lib/api-types'
 
 export const ASSISTANT_ACTIVITY_INDICATOR_RETURN_DELAY_MS = 250
 
-export type AssistantActivityStatus = 'idle' | 'dispatching' | 'streaming' | 'waiting_for_user'
+export type AssistantActivityStatus =
+  | 'idle'
+  | 'dispatching'
+  | 'streaming'
+  | 'waiting_for_user'
+  | 'waiting_for_terminal'
 
 export type AssistantActivityGateState = {
   suppressIndicator: boolean

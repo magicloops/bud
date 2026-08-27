@@ -731,6 +731,7 @@ class GrpcControlConnection {
         ? { ringNextOffset: result.data.ring_next_offset }
         : {}),
       ...(typeof result.data.output_ansi === "string" ? { outputAnsi: result.data.output_ansi } : {}),
+      ...(result.data.outcome ? { outcome: result.data.outcome } : {}),
       error: result.data.error,
     });
   }

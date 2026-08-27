@@ -73,6 +73,28 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
     },
   },
   {
+    name: "terminal_wait",
+    description:
+      "Wait for the terminal to become quiet or for the running command to finish, then return what changed. " +
+      "Use this instead of repeatedly observing while a program (a TUI like codex, a REPL, a long script) is working: " +
+      "it returns as soon as the terminal settles or the command finishes, and immediately if the terminal is already idle. " +
+      "The service owns the wait budget; if the program is still busy when the budget expires, the result says so and you can call it again.",
+    parameters: {
+      type: "object",
+      properties: {
+        until: {
+          type: "string",
+          enum: ["settled", "command_finished"],
+          description:
+            'What to wait for. "command_finished" waits for the open shell command to exit (exact, via shell integration); ' +
+            '"settled" waits for the screen to stop changing (right for TUIs and REPLs). Omit to let the service choose from the terminal state.',
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "web_view_open",
     description:
       "Open or reuse a browser web view for an HTTP server running on the Bud host loopback interface, then attach it to the current thread.",
@@ -226,6 +248,7 @@ const BUD_SPECIFIC_TOOL_NAMES: ReadonlySet<string> = new Set([
   "terminal_run",
   "terminal_send",
   "terminal_observe",
+  "terminal_wait",
   "web_view_open",
   "web_view_close",
   "web_view_list",

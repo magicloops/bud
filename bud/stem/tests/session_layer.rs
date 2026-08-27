@@ -362,3 +362,86 @@ async fn termios_facts_track_echo_toggles() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
+
+#[tokio::test]
+async fn ignored_input_still_settles() {
+    // A program that swallows input without any repaint (echo off, silent
+    // read): no damage ever happens, so damage-quiet alone would never fire
+    // and a caller awaiting "settled" after its gesture would ride its whole
+    // timeout budget. Input is activity: the write arms the quiet timer and a
+    // Settled follows. Regression for the tmux→stem no-reaction gap.
+    let (_tmp, dir) = start_holder("stty -echo 2>/dev/null; sleep 300", 64 * 1024);
+    wait_for_holder(&dir).await;
+
+    let (mut session, mut rx) = Session::attach(config(&dir, 0)).await.unwrap();
+    // Let stty take effect before typing (nothing is emitted for it).
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let before = session.screen_lines().join("\n");
+
+    session.write_text("swallowed").await.unwrap();
+    assert!(!session.is_quiet(), "a write must arm the quiet timer");
+    let settled = expect_event(&mut rx, "settled after ignored input", |e| {
+        matches!(e, Event::Settled { .. })
+    })
+    .await;
+    assert!(
+        matches!(
+            settled,
+            Event::Settled {
+                mode: Mode::Unknown,
+                ..
+            }
+        ),
+        "{settled:?}"
+    );
+    assert_eq!(
+        session.screen_lines().join("\n"),
+        before,
+        "the input must not have been echoed (otherwise this test proves nothing)"
+    );
+    assert!(
+        session.is_quiet(),
+        "after Settled the session reports quiet"
+    );
+
+    session.kill().await.unwrap();
+}
+
+#[tokio::test]
+async fn composing_at_an_idle_prompt_settles() {
+    // An integrated shell at its prompt never settles spontaneously
+    // (prompt_ready is its signal), but a gesture typed there without
+    // submitting (compose, or a key the shell ignores) must still resolve a
+    // settled-await: the quiet point after programmatic input is reported
+    // regardless of mode.
+    let (_tmp, dir) = start_holder(OSC133_LOOP, 256 * 1024);
+    wait_for_holder(&dir).await;
+
+    let (mut session, mut rx) = Session::attach(config(&dir, 0)).await.unwrap();
+    expect_event(&mut rx, "prompt", |e| {
+        matches!(e, Event::PromptReady { .. })
+    })
+    .await;
+    // Drain the post-prompt quiet point (no Settled is expected there).
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(session.is_quiet());
+
+    session.write_text("partial-command").await.unwrap();
+    let settled = expect_event(&mut rx, "settled after compose", |e| {
+        matches!(e, Event::Settled { .. })
+    })
+    .await;
+    assert!(
+        matches!(
+            settled,
+            Event::Settled {
+                mode: Mode::Shell,
+                ..
+            }
+        ),
+        "compose at prompt settles in Shell mode: {settled:?}"
+    );
+    assert_eq!(session.mode(), Mode::Shell);
+
+    session.kill().await.unwrap();
+}

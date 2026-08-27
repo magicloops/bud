@@ -488,3 +488,41 @@ function buildEnvironmentFixture(online: boolean) {
     lastSeenAt: new Date("2026-05-24T10:00:00.000Z"),
   });
 }
+
+test("runtime snapshots expose waiting_for_terminal for a pending terminal.wait", () => {
+  const runtime = new AgentRuntimeStateManager();
+  runtime.startTurn("thread-1", "turn-1");
+
+  const toolCursor = runtime.emit("thread-1", {
+    event: "agent.tool_call",
+    data: {
+      turn_id: "turn-1",
+      client_id: "tool-client-wait",
+      call_id: "call-wait",
+      name: "terminal.wait",
+      args: { until: "settled" },
+      started_at: "2026-08-27T00:00:00.000Z",
+    },
+  });
+  runtime.setPendingTerminalWait(
+    "thread-1",
+    {
+      client_id: "tool-client-wait",
+      call_id: "call-wait",
+      name: "terminal.wait",
+      args: { until: "settled" },
+      started_at: "2026-08-27T00:00:00.000Z",
+    },
+    toolCursor,
+  );
+
+  const snapshot = runtime.getSnapshot("thread-1");
+  assert.equal(snapshot.active, true);
+  assert.equal(snapshot.phase, "waiting_for_terminal");
+  assert.equal(snapshot.pending_tool?.name, "terminal.wait");
+  assert.equal(snapshot.pending_tool?.args.until, "settled");
+  assert.equal(snapshot.can_cancel, true);
+
+  runtime.finishTurn("thread-1");
+  assert.equal(runtime.getSnapshot("thread-1").phase, "idle");
+});

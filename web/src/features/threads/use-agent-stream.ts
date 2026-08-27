@@ -116,7 +116,9 @@ type ThreadTitleEvent = {
 type UseAgentStreamArgs = {
   threadId: string | null
   initialStreamCursor: string | null
-  onStatusChange: (status: 'idle' | 'streaming' | 'waiting_for_user') => void
+  onStatusChange: (
+    status: 'idle' | 'streaming' | 'waiting_for_user' | 'waiting_for_terminal',
+  ) => void
   onError: (message: string | null) => void
   onToolCall: (event: {
     turnId: string
@@ -429,7 +431,11 @@ export function useAgentStream({
       try {
         const data = JSON.parse(evt.data) as AgentToolCallEvent
         callbacksRef.current.onStatusChange(
-          data.name === 'ask_user_questions' ? 'waiting_for_user' : 'streaming',
+          data.name === 'ask_user_questions'
+            ? 'waiting_for_user'
+            : data.name === 'terminal.wait'
+              ? 'waiting_for_terminal'
+              : 'streaming',
         )
         callbacksRef.current.onToolCall({
           turnId: data.turn_id,

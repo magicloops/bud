@@ -20,6 +20,7 @@ import {
 import type { TerminalObservationView } from "../terminal/types.js";
 import {
   buildToolArgs,
+  isTerminalWaitUntil,
   normalizeToolKeyInput,
   toolNameForConversation,
   type AgentToolCallDirective,
@@ -316,6 +317,7 @@ export class AgentConversationLoader {
         keys?: string[];
         lines?: number;
         view?: string;
+        until?: string;
         target_host?: string;
         target_port?: number;
         path?: string;
@@ -381,6 +383,13 @@ export class AgentConversationLoader {
             tool: "terminal.observe",
             lines: typeof payload.lines === "number" ? payload.lines : undefined,
             view: this.parseObservationView(payload.view),
+            callId,
+          };
+        case "terminal.wait":
+          return {
+            type: "tool_call",
+            tool: "terminal.wait",
+            ...(isTerminalWaitUntil(payload.until) ? { until: payload.until } : {}),
             callId,
           };
         case "terminal.interrupt":

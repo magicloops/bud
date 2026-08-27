@@ -622,8 +622,10 @@ export class TerminalSessionManager {
   async observeTerminal(
     sessionId: string,
     options: ObserveOptions = {},
-    timeoutMs = 30000
+    timeoutMs?: number
   ): Promise<ObserveResult> {
+    // Budget: explicit override, else the dispatcher's policy (30s snapshots,
+    // the long `TERMINAL_WAIT_TIMEOUT_MS` for awaited observes).
     return this.requestDispatcher.observeTerminal(sessionId, options, timeoutMs);
   }
 

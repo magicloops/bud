@@ -41,7 +41,9 @@ export function CommandComposer({
 }: CommandComposerProps) {
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
   const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
-  const stopMode = Boolean(onCancelAgentTurn) && (status === 'dispatching' || status === 'streaming')
+  const stopMode =
+    Boolean(onCancelAgentTurn) &&
+    (status === 'dispatching' || status === 'streaming' || status === 'waiting_for_terminal')
   const inputDisabled = status === 'dispatching' || Boolean(disabledReason)
   const showBudOfflineNotice = environment?.mode === 'bud_offline'
 
@@ -51,7 +53,13 @@ export function CommandComposer({
     // (design/responsive-web-layout.md §3.2).
     if (event.key === 'Enter' && !event.shiftKey && !hasCoarsePointer()) {
       event.preventDefault()
-      if (!status || status === 'idle' || status === 'streaming' || status === 'waiting_for_user') {
+      if (
+        !status ||
+        status === 'idle' ||
+        status === 'streaming' ||
+        status === 'waiting_for_user' ||
+        status === 'waiting_for_terminal'
+      ) {
         ; (event.currentTarget.form as HTMLFormElement | null)?.requestSubmit()
       }
     }

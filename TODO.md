@@ -13,6 +13,13 @@
     behavior, toolbar collapse, programmatic IME focus from tap — the three
     things headless Chromium cannot emulate
     ([design/responsive-web-layout.md](./design/responsive-web-layout.md) status).
+- **Typed codec drops negative `terminal_observe.lines`**
+  - `writeOptionalInt32` (service `proto/wire.ts`) skips values < 0, so the
+    tail notation `lines: -50` never survives the typed field-level payload;
+    the daemon silently falls back to its own history default. Found while
+    pinning the awaited-observe codec regression test (`wire.test.ts`).
+    Fix by zigzag/sint32 or by normalizing to magnitude service-side before
+    encode; add the daemon decode counterpart in the same change.
 - **Multi-server local LLM support** (deferred by design — one origin per Bud)
   - `BUD_LOCAL_LLM_URL` is a single origin; multiple models behind that one
     endpoint already work (advertise-all + per-thread picker). Multiple

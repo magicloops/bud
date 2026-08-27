@@ -100,6 +100,15 @@ export class AgentService {
   private readonly cancellations = new AgentCancellationRegistry();
   private readonly userQuestions = new AgentUserQuestionRegistry();
   private readonly threadTransitions = new Map<string, Promise<void>>();
+  /**
+   * Follow-up supersession of a pending `terminal.wait`: the message route
+   * rejects the daemon wait and awaits the old turn's finalization here
+   * before starting the new turn (mirrors the question-supersede flow).
+   */
+  private readonly terminalWaitFinalizers = new Map<
+    string,
+    { finalize: () => void; fail: (error: unknown) => void }
+  >();
 
   constructor(
     terminalSessionManager: TerminalSessionManager,
@@ -395,6 +404,51 @@ export class AgentService {
 
       return { superseded: acceptedRows.length };
     });
+  }
+
+  /**
+   * A normal follow-up message while the turn is parked on `terminal.wait`
+   * ends that wait (the terminal keeps running), finishes the old turn with
+   * `reason: "superseded_by_user_message"`, and only then lets the caller
+   * start the new turn — so two flows never run on one thread.
+   */
+  async supersedePendingTerminalWaitForFollowUp(args: {
+    threadId: string;
+  }): Promise<{ superseded: number }> {
+    return this.withThreadTransition(args.threadId, async () => {
+      const snapshot = this.runtime.getSnapshot(args.threadId);
+      if (!snapshot.active || snapshot.phase !== "waiting_for_terminal") {
+        return { superseded: 0 };
+      }
+      const finalized = new Promise<void>((resolve, reject) => {
+        this.terminalWaitFinalizers.set(args.threadId, { finalize: resolve, fail: reject });
+      });
+      const rejected = await this.terminalSessionManager.rejectPendingRequestsForThread(
+        args.threadId,
+        "superseded_by_user_message",
+      );
+      if (rejected === 0) {
+        // The wait resolved on its own in the meantime; the flow continues
+        // normally and will finish (or be superseded) through other paths.
+        this.terminalWaitFinalizers.delete(args.threadId);
+        return { superseded: 0 };
+      }
+      await finalized;
+      return { superseded: 1 };
+    });
+  }
+
+  private settleTerminalWaitFinalizer(threadId: string, error?: unknown): void {
+    const finalizer = this.terminalWaitFinalizers.get(threadId);
+    if (!finalizer) {
+      return;
+    }
+    this.terminalWaitFinalizers.delete(threadId);
+    if (error === undefined) {
+      finalizer.finalize();
+    } else {
+      finalizer.fail(error);
+    }
   }
 
 	  private async runAgentFlow(args: {
@@ -769,6 +823,32 @@ export class AgentService {
               ownerUserId,
             });
 
+            if (
+              isTerminalToolDirective(execution.directive) &&
+              (execution as ExecutedTerminalTool).result.superseded === true
+            ) {
+              // terminal.wait ended by a follow-up user message: the tool row
+              // is recorded (above); finish this turn without another
+              // provider call and release the route waiting to start the
+              // next one.
+              this.runtime.emit(threadId, {
+                event: "final",
+                data: {
+                  turn_id: turnId,
+                  status: "succeeded",
+                  reason: "superseded_by_user_message",
+                },
+              });
+              this.runtime.finishTurn(threadId);
+	              this.debug("Agent terminal wait superseded by follow-up user message", {
+	                threadId,
+	                sessionId: currentSessionId,
+	              });
+              this.cancellations.clear(threadId);
+              this.settleTerminalWaitFinalizer(threadId);
+              return;
+            }
+
             if (supersededQuestionResponse?.continuation === "supersede") {
               this.runtime.emit(threadId, {
                 event: "final",
@@ -857,6 +937,7 @@ export class AgentService {
       throw new Error("agent reached max steps");
     } catch (err) {
       supersededQuestionResponse?.onFailed?.(err);
+      this.settleTerminalWaitFinalizer(threadId, err);
       const canceled =
         controller.signal.aborted ||
         (err instanceof Error && err.message === "agent_canceled");
