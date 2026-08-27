@@ -653,7 +653,7 @@ Rejected file opens and resolves use the same frame-family shape with
 - `draft_reasoning` is an additive list of in-flight provider reasoning text visible to the browser but not included in future model-visible conversation reconstruction. Each item includes `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`.
 - `phase` may be `waiting_for_user` while the agent is paused on `ask_user_questions`
 - `phase` may be `waiting_for_terminal` while the agent is parked on `terminal.wait` (idle until the daemon reports the terminal settled / the command finished); clients should present it as waiting, not loading, keep the composer enabled (a follow-up message supersedes the wait), and keep cancel available
-- For terminal tools, `pending_tool.args` mirrors the model-facing schema (`terminal.run` `{command}`, `terminal.send` `{raw_text|key}`, `terminal.observe` `{view?, lines?}`, `terminal.wait` `{until?}`); there is no `wait_for` field
+- For terminal tools, `pending_tool.args` mirrors the model-facing schema (`terminal.run` `{command}`, `terminal.send` `{raw_text|key}`, `terminal.observe` `{view?, lines?}`, `terminal.wait` `{}`); there is no `wait_for` field
 - For `terminal.send`, browser-facing `pending_tool.args` uses the model-facing gesture fields: exactly one of `command`, `raw_text`, or `key`. `command` means text plus Enter; `raw_text` means literal text without an implicit Enter; `key` means one semantic key gesture.
 - For web-view tools, `pending_tool.args` contains only product fields such as
   `target_port`, `path`, `title`, `proxied_site_id`, and `disable`; viewer
@@ -1597,24 +1597,24 @@ with `view ∈ "screen" | "delta" | "history"` (wire default `screen`; the
 model-facing tool layer defaults to `delta`). `history` takes optional `lines`
 (daemon default 200, cap 2000).
 
-- **Awaited observe** (additive): `await ∈ "settled" | "command"` blocks until
-  the fact, THEN snapshots (the lock is never held while waiting; the result
-  carries `outcome`, §6.6). `settled` resolves immediately when the session is
-  already quiet (`outcome.data.immediate: true`) — an at-prompt shell's quiet
-  point emits no `settled` event, so the daemon observes quiet directly rather
-  than waiting for one — otherwise on the next `settled` / `prompt_ready` /
-  `command_finished` / close. `command` resolves `idle` immediately when no
-  command is open, otherwise on `command_finished` / `prompt_ready` / close.
-  `quiet_ms` (settled only) asks for a longer quiet window than the daemon's
-  default; the extra window is confirmed against output-stream progress, so a
-  program that merely paused keeps the wait going. The service owns the
-  timeout budget (30 minutes for `terminal.wait`); the daemon's 4h safety cap
-  resolves with `error: "TIMEOUT"`. Daemons predating this field ignore it
-  and return a plain snapshot without `outcome`.
-
-`terminal_input` = `{ session_id, data }` — raw human keyboard bytes (browser
-xterm path) written verbatim to the PTY. `terminal_resize` and `terminal_close`
-are unchanged in shape.
+- **Awaited observe** (additive) — the knobless wait: `await ∈ "settled" |
+  "command"` (synonyms; both get the unified behavior) blocks until control
+  should return to the caller, THEN snapshots (the lock is never held while
+  waiting; the result carries `outcome`, §6.6). The race:
+  `command_finished` / `prompt_ready` / session close resolve exactly from
+  events; `stalled` resolves when screen content the caller has not observed
+  (delta vs the observe baseline) stays quiet for the stall window
+  (`quiet_ms`, service-owned, daemon default 1500ms) — detected by a 100ms
+  quiet+unseen poll, since an at-prompt shell's quiet point emits no event;
+  animation resets the timer and silent programs never trip it (no unseen
+  content → no stall, so a silent `sleep` holds to its real boundary).
+  Start snapshot: already quiet with unseen content → `stalled` immediately;
+  already quiet, seen, nothing open → `settled` immediately; already quiet,
+  seen, command open → HOLD (the caller just saw this screen; re-waiting
+  after a stall is therefore free — at most one wake per quiet stretch).
+  The service owns the timeout budget (30 minutes for `terminal.wait`); the
+  daemon's 4h safety cap resolves with `error: "TIMEOUT"`. Daemons predating
+  this field ignore it and return a plain snapshot without `outcome`.
 
 ### 6.2 `terminal_status` (Bud → Service)
 
@@ -1763,9 +1763,11 @@ service-side read from `terminal_session_output` by offset range.
 ```
 
 `outcome` is present only for awaited observes (§6.1 `await`): the
-terminating fact `{ event, data }` — `settled` (with `data.immediate: true`
-when the session was already quiet), `command_finished` (with its exit code),
-`prompt_ready`, `idle` (command-await with nothing open), or `closed`.
+terminating fact `{ event, data }` — `settled` (idle terminal, nothing
+unseen; `data.immediate: true` when true at wait start), `stalled` (unseen
+content stayed quiet for the stall window — look at it), `command_finished`
+(with its exit code), `prompt_ready`, or `closed`. (`idle` was the
+pre-knobless command-await vocabulary; consumers keep tolerating it.)
 
 `ring_next_offset` is the output-stream offset the emulator state reflects at
 observe time: a client can render an observation as a snapshot and resume the
@@ -1800,14 +1802,17 @@ did).
   `key` gestures).
 - `terminal.observe { view?, lines? }` → tool default `view: "delta"`. Output
   is tail-capped at 32 KiB for the model (`truncated`).
-- `terminal.wait { until? }` → awaited `terminal_observe` (`until:
-  "command_finished"` → `await: "command"`; `"settled"` → `await: "settled"`
-  with `quiet_ms: 2000`; omitted → `command_finished` while a command is
-  open, else `settled`) → tool result `{ outcome, waited_ms, output (delta
-  since the last look), changed, exit_code?, mode, open_command }` with
-  `outcome ∈ settled | command_finished | prompt_ready | idle | closed |
-  timeout | interrupted | superseded`. One provider call per wake: the turn
-  parks in `/agent/state.phase: "waiting_for_terminal"` (§3.2) for up to the
+- `terminal.wait {}` → the knobless wait: an awaited `terminal_observe`
+  (`await: "settled"`, `quiet_ms: 1500`) with nothing for the model to
+  configure (design rule: no foresight — the retired `until` knob mis-chose
+  "wait for the program to exit" during inline-TUI sessions). Tool result
+  `{ outcome, waited_ms, output (delta since the last look), changed,
+  exit_code?, mode, open_command }` with `outcome ∈ settled | stalled |
+  command_finished | prompt_ready | closed | timeout | interrupted |
+  superseded` — `stalled` means unseen output went quiet (a TUI question, a
+  finished step): read it and act; re-waiting is free (holds until NEW
+  activity or a boundary). One provider call per wake: the turn parks in
+  `/agent/state.phase: "waiting_for_terminal"` (§3.2) for up to the
   30-minute service budget (`timeout` = call again); a human interrupt ends
   it as `interrupted`; a follow-up user message ends it as `superseded` and
   finishes the turn (§7.1 `final.reason`). `terminal.run` may also report
@@ -2334,6 +2339,12 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - the awaited observe is now KNOBLESS: `await` values are synonyms, the
+    model-facing `terminal.wait.until` parameter is retired, and the daemon
+    races `command_finished`/`prompt_ready`/close against a new `stalled`
+    outcome (unseen content quiet for `quiet_ms`, default 1500ms) — fixes
+    command-boundary waits ignoring a TUI that asked a question
+    (debug/terminal-wait-codex-question-stall.md)
   - awaited `terminal_observe` (`await`, `quiet_ms` → result `outcome`) backs
     the new model-facing `terminal.wait` tool: one blocking call per wake
     instead of `terminal.observe` polling while a TUI/REPL/script works;

@@ -35,9 +35,6 @@ export type AgentToolCallDirective =
   | {
       type: "tool_call";
       tool: "terminal.wait";
-      /** What to wait for; omitted = service picks from session state
-       * (open command → command_finished, else settled). */
-      until?: TerminalWaitUntil;
       callId: string;
     }
   | {
@@ -68,18 +65,19 @@ export type AgentToolCallDirective =
       callId: string;
     };
 
-/** Model-facing `terminal.wait { until }` vocabulary. */
-export type TerminalWaitUntil = "settled" | "command_finished";
-
 /**
- * How a `terminal.wait` resolved. `settled` / `command_finished` /
- * `prompt_ready` / `closed` are daemon facts; `idle` means nothing was
- * running for a command wait; `timeout` = the service wait budget expired
- * (call again to keep waiting); `interrupted` = a human interrupted the
- * terminal; `superseded` = a follow-up user message ended the turn.
+ * How a `terminal.wait` resolved. The wait is knobless — the daemon races
+ * every fact: `command_finished` / `prompt_ready` / `closed` are exact
+ * boundaries; `stalled` means activity during the wait went quiet for the
+ * stall window (a TUI question, a finished step — look at the output);
+ * `settled` means the terminal was already idle with nothing new;
+ * `timeout` = the service budget expired (call again); `interrupted` = a
+ * human interrupted the terminal; `superseded` = a follow-up user message
+ * ended the turn. `idle` only arrives from pre-knobless daemons.
  */
 export type TerminalWaitOutcome =
   | "settled"
+  | "stalled"
   | "command_finished"
   | "prompt_ready"
   | "idle"
@@ -159,7 +157,6 @@ export type TerminalCallResult = {
   linesCaptured?: number;
   changed?: boolean;
   // terminal.wait
-  until?: TerminalWaitUntil;
   waitOutcome?: TerminalWaitOutcome;
   waitedMs?: number;
   /** interaction_ack / command: the daemon exit code when the wait ended on
@@ -300,9 +297,7 @@ export function isTerminalToolDirective(
   );
 }
 
-export function isTerminalWaitUntil(value: unknown): value is TerminalWaitUntil {
-  return value === "settled" || value === "command_finished";
-}
+
 
 export function isUserQuestionToolDirective(
   directive: AgentToolCallDirective,
@@ -349,9 +344,7 @@ export function buildToolArgs(
         ...(directive.view ? { view: directive.view } : {}),
       };
     case "terminal.wait":
-      return {
-        ...(directive.until ? { until: directive.until } : {}),
-      };
+      return {};
     case "web_view.open":
       return {
         ...(directive.targetHost ? { target_host: directive.targetHost } : {}),

@@ -522,7 +522,6 @@ function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<
     status: execution.result.status,
     command_id: execution.result.commandId,
     exit_code: execution.result.exitCode ?? execution.result.waitExitCode,
-    until: execution.result.until,
     outcome: execution.result.waitOutcome,
     waited_ms: execution.result.waitedMs,
     output: execution.result.output,

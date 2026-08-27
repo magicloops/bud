@@ -64,6 +64,12 @@ const AWAIT_SAFETY_CAP: Duration = Duration::from_secs(4 * 60 * 60);
 /// milliseconds; this only absorbs slow hooks and stale events from the
 /// previous prompt cycle.
 const INPUT_ABSORBED_GRACE: Duration = Duration::from_millis(1500);
+/// Awaited-observe stall window (the knobless `terminal.wait`): activity that
+/// occurs DURING the wait and then stays quiet this long returns control to
+/// the caller (`stalled`) — a TUI that painted a question, a build that
+/// finished a step. Silent programs never trip it (no activity, no stall).
+/// The service may override per request via `terminal_observe.quiet_ms`.
+const STALL_QUIET_MS: u64 = 1500;
 /// Fresh-session grace: how long a command-await will wait for the shell's
 /// FIRST prompt before falling back to the visible sentinel trailer. Only
 /// applies when a shim was installed and no marker has arrived yet (the shell
@@ -765,11 +771,11 @@ impl TerminalManager {
         let outcome = match frame.r#await {
             None => None,
             Some(kind) => {
-                let extra_quiet =
-                    Duration::from_millis(frame.quiet_ms.unwrap_or(0).saturating_sub(QUIET_MS));
+                let stall_quiet =
+                    Duration::from_millis(frame.quiet_ms.unwrap_or(STALL_QUIET_MS).max(QUIET_MS));
                 match tokio::time::timeout(
                     AWAIT_SAFETY_CAP,
-                    await_observe_outcome(&entry, kind, extra_quiet),
+                    await_observe_outcome(&entry, kind, stall_quiet),
                 )
                 .await
                 {
@@ -1127,109 +1133,114 @@ async fn await_outcome(
         }
     }
 }
-
-/// Resolve an awaited `terminal_observe` (§6.1): block on the requested fact
-/// and return the terminating outcome `{ "event", "data" }`. Never holds the
-/// session lock across a wait.
+/// Resolve an awaited `terminal_observe` (§6.1) — the knobless wait.
 ///
-/// - `settled`: subscribes FIRST, then checks `Session::is_quiet` — an already
-///   quiet terminal resolves immediately (`data.immediate: true`); otherwise
-///   the next `settled` / `prompt_ready` / `command_finished` / close
-///   resolves it. `extra_quiet > 0` adds an output-quiet confirmation after a
-///   `settled`: if the output stream advanced during the extra window the
-///   program only paused, so the wait continues to the next quiet point.
-/// - `command`: nothing open resolves `idle` immediately; otherwise the next
-///   `command_finished` / `prompt_ready` / close.
+/// One semantic, no caller-chosen mode (`await:"settled"` and `"command"` are
+/// accepted as synonyms; old services get the unified behavior): a race over
+/// every fact that should return control to the caller.
+///
+/// - `command_finished` / `prompt_ready` / close: exact boundaries from pump
+///   events; they always win when they arrive first.
+/// - `stalled`: content the caller has not observed (delta vs the observe
+///   baseline) stays quiet for the stall window (`stall_quiet`,
+///   service-owned). Detected by a 100ms poll over quiet+unseen persistence
+///   — an at-prompt shell's quiet point emits no event, so events alone
+///   cannot drive this. Animation resets the timer (quiet flickers); silent
+///   programs never trip it (nothing unseen).
+/// - `settled`: a quiet, fully-seen terminal with nothing open (idle).
+/// - Start snapshot (after subscribing, so nothing is missed): already quiet
+///   with unseen content resolves `stalled` immediately; already quiet,
+///   seen, nothing open resolves `settled` immediately; already quiet,
+///   seen, command open HOLDS — the caller just saw this exact screen, so
+///   only new content or a boundary should wake it. This makes re-waiting
+///   after a stall free: at most one wake per quiet stretch.
+///
+/// Never holds the session lock across a wait.
 async fn await_observe_outcome(
     entry: &SessionEntry,
-    kind: TerminalSendAwait,
-    extra_quiet: Duration,
+    _kind: TerminalSendAwait,
+    stall_quiet: Duration,
 ) -> Value {
     let mut rx = entry.pump_tx.subscribe();
     let closed = || json!({ "event": "closed", "data": {} });
-    match kind {
-        TerminalSendAwait::Command => {
-            let open = entry.shared.facts.lock().unwrap().open_command.is_some();
-            if !open {
-                return json!({ "event": "idle", "data": {} });
-            }
-            loop {
-                match rx.recv().await {
-                    Ok(PumpEvent::CommandFinished { data, .. }) => {
-                        return json!({ "event": "command_finished", "data": data })
-                    }
-                    Ok(PumpEvent::PromptReady { data }) => {
-                        return json!({ "event": "prompt_ready", "data": data })
-                    }
-                    Ok(PumpEvent::Closed) | Err(broadcast::error::RecvError::Closed) => {
-                        return closed()
-                    }
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                }
-            }
+
+    let (quiet_now, mode, screen) = {
+        let session = entry.session.lock().await;
+        (session.is_quiet(), session.mode(), session.screen_lines())
+    };
+    let (open, unseen) = {
+        let facts = entry.shared.facts.lock().unwrap();
+        let (changed, _) = grid_delta(facts.last_observed_screen.as_deref(), &screen);
+        (facts.open_command.is_some(), changed)
+    };
+
+    if quiet_now {
+        if unseen {
+            return json!({
+                "event": "stalled",
+                "data": { "mode": mode_str(mode), "quiet_ms": 0, "immediate": true },
+            });
         }
-        TerminalSendAwait::Settled => {
-            // Quiet is observed two ways: the pump's `settled` event, and a
-            // direct `is_quiet` poll. The poll is what makes this robust —
-            // an at-prompt shell's quiet point emits NO `settled` (by design;
-            // `prompt_ready` is its signal), and a wait that subscribes
-            // while the prompt is still painting would otherwise never
-            // resolve. Polling a daemon-local flag every 100ms is free.
-            let quiet_poll = Duration::from_millis(100);
-            let mut first_check = true;
-            loop {
-                let (quiet_now, mode) = {
+        if !open {
+            return json!({
+                "event": "settled",
+                "data": { "mode": mode_str(mode), "quiet_ms": 0, "immediate": true },
+            });
+        }
+        // Quiet, seen, command open: hold for new facts.
+    }
+
+    let quiet_poll = Duration::from_millis(100);
+    let mut quiet_unseen_since: Option<tokio::time::Instant> = None;
+    loop {
+        tokio::select! {
+            received = rx.recv() => match received {
+                Ok(PumpEvent::CommandFinished { data, .. }) => {
+                    return json!({ "event": "command_finished", "data": data })
+                }
+                Ok(PumpEvent::PromptReady { data }) => {
+                    return json!({ "event": "prompt_ready", "data": data })
+                }
+                Ok(PumpEvent::Closed) | Err(broadcast::error::RecvError::Closed) => {
+                    return closed()
+                }
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            },
+            _ = tokio::time::sleep(quiet_poll) => {
+                let (quiet, mode, screen) = {
                     let session = entry.session.lock().await;
-                    (session.is_quiet(), session.mode())
+                    (session.is_quiet(), session.mode(), session.screen_lines())
                 };
-                if quiet_now {
-                    // Confirm the extra window (if any) against output
-                    // progress: a program that merely paused resumes and the
-                    // wait continues to the next quiet point.
-                    let before = entry.shared.facts.lock().unwrap().ring_next_offset;
-                    if !extra_quiet.is_zero() {
-                        tokio::time::sleep(extra_quiet).await;
-                    }
-                    let after = entry.shared.facts.lock().unwrap().ring_next_offset;
-                    if after == before {
+                if !quiet {
+                    quiet_unseen_since = None;
+                    continue;
+                }
+                let (open, unseen) = {
+                    let facts = entry.shared.facts.lock().unwrap();
+                    let (changed, _) = grid_delta(facts.last_observed_screen.as_deref(), &screen);
+                    (facts.open_command.is_some(), changed)
+                };
+                if unseen {
+                    let since = *quiet_unseen_since.get_or_insert_with(tokio::time::Instant::now);
+                    // `is_quiet` already implies QUIET_MS of quiet before the
+                    // first positive poll; require the remainder of the window.
+                    if since.elapsed() + Duration::from_millis(QUIET_MS) >= stall_quiet {
                         return json!({
-                            "event": "settled",
+                            "event": "stalled",
                             "data": {
                                 "mode": mode_str(mode),
-                                "quiet_ms": if first_check { 0 } else { QUIET_MS },
-                                "immediate": first_check,
+                                "quiet_ms": stall_quiet.as_millis() as u64,
                             },
                         });
                     }
-                    first_check = false;
-                    continue;
-                }
-                first_check = false;
-                tokio::select! {
-                    received = rx.recv() => match received {
-                        Ok(PumpEvent::Settled { data }) => {
-                            let before = entry.shared.facts.lock().unwrap().ring_next_offset;
-                            if !extra_quiet.is_zero() {
-                                tokio::time::sleep(extra_quiet).await;
-                                let after = entry.shared.facts.lock().unwrap().ring_next_offset;
-                                if after != before {
-                                    continue;
-                                }
-                            }
-                            return json!({ "event": "settled", "data": data });
-                        }
-                        Ok(PumpEvent::CommandFinished { data, .. }) => {
-                            return json!({ "event": "command_finished", "data": data })
-                        }
-                        Ok(PumpEvent::PromptReady { data }) => {
-                            return json!({ "event": "prompt_ready", "data": data })
-                        }
-                        Ok(PumpEvent::Closed) | Err(broadcast::error::RecvError::Closed) => {
-                            return closed()
-                        }
-                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    },
-                    _ = tokio::time::sleep(quiet_poll) => continue,
+                } else {
+                    quiet_unseen_since = None;
+                    if !open {
+                        return json!({
+                            "event": "settled",
+                            "data": { "mode": mode_str(mode), "quiet_ms": 0, "immediate": false },
+                        });
+                    }
                 }
             }
         }

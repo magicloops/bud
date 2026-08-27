@@ -14,17 +14,16 @@ import {
   type TerminalCallResult,
   type TerminalToolCallDirective,
   type TerminalWaitOutcome,
-  type TerminalWaitUntil,
 } from "./contracts.js";
 
 /**
- * Quiet window the service requests for `terminal.wait until:"settled"`.
- * Longer than the daemon's 300ms interactive threshold on purpose: a wait
- * means "tell me when it is done", and a REPL or script that merely pauses
- * for a second must not wake the model. The daemon confirms the window
- * against output-stream progress (proto §6.1).
+ * Stall window the service requests for `terminal.wait` (the knobless wait):
+ * activity that occurs DURING the wait and then stays quiet this long
+ * returns control to the model (`stalled`) — a TUI question, a finished
+ * step. Silent programs never trip it, and re-waiting after a stall holds
+ * until NEW activity, so at most one wake per quiet stretch.
  */
-export const TERMINAL_WAIT_QUIET_MS = 2000;
+export const TERMINAL_WAIT_STALL_QUIET_MS = 1500;
 
 /**
  * Tail-keeping cap on observe/wait output handed to the model. Every tool
@@ -90,6 +89,12 @@ const WAIT_SUPERSEDED_NOTE =
 
 const WAIT_IDLE_NOTE =
   "No command is running and the terminal is idle at a prompt, so there was nothing to wait for.";
+
+const WAIT_STALLED_NOTE =
+  "Output appeared during the wait and then stopped changing — the program is likely waiting for " +
+  "input or finished a step. Read the output above; if it asked a question, answer with " +
+  "terminal.send. Calling terminal.wait again is safe: it holds until new activity or the command " +
+  "actually ends.";
 
 const WAIT_CLOSED_NOTE =
   "The terminal session's root process exited while waiting; the session is closed.";
@@ -240,7 +245,6 @@ export class TerminalToolExecutor {
       case "wait":
         return {
           ...base,
-          ...(result.until !== undefined ? { until: result.until } : {}),
           ...(result.waitOutcome !== undefined ? { outcome: result.waitOutcome } : {}),
           ...(result.waitedMs !== undefined ? { waited_ms: result.waitedMs } : {}),
           ...(result.waitExitCode !== undefined ? { exit_code: result.waitExitCode } : {}),
@@ -738,26 +742,24 @@ export class TerminalToolExecutor {
     sessionId: string,
     directive: Extract<TerminalToolCallDirective, { tool: "terminal.wait" }>,
   ): Promise<TerminalCallResult> {
-    const openCommandBefore = await this.resolveOpenCommand(sessionId);
-    // Default from session state: an open shell command has an exact end
-    // (command_finished); anything else (TUI, REPL, unknown) settles.
-    const until: TerminalWaitUntil =
-      directive.until ?? (openCommandBefore ? "command_finished" : "settled");
+    // Knobless: the daemon races every fact (command_finished, prompt_ready,
+    // close, activity-then-quiet stall, already-idle) — the model chooses
+    // nothing (design/terminal-send-settled-by-default.md: no foresight).
     const startedAt = Date.now();
-    this.debug("terminal.wait", { sessionId, until, openCommand: openCommandBefore?.commandId ?? null });
+    this.debug("terminal.wait", { sessionId });
 
     let capture: Awaited<ReturnType<TerminalSessionManager["observeTerminal"]>>;
     try {
       capture = await this.terminalSessionManager.observeTerminal(sessionId, {
         view: "delta",
         lines: -50,
-        await: until === "command_finished" ? "command" : "settled",
-        ...(until === "settled" ? { quietMs: TERMINAL_WAIT_QUIET_MS } : {}),
+        await: "settled",
+        quietMs: TERMINAL_WAIT_STALL_QUIET_MS,
       });
     } catch (err) {
       const waitedMs = Date.now() - startedAt;
       if (this.isInterruptedError(err)) {
-        return this.buildWaitEndedResult(sessionId, until, "interrupted", waitedMs, {
+        return this.buildWaitEndedResult(sessionId, "interrupted", waitedMs, {
           error: "interrupted",
           note: WAIT_INTERRUPTED_NOTE,
           observe: true,
@@ -767,7 +769,7 @@ export class TerminalToolExecutor {
         // No follow-up observe: the old turn must finish promptly so the
         // user's new message can start its turn.
         return {
-          ...(await this.buildWaitEndedResult(sessionId, until, "superseded", waitedMs, {
+          ...(await this.buildWaitEndedResult(sessionId, "superseded", waitedMs, {
             note: WAIT_SUPERSEDED_NOTE,
             observe: false,
           })),
@@ -775,7 +777,7 @@ export class TerminalToolExecutor {
         };
       }
       if (this.isLocalObserveTimeoutError(err)) {
-        return this.buildWaitEndedResult(sessionId, until, "timeout", waitedMs, {
+        return this.buildWaitEndedResult(sessionId, "timeout", waitedMs, {
           note: WAIT_TIMEOUT_NOTE,
           observe: true,
         });
@@ -791,6 +793,7 @@ export class TerminalToolExecutor {
     const outcomeEvent = capture.outcome?.event;
     const waitOutcome: TerminalWaitOutcome =
       outcomeEvent === "settled" ||
+      outcomeEvent === "stalled" ||
       outcomeEvent === "command_finished" ||
       outcomeEvent === "prompt_ready" ||
       outcomeEvent === "idle" ||
@@ -804,17 +807,18 @@ export class TerminalToolExecutor {
         : undefined;
     const note = legacyDaemon
       ? LEGACY_DAEMON_WAIT_NOTE
-      : waitOutcome === "idle"
-        ? WAIT_IDLE_NOTE
-        : waitOutcome === "closed"
-          ? WAIT_CLOSED_NOTE
-          : undefined;
+      : waitOutcome === "stalled"
+        ? WAIT_STALLED_NOTE
+        : waitOutcome === "idle"
+          ? WAIT_IDLE_NOTE
+          : waitOutcome === "closed"
+            ? WAIT_CLOSED_NOTE
+            : undefined;
 
     this.logTerminalOutput("terminal.wait delta", capture.output);
     const capped = capObservedOutput(capture.output);
     this.debug("terminal.wait resolved", {
       sessionId,
-      until,
       outcome: waitOutcome,
       waitedMs,
       immediate: capture.outcome?.data.immediate === true,
@@ -822,7 +826,6 @@ export class TerminalToolExecutor {
 
     return {
       kind: "wait",
-      until,
       waitOutcome,
       waitedMs,
       ...(exitCode !== undefined ? { waitExitCode: exitCode } : {}),
@@ -842,7 +845,6 @@ export class TerminalToolExecutor {
 
   private async buildWaitEndedResult(
     sessionId: string,
-    until: TerminalWaitUntil,
     waitOutcome: Extract<TerminalWaitOutcome, "timeout" | "interrupted" | "superseded">,
     waitedMs: number,
     options: { note: string; error?: string; observe: boolean },
@@ -875,7 +877,6 @@ export class TerminalToolExecutor {
     }
     return {
       kind: "wait",
-      until,
       waitOutcome,
       waitedMs,
       ...(options.error ? { error: options.error } : {}),
@@ -978,6 +979,8 @@ export class TerminalToolExecutor {
             return "Terminal wait ended because the user sent a new message";
           case "timeout":
             return `Waited ${waited ?? "for the budget"}; the terminal is still busy`;
+          case "stalled":
+            return `Waited ${waited ?? ""}; output stopped changing — look at it`.replace("  ", " ");
           case "idle":
             return "Nothing to wait for: the terminal is idle at a prompt";
           case "closed":
@@ -1092,7 +1095,6 @@ export class TerminalToolExecutor {
       case "terminal.wait":
         return {
           kind: "wait",
-          ...(directive.until ? { until: directive.until } : {}),
           ...base,
         };
     }

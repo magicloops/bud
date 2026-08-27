@@ -138,6 +138,7 @@ export function TerminalObserveContent({ payload }: ToolContentRendererProps) {
 
 const WAIT_OUTCOME_LABELS: Record<string, string> = {
   settled: 'terminal settled',
+  stalled: 'output stopped changing',
   command_finished: 'command finished',
   prompt_ready: 'back at the prompt',
   idle: 'nothing to wait for',
