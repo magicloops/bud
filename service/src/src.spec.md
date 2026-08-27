@@ -54,7 +54,7 @@ const threadTitleService = new ThreadTitleService(agentRuntime, ...);
 pushNotificationWorker.start();
 ```
 
-Thread-scoped SSE is mounted in route modules (`/api/threads/:thread_id/agent/stream` and `/api/threads/:thread_id/terminal/stream`). `server.ts` no longer exposes the removed run stream or the legacy bud-scoped terminal stream inline.
+Thread-scoped SSE is mounted in route modules (`/api/threads/:thread_id/agent/stream` and `/api/threads/:thread_id/terminal/stream`). `server.ts` no longer exposes the removed run stream or the legacy bud-scoped terminal stream inline. Before `listen`, boot awaits `repairDanglingToolCalls` (`agent/restart-repair.ts`): tool calls a prior process died on get a durable interrupted result (tool row + provider-ledger item) so transcripts never dangle after a restart; repair failures log and never block boot.
 
 **Exports**:
 - `buildServer()` - Create configured Fastify instance
