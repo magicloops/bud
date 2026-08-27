@@ -15,13 +15,16 @@ test("model catalog exposes the current default model lineup", () => {
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
     "claude-opus-4-7",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.4-nano",
     "gpt-5.5",
     "ds4-deepseek-v4-flash",
   ]);
-  assert.equal(getGlobalDefaultModelEntry().id, "gpt-5.5");
+  assert.equal(getGlobalDefaultModelEntry().id, "gpt-5.6-luna");
 });
 
 test("model catalog captures provider-specific reasoning levels", () => {
@@ -39,6 +42,16 @@ test("model catalog captures provider-specific reasoning levels", () => {
   assert.ok(gpt55);
   assert.deepEqual(gpt55.reasoning.levels, ["none", "low", "medium", "high", "xhigh"]);
   assert.equal(gpt55.reasoning.defaultLevel, "low");
+
+  // GPT-5.6 family: first OpenAI tier with all six levels, incl. `max`.
+  for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    const entry = getCatalogEntry(id);
+    assert.ok(entry, id);
+    assert.equal(entry.reasoning.kind, "openai_reasoning_effort");
+    assert.deepEqual(entry.reasoning.levels, ["none", "low", "medium", "high", "xhigh", "max"]);
+  }
+  assert.equal(getCatalogEntry("gpt-5.6-sol")?.reasoning.defaultLevel, "low");
+  assert.equal(getCatalogEntry("gpt-5.6-luna")?.reasoning.defaultLevel, "high");
 
   assert.ok(opus46);
   assert.deepEqual(opus46.reasoning.levels, ["low", "medium", "high", "max"]);
@@ -71,6 +84,17 @@ test("model catalog captures GPT-5.5 usable context policy", () => {
   assert.equal(gpt55.capabilities.usableContextWindowTokens, 400_000);
   assert.equal(gpt55.capabilities.maxOutputTokens, 128_000);
   assert.equal(gpt55.capabilities.reservedOutputTokens, 128_000);
+});
+
+test("model catalog caps the GPT-5.6 usable window at the 272K pricing knee", () => {
+  for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    const entry = getCatalogEntry(id);
+    assert.ok(entry, id);
+    assert.equal(entry.capabilities.contextWindowTokens, 1_050_000);
+    assert.equal(entry.capabilities.usableContextWindowTokens, 272_000);
+    assert.equal(entry.capabilities.maxOutputTokens, 128_000);
+    assert.equal(entry.capabilities.reservedOutputTokens, 128_000);
+  }
 });
 
 test("model catalog captures ds4 output capability and reserved budget", () => {

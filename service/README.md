@@ -158,13 +158,13 @@ Auth and Bud claim testing do not require an LLM provider key, and the service n
 - `DS4_DIRECT_MODEL` (defaults to `deepseek-v4-flash`)
 - `DS4_DIRECT_CONTEXT_TOKENS` (defaults to `100000`)
 - `DS4_DIRECT_MAX_OUTPUT_TOKENS` (defaults to `384000`)
-- `DEFAULT_MODEL` (defaults to `gpt-5.5`)
+- `DEFAULT_MODEL` (defaults to `gpt-5.6-luna`)
 - `AGENT_REASONING_EFFORT` (defaults to `low`)
 - `OPENAI_MODEL`
 - `AGENT_MAX_STEPS`
 - `AGENT_DEBUG`
 
-`/api/models` is the source of truth for first-party model IDs and valid `reasoning_effort` values. Current product IDs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.5`, and `ds4-deepseek-v4-flash` when the ds4 provider is configured.
+`/api/models` is the source of truth for first-party model IDs and valid `reasoning_effort` values. Current product IDs include `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-7`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.5`, and `ds4-deepseek-v4-flash` when the ds4 provider is configured.
 
 ## Scripts
 

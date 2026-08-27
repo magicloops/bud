@@ -19,7 +19,10 @@ OpenAI provider using the Responses API (~795 lines).
 **Supported Models** (dated versions in `supportedModels`):
 | Model | Type | Notes |
 |-------|------|-------|
-| `gpt-5.5` | Reasoning | Current frontier GPT model |
+| `gpt-5.6-sol` | Reasoning | GPT-5.6 frontier tier; supports `max` |
+| `gpt-5.6-terra` | Reasoning | GPT-5.6 balanced tier; supports `max` |
+| `gpt-5.6-luna` | Reasoning | GPT-5.6 fast tier; supports `max`; global default model |
+| `gpt-5.5` | Reasoning | Previous frontier GPT model |
 | `gpt-5.4-2026-03-05` | Reasoning | GPT-5.4 snapshot, supports `xhigh` |
 | `gpt-5.4-mini-2026-03-17` | Reasoning | Smaller GPT-5.4 variant, supports `xhigh` |
 | `gpt-5.4-nano-2026-03-17` | Reasoning | Smallest GPT-5.4 variant, supports `xhigh` |

@@ -291,7 +291,7 @@ export const config = {
     384_000,
   ),
   // Default product model for agent requests.
-  defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.5",
+  defaultModel: process.env.DEFAULT_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.6-luna",
   // Anthropic
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   anthropicTimeout: toNumber(process.env.ANTHROPIC_TIMEOUT_MS, 120000),

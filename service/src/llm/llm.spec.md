@@ -156,7 +156,7 @@ Central product model catalog and reasoning-control metadata.
 - keep provider/model-specific reasoning levels, defaults, labels, and capability metadata in one place
 - keep provider hard context-window metadata separate from Bud usable-context
   policy metadata (`usableContextWindowTokens` and `reservedOutputTokens`)
-- define the global default model (`gpt-5.5`)
+- define the global default model (`gpt-5.6-luna`, default level `high`)
 
 **Current Product Models**:
 
@@ -166,6 +166,9 @@ Central product model catalog and reasoning-control metadata.
 | `claude-sonnet-4-6` | `claude-sonnet-4-6` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `max`; default `medium` |
 | `claude-haiku-4-5` | `claude-haiku-4-5-20251001` | Manual thinking budgets: `none`, `low`, `medium`, `high`; default `none` |
 | `claude-opus-4-7` | `claude-opus-4-7` | Anthropic `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`; default `xhigh` |
+| `gpt-5.6-sol` | `gpt-5.6-sol` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` |
+| `gpt-5.6-terra` | `gpt-5.6-terra` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `low` |
+| `gpt-5.6-luna` | `gpt-5.6-luna` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`, `max`; default `high`; global default |
 | `gpt-5.4` | `gpt-5.4-2026-03-05` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-mini` | `gpt-5.4-mini-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
 | `gpt-5.4-nano` | `gpt-5.4-nano-2026-03-17` | OpenAI `reasoning.effort`: `none`, `low`, `medium`, `high`, `xhigh`; default `none` |
@@ -181,6 +184,11 @@ Central product model catalog and reasoning-control metadata.
 - GPT-5.5 currently declares `contextWindowTokens: 1_050_000`,
   `usableContextWindowTokens: 400_000`, and `reservedOutputTokens: 128_000`,
   producing a 272,000 token usable input window before the auto-compaction ratio
+- The GPT-5.6 family (Sol/Terra/Luna) declares `contextWindowTokens: 1_050_000`
+  with `usableContextWindowTokens: 272_000` — capped at OpenAI's pricing knee
+  (prompts above 272K input bill 2x input / 1.5x output for the whole request)
+  — and `reservedOutputTokens: 128_000`, producing a 144,000 token usable
+  input window before the auto-compaction ratio
 - ds4 DeepSeek V4 declares `contextWindowTokens: 100_000`,
   `maxOutputTokens: 384_000`, and `reservedOutputTokens: 20_000`, producing an
   80,000 token usable input window before the auto-compaction ratio
@@ -194,7 +202,7 @@ Model-specific reasoning validation and lowering.
 - use the catalog default when a request omits `reasoning_effort`
 - reject unsupported model/reasoning combinations with `InvalidReasoningEffortError`
 - build the canonical `ReasoningConfig` consumed by providers
-- resolve an effective selection from explicit request, stored thread preference, or the service default (`gpt-5.5` + `low`)
+- resolve an effective selection from explicit request, stored thread preference, or the service default (`gpt-5.6-luna` + its catalog default `high`; the service-default path leaves reasoning omitted so the default model's catalog `defaultLevel` applies unless `serviceDefaultReasoning` is pinned)
 - ignore invalid stored thread selections while still rejecting invalid explicit submissions
 
 ### `model-catalog.test.ts`

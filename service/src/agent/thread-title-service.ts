@@ -12,7 +12,10 @@ import {
 import type { AgentRuntimeStateManager } from "../runtime/agent-runtime-state.js";
 
 const THREAD_TITLE_EVENT = "thread.title";
-const THREAD_TITLE_MODEL = "claude-haiku-4-5";
+// Fast/cheap tier of the current default family; titles run with reasoning
+// disabled. Haiku stays as the fallback for OpenAI-less deployments.
+const THREAD_TITLE_MODEL = "gpt-5.6-luna";
+const THREAD_TITLE_FALLBACK_MODEL = "claude-haiku-4-5";
 const THREAD_TITLE_SOURCE = "generated_first_user_message";
 const THREAD_TITLE_MAX_OUTPUT_TOKENS = 24;
 const THREAD_TITLE_TIMEOUT_MS = 8_000;
@@ -99,12 +102,15 @@ function buildTitleUserPrompt(userMessageText: string): string {
 }
 
 export function resolveThreadTitleModel(): string | null {
-  try {
-    providerRegistry.getProviderForModel(THREAD_TITLE_MODEL);
-    return THREAD_TITLE_MODEL;
-  } catch {
-    return null;
+  for (const candidate of [THREAD_TITLE_MODEL, THREAD_TITLE_FALLBACK_MODEL]) {
+    try {
+      providerRegistry.getProviderForModel(candidate);
+      return candidate;
+    } catch {
+      // Provider for this candidate is not registered; try the next.
+    }
   }
+  return null;
 }
 
 export function normalizeGeneratedThreadTitle(candidate: string): string | null {
@@ -259,8 +265,12 @@ export class ThreadTitleService {
     const model = resolveThreadTitleModel();
     if (!model) {
       this.logger.warn(
-        { model: THREAD_TITLE_MODEL, component: "thread_title" },
-        "Skipping thread title generation because Anthropic Haiku 4.5 is unavailable",
+        {
+          model: THREAD_TITLE_MODEL,
+          fallbackModel: THREAD_TITLE_FALLBACK_MODEL,
+          component: "thread_title",
+        },
+        "Skipping thread title generation because no title model provider is registered",
       );
       return null;
     }
