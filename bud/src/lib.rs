@@ -48,7 +48,12 @@ pub async fn run(args: BudArgs) -> anyhow::Result<()> {
             }
         }
         Some(BudCommand::Upgrade(upgrade_args)) => {
-            upgrade::run_upgrade(&LifecyclePaths::resolve(&args)?, upgrade_args.check).await
+            upgrade::run_upgrade(
+                &LifecyclePaths::resolve(&args)?,
+                upgrade_args.check,
+                upgrade_args.force,
+            )
+            .await
         }
         Some(BudCommand::Llm(llm_cmd)) => {
             let paths = LifecyclePaths::resolve(&args)?;

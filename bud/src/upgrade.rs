@@ -176,10 +176,62 @@ pub async fn fetch_manifest(timeout: Duration) -> Result<ReleaseManifest> {
     Ok(manifest)
 }
 
-pub async fn run_upgrade(paths: &LifecyclePaths, check_only: bool) -> Result<()> {
+/// What `bud upgrade` may do for this binary. Pure: the dev-build guard in
+/// one testable place. A dev build (no baked `BUD_BUILD_VERSION`) always
+/// "differs" from stable — replacing it would destroy a locally built
+/// binary — so it is refused unless forced; `--check` stays informational.
+/// Release builds are untouched by the guard (rollback-as-update included).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeGate {
+    /// Release build: proceed with the normal flow.
+    Proceed,
+    /// Dev build, `--check`: report, never touch the binary.
+    DevReport,
+    /// Dev build without `--force`: refuse with guidance.
+    RefuseDevBuild,
+    /// Dev build with `--force`: deliberate replacement with stable.
+    ForcedDevReplace,
+}
+
+pub fn upgrade_gate(is_release_build: bool, check_only: bool, force: bool) -> UpgradeGate {
+    if is_release_build {
+        UpgradeGate::Proceed
+    } else if check_only {
+        UpgradeGate::DevReport
+    } else if force {
+        UpgradeGate::ForcedDevReplace
+    } else {
+        UpgradeGate::RefuseDevBuild
+    }
+}
+
+pub async fn run_upgrade(paths: &LifecyclePaths, check_only: bool, force: bool) -> Result<()> {
     let manifest = fetch_manifest(MANIFEST_TIMEOUT).await?;
     let current = current_release_version();
     let stable = normalize_version(&manifest.version);
+
+    match upgrade_gate(version::is_release_build(), check_only, force) {
+        UpgradeGate::Proceed => {}
+        UpgradeGate::DevReport => {
+            println!("Dev build: {}", version::version_line());
+            println!("Stable is {stable}. Dev builds are not auto-upgraded;");
+            println!("use `bud upgrade --force` to replace this binary with stable.");
+            return Ok(());
+        }
+        UpgradeGate::RefuseDevBuild => {
+            return Err(anyhow!(
+                "refusing to replace a dev build ({}) with stable {stable}; \
+                 pass --force to do it anyway",
+                version::version_line()
+            ));
+        }
+        UpgradeGate::ForcedDevReplace => {
+            println!(
+                "Replacing dev build ({}) with stable {stable} (--force).",
+                version::version_line()
+            );
+        }
+    }
 
     if !update_available(&current, &stable) {
         println!("Bud is up to date ({current}).");
@@ -234,6 +286,27 @@ pub async fn run_upgrade(paths: &LifecyclePaths, check_only: bool) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upgrade_gate_guards_dev_builds_only() {
+        use super::{upgrade_gate, UpgradeGate};
+        // Release builds: the guard never interferes (check_only handled by
+        // the normal flow; force is meaningless).
+        assert_eq!(upgrade_gate(true, false, false), UpgradeGate::Proceed);
+        assert_eq!(upgrade_gate(true, true, false), UpgradeGate::Proceed);
+        assert_eq!(upgrade_gate(true, false, true), UpgradeGate::Proceed);
+        // Dev builds: report on --check, refuse by default, replace on force.
+        assert_eq!(upgrade_gate(false, true, false), UpgradeGate::DevReport);
+        assert_eq!(upgrade_gate(false, true, true), UpgradeGate::DevReport);
+        assert_eq!(
+            upgrade_gate(false, false, false),
+            UpgradeGate::RefuseDevBuild
+        );
+        assert_eq!(
+            upgrade_gate(false, false, true),
+            UpgradeGate::ForcedDevReplace
+        );
+    }
 
     #[test]
     fn version_difference_is_the_update_signal_in_both_directions() {

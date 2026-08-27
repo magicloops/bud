@@ -484,17 +484,24 @@ pub async fn status(paths: &LifecyclePaths, args: &BudArgs) -> Result<()> {
     let manager = ServiceManager::detect();
     println!("Bud status");
     println!("==========");
-    // Best-effort update check: short budget, silent on failure.
     let current = crate::upgrade::current_release_version();
-    match crate::upgrade::fetch_manifest(crate::upgrade::STATUS_CHECK_TIMEOUT).await {
-        Ok(manifest) if crate::upgrade::update_available(&current, &manifest.version) => {
-            println!(
-                "version: {current} (update available: {} — run `bud upgrade`)",
-                crate::upgrade::normalize_version(&manifest.version)
-            );
+    if !crate::version::is_release_build() {
+        // Dev builds always "differ" from stable, so the update nag would be
+        // permanent and would advise a command the guard refuses. Say what
+        // this binary is and skip the manifest probe entirely.
+        println!("version: {current} (dev build; `bud upgrade --force` replaces it with stable)");
+    } else {
+        // Best-effort update check: short budget, silent on failure.
+        match crate::upgrade::fetch_manifest(crate::upgrade::STATUS_CHECK_TIMEOUT).await {
+            Ok(manifest) if crate::upgrade::update_available(&current, &manifest.version) => {
+                println!(
+                    "version: {current} (update available: {} — run `bud upgrade`)",
+                    crate::upgrade::normalize_version(&manifest.version)
+                );
+            }
+            Ok(_) => println!("version: {current} (up to date)"),
+            Err(_) => println!("version: {current}"),
         }
-        Ok(_) => println!("version: {current} (up to date)"),
-        Err(_) => println!("version: {current}"),
     }
     println!("service manager: {}", manager.describe());
 

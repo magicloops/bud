@@ -123,6 +123,12 @@ pub struct UpgradeArgs {
     /// Only report whether an update is available.
     #[arg(long, default_value_t = false)]
     pub check: bool,
+
+    /// Replace a non-release (dev) build with the stable release. Without
+    /// this, `bud upgrade` refuses to overwrite a binary that was not
+    /// produced by the release pipeline.
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
 }
 
 #[derive(Debug, Subcommand, Clone)]
