@@ -21,6 +21,11 @@ function createRuntimeRecorder() {
     pendingTool: Record<string, unknown>;
     cursor: string;
   }> = [];
+  const pendingTerminalWaits: Array<{
+    threadId: string;
+    pendingTool: Record<string, unknown>;
+    cursor: string;
+  }> = [];
   const clearedDraftReasoning: Array<{
     threadId: string;
     clientId: string;
@@ -31,6 +36,7 @@ function createRuntimeRecorder() {
     events,
     pendingTools,
     pendingUserQuestions,
+    pendingTerminalWaits,
     clearedDraftReasoning,
     runtime: {
       emit(threadId: string, event: { event: string; data: Record<string, unknown> }) {
@@ -50,6 +56,13 @@ function createRuntimeRecorder() {
         cursor: string,
       ) {
         pendingUserQuestions.push({ threadId, pendingTool, cursor });
+      },
+      setPendingTerminalWait(
+        threadId: string,
+        pendingTool: Record<string, unknown>,
+        cursor: string,
+      ) {
+        pendingTerminalWaits.push({ threadId, pendingTool, cursor });
       },
       markThinking() {
         // noop
@@ -675,4 +688,109 @@ test("final assistant messages persist final_answer assistant phase metadata", a
   assert.equal(events[0]?.event, "agent.message");
   assert.equal(events[1]?.event, "final");
   assert.equal(result.message_id, "message-final-1");
+});
+
+test("terminal.wait results carry until/outcome/waited_ms on the live tool_result event", async (t) => {
+  t.after(() => {
+    mock.restoreAll();
+  });
+  mock.method(db, "insert", () => ({
+    values(values: Record<string, unknown>) {
+      return {
+        returning() {
+          return [
+            {
+              messageId: "message-wait",
+              clientId: values.clientId,
+              role: values.role,
+              displayRole: values.displayRole,
+              content: values.content,
+              metadata: values.metadata,
+              createdAt: new Date("2026-04-21T19:05:00.000Z"),
+            },
+          ];
+        },
+      };
+    },
+  }) as never);
+  mock.method(db, "execute", async () => []);
+
+  const { runtime, events, pendingTerminalWaits, pendingTools } = createRuntimeRecorder();
+  const writer = new AgentTranscriptWriter(runtime as never);
+  const execution: ExecutedTerminalTool = {
+    directive: {
+      type: "tool_call",
+      tool: "terminal.wait",
+      until: "command_finished",
+      callId: "call-wait",
+    },
+    args: { until: "command_finished" },
+    summary: "Waited 1m 18s; command finished (exit 0)",
+    outputTruncationReason: null,
+    result: {
+      kind: "wait",
+      until: "command_finished",
+      waitOutcome: "command_finished",
+      waitedMs: 78017,
+      waitExitCode: 0,
+      output: "waited-ok\n",
+      outputBytes: 10,
+      truncated: false,
+      changed: true,
+      mode: "shell",
+      integration: "osc133",
+    },
+    payload: {
+      tool: "terminal.wait",
+      call_id: "call-wait",
+      until: "command_finished",
+      summary: "Waited 1m 18s; command finished (exit 0)",
+      kind: "wait",
+      outcome: "command_finished",
+      waited_ms: 78017,
+      exit_code: 0,
+      output: "waited-ok\n",
+      output_bytes: 10,
+      changed: true,
+      mode: "shell",
+      integration: "osc133",
+    },
+  };
+
+  const startedAt = new Date("2026-04-21T19:03:41.000Z");
+  writer.emitToolCall("thread-1", "turn-1", execution.directive, "tool-client-wait", startedAt);
+  // terminal.wait parks the turn: pending state goes through the dedicated
+  // waiting_for_terminal setter, not the generic tool_running one.
+  assert.equal(pendingTools.length, 0);
+  assert.equal(pendingTerminalWaits.length, 1);
+  assert.deepEqual(pendingTerminalWaits[0]?.pendingTool.args, { until: "command_finished" });
+
+  await writer.recordToolResult({
+    threadId: "thread-1",
+    turnId: "turn-1",
+    execution,
+    clientId: "tool-client-wait",
+    timing: {
+      startedAt,
+      finishedAt: new Date("2026-04-21T19:04:59.017Z"),
+      durationMs: 78017,
+    },
+    modelSelection: {
+      model: "gpt-5.5",
+      reasoningEffort: "low",
+      source: "explicit_request",
+    },
+  });
+
+  const toolResult = events.find((event) => event.event === "agent.tool_result");
+  assert.ok(toolResult);
+  assert.equal(toolResult.data.name, "terminal.wait");
+  assert.equal(toolResult.data.kind, "wait");
+  assert.equal(toolResult.data.until, "command_finished");
+  assert.equal(toolResult.data.outcome, "command_finished");
+  assert.equal(toolResult.data.waited_ms, 78017);
+  // exit_code falls back to the wait's command exit code.
+  assert.equal(toolResult.data.exit_code, 0);
+  assert.equal(toolResult.data.output, "waited-ok\n");
+  assert.equal(toolResult.data.changed, true);
 });
