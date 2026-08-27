@@ -20,7 +20,6 @@ import {
 import type { TerminalObservationView } from "../terminal/types.js";
 import {
   buildToolArgs,
-  isTerminalWaitUntil,
   normalizeToolKeyInput,
   toolNameForConversation,
   type AgentToolCallDirective,
@@ -386,10 +385,10 @@ export class AgentConversationLoader {
             callId,
           };
         case "terminal.wait":
+          // Historical rows may carry the retired `until` arg; ignored.
           return {
             type: "tool_call",
             tool: "terminal.wait",
-            ...(isTerminalWaitUntil(payload.until) ? { until: payload.until } : {}),
             callId,
           };
         case "terminal.interrupt":

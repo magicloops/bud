@@ -75,21 +75,14 @@ export const AGENT_CANONICAL_TOOLS: CanonicalTool[] = [
   {
     name: "terminal_wait",
     description:
-      "Wait for the terminal to become quiet or for the running command to finish, then return what changed. " +
-      "Use this instead of repeatedly observing while a program (a TUI like codex, a REPL, a long script) is working: " +
-      "it returns as soon as the terminal settles or the command finishes, and immediately if the terminal is already idle. " +
-      "The service owns the wait budget; if the program is still busy when the budget expires, the result says so and you can call it again.",
+      "Wait until the terminal needs your attention, then return what changed. There is nothing to configure: " +
+      "it returns when the running command finishes (with its exit code), when the shell prompt returns, or when " +
+      "output painted during the wait stops changing (a TUI asking a question, a finished step) — and immediately " +
+      "if the terminal is already idle. Use this instead of repeatedly observing while anything is working. " +
+      "The service owns the wait budget; if nothing has happened when it expires, the result says so and you can call it again.",
     parameters: {
       type: "object",
-      properties: {
-        until: {
-          type: "string",
-          enum: ["settled", "command_finished"],
-          description:
-            'What to wait for. "command_finished" waits for the open shell command to exit (exact, via shell integration); ' +
-            '"settled" waits for the screen to stop changing (right for TUIs and REPLs). Omit to let the service choose from the terminal state.',
-        },
-      },
+      properties: {},
       required: [],
       additionalProperties: false,
     },

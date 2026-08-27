@@ -289,14 +289,11 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
     (observeProperties.view as { enum?: unknown }).enum,
     ["delta", "screen", "history"],
   );
-  // terminal_wait: the only knob is WHAT to wait for — never how long.
+  // terminal_wait is knobless: no parameters at all — the daemon races the
+  // facts; the model never chooses a wait mode.
   const waitProperties = waitTool.parameters.properties as Record<string, unknown>;
-  assert.deepEqual(Object.keys(waitProperties), ["until"]);
+  assert.deepEqual(Object.keys(waitProperties), []);
   assert.deepEqual(waitTool.parameters.required, []);
-  assert.deepEqual(
-    (waitProperties.until as { enum?: unknown }).enum,
-    ["settled", "command_finished"],
-  );
   // Retired 0.2 vocabulary must not appear in any tool schema.
   const serializedTools = JSON.stringify(capturedTools);
   for (const retired of ["wait_for", "shell_ready", "screen_stable", "readiness", "looks_like", "observe_after_ms", "timeout_ms"]) {

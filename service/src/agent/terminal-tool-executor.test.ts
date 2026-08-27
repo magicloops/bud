@@ -828,7 +828,7 @@ test("terminal.send of a shell command at a prompt carries the real exit code (s
   assert.equal(execution.result.dispatched, true);
 });
 
-test("terminal.wait defaults to command_finished while a command is open and returns the delta", async () => {
+test("terminal.wait is knobless: one awaited observe with the stall window, boundary facts win", async () => {
   const observeCalls: Array<Record<string, unknown>> = [];
   const terminalSessionManager = {
     getSessionContext() {
@@ -859,38 +859,73 @@ test("terminal.wait defaults to command_finished while a command is open and ret
     callId: "call_wait_cmd",
   });
 
-  assert.deepEqual(observeCalls, [{ view: "delta", lines: -50, await: "command" }]);
+  assert.deepEqual(observeCalls, [
+    { view: "delta", lines: -50, await: "settled", quietMs: 1500 },
+  ]);
   assert.equal(execution.result.kind, "wait");
-  assert.equal(execution.result.until, "command_finished");
   assert.equal(execution.result.waitOutcome, "command_finished");
   assert.equal(execution.result.waitExitCode, 0);
   assert.equal(execution.payload.outcome, "command_finished");
   assert.equal(execution.payload.exit_code, 0);
   assert.equal(execution.payload.output, "build finished\n$ ");
   assert.equal(typeof execution.payload.waited_ms, "number");
+  assert.equal("until" in execution.payload, false);
   assert.match(execution.summary, /command finished \(exit 0\)/);
 });
 
-test("terminal.wait defaults to settled with the service quiet window when nothing is open", async () => {
-  const observeCalls: Array<Record<string, unknown>> = [];
+test("terminal.wait maps a stalled outcome to look-at-it guidance", async () => {
   const terminalSessionManager = {
     getSessionContext() {
-      return { mode: "tui", integration: "none", cwd: null };
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async getLatestCommandForSession() {
+      return { commandId: "cmd_codex", commandStartedAt: new Date(Date.now() - 60_000), commandFinishedAt: null };
+    },
+    async observeTerminal() {
+      return {
+        view: "delta",
+        output: "Apply this patch? [y/n]",
+        linesCaptured: 1,
+        changed: true,
+        mode: "shell",
+        integration: "osc133",
+        altScreen: false,
+        outcome: { event: "stalled", data: { mode: "shell", quiet_ms: 1500 } },
+      };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.wait",
+    callId: "call_wait_stalled",
+  });
+
+  assert.equal(execution.result.waitOutcome, "stalled");
+  assert.equal(execution.payload.outcome, "stalled");
+  assert.equal(execution.payload.output, "Apply this patch? [y/n]");
+  assert.match(String(execution.payload.note), /answer with terminal\.send/);
+  assert.match(execution.summary, /output stopped changing/);
+});
+
+test("terminal.wait already-idle terminals resolve as settled immediately", async () => {
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
     },
     async getLatestCommandForSession() {
       return null;
     },
-    async observeTerminal(_sessionId: string, options: Record<string, unknown>) {
-      observeCalls.push(options);
+    async observeTerminal() {
       return {
         view: "delta",
         output: "",
         linesCaptured: 0,
         changed: false,
-        mode: "tui",
-        integration: "none",
-        altScreen: true,
-        outcome: { event: "settled", data: { mode: "tui", quiet_ms: 0, immediate: true } },
+        mode: "shell",
+        integration: "osc133",
+        altScreen: false,
+        outcome: { event: "settled", data: { mode: "shell", quiet_ms: 0, immediate: true } },
       };
     },
   };
@@ -901,8 +936,6 @@ test("terminal.wait defaults to settled with the service quiet window when nothi
     callId: "call_wait_settled",
   });
 
-  assert.deepEqual(observeCalls, [{ view: "delta", lines: -50, await: "settled", quietMs: 2000 }]);
-  assert.equal(execution.result.until, "settled");
   assert.equal(execution.result.waitOutcome, "settled");
   assert.equal(execution.payload.changed, false);
   assert.equal(execution.summary, "Terminal is already settled");
@@ -929,7 +962,6 @@ test("terminal.wait budget expiry is a normal timeout result with a delta fallba
   const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
     type: "tool_call",
     tool: "terminal.wait",
-    until: "command_finished",
     callId: "call_wait_timeout",
   });
 

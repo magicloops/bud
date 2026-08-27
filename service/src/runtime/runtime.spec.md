@@ -29,7 +29,7 @@ Dedicated runtime store for agent-thread in-flight state and bounded resume.
 - `phase`
 - `can_cancel`
 - `stream_cursor`
-- `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`; terminal-tool args are exactly the model-facing args — `terminal.send` uses `raw_text` or `key`, `terminal.wait` uses `until?` — there is no `wait_for` decoration)
+- `pending_tool` (`client_id`, `call_id`, `name`, `args`, `started_at`; terminal-tool args are exactly the model-facing args — `terminal.send` uses `raw_text` or `key`, `terminal.wait` takes no args — there is no `wait_for` decoration)
 - `pending_tool` may also contain the normalized `ask_user_questions_request_v1` payload while the agent is waiting for a user response
 - `draft_assistant` (`client_id`, `text`, `started_at`, `updated_at`)
 - `draft_reasoning` (array of visible in-flight reasoning segments with `client_id`, `text`, `llm_call_id`, `index`, `provider`, `provider_model`, `started_at`, and `updated_at`)
@@ -105,7 +105,7 @@ Standalone Node test coverage for the agent runtime snapshot and bounded-resume 
 - runtime snapshots expose `started_at` on `draft_assistant` so reconnecting clients can calculate active assistant draft duration from service timestamps
 - runtime snapshots expose draft reasoning segments so reconnecting clients can recover in-flight provider reasoning before the persisted `reasoning` row is emitted
 - runtime snapshots expose `started_at` on `pending_tool` so long-running tool waits remain diagnosable after reconnect
-- runtime snapshots expose `pending_tool.args` exactly as the model-facing args (no effective-`wait_for` decoration; `terminal.wait` shows `until` when given)
+- runtime snapshots expose `pending_tool.args` exactly as the model-facing args (no effective-`wait_for` decoration; `terminal.wait` has none)
 - runtime snapshots expose model-facing `terminal.send` gesture args (`command`, `raw_text`, or `key`) instead of the Bud wire `text`/`submit` fields
 - runtime snapshots expose `waiting_for_user` with a pending `ask_user_questions` tool while a turn is paused for a structured response
 - runtime snapshots expose `waiting_for_terminal` with a pending `terminal.wait` tool (`setPendingTerminalWait`) while a turn is parked on a terminal fact; `finishTurn` returns to `idle`

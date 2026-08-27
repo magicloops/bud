@@ -6,6 +6,18 @@
 > shape. Wire truth: `docs/proto.md` §3.2, §6.1, §6.6, §6.7, §7.1; plan:
 > `plan/terminal-wait-async-wakeup.md`.
 
+## 0. Update (knobless wait + `stalled`)
+
+After field testing (Codex asking a question mid-command hung a
+command-boundary wait), `terminal.wait` became **knobless**: the `until`
+parameter is retired (tool args are now `{}`), and the daemon races every
+fact. New result `outcome: "stalled"` — output the agent had not seen went
+quiet for ~1.5s (typically a TUI question or a finished step). Treat it as
+a normal completed wait row; the label web uses is "output stopped
+changing". The §6 fixtures below predate this update: ignore the `until`
+field in them, and add `stalled` to the outcome union in §2.2. Everything
+else (phase, supersession, restart rows) is unchanged.
+
 ## 1. What changed and why
 
 The agent used to spin-poll `terminal.observe` while a program worked in the

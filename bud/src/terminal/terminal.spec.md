@@ -63,16 +63,17 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   `delta` (grid-diff v1: rows differing from the last observe/send snapshot),
   `history` (last N scrollback lines, default 200, cap 2000) — plus
   `mode`/`integration`/`alt_screen`/cursor facts. **Awaited observe**
-  (`await: "settled" | "command"`, `quiet_ms?`; backs the model's
-  `terminal.wait`): `await_observe_outcome` blocks on the fact FIRST (lock
-  never held while waiting), then the snapshot is taken, and the result
-  carries `outcome`. Settled-waits subscribe to the pump AND poll
-  `Session::is_quiet` every 100ms — an at-prompt shell's quiet point emits no
-  `settled`, so a wait that subscribes mid-paint would otherwise never
-  resolve; already-quiet resolves immediately (`data.immediate: true`).
-  `quiet_ms` above the daemon's 300ms adds an output-quiet confirmation
-  (ring offset unchanged across the extra window, else keep waiting).
-  Command-waits resolve `idle` immediately with nothing open. Same 4h cap.
+  (`await` — values are synonyms — `quiet_ms?`; backs the knobless
+  `terminal.wait`): `await_observe_outcome` races the facts, then snapshots
+  (lock never held while waiting), result carries `outcome`. Boundaries
+  (`command_finished`/`prompt_ready`/close) come from pump events; `stalled`
+  comes from a 100ms poll over quiet+UNSEEN persistence (delta vs the
+  observe baseline, window `quiet_ms` default `STALL_QUIET_MS` 1500) — an
+  at-prompt shell's quiet point emits no event, so events alone cannot
+  drive it; animation resets the timer and silent programs never trip it.
+  Start snapshot: quiet+unseen → `stalled` immediate; quiet+seen+nothing
+  open → `settled` immediate; quiet+seen+open → hold (re-waiting after a
+  stall is free). Same 4h cap.  Command-waits resolve `idle` immediately with nothing open. Same 4h cap.
 - `handle_input`: raw browser keyboard bytes written verbatim to the PTY.
 - `handle_resize` / `handle_close`: stem resize (+ status with new geometry)
   and holder kill (+ status `closed`, best-effort registry GC).

@@ -1269,8 +1269,19 @@ async fn awaited_observe_resolves_immediately_when_already_quiet() {
         is_result_for(f, "terminal_send_result", "req-echo")
     })
     .await;
-    // Let the post-command quiet point pass.
+    // Let the post-command quiet point pass, then set the observe baseline —
+    // the knobless wait treats quiet UNSEEN content as an immediate stall, so
+    // "immediately settled" requires having looked first (as the agent
+    // always has: send proof / prior observe).
     tokio::time::sleep(Duration::from_millis(600)).await;
+    manager
+        .handle_observe(observe_frame("sess-wait-idle", "req-baseline", "screen"))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "baseline observe", |f| {
+        is_result_for(f, "terminal_observe_result", "req-baseline")
+    })
+    .await;
 
     let started = Instant::now();
     awaited_observe(
@@ -1307,7 +1318,7 @@ async fn awaited_observe_resolves_immediately_when_already_quiet() {
     assert_eq!(result.get("view").and_then(Value::as_str), Some("delta"));
     assert!(result.get("mode").and_then(Value::as_str).is_some());
 
-    // A command-await with nothing open resolves `idle` immediately too.
+    // `await:"command"` is a synonym of the knobless wait now: same result.
     awaited_observe(
         &manager,
         awaited_observe_frame(
@@ -1328,7 +1339,7 @@ async fn awaited_observe_resolves_immediately_when_already_quiet() {
     .await;
     assert_eq!(
         result.pointer("/outcome/event").and_then(Value::as_str),
-        Some("idle")
+        Some("settled")
     );
 
     manager
@@ -1383,9 +1394,19 @@ async fn awaited_observe_resolves_on_the_open_commands_finish() {
     .await;
 
     let started = Instant::now();
+    // Stall window raised above the command duration: the exact boundary
+    // must win the race even though the command echo settles early. The
+    // baseline is unseen here, so a quiet start would stall immediately —
+    // the send dispatch keeps the session un-quiet long enough that the
+    // race is entered; raise the window and let command_finished win.
     awaited_observe(
         &manager,
-        awaited_observe_frame(session_id, "req-wait", TerminalSendAwait::Command, None),
+        awaited_observe_frame(
+            session_id,
+            "req-wait",
+            TerminalSendAwait::Command,
+            Some(10_000),
+        ),
     )
     .await
     .unwrap();
@@ -1410,8 +1431,8 @@ async fn awaited_observe_resolves_on_the_open_commands_finish() {
         decoded_output(&result)
     );
 
-    // A settled-await with a longer quiet window on the (now idle) prompt
-    // still resolves promptly via the immediate path plus confirmation.
+    // The wait's own snapshot updated the observe baseline, so an immediate
+    // re-wait on the idle prompt resolves `settled` right away (idle, seen).
     let started = Instant::now();
     awaited_observe(
         &manager,
@@ -1424,21 +1445,16 @@ async fn awaited_observe_resolves_on_the_open_commands_finish() {
     )
     .await
     .unwrap();
-    let result = wait_frame(
-        &mut rx,
-        Duration::from_secs(15),
-        "quiet-confirmed observe",
-        |f| is_result_for(f, "terminal_observe_result", "req-wait-quiet"),
-    )
+    let result = wait_frame(&mut rx, Duration::from_secs(15), "idle re-wait", |f| {
+        is_result_for(f, "terminal_observe_result", "req-wait-quiet")
+    })
     .await;
     assert_eq!(
         result.pointer("/outcome/event").and_then(Value::as_str),
         Some("settled")
     );
-    assert!(
-        started.elapsed() >= Duration::from_millis(400),
-        "extra quiet window applied"
-    );
+    // `immediate` is racy here (the prompt may still be painting when the
+    // wait starts); the contract is the settled outcome, promptly.
     assert!(started.elapsed() < Duration::from_secs(5));
 
     manager
@@ -1527,6 +1543,114 @@ async fn command_await_reports_input_absorbed_when_nothing_starts() {
         started.elapsed() < Duration::from_secs(6),
         "resolved within the grace, took {:?}",
         started.elapsed()
+    );
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn awaited_observe_stalls_when_mid_command_activity_goes_quiet() {
+    // The codex-question shape: a command is open (inline TUI), the caller
+    // has seen the current screen, and NEW output paints during the wait and
+    // then stops changing. The knobless wait must return control with a
+    // `stalled` outcome after the stall window — not hold for a
+    // command_finished that may be minutes away.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present on this machine");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-stall";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+
+    // Open a long command that paints a "question" after a beat and then
+    // waits silently for input (never finishing on its own).
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-open",
+            "sleep 2; printf 'Continue? [y/n] '; read answer",
+            None,
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "command started", |f| {
+        is_event(f, "command_started")
+    })
+    .await;
+    // Let the command-echo settle, then set the baseline: the caller has
+    // seen everything up to the silent stretch (the send-proof shape).
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    // Baseline: the caller has seen the screen as of command start.
+    manager
+        .handle_observe(observe_frame(session_id, "req-baseline", "screen"))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(10), "baseline observe", |f| {
+        is_result_for(f, "terminal_observe_result", "req-baseline")
+    })
+    .await;
+
+    let started = Instant::now();
+    awaited_observe(
+        &manager,
+        awaited_observe_frame(
+            session_id,
+            "req-wait",
+            TerminalSendAwait::Settled,
+            Some(1000),
+        ),
+    )
+    .await
+    .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(15), "stalled wait", |f| {
+        is_result_for(f, "terminal_observe_result", "req-wait")
+    })
+    .await;
+    assert_eq!(
+        result.pointer("/outcome/event").and_then(Value::as_str),
+        Some("stalled"),
+        "{result:?}"
+    );
+    assert_eq!(
+        result
+            .pointer("/outcome/data/quiet_ms")
+            .and_then(Value::as_u64),
+        Some(1000)
+    );
+    // Waited through the sleep + paint + stall window, not the full budget.
+    assert!(started.elapsed() >= Duration::from_millis(1500));
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        decoded_output(&result).contains("Continue?"),
+        "the stalled snapshot carries the question: {:?}",
+        decoded_output(&result)
     );
 
     manager
