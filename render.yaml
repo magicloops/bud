@@ -7,7 +7,11 @@ services:
     name: bud-web
     runtime: static
     rootDir: web
-    buildCommand: pnpm install --frozen-lockfile && pnpm build
+    # Render clones shallow and tagless; the web build bakes `git describe`
+    # (release tag + distance + SHA) into the bundle, so fetch history+tags
+    # first. Tolerant: an already-complete clone or a fetch failure falls
+    # through to the bare-SHA fallback rather than failing the build.
+    buildCommand: (git fetch --unshallow --tags 2>/dev/null || git fetch --tags 2>/dev/null || true) && pnpm install --frozen-lockfile && pnpm build
     staticPublishPath: dist
     buildFilter:
       paths:
