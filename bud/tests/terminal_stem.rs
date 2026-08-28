@@ -13,8 +13,8 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 
 use bud::protocol::{
     Envelope, TerminalCloseFrame, TerminalEnsureConfig, TerminalEnsureFrame,
-    TerminalGridWatchFrame, TerminalObserveFrame, TerminalResizeFrame, TerminalSendAwait,
-    TerminalSendFrame,
+    TerminalGridWatchFrame, TerminalInputFrame, TerminalObserveFrame, TerminalResizeFrame,
+    TerminalSendAwait, TerminalSendFrame,
 };
 use bud::terminal::{TerminalConfig, TerminalManager};
 use bud::transport::TransportSender;
@@ -1449,12 +1449,15 @@ async fn awaited_observe_resolves_on_the_open_commands_finish() {
         is_result_for(f, "terminal_observe_result", "req-wait-quiet")
     })
     .await;
-    assert_eq!(
-        result.pointer("/outcome/event").and_then(Value::as_str),
-        Some("settled")
+    // Timing-dependent but both correct: `settled` when the first wait's
+    // snapshot already covered the returned prompt, `stalled` when the
+    // prompt painted after that snapshot (quiet + unseen content). The
+    // contract is: resolve promptly, never hang.
+    let outcome = result.pointer("/outcome/event").and_then(Value::as_str);
+    assert!(
+        outcome == Some("settled") || outcome == Some("stalled"),
+        "idle re-wait resolves settled or stalled, got {outcome:?}"
     );
-    // `immediate` is racy here (the prompt may still be painting when the
-    // wait starts); the contract is the settled outcome, promptly.
     assert!(started.elapsed() < Duration::from_secs(5));
 
     manager
@@ -1998,6 +2001,194 @@ async fn grid_watch_saturated_history_and_resize_races_stay_incremental() {
     assert_eq!(total_dropped, 0);
 
     manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn restart_reattach_mid_tui_never_pushes_replayed_history() {
+    // Mobile follow-up (v0.1.11 still reproduced): daemon restart (upgrade)
+    // with a TUI open, sessions reattach from the ring — the replay ends
+    // inside the alt screen, and pre-fix the first alt-exit shipped the
+    // ENTIRE replayed history (588 rows here) as scrollback_push. The
+    // replayed history predates the attachment and is snapshot-covered:
+    // no phase below may push it.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-restart-tui";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+    manager
+        .handle_resize(TerminalResizeFrame {
+            envelope: envelope("terminal_resize"),
+            session_id: session_id.to_string(),
+            cols: 48,
+            rows: 22,
+        })
+        .await
+        .unwrap();
+    // Seed history + a file for the pager.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-seed",
+            "for i in {1..600}; do echo hist-$i; done; seq 1 500 > lessfile",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(30), "seed done", |f| {
+        is_result_for(f, "terminal_send_result", "req-seed")
+    })
+    .await;
+    // Open an alt-screen TUI and leave it open.
+    manager
+        .handle_send(send_frame(session_id, "req-less", "less lessfile", None))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    // ---- simulate the daemon restart: drop the manager, build a new one ----
+    drop(rx);
+    drop(manager);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (manager2, mut rx) = manager_with_sender(&tmp).await;
+    manager2
+        .handle_ensure(ensure_frame(session_id, None))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "reattach ready", |f| {
+        is_status(f, "ready")
+    })
+    .await;
+
+    manager2
+        .handle_grid_watch(TerminalGridWatchFrame {
+            envelope: envelope("terminal_grid_watch"),
+            session_id: session_id.to_string(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let dump = |label: &str, frames: &[Value]| {
+        for f in frames {
+            if is_type(f, "terminal_grid") {
+                let p = f["scrollback_push"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                eprintln!(
+                    "[{label}] gen={} full={} push={} dropped={} alt={} rows={}",
+                    f["generation"],
+                    f["full"],
+                    p,
+                    f["scrollback_dropped"],
+                    f["alt_screen"],
+                    f["rows"],
+                );
+            }
+        }
+    };
+    let push_total = |frames: &[Value]| -> usize {
+        frames
+            .iter()
+            .filter(|f| is_type(f, "terminal_grid"))
+            .map(|f| {
+                f["scrollback_push"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0)
+            })
+            .sum()
+    };
+    let frames = collect_frames(&mut rx, Duration::from_millis(1500)).await;
+    dump("watch-after-restart", &frames);
+    assert_eq!(
+        push_total(&frames),
+        0,
+        "fresh watch after restart pushes nothing"
+    );
+
+    // Mobile keystrokes into the TUI (scroll down/up in less).
+    for (i, key) in [b"j", b"j", b"k", b"j"].iter().enumerate() {
+        manager2
+            .handle_input(TerminalInputFrame {
+                envelope: envelope("terminal_input"),
+                session_id: session_id.to_string(),
+                data: BASE64_STANDARD.encode(key),
+                input_seq: Some(i as u64 + 1),
+            })
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let frames = collect_frames(&mut rx, Duration::from_millis(1500)).await;
+    dump("after-keys", &frames);
+    assert_eq!(push_total(&frames), 0, "alt-screen keystrokes push nothing");
+
+    // Exit the TUI (alt-screen leave) — the alt-exit accounting moment.
+    manager2
+        .handle_input(TerminalInputFrame {
+            envelope: envelope("terminal_input"),
+            session_id: session_id.to_string(),
+            data: BASE64_STANDARD.encode(b"q"),
+            input_seq: Some(99),
+        })
+        .await
+        .unwrap();
+    let frames = collect_frames(&mut rx, Duration::from_secs(3)).await;
+    dump("after-quit", &frames);
+    // THE regression: pre-fix this was push=588 (whole replayed history).
+    assert_eq!(
+        push_total(&frames),
+        0,
+        "alt exit after restart-reattach must not push replayed history"
+    );
+
+    // Anchor must be healthy afterwards: new output pushes incrementally.
+    manager2
+        .handle_send(send_frame(
+            session_id,
+            "req-fresh",
+            "for i in {1..30}; do echo fresh-$i; done",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "fresh done", |f| {
+        is_result_for(f, "terminal_send_result", "req-fresh")
+    })
+    .await;
+    let frames = collect_frames(&mut rx, Duration::from_millis(1200)).await;
+    let fresh_pushes = push_total(&frames);
+    assert!(
+        (20..=45).contains(&fresh_pushes),
+        "post-exit pushes stay incremental and alive, got {fresh_pushes}"
+    );
+
+    manager2
         .handle_close(TerminalCloseFrame {
             envelope: envelope("terminal_close"),
             session_id: session_id.to_string(),

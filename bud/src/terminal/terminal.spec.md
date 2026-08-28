@@ -80,8 +80,11 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
 - Integration detection window: no OSC 133 marker within 5s of attach →
   `mark_no_integration()` and a daemon-emitted `mode_changed` (stem swallows
   the ModeChange from its own override methods).
-- Grid watch semantics (mobile cumulative-scrollback fix,
-  debug/terminal-grid-cumulative-scrollback.md): `handle_grid_watch enabled`
+- Grid watch semantics (mobile cumulative-scrollback fixes,
+  debug/terminal-grid-cumulative-scrollback.md — two root causes: unwatched
+  backlog flush, and restart-replay-ending-in-alt leaving the scroll
+  watermark unanchored so the first alt-exit counted the whole replayed
+  history; the latter fixed in stem via `sync_scroll_anchor`): `handle_grid_watch enabled`
   on a LIVE loop is an idempotent in-place re-arm (`grid_force_full` flag →
   one force-full frame; pushes survive; generation continuous); a FRESH
   watch calls `Session::reset_grid_scrollback_pending()` first so the

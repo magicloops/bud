@@ -121,6 +121,15 @@ pub struct Emu {
     /// reflowed while unmeasurable; the next primary feed reports
     /// `scroll_history_lost` and re-anchors.
     pending_scroll_loss: bool,
+    /// The attachment's replay ended inside the alt screen, so the primary
+    /// history built during replay could not be anchored (`history_size()`
+    /// reads the ALT grid, which has none). The first primary feed anchors
+    /// with `scrolled_lines = 0` and no loss: everything up to that point is
+    /// pre-attachment history, covered by consumers' snapshots — counting it
+    /// as freshly scrolled shipped the entire replayed history as
+    /// `scrollback_push` (mobile cumulative-scrollback report, restart-
+    /// mid-TUI shape).
+    anchor_pending_alt_exit: bool,
 }
 
 enum RowLocation {
@@ -156,6 +165,7 @@ impl Emu {
             primary_hist_watermark: 0,
             primary_top_id: None,
             pending_scroll_loss: false,
+            anchor_pending_alt_exit: false,
         })
     }
 
@@ -188,7 +198,13 @@ impl Emu {
         let mut scroll_history_lost = false;
         if !alt_after {
             let hist_after = self.term.grid().history_size();
-            if self.pending_scroll_loss {
+            if self.anchor_pending_alt_exit {
+                // First primary feed after an attach whose replay ended in
+                // the alt screen: anchor WITHOUT counting — the history that
+                // exists now predates the attachment (snapshot-covered).
+                self.anchor_pending_alt_exit = false;
+                self.pending_scroll_loss = false;
+            } else if self.pending_scroll_loss {
                 // A resize under the alt screen reflowed primary history while
                 // the watermark was unreadable; continuity is gone.
                 self.pending_scroll_loss = false;
@@ -501,6 +517,22 @@ impl Emu {
             application_cursor: mode.contains(TermMode::APP_CURSOR),
             application_keypad: mode.contains(TermMode::APP_KEYPAD),
             bracketed_paste: mode.contains(TermMode::BRACKETED_PASTE),
+        }
+    }
+
+    /// Re-anchor scroll accounting to the CURRENT state without counting
+    /// anything as scrolled. Called after an attach's ring replay: replayed
+    /// history predates the attachment and is covered by consumers'
+    /// snapshots. While the alt screen is active the primary grid is
+    /// unreadable, so the anchor is deferred to the first primary feed
+    /// (`anchor_pending_alt_exit`).
+    pub fn sync_scroll_anchor(&mut self) {
+        if self.term.mode().contains(TermMode::ALT_SCREEN) {
+            self.anchor_pending_alt_exit = true;
+        } else {
+            self.anchor_pending_alt_exit = false;
+            self.primary_hist_watermark = self.term.grid().history_size();
+            self.primary_top_id = Some(self.row_addr(Line(0)));
         }
     }
 
