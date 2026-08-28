@@ -1539,6 +1539,20 @@ Request families: `terminal_ensure`, `terminal_resize`, `terminal_send`,
   and re-asserts its dimensions via `terminal_resize` when the session reports
   ready (clients must do this; stored dims are not authoritative).
 
+Resize application (daemon, since v0.1.14): a `terminal_resize` that SHRINKS
+the width while a readline line is pending at an idle shell prompt (input
+written since the last `prompt_ready` with no `command_started` yet — e.g.
+between a pasted command and its Enter, or a human composing a long line)
+is deferred until the shell consumes the line (`command_started` /
+`prompt_ready`), capped at 3 s; grows, rows-only changes, TUI/REPL modes,
+and open commands apply immediately. The `ready` status announces the
+geometry actually in effect, so viewers converge on it exactly as before —
+deferral only changes WHEN `ready` (and the re-armed full frame) arrives.
+Rationale: readline redisplays a multi-row line on SIGWINCH with its
+pre-reflow row count, which duplicated the command and overwrote the
+following output rows whenever a phone took geometry from a wider viewer
+mid-command.
+
 `terminal_send` sends one gesture:
 
 ```json
@@ -2353,6 +2367,7 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - Daemon: width-shrinking `terminal_resize` is deferred while a readline line is pending at an idle shell prompt (≤3 s, until `command_started`/`prompt_ready`); `ready` announces the applied geometry. Fixes readline-vs-reflow garbling (duplicated command, overwritten output rows) when a narrow viewer takes geometry mid-command.
   - the awaited observe is now KNOBLESS: `await` values are synonyms, the
     model-facing `terminal.wait.until` parameter is retired, and the daemon
     races `command_finished`/`prompt_ready`/close against a new `stalled`

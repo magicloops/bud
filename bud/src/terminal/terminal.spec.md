@@ -75,7 +75,18 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   open → `settled` immediate; quiet+seen+open → hold (re-waiting after a
   stall is free). Same 4h cap.  Command-waits resolve `idle` immediately with nothing open. Same 4h cap.
 - `handle_input`: raw browser keyboard bytes written verbatim to the PTY.
-- `handle_resize` / `handle_close`: stem resize (+ status with new geometry)
+- `handle_resize` / `handle_close`: stem resize (+ status with new geometry).
+  Width SHRINKS are deferred while `SessionFacts::input_pending_at_prompt`
+  is set (text/paste/raw input landed on an idle shell prompt and no
+  `command_started`/`prompt_ready` followed): readline redisplays a
+  multi-row line on SIGWINCH with its pre-reflow row count, duplicating the
+  command and overwriting the following output rows — reproduced against
+  bash 5.2/5.3 with the 75 ms paste→Enter gap (a queued shrink landed right
+  after the Enter byte) and with a line composed at the prompt. The newest
+  deferred geometry applies on the next `command_started`/`prompt_ready`
+  (cap `RESIZE_DEFER_CAP` 3 s) via `apply_resize`, which also announces
+  `ready`; grows, rows-only changes, TUI/REPL modes and open commands apply
+  immediately (`debug/terminal-resize-shrink-readline-garble.md`)
   and holder kill (+ status `closed`, best-effort registry GC).
 - Integration detection window: no OSC 133 marker within 5s of attach →
   `mark_no_integration()` and a daemon-emitted `mode_changed` (stem swallows

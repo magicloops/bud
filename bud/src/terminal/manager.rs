@@ -84,6 +84,11 @@ const FIRST_PROMPT_GRACE: Duration = Duration::from_secs(3);
 /// deliberate keystroke rather than part of the text burst. NOT an ordering
 /// hack — the single writer already guarantees order.
 const SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
+/// Upper bound on deferring a width shrink while a readline line is pending
+/// at an idle shell prompt (see `SessionFacts::input_pending_at_prompt`).
+/// Long enough to cover paste→Enter→`command_started`; short enough that a
+/// half-typed line never pins another viewer's geometry noticeably.
+const RESIZE_DEFER_CAP: Duration = Duration::from_secs(3);
 /// Sentinel exit-code trailer (design D6c). Sent as literal shell input.
 const SENTINEL_TRAILER: &str = r#"; printf '\033]133;D;%s\a' "$?""#;
 /// Grid-sync emission pacing (§6.8.2): event-driven, not a fixed tick. The
@@ -383,6 +388,8 @@ impl TerminalManager {
                 closed: !stat.child_alive,
                 last_observed_screen: None,
                 last_applied_input_seq: None,
+                input_pending_at_prompt: false,
+                deferred_resize: None,
             }),
         });
 
@@ -654,6 +661,9 @@ impl TerminalManager {
                 // action to app-side input heuristics; ordering itself is
                 // already guaranteed by the single writer. (Appending "\n"
                 // to the text would be swallowed by bracketed paste.)
+                if !payload.is_empty() {
+                    mark_input_pending(&entry.shared.facts);
+                }
                 let mut write = if payload.is_empty() {
                     Ok(())
                 } else {
@@ -968,6 +978,9 @@ impl TerminalManager {
             );
             return Ok(());
         };
+        if !bytes.is_empty() {
+            mark_input_pending(&entry.shared.facts);
+        }
         {
             let mut session = entry.session.lock().await;
             session
@@ -1001,23 +1014,93 @@ impl TerminalManager {
             );
             return Ok(());
         };
+        // Subscribe BEFORE deciding, so a `command_started`/`prompt_ready`
+        // racing the decision can never be missed by the deferral task.
+        let wake = entry.pump_tx.subscribe();
+        let deferred = {
+            let mut facts = entry.shared.facts.lock().unwrap();
+            // Width shrink onto an idle shell prompt with a line pending:
+            // bash's readline redisplays the multi-row line on SIGWINCH
+            // using its pre-reflow row count and lands every following row
+            // too high (duplicated command, overwritten output — reproduced
+            // against bash 5.2/5.3 with the paste→Enter gap and with a line
+            // composed at the prompt). Defer until the shell consumes the
+            // line; grows and rows-only changes are safe and apply now.
+            let shrink = frame.cols < facts.cols;
+            let at_idle_shell_prompt =
+                facts.mode == stem::events::Mode::Shell && facts.open_command.is_none();
+            if shrink && at_idle_shell_prompt && facts.input_pending_at_prompt && !facts.closed {
+                facts.deferred_resize = Some((frame.cols, frame.rows));
+                true
+            } else {
+                // Newest geometry wins over anything still deferred.
+                facts.deferred_resize = None;
+                false
+            }
+        };
+        if !deferred {
+            return self
+                .apply_resize(&entry, &frame.session_id, frame.cols, frame.rows)
+                .await;
+        }
+        debug!(
+            session_id = %frame.session_id,
+            cols = frame.cols,
+            rows = frame.rows,
+            "terminal_resize shrink deferred: input pending at shell prompt"
+        );
+        let manager = self.clone();
+        let session_id = frame.session_id.clone();
+        tokio::spawn(async move {
+            let mut wake = wake;
+            let _ = tokio::time::timeout(RESIZE_DEFER_CAP, async {
+                loop {
+                    match wake.recv().await {
+                        Ok(PumpEvent::CommandStarted { .. })
+                        | Ok(PumpEvent::PromptReady { .. })
+                        | Ok(PumpEvent::Closed)
+                        | Err(broadcast::error::RecvError::Closed) => break,
+                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    }
+                }
+            })
+            .await;
+            let pending = entry.shared.facts.lock().unwrap().deferred_resize.take();
+            if let Some((cols, rows)) = pending {
+                if let Err(err) = manager.apply_resize(&entry, &session_id, cols, rows).await {
+                    warn!(session_id = %session_id, error = %err, "deferred terminal resize failed");
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Apply a geometry change to the PTY + emulator and announce `ready`
+    /// (the service re-arms grid watches on it so viewers get a full frame).
+    async fn apply_resize(
+        &self,
+        entry: &Arc<SessionEntry>,
+        session_id: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<()> {
         {
             let mut session = entry.session.lock().await;
             session
-                .resize(frame.cols, frame.rows)
+                .resize(cols, rows)
                 .await
                 .map_err(|err| anyhow!("terminal resize failed: {err}"))?;
         }
         {
             let mut facts = entry.shared.facts.lock().unwrap();
-            facts.cols = frame.cols;
-            facts.rows = frame.rows;
+            facts.cols = cols;
+            facts.rows = rows;
         }
         if let Some(sender) = self.sender().await {
-            let info = self.entry_status_info(&entry).await;
+            let info = self.entry_status_info(entry).await;
             send_transport_frame(
                 &sender,
-                terminal_status_frame(&frame.session_id, "ready", Some(info)),
+                terminal_status_frame(session_id, "ready", Some(info)),
             )?;
         }
         Ok(())
@@ -1499,6 +1582,16 @@ fn trim_trailing_empty(lines: &[String]) -> Vec<String> {
         .map(|index| index + 1)
         .unwrap_or(0);
     lines[..end].to_vec()
+}
+
+/// Record that bytes are about to land on an idle shell prompt (a readline
+/// line is pending until `command_started`/`prompt_ready`). Only meaningful
+/// in shell mode with no open command: TUIs/REPLs must keep instant resizes.
+fn mark_input_pending(facts: &std::sync::Mutex<SessionFacts>) {
+    let mut facts = facts.lock().unwrap();
+    if facts.mode == stem::events::Mode::Shell && facts.open_command.is_none() {
+        facts.input_pending_at_prompt = true;
+    }
 }
 
 fn build_session_env(overrides: Option<HashMap<String, String>>) -> Vec<(String, String)> {
