@@ -46,6 +46,9 @@ use super::shims::prepare_shim;
 const QUIET_MS: u64 = 300;
 /// Emulator scrollback retained per session.
 const SCROLLBACK_LINES: usize = 5000;
+/// A single grid frame shipping this many `scrollback_push` rows is worth a
+/// forensic warn (whole-history duplication triage).
+const GRID_PUSH_WARN_LINES: usize = 300;
 /// Holder output ring capacity (design D8 default).
 const RING_CAP_BYTES: u64 = 8 * 1024 * 1024;
 /// `terminal_observe view:"history"` defaults and cap.
@@ -256,6 +259,13 @@ impl TerminalManager {
             Ok(entry) => {
                 let info = self.entry_status_info(&entry).await;
                 self.install_entry(&session_id, &entry).await;
+                let grid = entry.session.lock().await.grid_debug();
+                info!(
+                    session_id = %session_id,
+                    resume_from_offset,
+                    grid = ?grid,
+                    "terminal ensure attached"
+                );
                 send_transport_frame(
                     &sender,
                     terminal_status_frame(&session_id, "ready", Some(info)),
@@ -923,8 +933,12 @@ impl TerminalManager {
         // all history up to now — start scrollback-clean so the backlog
         // accumulated while unwatched is never shipped as an "incremental"
         // push (whole-history duplication found live on mobile).
-        entry.session.lock().await.reset_grid_scrollback_pending();
-        debug!(session_id = %frame.session_id, "grid watch enabled");
+        let cleared = entry.session.lock().await.reset_grid_scrollback_pending();
+        info!(
+            session_id = %frame.session_id,
+            cleared_pending = cleared,
+            "grid watch enabled (fresh; scrollback baseline reset)"
+        );
         let task = tokio::spawn(grid_watch_loop(
             Arc::downgrade(&entry),
             frame.session_id.clone(),
@@ -1316,6 +1330,7 @@ async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: 
                 session.alt_screen_active(),
             )
         };
+        let initial_full = force_full;
         force_full = false;
         let (mode, open_command, applied_input_seq) = {
             let facts = entry.shared.facts.lock().unwrap();
@@ -1341,12 +1356,48 @@ async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: 
         // `!t.icanon || t.echo` == NOT silent-canonical (`ICANON && !ECHO`).
         let predict_ok =
             at_interactive_prompt && !alt_screen && termios.is_some_and(|t| !t.icanon || t.echo);
+        let mut gate_flip_forced = false;
         let frame = if frame.is_none() && last_predict_ok.is_some_and(|last| last != predict_ok) {
+            gate_flip_forced = true;
             entry.session.lock().await.take_grid_frame(true)
         } else {
             frame
         };
         if let Some(frame) = frame {
+            // Frame provenance (mobile grid triage asks "why was this full
+            // forced"): watch start, service re-arm, predict-gate flip, or
+            // ordinary damage.
+            let reason = if initial_full {
+                "watch_start"
+            } else if rearm_full {
+                "rearm"
+            } else if gate_flip_forced {
+                "gate_flip"
+            } else {
+                "damage"
+            };
+            if frame.scrollback_push.len() >= GRID_PUSH_WARN_LINES {
+                let grid = entry.session.lock().await.grid_debug();
+                warn!(
+                    session_id = %session_id,
+                    generation = frame.generation,
+                    full = frame.full,
+                    reason,
+                    push = frame.scrollback_push.len(),
+                    dropped = frame.scrollback_dropped,
+                    grid = ?grid,
+                    "grid frame ships a large scrollback_push"
+                );
+            } else {
+                debug!(
+                    session_id = %session_id,
+                    generation = frame.generation,
+                    full = frame.full,
+                    reason,
+                    push = frame.scrollback_push.len(),
+                    "grid frame emitted"
+                );
+            }
             let mut fields = grid_frame_fields(&frame);
             fields.insert("predict_ok".into(), Value::Bool(predict_ok));
             if let Some(seq) = applied_input_seq {

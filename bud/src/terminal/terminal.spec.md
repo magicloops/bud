@@ -81,16 +81,21 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   `mark_no_integration()` and a daemon-emitted `mode_changed` (stem swallows
   the ModeChange from its own override methods).
 - Grid watch semantics (mobile cumulative-scrollback fixes,
-  debug/terminal-grid-cumulative-scrollback.md — two root causes: unwatched
-  backlog flush, and restart-replay-ending-in-alt leaving the scroll
+  debug/terminal-grid-cumulative-scrollback.md — three root-cause classes:
+  unwatched backlog flush; restart-replay-ending-in-alt leaving the scroll
   watermark unanchored so the first alt-exit counted the whole replayed
-  history; the latter fixed in stem via `sync_scroll_anchor`): `handle_grid_watch enabled`
+  history (fixed in stem via `sync_scroll_anchor`); and duplicate holder
+  delivery re-parsed by the live loop, duplicating emulator history (fixed
+  in stem via the `live_cursor` clip guard; warn-logged tripwires cover any
+  residual path)): `handle_grid_watch enabled`
   on a LIVE loop is an idempotent in-place re-arm (`grid_force_full` flag →
   one force-full frame; pushes survive; generation continuous); a FRESH
   watch calls `Session::reset_grid_scrollback_pending()` first so the
   backlog accumulated while unwatched (tracker runs on every feed, watch or
   not — cap 1024 + dropped counter) is never shipped as an "incremental"
-  `scrollback_push` duplicating the viewer's snapshot history.
+  `scrollback_push` duplicating the viewer's snapshot history. Frame emission
+  logs provenance (`watch_start`/`rearm`/`gate_flip`/`damage`) and warns
+  with grid/anchor forensics when a frame ships ≥300 pushed rows.
 - `clear_sender` drops attachments (pump/detect tasks aborted); holders
   survive and the service re-ensures with its committed offset on reconnect.
   Send/observe/input/resize can also re-attach to a surviving holder without
