@@ -2355,3 +2355,254 @@ async fn restart_reattach_primary_input_stays_scrollback_clean() {
         .await
         .unwrap();
 }
+
+/// bash 5.x readline regression harness: needs a bash with bracketed paste
+/// (macOS ships 3.2). `BUD_REGRESSION_BASH` overrides; skipped when absent.
+fn regression_bash() -> Option<String> {
+    let shell =
+        std::env::var("BUD_REGRESSION_BASH").unwrap_or_else(|_| "/opt/homebrew/bin/bash".into());
+    if std::path::Path::new(&shell).exists() {
+        Some(shell)
+    } else {
+        eprintln!("skipping: {shell} not present");
+        None
+    }
+}
+
+fn ubuntu_style_home(tmp: &tempfile::TempDir) -> std::path::PathBuf {
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // Ubuntu-style colored/titled PS1 with a FIXED 28-char path segment
+    // (the report's prompt width). A `\w` prompt longer than the narrow
+    // viewer's width wraps, and readline's own multi-row prompt redisplay on
+    // a later width change is a separate, known readline-vs-reflow artifact
+    // that would confound these assertions.
+    std::fs::write(
+        home.join(".bashrc"),
+        "PS1='\\[\\e]0;\\u@\\h: \\w\\a\\]\\[\\033[01;32m\\]adam@spark-1\\[\\033[00m\\]:\\[\\033[01;34m\\]~/doner-atlas\\[\\033[00m\\]\\$ '\n",
+    )
+    .unwrap();
+    home
+}
+
+const LONG_CMD: &str = "echo start && echo \"app.js OK\" && echo ZIGZAG-0123456789-0123456789-0123456789-0123456789-0123456789-0123456789-0123456789-0123456789-0123456789-0123456789-0123456789-0123456789 && ls / >/dev/null && echo done-marker";
+
+fn resize_frame(session_id: &str, cols: u16, rows: u16) -> TerminalResizeFrame {
+    TerminalResizeFrame {
+        envelope: envelope("terminal_resize"),
+        session_id: session_id.to_string(),
+        cols,
+        rows,
+    }
+}
+
+async fn screen_text(manager: &TerminalManager, rx: &mut FrameRx, session_id: &str) -> String {
+    manager
+        .handle_observe(observe_frame(session_id, "req-obs", "screen"))
+        .await
+        .unwrap();
+    let result = wait_frame(rx, Duration::from_secs(10), "observe", |f| {
+        is_result_for(f, "terminal_observe_result", "req-obs")
+    })
+    .await;
+    result["output"]
+        .as_str()
+        .and_then(|s| BASE64_STANDARD.decode(s).ok())
+        .map(|b| String::from_utf8_lossy(&b).to_string())
+        .unwrap_or_else(|| result.to_string())
+}
+
+/// The readline-garble invariants for LONG_CMD: the prompt appears only at
+/// column 0 (never redrawn mid-row), and every output line is intact.
+fn assert_clean_long_cmd_screen(label: &str, text: &str) {
+    let rows: Vec<&str> = text.lines().collect();
+    for l in &rows {
+        eprintln!("[{label}] {l}");
+    }
+    for row in &rows {
+        if let Some(pos) = row.find("adam@") {
+            assert_eq!(pos, 0, "[{label}] prompt redrawn mid-row: {row:?}");
+        }
+    }
+    for expected in ["start", "app.js OK", "done-marker"] {
+        assert!(
+            rows.contains(&expected),
+            "[{label}] output line {expected:?} missing or overwritten"
+        );
+    }
+}
+
+/// A width shrink queued during an atomic paste→Enter submit (mobile taking
+/// geometry while the agent runs a long command) used to land right after
+/// the Enter byte, before bash consumed it: readline redrew the multi-row
+/// line against the reflowed grid and every following row landed too high
+/// (duplicated command, `done-markersta/rt`). The shrink now defers until
+/// `command_started`.
+#[tokio::test]
+async fn resize_shrink_defers_behind_pasted_submit() {
+    let Some(shell) = regression_bash() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let manager = std::sync::Arc::new(manager);
+    let home = ubuntu_style_home(&tmp);
+    for (i, delay_ms) in [10u64, 40].iter().enumerate() {
+        let session_id = format!("sess-queued-{i}");
+        manager
+            .handle_ensure(ensure_frame_with_shell(
+                &session_id,
+                &shell,
+                &home.to_string_lossy(),
+            ))
+            .await
+            .unwrap();
+        wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+            is_event(f, "prompt_ready")
+        })
+        .await;
+        manager
+            .handle_resize(resize_frame(&session_id, 122, 61))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let m2 = std::sync::Arc::clone(&manager);
+        let sid2 = session_id.clone();
+        let delay = *delay_ms;
+        let resizer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            m2.handle_resize(resize_frame(&sid2, 48, 38)).await.unwrap();
+        });
+        manager
+            .handle_send(send_frame(
+                &session_id,
+                "req-long",
+                LONG_CMD,
+                Some(TerminalSendAwait::Command),
+            ))
+            .await
+            .unwrap();
+        resizer.await.unwrap();
+        wait_frame(&mut rx, Duration::from_secs(20), "command finished", |f| {
+            is_result_for(f, "terminal_send_result", "req-long")
+        })
+        .await;
+        // The deferred shrink applied once the command started: a `ready`
+        // status for THIS session arrives (the service re-arms watches on it).
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        // View at web width like the report; content must be intact.
+        manager
+            .handle_resize(resize_frame(&session_id, 122, 61))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let text = screen_text(&manager, &mut rx, &session_id).await;
+        assert_clean_long_cmd_screen(&format!("shrink at +{delay_ms}ms"), &text);
+        manager
+            .handle_close(TerminalCloseFrame {
+                envelope: envelope("terminal_close"),
+                session_id: session_id.clone(),
+                reason: None,
+            })
+            .await
+            .unwrap();
+    }
+}
+
+/// A long line composed at the prompt (no submit), then a width shrink, then
+/// Enter: the shrink defers until the line is consumed, so readline never
+/// redisplays it against a reflowed grid. Growing with a line pending and
+/// rows-only changes were always clean and still apply immediately.
+#[tokio::test]
+async fn resize_shrink_defers_while_line_pending_at_prompt() {
+    let Some(shell) = regression_bash() else {
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = ubuntu_style_home(&tmp);
+    let session_id = "sess-pending-line";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            &shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+    manager
+        .handle_resize(resize_frame(session_id, 122, 61))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    manager
+        .handle_send(TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: session_id.to_string(),
+            request_id: "req-paste".into(),
+            text: Some(LONG_CMD.to_string()),
+            submit: Some(false),
+            key: None,
+            r#await: Some(TerminalSendAwait::Settled),
+        })
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "paste settled", |f| {
+        is_result_for(f, "terminal_send_result", "req-paste")
+    })
+    .await;
+    // Shrink with the line pending: deferred (no `ready` until the line is
+    // consumed), so the grid stays at 122 for now.
+    manager
+        .handle_resize(resize_frame(session_id, 48, 38))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let before = screen_text(&manager, &mut rx, session_id).await;
+    assert!(
+        before.lines().any(|l| l.len() > 48),
+        "shrink applied while a line was pending at the prompt"
+    );
+    manager
+        .handle_send(TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: session_id.to_string(),
+            request_id: "req-enter".into(),
+            text: None,
+            submit: None,
+            key: Some("enter".into()),
+            r#await: Some(TerminalSendAwait::Command),
+        })
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(20), "command finished", |f| {
+        is_result_for(f, "terminal_send_result", "req-enter")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    // The deferred shrink applied after command start: rows now wrap at 48.
+    let after = screen_text(&manager, &mut rx, session_id).await;
+    assert!(
+        after.lines().all(|l| l.len() <= 48),
+        "deferred shrink never applied: {after}"
+    );
+    manager
+        .handle_resize(resize_frame(session_id, 122, 61))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let text = screen_text(&manager, &mut rx, session_id).await;
+    assert_clean_long_cmd_screen("line pending then shrink", &text);
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}

@@ -54,6 +54,16 @@ pub(crate) struct SessionFacts {
     /// Highest client `input_seq` written to the PTY (grid-sync predictive
     /// echo, §6.8.3): stamped onto grid frames as `applied_input_seq`.
     pub last_applied_input_seq: Option<u64>,
+    /// Bytes were written to an idle shell prompt (paste, text, or raw
+    /// keys) and no `command_started`/`prompt_ready` has followed yet: a
+    /// readline line is (probably) pending. Width SHRINKS are deferred while
+    /// set — readline's SIGWINCH redisplay of a multi-row line against the
+    /// emulator's reflow duplicates the line and lands the following output
+    /// rows too high (bash 5.x; reproduced with the paste→Enter gap).
+    pub input_pending_at_prompt: bool,
+    /// Latest deferred shrink (cols, rows); applied on the next
+    /// `command_started`/`prompt_ready` or after `RESIZE_DEFER_CAP`.
+    pub deferred_resize: Option<(u16, u16)>,
 }
 
 pub(crate) struct SessionShared {
@@ -194,6 +204,7 @@ pub(crate) async fn run_pump(
                     // Back at a prompt heals a lost `D` marker: no command can
                     // still be open when the shell is prompting.
                     facts.open_command = None;
+                    facts.input_pending_at_prompt = false;
                 }
                 let mut data = Map::new();
                 if let Some(cwd) = cwd {
@@ -214,6 +225,9 @@ pub(crate) async fn run_pump(
                     facts.marker_seen = true;
                     facts.genuine_osc133 = true;
                     facts.open_command = Some((command_id.clone(), Instant::now()));
+                    // The shell consumed the line: pending input is now a
+                    // running command, and deferred shrinks may apply.
+                    facts.input_pending_at_prompt = false;
                 }
                 let _ = pump_tx.send(PumpEvent::CommandStarted {
                     command_id: command_id.clone(),
@@ -278,6 +292,9 @@ pub(crate) async fn run_pump(
                     if integration == Integration::Osc133 {
                         facts.marker_seen = true;
                     }
+                    if mode != Mode::Shell {
+                        facts.input_pending_at_prompt = false;
+                    }
                     facts.open_command.clone()
                 };
                 let mut frames = vec![terminal_event_frame(
@@ -319,7 +336,11 @@ pub(crate) async fn run_pump(
                 json!({ "from_offset": from_offset, "resume_offset": resume_offset }),
             )],
             Event::ChildExited { exit_code, signal } => {
-                shared.facts.lock().unwrap().closed = true;
+                {
+                    let mut facts = shared.facts.lock().unwrap();
+                    facts.closed = true;
+                    facts.input_pending_at_prompt = false;
+                }
                 let _ = pump_tx.send(PumpEvent::Closed);
                 let mut data = Map::new();
                 if let Some(exit_code) = exit_code {
@@ -376,7 +397,11 @@ pub(crate) async fn run_pump(
     // holder-crash scenario).
     let announced = shared.facts.lock().unwrap().closed;
     if !announced {
-        shared.facts.lock().unwrap().closed = true;
+        {
+            let mut facts = shared.facts.lock().unwrap();
+            facts.closed = true;
+            facts.input_pending_at_prompt = false;
+        }
         let _ = send_transport_frame(&sender, terminal_status_frame(&session_id, "closed", None));
         debug!(session_id = %session_id, "terminal pump ended without child_exited; session closed");
     }
@@ -409,6 +434,8 @@ mod tests {
                 closed: false,
                 last_observed_screen: None,
                 last_applied_input_seq: None,
+                input_pending_at_prompt: false,
+                deferred_resize: None,
             }),
         })
     }
@@ -428,7 +455,11 @@ mod tests {
         // so the pump's end-of-stream closure announcement (tested separately
         // in `stream_end_without_child_exit_announces_closed`) stays out of
         // the per-event frame assertions.
-        shared.facts.lock().unwrap().closed = true;
+        {
+            let mut facts = shared.facts.lock().unwrap();
+            facts.closed = true;
+            facts.input_pending_at_prompt = false;
+        }
         run_pump(event_rx, sender, Arc::clone(&shared), pump_tx).await;
 
         let mut frames = Vec::new();
