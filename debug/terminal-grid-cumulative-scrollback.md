@@ -150,3 +150,35 @@ Fix + forensics (branch `fix/terminal-grid-live-feed-guard`):
    (`bud/tests/terminal_stem.rs`): the report's primary-input acceptance
    shape — every frame across attach, resize convergence, ready re-arms,
    and printable input must carry `push=0, dropped=0, alt=false`.
+
+## Fourth report (2026-08-28, v0.1.13): resize-correlated bursts — NOT a daemon bug
+
+Mobile re-tested with the live-feed guard deployed
+(`reference/terminal-grid-resize-rearm-regression-handoff.md`): input is
+now clean, but every keyboard-driven resize is followed (after 1–2 clean
+convergence fulls) by a replay-sized push — 980 rows at 48×38, 998 at
+48×20, alternating across four cycles on one continuous gen-103–121
+attachment.
+
+Resolution: **the wire data is correct.** The arithmetic is decisive —
+`push + rows = 1018` at both geometries — each burst is the foreground
+program clearing and reprinting its full ~1018-line transcript on
+SIGWINCH at the current height. Reproduced exactly with a WINCH-trap
+reprint script driven through the production lifecycle (bursts per cycle
+sum to 1018, dropped=0, delayed after convergence, generations
+continuous); a plain-prompt foreground stays at push=0 through identical
+cycles (standing regressions). Inline-TUI agent CLIs (codex/claude-code)
+redraw this way in desktop terminals too — resizing a terminal running
+them duplicates scrollback there as well.
+
+Also explains earlier report anomalies: report #3's input-burst was
+998 = 1018−20 at 48×20 — likely the same reprint triggered by input to
+the then-running TUI rather than a delivery duplication (the guard
+remains correct defense-in-depth either way; the v0.1.13 forensics'
+"large scroll burst" warns show `history_size` genuinely growing for
+reprints, which distinguishes the two on any future capture).
+
+Recommendation recorded in the handoff response: mobile should stop
+resizing the PTY on keyboard show/hide (fixed rows + view cropping) —
+every PTY resize SIGWINCHes the foreground program. Daemon-side
+suppression is impossible without corrupting legitimate large outputs.
