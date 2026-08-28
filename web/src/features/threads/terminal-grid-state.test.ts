@@ -5,6 +5,7 @@ import {
   emptyGridState,
   GRID_SCROLLBACK_CAP,
   gridColorToCss,
+  gridRowsEqual,
   gridRowText,
   seedGridScrollback,
   type TerminalGridFrame,
@@ -198,4 +199,93 @@ test('color resolution covers named, cube, grayscale, and truecolor', () => {
   assert.equal(gridColorToCss(232, '#abc'), 'rgb(8, 8, 8)')
   assert.equal(gridColorToCss(255, '#abc'), 'rgb(238, 238, 238)')
   assert.equal(gridColorToCss([1, 2, 3], '#abc'), 'rgb(1, 2, 3)')
+})
+
+test('rows with unchanged content keep their array identity across frames', () => {
+  const state = seeded()
+  const row0 = state.grid[0]!
+  // Full frame rewriting every row (the streaming-TUI shape): row 0 content
+  // identical, row 1 changed — only row 1 may get a new identity, so row
+  // memoization skips untouched DOM and native selection survives.
+  const next = applyGridFrame(
+    state,
+    frame({
+      generation: 2,
+      dirty_rows: [
+        { row: 0, runs: [{ t: 'prompt$ ' }] },
+        { row: 1, runs: [{ t: 'output' }] },
+        { row: 2, runs: [] },
+      ],
+    }),
+  )
+  assert.equal(next.discontinuity, false)
+  assert.equal(next.state.grid[0], row0)
+  assert.equal(gridRowText(next.state.grid[1]!), 'output')
+
+  // Delta frame re-sending identical content (cursor-artifact dirty rows).
+  const after = applyGridFrame(
+    next.state,
+    frame({
+      generation: 3,
+      full: false,
+      dirty_rows: [{ row: 0, runs: [{ t: 'prompt$ ' }] }],
+    }),
+  )
+  assert.equal(after.discontinuity, false)
+  assert.equal(after.state.grid[0], row0)
+})
+
+test('full frame at a new geometry does not inherit stale rows', () => {
+  const state = seeded()
+  const next = applyGridFrame(
+    state,
+    frame({
+      generation: 2,
+      rows: 2,
+      dirty_rows: [{ row: 0, runs: [{ t: 'resized' }] }],
+    }),
+  )
+  assert.equal(next.discontinuity, false)
+  assert.equal(gridRowText(next.state.grid[0]!), 'resized')
+  assert.deepEqual(next.state.grid[1], [])
+})
+
+test('gridRowsEqual compares run content including colors and attrs', () => {
+  assert.equal(gridRowsEqual([{ t: 'a', fg: 2 }], [{ t: 'a', fg: 2 }]), true)
+  assert.equal(gridRowsEqual([{ t: 'a' }], [{ t: 'b' }]), false)
+  assert.equal(gridRowsEqual([{ t: 'a', fg: 2 }], [{ t: 'a', fg: 3 }]), false)
+  assert.equal(
+    gridRowsEqual([{ t: 'a', bg: [1, 2, 3] }], [{ t: 'a', bg: [1, 2, 3] }]),
+    true,
+  )
+  assert.equal(
+    gridRowsEqual([{ t: 'a', bg: [1, 2, 3] }], [{ t: 'a', bg: [1, 2, 4] }]),
+    false,
+  )
+  assert.equal(gridRowsEqual([{ t: 'a' }], [{ t: 'a', a: 1 }]), false)
+})
+
+test('scrollbackStart advances only when the cap trims the front', () => {
+  let state = seeded()
+  assert.equal(state.scrollbackStart, 0)
+  const push = Array.from({ length: GRID_SCROLLBACK_CAP }, (_, i): [{ t: string }] => [
+    { t: `line-${i}` },
+  ])
+  state = applyGridFrame(state, frame({ generation: 2, scrollback_push: push })).state
+  assert.equal(state.scrollbackStart, 0)
+  assert.equal(state.scrollback.length, GRID_SCROLLBACK_CAP)
+  const survivor = state.scrollback[3]!
+  state = applyGridFrame(
+    state,
+    frame({ generation: 3, scrollback_push: [[{ t: 'over-1' }], [{ t: 'over-2' }]] }),
+  ).state
+  assert.equal(state.scrollbackStart, 2)
+  assert.equal(state.scrollback.length, GRID_SCROLLBACK_CAP)
+  // The surviving row keeps identity AND its absolute key
+  // (scrollbackStart + newIndex === 3).
+  assert.equal(state.scrollback[1], survivor)
+  assert.equal(state.scrollbackStart + 1, 3)
+  // Seeding resets the base.
+  const reseeded = seedGridScrollback(state, 'a\nb')
+  assert.equal(reseeded.scrollbackStart, 0)
 })

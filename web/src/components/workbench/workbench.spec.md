@@ -354,7 +354,15 @@ scrollback above the live grid, and a `ch`-positioned cursor overlay.
 Run spans render as cell-height inline-blocks so app background colors
 paint the full cell rect (inline font-boxes left dark gaps between lines
 under vim themes); rows are memoized on run-array identity so delta frames
-re-render only dirty rows.
+re-render only dirty rows (the reducer preserves row identity for
+content-equal rewrites, so full-frame streams leave unchanged DOM — and any
+native selection in it — untouched; scrollback rows key on
+`scrollbackStart + index` absolute indexes so cap trims never remount
+survivors). Click-to-focus is selection-aware: a click that completes a
+drag-selection inside the pane focuses the container (which never owns a
+text selection) instead of the IME textarea, so the highlight survives and
+the platform copy shortcut works; collapsed-selection clicks focus the IME
+as before.
 Mouse support (§6.8.4): press/release/drag/motion/wheel encoded via
 `terminal-mouse.ts` only while the app enabled reporting (Shift bypasses to
 native selection; contextmenu suppressed while reporting); wheel falls back

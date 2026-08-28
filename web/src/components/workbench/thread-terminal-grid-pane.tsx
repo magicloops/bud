@@ -125,6 +125,25 @@ export function ThreadTerminalGridPane({
   const focusIme = useCallback(() => {
     imeRef.current?.focus({ preventScroll: true })
   }, [])
+  // Click-to-focus, selection-aware: completing a drag-selection fires a
+  // click on the container, and focusing the IME textarea would move the
+  // document selection into it — collapsing the highlight the user just
+  // made (the "can't copy from the terminal" bug). With a live selection
+  // anchored in the pane, focus the container instead: it never owns a
+  // text selection, keydown translation lives on it (typing still works),
+  // and the platform copy shortcut targets the intact document selection.
+  const handleClick = useCallback(() => {
+    const selection = window.getSelection()
+    const hasPaneSelection =
+      !!selection &&
+      !selection.isCollapsed &&
+      !!containerRef.current?.contains(selection.anchorNode)
+    if (hasPaneSelection) {
+      containerRef.current?.focus({ preventScroll: true })
+      return
+    }
+    focusIme()
+  }, [focusIme])
   // Terminal convention: filled blinking cursor only while the pane owns
   // keyboard focus; hollow outline otherwise (matches xterm on the bytes
   // path, and disambiguates terminal focus vs. the message composer).
@@ -604,7 +623,7 @@ export function ThreadTerminalGridPane({
     <div
       ref={containerRef}
       tabIndex={-1}
-      onClick={focusIme}
+      onClick={handleClick}
       onFocus={handleFocusIn}
       onBlur={handleFocusOut}
       onKeyDown={handleKeyDown}
@@ -641,7 +660,12 @@ export function ThreadTerminalGridPane({
           className={`flex min-h-full flex-col justify-end ${assertGeometry ? '' : 'w-max min-w-full'}`}
         >
           {!state.altScreen &&
-            state.scrollback.map((runs, index) => <GridRow key={`sb-${index}`} runs={runs} />)}
+            state.scrollback.map((runs, index) => (
+              // Absolute-index keys: cap trims shift the array but not the
+              // identity of surviving rows, so appends/trims never remount
+              // them (native selection in scrollback survives streaming).
+              <GridRow key={`sb-${state.scrollbackStart + index}`} runs={runs} />
+            ))}
           <div ref={gridBlockRef} style={{ position: 'relative' }}>
             {state.grid.map((runs, index) => (
               <GridRow key={`row-${index}`} runs={runs} />
