@@ -132,6 +132,18 @@ pub struct Emu {
     anchor_pending_alt_exit: bool,
 }
 
+/// Forensic snapshot of primary-scroll anchor state (grid-duplication
+/// triage; surfaced through `Session::grid_debug`).
+#[derive(Debug, Clone, Copy)]
+pub struct ScrollDebug {
+    pub history_size: usize,
+    pub watermark: usize,
+    pub top_id_set: bool,
+    pub pending_scroll_loss: bool,
+    pub anchor_pending_alt_exit: bool,
+    pub alt_screen: bool,
+}
+
 enum RowLocation {
     Viewport,
     History(usize),
@@ -533,6 +545,18 @@ impl Emu {
             self.anchor_pending_alt_exit = false;
             self.primary_hist_watermark = self.term.grid().history_size();
             self.primary_top_id = Some(self.row_addr(Line(0)));
+        }
+    }
+
+    /// See [`ScrollDebug`].
+    pub fn scroll_debug(&self) -> ScrollDebug {
+        ScrollDebug {
+            history_size: self.term.grid().history_size(),
+            watermark: self.primary_hist_watermark,
+            top_id_set: self.primary_top_id.is_some(),
+            pending_scroll_loss: self.pending_scroll_loss,
+            anchor_pending_alt_exit: self.anchor_pending_alt_exit,
+            alt_screen: self.term.mode().contains(TermMode::ALT_SCREEN),
         }
     }
 

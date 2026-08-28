@@ -2197,3 +2197,161 @@ async fn restart_reattach_mid_tui_never_pushes_replayed_history() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn restart_reattach_primary_input_stays_scrollback_clean() {
+    // v0.1.12 mobile retest shape: history at a PRIMARY prompt (no TUI),
+    // daemon restart, reattach, geometry convergence, then printable input.
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-restart-primary";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+    manager
+        .handle_resize(TerminalResizeFrame {
+            envelope: envelope("terminal_resize"),
+            session_id: session_id.to_string(),
+            cols: 48,
+            rows: 38,
+        })
+        .await
+        .unwrap();
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-seed",
+            "for i in {1..1000}; do echo hist-$i; done",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(30), "seed done", |f| {
+        is_result_for(f, "terminal_send_result", "req-seed")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    // ---- daemon restart ----
+    drop(rx);
+    drop(manager);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (manager2, mut rx) = manager_with_sender(&tmp).await;
+    manager2
+        .handle_ensure(ensure_frame(session_id, None))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "reattach ready", |f| {
+        is_status(f, "ready")
+    })
+    .await;
+
+    manager2
+        .handle_grid_watch(TerminalGridWatchFrame {
+            envelope: envelope("terminal_grid_watch"),
+            session_id: session_id.to_string(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    // Regression contract (mobile v0.1.12 input-path report): after a
+    // restart+reattach at a PRIMARY prompt, no frame across attach, resize
+    // convergence, ready re-arms, or printable input may ship replayed
+    // history as `scrollback_push` (the inputs never scroll a line).
+    let assert_clean = |label: &str, frames: &[Value]| {
+        for f in frames {
+            if is_type(f, "terminal_grid") {
+                let p = f["scrollback_push"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                eprintln!(
+                    "[{label}] gen={} full={} push={} dropped={} alt={} rows={}",
+                    f["generation"],
+                    f["full"],
+                    p,
+                    f["scrollback_dropped"],
+                    f["alt_screen"],
+                    f["rows"],
+                );
+                assert_eq!(p, 0, "[{label}] frame shipped scrollback_push rows");
+                assert_eq!(
+                    f["scrollback_dropped"].as_u64().unwrap_or(0),
+                    0,
+                    "[{label}] frame reported dropped scrollback"
+                );
+                assert_eq!(
+                    f["alt_screen"].as_bool(),
+                    Some(false),
+                    "[{label}] unexpected alt screen"
+                );
+            }
+        }
+    };
+    let frames = collect_frames(&mut rx, Duration::from_millis(1200)).await;
+    assert_clean("watch", &frames);
+
+    // Geometry convergence with ready-driven re-arms like production.
+    for rows in [38u16, 20, 20] {
+        manager2
+            .handle_resize(TerminalResizeFrame {
+                envelope: envelope("terminal_resize"),
+                session_id: session_id.to_string(),
+                cols: 48,
+                rows,
+            })
+            .await
+            .unwrap();
+        manager2
+            .handle_grid_watch(TerminalGridWatchFrame {
+                envelope: envelope("terminal_grid_watch"),
+                session_id: session_id.to_string(),
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        let frames = collect_frames(&mut rx, Duration::from_millis(900)).await;
+        assert_clean("resize-rearm", &frames);
+    }
+
+    // Two separately posted printable characters.
+    for (i, ch) in [b"a", b"b"].iter().enumerate() {
+        manager2
+            .handle_input(TerminalInputFrame {
+                envelope: envelope("terminal_input"),
+                session_id: session_id.to_string(),
+                data: BASE64_STANDARD.encode(ch),
+                input_seq: Some(i as u64 + 1),
+            })
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let frames = collect_frames(&mut rx, Duration::from_secs(2)).await;
+    assert_clean("after-input", &frames);
+
+    manager2
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}

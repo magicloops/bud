@@ -18,9 +18,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::{mpsc, Notify};
+use tracing::{info, warn};
 
 use crate::client::{HolderClient, HolderPush};
-use crate::emu::{CursorPos, CursorShapeKind, Emu, FeedReport, MouseModes, StyledRun};
+use crate::emu::{CursorPos, CursorShapeKind, Emu, FeedReport, MouseModes, ScrollDebug, StyledRun};
 use crate::error::{Result, StemError};
 use crate::events::{Event, Mode};
 use crate::ipc::HolderMsg;
@@ -31,6 +32,10 @@ use crate::semantic::{ScanKind, Scanner};
 /// plan §3): a flood between takes ships at most this many history lines;
 /// overflow is counted, never silent.
 const SCROLLBACK_PENDING_CAP: usize = 1024;
+/// One tracked feed claiming a scroll burst this large is either a genuine
+/// huge output or the history-duplication signature — worth a forensic log
+/// line either way (mobile cumulative-scrollback triage).
+const SCROLL_BURST_LOG_LINES: usize = 300;
 
 /// Per-row identity baseline for scroll-shift detection: the geometry it was
 /// captured at plus (cell-buffer address, content hash) per viewport row.
@@ -83,6 +88,15 @@ pub struct GridFrame {
     /// (pending-buffer overflow or scroll-tracking loss). Any nonzero value
     /// means the consumer's accumulated scrollback has a seam.
     pub scrollback_dropped: u64,
+}
+
+/// Forensic grid/scroll state snapshot (see [`Session::grid_debug`]).
+#[derive(Debug, Clone, Copy)]
+pub struct GridDebug {
+    pub scroll: ScrollDebug,
+    pub generation: u64,
+    pub pending_push: usize,
+    pub pending_dropped: u64,
 }
 
 /// Accumulates grid damage between [`Session::take_grid_frame`] calls.
@@ -351,10 +365,24 @@ impl Session {
     /// already seeded from its snapshot (found live on mobile: whole-history
     /// pushes after watch churn). A fresh watcher's snapshot covers
     /// everything up to now, so the clean slate is the correct baseline.
-    pub fn reset_grid_scrollback_pending(&self) {
+    pub fn reset_grid_scrollback_pending(&self) -> usize {
         let mut inner = self.inner.lock().unwrap();
+        let cleared = inner.grid.scrollback_push.len();
         inner.grid.scrollback_push.clear();
         inner.grid.scrollback_dropped = 0;
+        cleared
+    }
+
+    /// Forensic snapshot for grid-duplication triage: scroll-anchor state
+    /// plus the tracker's pending-push backlog.
+    pub fn grid_debug(&self) -> GridDebug {
+        let inner = self.inner.lock().unwrap();
+        GridDebug {
+            scroll: inner.emu.scroll_debug(),
+            generation: inner.grid.generation,
+            pending_push: inner.grid.scrollback_push.len(),
+            pending_dropped: inner.grid.scrollback_dropped,
+        }
     }
 
     pub fn screen_lines(&self) -> Vec<String> {
@@ -447,8 +475,23 @@ fn process_chunk(
     }
 
     let scan_events = inner.scanner.scan(offset, bytes);
+    let scroll_before = inner.emu.scroll_debug();
     let report = inner.emu.feed(bytes);
     if track_grid {
+        // Forensic tripwire: a single feed claiming hundreds of scrolled
+        // lines is either a genuine large output or the double-parse
+        // signature (history re-fed after replay). Log enough anchor state
+        // to tell them apart in production.
+        if report.scrolled_lines >= SCROLL_BURST_LOG_LINES {
+            warn!(
+                offset,
+                len = bytes.len(),
+                scrolled = report.scrolled_lines,
+                before = ?scroll_before,
+                after = ?inner.emu.scroll_debug(),
+                "large scroll burst in a single tracked feed"
+            );
+        }
         inner.grid.observe_feed(&report, &inner.emu);
     }
 
@@ -659,6 +702,18 @@ fn detect_row_shift(
     Some((shift, dirty))
 }
 
+/// Clip a holder-delivered chunk against the attachment's parse cursor:
+/// `None` when it is entirely below (already parsed), otherwise the clipped
+/// start offset and the byte count to skip from the front.
+fn clip_before_cursor(cursor: u64, offset: u64, len: usize) -> Option<(u64, usize)> {
+    let end = offset.saturating_add(len as u64);
+    if end <= cursor {
+        return None;
+    }
+    let skip = cursor.saturating_sub(offset) as usize;
+    Some((offset + skip as u64, skip))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn event_loop(
     inner: Arc<Mutex<Inner>>,
@@ -745,7 +800,17 @@ async fn event_loop(
     // screen otherwise leaves the watermark at 0 and the first alt-exit
     // ships the entire replayed history as scrollback_push (mobile
     // cumulative-scrollback report, daemon-restart-mid-TUI shape).
-    inner.lock().unwrap().emu.sync_scroll_anchor();
+    {
+        let mut guard = inner.lock().unwrap();
+        guard.emu.sync_scroll_anchor();
+        info!(
+            ring_oldest,
+            ring_next,
+            replay_end,
+            anchor = ?guard.emu.scroll_debug(),
+            "attach replay complete; scroll anchor synced"
+        );
+    }
 
     // ---- Live phase --------------------------------------------------------
     let mut pushes = match HolderClient::subscribe(&session_dir, replay_end).await {
@@ -753,6 +818,10 @@ async fn event_loop(
         Err(_) => return,
     };
 
+    // Parse cursor: every byte below it has been fed to the emulator by THIS
+    // attachment (ring replay, then live pushes). The live loop must never
+    // re-feed below it.
+    let mut live_cursor = replay_end;
     let quiet = Duration::from_millis(quiet_ms.max(1));
     let mut deadline: Option<tokio::time::Instant> = None;
     // Replayed content counts as recent activity: without this, a session whose
@@ -770,11 +839,37 @@ async fn event_loop(
                 let Some(push) = push else { break };
                 match push {
                     HolderPush::Output { offset, bytes } => {
+                        // Duplicate-delivery guard: re-feeding already-parsed
+                        // bytes duplicates emulator history and ships the
+                        // scrollback tail as a bogus `scrollback_push`
+                        // (mobile cumulative-scrollback report, v0.1.12
+                        // input-path shape) — clip or drop instead.
+                        let Some((offset, skip)) =
+                            clip_before_cursor(live_cursor, offset, bytes.len())
+                        else {
+                            warn!(
+                                offset,
+                                len = bytes.len(),
+                                live_cursor,
+                                "holder push entirely below parse cursor; dropped"
+                            );
+                            continue;
+                        };
+                        if skip > 0 {
+                            warn!(
+                                offset,
+                                skip,
+                                live_cursor,
+                                "holder push overlaps parse cursor; clipped"
+                            );
+                        }
+                        let bytes = &bytes[skip..];
                         let mut out = Vec::new();
                         let damaged = {
                             let mut guard = inner.lock().unwrap();
-                            process_chunk(&mut guard, offset, &bytes, 0, true, true, &mut out)
+                            process_chunk(&mut guard, offset, bytes, 0, true, true, &mut out)
                         };
+                        live_cursor = offset + bytes.len() as u64;
                         if damaged {
                             inner.lock().unwrap().settled_pending = true;
                             deadline = Some(tokio::time::Instant::now() + quiet);
@@ -1215,5 +1310,31 @@ mod grid_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::clip_before_cursor;
+
+    #[test]
+    fn drops_chunks_entirely_below_the_cursor() {
+        assert_eq!(clip_before_cursor(100, 40, 60), None); // ends exactly at cursor
+        assert_eq!(clip_before_cursor(100, 0, 50), None);
+        assert_eq!(clip_before_cursor(100, 100, 0), None); // empty at cursor
+    }
+
+    #[test]
+    fn passes_chunks_at_or_beyond_the_cursor_unchanged() {
+        assert_eq!(clip_before_cursor(100, 100, 16), Some((100, 0)));
+        // Forward gap (post-truncation resume): no clipping.
+        assert_eq!(clip_before_cursor(100, 500, 16), Some((500, 0)));
+        assert_eq!(clip_before_cursor(0, 0, 1), Some((0, 0)));
+    }
+
+    #[test]
+    fn clips_partial_overlap_to_the_unparsed_tail() {
+        assert_eq!(clip_before_cursor(100, 90, 30), Some((100, 10)));
+        assert_eq!(clip_before_cursor(100, 99, 2), Some((100, 1)));
     }
 }

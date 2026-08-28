@@ -101,3 +101,52 @@ regression.
 - e2e: watch-after-seeded-history first full frame has `push=0, dropped=0`;
   resize cycle (22→39→22) pushes 0; input pushes only genuinely scrolled
   rows; re-arm preserves in-flight pushes and stays generation-continuous.
+
+## Third report (2026-08-28, v0.1.12): input-path full with push=998
+
+Mobile reproduced on a confirmed v0.1.12 daemon
+(`reference/terminal-grid-v0.1.12-input-scrollback-regression-handoff.md`):
+clean attach + geometry fulls (gens 1–5, 48×38→48×20, `alt_screen=false`
+throughout), then two printable one-byte inputs → gen 6 `full=true`,
+`scrollback_push=998` (`previous=980`, dropped 0, row_shift 0), then
+`applied_input_seq` acks at gens 7–8.
+
+Static analysis of the capture:
+- gen 6 was almost certainly the §6.8.3 predict-gate forced full: the
+  watch refreshes termios on its first tick after input, and a gate flip
+  takes `take_grid_frame(true)` outside the damage path — explaining
+  `full=true` at input time (the local pure-input repro emits deltas). A
+  take only DRAINS the tracker, so the 998 rows were already pending: some
+  tracked live feed reported `scrolled_lines≈998`.
+- `scroll_history_lost` only bumps `dropped` (never pushes), the identity
+  path needs `hist == cap` (5000), `Emu::resize` re-anchors on the primary
+  screen, and every primary-ending feed self-anchors the watermark — so a
+  stale-anchor story contradicts the all-primary frames. The only
+  mechanism consistent with every number (980 snapshot + exactly the 18
+  rows the 38→20 shrink reflowed into history) is the first tracked live
+  feed RE-PARSING ring bytes the attach replay had already fed: a
+  re-parse duplicates emulator history row-for-row and ships the
+  scrollback tail as an "incremental" push — exactly what mobile renders.
+  The live loop fed holder pushes at face value, with no cursor check.
+- The clean local repro (restart → reattach at a primary prompt → resize
+  convergence + ready re-arms → printable input) stays push=0; the
+  production delivery quirk itself was not reproduced.
+
+Fix + forensics (branch `fix/terminal-grid-live-feed-guard`):
+1. **Duplicate-delivery guard** (`stem/src/session.rs`): the live loop
+   tracks `live_cursor` (starting at the replay end); pushes entirely
+   below it are dropped, partial overlaps clipped to the unparsed tail
+   (`clip_before_cursor`, unit-tested). Double-parse is structurally
+   impossible per attachment regardless of holder delivery behavior — and
+   each clip/drop warn-logs (the smoking gun if it ever fires).
+2. **Forensic instrumentation** (mobile doc items 1–8): attach-replay
+   completion logs offsets + `ScrollDebug` anchor state; any tracked feed
+   with `scrolled_lines ≥ 300` warn-logs before/after anchor state;
+   `terminal_ensure` logs `resume_from_offset` + post-attach `GridDebug`;
+   fresh grid-watch enable logs the cleared pending baseline; every frame
+   logs provenance (`watch_start`/`rearm`/`gate_flip`/`damage`) at debug,
+   and any frame shipping ≥ 300 pushed rows warn-logs full grid state.
+3. Regression `restart_reattach_primary_input_stays_scrollback_clean`
+   (`bud/tests/terminal_stem.rs`): the report's primary-input acceptance
+   shape — every frame across attach, resize convergence, ready re-arms,
+   and printable input must carry `push=0, dropped=0, alt=false`.
