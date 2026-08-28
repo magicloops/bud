@@ -10,10 +10,18 @@ function gitDescribe(): string {
   // (+ -dirty), e.g. "v0.1.13-2-g2a57857". Best-effort — builds outside a
   // git checkout fall back to "unknown".
   try {
-    return execSync('git describe --tags --long --always --dirty', {
+    const describe = execSync('git describe --tags --long --always --dirty', {
       encoding: 'utf8',
     }).trim()
+    if (!/^v\d+\.\d+\.\d+/.test(describe)) {
+      // Shallow/tagless checkouts (CI, Render) reach no release tag and
+      // `--always` yields a bare SHA — surface it in the build log so the
+      // deploy pipeline (render.yaml fetches tags first) can be checked.
+      console.warn(`[build-info] no release tag reachable from this checkout; build tag is "${describe}"`)
+    }
+    return describe
   } catch {
+    console.warn('[build-info] git describe failed; build tag is "unknown"')
     return 'unknown'
   }
 }

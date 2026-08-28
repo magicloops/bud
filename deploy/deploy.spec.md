@@ -26,7 +26,10 @@ CI-generated artifacts.
 ## Dependencies
 
 - [../plan/deploy/cloudflare-front-door-runbook.md](../plan/deploy/cloudflare-front-door-runbook.md)
-- [../render.yaml](../render.yaml)
+- [../render.yaml](../render.yaml) — the `bud-web` build command fetches full
+  history + tags before `pnpm build` (Render clones shallow/tagless) so the
+  bundle's baked `git describe` build tag resolves to `vX.Y.Z-N-gSHA` rather
+  than a bare SHA (`web/src/lib/build-info.ts`)
 - [../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md](../plan/daemon-readiness/phase-3-release-artifacts-and-manifest.md)
 
 ---
