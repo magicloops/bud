@@ -1831,7 +1831,10 @@ already live is an idempotent re-arm: the daemon emits one force-full frame
 in place, pending pushes survive (they are real deltas for connected
 viewers), and `generation` stays continuous. `scrollback_push` is therefore
 strictly incremental relative to the frames the current watch has emitted;
-`full: true` never redefines it.
+`full: true` never redefines it, and history replayed while (re)attaching a
+daemon-side session (e.g. after a daemon restart/upgrade) is never counted
+as scrolled — it predates the attachment and reaches clients via the
+snapshot.
 
 Server-authoritative grid deltas for live client rendering. The byte stream
 (§6.3) remains the durable transcript and resume substrate; grid frames are

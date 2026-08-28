@@ -739,6 +739,14 @@ async fn event_loop(
         }
     }
 
+    // Replayed content predates this attachment (consumers seed it from the
+    // snapshot). Re-anchor scroll accounting so the first live feeds never
+    // count it as freshly scrolled — a replay that ENDS inside the alt
+    // screen otherwise leaves the watermark at 0 and the first alt-exit
+    // ships the entire replayed history as scrollback_push (mobile
+    // cumulative-scrollback report, daemon-restart-mid-TUI shape).
+    inner.lock().unwrap().emu.sync_scroll_anchor();
+
     // ---- Live phase --------------------------------------------------------
     let mut pushes = match HolderClient::subscribe(&session_dir, replay_end).await {
         Ok(rx) => rx,

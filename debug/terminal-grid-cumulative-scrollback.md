@@ -71,15 +71,31 @@ Not changed: mid-watch pending-cap overflow still reports
 (now harmless); the client contract (`scrollback_push` stays strictly
 incremental — no new fields).
 
-## Residual uncertainty
+## Second root cause (2026-08-28, found via the v0.1.11 device retest)
 
-The capture's fine structure (pushes on gen 51/55 rather than the first
-frame at 47) implies viewer churn mid-session (SSE reconnects around
-keyboard transitions toggling the watch off/on while generations continue)
-— consistent with this mechanism, but not reproducible byte-for-byte from
-the log alone. If a device capture still shows cumulative pushes after
-this fix deploys, next step is daemon-side logging of per-feed
-`scrolled_lines` and watch enable/disable transitions for the session.
+Mobile re-tested on v0.1.11 (upgrade log confirmed the fixed daemon) and
+reproduced again: gen=20, full=true, push=998, previous=980 — this time
+with a TUI open, right after the UPGRADE ITSELF restarted the daemon, and
+triggered by keystrokes from mobile.
+
+Reproduced locally (`restart_reattach_mid_tui_never_pushes_replayed_history`):
+daemon restart with an alt-screen TUI open → sessions reattach → the ring
+replay arrives as one large chunk that ENDS inside the alt screen. The
+scroll-accounting block in `Emu::feed` only runs when a feed ends on the
+PRIMARY screen, so the fresh emulator's watermark stayed at 0 even though
+the replay built the full primary history. The first live alt-exit then
+computed `history_size − 0` = the ENTIRE replayed history as freshly
+scrolled — pre-fix: `push=588` for 588 seeded rows, matching the device's
+998. (Multi-chunk replays that end primary anchored correctly, which is
+why ordinary sessions never showed it.)
+
+Fix: `Emu::sync_scroll_anchor()` runs after every attach replay — anchors
+immediately when the replay ends primary, or defers via
+`anchor_pending_alt_exit` when it ends in alt: the first primary feed then
+anchors with `scrolled_lines = 0` and no seam, because everything up to
+that point predates the attachment and is covered by consumers'
+snapshots. Post-exit incremental pushes verified healthy in the same
+regression.
 
 ## Regression coverage
 - e2e: watch-after-seeded-history first full frame has `push=0, dropped=0`;
