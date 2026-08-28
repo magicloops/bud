@@ -33,6 +33,8 @@ Left sidebar navigation showing connected buds.
 
 ### `thread-panel.tsx`
 
+Footer build tag (`data-testid="web-build-tag"`): shows `shortBuildVersion(buildDescribe())` (e.g. `v0.1.13`); clicking toggles the full git-describe string (`v0.1.13-2-g2a57857`), which is always in the tooltip. The same describe is logged to the console at boot (`main.tsx`); see `lib/build-info.ts`.
+
 Thread list sidebar for conversation navigation.
 
 **Type**: `ThreadSummary` - Thread metadata including:

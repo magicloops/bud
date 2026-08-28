@@ -4,6 +4,11 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import 'streamdown/styles.css'
 import 'katex/dist/katex.min.css'
 import './index.css'
+import { buildDescribe } from '@/lib/build-info'
+
+// Build identity in every session's console — lets any bug report answer
+// "which web build?" without UI screenshots.
+console.info(`bud web build ${buildDescribe()}`)
 
 // Import the generated route tree
 import { routeTree } from './routeTree.gen'

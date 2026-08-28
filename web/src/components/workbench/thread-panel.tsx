@@ -1,4 +1,5 @@
 import { useMemo, useState, type MouseEvent } from 'react'
+import { buildDescribe, shortBuildVersion } from '@/lib/build-info'
 import { Trash2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getMutedColor, resolveCssVar } from '@/lib/theme-colors'
@@ -98,6 +99,7 @@ export function ThreadPanel({
 }: ThreadPanelProps) {
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ThreadSummary | null>(null)
+  const [showFullBuild, setShowFullBuild] = useState(false)
 
   const accentBorder = useMemo(() => {
     const resolved = resolveCssVar(accentColor ?? 'var(--accent)')
@@ -250,6 +252,20 @@ export function ThreadPanel({
             </div>
           )
         })}
+      </div>
+
+      {/* Build tag: short release version; click toggles the full
+          git-describe string (build forensics without a settings surface). */}
+      <div className="border-t-2 border-black/20 px-4 py-1.5">
+        <button
+          type="button"
+          onClick={() => setShowFullBuild((value) => !value)}
+          title={buildDescribe()}
+          className="font-mono text-[10px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+          data-testid="web-build-tag"
+        >
+          {showFullBuild ? buildDescribe() : shortBuildVersion(buildDescribe())}
+        </button>
       </div>
 
       {/* Delete Confirmation Dialog */}
