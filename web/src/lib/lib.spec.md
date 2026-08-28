@@ -307,6 +307,20 @@ deriveBudPalette(color) → {
 }
 ```
 
+### `build-info.ts`
+
+Build identity: `buildDescribe()` returns the `__BUD_WEB_BUILD__` constant
+(git `describe --tags --long --always --dirty`, baked by Vite `define` in
+`vite.config.ts`; "unknown" outside a Vite build, e.g. node-run tests), and
+`shortBuildVersion()` reduces it to the release-tag prefix (`v0.1.13`) or
+passes non-tag strings through. Rendered by the command composer's build tag
+(left of the model selector) and logged at boot in `main.tsx`.
+
+### `build-info.test.ts`
+
+Node tests: tag extraction (plain/dirty/zero-distance), non-tag passthrough
+(bare SHA, "unknown"), and the no-Vite fallback guard.
+
 ### `utils.ts`
 
 General utilities.

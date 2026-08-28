@@ -126,6 +126,8 @@ The existing-thread route also suppresses the generic indicator while assistant 
 
 ### `command-composer.tsx`
 
+Build tag (`data-testid="web-build-tag"`, first item in the bottom controls row, left of the model selector): shows `shortBuildVersion(buildDescribe())` (e.g. `v0.1.13`); clicking toggles the full git-describe string (`v0.1.13-2-g2a57857`), which is always in the tooltip. The same describe is logged to the console at boot (`main.tsx`); see `lib/build-info.ts`.
+
 Message input form with options.
 
 **Props**:

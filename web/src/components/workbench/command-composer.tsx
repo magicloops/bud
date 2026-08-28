@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { hasCoarsePointer } from '@/lib/use-viewport'
 import { getReasoningOptionsForModel, type ModelInfo, type ReasoningLevel } from '@/lib/models'
 import type { ApiAgentEnvironment, ApiContextBudget } from '@/lib/api-types'
 import type { WorkbenchStatus } from '@/components/workbench/workspace-top-bar'
 import { ContextSendButton } from './context-send-button'
+import { buildDescribe, shortBuildVersion } from '@/lib/build-info'
 
 type CommandComposerProps = {
   messageText: string
@@ -39,6 +40,7 @@ export function CommandComposer({
   environment = null,
   contextBudget,
 }: CommandComposerProps) {
+  const [showFullBuild, setShowFullBuild] = useState(false)
   const reasoningOptions = getReasoningOptionsForModel(models, selectedModel)
   const showReasoningSelector = reasoningOptions.length > 1 || reasoningOptions[0]?.value !== 'none'
   const stopMode =
@@ -110,6 +112,17 @@ export function CommandComposer({
       {/* Static row below the textarea on phones (the absolute pinning
           overlapped the text at <332px); pinned bottom-right on md+. */}
       <div className="flex items-center gap-2 px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] md:absolute md:bottom-4 md:right-4 md:gap-3 md:p-0">
+        {/* Build tag: short release version; click toggles the full
+            git-describe string (build forensics without a settings surface). */}
+        <button
+          type="button"
+          onClick={() => setShowFullBuild((value) => !value)}
+          title={buildDescribe()}
+          className="shrink-0 font-mono text-[10px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+          data-testid="web-build-tag"
+        >
+          {showFullBuild ? buildDescribe() : shortBuildVersion(buildDescribe())}
+        </button>
         {/* Model selector */}
         <select
           value={selectedModel}
