@@ -75,6 +75,12 @@ export type TerminalGridState = {
   grid: GridRun[][]
   /** Accumulated scrolled-off lines, oldest first (capped). */
   scrollback: GridRun[][]
+  /**
+   * Absolute index of `scrollback[0]` since seeding (advanced when the cap
+   * trims the front). Lets renderers key rows stably across trims/appends
+   * so appending never remounts surviving rows (native selection survives).
+   */
+  scrollbackStart: number
   /** Cumulative count of known scrollback seams/losses. */
   scrollbackDropped: number
   /** Predictive-echo gate from the latest frame (§6.8.3). */
@@ -99,6 +105,7 @@ export function emptyGridState(): TerminalGridState {
     cursor: { row: 0, col: 0, visible: true },
     grid: [],
     scrollback: [],
+    scrollbackStart: 0,
     scrollbackDropped: 0,
     predictOk: false,
     appliedInputSeq: null,
@@ -119,6 +126,39 @@ export type ApplyGridFrameResult = {
   discontinuity: boolean
 }
 
+function colorEqual(a: GridColor | undefined, b: GridColor | undefined): boolean {
+  if (a === b) {
+    return true
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
+  }
+  return false
+}
+
+/** Run-for-run content equality — cheap (rows are short) and exact. */
+export function gridRowsEqual(a: GridRun[], b: GridRun[]): boolean {
+  if (a === b) {
+    return true
+  }
+  if (a.length !== b.length) {
+    return false
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    const ra = a[i]!
+    const rb = b[i]!
+    if (
+      ra.t !== rb.t ||
+      (ra.a ?? 0) !== (rb.a ?? 0) ||
+      !colorEqual(ra.fg, rb.fg) ||
+      !colorEqual(ra.bg, rb.bg)
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
 export function applyGridFrame(
   state: TerminalGridState,
   frame: TerminalGridFrame,
@@ -136,7 +176,13 @@ export function applyGridFrame(
 
   let grid: GridRun[][]
   if (frame.full) {
-    grid = Array.from({ length: frame.rows }, (): GridRun[] => [])
+    // Start from the existing rows where geometry matches: rows the frame
+    // rewrites with identical content keep their array identity below, so
+    // React leaves their DOM (and any native selection in it) untouched.
+    const sameGeometry = state.rows === frame.rows && state.cols === frame.cols
+    grid = Array.from({ length: frame.rows }, (_, i): GridRun[] =>
+      sameGeometry ? (state.grid[i] ?? []) : [],
+    )
   } else if (frame.row_shift) {
     // Scroll hint: splice the existing rows by the shift (preserving row
     // array identity for unmoved-content memoization), blank the holes —
@@ -151,15 +197,22 @@ export function applyGridFrame(
   }
   for (const dirty of frame.dirty_rows) {
     if (dirty.row >= 0 && dirty.row < frame.rows) {
-      grid[dirty.row] = dirty.runs
+      // Identity preservation: unchanged content keeps the previous array
+      // so row memoization skips it and its DOM survives (full frames
+      // stream at TUI cadence; without this every frame collapsed native
+      // selection by replacing every row's text nodes).
+      const prev = grid[dirty.row]
+      grid[dirty.row] = prev && gridRowsEqual(prev, dirty.runs) ? prev : dirty.runs
     }
   }
 
   let scrollback = state.scrollback
+  let scrollbackStart = state.scrollbackStart
   let scrollbackDropped = state.scrollbackDropped + (frame.scrollback_dropped ?? 0)
   if (frame.scrollback_push.length > 0) {
     scrollback = state.scrollback.concat(frame.scrollback_push)
     if (scrollback.length > GRID_SCROLLBACK_CAP) {
+      scrollbackStart += scrollback.length - GRID_SCROLLBACK_CAP
       scrollback = scrollback.slice(scrollback.length - GRID_SCROLLBACK_CAP)
     }
   }
@@ -179,6 +232,7 @@ export function applyGridFrame(
       cursor: frame.cursor,
       grid,
       scrollback,
+      scrollbackStart,
       scrollbackDropped,
       predictOk: frame.predict_ok ?? false,
       appliedInputSeq:
@@ -204,13 +258,14 @@ export function seedGridScrollback(
   historyText: string,
 ): TerminalGridState {
   if (!historyText) {
-    return { ...state, scrollback: [] }
+    return { ...state, scrollback: [], scrollbackStart: 0 }
   }
   const lines = historyText.split('\n')
   const scrollback: GridRun[][] = lines.map((line) => (line.length > 0 ? [{ t: line }] : []))
   return {
     ...state,
     scrollback: scrollback.slice(Math.max(0, scrollback.length - GRID_SCROLLBACK_CAP)),
+    scrollbackStart: 0,
   }
 }
 
