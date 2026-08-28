@@ -80,6 +80,14 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
 - Integration detection window: no OSC 133 marker within 5s of attach →
   `mark_no_integration()` and a daemon-emitted `mode_changed` (stem swallows
   the ModeChange from its own override methods).
+- Grid watch semantics (mobile cumulative-scrollback fix,
+  debug/terminal-grid-cumulative-scrollback.md): `handle_grid_watch enabled`
+  on a LIVE loop is an idempotent in-place re-arm (`grid_force_full` flag →
+  one force-full frame; pushes survive; generation continuous); a FRESH
+  watch calls `Session::reset_grid_scrollback_pending()` first so the
+  backlog accumulated while unwatched (tracker runs on every feed, watch or
+  not — cap 1024 + dropped counter) is never shipped as an "incremental"
+  `scrollback_push` duplicating the viewer's snapshot history.
 - `clear_sender` drops attachments (pump/detect tasks aborted); holders
   survive and the service re-ensures with its committed offset on reconnect.
   Send/observe/input/resize can also re-attach to a surviving holder without

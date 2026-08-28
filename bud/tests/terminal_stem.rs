@@ -1662,3 +1662,347 @@ async fn awaited_observe_stalls_when_mid_command_activity_goes_quiet() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn grid_watch_never_ships_history_as_scrollback_push() {
+    // Regression for the mobile cumulative-scrollback report
+    // (debug/terminal-grid-cumulative-scrollback.md): a fresh watch after
+    // seeded history must start scrollback-clean (the snapshot covers it),
+    // and resize cycles / input must push only genuinely scrolled rows.
+    let shell = "/bin/zsh";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-push-diag";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+
+    // Match the mobile geometry.
+    manager
+        .handle_resize(TerminalResizeFrame {
+            envelope: envelope("terminal_resize"),
+            session_id: session_id.to_string(),
+            cols: 48,
+            rows: 22,
+        })
+        .await
+        .unwrap();
+    // Seed ~600 history lines.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-seed",
+            "for i in {1..600}; do echo hist-$i; done",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(20), "seed done", |f| {
+        is_result_for(f, "terminal_send_result", "req-seed")
+    })
+    .await;
+
+    let watch = TerminalGridWatchFrame {
+        envelope: envelope("terminal_grid_watch"),
+        session_id: session_id.to_string(),
+        enabled: true,
+    };
+    manager.handle_grid_watch(watch).await.unwrap();
+
+    let push_total = |frames: &[Value]| -> usize {
+        frames
+            .iter()
+            .filter(|f| is_type(f, "terminal_grid"))
+            .map(|f| {
+                f["scrollback_push"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0)
+            })
+            .sum()
+    };
+    let dropped_total = |frames: &[Value]| -> u64 {
+        frames
+            .iter()
+            .filter(|f| is_type(f, "terminal_grid"))
+            .map(|f| f["scrollback_dropped"].as_u64().unwrap_or(0))
+            .sum()
+    };
+
+    let frames = collect_frames(&mut rx, Duration::from_millis(1500)).await;
+    let first = frames
+        .iter()
+        .find(|f| is_type(f, "terminal_grid"))
+        .expect("watch produces a first frame");
+    assert_eq!(first["full"], true);
+    // THE bug: this used to be the entire seeded history (581 rows).
+    assert_eq!(
+        first["scrollback_push"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0),
+        0,
+        "fresh watch must not ship history as scrollback_push: {first:?}"
+    );
+    assert_eq!(first["scrollback_dropped"], 0);
+    assert_eq!(
+        push_total(&frames),
+        0,
+        "no pushes without new scrolling output"
+    );
+
+    // grow 22 -> 39 (keyboard hidden / measured geometry)
+    manager
+        .handle_resize(TerminalResizeFrame {
+            envelope: envelope("terminal_resize"),
+            session_id: session_id.to_string(),
+            cols: 48,
+            rows: 39,
+        })
+        .await
+        .unwrap();
+    let frames = collect_frames(&mut rx, Duration::from_millis(2500)).await;
+    assert_eq!(push_total(&frames), 0, "grow resize must not push history");
+    assert_eq!(dropped_total(&frames), 0);
+
+    // shrink 39 -> 22 (keyboard shown)
+    manager
+        .handle_resize(TerminalResizeFrame {
+            envelope: envelope("terminal_resize"),
+            session_id: session_id.to_string(),
+            cols: 48,
+            rows: 22,
+        })
+        .await
+        .unwrap();
+    let frames = collect_frames(&mut rx, Duration::from_millis(2500)).await;
+    assert_eq!(
+        push_total(&frames),
+        0,
+        "shrink resize must not push history"
+    );
+    assert_eq!(dropped_total(&frames), 0);
+
+    // Enter keypress (submit input)
+    manager
+        .handle_send(TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: session_id.to_string(),
+            request_id: "req-enter".to_string(),
+            text: None,
+            submit: Some(false),
+            key: Some("enter".to_string()),
+            r#await: None,
+        })
+        .await
+        .unwrap();
+    let frames = collect_frames(&mut rx, Duration::from_millis(2000)).await;
+    // Enter at a zsh prompt scrolls at most a couple of rows.
+    assert!(
+        push_total(&frames) <= 4,
+        "input must push only genuinely scrolled rows, got {}",
+        push_total(&frames)
+    );
+
+    // Re-arm (watch enable while live) keeps the loop and its baseline:
+    // an in-place force-full frame, generation continuous, no history dump.
+    let last_gen = frames
+        .iter()
+        .rev()
+        .chain(std::iter::empty())
+        .filter(|f| is_type(f, "terminal_grid"))
+        .filter_map(|f| f["generation"].as_u64())
+        .next()
+        .unwrap_or(1);
+    manager
+        .handle_grid_watch(TerminalGridWatchFrame {
+            envelope: envelope("terminal_grid_watch"),
+            session_id: session_id.to_string(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let frames = collect_frames(&mut rx, Duration::from_millis(1500)).await;
+    let rearmed = frames
+        .iter()
+        .find(|f| is_type(f, "terminal_grid"))
+        .expect("re-arm produces a full frame");
+    assert_eq!(rearmed["full"], true);
+    assert!(
+        rearmed["generation"].as_u64().unwrap() > last_gen,
+        "generation continuous"
+    );
+    assert_eq!(
+        rearmed["scrollback_push"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0),
+        0,
+        "re-arm must not dump history either"
+    );
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn grid_watch_saturated_history_and_resize_races_stay_incremental() {
+    // Companion regression: saturated emulator history (5000-line cap) and
+    // resize storms racing live output never produce cumulative pushes.
+    let shell = "/bin/zsh";
+    if !std::path::Path::new(shell).exists() {
+        eprintln!("skipping: {shell} not present");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let session_id = "sess-push-sat";
+    manager
+        .handle_ensure(ensure_frame_with_shell(
+            session_id,
+            shell,
+            &home.to_string_lossy(),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(15), "prompt", |f| {
+        is_event(f, "prompt_ready")
+    })
+    .await;
+    manager
+        .handle_resize(TerminalResizeFrame {
+            envelope: envelope("terminal_resize"),
+            session_id: session_id.to_string(),
+            cols: 48,
+            rows: 22,
+        })
+        .await
+        .unwrap();
+    // Saturate the 5000-line emulator history.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-sat",
+            "for i in {1..5300}; do echo sat-$i; done",
+            Some(TerminalSendAwait::Command),
+        ))
+        .await
+        .unwrap();
+    wait_frame(&mut rx, Duration::from_secs(60), "sat done", |f| {
+        is_result_for(f, "terminal_send_result", "req-sat")
+    })
+    .await;
+
+    let watch = TerminalGridWatchFrame {
+        envelope: envelope("terminal_grid_watch"),
+        session_id: session_id.to_string(),
+        enabled: true,
+    };
+    manager.handle_grid_watch(watch).await.unwrap();
+    let push_total = |frames: &[Value]| -> usize {
+        frames
+            .iter()
+            .filter(|f| is_type(f, "terminal_grid"))
+            .map(|f| {
+                f["scrollback_push"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0)
+            })
+            .sum()
+    };
+    let frames = collect_frames(&mut rx, Duration::from_millis(1500)).await;
+    assert_eq!(
+        push_total(&frames),
+        0,
+        "fresh watch on saturated history must not ship pushes"
+    );
+
+    for (c, r, label) in [(48u16, 39u16, "sat-grow"), (48, 22, "sat-shrink")] {
+        manager
+            .handle_resize(TerminalResizeFrame {
+                envelope: envelope("terminal_resize"),
+                session_id: session_id.to_string(),
+                cols: c,
+                rows: r,
+            })
+            .await
+            .unwrap();
+        let frames = collect_frames(&mut rx, Duration::from_millis(2000)).await;
+        assert_eq!(
+            push_total(&frames),
+            0,
+            "{label}: resize must not push history"
+        );
+    }
+
+    // Variant C: output racing resizes.
+    manager
+        .handle_send(send_frame(
+            session_id,
+            "req-race",
+            "for i in {1..800}; do echo race-$i; sleep 0.002; done",
+            None,
+        ))
+        .await
+        .unwrap();
+    for (c, r) in [(48u16, 39u16), (48, 22), (48, 39), (48, 22)] {
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        manager
+            .handle_resize(TerminalResizeFrame {
+                envelope: envelope("terminal_resize"),
+                session_id: session_id.to_string(),
+                cols: c,
+                rows: r,
+            })
+            .await
+            .unwrap();
+    }
+    let frames = collect_frames(&mut rx, Duration::from_secs(6)).await;
+    let total_push = push_total(&frames);
+    let total_dropped: u64 = frames
+        .iter()
+        .filter(|f| is_type(f, "terminal_grid"))
+        .map(|f| f["scrollback_dropped"].as_u64().unwrap_or(0))
+        .sum();
+    // 800 output lines scroll ~800 rows; cumulative duplication would be
+    // thousands. Allow slack for prompt/redraw scrolls, require the total to
+    // stay in the incremental ballpark and the seam counter quiet.
+    assert!(
+        (700..=900).contains(&total_push),
+        "racing pushes must stay incremental, got {total_push}"
+    );
+    assert_eq!(total_dropped, 0);
+
+    manager
+        .handle_close(TerminalCloseFrame {
+            envelope: envelope("terminal_close"),
+            session_id: session_id.to_string(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+}

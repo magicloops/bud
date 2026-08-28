@@ -343,6 +343,20 @@ impl Session {
         take_grid_frame_inner(&mut self.inner.lock().unwrap(), force_full)
     }
 
+    /// Discard pending scrollback pushes and the dropped counter. For the
+    /// start of a FRESH grid watch: the tracker accumulates pushes whenever
+    /// no watch is draining frames (pre-watch lifetime, viewer-dark
+    /// windows), and shipping that backlog as the first frame's
+    /// "incremental" `scrollback_push` duplicates history the consumer
+    /// already seeded from its snapshot (found live on mobile: whole-history
+    /// pushes after watch churn). A fresh watcher's snapshot covers
+    /// everything up to now, so the clean slate is the correct baseline.
+    pub fn reset_grid_scrollback_pending(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.grid.scrollback_push.clear();
+        inner.grid.scrollback_dropped = 0;
+    }
+
     pub fn screen_lines(&self) -> Vec<String> {
         self.inner.lock().unwrap().emu.screen_lines()
     }

@@ -139,6 +139,12 @@ struct SessionEntry {
     /// viewers attached. Dies with the entry (re-ensure/reconnect: the
     /// service re-arms with a fresh `terminal_grid_watch`).
     grid_watch: std::sync::Mutex<Option<JoinHandle<()>>>,
+    /// Re-arm signal for a LIVE watch loop: `terminal_grid_watch enabled`
+    /// while the loop is already running requests one force-full frame
+    /// in-place instead of respawning — pending scrollback pushes survive
+    /// (they are real deltas for the connected consumers), and only a FRESH
+    /// watch starts scrollback-clean (see `reset_grid_scrollback_pending`).
+    grid_force_full: std::sync::atomic::AtomicBool,
 }
 
 impl SessionEntry {
@@ -395,6 +401,7 @@ impl TerminalManager {
             pump,
             detect: std::sync::Mutex::new(None),
             grid_watch: std::sync::Mutex::new(None),
+            grid_force_full: std::sync::atomic::AtomicBool::new(false),
         });
 
         let detect = tokio::spawn(detect_integration_window(
@@ -884,16 +891,39 @@ impl TerminalManager {
             }
         };
 
-        if let Some(existing) = entry.grid_watch.lock().unwrap().take() {
-            existing.abort();
-        }
         if !frame.enabled {
+            if let Some(existing) = entry.grid_watch.lock().unwrap().take() {
+                existing.abort();
+            }
             debug!(session_id = %frame.session_id, "grid watch disabled");
             return Ok(());
+        }
+        // Idempotent re-arm: a live loop just gets a force-full request —
+        // pushes survive (real deltas for already-connected consumers).
+        {
+            let mut watch = entry.grid_watch.lock().unwrap();
+            if let Some(existing) = watch.as_ref() {
+                if !existing.is_finished() {
+                    entry
+                        .grid_force_full
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    entry.shared.grid_dirty.notify_one();
+                    debug!(session_id = %frame.session_id, "grid watch re-armed in place");
+                    return Ok(());
+                }
+            }
+            if let Some(existing) = watch.take() {
+                existing.abort();
+            }
         }
         let Some(sender) = self.sender().await else {
             return Ok(());
         };
+        // Fresh watch: the consumer just seeded from a snapshot that covers
+        // all history up to now — start scrollback-clean so the backlog
+        // accumulated while unwatched is never shipped as an "incremental"
+        // push (whole-history duplication found live on mobile).
+        entry.session.lock().await.reset_grid_scrollback_pending();
         debug!(session_id = %frame.session_id, "grid watch enabled");
         let task = tokio::spawn(grid_watch_loop(
             Arc::downgrade(&entry),
@@ -1272,6 +1302,9 @@ async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: 
         // serialization and send happen unlocked. The termios query is a
         // local UDS roundtrip (None for surviving pre-v2 holders → gate
         // stays closed, predictions off).
+        let rearm_full = entry
+            .grid_force_full
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
         let (frame, alt_screen) = {
             let mut session = entry.session.lock().await;
             if termios_at.is_none_or(|at| at.elapsed() >= GRID_TERMIOS_REFRESH) {
@@ -1279,7 +1312,7 @@ async fn grid_watch_loop(entry: Weak<SessionEntry>, session_id: String, sender: 
                 termios_at = Some(tokio::time::Instant::now());
             }
             (
-                session.take_grid_frame(force_full),
+                session.take_grid_frame(force_full || rearm_full),
                 session.alt_screen_active(),
             )
         };
