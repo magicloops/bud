@@ -32,6 +32,8 @@ const CapabilitiesSchema = z
       })
       .passthrough()
       .optional(),
+    /** §6.7.4: the daemon accepts `terminal_send` `await:"auto"`. */
+    terminal_send_auto: z.boolean().optional(),
     supports_pty: z.boolean().optional(),
     sessions_backends: z.array(z.string()).optional(),
     tmux_version: z.string().optional(),
@@ -46,6 +48,7 @@ const CapabilitiesSchema = z
     sessions: capabilities.sessions,
     terminal: capabilities.terminal,
     ...(capabilities.terminal_proto ? { terminal_proto: capabilities.terminal_proto } : {}),
+    ...(capabilities.terminal_send_auto === true ? { terminal_send_auto: true } : {}),
     ...(capabilities.bud_envelope ? { bud_envelope: capabilities.bud_envelope } : {}),
     ...(capabilities.proxy ? { proxy: capabilities.proxy } : {}),
     ...(capabilities.files ? { files: capabilities.files } : {}),

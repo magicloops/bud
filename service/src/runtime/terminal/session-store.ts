@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import { db } from "../../db/client.js";
-import { terminalSessionTable } from "../../db/schema.js";
+import { budTable, terminalSessionTable } from "../../db/schema.js";
 import { TERMINAL_PROTO_VERSION } from "../../config.js";
 import type { DaemonTransportRouter } from "../../transport/daemon-router.js";
 import { daemonTransportRouter } from "../../transport/composite-daemon-router.js";
@@ -74,6 +74,18 @@ export class TerminalSessionStore {
     });
 
     return row ? this.rowToSession(row) : null;
+  }
+
+  /** The bud's last advertised `hello` capabilities (null when unknown). */
+  async getBudCapabilities(budId: string): Promise<Record<string, unknown> | null> {
+    const row = await db.query.budTable.findFirst({
+      columns: { capabilities: true },
+      where: eq(budTable.budId, budId),
+    });
+    const capabilities = row?.capabilities;
+    return capabilities && typeof capabilities === "object" && !Array.isArray(capabilities)
+      ? (capabilities as Record<string, unknown>)
+      : null;
   }
 
   async getSession(sessionId: string): Promise<TerminalSession | null> {

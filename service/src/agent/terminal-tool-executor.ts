@@ -434,15 +434,43 @@ export class TerminalToolExecutor {
       key: gesture.kind === "key" ? gesture.key : undefined,
     });
 
+    // Compatibility gate (proto §6.7.4): only daemons advertising
+    // `terminal_send_auto` accept `await:"auto"` — an unknown await variant
+    // fails their frame parse and tears down the control connection. For
+    // older daemons the service resolves the await itself with the same
+    // rule (submitted text with no open command → command, else settled)
+    // and retries a legacy `command_in_flight` refusal as settled.
+    const supportsAuto = await this.daemonSupportsSendAuto(sessionId);
+    const interaction = {
+      // text submits by default (commands, REPLs, prompts, chat TUIs);
+      // explicit submit:false supports composing without a trailing Enter.
+      ...(gesture.kind === "text" ? { text: gesture.text, submit: gesture.submit ?? true } : {}),
+      ...(gesture.kind === "key" ? { key: gesture.key } : {}),
+    };
+    const legacyAwait = async (): Promise<"command" | "settled"> =>
+      gesture.kind === "text" && (gesture.submit ?? true) && !(await this.resolveOpenCommand(sessionId))
+        ? "command"
+        : "settled";
+
     let sendResult: Awaited<ReturnType<TerminalSessionManager["sendInteraction"]>>;
     try {
-      sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
-        // text submits by default (commands, REPLs, prompts, chat TUIs);
-        // explicit submit:false supports composing without a trailing Enter.
-        ...(gesture.kind === "text" ? { text: gesture.text, submit: gesture.submit ?? true } : {}),
-        ...(gesture.kind === "key" ? { key: gesture.key } : {}),
-        await: "auto",
-      });
+      try {
+        sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
+          ...interaction,
+          await: supportsAuto ? "auto" : await legacyAwait(),
+        });
+      } catch (err) {
+        if (!supportsAuto && err instanceof Error && err.message.includes("command_in_flight")) {
+          // Legacy daemon refused a command-await because a command opened
+          // between our check and the dispatch: deliver as program input.
+          sendResult = await this.terminalSessionManager.sendInteraction(sessionId, {
+            ...interaction,
+            await: "settled",
+          });
+        } else {
+          throw err;
+        }
+      }
     } catch (err) {
       if (this.isInterruptedError(err)) {
         const openCommand = await this.resolveOpenCommand(sessionId);
@@ -577,6 +605,25 @@ export class TerminalToolExecutor {
       ...observeFacts,
       openCommand: await this.resolveOpenCommand(sessionId),
     };
+  }
+
+  /** Daemon capability check; managers without the method (tests) count as modern. */
+  private async daemonSupportsSendAuto(sessionId: string): Promise<boolean> {
+    const manager = this.terminalSessionManager as {
+      supportsTerminalSendAuto?: (sessionId: string) => Promise<boolean>;
+    };
+    if (typeof manager.supportsTerminalSendAuto !== "function") {
+      return true;
+    }
+    try {
+      return await manager.supportsTerminalSendAuto(sessionId);
+    } catch (err) {
+      this.logger.warn(
+        { err, sessionId, component: "agent" },
+        "Daemon capability lookup failed; assuming legacy send awaits",
+      );
+      return false;
+    }
   }
 
   /**

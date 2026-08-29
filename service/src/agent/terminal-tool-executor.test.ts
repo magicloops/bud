@@ -1163,3 +1163,98 @@ test("terminal.observe output is tail-capped for the model", async () => {
   assert.ok(String(execution.payload.output).endsWith("line 3999 " + "x".repeat(20)));
   assert.equal(execution.payload.output_truncation_reason, "service_observe_limit");
 });
+
+test("legacy daemons (no terminal_send_auto) get service-resolved awaits and a command_in_flight retry", async () => {
+  const awaits: string[] = [];
+  let openCommandVisible = false;
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async supportsTerminalSendAuto() {
+      return false;
+    },
+    async getLatestCommandForSession(sessionId: string) {
+      return openCommandVisible
+        ? {
+            commandId: "cmd_late",
+            terminalSessionId: sessionId,
+            commandStartedAt: new Date(Date.now() - 1_000),
+            commandFinishedAt: null,
+            exitCode: null,
+          }
+        : null;
+    },
+    async sendInteraction(_sessionId: string, interaction: { await?: string }) {
+      awaits.push(interaction.await ?? "none");
+      if (interaction.await === "command") {
+        // A program opened between the service check and the dispatch: the
+        // legacy daemon refuses command-awaits into it.
+        openCommandVisible = true;
+        throw new Error("command_in_flight");
+      }
+      return {
+        dispatched: true,
+        outcome: { event: "settled", data: { mode: "shell", quiet_ms: 300 } },
+      };
+    },
+    async observeTerminal() {
+      return { view: "delta", output: "> ls", linesCaptured: 1, changed: true };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    text: "ls",
+    callId: "call_legacy_daemon",
+  });
+
+  // No open command at check time → "command"; refusal → retried as "settled".
+  assert.deepEqual(awaits, ["command", "settled"]);
+  assert.equal(execution.result.kind, "interaction_ack");
+  assert.equal(execution.result.dispatched, true);
+  const openCommand = execution.payload.open_command as { command_id: string };
+  assert.equal(openCommand.command_id, "cmd_late");
+});
+
+test("legacy daemons: text into a known-open program is dispatched as settled directly", async () => {
+  const awaits: string[] = [];
+  const terminalSessionManager = {
+    getSessionContext() {
+      return { mode: "shell", integration: "osc133", cwd: "/repo" };
+    },
+    async supportsTerminalSendAuto() {
+      return false;
+    },
+    async getLatestCommandForSession(sessionId: string) {
+      return {
+        commandId: "cmd_codex",
+        terminalSessionId: sessionId,
+        commandStartedAt: new Date(Date.now() - 60_000),
+        commandFinishedAt: null,
+        exitCode: null,
+      };
+    },
+    async sendInteraction(_sessionId: string, interaction: { await?: string }) {
+      awaits.push(interaction.await ?? "none");
+      return {
+        dispatched: true,
+        outcome: { event: "settled", data: { mode: "shell", quiet_ms: 300 } },
+      };
+    },
+    async observeTerminal() {
+      return { view: "delta", output: "", linesCaptured: 0, changed: false };
+    },
+  };
+
+  const execution = await createExecutor(terminalSessionManager).execute("thread_test", {
+    type: "tool_call",
+    tool: "terminal.send",
+    text: "Build the site",
+    callId: "call_legacy_program_input",
+  });
+
+  assert.deepEqual(awaits, ["settled"]);
+  assert.equal(execution.result.kind, "interaction_ack");
+});

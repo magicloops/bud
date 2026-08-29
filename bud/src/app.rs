@@ -1487,6 +1487,11 @@ impl BudApp {
             "sessions": terminal_available,
             "terminal": terminal_available,
             "terminal_proto": TERMINAL_PROTO_VERSION,
+            // §6.7.4 unified send: this daemon accepts `await:"auto"` and
+            // reports readiness/gate facts. Services must not send `auto` to
+            // daemons lacking it (an unknown await variant fails the frame
+            // parse, which tears down the control connection).
+            "terminal_send_auto": true,
             "bud_envelope": {
                 "version": 1,
                 "websocket_binary": true,

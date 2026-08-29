@@ -19,6 +19,15 @@ is reported `still_running` when a command is known open or the session was
 at a shell. Every terminal result carries `open_command` from
 `getLatestCommandForSession`.
 
+Compatibility gate: `await:"auto"` is sent only when the session's daemon
+advertised `capabilities.terminal_send_auto` (`TerminalSessionManager.
+supportsTerminalSendAuto`, read from the bud row's last `hello`). Older
+daemons tear down their control connection on an unknown await variant, so
+for them the executor resolves the await itself (submitted text with no
+open command → `command`, else `settled`) and retries a legacy
+`command_in_flight` refusal as `settled`. Service-first deploys are
+therefore safe; nothing here touches persisted daemon or session state.
+
 ## Purpose
 
 The agent service coordinates AI-assisted terminal interactions. When a user sends a message, it:

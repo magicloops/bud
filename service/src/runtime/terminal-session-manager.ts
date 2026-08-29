@@ -159,6 +159,21 @@ export class TerminalSessionManager {
     return this.daemonTransport.isBudOnline(budId);
   }
 
+  /**
+   * Proto §6.7.4 compatibility gate: whether the session's daemon advertised
+   * `capabilities.terminal_send_auto` in its last `hello`. Services must not
+   * send `await:"auto"` to daemons that did not — an unknown await variant
+   * fails their frame parse and tears down the control connection.
+   */
+  async supportsTerminalSendAuto(sessionId: string): Promise<boolean> {
+    const session = await this.sessionStore.getSession(sessionId);
+    if (!session) {
+      return false;
+    }
+    const capabilities = await this.sessionStore.getBudCapabilities(session.budId);
+    return capabilities?.terminal_send_auto === true;
+  }
+
   getBudTransportStatus(budId: string): DaemonTransportStatus {
     return this.daemonTransport.getTransportStatus(budId);
   }

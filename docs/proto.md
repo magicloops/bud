@@ -1182,6 +1182,7 @@ Dev-only token bypass example:
     "sessions": true,
     "terminal": true,
     "terminal_proto": "0.2",
+    "terminal_send_auto": true,
     "bud_envelope": {
       "version": 1,
       "websocket_binary": true,
@@ -1276,6 +1277,7 @@ Reconnect example:
     "sessions": true,
     "terminal": true,
     "terminal_proto": "0.2",
+    "terminal_send_auto": true,
     "bud_envelope": {
       "version": 1,
       "websocket_binary": true,
@@ -1355,6 +1357,13 @@ Rules:
   (renames via BUD_DEVICE_NAME still work). Unowned Buds (dev bypass) store
   the requested name verbatim
 - normal first-time onboarding uses browser-mediated device claim before challenge-response reconnect
+- `capabilities.terminal_send_auto: true` (daemon ≥ v0.1.15) means the daemon
+  accepts `terminal_send` `await:"auto"` and reports readiness/gate facts
+  (§6.7.4). Services MUST NOT send `auto` to daemons that omit it: an
+  unknown await variant fails the frame parse, which tears down the control
+  connection. Without it the service resolves the await itself (submitted
+  text with no open command → `command`, else `settled`) and retries a
+  legacy `command_in_flight` refusal as `settled`.
 - `capabilities.llm` is optional and advertised only after the daemon's local
   ds4 startup probe succeeds; it uses logical server metadata only and must not
   include a raw local URL
