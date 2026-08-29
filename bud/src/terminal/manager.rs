@@ -650,6 +650,11 @@ impl TerminalManager {
         let expect_start_marker =
             submit && effective_await == Some(TerminalSendAwait::Command) && genuine_osc133;
 
+        // Screen before the gesture: the settle-await measures the program's
+        // REACTION against it (echo included), so a reply that arrives a few
+        // seconds later is part of this result rather than the next wait's.
+        let dispatch_screen = entry.session.lock().await.screen_lines();
+
         // Dispatch under the per-session lock (gesture ordering); the await
         // below runs after releasing it.
         let dispatch = {
@@ -727,6 +732,22 @@ impl TerminalManager {
         }
 
         let result = match (effective_await, waiter) {
+            (Some(TerminalSendAwait::Settled), Some(rx)) => {
+                match tokio::time::timeout(
+                    AWAIT_SAFETY_CAP,
+                    await_send_settled(
+                        &entry,
+                        rx,
+                        dispatch_screen,
+                        Duration::from_millis(STALL_QUIET_MS),
+                    ),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => AwaitResult::Timeout,
+                }
+            }
             (Some(kind), Some(rx)) => {
                 match tokio::time::timeout(
                     AWAIT_SAFETY_CAP,
@@ -1400,6 +1421,69 @@ async fn await_outcome(
         }
     }
 }
+/// Resolve a settle-await on a send into a program (§6.7.4): the program's
+/// REACTION to the gesture, settled.
+///
+/// The old rule ("first `Settled` event after dispatch", 300 ms of quiet)
+/// resolved on the input echo — a chat TUI showed `› exit` and its working
+/// indicator, its actual reply landed seconds later as an unrelated wait
+/// result, and the model misread `• Goodbye!` as an exit. Now, like the
+/// knobless wait: exact boundaries win when they arrive (`command_finished`,
+/// `prompt_ready`, close); otherwise resolve once the screen has been
+/// damage-quiet AND unchanged for `stall_quiet` measured from the LAST
+/// change since dispatch — so a program that never reacts returns after
+/// `stall_quiet`, and one that replies after a pause returns `stall_quiet`
+/// after the reply. `data.reacted` reports whether the screen changed at
+/// all. Animations (spinners) keep it waiting — the service's send budget
+/// turns that into a still-active report and `terminal.wait` takes over.
+async fn await_send_settled(
+    entry: &SessionEntry,
+    mut rx: broadcast::Receiver<PumpEvent>,
+    dispatch_screen: Vec<String>,
+    stall_quiet: Duration,
+) -> AwaitResult {
+    let poll = Duration::from_millis(100);
+    let mut last_screen = dispatch_screen.clone();
+    let mut last_change = tokio::time::Instant::now();
+    loop {
+        tokio::select! {
+            received = rx.recv() => match received {
+                Ok(PumpEvent::CommandFinished { data, .. }) => {
+                    return AwaitResult::Outcome(json!({ "event": "command_finished", "data": data }))
+                }
+                Ok(PumpEvent::PromptReady { data }) => {
+                    return AwaitResult::Outcome(json!({ "event": "prompt_ready", "data": data }))
+                }
+                Ok(PumpEvent::Closed) | Err(broadcast::error::RecvError::Closed) => {
+                    return AwaitResult::Closed
+                }
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            },
+            _ = tokio::time::sleep(poll) => {
+                let (quiet, mode, screen) = {
+                    let session = entry.session.lock().await;
+                    (session.is_quiet(), session.mode(), session.screen_lines())
+                };
+                if screen != last_screen {
+                    last_screen = screen;
+                    last_change = tokio::time::Instant::now();
+                    continue;
+                }
+                if quiet && last_change.elapsed() >= stall_quiet {
+                    return AwaitResult::Outcome(json!({
+                        "event": "settled",
+                        "data": {
+                            "mode": mode_str(mode),
+                            "quiet_ms": stall_quiet.as_millis() as u64,
+                            "reacted": last_screen != dispatch_screen,
+                        },
+                    }));
+                }
+            }
+        }
+    }
+}
+
 /// Resolve an awaited `terminal_observe` (§6.1) — the knobless wait.
 ///
 /// One semantic, no caller-chosen mode (`await:"settled"` and `"command"` are

@@ -1580,7 +1580,17 @@ mid-command.
 ```
 
 `await` (§6.7.4): `command` (resolve on the command boundary), `settled`
-(resolve on the next settle), or **`auto`** — the daemon picks from terminal
+(resolve when the program's REACTION to the gesture has settled: exact
+boundaries — `command_finished`, `prompt_ready`, close — win; otherwise the
+screen must be damage-quiet and unchanged for the stall window (1500 ms)
+measured from the last change since dispatch, so an ignored gesture returns
+after one window and a reply that lands seconds later is part of this
+result; `data.reacted` says whether the screen changed at all. A program
+that works SILENTLY after the echo is indistinguishable from one that
+ignored the gesture and settles after one window (chat TUIs animate a
+working indicator, which holds the send) — the caller then waits — since
+v0.1.16; earlier daemons resolved on the first 300 ms quiet point, i.e. the
+input echo), or **`auto`** — the daemon picks from terminal
 state: a submitted line at an idle shell prompt (no open command, mode
 `shell`/`unknown`) behaves as `command`, anything else as `settled`. The
 unified `terminal.send` tool always sends `auto`. The result reports
@@ -2389,6 +2399,7 @@ If the Bud reconnects before a later provider step, the service refreshes enviro
 ## 12. Changelog
 
 - **Current**
+  - `terminal_send` `await:"settled"` (and `auto` inside a program) resolves on the program's settled REACTION (stall window from the last change since dispatch, boundaries win, `data.reacted`) instead of the first quiet point after the echo.
   - `terminal_send` `await:"auto"` (daemon-resolved: command boundary at an idle shell prompt, settle otherwise) with `resolved_await`, `gated_ms`, `program_ready` on the result; input into an open command is gated on readiness (painted + quiet, 10 s cap); `interactive_started` is held until ready and carries `ready`/`painted`; the `command_in_flight` refusal is retired. Model-facing: `terminal.send { text | key, submit? }` is the single input tool (`terminal.run` retired).
   - Daemon: width-shrinking `terminal_resize` is deferred while a readline line is pending at an idle shell prompt (≤3 s, until `command_started`/`prompt_ready`); `ready` announces the applied geometry. Fixes readline-vs-reflow garbling (duplicated command, overwritten output rows) when a narrow viewer takes geometry mid-command.
   - the awaited observe is now KNOBLESS: `await` values are synonyms, the

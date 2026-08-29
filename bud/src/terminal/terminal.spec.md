@@ -51,8 +51,13 @@ Module composition; re-exports `TerminalConfig` and `TerminalManager`.
   reporting `gated_ms`/`program_ready` (raw-mode init discards pending tty
   input; typing before a TUI paints loses the text — the codex launch→send
   regression). Command-awaits likewise HOLD `interactive_started` until
-  ready (or the cap: `ready:false`, `painted`). Awaited
-  outcomes (`await: "command" | "settled"`) resolve off the pump's broadcast
+  ready (or the cap: `ready:false`, `painted`). Settle-awaits use
+  `await_send_settled`: the program's reaction to the gesture, settled —
+  boundaries win, else damage-quiet + screen unchanged for `STALL_QUIET_MS`
+  from the last change since dispatch (`data.reacted`); the old
+  first-`Settled`-event rule resolved on the echo and split a chat TUI's
+  reply into the next wait (the codex `exit`/`Goodbye!` misread). Command
+  awaits (`await: "command"`) resolve off the pump's broadcast
   channel — settled-awaits ALSO resolve on `prompt_ready` (returning to a
   shell prompt is maximal settlement; an idle prompt never emits `settled`,
   so exits from interactive programs would otherwise ride the timeout) — *after* the session lock is released, so slow commands never block
