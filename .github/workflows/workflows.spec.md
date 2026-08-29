@@ -46,7 +46,7 @@ The workflow:
 - generates Worker static assets through [../../scripts/bud-release.mjs](../../scripts/bud-release.mjs)
 - deploys [../../deploy/get-bud-dev/worker.js](../../deploy/get-bud-dev/worker.js) with
   `cloudflare/wrangler-action@v4` and explicitly requests Wrangler v4
-- optionally smoke-tests `/`, `/install.sh`, the stable manifest (polling up
+- optionally smoke-tests `/`, `/install.sh`, the stable manifest (polling up Both the stable manifest AND the versioned Linux artifact routes are polled (up to 3 minutes) — Worker propagation is eventually consistent per route, and the v0.1.15 promote saw the manifest converge while an artifact HEAD 404'd a second later.
   to 3 minutes for edge propagation of the new Worker version — single-shot
   checks repeatedly raced it and read the previous release), and a
   versioned artifact redirect

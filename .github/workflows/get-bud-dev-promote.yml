@@ -90,5 +90,24 @@ jobs:
             echo "stable manifest never converged on ${VERSION} within 3 minutes"
             exit 1
           fi
-          curl -fsSI "https://get.bud.dev/releases/${VERSION}/bud-x86_64-unknown-linux-gnu.tar.gz"
-          curl -fsSI "https://get.bud.dev/releases/${VERSION}/bud-aarch64-unknown-linux-gnu.tar.gz"
+          # Versioned artifact routes propagate to the edge on the same
+          # eventually-consistent schedule as the manifest (v0.1.15 promote:
+          # manifest converged, the artifact HEAD 404'd one second later on
+          # one PoP, then served) — poll them the same way.
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            url="https://get.bud.dev/releases/${VERSION}/bud-${target}.tar.gz"
+            ok=""
+            for attempt in $(seq 1 18); do
+              if curl -fsSI "${url}" >/dev/null; then
+                echo "artifact ${target} served (attempt ${attempt})"
+                ok="1"
+                break
+              fi
+              echo "artifact ${target} not served yet; retrying in 10s (attempt ${attempt}/18)"
+              sleep 10
+            done
+            if [ -z "${ok}" ]; then
+              echo "artifact ${target} never became available within 3 minutes"
+              exit 1
+            fi
+          done
