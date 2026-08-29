@@ -373,6 +373,11 @@ export class BudConnection {
       dispatched: result.data.dispatched,
       outcome: result.data.outcome ?? null,
       error: result.data.error,
+      ...(result.data.resolved_await ? { resolvedAwait: result.data.resolved_await } : {}),
+      ...(typeof result.data.gated_ms === "number" ? { gatedMs: result.data.gated_ms } : {}),
+      ...(typeof result.data.program_ready === "boolean"
+        ? { programReady: result.data.program_ready }
+        : {}),
     });
   }
 

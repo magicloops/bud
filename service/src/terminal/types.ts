@@ -14,8 +14,11 @@ export type TerminalObservationView = "delta" | "screen" | "history";
 /**
  * Await modes for `terminal_send` (proto 0.3). Replaces the retired 0.2
  * `wait_for` vocabulary. Omitted = resolve on dispatch (transport ack only).
+ * `auto` (§6.7.4): the daemon picks from terminal state — a submitted line
+ * at a shell prompt awaits the command boundary, anything into a running
+ * program awaits settle. The unified `terminal.send` tool always sends it.
  */
-export type TerminalSendAwait = "command" | "settled";
+export type TerminalSendAwait = "command" | "settled" | "auto";
 
 export const TERMINAL_EVENT_NAMES = [
   "prompt_ready",

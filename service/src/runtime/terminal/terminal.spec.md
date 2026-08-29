@@ -25,6 +25,7 @@ Shared `SessionState` and `TerminalSession` types for the terminal runtime, incl
 ### `session-store.ts`
 
 Database-backed session-record lifecycle, including `ensureSessionRecordForThread(...)` as the single concurrency-safe first-use session boundary. It receives the daemon transport router so session ensure/resume checks do not depend on `ws/gateway` directly.
+`getBudCapabilities(budId)` returns the bud row's last `hello` capabilities (the §6.7.4 `terminal_send_auto` compatibility gate reads it via `TerminalSessionManager.supportsTerminalSendAuto`).
 
 Proto 0.3 notes:
 - `ensureSession(sessionId, { resumeFromOffset })` includes `resume_from_offset` on the outbound `terminal_ensure` frame when a positive stored end offset is supplied, so the daemon backfills ring-buffered output from exactly that offset.

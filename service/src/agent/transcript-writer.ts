@@ -513,7 +513,7 @@ function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<
     };
   }
 
-  // Terminal tool result (terminal.run / terminal.send / terminal.observe /
+  // Terminal tool result (terminal.send / terminal.observe /
   // terminal.wait). The command's own duration_ms stays inside the persisted
   // tool payload; top-level duration_ms remains the service tool-execution
   // timing.
@@ -528,7 +528,9 @@ function serializeRuntimeToolResultFields(execution: ExecutedAgentTool): Record<
     output_bytes: execution.result.outputBytes,
     truncated: execution.result.truncated,
     dispatched: execution.result.dispatched,
-    raw_text_sent: execution.result.rawTextSent,
+    text_sent: execution.result.textSent,
+    gated_ms: execution.result.gatedMs,
+    program_ready: execution.result.programReady,
     key_sent: execution.result.keySent,
     delta: serializeTerminalDelta(execution.result.delta),
     changed: execution.result.changed,

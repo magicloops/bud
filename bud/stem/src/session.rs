@@ -530,6 +530,7 @@ fn process_chunk(
                     out.push(Event::CommandStarted {
                         command_index: index,
                         output_byte_start: ev.at_offset,
+                        screen: inner.emu.screen_lines(),
                     });
                 }
             }

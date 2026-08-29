@@ -13,14 +13,11 @@ import {
 export type AgentToolCallDirective =
   | {
       type: "tool_call";
-      tool: "terminal.run";
-      command: string;
-      callId: string;
-    }
-  | {
-      type: "tool_call";
       tool: "terminal.send";
-      rawText?: string;
+      /** Text to type — a shell command at a prompt, or input for the
+       * foreground program. Exactly one of `text` / `key`. */
+      text?: string;
+      /** Press Enter after `text` (default true). */
       submit?: boolean;
       key?: string;
       callId: string;
@@ -88,7 +85,7 @@ export type TerminalWaitOutcome =
 
 export type TerminalToolCallDirective = Extract<
   AgentToolCallDirective,
-  { tool: "terminal.run" | "terminal.send" | "terminal.observe" | "terminal.wait" }
+  { tool: "terminal.send" | "terminal.observe" | "terminal.wait" }
 >;
 
 export type WebViewToolCallDirective = Extract<
@@ -118,26 +115,37 @@ export type TerminalDeltaSnapshot = {
 /**
  * Result of one terminal tool execution (proto 0.3 vocabulary).
  *
- * - `kind: "command"` — terminal.run; carries the daemon-authoritative exit
- *   code, duration, and the command's output slice. `status: "still_running"`
- *   means the service wait budget expired before `command_finished`; that is a
- *   normal result, not a failure.
- * - `kind: "interaction_ack"` — terminal.send; dispatch acknowledgement plus a
- *   settled screen delta.
+ * `terminal.send` is the single input tool; the daemon decides the wait
+ * (`await:"auto"`) and the result takes one of two shapes:
+ * - `kind: "command"` — the text ran as a shell command at a prompt; carries
+ *   the daemon-authoritative exit code, duration, and the command's output
+ *   slice. `status: "still_running"` means the service wait budget expired
+ *   before `command_finished` (normal, not a failure); `status:
+ *   "interactive"` means the command launched a program that is now READY
+ *   for input (painted + quiet) — drive it with further sends.
+ * - `kind: "interaction_ack"` — the input went to a running program;
+ *   dispatch acknowledgement plus a settled screen delta.
  * - `kind: "observation"` — terminal.observe; grid-backed screen/delta/history.
  * - `kind: "wait"` — terminal.wait; blocked on a daemon fact (or the service
  *   budget / a human) and returns the delta observed since the last look.
  */
 export type TerminalCallResult = {
   kind: "command" | "interaction_ack" | "observation" | "wait";
-  // terminal.run
+  // terminal.send (kind "command")
   /** `input_absorbed`: the text was typed but no shell command started — a
    * foreground program consumed it (or the shell ran nothing). */
-  status?: "completed" | "still_running" | "terminal_busy" | "interactive" | "input_absorbed";
+  status?: "completed" | "still_running" | "interactive" | "input_absorbed";
+  /** `status:"interactive"`: the daemon's readiness verdict for the launched
+   * program (§6.7.4) — `ready:false` only when the readiness cap expired. */
+  readiness?: { ready: boolean; painted: boolean };
+  /** Input gate (§6.7.4): ms the daemon waited for the open program to be
+   * ready before typing; `programReady:false` when the cap expired. */
+  gatedMs?: number;
+  programReady?: boolean;
   commandId?: string | null;
   exitCode?: number | null;
   durationMs?: number | null;
-  // terminal.run + terminal.observe output text
+  // command output / terminal.observe output text
   output?: string;
   outputBytes?: number;
   truncated?: boolean;
@@ -147,8 +155,8 @@ export type TerminalCallResult = {
    * awaits accept command_finished), its real exit code rides along — the
    * send/run substitutability path for models that pick send at a prompt. */
   interactionExitCode?: number | null;
-  rawTextSent?: boolean;
-  /** raw_text gestures: whether Enter was pressed after the text (default true). */
+  textSent?: boolean;
+  /** text gestures: whether Enter was pressed after the text (default true). */
   submitted?: boolean;
   keySent?: string | null;
   delta?: TerminalDeltaSnapshot | null;
@@ -258,7 +266,6 @@ export type AgentTransportToolError = {
 export function toolNameForConversation(
   tool: AgentToolCallDirective["tool"],
 ):
-  | "terminal_run"
   | "terminal_send"
   | "terminal_observe"
   | "terminal_wait"
@@ -267,8 +274,6 @@ export function toolNameForConversation(
   | "web_view_list"
   | typeof ASK_USER_QUESTIONS_TOOL {
   switch (tool) {
-    case "terminal.run":
-      return "terminal_run";
     case "terminal.send":
       return "terminal_send";
     case "terminal.observe":
@@ -290,7 +295,6 @@ export function isTerminalToolDirective(
   directive: AgentToolCallDirective,
 ): directive is TerminalToolCallDirective {
   return (
-    directive.tool === "terminal.run" ||
     directive.tool === "terminal.send" ||
     directive.tool === "terminal.observe" ||
     directive.tool === "terminal.wait"
@@ -330,11 +334,9 @@ export function buildToolArgs(
   directive: AgentToolCallDirective,
 ): Record<string, unknown> {
   switch (directive.tool) {
-    case "terminal.run":
-      return { command: directive.command };
     case "terminal.send":
       return {
-        ...(typeof directive.rawText === "string" ? { raw_text: directive.rawText } : {}),
+        ...(typeof directive.text === "string" ? { text: directive.text } : {}),
         ...(typeof directive.submit === "boolean" ? { submit: directive.submit } : {}),
         ...(directive.key ? { key: directive.key } : {}),
       };

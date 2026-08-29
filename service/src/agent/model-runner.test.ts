@@ -260,7 +260,6 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
     runner.resolveModelReasoning("gpt-5.4"),
   );
 
-  const runTool = capturedTools.find((tool) => tool.name === "terminal_run");
   const sendTool = capturedTools.find((tool) => tool.name === "terminal_send");
   const observeTool = capturedTools.find((tool) => tool.name === "terminal_observe");
   const waitTool = capturedTools.find((tool) => tool.name === "terminal_wait");
@@ -268,8 +267,9 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   const webViewCloseTool = capturedTools.find((tool) => tool.name === "web_view_close");
   const webViewListTool = capturedTools.find((tool) => tool.name === "web_view_list");
   const askUserQuestionsTool = capturedTools.find((tool) => tool.name === "ask_user_questions");
-  assert.ok(runTool);
   assert.ok(sendTool);
+  // terminal_run is retired: terminal_send is the single input tool.
+  assert.equal(capturedTools.some((tool) => tool.name === "terminal_run"), false);
   assert.ok(observeTool);
   assert.ok(waitTool);
   assert.ok(webViewOpenTool);
@@ -277,13 +277,9 @@ test("invokeModel advertises only public wait modes and no timeout_ms", async (t
   assert.ok(webViewListTool);
   assert.ok(askUserQuestionsTool);
 
-  const runProperties = runTool.parameters.properties as Record<string, unknown>;
   const sendProperties = sendTool.parameters.properties as Record<string, unknown>;
   const observeProperties = observeTool.parameters.properties as Record<string, unknown>;
-  assert.ok(runProperties.command);
-  assert.deepEqual(runTool.parameters.required, ["command"]);
-  assert.deepEqual(Object.keys(runProperties), ["command"]);
-  assert.deepEqual(Object.keys(sendProperties).sort(), ["key", "raw_text", "submit"]);
+  assert.deepEqual(Object.keys(sendProperties).sort(), ["key", "submit", "text"]);
   assert.deepEqual(Object.keys(observeProperties).sort(), ["lines", "view"]);
   assert.deepEqual(
     (observeProperties.view as { enum?: unknown }).enum,
@@ -739,13 +735,13 @@ test("extractToolCall normalizes legacy keys arrays to canonical semantic key st
   assert.deepEqual(directive, {
     type: "tool_call",
     tool: "terminal.send",
-    rawText: undefined,
+    text: undefined,
     key: "ctrl+c",
     callId: "call_send_legacy",
   });
 });
 
-test("extractToolCall parses terminal_run commands and rejects command-less calls", () => {
+test("extractToolCall parses terminal_send text and tolerates the legacy raw_text field", () => {
   const runner = new AgentModelRunner(
     createRuntime() as never,
     createLogger() as never,
@@ -753,40 +749,50 @@ test("extractToolCall parses terminal_run commands and rejects command-less call
     false,
   );
 
-  const directive = runner.extractToolCall({
-    id: "resp_run",
-    content: [],
-    stopReason: "tool_use",
-    toolCalls: [
-      {
-        id: "call_run_1",
-        name: "terminal_run",
-        input: {
-          command: "git status",
-        },
-      },
-    ],
-  });
-
-  assert.deepEqual(directive, {
-    type: "tool_call",
-    tool: "terminal.run",
-    command: "git status",
-    callId: "call_run_1",
-  });
-
-  assert.equal(
+  assert.deepEqual(
     runner.extractToolCall({
-      id: "resp_run_invalid",
+      id: "resp_send_text",
       content: [],
       stopReason: "tool_use",
       toolCalls: [
-        {
-          id: "call_run_2",
-          name: "terminal_run",
-          input: {},
-        },
+        { id: "call_send_1", name: "terminal_send", input: { text: "git status" } },
       ],
+    }),
+    {
+      type: "tool_call",
+      tool: "terminal.send",
+      text: "git status",
+      key: undefined,
+      callId: "call_send_1",
+    },
+  );
+
+  assert.deepEqual(
+    runner.extractToolCall({
+      id: "resp_send_legacy_text",
+      content: [],
+      stopReason: "tool_use",
+      toolCalls: [
+        { id: "call_send_2", name: "terminal_send", input: { raw_text: "y", submit: false } },
+      ],
+    }),
+    {
+      type: "tool_call",
+      tool: "terminal.send",
+      text: "y",
+      submit: false,
+      key: undefined,
+      callId: "call_send_2",
+    },
+  );
+
+  // terminal_run is retired: unknown tool names produce no directive.
+  assert.equal(
+    runner.extractToolCall({
+      id: "resp_run_retired",
+      content: [],
+      stopReason: "tool_use",
+      toolCalls: [{ id: "call_run_1", name: "terminal_run", input: { command: "git status" } }],
     }),
     null,
   );

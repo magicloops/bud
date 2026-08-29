@@ -335,43 +335,35 @@ export class AgentConversationLoader {
 
       switch (payload.tool) {
         case "terminal.run":
+          // Retired tool: historical rows replay as the unified send.
           if (typeof payload.command !== "string") {
             return null;
           }
-          return {
-            type: "tool_call",
-            tool: "terminal.run",
-            command: payload.command,
-            callId,
-          };
-        case "terminal.send": {
-          // Historical rows: submitted line input (`command`, or legacy
-          // `text` + `submit`) replays as terminal.run so old transcripts
-          // round-trip into the current tool vocabulary.
-          let command = typeof payload.command === "string" ? payload.command : undefined;
-          let rawText = typeof payload.raw_text === "string" ? payload.raw_text : undefined;
-
-          if (command === undefined && rawText === undefined && typeof payload.text === "string") {
-            if (payload.submit === true) {
-              command = payload.text;
-            } else {
-              rawText = payload.text;
-            }
-          }
-
-          if (command !== undefined) {
-            return {
-              type: "tool_call",
-              tool: "terminal.run",
-              command,
-              callId,
-            };
-          }
-
+          // Enter is the default: no explicit `submit` in the replayed args.
           return {
             type: "tool_call",
             tool: "terminal.send",
-            rawText,
+            text: payload.command,
+            callId,
+          };
+        case "terminal.send": {
+          // Historical rows carry `raw_text` (pre-unification) or `command`
+          // (0.2); all replay as the unified `text`.
+          const text =
+            typeof payload.text === "string"
+              ? payload.text
+              : typeof payload.raw_text === "string"
+                ? payload.raw_text
+                : typeof payload.command === "string"
+                  ? payload.command
+                  : undefined;
+          return {
+            type: "tool_call",
+            tool: "terminal.send",
+            text,
+            // Enter is the default; only an explicit compose (`submit:false`)
+            // is worth replaying.
+            ...(payload.submit === false ? { submit: false } : {}),
             key: normalizeToolKeyInput(payload.key, payload.keys),
             callId,
           };

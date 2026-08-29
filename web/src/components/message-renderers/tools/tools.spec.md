@@ -28,14 +28,16 @@ export const toolContentRenderers: Record<string, ToolContentRenderer> = {
 Renders the revised terminal tool contract:
 
 **Props**:
-- `payload.command` / `payload.raw_text` / `payload.key` - Send-first input summary for `terminal.send`
+- `payload.text` / `payload.key` (historical rows: `raw_text`, `command`) - Input summary for `terminal.send`, the single terminal input tool
+- `payload.kind` - `command` (the text ran as a shell command: rendered by `TerminalRunContent` with exit code / duration / output, `status:"interactive"` for launched programs) or `interaction_ack` (input into a program: delta card)
 - `payload.input_dispatched` / `payload.enter_requested` - Explicit send-result gesture metadata for `terminal.send`
 - `payload.delta` / `payload.readiness` / `payload.context_after` - Delta-first send-result state for `terminal.send`
 - `payload.view` / `payload.lines` - Observation metadata for `terminal.observe`
 - `payload.outcome` / `payload.waited_ms` / `payload.exit_code` - Wait result metadata for `terminal.wait`
 
 **Rendering**:
-- `terminal.send`: compact delta-first card showing readiness, context source, input dispatch state, Enter-request state, and any visible delta excerpt
+- `terminal.send` (`kind:"command"`): the command card — exit chip / still-running badge, duration, output excerpt (historical `terminal.run` rows render the same way)
+- `terminal.send` (`kind:"interaction_ack"`): compact delta-first card showing the typed text or key, input dispatch state, and any visible delta excerpt
 - `terminal.observe`: dashed observation badge
 - `terminal.wait`: dashed badge "Waited <duration>: <outcome label>" (settled / command finished (exit N) / back at the prompt / nothing to wait for / still busy / interrupted / ended by a new message) with the mode chip
 

@@ -32,20 +32,21 @@ test("terminal tool args serialize the proto 0.3 model-facing shapes", () => {
   assert.deepEqual(
     buildToolArgs({
       type: "tool_call",
-      tool: "terminal.run",
-      command: "git status",
-      callId: "call-run",
+      tool: "terminal.send",
+      text: "git status",
+      callId: "call-send-command",
     }),
-    { command: "git status" },
+    { text: "git status" },
   );
   assert.deepEqual(
     buildToolArgs({
       type: "tool_call",
       tool: "terminal.send",
-      rawText: "partial input",
-      callId: "call-send-raw",
+      text: "partial input",
+      submit: false,
+      callId: "call-send-compose",
     }),
-    { raw_text: "partial input" },
+    { text: "partial input", submit: false },
   );
   assert.deepEqual(
     buildToolArgs({
@@ -92,7 +93,6 @@ test("terminal tool args serialize the proto 0.3 model-facing shapes", () => {
 });
 
 test("terminal directives map to canonical provider tool names", () => {
-  assert.equal(toolNameForConversation("terminal.run"), "terminal_run");
   assert.equal(toolNameForConversation("terminal.send"), "terminal_send");
   assert.equal(toolNameForConversation("terminal.observe"), "terminal_observe");
 });

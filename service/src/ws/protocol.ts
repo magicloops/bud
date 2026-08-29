@@ -32,6 +32,8 @@ const CapabilitiesSchema = z
       })
       .passthrough()
       .optional(),
+    /** §6.7.4: the daemon accepts `terminal_send` `await:"auto"`. */
+    terminal_send_auto: z.boolean().optional(),
     supports_pty: z.boolean().optional(),
     sessions_backends: z.array(z.string()).optional(),
     tmux_version: z.string().optional(),
@@ -46,6 +48,7 @@ const CapabilitiesSchema = z
     sessions: capabilities.sessions,
     terminal: capabilities.terminal,
     ...(capabilities.terminal_proto ? { terminal_proto: capabilities.terminal_proto } : {}),
+    ...(capabilities.terminal_send_auto === true ? { terminal_send_auto: true } : {}),
     ...(capabilities.bud_envelope ? { bud_envelope: capabilities.bud_envelope } : {}),
     ...(capabilities.proxy ? { proxy: capabilities.proxy } : {}),
     ...(capabilities.files ? { files: capabilities.files } : {}),
@@ -185,7 +188,11 @@ export const TerminalSendResultSchema = TerminalEnvelopeSchema.extend({
   request_id: z.string(),
   dispatched: z.boolean(),
   outcome: TerminalEventOutcomeSchema.nullable().optional(),
-  error: z.string().nullable()
+  error: z.string().nullable(),
+  // §6.7.4 unified-send facts (daemon ≥ v0.1.15).
+  resolved_await: z.enum(["command", "settled", "auto"]).optional(),
+  gated_ms: z.number().optional(),
+  program_ready: z.boolean().optional()
 });
 
 export const ErrorFrameSchema = EnvelopeSchema.extend({

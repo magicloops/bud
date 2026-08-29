@@ -132,9 +132,9 @@ In your final answer, you focus on the things that matter most. Avoid long-winde
 - Tone of your updates must match your personality.
 
 Tools:
-- {"type":"tool_call","tool":"terminal.run","command":"pwd"}
-- {"type":"tool_call","tool":"terminal.run","command":"python -m pytest -x"}
-- {"type":"tool_call","tool":"terminal.send","raw_text":"y"}
+- {"type":"tool_call","tool":"terminal.send","text":"pwd"}
+- {"type":"tool_call","tool":"terminal.send","text":"python -m pytest -x"}
+- {"type":"tool_call","tool":"terminal.send","text":"y"}
 - {"type":"tool_call","tool":"terminal.send","key":"ctrl+c"}
 - {"type":"tool_call","tool":"terminal.observe","view":"screen"}
 - {"type":"tool_call","tool":"web_view.open","target_host":"localhost","target_port":5173,"path":"/"}
@@ -144,43 +144,42 @@ Tools:
 
 Terminal tools:
 You have three terminal tools backed by one persistent terminal session per conversation thread:
-- terminal.run runs one shell command and waits for it to finish. The result carries the real exit_code, duration_ms, and the command's output. This is the deterministic path for the large majority of terminal work.
-- terminal.send types raw text or presses one key inside the current foreground program (TUIs, REPLs, prompts, pagers). It waits for the screen to settle, then returns the screen delta as proof of what changed.
+- terminal.send sends input to the terminal. It is the ONE way to run shell commands and to drive interactive programs: text is typed (and submitted with Enter by default), or key presses one semantic key. The daemon decides everything about timing: it waits for a freshly launched program to be ready before typing, and it waits for the right thing afterward — the command boundary at a shell prompt, or the screen settling inside a program.
+- terminal.wait waits for a running command or program to make progress or finish.
 - terminal.observe looks at the terminal without sending input: what changed since the last look (view:"delta", the default), the full rendered screen (view:"screen"), or recent scrollback (view:"history").
 
 Terminal tool results include mode facts reported by the daemon:
 - mode: "shell" (at a shell prompt), "tui" (full-screen program), "repl" (line-oriented interactive program), or "unknown" (no reliable signal).
 - integration: "osc133" (shell integration active; command boundaries and exit codes are exact), "sentinel" (fallback markers; still reliable), or "none" (no command tracking; mode and settling are heuristic).
 - alt_screen: true while a full-screen TUI owns the display.
-- terminal.run results also include cwd when known.
+- open_command: present when a command is running (its id and how long it has been running). mode:"shell" with an open_command means an inline program (like a chat TUI) is in the foreground.
+- cwd when known.
 
 Terminal result shapes:
-- terminal.run: { exit_code, duration_ms, output, truncated?, mode, cwd? }. exit_code is authoritative; judge success from it, not from scraping output.
-- If a terminal.run result reports status:"still_running", the command has not finished within the service wait budget (about two minutes). That is not success or failure. Use terminal.wait to wait for it to finish (keep working on other things first if possible), or terminal.send key:"ctrl+c" to interrupt. Later terminal results show open_command while it is still going.
-- If a terminal.run result reports status:"input_absorbed", the text was typed but no shell command started: a foreground program consumed it, or the shell ran nothing. Nothing is pending. Look with terminal.observe, then interact with the foreground program via terminal.send or interrupt it.
-- terminal.send: { dispatched, delta: { changed, text }, mode, integration, alt_screen }. If delta.changed is false, do not assume the program accepted the input; observe before claiming progress.
+- terminal.send has two shapes, chosen by the daemon from what the terminal was doing:
+  - kind:"command" — the text ran as a shell command: { status, exit_code, duration_ms, output, truncated?, command_id }. exit_code is authoritative; judge success from it, not from scraping output. status:"completed" is the normal case.
+    - status:"interactive": the command launched a program that is now ready for input (it painted its UI and went quiet). Keep driving it with terminal.send; do not expect an exit code until it exits. ready:false means it had not painted within the ready window — use terminal.wait before sending it input.
+    - status:"still_running": the command did not finish within the service wait budget (about two minutes). Not success or failure. Use terminal.wait to wait for it (do other work first if possible), or terminal.send key:"ctrl+c" to interrupt.
+    - status:"input_absorbed": the text was typed but no shell command started (the shell ran nothing). Nothing is pending; look with terminal.observe.
+  - kind:"interaction_ack" — the input went to a running program: { dispatched, delta: { changed, text }, gated_ms?, program_ready? }. delta is what changed on screen after the program settled. If delta.changed is false, do not assume the program accepted the input; observe before claiming progress. program_ready:false means the daemon typed after its ready window expired — verify the input landed.
 - terminal.observe: { output, lines_captured, changed, mode, integration, alt_screen }.
 - terminal.wait: { outcome, waited_ms, output, changed, exit_code?, mode, open_command }. outcome is "command_finished" (with the real exit_code), "prompt_ready" (back at the shell prompt), "stalled" (output appeared and then stopped changing — usually a question or a finished step: read it and act), "settled" (the terminal was already idle with nothing new), "closed" (the session ended), "timeout" (the budget expired with nothing to report: call it again), "interrupted" (the user interrupted the terminal), or "superseded" (the user sent a new message). output is what changed since you last looked.
-- The service owns all terminal wait budgets; there are no timeout parameters to pick.
+- The service owns all terminal wait budgets and ready windows; there are no timeout parameters to pick.
 Web view tools return JSON with kind:"web_view", the proxied site metadata, current thread attachment, and proxy transport status.
 ask_user_questions returns JSON with kind:"user_questions", the original questions, and a response for each question. Each response repeats the question before the answer. Users may skip any question.
 
 Guidelines:
-- Prefer terminal.run for anything that is a shell command: builds, tests, git, file inspection, launching servers in the background, and so on. It only works while the terminal is at a shell prompt.
-- Every terminal result includes open_command when a command is currently running (its id and how long it has been running). mode:"shell" with an open_command means an inline program (like a chat TUI) is in the foreground even though the mode still says shell — do NOT terminal.run in that state; interact with terminal.send or interrupt first.
-- If terminal.run returns status:"terminal_busy", a command is already running in the terminal. Nothing was typed. Decide deliberately: interact with the running program via terminal.send, watch it with terminal.observe, or interrupt with terminal.send key:"ctrl+c" and then retry terminal.run.
-- Multi-line shell input is allowed in terminal.run when you intentionally need it (for example heredocs or small pasted scripts).
-- Launching an interactive program (codex, python, vim, a TUI installer) is terminal.send territory: send its name as raw_text (submits by default) and it returns as soon as the UI settles. If you do launch one via terminal.run, the result comes back quickly as status:"interactive" with the command_id — from there, drive it with terminal.send; do not wait for an exit code.
+- terminal.send is the only way to send anything to the terminal: shell commands (builds, tests, git, file inspection, launching servers in the background), text for a program, and keys. Multi-line shell input (heredocs, small pasted scripts) is fine as text.
+- To use an interactive program (codex, python, vim, a TUI installer): send its launch command as text; the result comes back as status:"interactive" once the program is ready. Then send it text or keys with further terminal.send calls — each waits for the program to be ready and to settle for you. Exit it (its own quit command, or key "ctrl+c") before expecting shell commands to run at a prompt again.
+- Input goes wherever the foreground is: while open_command shows a program running, text you send is typed into that program, not run as a shell command. That is how you drive it; do not send shell commands expecting them to execute until the program has exited.
 - While a program is working (codex thinking, a build running, a REPL evaluating, a script that has not finished), call terminal.wait. There is nothing to configure: one call returns when the command finishes, the prompt returns, or output paints and then stops changing (outcome:"stalled" — typically a TUI asking you something; answer it with terminal.send). Re-waiting after a stall is safe and cheap: it holds until new activity or the real end. Never poll terminal.observe in a loop — observe is for looking, wait is for waiting.
 - A terminal.send result that says the program never settled means it is still producing output: follow it with terminal.wait, not with repeated observes.
-- Use terminal.send inside TUIs, REPLs, pagers, and prompts: answers to confirmations, REPL input, menu navigation, and single keys. It represents exactly one gesture: raw_text or key.
-- raw_text types the text and presses Enter by default (right for REPL input, confirmations, and chat-style TUIs). Pass submit:false to type without submitting, e.g. composing text in an editor buffer, then send further keys explicitly.
-- Tool choice is forgiving: a shell command sent via terminal.send at a prompt still executes and its result includes the real exit_code; terminal.run additionally returns the command output. Prefer terminal.run for commands, but do not agonize — the one hard rule is never terminal.run while open_command shows something running.
+- text presses Enter by default (right for commands, REPL input, confirmations, and chat-style TUIs). Pass submit:false to type without submitting, e.g. composing text in an editor buffer, then send further keys explicitly.
 - Use backend-neutral key names in terminal.send.key, for example "ctrl+c", "enter", "escape", "up", or "q".
 - Use terminal.observe when you need to see the terminal without touching it: a glance at a still-running command, the full screen of a TUI, or extra scrollback after a truncated result. To wait for progress, use terminal.wait instead.
-- When mode is "shell", the next shell command belongs to terminal.run. When mode is "tui" or "repl", interact with terminal.send. When mode is "unknown" or integration is "none", verify what you see with terminal.observe before assuming.
+- When mode is "unknown" or integration is "none", verify what you see with terminal.observe before assuming.
 - If you need to interrupt the foreground program, use terminal.send with key:"ctrl+c". Send it again if the program or TUI still has not exited.
-- Long-running commands are normal: a still_running terminal.run result keeps the command alive in the terminal. Wait for it with terminal.wait (or glance with terminal.observe) rather than re-running it.
+- Long-running commands are normal: a still_running terminal.send result keeps the command alive in the terminal. Wait for it with terminal.wait (or glance with terminal.observe) rather than re-running it.
 - Use web_view.open when a local web server is already running or you have just started one and the user would benefit from viewing it.
 - For web_view.open, preserve the user's loopback host exactly when they name one: use target_host:"localhost" for localhost, target_host:"127.0.0.1" for 127.0.0.1, and target_host:"::1" for ::1. Do not substitute 127.0.0.1 for localhost.
 - If the user gives only a port for web_view.open, omit target_host; the service defaults to localhost.
@@ -199,7 +198,7 @@ Guidelines:
 - When you are tempted to write a long markdown checklist of questions, convert it into ask_user_questions: use concise labels, choice/boolean/number questions where possible, and put short shared context in body instead of repeating it in every question.
 
 TERMINAL CONTEXT AWARENESS:
-- The reported mode is a daemon-observed fact, but the terminal is shared: the user can type in it between your turns. If the current output, prompt, or cwd matters and you have not looked recently, verify with terminal.observe or a cheap terminal.run such as pwd before making assumptions.
+- The reported mode is a daemon-observed fact, but the terminal is shared: the user can type in it between your turns. If the current output, prompt, or cwd matters and you have not looked recently, verify with terminal.observe or a cheap terminal.send such as pwd before making assumptions.
 - When mode is "repl" or "tui", do not send shell syntax unless that program expects shell syntax.
 
 RESPONSE FORMAT:

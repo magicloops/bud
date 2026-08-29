@@ -38,6 +38,12 @@ pub(crate) struct SessionFacts {
     /// prompt and an inline TUI running under a shell (both report
     /// mode=shell) — `terminal.run` is refused while one is open.
     pub open_command: Option<(String, std::time::Instant)>,
+    /// Screen as rendered when the open command started: the program has
+    /// PAINTED once the screen differs from it — the first half of readiness
+    /// (painted + quiet) that gates input into a freshly launched program
+    /// and holds `interactive_started`. Byte offsets cannot serve here: a
+    /// bracketed-paste enable or the Enter echo are bytes but not a UI.
+    pub open_command_screen: Option<Vec<String>>,
     /// Genuine OSC 133 `A`/`C` markers observed by THIS attachment
     /// (`prompt_ready` / `command_started`). A sentinel trailer can only
     /// produce bare `D` markers, and a reattach replay can mislabel those as
@@ -204,6 +210,7 @@ pub(crate) async fn run_pump(
                     // Back at a prompt heals a lost `D` marker: no command can
                     // still be open when the shell is prompting.
                     facts.open_command = None;
+                    facts.open_command_screen = None;
                     facts.input_pending_at_prompt = false;
                 }
                 let mut data = Map::new();
@@ -217,6 +224,7 @@ pub(crate) async fn run_pump(
             Event::CommandStarted {
                 command_index,
                 output_byte_start,
+                screen,
             } => {
                 let command_id = new_command_id();
                 open_commands.insert(command_index, (command_id.clone(), Instant::now()));
@@ -225,6 +233,7 @@ pub(crate) async fn run_pump(
                     facts.marker_seen = true;
                     facts.genuine_osc133 = true;
                     facts.open_command = Some((command_id.clone(), Instant::now()));
+                    facts.open_command_screen = Some(screen);
                     // The shell consumed the line: pending input is now a
                     // running command, and deferred shrinks may apply.
                     facts.input_pending_at_prompt = false;
@@ -275,7 +284,11 @@ pub(crate) async fn run_pump(
                     "output_byte_end".into(),
                     Value::Number(Number::from(output_byte_end)),
                 );
-                shared.facts.lock().unwrap().open_command = None;
+                {
+                    let mut facts = shared.facts.lock().unwrap();
+                    facts.open_command = None;
+                    facts.open_command_screen = None;
+                }
                 let data = Value::Object(data);
                 let _ = pump_tx.send(PumpEvent::CommandFinished {
                     command_id,
@@ -434,6 +447,7 @@ mod tests {
                 closed: false,
                 last_observed_screen: None,
                 last_applied_input_seq: None,
+                open_command_screen: None,
                 input_pending_at_prompt: false,
                 deferred_resize: None,
             }),
@@ -540,6 +554,7 @@ mod tests {
             Event::CommandStarted {
                 command_index: 0,
                 output_byte_start: 10,
+                screen: Vec::new(),
             },
             Event::CommandFinished {
                 command_index: 0,
