@@ -2547,7 +2547,9 @@ async fn resize_shrink_defers_while_line_pending_at_prompt() {
 
 /// A scripted inline TUI with codex's startup shape: an early bracketed-
 /// paste enable (the interactive signal), a `paint_delay` pause, THEN the
-/// UI paints; afterwards it echoes every submitted line as `GOT: <line>`.
+/// UI paints; afterwards it echoes every submitted line as `GOT: <line>`
+/// after an optional `reply_delay` (argv[2]) spent animating a working
+/// indicator — a chat TUI "thinking" (spinner damage is what holds a send).
 fn fake_tui_script(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("fake_tui.py");
     std::fs::write(
@@ -2556,10 +2558,21 @@ fn fake_tui_script(dir: &std::path::Path) -> std::path::PathBuf {
 w = sys.stdout.write
 w("\x1b[?2004h"); sys.stdout.flush()
 time.sleep(float(sys.argv[1]) if len(sys.argv) > 1 else 2.0)
+reply_delay = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 w("+------ fake tui ------+\r\n| ask me anything      |\r\n> "); sys.stdout.flush()
 for line in sys.stdin:
     line = line.replace("\x1b[200~", "").replace("\x1b[201~", "").strip()
-    w("GOT: " + line + "\r\n> "); sys.stdout.flush()
+    if not line:
+        continue
+    # Think like codex: an animated working indicator (continuous damage)
+    # for reply_delay, then the reply. A SILENT pause would be
+    # indistinguishable from an ignored gesture and settle early by design.
+    waited = 0.0
+    while waited < reply_delay:
+        w("\r* Working (%.1fs)" % waited); sys.stdout.flush()
+        time.sleep(0.2)
+        waited += 0.2
+    w("\r" + " " * 24 + "\rGOT: " + line + "\r\n> "); sys.stdout.flush()
     if line == "quit":
         break
 w("\x1b[?2004l"); sys.stdout.flush()
@@ -2782,4 +2795,74 @@ async fn unified_send_readiness_cap_when_program_never_paints() {
         })
         .await
         .unwrap();
+}
+
+/// A send into a program resolves on the program's REACTION, settled — not
+/// on the input echo. A reply that lands 2 s later is part of this result
+/// (the codex `exit` → `• Goodbye!` misread: the old send returned on the
+/// echo, the reply surfaced as an unrelated wait, and the model assumed an
+/// exit). A gesture the program ignores still returns after the quiet
+/// window.
+#[tokio::test]
+async fn unified_send_into_program_waits_for_its_reply_to_settle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manager, mut rx) = manager_with_sender(&tmp).await;
+    let session_id = "sess-auto-reply";
+    ensure_bash_prompt(&manager, &mut rx, &tmp, session_id).await;
+    let script = fake_tui_script(tmp.path());
+    let (result, _) = send_auto_result(
+        &manager,
+        &mut rx,
+        session_id,
+        "req-launch",
+        &format!("python3 {} 0.3 2.0", script.display()),
+    )
+    .await;
+    assert_eq!(
+        result["outcome"]["event"], "interactive_started",
+        "{result}"
+    );
+
+    // Reply arrives 2 s after the input: the send must hold through it and
+    // the 1.5 s quiet window (≥ 3.3 s), and the reply must be on screen.
+    let (result, elapsed) =
+        send_auto_result(&manager, &mut rx, session_id, "req-ping", "ping").await;
+    assert_eq!(result["outcome"]["event"], "settled", "{result}");
+    assert_eq!(result["outcome"]["data"]["reacted"], true, "{result}");
+    assert!(
+        elapsed >= Duration::from_millis(3300),
+        "returned before the reply settled: {elapsed:?}"
+    );
+    let screen = screen_text(&manager, &mut rx, session_id).await;
+    assert!(
+        screen.contains("GOT: ping"),
+        "reply missing at resolve time:\n{screen}"
+    );
+
+    // A gesture the program ignores (a bare arrow key: no line, no echo)
+    // returns after the quiet window without waiting for a boundary.
+    let started = Instant::now();
+    manager
+        .handle_send(TerminalSendFrame {
+            envelope: envelope("terminal_send"),
+            session_id: session_id.to_string(),
+            request_id: "req-key".into(),
+            text: None,
+            submit: None,
+            key: Some("up".into()),
+            r#await: Some(TerminalSendAwait::Auto),
+        })
+        .await
+        .unwrap();
+    let result = wait_frame(&mut rx, Duration::from_secs(15), "key settled", |f| {
+        is_result_for(f, "terminal_send_result", "req-key")
+    })
+    .await;
+    let elapsed = started.elapsed();
+    assert_eq!(result["outcome"]["event"], "settled", "{result}");
+    assert!(
+        elapsed >= Duration::from_millis(1400) && elapsed < Duration::from_secs(5),
+        "no-reaction send should return after the quiet window: {elapsed:?}"
+    );
+    let _ = send_auto_result(&manager, &mut rx, session_id, "req-quit", "quit").await;
 }
